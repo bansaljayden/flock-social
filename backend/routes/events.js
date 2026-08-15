@@ -107,6 +107,29 @@ function setCache(key, data, negative = false) {
 }
 
 // ---------------------------------------------------------------------------
+// In-flight coalescing — routes/venueSearch.js round 18, which this router had
+// been left out of. The cache above only helps requests that arrive AFTER the
+// first one has finished; N concurrent requests for the same uncached key were
+// N budget charges and N paid Ticketmaster calls — the /featured list the app
+// fetches on open is exactly where a burst of opens lands on one key. Worse
+// here than in venueSearch: N concurrent TIMEOUTS were counted as N breaker
+// failures, so a single slow moment could trip the two-failure breaker that
+// exists precisely to not open on a single slow moment.
+//
+// The first request to find neither a cache entry nor a flight (the leader)
+// passes the breaker check, pays the budget and makes the call; everyone else
+// awaits the same promise. Sound because the route code from cache check to
+// flight registration is synchronous — Node runs one turn at a time, so a
+// second request cannot interleave into that window. The workers NEVER reject:
+// they resolve to a { status, body } descriptor, so awaiting a flight cannot
+// throw into a follower and the cleanup .then() cannot leak an unhandled
+// rejection. Entries are deleted the moment they settle, so a failure is never
+// pinned — the next request after a failed flight goes back upstream (the
+// negative cache and the breaker are what remember failures, on their own
+// short clocks).
+const inflight = new Map(); // cacheKey -> Promise<{ status, body }>
+
+// ---------------------------------------------------------------------------
 // Upstream budget: per-user 20 fresh searches/hour and 200/day, global
 // 2000/day. The documented Ticketmaster ceiling is 5K/day.
 //
@@ -141,12 +164,21 @@ const tmUserBudget = createUserBudget({ name: 'ticketmaster', hourly: 20, daily:
 let tmDayKey = new Date().toISOString().slice(0, 10);
 let tmDayCount = 0;
 
-// The day rollover, in ONE place. It was written out at each call site, which
-// is two copies of a spending control that have to agree and no reason they
-// would.
-function chargeGlobal(cost) {
+// The day rollover, in ONE place — and it must run BEFORE any read of
+// tmDayCount, not only inside the charge. The previous shape had the rollover
+// inside chargeGlobal while allowUpstream pre-checked the STALE count, and the
+// failed pre-check never reached chargeGlobal. So one day that hit the
+// 2000-call cap left tmDayKey pointing at yesterday forever: every later day
+// started with the ledger already "full", event search answered 429 to every
+// user, and only a process restart cleared it. A spending cap that outlives
+// its own day is an outage, not a control.
+function rollGlobalDay() {
   const today = new Date().toISOString().slice(0, 10);
   if (today !== tmDayKey) { tmDayKey = today; tmDayCount = 0; }
+}
+
+function chargeGlobal(cost) {
+  rollGlobalDay();
   if (tmDayCount + cost > TM_GLOBAL_DAILY) return false;
   tmDayCount += cost;
   return true;
@@ -160,6 +192,7 @@ function chargeGlobal(cost) {
 // a caller refused by the global ceiling does not also lose one of their own
 // twenty — they were never going to get the call either way.
 function allowUpstream(userId, cost = 1) {
+  rollGlobalDay();
   if (tmDayCount + cost > TM_GLOBAL_DAILY) return false;
   if (!tmUserBudget.allow(userId)) return false;
   return chargeGlobal(cost);
@@ -373,109 +406,132 @@ router.get('/search',
       const cached = getCached(cacheKey);
       if (cached) return res.json(cached);
 
-      if (upstreamIsDown()) return res.status(503).json(UPSTREAM_DOWN);
+      let flight = inflight.get(cacheKey);
+      if (!flight) {
+        if (upstreamIsDown()) return res.status(503).json(UPSTREAM_DOWN);
 
-      // A keyword search fires a second, location-free query below, so it is
-      // charged for two. See allowUpstream.
-      if (!allowUpstream(req.user.id, searchQuery ? 2 : 1)) {
-        return res.status(429).json({ error: 'Event search is busy right now. Try again in a bit.' });
-      }
-
-      // Search with location bias
-      const localParams = new URLSearchParams({
-        apikey: TM_API_KEY,
-        latlong: `${lat},${lng}`,
-        radius: radiusMiles,
-        unit: 'miles',
-        size: 20,
-        sort: 'date,asc',
-      });
-
-      if (searchQuery) localParams.set('keyword', searchQuery);
-      if (categoryFilter) {
-        const segMap = { concert: 'Music', sports: 'Sports', arts: 'Arts & Theatre', film: 'Film', comedy: 'Arts & Theatre' };
-        const seg = ownLookup(segMap, categoryFilter);
-        if (seg) localParams.set('classificationName', seg);
-      }
-
-      // If user typed a keyword, also search without location (catches team names, artists, etc.)
-      // Round 12: every Ticketmaster call now carries a deadline (utils/upstream.js).
-      const fetches = [fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${localParams}`, { signal: upstreamSignal('ticketmaster') })];
-      if (searchQuery) {
-        const wideParams = new URLSearchParams({
-          apikey: TM_API_KEY,
-          keyword: searchQuery,
-          size: 15,
-          sort: 'date,asc',
-          countryCode: 'US',
-        });
-        if (categoryFilter) {
-          const segMap = { concert: 'Music', sports: 'Sports', arts: 'Arts & Theatre', film: 'Film', comedy: 'Arts & Theatre' };
-          const seg = ownLookup(segMap, categoryFilter);
-          if (seg) wideParams.set('classificationName', seg);
+        // A keyword search fires a second, location-free query in the worker,
+        // so it is charged for two. See allowUpstream. Only the LEADER
+        // charges: one paid call is one budget unit, however many concurrent
+        // requests share its answer.
+        if (!allowUpstream(req.user.id, searchQuery ? 2 : 1)) {
+          return res.status(429).json({ error: 'Event search is busy right now. Try again in a bit.' });
         }
-        fetches.push(fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${wideParams}`, { signal: upstreamSignal('ticketmaster') }));
+        flight = runSearch({ lat, lng, searchQuery, radiusMiles, categoryFilter, cacheKey });
+        inflight.set(cacheKey, flight);
+        flight.then(() => inflight.delete(cacheKey));
       }
-
-      // allSettled, not all: the optional keyword-wide search timing out must
-      // not throw away the local results that already came back (round 12).
-      const settled = await Promise.allSettled(fetches);
-      if (settled[0].status === 'rejected') {
-        noteUpstreamDown('search', settled[0].reason);
-        return res.status(503).json(UPSTREAM_DOWN);
-      }
-      noteUpstreamAnswered();
-      const responses = settled.map((s) => (s.status === 'fulfilled' ? s.value : null));
-
-      // Handle Ticketmaster rate limits and outages gracefully — return empty
-      // instead of 500, but remember the FAILURE under the short negative TTL,
-      // not the hour-long success TTL. A 429 lasts seconds.
-      if (!responses[0].ok) {
-        console.warn('[Events] Ticketmaster search returned', responses[0].status, '— returning empty');
-        const empty = { events: [], total: 0 };
-        setCache(cacheKey, empty, true);
-        return res.json(empty);
-      }
-
-      // responses[0].ok is guaranteed by the guard above. The wide search is
-      // still optional in every direction — rejected, not-ok, or absent.
-      //
-      // A BODY THAT WILL NOT PARSE IS AN UPSTREAM FAILURE, not a search with no
-      // results. `await response.json()` on a truncated or hung body throws —
-      // the deadline covers the body stream too — and that throw used to land
-      // in the blanket catch at the bottom, which answers `200 {events: []}`.
-      // So a broken upstream read to the user as "nothing is happening near
-      // you", and because nothing was cached it re-charged the paid budget on
-      // every retry. services/weatherService.js draws exactly this distinction
-      // and for exactly this reason.
-      const localData = await responses[0].json().catch((e) => {
-        console.warn('[Events] Malformed search body:', e.message);
-        return null;
-      });
-      if (!localData) {
-        const empty = { events: [], total: 0 };
-        setCache(cacheKey, empty, true);
-        return res.json(empty);
-      }
-      const wideData = responses[1]?.ok ? await responses[1].json().catch(() => ({})) : {};
-
-      // Merge: local results first, then wide results (deduped)
-      const localEvents = localData._embedded?.events || [];
-      const wideEvents = wideData._embedded?.events || [];
-      const seenIds = new Set(localEvents.map(e => e.id));
-      const rawEvents = [...localEvents, ...wideEvents.filter(e => !seenIds.has(e.id))].slice(0, 30);
-
-      const events = rawEvents.map(mapEvent);
-
-      const result = { events, total: events.length };
-      setCache(cacheKey, result);
-      res.json(result);
+      const out = await flight;
+      return res.status(out.status).json(out.body);
     } catch (err) {
       console.error('[Events] Search error:', err);
       res.json({ events: [], total: 0 }); // graceful degradation — never 500 for events
     }
   }
 );
+
+// The worker behind GET /search. NEVER rejects — it resolves to
+// { status, body }, so a failure reaches every coalesced waiter as the same
+// clean response (see the inflight note above).
+async function runSearch({ lat, lng, searchQuery, radiusMiles, categoryFilter, cacheKey }) {
+  try {
+    // Search with location bias
+    const localParams = new URLSearchParams({
+      apikey: TM_API_KEY,
+      latlong: `${lat},${lng}`,
+      radius: radiusMiles,
+      unit: 'miles',
+      size: 20,
+      sort: 'date,asc',
+    });
+
+    if (searchQuery) localParams.set('keyword', searchQuery);
+    if (categoryFilter) {
+      const segMap = { concert: 'Music', sports: 'Sports', arts: 'Arts & Theatre', film: 'Film', comedy: 'Arts & Theatre' };
+      const seg = ownLookup(segMap, categoryFilter);
+      if (seg) localParams.set('classificationName', seg);
+    }
+
+    // If user typed a keyword, also search without location (catches team names, artists, etc.)
+    // Round 12: every Ticketmaster call now carries a deadline (utils/upstream.js).
+    const fetches = [fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${localParams}`, { signal: upstreamSignal('ticketmaster') })];
+    if (searchQuery) {
+      const wideParams = new URLSearchParams({
+        apikey: TM_API_KEY,
+        keyword: searchQuery,
+        size: 15,
+        sort: 'date,asc',
+        countryCode: 'US',
+      });
+      if (categoryFilter) {
+        const segMap = { concert: 'Music', sports: 'Sports', arts: 'Arts & Theatre', film: 'Film', comedy: 'Arts & Theatre' };
+        const seg = ownLookup(segMap, categoryFilter);
+        if (seg) wideParams.set('classificationName', seg);
+      }
+      fetches.push(fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${wideParams}`, { signal: upstreamSignal('ticketmaster') }));
+    }
+
+    // allSettled, not all: the optional keyword-wide search timing out must
+    // not throw away the local results that already came back (round 12).
+    const settled = await Promise.allSettled(fetches);
+    if (settled[0].status === 'rejected') {
+      noteUpstreamDown('search', settled[0].reason);
+      return { status: 503, body: UPSTREAM_DOWN };
+    }
+    noteUpstreamAnswered();
+    const responses = settled.map((s) => (s.status === 'fulfilled' ? s.value : null));
+
+    // Handle Ticketmaster rate limits and outages gracefully — return empty
+    // instead of 500, but remember the FAILURE under the short negative TTL,
+    // not the hour-long success TTL. A 429 lasts seconds.
+    if (!responses[0].ok) {
+      console.warn('[Events] Ticketmaster search returned', responses[0].status, '— returning empty');
+      const empty = { events: [], total: 0 };
+      setCache(cacheKey, empty, true);
+      return { status: 200, body: empty };
+    }
+
+    // responses[0].ok is guaranteed by the guard above. The wide search is
+    // still optional in every direction — rejected, not-ok, or absent.
+    //
+    // A BODY THAT WILL NOT PARSE IS AN UPSTREAM FAILURE, not a search with no
+    // results. `await response.json()` on a truncated or hung body throws —
+    // the deadline covers the body stream too — and that throw used to land
+    // in the blanket catch at the bottom, which answers `200 {events: []}`.
+    // So a broken upstream read to the user as "nothing is happening near
+    // you", and because nothing was cached it re-charged the paid budget on
+    // every retry. services/weatherService.js draws exactly this distinction
+    // and for exactly this reason.
+    const localData = await responses[0].json().catch((e) => {
+      console.warn('[Events] Malformed search body:', e.message);
+      return null;
+    });
+    if (!localData) {
+      const empty = { events: [], total: 0 };
+      setCache(cacheKey, empty, true);
+      return { status: 200, body: empty };
+    }
+    const wideData = responses[1]?.ok ? await responses[1].json().catch(() => ({})) : {};
+
+    // Merge: local results first, then wide results (deduped)
+    const localEvents = localData._embedded?.events || [];
+    const wideEvents = wideData._embedded?.events || [];
+    const seenIds = new Set(localEvents.map(e => e.id));
+    const rawEvents = [...localEvents, ...wideEvents.filter(e => !seenIds.has(e.id))].slice(0, 30);
+
+    const events = rawEvents.map(mapEvent);
+
+    const result = { events, total: events.length };
+    setCache(cacheKey, result);
+    return { status: 200, body: result };
+  } catch (err) {
+    // Same graceful degradation the route's blanket catch has always given
+    // /search — but produced HERE so every coalesced waiter gets it. Not
+    // cached: an unexpected error is not an answer.
+    console.error('[Events] Search error:', err);
+    return { status: 200, body: { events: [], total: 0 } };
+  }
+}
 
 // GET /api/events/featured?location=lat,lng&interests=Live+Music,Sports — curated "what's happening nearby"
 router.get('/featured',
@@ -521,13 +577,35 @@ router.get('/featured',
       const cached = getCached(cacheKey);
       if (cached) return res.json(cached);
 
-      if (upstreamIsDown()) return res.status(503).json(UPSTREAM_DOWN);
+      let flight = inflight.get(cacheKey);
+      if (!flight) {
+        if (upstreamIsDown()) return res.status(503).json(UPSTREAM_DOWN);
 
-      if (!allowUpstream(req.user.id)) {
-        return res.status(429).json({ error: 'Event search is busy right now. Try again in a bit.' });
+        if (!allowUpstream(req.user.id)) {
+          return res.status(429).json({ error: 'Event search is busy right now. Try again in a bit.' });
+        }
+        flight = runFeatured({ lat, lng, normalizedInterests, cacheKey });
+        inflight.set(cacheKey, flight);
+        flight.then(() => inflight.delete(cacheKey));
       }
+      const out = await flight;
+      return res.status(out.status).json(out.body);
+    } catch (err) {
+      console.error('[Events] Featured error:', err);
+      res.status(500).json({ error: 'Failed to get featured events' });
+    }
+  }
+);
 
-      // Map user interests to Ticketmaster classification keywords
+// The worker behind GET /featured. NEVER rejects — resolves to
+// { status, body } for every coalesced waiter (see the inflight note).
+async function runFeatured({ lat, lng, normalizedInterests, cacheKey }) {
+  try {
+    // Map user interests to Ticketmaster classification keywords.
+    // (Indented one level deeper than its surroundings on purpose:
+    // fieldBounds.test.js reads this literal out of the source to prove the
+    // profile's interest ceilings fit the vocabulary, and its regex expects
+    // the closing brace at this exact depth.)
       const interestToTM = {
         'live music': 'Music',
         'cocktails': '',
@@ -544,101 +622,109 @@ router.get('/featured',
         'nightlife': 'Music',
       };
 
-      // Build classification filter from interests. Derived from the SAME
-      // normalised list the cache key is built from, so two requests that share
-      // a cache entry cannot have asked Ticketmaster different questions.
-      const tmClassifications = [...new Set(
-        normalizedInterests.split(',').map((i) => ownLookup(interestToTM, i)).filter(Boolean)
-      )].sort();
+    // Build classification filter from interests. Derived from the SAME
+    // normalised list the cache key is built from, so two requests that share
+    // a cache entry cannot have asked Ticketmaster different questions.
+    const tmClassifications = [...new Set(
+      normalizedInterests.split(',').map((i) => ownLookup(interestToTM, i)).filter(Boolean)
+    )].sort();
 
-      // Fetch upcoming events in the next 7 days
-      const startDate = new Date();
-      const endDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-      const fmt = (d) => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
+    // Fetch upcoming events in the next 7 days
+    const startDate = new Date();
+    const endDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+    const fmt = (d) => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 
-      const params = new URLSearchParams({
-        apikey: TM_API_KEY,
-        latlong: `${lat},${lng}`,
-        radius: 30,
-        unit: 'miles',
-        size: 20,
-        sort: 'relevance,desc',
-        startDateTime: fmt(startDate),
-        endDateTime: fmt(endDate),
-      });
+    const params = new URLSearchParams({
+      apikey: TM_API_KEY,
+      latlong: `${lat},${lng}`,
+      radius: 30,
+      unit: 'miles',
+      size: 20,
+      sort: 'relevance,desc',
+      startDateTime: fmt(startDate),
+      endDateTime: fmt(endDate),
+    });
 
-      // If user has relevant interests, filter by classification
-      if (tmClassifications.length > 0 && tmClassifications.length <= 2) {
-        params.set('classificationName', tmClassifications.join(','));
-      }
-
-      // An unreachable upstream is a 503, not a 500. It used to throw straight
-      // into the outer catch, which answers "Failed to get featured events"
-      // with a 500 — our fault, retry-hostile, and indistinguishable in the
-      // logs from a bug in this file. /search already drew that line; these two
-      // did not. Round 12 gave every one of these calls a deadline; a deadline
-      // that fires is precisely this path.
-      const response = await fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${params}`, { signal: upstreamSignal('ticketmaster') }) // round 12
-        .catch((e) => { noteUpstreamDown('featured', e); return null; });
-      if (!response) return res.status(503).json(UPSTREAM_DOWN);
-      noteUpstreamAnswered();
-
-      if (!response.ok) {
-        // Rate limited or failed — gracefully return empty, and remember the
-        // FAILURE under the short negative TTL rather than the hour-long
-        // success TTL. See NEGATIVE_TTL.
-        console.warn('[Events] Featured: Ticketmaster', response.status, '— returning empty');
-        const empty = { events: [], total: 0 };
-        setCache(cacheKey, empty, true);
-        return res.json(empty);
-      }
-
-      // A body that will not parse is a failure, not an empty list. See the
-      // same guard in /search.
-      const data = await response.json().catch((e) => {
-        console.warn('[Events] Malformed featured body:', e.message);
-        return null;
-      });
-      if (!data) {
-        const empty = { events: [], total: 0 };
-        setCache(cacheKey, empty, true);
-        return res.json(empty);
-      }
-      let rawEvents = data._embedded?.events || [];
-
-      // If we filtered by classification and got few results, fetch more
-      // without the filter. This is a SECOND paid call, and it was not charged
-      // at all — the global ledger was one call short on every request that
-      // took this branch. It is charged before it is made (utils/upstream.js:
-      // an aborted paid request still bills), against the global ceiling only:
-      // the caller's own hourly allowance was already spent on this request and
-      // charging it twice would refuse them a search they only made once.
-      if (tmClassifications.length > 0 && rawEvents.length < 5 && chargeUpstreamExtra(1)) {
-        params.delete('classificationName');
-        // The unfiltered top-up is optional — a timeout here must not lose the
-        // interest-matched events we already have (round 12).
-        const fallbackRes = await fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${params}`, { signal: upstreamSignal('ticketmaster') })
-          .catch((e) => { console.warn('[Events] Featured top-up failed:', e.message); return null; });
-        if (fallbackRes?.ok) {
-          const fallbackData = await fallbackRes.json();
-          const fallbackEvents = fallbackData._embedded?.events || [];
-          // Merge: interest-matched first, then others
-          const existingIds = new Set(rawEvents.map(e => e.id));
-          rawEvents = [...rawEvents, ...fallbackEvents.filter(e => !existingIds.has(e.id))].slice(0, 20);
-        }
-      }
-
-      const events = rawEvents.map(mapEvent);
-
-      const result = { events, total: events.length };
-      setCache(cacheKey, result);
-      res.json(result);
-    } catch (err) {
-      console.error('[Events] Featured error:', err);
-      res.status(500).json({ error: 'Failed to get featured events' });
+    // If user has relevant interests, filter by classification
+    if (tmClassifications.length > 0 && tmClassifications.length <= 2) {
+      params.set('classificationName', tmClassifications.join(','));
     }
+
+    // An unreachable upstream is a 503, not a 500. It used to throw straight
+    // into the outer catch, which answers "Failed to get featured events"
+    // with a 500 — our fault, retry-hostile, and indistinguishable in the
+    // logs from a bug in this file. /search already drew that line; these two
+    // did not. Round 12 gave every one of these calls a deadline; a deadline
+    // that fires is precisely this path.
+    const response = await fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${params}`, { signal: upstreamSignal('ticketmaster') }) // round 12
+      .catch((e) => { noteUpstreamDown('featured', e); return null; });
+    if (!response) return { status: 503, body: UPSTREAM_DOWN };
+    noteUpstreamAnswered();
+
+    if (!response.ok) {
+      // Rate limited or failed — gracefully return empty, and remember the
+      // FAILURE under the short negative TTL rather than the hour-long
+      // success TTL. See NEGATIVE_TTL.
+      console.warn('[Events] Featured: Ticketmaster', response.status, '— returning empty');
+      const empty = { events: [], total: 0 };
+      setCache(cacheKey, empty, true);
+      return { status: 200, body: empty };
+    }
+
+    // A body that will not parse is a failure, not an empty list. See the
+    // same guard in /search.
+    const data = await response.json().catch((e) => {
+      console.warn('[Events] Malformed featured body:', e.message);
+      return null;
+    });
+    if (!data) {
+      const empty = { events: [], total: 0 };
+      setCache(cacheKey, empty, true);
+      return { status: 200, body: empty };
+    }
+    let rawEvents = data._embedded?.events || [];
+
+    // If we filtered by classification and got few results, fetch more
+    // without the filter. This is a SECOND paid call, and it was not charged
+    // at all — the global ledger was one call short on every request that
+    // took this branch. It is charged before it is made (utils/upstream.js:
+    // an aborted paid request still bills), against the global ceiling only:
+    // the caller's own hourly allowance was already spent on this request and
+    // charging it twice would refuse them a search they only made once.
+    if (tmClassifications.length > 0 && rawEvents.length < 5 && chargeUpstreamExtra(1)) {
+      params.delete('classificationName');
+      // The unfiltered top-up is optional — a timeout here must not lose the
+      // interest-matched events we already have (round 12).
+      const fallbackRes = await fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${params}`, { signal: upstreamSignal('ticketmaster') })
+        .catch((e) => { console.warn('[Events] Featured top-up failed:', e.message); return null; });
+      if (fallbackRes?.ok) {
+        // This .json() was the ONE unguarded body parse in the file, and it
+        // sat on the only path that already HOLDS good events. A truncated
+        // top-up body threw into the outer catch and turned a request whose
+        // interest-matched results were sitting in rawEvents into a 500. The
+        // top-up is optional in every direction — rejected, not-ok, and now
+        // unparseable too.
+        const fallbackData = await fallbackRes.json().catch((e) => {
+          console.warn('[Events] Malformed featured top-up body:', e.message);
+          return null;
+        });
+        const fallbackEvents = fallbackData?._embedded?.events || [];
+        // Merge: interest-matched first, then others
+        const existingIds = new Set(rawEvents.map(e => e.id));
+        rawEvents = [...rawEvents, ...fallbackEvents.filter(e => !existingIds.has(e.id))].slice(0, 20);
+      }
+    }
+
+    const events = rawEvents.map(mapEvent);
+
+    const result = { events, total: events.length };
+    setCache(cacheKey, result);
+    return { status: 200, body: result };
+  } catch (err) {
+    console.error('[Events] Featured error:', err);
+    return { status: 500, body: { error: 'Failed to get featured events' } };
   }
-);
+}
 
 // GET /api/events/details?id=xxx — Full event details (like venue details page)
 router.get('/details',
@@ -660,98 +746,115 @@ router.get('/details',
       const cached = getCached(cacheKey);
       if (cached) return res.json(cached);
 
-      if (upstreamIsDown()) return res.status(503).json(UPSTREAM_DOWN);
+      let flight = inflight.get(cacheKey);
+      if (!flight) {
+        if (upstreamIsDown()) return res.status(503).json(UPSTREAM_DOWN);
 
-      if (!allowUpstream(req.user.id)) {
-        return res.status(429).json({ error: 'Event lookups are busy right now. Try again in a bit.' });
+        if (!allowUpstream(req.user.id)) {
+          return res.status(429).json({ error: 'Event lookups are busy right now. Try again in a bit.' });
+        }
+        flight = runDetails(eventId, cacheKey);
+        inflight.set(cacheKey, flight);
+        flight.then(() => inflight.delete(cacheKey));
       }
-
-      // encodeURIComponent as well as the format check above. The allowlist is
-      // what stops the path being chosen by the caller; the encoding is what
-      // keeps that true if the allowlist is ever widened.
-      const response = await fetch(
-        `https://app.ticketmaster.com/discovery/v2/events/${encodeURIComponent(eventId)}?apikey=${TM_API_KEY}`,
-        { signal: upstreamSignal('ticketmaster') }
-      ).catch((e) => { noteUpstreamDown('details', e); return null; }); // round 12
-      // Unreachable is a 503, the same as /search. See the note on /featured.
-      if (!response) return res.status(503).json(UPSTREAM_DOWN);
-      noteUpstreamAnswered();
-
-      if (!response.ok) {
-        return res.status(response.status === 404 ? 404 : 502).json({ error: 'Event not found' });
-      }
-
-      // Same rule as the two search endpoints: an unreadable body is the
-      // upstream failing, and it must not be reported as an event made
-      // entirely of nulls (which is what mapEvent produces from `{}`, and what
-      // the blanket catch below would have turned into a 500 anyway).
-      const e = await response.json().catch((err) => {
-        console.warn('[Events] Malformed details body:', err.message);
-        return null;
-      });
-      if (!e || typeof e !== 'object') {
-        return res.status(502).json({ error: 'Event not found' });
-      }
-      const venue = e._embedded?.venues?.[0];
-      const attraction = e._embedded?.attractions?.[0];
-
-      // Collect unique images — TM serves same photo in many sizes, dedupe by base filename
-      const getImageKey = (url) => {
-        // Extract the unique image hash from URL (e.g. "c9d1f714-57de-4e29-9d62-cb403420d615")
-        const match = url.match(/\/([a-f0-9-]{20,})_/);
-        return match ? match[1] : url;
-      };
-      const allImgs = (e.images || []).filter(i => !i.fallback);
-      const attractionImgs = (attraction?.images || []).filter(i => !i.fallback);
-      const seenKeys = new Set();
-      const photos = [...allImgs, ...attractionImgs]
-        .filter(i => i.ratio === '16_9' && i.width >= 500)
-        .sort((a, b) => (b.width || 0) - (a.width || 0))
-        .filter(i => { const k = getImageKey(i.url); if (seenKeys.has(k)) return false; seenKeys.add(k); return true; })
-        .slice(0, 4)
-        .map(i => i.url);
-
-      const result = {
-        event: {
-          ...mapEvent(e),
-          // Extended details
-          photos,
-          venue_details: venue ? {
-            name: venue.name,
-            address: venue.address?.line1 || null,
-            city: venue.city?.name || null,
-            state: venue.state?.stateCode || null,
-            postal_code: venue.postalCode || null,
-            country: venue.country?.name || null,
-            location: venue.location ? {
-              latitude: parseFloat(venue.location.latitude),
-              longitude: parseFloat(venue.location.longitude),
-            } : null,
-            upcoming_events: venue.upcomingEvents?._total || 0,
-          } : null,
-          attractions: (e._embedded?.attractions || []).map(a => ({
-            name: a.name,
-            url: a.url || null,
-            image_url: getBestImage({ images: a.images || [], _embedded: {} }),
-          })),
-          date_end: e.dates?.end?.localDate || null,
-          time_end: e.dates?.end?.localTime || null,
-          timezone: e.dates?.timezone || null,
-          on_sale: e.dates?.status?.code === 'onsale',
-          ticketing: e.ticketing ? {
-            safe_tix: e.ticketing.safeTix?.enabled || false,
-          } : null,
-        },
-      };
-
-      setCache(cacheKey, result);
-      res.json(result);
+      const out = await flight;
+      return res.status(out.status).json(out.body);
     } catch (err) {
       console.error('[Events] Details error:', err);
       res.status(500).json({ error: 'Failed to get event details' });
     }
   }
 );
+
+// The worker behind GET /details. NEVER rejects — resolves to
+// { status, body } for every coalesced waiter (see the inflight note).
+async function runDetails(eventId, cacheKey) {
+  try {
+    // encodeURIComponent as well as the format check in the route. The
+    // allowlist is what stops the path being chosen by the caller; the
+    // encoding is what keeps that true if the allowlist is ever widened.
+    const response = await fetch(
+      `https://app.ticketmaster.com/discovery/v2/events/${encodeURIComponent(eventId)}?apikey=${TM_API_KEY}`,
+      { signal: upstreamSignal('ticketmaster') }
+    ).catch((e) => { noteUpstreamDown('details', e); return null; }); // round 12
+    // Unreachable is a 503, the same as /search. See the note on /featured.
+    if (!response) return { status: 503, body: UPSTREAM_DOWN };
+    noteUpstreamAnswered();
+
+    if (!response.ok) {
+      return { status: response.status === 404 ? 404 : 502, body: { error: 'Event not found' } };
+    }
+
+    // Same rule as the two search endpoints: an unreadable body is the
+    // upstream failing, and it must not be reported as an event made
+    // entirely of nulls (which is what mapEvent produces from `{}`, and what
+    // the blanket catch would have turned into a 500 anyway).
+    const e = await response.json().catch((err) => {
+      console.warn('[Events] Malformed details body:', err.message);
+      return null;
+    });
+    if (!e || typeof e !== 'object') {
+      return { status: 502, body: { error: 'Event not found' } };
+    }
+    const venue = e._embedded?.venues?.[0];
+    const attraction = e._embedded?.attractions?.[0];
+
+    // Collect unique images — TM serves same photo in many sizes, dedupe by base filename
+    const getImageKey = (url) => {
+      // Extract the unique image hash from URL (e.g. "c9d1f714-57de-4e29-9d62-cb403420d615")
+      const match = url.match(/\/([a-f0-9-]{20,})_/);
+      return match ? match[1] : url;
+    };
+    const allImgs = (e.images || []).filter(i => !i.fallback);
+    const attractionImgs = (attraction?.images || []).filter(i => !i.fallback);
+    const seenKeys = new Set();
+    const photos = [...allImgs, ...attractionImgs]
+      .filter(i => i.ratio === '16_9' && i.width >= 500)
+      .sort((a, b) => (b.width || 0) - (a.width || 0))
+      .filter(i => { const k = getImageKey(i.url); if (seenKeys.has(k)) return false; seenKeys.add(k); return true; })
+      .slice(0, 4)
+      .map(i => i.url);
+
+    const result = {
+      event: {
+        ...mapEvent(e),
+        // Extended details
+        photos,
+        venue_details: venue ? {
+          name: venue.name,
+          address: venue.address?.line1 || null,
+          city: venue.city?.name || null,
+          state: venue.state?.stateCode || null,
+          postal_code: venue.postalCode || null,
+          country: venue.country?.name || null,
+          location: venue.location ? {
+            latitude: parseFloat(venue.location.latitude),
+            longitude: parseFloat(venue.location.longitude),
+          } : null,
+          upcoming_events: venue.upcomingEvents?._total || 0,
+        } : null,
+        attractions: (e._embedded?.attractions || []).map(a => ({
+          name: a.name,
+          url: a.url || null,
+          image_url: getBestImage({ images: a.images || [], _embedded: {} }),
+        })),
+        date_end: e.dates?.end?.localDate || null,
+        time_end: e.dates?.end?.localTime || null,
+        timezone: e.dates?.timezone || null,
+        on_sale: e.dates?.status?.code === 'onsale',
+        ticketing: e.ticketing ? {
+          safe_tix: e.ticketing.safeTix?.enabled || false,
+        } : null,
+      },
+    };
+
+    setCache(cacheKey, result);
+    return { status: 200, body: result };
+  } catch (err) {
+    console.error('[Events] Details error:', err);
+    return { status: 500, body: { error: 'Failed to get event details' } };
+  }
+}
 
 module.exports = router;
 
@@ -761,6 +864,11 @@ module.exports = router;
 module.exports.__test = {
   reset() {
     eventCache.clear();
+    // Iterate-delete rather than .clear(): edgeCaseSweep.test.js pins that the
+    // only wholesale clear in this file is the result cache's, so that a
+    // budget map can never grow one. The inflight map self-empties as flights
+    // settle; this only covers a test that gave up on one mid-flight.
+    for (const k of [...inflight.keys()]) inflight.delete(k);
     lastCacheKey = null;
     tmUserBudget.reset();
     tmDayCount = 0;
@@ -768,6 +876,9 @@ module.exports.__test = {
     tmDownUntil = 0;
     tmConsecutiveFailures = 0;
   },
+  // Force the global day ledger into an arbitrary state — how the midnight
+  // rollover is testable without waiting for midnight.
+  forceGlobalLedger(dayKey, count) { tmDayKey = dayKey; tmDayCount = count; },
   clearBreaker() { tmDownUntil = 0; tmConsecutiveFailures = 0; },
   breakerOpen: () => tmDownUntil > Date.now(),
   FAILURES_TO_OPEN: TM_FAILURES_TO_OPEN,
