@@ -4,13 +4,14 @@ import SiteFooter from './SiteFooter';
 
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
-// PrivacyPolicy.css's --pp-ink-3 is commented "meta — 4.6:1 on paper". It is
-// not: #6b7a8c on #f1ede0 measures 3.75:1, and 3.42:1 on the --pp-paper-2
-// panels. That is a WCAG 1.4.3 failure for every string it carries, all of
-// which are 13-16px body text. The token is shared by six pages and lives in a
-// file this pass does not own, so the two pages it does own step off it here
-// and the token itself is reported instead of edited. --pp-ink-2 is the next
-// step up and is defined in BOTH themes: 8.14:1 light, 10.12:1 dark.
+// HISTORY, so the next reader is not misled: this override was added when
+// --pp-ink-3 was #6b7a8c, a WCAG 1.4.3 failure at 3.75:1 on the cream paper.
+// That token has since been fixed in PrivacyPolicy.css (#586473, 5.14:1 on
+// paper, 4.70:1 on the panels), so the failure is gone either way. The
+// override stays: marketingSiteAccessibility.test.js pins BY SOURCE SCAN that
+// this page's back link, standfirst and footer links all carry it, and
+// --pp-ink-2 (8.14:1 light, 10.12:1 dark) is the better reading colour for
+// these strings regardless.
 const READABLE = { color: 'var(--pp-ink-2)' };
 
 // The public why-does-this-exist page: what users get, why venues pay, and
