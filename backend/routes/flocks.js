@@ -843,6 +843,19 @@ router.put('/:id',
         [name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, safePhotoUrl, event_time, status, flockId]
       );
 
+      // The ownership check above and this UPDATE are two statements, and the
+      // row can go between them — a co-creator's DELETE, the creator's own
+      // `leave` from a second device, an admin takedown. Everything below
+      // assumed a row came back: `updated.name` on the fan-out payload threw a
+      // TypeError into the outer catch (a 500 on a request that was merely
+      // late), and with no socket attached the route answered 200 with
+      // `{ flock: {} }` — reporting success for a write that matched nothing.
+      // Same 404 the ownership check gives, which is also the honest answer:
+      // by the time we finished, there was no such flock.
+      if (result.rowCount === 0) {
+        return res.status(404).json({ error: 'Flock not found' });
+      }
+
       // Notify flock members of the update
       const io = req.app.get('io');
       const updated = result.rows[0];
@@ -1011,7 +1024,14 @@ router.delete('/:id', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('
       }).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
     }
 
-    await pool.query('DELETE FROM flocks WHERE id = $1', [flockId]);
+    const removed = await pool.query('DELETE FROM flocks WHERE id = $1', [flockId]);
+    // Same two-statement window as PUT: the ownership check read a row that was
+    // gone by the time this ran. Reporting "Flock deleted" for a DELETE that
+    // matched nothing tells the caller their action landed when somebody else's
+    // did, so it gets the same 404 the check itself would have given.
+    if (removed.rowCount === 0) {
+      return res.status(404).json({ error: 'Flock not found' });
+    }
     res.json({ message: 'Flock deleted' });
   } catch (err) {
     console.error('Delete flock error:', err);
@@ -2003,8 +2023,32 @@ router.post('/:id/attendance',
         // Block-aware for the same reason as flock_member_left: this names
         // members and their scores, and per-member delivery would otherwise
         // carry it to someone who blocked the marker.
+        //
+        // ── WHAT THE ROOM IS TOLD, AND WHAT IT IS NOT (authz sweep) ─────────
+        // This used to broadcast `results` verbatim, which carries
+        // totalPlansJoined and totalPlansAttended — counts computed across
+        // EVERY completed flock each person has ever been in. So marking one
+        // evening's attendance told every member of this flock how many plans
+        // each of the others has joined and shown up to app-wide, in groups
+        // these recipients have no relationship to. reliability_score is a
+        // different matter: it is already on this flock's roster (GET /:id
+        // selects u.reliability_score), so re-sending it live tells nobody
+        // anything a refresh would not, and withholding it would only make the
+        // live update disagree with the screen underneath it.
+        //
+        // The counts still go to the person they belong to, on the
+        // `reliability_updated` event below, and routes/users.js already serves
+        // them the same three fields about themselves.
+        //
+        // The HTTP `results` above is deliberately UNCHANGED. It answers one
+        // caller — the creator, about the write they just made — and its exact
+        // shape is the contract __tests__/reliabilitySelfCredit.test.js and
+        // __tests__/queryReliability.test.js pin. A broadcast to N people and a
+        // reply to the one who acted are not the same disclosure, so they do
+        // not have to carry the same payload.
         await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'attendance_marked', {
-          flockId: parseInt(flockId), attendance: results,
+          flockId: parseInt(flockId),
+          attendance: results.map((r) => ({ userId: r.userId, reliabilityScore: r.reliabilityScore })),
         }).catch((e) => console.error('attendance_marked fan-out failed:', e.message));
         for (const r of results) {
           io.to(`user:${r.userId}`).emit('reliability_updated', {
