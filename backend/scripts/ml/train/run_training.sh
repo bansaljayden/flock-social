@@ -59,15 +59,32 @@ with open('../models/model_metadata.json') as f:
 print(f'  Model: {m.get(\"best_model\", \"?\")}')
 print(f'  Features: {m.get(\"feature_count\", \"?\")}')
 print(f'  Training rows: {m.get(\"training_rows\", \"?\")}')
-if 'evaluation' in m:
-    v = m['evaluation'].get('validation', {})
-    h = m['evaluation'].get('holdout', {})
-    print(f'  Val RMSE: {v.get(\"rmse\", \"?\")}')
-    print(f'  Val R²: {v.get(\"r2\", \"?\")}')
-    print(f'  Val within 10pts: {v.get(\"within_10\", \"?\")}%')
+e = m.get('evaluation', {})
+if e:
+    # quick_eval.py runs LAST and rewrites metadata['evaluation'] with its own
+    # shape, which has no 'validation' key — it has 'training_loco_cv'. This
+    # summary used to read the key evaluate_model.py writes and had therefore
+    # printed '?' for every number since the gate was introduced. Read whichever
+    # survived, and say which one it is rather than labelling it wrongly.
+    train_key = 'training_loco_cv' if 'training_loco_cv' in e else 'validation'
+    v = e.get(train_key, {})
+    h = e.get('holdout', {})
+    if v:
+        label = 'LOCO CV' if train_key == 'training_loco_cv' else 'Val'
+        print(f'  {label} MAE: {v.get(\"mae\", \"?\")}')
+        print(f'  {label} R²: {v.get(\"r2\", \"?\")}')
+        print(f'  {label} within 10pts: {v.get(\"within_10\", \"?\")}%')
     if h:
-        print(f'  Holdout RMSE: {h.get(\"rmse\", \"?\")}')
+        print(f'  Holdout MAE: {h.get(\"mae\", \"?\")}')
         print(f'  Holdout R²: {h.get(\"r2\", \"?\")}')
+        print(f'  Holdout within 10pts: {h.get(\"within_10\", \"?\")}%')
+inc = m.get('incumbent_comparison')
+if inc:
+    verdict = inc.get('verdict') or ('BEATS INCUMBENT' if inc.get('challenger_wins') else 'DOES NOT BEAT INCUMBENT')
+    print(f'  vs INCUMBENT: {verdict}')
+    print(f'    challenger MAE {inc.get(\"challenger_mae\", \"?\")} vs incumbent MAE {inc.get(\"incumbent_mae\", \"?\")} on {inc.get(\"comparable_rows\", \"?\")} shared rows')
+else:
+    print('  vs INCUMBENT: not computed')
 g = m.get('ship_gate')
 if g:
     print(f'  SHIP GATE: {\"PASS\" if g.get(\"overall_pass\") else \"FAIL\"} ({g.get(\"gate_basis\", \"?\")}) — the backend refuses to load a FAIL artifact')
