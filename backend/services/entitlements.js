@@ -162,7 +162,14 @@ async function isPremium(userId) {
 // can debug at the moment it matters.
 function paywallEnabled() {
   const on = boolFlag('PAYWALL_ENABLED');
-  if (on && !process.env.REVENUECAT_WEBHOOK_SECRET) {
+  // Ask the webhook route what it considers configured rather than reading the
+  // variable raw. A blank, whitespace-only, or too-short secret is refused
+  // there but looked SET to a raw truthiness test, so this preflight went
+  // quiet in exactly the case it exists to catch: every account metered while
+  // no purchase can lift any of them. Required lazily because the route is
+  // mounted after this module loads.
+  const secretConfigured = require('../routes/revenuecat').configuredSecret();
+  if (on && !secretConfigured) {
     warnOnce(
       'preflight:paywall-no-grant-path',
       '[entitlements] PAYWALL_ENABLED=true but REVENUECAT_WEBHOOK_SECRET is unset. routes/revenuecat.js refuses every event without it, and it is the only writer of users.is_premium, so every account is metered on the free tier and NO purchase can lift it. Set the webhook secret before metering anyone.'
