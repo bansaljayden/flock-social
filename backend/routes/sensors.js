@@ -258,7 +258,18 @@ router.post('/data',
       // writing a fabricated "0 people" row into the venue's live occupancy and
       // the model's training data. Everything above has already run, so this
       // still answers the only question the installer is asking.
-      if (req.body.dry_run === true) {
+      //
+      // Round 21: every truthy spelling isBoolean() admits, not just the JSON
+      // boolean. The validator passes the STRINGS 'true' and '1' (and the
+      // number 1) as readily as `true`, and a curl-driven install check sends
+      // exactly those — `-d '{"dry_run":"true"}'`. Under a bare `=== true`
+      // each of them validated cleanly and then read as "not a dry run", so
+      // the self test wrote the fabricated zero row this branch exists to keep
+      // out. Same bug as the `["true"]` array case fixed in round 20, one
+      // coercion earlier.
+      const dryRun = req.body.dry_run === true || req.body.dry_run === 'true'
+        || req.body.dry_run === 1 || req.body.dry_run === '1';
+      if (dryRun) {
         return res.status(200).json({ success: true, dry_run: true, device_id: device.device_id });
       }
 
