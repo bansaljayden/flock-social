@@ -35,18 +35,25 @@ What is actually possible, in order of honesty:
 Recommend telling the friend the honest version rather than shipping something
 called Apple Pay that is not.
 
-## 3. Make Birdie smarter
+## 3. "Make birdie smarter, Kome is full"
 
-Wording in the screenshot is ambiguous ("kome is full"), so this needs one
-clarifying question before work starts. Two readings:
-- Birdie should be smarter when the venue it suggests is at capacity, i.e. use
-  the crowd forecast in its answers rather than answering independently of it.
-- The home screen is full, and Birdie should carry more of the load.
+**Resolved by Jayden: Kome is a restaurant name, not a typo.** The friend saw
+Kome, a popular Atlanta restaurant, reading about 20 percent capacity at 6pm.
+That is a peak dinner hour at a busy venue, so the number is simply wrong.
 
-The first reading is the buildable one and is a real gap: Birdie answers venue
-questions through Gemini while the app's own trained crowd model sits right
-there. Feeding the forecast into Birdie's context would make its answers say
-when to go, not just where.
+This is a crowd prediction accuracy bug, not a Birdie feature request, and it is
+the most serious item on this list: crowd forecasting is the app's
+differentiator, and a visibly wrong number on a venue the user knows destroys
+trust in the whole feature. Under investigation as of 2026-08-14. Leading
+suspicions, in order: the scored hour may not be the venue's local hour (6pm
+Eastern is 22:00 UTC, and this exact class of bug already shipped once, which
+migration 021 corrected in the feedback corpus), the venue may have no entry in
+the ml_venues corpus and be answered by the rule fallback's generic curve, or
+the venue's Google types may dispatch it into a non-dinner category.
+
+The honesty question rides along with the fix: if the app cannot support a
+confident number for a venue it has no data on, it must not assert a precise
+percentage anyway.
 
 ## 4. Bio on the profile
 
