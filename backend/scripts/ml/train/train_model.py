@@ -61,7 +61,10 @@ from xgboost import XGBRegressor
 # The single definition of "rows production scores with this model". Imported,
 # never re-implemented: prepare_features.py filters TRAINING with it and
 # quick_eval.py gates with it. A third copy here would be a third thing to drift.
-from prepare_features import serving_population_mask
+# CAT_KEYS / REFINED_KEYS come from the same place for the same reason: the
+# per-fold refit below has to key its cells exactly the way the map it replaces
+# was keyed, and a second copy of those key lists is a second thing to drift.
+from prepare_features import serving_population_mask, CAT_KEYS, REFINED_KEYS
 
 logging.basicConfig(level=logging.INFO, format='[%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -311,6 +314,361 @@ def assert_weighting_matches_provenance(sample_weight, is_realtime, provenance) 
 
 
 # ---------------------------------------------------------------------------
+# Per-fold category baselines — the consuming half of RETRAIN.md's lever 2
+# ---------------------------------------------------------------------------
+# THE LEAK THIS CLOSES, and the exact sense in which it closes it.
+#
+# `category_baseline` and `refined_category_baseline` are means of `busyness_pct`
+# — the label. prepare_features.py fits both on the whole training frame and
+# applies them to that same frame, and it has no folds to fit inside of. The CV
+# below holds out one CITY per fold, so a held-out city had already contributed
+# to the category cells its own rows are then scored against, and the REPORTED
+# cross-validation numbers came out optimistic.
+#
+# What changes here is the reporting and nothing else. The final model is still
+# fitted on the matrix prepare_features wrote, because the map that matrix
+# carries is the map `services/mlPredictor.js` is shipped and serves — for
+# inference there is no held-out group, so every training row is the right
+# estimate. The ship gate is untouched: it runs on the separate holdout cities,
+# whose category features were built from training rows only.
+#
+# THE FORMULATION, AND WHY THIS ONE AND NOT THE CHEAP ONE. Inside a fold the map
+# must be ONE value per cell, shared by that fold's training and validation rows
+# alike. The tempting substitute — one leave-one-city-out map computed once,
+# each row reading (cell_sum - own_city_sum) / (cell_n - own_city_n) — is not
+# equivalent and was measured to be roughly six times worse than the leak it
+# claims to remove: the feature then varies BY CITY inside a fold, and its
+# deviation from the cell's typical value is an invertible function of the
+# held-out city's own labels, so a tree splits to identify the cell and reads
+# that city's level straight off the feature. It also PASSES a label-perturbation
+# invariance check, which is why invariance is necessary and not sufficient and
+# why the fix below is validated against a held-out population instead. See
+# prepare_features.build_category_cell_aggregates and RETRAIN.md lever 2.
+#
+# THE POPULATION TRAP THIS ALREADY FELL INTO ONCE, AND THE ASSERTION THAT MAKES
+# IT UNREPEATABLE. The first version of these statistics was aggregated after the
+# serving-population filter, because row_cell/row_group are positional indexes
+# into X and X is the filtered matrix. But the map being replaced is fitted
+# BEFORE that filter, on 3.57M rows rather than 1.93M. Measured on the shipped
+# pickle: a fold map built that way moved category_baseline on 99.9% of rows by a
+# mean of 9.27 points, while removing the held-out city — the entire point — moved
+# it on 75% of rows by a mean of 0.17. Reporting the resulting cross-validation
+# figure as "the leak-corrected number" would have published a number describing a
+# model whose category feature is not the one shipped: the same sin as the 84%
+# confidence, in a new place.
+#
+# prepare_features.build_category_cell_aggregates now fits on the pre-filter frame
+# and index_category_cells attaches the indexes afterwards, so the ONLY difference
+# a fold map carries is the held-out city. That is checkable exactly, and it is
+# checked: verify_reproduces_shipped() holds out nothing and requires the rebuilt
+# columns to equal X's own columns bit for bit before any fold is fitted. A v1
+# pickle is refused rather than silently producing the confounded number.
+CATEGORY_FEATURES = ('category_baseline', 'refined_category_baseline')
+CELL_STATS_MIN_VERSION = 2
+
+
+class FoldCategoryBaselines:
+    """Rebuild both category label-means from a fold's TRAINING rows only.
+
+    Consumes `features_train.pkl['category_cell_stats']`: per-(city, cell) label
+    sums and counts, each row's cell index and group index, and the cell key
+    tuples so the coarse map's 0.6/0.2/0.2 adjacent-hour smoothing can be redone
+    on the cells a fold actually supports. One fold costs two dense sums over a
+    (30 x 2184) and a (30 x 7316) matrix — no second pass over the CSV, and no
+    refit of anything expensive.
+
+    Every check in __init__ is about one failure mode: `row_cell` and `row_group`
+    are POSITIONAL indexes into X, so a pickle whose statistics were computed
+    against a different row order would score every row against the wrong
+    category cell, silently, and produce better-looking numbers that mean
+    nothing. The aggregate rebuild (`sums` re-derived from the rows themselves)
+    is what makes that structural rather than trusted.
+    """
+
+    def __init__(self, cell_stats, cities, feature_cols, y_actual):
+        self.active = False
+        self.reason = None
+        self.version = None
+        self.col_index = {}
+        present = [c for c in CATEGORY_FEATURES if c in feature_cols]
+        if not present:
+            self.reason = ('the feature matrix carries neither category_baseline nor '
+                           'refined_category_baseline, so there is no label-mean feature '
+                           'to refit')
+            logger.info('Per-fold category baselines: not applicable — %s.', self.reason)
+            return
+        if len(present) != len(CATEGORY_FEATURES):
+            raise LabelContractError(
+                f'The feature matrix carries {present} but not all of {list(CATEGORY_FEATURES)}. '
+                'Both are means of busyness_pct and both must be refitted per fold, or the '
+                'one left behind keeps the leak open while the metadata claims it is closed.')
+        if not cell_stats:
+            raise LabelContractError(
+                'features_train.pkl carries category_baseline / refined_category_baseline '
+                'but no category_cell_stats. Those two features are label means fitted on '
+                'the whole training frame; without the per-(city, cell) statistics this '
+                'script cannot refit them inside a fold, and every cross-validation number '
+                'below would be optimistic by an unmeasured amount. Re-run '
+                'prepare_features.py, which writes them.')
+
+        version = cell_stats.get('version', 1)
+        if version < CELL_STATS_MIN_VERSION:
+            raise LabelContractError(
+                f'features_train.pkl carries category_cell_stats v{version}, but this '
+                f'script requires v{CELL_STATS_MIN_VERSION}. v1 aggregated the label '
+                'sums AFTER the serving-population filter while the feature they '
+                'replace is fitted BEFORE it, so a "leak-corrected" fold map built '
+                'from them moves category_baseline by ~9.3 points for reasons that '
+                'have nothing to do with the leak (which moves it ~0.17). The '
+                'resulting cross-validation number would not describe the shipped '
+                'model. Re-run prepare_features.py, which now fits the aggregates on '
+                'the pre-filter frame.')
+        if cell_stats.get('fit_population') != 'pre_serving_filter':
+            raise LabelContractError(
+                'category_cell_stats.fit_population is '
+                f'{cell_stats.get("fit_population")!r}; a per-fold refit is only a '
+                'correction if its aggregates were fitted on the same population as '
+                'the map it replaces (pre_serving_filter).')
+        self.version = version
+        n = len(y_actual)
+        self.n_rows = n
+        if cell_stats.get('group_col') != 'city':
+            raise LabelContractError(
+                f'category_cell_stats groups on {cell_stats.get("group_col")!r}, but this '
+                'CV holds out a CITY per fold. A per-fold refit needs the statistics '
+                'grouped on the same key the folds are.')
+        self.groups = [str(g) for g in cell_stats['groups']]
+        self.group_index = {g: i for i, g in enumerate(self.groups)}
+        row_group = np.asarray(cell_stats['row_group'], dtype=np.int64)
+        if len(row_group) != n:
+            raise LabelContractError(
+                f'category_cell_stats.row_group has {len(row_group)} entries for {n} rows. '
+                'It is a positional index into X; a length mismatch means the statistics '
+                'and the matrix came from different prepare_features.py runs.')
+        cities_arr = np.asarray(cities).astype(str)
+        mapped = np.asarray(self.groups, dtype=object)[row_group].astype(str)
+        if not np.array_equal(mapped, cities_arr):
+            bad = int((mapped != cities_arr).sum())
+            raise LeakageError(
+                f'category_cell_stats.row_group disagrees with the city of {bad} rows. '
+                'The statistics are positionally aligned to X by construction, so a '
+                'disagreement means they describe a different row order — a per-fold map '
+                'built from them would exclude the wrong city and the "honest" number '
+                'would be fiction.')
+        self.row_group = row_group
+
+        y64 = np.asarray(y_actual, dtype=np.float64)
+        finite = np.isfinite(y64)
+        self.blocks = {}
+        for name, keys in (('category', CAT_KEYS), ('refined', REFINED_KEYS)):
+            block = cell_stats.get(name)
+            if block is None:
+                raise LabelContractError(f'category_cell_stats has no {name!r} block.')
+            if list(block['keys']) != list(keys):
+                raise LabelContractError(
+                    f'category_cell_stats[{name!r}] is keyed on {list(block["keys"])} but '
+                    f'prepare_features keys that map on {list(keys)}. The refit would '
+                    'aggregate over a different cell than the feature it replaces.')
+            row_cell = np.asarray(block['row_cell'], dtype=np.int64)
+            sums = np.asarray(block['sums'], dtype=np.float64)
+            counts = np.asarray(block['counts'], dtype=np.int64)
+            n_cells = len(block['cells'])
+            if len(row_cell) != n:
+                raise LabelContractError(
+                    f'category_cell_stats[{name!r}].row_cell has {len(row_cell)} entries '
+                    f'for {n} rows.')
+            if sums.shape != (len(self.groups), n_cells) or counts.shape != sums.shape:
+                raise LabelContractError(
+                    f'category_cell_stats[{name!r}] sums/counts are {sums.shape}/'
+                    f'{counts.shape}, expected {(len(self.groups), n_cells)}.')
+            # Rebuild the ROW-restricted statistics from the rows they claim to
+            # describe. This is the check that cannot be satisfied by a coincidence:
+            # if row_cell or row_group belonged to a different frame, the totals
+            # would not land back on the shipped matrices. It compares against
+            # rows_sums/rows_counts, NOT sums/counts — the latter are fitted on the
+            # wider pre-filter frame on purpose, and comparing to them would fail
+            # for the very reason the design is correct.
+            rows_counts = np.asarray(block['rows_counts'], dtype=np.int64)
+            rows_sums = np.asarray(block['rows_sums'], dtype=np.float64)
+            flat = row_group * n_cells + row_cell
+            rebuilt_sum = np.bincount(flat[finite], weights=y64[finite],
+                                      minlength=len(self.groups) * n_cells)
+            rebuilt_cnt = np.bincount(flat[finite],
+                                      minlength=len(self.groups) * n_cells)
+            if not np.array_equal(rebuilt_cnt.reshape(rows_counts.shape), rows_counts):
+                raise LeakageError(
+                    f'category_cell_stats[{name!r}].rows_counts do not match the counts '
+                    'implied by row_cell/row_group on this pickle\'s own rows. The '
+                    'statistics describe a different frame.')
+            if not np.allclose(rebuilt_sum.reshape(rows_sums.shape), rows_sums,
+                               rtol=0, atol=1e-6):
+                raise LeakageError(
+                    f'category_cell_stats[{name!r}].rows_sums do not match the label sums '
+                    'implied by row_cell/row_group on this pickle\'s own rows.')
+            if (rows_counts > counts).any():
+                raise LeakageError(
+                    f'category_cell_stats[{name!r}] has more rows in a cell than the '
+                    'pre-filter aggregates do. The matrix rows must be a subset of the '
+                    'rows the aggregates were fitted on; they are not, so the two came '
+                    'from different runs.')
+            self.blocks[name] = {'row_cell': row_cell, 'sums': sums, 'counts': counts,
+                                 'n_cells': n_cells}
+
+        # Smoothing order for the coarse map. _smooth_category_hours sorts by
+        # (venue_category, day_of_week, hour) and shifts WITHIN
+        # (venue_category, day_of_week), so a cell's neighbour is the adjacent
+        # hour PRESENT in the map — which is why the order is rebuilt per fold
+        # over the cells that fold supports, not once over all of them.
+        cells = list(cell_stats['category']['cells'])
+        cat_key = np.array([c[0] for c in cells], dtype=object)
+        try:
+            dow = np.array([float(c[1]) for c in cells])
+            hour = np.array([float(c[2]) for c in cells])
+        except (TypeError, ValueError) as err:
+            raise LabelContractError(
+                'category_cell_stats.category cell keys carry a non-numeric day_of_week or '
+                f'hour ({err}). prepare_features sorts those columns numerically before '
+                'smoothing; without the same order the rebuilt map blends the wrong '
+                'neighbours.') from err
+        self._cell_order = np.lexsort((hour, dow, cat_key.astype(str)))
+        pair = np.array([f'{c}\x1f{d}' for c, d in zip(cat_key.astype(str), dow)], dtype=object)
+        _, self._pair_id = np.unique(pair.astype(str), return_inverse=True)
+
+        self.active = True
+        self.col_index = {c: feature_cols.index(c) for c in CATEGORY_FEATURES}
+        logger.info(
+            'Per-fold category baselines ARMED: %d coarse cells, %d refined cells over %d '
+            'cities; both label-mean features are rebuilt from each fold\'s training rows '
+            'before that fold is fitted or scored.',
+            self.blocks['category']['n_cells'], self.blocks['refined']['n_cells'],
+            len(self.groups))
+
+    # -- the arithmetic, one fold at a time ---------------------------------
+    def _cell_means(self, name, keep):
+        block = self.blocks[name]
+        s = block['sums'][keep].sum(0)
+        c = block['counts'][keep].sum(0)
+        supported = c > 0
+        means = np.full(block['n_cells'], np.nan)
+        means[supported] = np.round(s[supported] / c[supported], 1)
+        return means, supported, float(s.sum()), int(c.sum())
+
+    def _smooth_coarse(self, means, supported):
+        """prepare_features._smooth_category_hours, restricted to supported cells."""
+        order = self._cell_order[supported[self._cell_order]]
+        out = np.full(len(means), np.nan)
+        if len(order) == 0:
+            return out
+        m = means[order]
+        pair = self._pair_id[order]
+        prev = m.copy()
+        nxt = m.copy()
+        if len(order) > 1:
+            same_as_prev = pair[1:] == pair[:-1]
+            prev[1:] = np.where(same_as_prev, m[:-1], m[1:])
+            nxt[:-1] = np.where(same_as_prev, m[1:], m[:-1])
+        out[order] = np.round(m * 0.6 + prev * 0.2 + nxt * 0.2, 1)
+        return out
+
+    def columns_for_fold(self, held_out_city):
+        """The two feature columns as a map fitted WITHOUT `held_out_city`.
+
+        `held_out_city` is one city name or an iterable of them (the early-stopping
+        split holds out several). Returned for EVERY row, training and validation
+        alike: one value per cell, shared by both sides of the fold. That sharing
+        is the property that makes this honest — it leaves no city-varying residual
+        for a tree to invert back into the held-out city's own label level.
+        """
+        if not self.active:
+            raise RuntimeError('columns_for_fold called on an inactive refitter.')
+        held = ([held_out_city] if isinstance(held_out_city, str)
+                else list(held_out_city))
+        keep = np.ones(len(self.groups), dtype=bool)
+        for name in held:
+            g = self.group_index.get(str(name))
+            if g is None:
+                raise LabelContractError(
+                    f'Fold holds out city {name!r}, which is not one of the '
+                    f'{len(self.groups)} cities in category_cell_stats.')
+            keep[g] = False
+
+        cat_means, cat_supported, s_total, n_total = self._cell_means('category', keep)
+        if n_total == 0:
+            raise LabelContractError(
+                f'Removing {held_out_city!r} leaves no labelled rows to fit the category '
+                'baselines on.')
+        # prepare_features: round(float(df['busyness_pct'].mean()), 1)
+        global_mean = round(s_total / n_total, 1)
+        cat_map = self._smooth_coarse(cat_means, cat_supported)
+        cat_col = cat_map[self.blocks['category']['row_cell']]
+        cat_col = np.where(np.isnan(cat_col), global_mean, cat_col)
+
+        ref_means, _, _, _ = self._cell_means('refined', keep)
+        ref_col = ref_means[self.blocks['refined']['row_cell']]
+        # add_baseline_features fills a missing refined cell with the row's
+        # (already filled) coarse value, not with the global mean.
+        ref_col = np.where(np.isnan(ref_col), cat_col, ref_col)
+        return {self.col_index['category_baseline']: cat_col.astype(np.float32),
+                self.col_index['refined_category_baseline']: ref_col.astype(np.float32)}
+
+    def apply_to(self, X_block, rows, fold_cols):
+        """Write a fold's map into a COPY of the matrix. X itself is never touched."""
+        for j, col in fold_cols.items():
+            X_block[:, j] = col[rows]
+        return X_block
+
+    def verify_reproduces_shipped(self, X):
+        """Hold out NOTHING and require the rebuilt columns to equal X's own.
+
+        This is the whole design compressed into one assertion. If the aggregates
+        were fitted on the same population as the shipped map, and the smoothing,
+        the rounding and the two fallbacks were all reproduced faithfully, then a
+        map built from every group is the shipped map and the columns must match
+        exactly. Anything else — a population difference, a rounding difference, a
+        misremembered fallback — shows up here as a nonzero diff, BEFORE thirty
+        folds are fitted and a number is written into the artifact.
+
+        Returns the largest absolute difference (0.0 on success) so the metadata
+        can carry the evidence rather than the claim.
+        """
+        if not self.active:
+            return None
+        cols = self.columns_for_fold([])
+        worst = 0.0
+        for name, j in self.col_index.items():
+            shipped = np.asarray(X[:, j], dtype=np.float64)
+            rebuilt = np.asarray(cols[j], dtype=np.float64)
+            diff = np.abs(rebuilt - shipped)
+            worst = max(worst, float(diff.max()))
+            if diff.max() > 0:
+                bad = int((diff > 0).sum())
+                raise LeakageError(
+                    f'Rebuilding {name} from category_cell_stats with NO city held out '
+                    f'does not reproduce the shipped column: {bad} of {len(diff)} rows '
+                    f'differ, by up to {diff.max():.4f}. The per-fold map is therefore '
+                    'not "the shipped map minus one city", and any cross-validation '
+                    'number computed from it would describe a model that is not the one '
+                    'this script saves. Most likely the aggregates were fitted on a '
+                    'different population than build_category_baseline_maps was.')
+        logger.info('Per-fold category baselines reproduce the shipped columns exactly '
+                    'with no city held out (max |diff| = %g). The only thing a fold map '
+                    'changes is the held-out city.', worst)
+        return worst
+
+    def fold_shift(self, X, fold_cols):
+        """How far this fold's map moved the two features, for the metadata."""
+        out = {}
+        for name, j in self.col_index.items():
+            before = np.asarray(X[:, j], dtype=np.float64)
+            after = np.asarray(fold_cols[j], dtype=np.float64)
+            diff = np.abs(after - before)
+            out[name] = {'rows_changed_pct': round(float(np.mean(diff > 1e-6) * 100), 2),
+                         'mean_abs_shift': round(float(diff.mean()), 4),
+                         'max_abs_shift': round(float(diff.max()), 4)}
+        return out
+
+
+# ---------------------------------------------------------------------------
 # The split
 # ---------------------------------------------------------------------------
 def assert_group_disjoint(cv, X, y, groups) -> list:
@@ -388,20 +746,48 @@ def reconstruct(raw_delta, baseline, clamp) -> np.ndarray:
     return np.clip(baseline + np.clip(raw_delta, lo, hi), 0, 100)
 
 
-def evaluate_city_cv(model, X, y, folds, baseline, y_actual, sample_weight, clamp) -> tuple:
+def evaluate_city_cv(model, X, y, folds, baseline, y_actual, sample_weight, clamp,
+                     fold_cats=None) -> tuple:
     """Leave-one-city-out out-of-fold predictions, on the ABSOLUTE scale.
 
     Each fold refits from scratch (clone drops the fitted state) WITH the sample
     weights of its own training rows, so the numbers describe the model that is
     actually shipped rather than an unweighted stand-in.
+
+    `fold_cats` rebuilds the two category label-mean features from the fold's own
+    training rows before that fold is fitted or scored, so the held-out city no
+    longer contributes to the cells its rows are measured against. Both sides of
+    the fold get the SAME map (see FoldCategoryBaselines). The write goes into
+    the per-fold COPIES `X[tr]` / `X[va]` already produce; `X` is never mutated,
+    and the assertion at the end proves it, because the final model — the shipped
+    artifact — is fitted on the whole-frame matrix on purpose.
     """
     oof = np.full(len(y), np.nan)
     per_city = {}
+    shifts = {}
+    guard = None
+    if fold_cats is not None and fold_cats.active:
+        guard = {j: X[:, j].copy() for j in fold_cats.col_index.values()}
     for tr, va, city in folds:
+        Xtr, Xva = X[tr], X[va]
+        if fold_cats is not None and fold_cats.active:
+            fold_cols = fold_cats.columns_for_fold(city)
+            fold_cats.apply_to(Xtr, tr, fold_cols)
+            fold_cats.apply_to(Xva, va, fold_cols)
+            shifts[str(city)] = fold_cats.fold_shift(X, fold_cols)
         m = clone(model)
-        m.fit(X[tr], y[tr], sample_weight=sample_weight[tr])
-        oof[va] = m.predict(X[va])
+        m.fit(Xtr, y[tr], sample_weight=sample_weight[tr])
+        oof[va] = m.predict(Xva)
         per_city[str(city)] = va
+
+    if guard is not None:
+        for j, col in guard.items():
+            if not np.array_equal(X[:, j], col):
+                raise LeakageError(
+                    f'The per-fold category refit mutated feature column {j} of the shared '
+                    'matrix. The final model is fitted on X after this function returns, so '
+                    'a leftover fold map would ship a model whose features do not match the '
+                    'category_baselines metadata mlPredictor.js serves.')
 
     if np.isnan(oof).any():
         raise ValueError(f'{int(np.isnan(oof).sum())} out-of-fold predictions are NaN.')
@@ -419,7 +805,7 @@ def evaluate_city_cv(model, X, y, folds, baseline, y_actual, sample_weight, clam
                                'note': f'fewer than {PER_CITY_MIN_ROWS} rows — not measured'}
             continue
         city_metrics[c] = {'rows': int(len(idx)), **_metrics(y_actual[idx], absolute[idx])}
-    return overall, absolute, city_metrics
+    return overall, absolute, city_metrics, shifts
 
 
 def slice_report(y_actual, absolute, is_realtime, baseline) -> dict:
@@ -635,13 +1021,17 @@ def early_stopping_split(groups, rows_fraction=0.15) -> tuple:
 
 
 def fit_with_early_stopping(base_model, params, X, y, groups, sample_weight,
-                            baseline, y_actual, clamp, rounds) -> tuple:
+                            baseline, y_actual, clamp, rounds, fold_cats=None) -> tuple:
     """Choose n_estimators on held-out CITIES, scored with the gate's own metric.
 
     The eval metric is MAE on the reconstructed absolute scale — the same
     quantity quick_eval.py's gate compares against the popular_times baseline
     and against the incumbent. Stopping on RMSE, or on the raw delta, would tune
     the model on one number and judge it on another.
+
+    The category label-means are refitted on this split's training side too, for
+    the same reason they are refitted per CV fold: otherwise the stopping round
+    is chosen against held-out cities that helped build their own features.
     """
     tr, va, held = early_stopping_split(groups)
     va_baseline = np.asarray(baseline, dtype=np.float64)[va]
@@ -651,10 +1041,16 @@ def fit_with_early_stopping(base_model, params, X, y, groups, sample_weight,
         return float(np.mean(np.abs(va_actual - reconstruct(np.asarray(y_pred, dtype=np.float64),
                                                             va_baseline, clamp))))
 
+    Xtr, Xva = X[tr], X[va]
+    if fold_cats is not None and fold_cats.active:
+        fold_cols = fold_cats.columns_for_fold(held)
+        fold_cats.apply_to(Xtr, tr, fold_cols)
+        fold_cats.apply_to(Xva, va, fold_cols)
+
     probe = clone(base_model).set_params(**params, early_stopping_rounds=rounds,
                                          eval_metric=gate_mae)
-    probe.fit(X[tr], y[tr], sample_weight=sample_weight[tr],
-              eval_set=[(X[va], y[va])], verbose=False)
+    probe.fit(Xtr, y[tr], sample_weight=sample_weight[tr],
+              eval_set=[(Xva, y[va])], verbose=False)
 
     # XGBoost keeps its default `rmse` alongside a custom metric and stops on the
     # LAST one in the list. Verify that the round it chose is the minimum of OUR
@@ -685,6 +1081,8 @@ def fit_with_early_stopping(base_model, params, X, y, groups, sample_weight,
         'best_iteration': best_iter,
         'best_score_gate_mae': round(float(probe.best_score), 4),
         'n_estimators_requested': params['n_estimators'],
+        'category_baselines_refit_on_train_side': bool(fold_cats is not None
+                                                       and fold_cats.active),
         'note': ('n_estimators was chosen on these cities and the final model is then '
                  'refit on ALL cities, so the LOCO folds covering them are mildly '
                  'optimistic by one integer of hyperparameter choice. The ship gate is '
@@ -694,7 +1092,7 @@ def fit_with_early_stopping(base_model, params, X, y, groups, sample_weight,
 
 
 def train_xgboost(X, y, cv, folds, groups, baseline, y_actual, sample_weight, clamp,
-                  device, threads) -> tuple:
+                  device, threads, fold_cats=None) -> tuple:
     logger.info('\n=== Training XGBoost ===')
     start = time.time()
 
@@ -731,7 +1129,7 @@ def train_xgboost(X, y, cv, folds, groups, baseline, y_actual, sample_weight, cl
     if es_rounds > 0:
         best_iter, es_info = fit_with_early_stopping(
             base_model, params, X, y, groups, sample_weight, baseline, y_actual,
-            clamp, es_rounds)
+            clamp, es_rounds, fold_cats=fold_cats)
         params = {**params, 'n_estimators': best_iter}
 
     # Nothing may reach .fit() with early stopping configured but no eval set:
@@ -746,11 +1144,15 @@ def train_xgboost(X, y, cv, folds, groups, baseline, y_actual, sample_weight, cl
 
     logger.info('Params (%s): %s', hp_info['source'], params)
     model = clone(base_model).set_params(**params)
+    # The SHIPPED fit, on the matrix prepare_features wrote — whole-frame category
+    # maps included, because those are the maps mlPredictor.js is handed and
+    # serves. Only the fold fits below swap in a fold-local map.
     model.fit(X, y, sample_weight=sample_weight)
 
     logger.info('Computing leave-one-city-out metrics...')
-    metrics, absolute, per_city = evaluate_city_cv(
-        model, X, y, folds, baseline, y_actual, sample_weight, clamp)
+    metrics, absolute, per_city, cat_shifts = evaluate_city_cv(
+        model, X, y, folds, baseline, y_actual, sample_weight, clamp,
+        fold_cats=fold_cats)
     elapsed = time.time() - start
 
     logger.info('City CV RMSE: %.4f, MAE: %.4f, R2: %.4f',
@@ -758,7 +1160,8 @@ def train_xgboost(X, y, cv, folds, groups, baseline, y_actual, sample_weight, cl
     logger.info('Within 10 pts: %s%%', metrics['within_10'])
     logger.info('Training time: %.1fs', elapsed)
 
-    return model, metrics, absolute, per_city, params, hp_info, es_info, elapsed
+    return (model, metrics, absolute, per_city, params, hp_info, es_info, elapsed,
+            cat_shifts)
 
 
 def main():
@@ -886,8 +1289,16 @@ def main():
     logger.info('Using GroupKFold with %d splits (leave-one-city-out)', n_cities)
     folds = assert_group_disjoint(cv, X, y, cities)
 
-    model, metrics, absolute, per_city, params, hp_info, es_info, elapsed = train_xgboost(
-        X, y, cv, folds, cities, baseline, y_actual, sample_weight, clamp, device, threads)
+    fold_cats = FoldCategoryBaselines(data.get('category_cell_stats'), cities,
+                                      feature_cols, y_actual)
+    # Before any fold is fitted: prove the refit is the shipped map minus a city,
+    # and nothing else. Raises rather than reporting a confounded number.
+    shipped_repro = fold_cats.verify_reproduces_shipped(X)
+
+    (model, metrics, absolute, per_city, params, hp_info, es_info, elapsed,
+     cat_shifts) = train_xgboost(
+        X, y, cv, folds, cities, baseline, y_actual, sample_weight, clamp, device,
+        threads, fold_cats=fold_cats)
 
     slices = slice_report(y_actual, absolute, is_realtime, baseline)
 
@@ -925,7 +1336,10 @@ def main():
                        'popular_times snapshots where busyness_pct equals '
                        'baseline_busyness by construction, so this figure is close to a '
                        'tautology on that majority. See training_metrics_by_population '
-                       '.realtime_served for the rows production scores.'),
+                       '.realtime_served for the rows production scores. Each fold\'s '
+                       'category_baseline / refined_category_baseline were rebuilt from '
+                       'that fold\'s own training rows — see training_contracts.'
+                       'category_baselines_refit_per_fold.'),
     }
     metadata['training_metrics_by_population'] = slices
     metadata['training_loco_per_city'] = per_city
@@ -933,6 +1347,59 @@ def main():
     metadata['training_cities'] = [str(c) for c in unique_cities]
     metadata['training_city_rows'] = city_rows
     metadata['training_environment'] = {**env, 'training_seconds': round(elapsed, 1)}
+
+    if fold_cats.active:
+        moved = [s['category_baseline']['rows_changed_pct'] for s in cat_shifts.values()]
+        shift = [s['category_baseline']['mean_abs_shift'] for s in cat_shifts.values()]
+        cat_refit_contract = {
+            'applies_to': 'every leave-one-city-out fold, and the early-stopping split '
+                          'when it is enabled',
+            'features': list(CATEGORY_FEATURES),
+            'method': ('both maps are rebuilt from the fold\'s TRAINING rows only, using '
+                       'the per-(city, cell) label sums and counts in '
+                       'features_train.pkl["category_cell_stats"], with the coarse map\'s '
+                       '0.6/0.2/0.2 adjacent-hour smoothing redone over the cells that '
+                       'fold supports. One value per cell, shared by the fold\'s training '
+                       'and validation rows alike.'),
+            'why_one_value_per_cell': (
+                'a per-city ("leave-one-city-out computed once") map is NOT equivalent and '
+                'was measured roughly six times worse than the leak it removes: the feature '
+                'then varies by city inside a fold and its deviation from the cell\'s '
+                'typical value is an invertible function of the held-out city\'s own '
+                'labels. It also passes a label-perturbation invariance check, so this fix '
+                'is validated against a held-out population instead.'),
+            'final_model_unchanged': (
+                'the shipped artifact is still fitted on the whole-frame matrix, which '
+                'carries the same maps served as metadata.category_baselines'),
+            'isolates_the_leak': (
+                'the aggregates are fitted on the pre-filter frame, the same population '
+                'build_category_baseline_maps fits the shipped map on, so the ONLY '
+                'difference a fold map carries is the held-out city. Verified before '
+                'training rather than asserted: holding out no city reproduces the '
+                'shipped columns with max |diff| = '
+                f'{shipped_repro!r}. An earlier version of these statistics was '
+                'aggregated after the serving-population filter, which moved the '
+                'feature ~9.3 points on 99.9% of rows against ~0.17 for the leak '
+                'itself; that pickle is now refused by version.'),
+            'shipped_column_reproduced_max_abs_diff': shipped_repro,
+            'cell_stats_version': fold_cats.version,
+            'cells': {'category': fold_cats.blocks['category']['n_cells'],
+                      'refined': fold_cats.blocks['refined']['n_cells'],
+                      'groups': len(fold_cats.groups)},
+            'alignment_checked': ('row_cell/row_group are positional indexes into X; the '
+                                  'shipped sums and counts were re-derived from this '
+                                  'pickle\'s own rows and matched exactly'),
+            'fold_feature_shift': {
+                'rows_changed_pct_min': round(float(min(moved)), 2),
+                'rows_changed_pct_max': round(float(max(moved)), 2),
+                'mean_abs_shift_min': round(float(min(shift)), 4),
+                'mean_abs_shift_max': round(float(max(shift)), 4),
+            },
+            'per_fold': cat_shifts,
+        }
+    else:
+        cat_refit_contract = {'applies_to': 'nothing', 'reason': fold_cats.reason}
+
     metadata['training_contracts'] = {
         'delta_clamp_range_used': list(clamp),
         'delta_clamp_source': 'model_metadata.json' if metadata.get('delta_clamp_range')
@@ -943,16 +1410,29 @@ def main():
         'split': 'GroupKFold on city; every fold verified train/validation city-disjoint '
                  'and every row predicted exactly once',
         'sample_weight_tiers': weight_tiers,
-        # Named rather than left for someone to rediscover. This is the one leak
-        # the trainer can see and cannot fix from here.
+        'category_baselines_refit_per_fold': cat_refit_contract,
+        # Kept as a key, and kept honest. The leak that made the REPORTED
+        # cross-validation optimistic is closed above; what remains is named here
+        # so nobody reads a missing key as "there was never anything here".
         'known_residual_leak': (
-            'category_baseline and refined_category_baseline are averages of '
-            'busyness_pct that prepare_features.py fits on the WHOLE training frame, '
-            'before this split exists, so a held-out city contributes to the category '
-            'cells its own rows are then scored against. RETRAIN.md tracks the in-fold '
-            'recomputation as next lever 2. It makes training_metrics optimistic; it '
-            'does NOT touch the ship gate, which is measured on the separate holdout '
-            'cities whose category features were built from training rows only.'),
+            'CLOSED FOR THE REPORTED METRICS, still present in the shipped feature '
+            'matrix by design. category_baseline and refined_category_baseline are '
+            'averages of busyness_pct that prepare_features.py fits on the WHOLE '
+            'training frame; every fold above now rebuilds both from that fold\'s own '
+            'training rows (see category_baselines_refit_per_fold), so a held-out city '
+            'no longer contributes to the cells its rows are scored against and '
+            'training_metrics / training_metrics_by_population / training_loco_per_city '
+            'are no longer inflated by it. The final artifact is deliberately still '
+            'fitted on the whole-frame matrix, because that map is the one shipped as '
+            'metadata.category_baselines and served by mlPredictor.js — inference has '
+            'no held-out group. The ship gate never had this leak: it is measured on '
+            'the separate holdout cities, whose category features were built from '
+            'training rows only. NOTE: corpus_contract.category_baseline_fit says OPEN '
+            'IN THIS FILE — correctly, about prepare_features.py itself: that file does '
+            'fit on the frame it applies to, and it cannot do otherwise, because being '
+            'constant within a fold is what makes the correction honest and '
+            'prepare_features has no folds. What it leaks is the reported CV number, '
+            'and this is where that is closed.'),
     }
 
     # allow_nan=False: Python happily writes (and reads) a bare NaN / Infinity
