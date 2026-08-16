@@ -87,15 +87,46 @@ It fails loud instead of degrading. Each of these used to be a silent skip:
 | any row lacks `month` / `season` | `month=0` with four zero season one-hots cannot occur at inference |
 | every row's `label_provenance` is `unknown` | vendor forecasts would all be weighted 1.0 again |
 | the holdout is missing a non-one-hot feature | the two frames went through different code paths |
+| a feature column is CONSTANT and is not named in `EXPECTED_SPARSE_FEATURES` | a constant column is never a split, so it produces no wrong number to notice — it just sits there while metadata advertises it and `mlPredictor.js` builds and parity-checks it. See "Dead feature slots" below |
 
-Two escape hatches exist. Both are explicit, both log a warning, both are
-recorded in `model_metadata.json.corpus_contract`, and **neither is acceptable
+Three escape hatches exist. All are explicit, all log a warning, all are
+recorded in `model_metadata.json.corpus_contract`, and **none is acceptable
 for a release**:
 
 ```bash
 FLOCK_WEATHER_POLICY=drop    # remove the 10 weather features instead of faking them
 FLOCK_CALENDAR_POLICY=drop   # remove the 12 calendar/month-derived features
+FLOCK_DEAD_SLOT_POLICY=warn  # ship an unexplained constant column anyway
 ```
+
+### Dead feature slots (2026-08-16)
+
+The last run logged `DEAD SLOTS — 11 of 106 features are CONSTANT`. Ten were
+true statements about a corpus collected inside one ten-week window
+(2026-03-10..2026-05-18); one was a bug. Audited row by row against
+`train/features_train.pkl`:
+
+| slot | value | share | verdict |
+|---|---|---|---|
+| `cold_outdoor` | 0 | 100% | **BROKEN, FIXED.** `temperature < 5` was a Celsius threshold on a Fahrenheit column — `weatherService.js` fetches `units=imperial` and the corpus minimum is 14.7°F, so it could never fire. `mlPredictor.js` carried the identical expression, so the feature-parity gate was green while the slot was dead on **both** sides. Now 41°F (= 5°C) in both files; fires on 5,321 rows (0.28%) |
+| `is_holiday` | 0 | 100% | EXPECTED-SPARSE. `config.js HOLIDAYS` is a US federal calendar and the window contains no entry (Memorial Day 2026-05-25 is 7 days past the last row). Fills in on the first run crossing a federal date |
+| `season_spring` | 1 | 100% | EXPECTED-SPARSE. Every row is month 3-5, so this is 1 everywhere |
+| `season_summer` / `season_fall` / `season_winter` | 0 | 100% | EXPECTED-SPARSE. Same cause. Fills in when collection spans a second quarter. Note the asymmetry: in July `mlPredictor` emits `season_summer=1`, a corner with zero training support — audit finding 5 pointing the other way |
+| `avg_user_crowd`, `log_user_feedback_count`, `has_user_feedback`, `avg_prediction_error` | 0 | 100% | EXPECTED-SPARSE. The exporter joins `venue_feedback WHERE verified = true` and no presence-verified row exists yet. **Fix audit finding 13 before they fill in** — that join is per-venue over all time with no cutoff, so the day they stop being constant is the day a lookahead leak arms |
+| `etype_family` | 0 | 100% | EXPECTED-SPARSE. A level of a one-hot whose other four are alive. `collectEvents.mapEventType` and `mlPredictor.mapTmEventType` both emit `family` (checked, they agree); the 206,925 enriched rows contain none. Same shape as `weather_snow`, alive on 1,605 rows |
+
+Also checked and clean, so nobody re-derives it: `eventService.js`'s
+`mapEventType` uses a *different* vocabulary (`concert`, `film`) from
+`collectEvents.js` (`music`, `family`), but it only feeds `event_type`, which
+`get_feature_columns` excludes. `nearest_event_type` — the column the `etype_*`
+one-hots come from — is written solely by `enrichWithEvents.js` from
+`ml_events`, on the `collectEvents` vocabulary. No divergence reaches a feature.
+
+Not a dead slot but worth recording next to `season_*`: `getSeason()` in
+`scripts/ml/config.js` is northern-hemisphere only, so Sydney rows collected in
+March-May are stamped `spring` when it is autumn there. It does not cause the
+dead slot (the ten-week window does) and it cannot be seen while the corpus has
+one season in it.
 
 Re-running `prepare_features.py` now **merges** into `model_metadata.json`
 instead of rewriting it from scratch, but it deliberately evicts `ship_gate`,
