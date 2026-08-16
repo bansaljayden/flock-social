@@ -1138,12 +1138,21 @@ function buildFeatureMap(venue, weather, timestamp, eventData, feedback, baselin
     log_review_count: Math.log(reviewCount + 1),
     rain_x_weekend: isRaining * isWeekend,
     rain_x_dinner: isRaining * isDinner,
+    // 41, not 5. The threshold was written in Celsius against a Fahrenheit
+    // column: weatherService fetches units=imperial, so `temp < 5` meant -15C.
+    // It was false on every one of the 1.93M training rows (corpus minimum
+    // 14.7F) and on essentially every live reading, so cold_outdoor was a dead
+    // feature slot on BOTH sides. The parity gate stayed green throughout,
+    // because both sides were wrong in exactly the same way — which is the
+    // reason a unit error has to be caught by looking at the values, and is now
+    // caught by prepare_features.py's dead-slot contract. 41F is the same 5C the
+    // author meant, and the two files must keep the same number.
     // Number.isFinite first: with no reading AND no climatology to impute from
-    // (see tempForFeature) `temp` is null, and `null < 5` is true — which would
+    // (see tempForFeature) `temp` is null, and `null < 41` is true — which would
     // turn "we have no idea what the weather is" into "it is freezing and
     // clear". Serving never reaches that state (predictBusyness answers with
     // the rule engine instead), and this makes the map itself safe anyway.
-    cold_outdoor: (Number.isFinite(temp) && temp < 5 && weatherGroup === 'clear') ? 1 : 0,
+    cold_outdoor: (Number.isFinite(temp) && temp < 41 && weatherGroup === 'clear') ? 1 : 0,
     // Baseline + freshness — venue-specific if available, category fallback otherwise
     baseline_busyness: baseline || 0,
     category_baseline: (metadata.category_baselines || {})[`${venueCategory}_${dayOfWeek}_${hour}`] || 0,

@@ -287,3 +287,78 @@ test('RETRAIN.md carries a status for every blocking audit finding', () => {
     'finding 8 is only partly closed: the test that pins the bent clock axis must be ' +
     'inverted as part of the clock fix, and the runbook has to say so');
 });
+
+// ── Round 22: dead feature slots ────────────────────────────────────────────
+//
+// A constant feature column is the quietest defect this pipeline has. It is
+// never a split, so it produces no wrong number to notice; metadata advertises
+// it, mlPredictor.js builds it, and the feature-parity gate happily confirms
+// that both sides compute the same nothing. The last run carried ELEVEN of 106.
+// Ten were true statements about a ten-week corpus. One, cold_outdoor, was a
+// Celsius threshold applied to a Fahrenheit column — dead in training AND at
+// inference, with parity green throughout. The old check was a logger.warning
+// that lumped all eleven together, so no reader could tell those apart.
+
+const PREDICTOR_JS = read(path.join(__dirname, '..', 'services', 'mlPredictor.js'));
+
+test('a constant feature column must be explained or it stops the run', () => {
+  assert.match(PREPARE, /def enforce_dead_slot_contract\(/,
+    'the dead-slot report must be a contract, not a log line: eleven dead slots ' +
+    'survived four rounds behind a warning that said "some of these are ' +
+    'legitimately sparse" without saying which');
+  assert.match(PREPARE, /dead_slot_record = enforce_dead_slot_contract\(constant_cols, feature_cols\)/,
+    'the contract must actually be called on the final feature set');
+  assert.match(PREPARE, /raise CorpusContractError\(\s*\n?\s*f'\{len\(unexplained\)\} feature\(s\) are CONSTANT/,
+    'an unexplained constant column must RAISE. Downgrading it to a warning is ' +
+    'the exact regression this pin exists to stop.');
+  assert.ok(!/logger\.warning\(\s*\n?\s*'DEAD SLOTS — %d of %d features are CONSTANT across the training frame '\s*\n?\s*'and can never be split on: %s'/.test(PREPARE),
+    'the old passive dead-slot warning is back in place of the contract');
+});
+
+test('every name excused as expected-sparse carries a reason and a fill-in condition', () => {
+  const block = PREPARE.match(/EXPECTED_SPARSE_FEATURES: Dict\[str, str\] = \{([\s\S]*?)^\}/m);
+  assert.ok(block, 'EXPECTED_SPARSE_FEATURES is not a dict literal any more');
+  const names = [...block[1].matchAll(/^\s{4}'([^']+)':/gm)].map((x) => x[1]);
+  assert.ok(names.length >= 10,
+    'the inventory should still name the ten explained dead slots of the last run');
+  assert.ok(!names.includes('cold_outdoor'),
+    'cold_outdoor is a UNIT BUG, not a sparse feature. Excusing it here would ' +
+    'restore the dead slot behind a justification and defeat the whole contract.');
+  // The list is an inventory, not an excuse list: it has to say what would make
+  // each entry stop being constant, or it becomes permanent.
+  assert.match(block[1], /FILLS IN/,
+    'an entry that does not say what makes it fill in is an excuse, not an inventory');
+  assert.match(block[1], /audit finding 13/i,
+    'the four venue_feedback slots must keep pointing at the lookahead leak that ' +
+    'arms on the very day they stop being constant');
+});
+
+test('the dead-slot hatch defaults to require and is recorded in the artifact', () => {
+  assert.match(PREPARE, /FLOCK_DEAD_SLOT_POLICY['"]\s*,\s*['"]require['"]/,
+    'the dead-slot policy must default to require, not to a silent warn');
+  assert.match(PREPARE, /'dead_slot_policy': DEAD_SLOT_POLICY/,
+    'model_metadata.json must record which policy produced the artifact');
+  assert.match(PREPARE, /'dead_slots': dead_slot_record/,
+    'an artifact that ships a dead column must carry the justification for it');
+});
+
+test('cold_outdoor uses the same Fahrenheit threshold in training and in serving', () => {
+  // services/weatherService.js fetches OpenWeatherMap with units=imperial, so
+  // the corpus temperature column is °F (minimum 14.7). `< 5` is -15°C: it was
+  // false on all 1,934,988 training rows and on every live reading, and BOTH
+  // files carried it, so parity was green while the slot was dead on both
+  // sides. A parity check cannot find a unit error; only the value-level
+  // dead-slot contract above can.
+  const py = PREPARE.match(/COLD_OUTDOOR_MAX_TEMP_F = ([\d.]+)/);
+  assert.ok(py, 'prepare_features.py no longer names the cold_outdoor threshold');
+  const js = PREDICTOR_JS.match(/cold_outdoor: \(Number\.isFinite\(temp\) && temp < ([\d.]+)/);
+  assert.ok(js, 'mlPredictor.js no longer computes cold_outdoor from a literal threshold');
+  assert.equal(parseFloat(js[1]), parseFloat(py[1]),
+    'training and serving disagree about what "cold" is. The model would be fed a ' +
+    'feature it was never trained on, silently, on cold clear nights.');
+  assert.equal(parseFloat(py[1]), 41,
+    '41°F is 5°C, the line the author plainly meant, in the units the corpus is ' +
+    'collected in. 5 is the Celsius original and can never fire.');
+  assert.match(PREPARE, /units=imperial/,
+    'the reason the threshold is 41 has to stay next to the threshold');
+});

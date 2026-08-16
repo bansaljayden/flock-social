@@ -134,6 +134,11 @@ def _policy(env_name: str, default: str, allowed: set) -> str:
 
 WEATHER_POLICY = _policy('FLOCK_WEATHER_POLICY', 'require', {'require', 'drop'})
 CALENDAR_POLICY = _policy('FLOCK_CALENDAR_POLICY', 'require', {'require', 'drop'})
+# 'require' = every constant feature column must be one this file has already
+# explained. 'warn' downgrades an unexplained one to a log line, which is what
+# this check used to be and what let a Celsius threshold sit on a Fahrenheit
+# column through every round. See EXPECTED_SPARSE_FEATURES.
+DEAD_SLOT_POLICY = _policy('FLOCK_DEAD_SLOT_POLICY', 'require', {'require', 'warn'})
 
 # Smoke-test escape hatch for the realtime-row floor. A real retrain must never
 # set this; it exists so the pipeline can be exercised on a synthetic fixture.
@@ -409,6 +414,166 @@ def enforce_calendar_contract(stats: Dict) -> None:
             '    - set FLOCK_CALENDAR_POLICY=drop to remove every calendar-derived '
             f'feature ({len(CALENDAR_FEATURES)} of them) instead of faking it.'
         )
+
+
+# ---------------------------------------------------------------------------
+# DEAD SLOTS (round 22) — which constant feature columns are allowed to be one.
+#
+# A constant column can never be split on by a tree, so it is not a wrong
+# number; it is a feature slot that does nothing while metadata.feature_names
+# advertises it and mlPredictor.js builds, ships and parity-checks it. That
+# makes it the quietest failure this pipeline has: ten weather features and five
+# feedback features rode along dead for four rounds, and the DEAD SLOTS line
+# below them was a logger.warning nobody had to act on.
+#
+# Two causes, and only a value-level look at the column distinguishes them:
+#
+#   (a) GENUINELY SPARSE — the computation is right and the corpus simply has no
+#       instance yet. is_holiday over a 10-week window that contains no federal
+#       date is a true 0, not a bug.
+#   (b) SILENTLY BROKEN — the computation can never fire. cold_outdoor tested a
+#       Celsius threshold against a Fahrenheit column, so it was 0 on all
+#       1,934,988 rows AND on every live prediction. mlPredictor.js carried the
+#       identical expression, so feature parity was green the whole time: two
+#       sides agreeing about a feature that cannot fire is still a dead slot.
+#       That is the case this contract exists to catch, because parity checks
+#       and missing-value reports both look straight past it.
+#
+# So the rule is: a constant column must be NAMED here with why it is constant
+# and what would make it stop being one. Anything else stops the run. The list
+# is an inventory that has to be maintained, not an excuse list — the enforcer
+# also reports entries that are no longer constant (so a healed feature does not
+# keep a stale justification) and entries that are no longer features at all (so
+# a rename does not leave an excuse behind that silently covers nothing).
+#
+# FLOCK_DEAD_SLOT_POLICY=warn is the hatch, logged and recorded in
+# model_metadata.json like the other two. It is not acceptable for a release.
+# ---------------------------------------------------------------------------
+EXPECTED_SPARSE_FEATURES: Dict[str, str] = {
+    # ── The corpus covers one 10-week window: 2026-03-10 .. 2026-05-18. ───────
+    'is_holiday': (
+        'stamped by collectRealtime.js from config.js HOLIDAYS, a US federal '
+        'calendar. The collection window contains no entry — Memorial Day '
+        '2026-05-25 falls seven days after the last row. Weekly rows are a '
+        'synthetic typical week and correctly carry 0. FILLS IN on the first '
+        'collection run that crosses a federal date.'),
+    'season_spring': (
+        'every row in the corpus was collected in month 3, 4 or 5, so '
+        'season_spring is 1 everywhere and the other three are 0 everywhere. '
+        'The one-hot is computed correctly; the corpus has one season in it. '
+        'FILLS IN when collection spans a second quarter. Note the asymmetry '
+        'this leaves: in July mlPredictor emits season_summer=1, a corner of '
+        'feature space with zero training support — the same unreachable-corner '
+        'problem as audit finding 5, pointing the other way. '
+        'FLOCK_CALENDAR_POLICY=drop is the lever if a retrain must ship before '
+        'the corpus spans more than one season.'),
+    'season_summer': 'see season_spring — single-season corpus.',
+    'season_fall': 'see season_spring — single-season corpus.',
+    'season_winter': 'see season_spring — single-season corpus.',
+    # ── No verified user feedback exists yet. ────────────────────────────────
+    'avg_user_crowd': (
+        "export_training_data.js joins venue_feedback WHERE verified = true, and "
+        'no presence-verified feedback row exists yet (~0 users). FILLS IN with '
+        'real usage. READ AUDIT FINDING 13 BEFORE IT DOES: that join aggregates '
+        'per venue over ALL TIME with no cutoff and no (dow, hour) key, and '
+        'avg_prediction_error is a label proxy minus a model output — so the day '
+        'these four columns stop being constant is the day a lookahead leak '
+        'arms. Key the aggregate and add the observed_date cutoff first.'),
+    'log_user_feedback_count': 'see avg_user_crowd — no verified feedback rows exist.',
+    'has_user_feedback': 'see avg_user_crowd — no verified feedback rows exist.',
+    'avg_prediction_error': 'see avg_user_crowd — no verified feedback rows exist.',
+    # ── A rare level of a one-hot that is otherwise alive. ───────────────────
+    'etype_family': (
+        "a level of the nearest_event_type one-hot whose other four levels "
+        '(music, sports, arts, other) are all non-constant, so the channel '
+        'works. collectEvents.mapEventType and mlPredictor.mapTmEventType both '
+        "emit 'family' for the Ticketmaster Family segment — checked, they "
+        'agree — and the 206,925 event-enriched rows simply contain none. Same '
+        'shape as weather_snow, which is alive on 1,605 rows. FILLS IN with a '
+        'family-segment event within 2km of a corpus venue.'),
+}
+
+
+def enforce_dead_slot_contract(constant_cols: List[str],
+                               feature_cols: List[str]) -> Dict:
+    """Every constant feature column must be an explained one. Round 22.
+
+    Returns the record written into model_metadata.json so an artifact can never
+    hide that it shipped a dead slot, or which justification covered it.
+    """
+    explained = [c for c in constant_cols if c in EXPECTED_SPARSE_FEATURES]
+    unexplained = [c for c in constant_cols if c not in EXPECTED_SPARSE_FEATURES]
+    # An entry that is no longer constant has done its job; saying so is what
+    # keeps the list from becoming a permanent excuse for a feature that has
+    # since started working (or has since been renamed into a different bug).
+    healed = sorted(n for n in EXPECTED_SPARSE_FEATURES
+                    if n in feature_cols and n not in constant_cols)
+    stale = sorted(n for n in EXPECTED_SPARSE_FEATURES if n not in feature_cols)
+
+    record = {
+        'policy': DEAD_SLOT_POLICY,
+        'feature_count': len(feature_cols),
+        'constant': sorted(constant_cols),
+        'expected_sparse': sorted(explained),
+        'unexplained': sorted(unexplained),
+        'no_longer_constant': healed,
+        'named_but_not_a_feature': stale,
+        'reasons': {c: EXPECTED_SPARSE_FEATURES[c] for c in sorted(explained)},
+    }
+
+    if healed:
+        logger.info(
+            'DEAD SLOTS — %d previously-sparse feature(s) now carry more than one '
+            'value: %s. Remove them from EXPECTED_SPARSE_FEATURES; a justification '
+            'for a feature that works is a comment that will mislead the next '
+            'reader.', len(healed), healed)
+    if stale:
+        logger.warning(
+            'DEAD SLOTS — EXPECTED_SPARSE_FEATURES names %d column(s) that are not '
+            'in the feature set at all: %s. Either they were renamed (in which '
+            'case the new name is currently unexplained and this contract is '
+            'covering nothing) or a policy dropped them.', len(stale), stale)
+
+    if explained:
+        logger.warning(
+            'DEAD SLOTS — %d of %d features are CONSTANT across the training frame '
+            'and can never be split on. All %d are named in '
+            'EXPECTED_SPARSE_FEATURES: %s',
+            len(explained), len(feature_cols), len(explained), sorted(explained))
+    if not constant_cols:
+        logger.info('No constant feature columns.')
+        return record
+
+    if not unexplained:
+        return record
+
+    if DEAD_SLOT_POLICY == 'warn':
+        logger.warning(
+            'POLICY OVERRIDE FLOCK_DEAD_SLOT_POLICY=warn: shipping %d UNEXPLAINED '
+            'dead slot(s) %s. This is recorded in model_metadata.json and is not '
+            'acceptable for a release.', len(unexplained), sorted(unexplained))
+        return record
+
+    raise CorpusContractError(
+        f'{len(unexplained)} feature(s) are CONSTANT across the training frame and '
+        f'nothing in this file explains why: {sorted(unexplained)}.\n'
+        '  A constant column is never a split, so the model has no signal from it, '
+        'yet metadata.feature_names advertises it and mlPredictor.js builds, ships '
+        'and parity-checks it. That is how ten weather features and five feedback '
+        'features rode along dead for four rounds.\n'
+        '  Work out which kind it is before doing anything else:\n'
+        '    BROKEN     — the computation can never fire. Check UNITS first: '
+        'cold_outdoor tested a Celsius threshold against a Fahrenheit column and '
+        'mlPredictor.js carried the same expression, so feature parity was green '
+        'while the slot was dead on both sides. Fix the computation in BOTH files.\n'
+        '    SPARSE     — the computation is right and the corpus has no instance '
+        'yet. Add the name to EXPECTED_SPARSE_FEATURES with why it is constant AND '
+        'what event makes it stop being constant.\n'
+        '    UNFIXABLE  — nothing available can ever make it vary. Delete it from '
+        'the feature set (drop_features) rather than shipping a dead column.\n'
+        '  FLOCK_DEAD_SLOT_POLICY=warn ships it anyway, loudly, and records it in '
+        'model_metadata.json. It is not acceptable for a release.'
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -850,7 +1015,34 @@ def add_weather_features(df: pd.DataFrame) -> pd.DataFrame:
     # Interaction features
     df['rain_x_weekend'] = df['is_raining'] * df['is_weekend']
     df['rain_x_dinner'] = df['is_raining'] * df['is_dinner_hour']
-    df['cold_outdoor'] = ((df['temperature'] < 5) & (df['weather_clear'] == 1)).astype(int)
+    # cold_outdoor: THE THRESHOLD WAS IN CELSIUS AND THE COLUMN IS FAHRENHEIT.
+    # services/weatherService.js fetches OpenWeatherMap with units=imperial (both
+    # call sites, lines 303 and 400) and every row in the corpus was collected
+    # through that same function, so `temperature < 5` asks for -15C. The corpus
+    # minimum is 14.7F, p0.1 is 26.1F: the test was false on all 1,934,988
+    # training rows and all 395,464 holdout rows, and cold_outdoor has been a
+    # dead slot in every artifact ever exported.
+    #
+    # The failure mode this is worth naming: mlPredictor.buildFeatureMap carried
+    # the IDENTICAL `temp < 5`, so the feature-parity gate was green the whole
+    # time. Parity between two sides that are both wrong is not correctness, and
+    # a parity check can never find a unit error by itself — only a value-level
+    # look at the column can, which is what the dead-slot contract below now
+    # forces on every run.
+    #
+    # 41F is 5C, i.e. the same line the author meant, in the units the data is
+    # actually in. It is a unit conversion, not a new hyperparameter. Measured on
+    # the shipped pickle: 4.00% of rows fall below 41F and 5,321 of them (0.28%)
+    # are also clear, so the slot becomes a rare live level on the order of
+    # weather_snow (1,605 rows) instead of a constant.
+    #
+    # CHANGE BOTH SIDES IN THE SAME COMMIT. mlPredictor.js's cold_outdoor must
+    # use the same number or training and serving disagree about what cold means,
+    # and that disagreement is invisible to every test in the repo.
+    COLD_OUTDOOR_MAX_TEMP_F = 41.0  # 5C, in the imperial units the corpus is collected in
+    df['cold_outdoor'] = (
+        (df['temperature'] < COLD_OUTDOOR_MAX_TEMP_F) & (df['weather_clear'] == 1)
+    ).astype(int)
 
     return df
 
@@ -1672,21 +1864,16 @@ def main():
     train_df[feature_cols] = train_df[feature_cols].fillna(0)
     holdout_df[feature_cols] = holdout_df[feature_cols].fillna(0)
 
-    # Dead-slot report. A constant column is never a split in a tree model, so a
-    # feature that carries one value is not a wrong number — it is a feature
-    # slot that does nothing while metadata advertises it, and mlPredictor's
-    # parity guards defend a channel with no content. That is exactly how ten
-    # weather features and five feedback features went unnoticed for four
-    # rounds. Reported, not fatal: some of these (event features) are legitimately
-    # sparse and expected to fill in as data accrues.
+    # Dead-slot contract (round 22). This used to be a bare logger.warning that
+    # ended "some of these are legitimately sparse" without saying WHICH, so the
+    # eleven dead slots of the last run were indistinguishable from each other:
+    # ten were true statements about a young corpus and one (cold_outdoor) was a
+    # Celsius threshold on a Fahrenheit column that could never fire on either
+    # side of the parity gate. A warning that mixes those two is a warning nobody
+    # can act on. Now each constant column must be named and justified in
+    # EXPECTED_SPARSE_FEATURES or the run stops.
     constant_cols = [c for c in feature_cols if train_df[c].nunique(dropna=False) <= 1]
-    if constant_cols:
-        logger.warning(
-            'DEAD SLOTS — %d of %d features are CONSTANT across the training frame '
-            'and can never be split on: %s',
-            len(constant_cols), len(feature_cols), constant_cols)
-    else:
-        logger.info('No constant feature columns.')
+    dead_slot_record = enforce_dead_slot_contract(constant_cols, feature_cols)
 
     # Save
     logger.info('\nSaving artifacts...')
@@ -1864,6 +2051,7 @@ def main():
             'export_columns_required': len(EXPORT_COLUMNS),
             'weather_policy': WEATHER_POLICY,
             'calendar_policy': CALENDAR_POLICY,
+            'dead_slot_policy': DEAD_SLOT_POLICY,
             'weather_code_recovery': {
                 'train': weather_stats,
                 'holdout': holdout_weather_stats,
@@ -1896,6 +2084,10 @@ def main():
             'dropped_features': sorted(DROPPED_FEATURES),
             'dropped_feature_reasons': DROP_REASONS,
             'constant_feature_slots': constant_cols,
+            # Round 22. Not just WHICH slots are dead but why each one is
+            # allowed to be, and what makes it stop. An artifact that ships a
+            # dead column now has to carry its own justification for it.
+            'dead_slots': dead_slot_record,
             'serving_population_filter': 'baseline_busyness > 0',
             'min_realtime_rows': MIN_REALTIME_ROWS,
             # Round 14. Where the two category label-means were fitted, where
