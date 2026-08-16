@@ -125,9 +125,18 @@ test('cross-validation is leave-one-city-out and every fold is verified city-dis
 });
 
 test('folds are refit with their own sample weights, and the weight tiers are checked', () => {
-  assert.match(TRAIN_PY, /m\.fit\(X\[tr\], y\[tr\], sample_weight=sample_weight\[tr\]\)/,
+  assert.match(TRAIN_PY, /Xtr, Xva = X\[tr\], X\[va\]/,
+    'the fold matrices must be built by fancy indexing, which COPIES. The per-fold ' +
+    'category refit writes its map into them, and the final model is fitted on X ' +
+    'itself afterwards — a view here would leave one fold\'s map in the shipped ' +
+    'artifact\'s features.');
+  assert.match(TRAIN_PY, /m\.fit\(Xtr, y\[tr\], sample_weight=sample_weight\[tr\]\)/,
     'each leave-one-city-out fold must refit WITH the weights of its own training ' +
     'rows, or the reported metrics describe a model that was never trained');
+  assert.match(TRAIN_PY, /raise LeakageError\(\s*f?'The per-fold category refit mutated feature column/,
+    'and X must be proven unmutated after the fold loop, not assumed — the final ' +
+    'fit reads it, and the shipped metadata.category_baselines must match the ' +
+    'features the shipped model was fitted on');
   assert.match(TRAIN_PY, /weight_tiers = assert_weighting_matches_provenance\(/,
     'the weight/provenance contract must be checked');
   assert.match(TRAIN_PY, /if weights != sorted\(weights\)/,
@@ -174,10 +183,14 @@ test('early stopping, when used, is held out by whole cities and scored on the g
   assert.match(TRAIN_PY, /val = np\.isin\(g, held\)/,
     'the held-out set must be whole cities. A random row split puts the same venue ' +
     'Tuesday 9 PM on both sides and the stopping round is chosen on seen rows.');
-  assert.match(TRAIN_PY, /eval_set=\[\(X\[va\], y\[va\]\)\]/,
+  assert.match(TRAIN_PY, /eval_set=\[\(Xva, y\[va\]\)\]/,
     'early stopping must evaluate on the held-out rows');
-  assert.match(TRAIN_PY, /probe\.fit\(X\[tr\], y\[tr\]/,
+  assert.match(TRAIN_PY, /probe\.fit\(Xtr, y\[tr\]/,
     'and must train on the complement of them');
+  assert.match(TRAIN_PY, /fold_cats\.columns_for_fold\(held\)/,
+    'and the category label-means must be refitted on this split\'s training side ' +
+    'too. Otherwise the stopping round — an integer that goes into the shipped ' +
+    'model — is chosen against cities that helped build their own features.');
   assert.match(TRAIN_PY, /def gate_mae\(y_true, y_pred\)/,
     'the stopping metric must be MAE on the reconstructed absolute scale — the same ' +
     'quantity quick_eval.py gates on. A model stopped on RMSE and gated on MAE is a ' +

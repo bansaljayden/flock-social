@@ -12,7 +12,15 @@
 // holdout cities, whose rows contribute to neither map (main() passes the
 // training maps into the holdout call instead of refitting).
 //
-// WHY THIS FILE EXISTS RATHER THAN A FIX. Round 14 tried the fix, measured it
+// CLOSED ON 2026-08-16 (round 21), for the REPORTED metrics.
+// train_model.FoldCategoryBaselines rebuilds both maps from each fold's own
+// training cities. The shipped artifact is still fitted on the whole-frame
+// matrix on purpose — that map is what mlPredictor.js serves, and inference has
+// no held-out group — so what moved is the number, not the model. These pins now
+// protect the fix as well as the record; the history below is kept because both
+// wrong turns were plausible and one of them shipped for a round.
+//
+// WHY THIS FILE EXISTED BEFORE THE FIX. Round 14 tried the fix, measured it
 // on a synthetic fixture over three independent draws (10 training cities,
 // GroupKFold on city, identical hyperparameters; the delta label's only
 // learnable signal is a per-city deviation, so an honest model cannot beat the
@@ -72,11 +80,14 @@ const PREPARE_CODE = PREPARE_PY
 // ── 1. The half that belongs in prepare_features.py ────────────────────────
 
 test('the per-fold sufficient statistics are built and shipped in the training pickle', () => {
-  assert.match(PREPARE_CODE, /def build_category_cell_stats\(/,
-    'build_category_cell_stats is the only thing that lets train_model.py refit the '
-    + 'category baselines inside a fold without a second pass over the CSV — this '
+  assert.match(PREPARE_CODE, /def build_category_cell_aggregates\(/,
+    'build_category_cell_aggregates is the only thing that lets train_model.py refit '
+    + 'the category baselines inside a fold without a second pass over the CSV — this '
     + 'script is the last step that still holds the labels in a frame');
-  assert.match(PREPARE_CODE, /cell_stats = build_category_cell_stats\(train_df, LEAVE_OUT_COL\)/,
+  assert.match(PREPARE_CODE, /def index_category_cells\(/,
+    'and the positional half must be a SEPARATE function, because it runs at a '
+    + 'different point in main() than the aggregation does');
+  assert.match(PREPARE_CODE, /cell_aggregates = build_category_cell_aggregates\(train_df, LEAVE_OUT_COL\)/,
     'main() must actually build them, and on the training frame');
   assert.match(PREPARE_CODE, /'category_cell_stats': cell_stats,/,
     'they must travel inside features_train.pkl; a statistic that is computed and '
@@ -86,18 +97,78 @@ test('the per-fold sufficient statistics are built and shipped in the training p
     + 'groups on, so any other granularity does not match the folds');
 });
 
-test('the statistics are computed after every row filter, so they align with X', () => {
+test('the sums are fitted BEFORE the serving filter and the indexes attached AFTER', () => {
+  // Round 21. This ordering is the whole correctness of the refit and it is
+  // counter-intuitive in both directions, so both halves are pinned.
+  //
+  // The SUMS must be fitted on the pre-filter frame because that is the frame
+  // build_category_baseline_maps fits the shipped map on, and the trainer's job
+  // is to rebuild THAT map minus one city. Fitted after the filter instead —
+  // which is what round 14 shipped — a fold map moved category_baseline on 99.9%
+  // of the corpus's rows by a mean of 9.27 points, while removing the held-out
+  // city moved it on 74.9% by 0.17. The confound was 54x the effect, and the
+  // "leak-corrected" CV number would have described a model with a category
+  // feature the artifact does not carry.
+  //
+  // The INDEXES must be attached after every row filter because row_cell and
+  // row_group are POSITIONAL indexes into X; computing them earlier is the same
+  // misalignment audit finding 10 found in evaluate_model.py, where a per-hour
+  // diagnostic was drawn on scrambled pairs.
   const filterAt = PREPARE_CODE.indexOf('train_df = train_df[serving_population_mask(');
-  const statsAt = PREPARE_CODE.indexOf('cell_stats = build_category_cell_stats(');
+  const aggAt = PREPARE_CODE.indexOf('cell_aggregates = build_category_cell_aggregates(');
+  const indexAt = PREPARE_CODE.indexOf('cell_stats = index_category_cells(');
   assert.ok(filterAt > 0, 'the serving-population filter must still be there');
-  assert.ok(statsAt > filterAt,
-    'build_category_cell_stats must run AFTER the serving-population filter. '
-    + 'row_cell / row_group are POSITIONAL indexes into X; computing them before a '
-    + 'row filter is the same misalignment audit finding 10 found in '
-    + 'evaluate_model.py, where a per-hour diagnostic was drawn on scrambled pairs.');
+  assert.ok(aggAt > 0 && indexAt > 0, 'both halves must be called in main()');
+  assert.ok(aggAt < filterAt,
+    'build_category_cell_aggregates must run BEFORE the serving-population filter, '
+    + 'on the same population build_category_baseline_maps is fitted on. Otherwise '
+    + 'the per-fold map differs from the shipped feature by a population change '
+    + 'fifty-four times the size of the leak it removes.');
+  assert.ok(indexAt > filterAt,
+    'index_category_cells must run AFTER the filter — row_cell / row_group are '
+    + 'positional indexes into X, and X is the filtered matrix');
+  assert.match(PREPARE_CODE, /'fit_population': 'pre_serving_filter'/,
+    'and the pickle must SAY which population it was fitted on, so the trainer can '
+    + 'refuse the other one instead of silently reporting a confounded number');
+  assert.match(PREPARE_CODE, /CELL_STATS_VERSION = 2/,
+    'the block is versioned so an old features_train.pkl is refused rather than '
+    + 'consumed');
   assert.match(PREPARE_CODE, /len\(cell_stats\['row_group'\]\) != len\(train_df\)/,
     'the alignment must be CHECKED, not assumed — and with a raise, not a bare '
     + '`assert`, which python -O strips');
+  assert.match(PREPARE_CODE, /if \(rows_counts > block\['counts'\]\)\.any\(\)/,
+    'and the matrix rows must be proven a SUBSET of the rows the aggregates were '
+    + 'fitted on; that is what distinguishes "wider population, same run" from '
+    + '"two unrelated runs"');
+});
+
+test('the trainer proves the refit is the shipped map minus one city, before it trains', () => {
+  assert.match(TRAIN_PY, /def verify_reproduces_shipped\(self, X\)/,
+    'the one assertion that makes this design checkable rather than argued: hold out '
+    + 'NO city and the rebuilt columns must equal the shipped columns exactly');
+  assert.match(TRAIN_PY, /shipped_repro = fold_cats\.verify_reproduces_shipped\(X\)/,
+    'and it must actually run in main(), before any fold is fitted — a number written '
+    + 'into the artifact after thirty folds is too late to be a check');
+  assert.match(TRAIN_PY, /CELL_STATS_MIN_VERSION = 2/,
+    'a v1 pickle must be refused. v1 aggregated after the serving filter, so its '
+    + '"corrected" number describes a model that is not the one saved.');
+  assert.match(TRAIN_PY, /'shipped_column_reproduced_max_abs_diff': shipped_repro/,
+    'and the evidence must land in model_metadata.json, not only in a log line — the '
+    + 'artifact should carry the proof, not the claim');
+
+  const suite = path.join(TRAIN_DIR, 'test_fold_category_baselines.py');
+  assert.ok(fs.existsSync(suite),
+    'the property must also be tested on a synthetic corpus through the real '
+    + 'pipeline functions, so it is checkable without a 900MB pickle');
+  const suiteSrc = read(suite);
+  assert.match(suiteSrc, /def test_negative_control_old_population\(\)/,
+    'including a negative control that rebuilds the statistics the pre-round-21 way '
+    + 'and requires the suite to catch it. Without it the suite could pass on the '
+    + 'confounded pipeline.');
+  assert.match(read(path.join(TRAIN_DIR, 'run_training.sh')),
+    /python test_fold_category_baselines\.py/,
+    'and run_training.sh must run it — before train_model.py, so a broken refit '
+    + 'costs seconds rather than a full training run');
 });
 
 test('the shipped statistics carry the cell keys, so the smoothing can be redone per fold', () => {
@@ -154,9 +225,12 @@ test('the metadata records where each map was fitted and that the leak is still 
   assert.match(PREPARE_CODE, /'category_baseline_fit': category_baseline_fit,/,
     'model_metadata.json must say where these two label-means were fitted and where '
     + 'they were applied; an artifact must not require reading the source to find out');
-  assert.match(PREPARE_CODE, /'residual_leak': \(\s*'OPEN/,
-    'while the maps are still fitted on the frame they are applied to, the metadata '
-    + 'must say OPEN. Do not claim a leak is closed when it has only been narrowed.');
+  assert.match(PREPARE_CODE, /'residual_leak': \(\s*'OPEN IN THIS FILE/,
+    'this file still fits the maps on the frame it applies them to and cannot do '
+    + 'otherwise — being constant within a fold is what makes the correction honest, '
+    + 'and prepare_features has no folds. The metadata must keep saying so, and must '
+    + 'point at where it IS corrected, rather than either claiming a clean close or '
+    + 'leaving a reader to think the reported CV is still inflated.');
   assert.match(PREPARE_CODE, /'per_fold_inputs_shipped': True/,
     'and it must record that the raw material for the real fix is in the pickle');
 });

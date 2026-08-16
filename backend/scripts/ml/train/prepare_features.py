@@ -915,7 +915,7 @@ def build_category_baseline_maps(df: pd.DataFrame) -> Dict:
         finding: train_model.py's GroupKFold holds out one CITY per fold, and a
         held-out city had already contributed to the very category cells its
         own rows were then scored against. That is still true and still open;
-        the note above build_category_cell_stats says why the correction cannot
+        the note above build_category_cell_aggregates says why the correction cannot
         be applied from this file and what this file ships instead.
     """
     df = _slice_keys(df.copy())
@@ -993,54 +993,92 @@ def build_category_baseline_maps(df: pd.DataFrame) -> Dict:
 # per-(city, cell) sums and counts below let the trainer rebuild any fold's map
 # with one subtraction and no second pass over the CSV. RETRAIN.md tracks the
 # consuming half as next lever 2.
+#
+# ROUND 21: THE STATISTICS MUST BE FITTED ON THE SAME POPULATION AS THE FEATURE
+# THEY REPLACE, AND FOR ONE ROUND THEY WERE NOT. These aggregates used to be
+# built after the serving-population filter, because row_cell / row_group are
+# positional indexes into X and X is the filtered matrix. But the map they stand
+# in for is fitted by build_category_baseline_maps BEFORE that filter, on all
+# 3.57M rows rather than the 1.93M with a real baseline. Measured on the shipped
+# pickle, a fold map built the old way moved category_baseline on 99.9% of rows
+# by a mean of 9.27 points, while removing the held-out city — the entire point —
+# moved it on 75% of rows by a mean of 0.17. The confound was fifty-four times
+# the effect. A cross-validation number computed that way is not a corrected
+# number; it describes a model whose category feature is not the one shipped, and
+# reporting it would repeat, in a new place, exactly the sin of publishing a
+# figure that measures something other than what production serves.
+#
+# So the two halves are split at the two points in main() where they are each
+# correct: build_category_cell_aggregates runs on the PRE-filter frame, beside
+# the map it must reproduce, and index_category_cells attaches the positional
+# indexes AFTER the filter, on the rows X actually contains. The property that
+# makes this checkable is exact: hold out no city, and the rebuilt column must
+# equal the shipped column to the bit. The trainer asserts it.
 # ---------------------------------------------------------------------------
 
 LEAVE_OUT_COL = 'city'
 
 
-def build_category_cell_stats(df: pd.DataFrame,
-                              group_col: str = LEAVE_OUT_COL) -> Dict:
-    """Sufficient statistics for a per-fold refit of the category baselines.
+CELL_STATS_VERSION = 2
+
+
+def _cell_key_column(d: pd.DataFrame, keys: List[str]) -> np.ndarray:
+    """One \\x1f-joined string per row, for the cell `keys`.
+
+    Vectorised string concat, not `.agg(join, axis=1)`: the latter is a per-row
+    Python call and these frames are millions of rows.
+    """
+    key_frame = d[keys[0]].astype(str)
+    for k in keys[1:]:
+        key_frame = key_frame + '\x1f' + d[k].astype(str)
+    return key_frame.to_numpy()
+
+
+def build_category_cell_aggregates(fit_df: pd.DataFrame,
+                                   group_col: str = LEAVE_OUT_COL) -> Dict:
+    """Per-(group, cell) label sums and counts for a per-fold refit.
+
+    MUST be called on the frame build_category_baseline_maps was fitted on —
+    i.e. BEFORE the serving-population filter — because the whole purpose is to
+    let the trainer rebuild THAT map minus one city. See the round 21 paragraph
+    above: fitting these on the filtered frame instead moved the feature fifty
+    times further than the leak did, in a direction that has nothing to do with
+    the leak.
 
     Returns, for both the coarse and the refined key:
       cells       — the cell key tuples, in cell-index order (the coarse one
                     carries (venue_category, day_of_week, hour) so the caller
                     can redo the adjacent-hour smoothing);
-      row_cell    — each training row's cell index;
       sums/counts — dense (n_groups x n_cells) label sums and counts.
 
     A fold's map is then:
         s = sums[train_groups].sum(0); n = counts[train_groups].sum(0)
         cell_mean = round(s / n, 1)          # n == 0 -> no support, fall back
     which is the identical arithmetic build_category_baseline_maps performs,
-    restricted to that fold's training rows. Nothing here is a feature and
+    restricted to that fold's training groups. Nothing here is a feature and
     nothing here is applied to a row by this script; it is raw material.
-
-    ONE POPULATION DIFFERENCE, STATED SO THE RETRAIN'S NUMBERS ARE EXPLAINABLE.
-    main() calls this AFTER the serving-population filter, because row_cell and
-    row_group are positional indexes into X and X is the filtered frame. The
-    map shipped to Node is fitted BEFORE that filter. So a per-fold refit built
-    from these statistics differs from today's feature in two ways at once: it
-    excludes the held-out city (the point), and it is fitted on the rows
-    production actually scores rather than on every row in the corpus. The
-    second difference is a narrowing in the same direction as audit finding 6
-    and is deliberate, but it is a second difference — do not attribute the
-    whole metric change to the leak.
     """
-    if group_col not in df.columns:
+    if group_col not in fit_df.columns:
         raise CorpusContractError(
-            f'build_category_cell_stats needs the {group_col!r} column — it is the '
-            'group train_model.py holds one out of per fold, and without it a '
+            f'build_category_cell_aggregates needs the {group_col!r} column — it is '
+            'the group train_model.py holds one out of per fold, and without it a '
             'per-fold refit of the category baselines is not expressible.'
         )
-    d = _slice_keys(df.copy())
+    d = _slice_keys(fit_df.copy())
     groups = d[group_col].fillna('__unknown__').astype(str)
     group_levels, group_idx = np.unique(groups.to_numpy(), return_inverse=True)
 
     out: Dict = {
+        'version': CELL_STATS_VERSION,
         'group_col': group_col,
         'groups': [str(g) for g in group_levels],
-        'row_group': group_idx.astype(np.int32),
+        'fit_population': 'pre_serving_filter',
+        'fit_population_note': (
+            'fitted on the same frame build_category_baseline_maps is fitted on, so '
+            'holding out no group reproduces the shipped category_baseline / '
+            'refined_category_baseline columns exactly. The only difference a fold '
+            'map carries is the held-out group.'),
+        'fit_rows': int(len(d)),
         'global_sum': float(d['busyness_pct'].sum()),
         'global_count': int(d['busyness_pct'].count()),
         'recipe': (
@@ -1049,18 +1087,13 @@ def build_category_cell_stats(df: pd.DataFrame,
             'adjacent hours within (venue_category, day_of_week) with the '
             '0.6/0.2/0.2 blend prepare_features._smooth_category_hours uses, then '
             'index with row_cell. Cells with a zero fold count have no support '
-            'outside the held-out city — fall back to the fold global mean.'),
+            'outside the held-out group — fall back to the fold global mean.'),
     }
 
     y = d['busyness_pct'].to_numpy(dtype=float)
     finite = np.isfinite(y)
     for name, keys in (('category', CAT_KEYS), ('refined', REFINED_KEYS)):
-        # Vectorised string concat, not `.agg(join, axis=1)`: the latter is a
-        # per-row Python call and this frame is millions of rows.
-        key_frame = d[keys[0]].astype(str)
-        for k in keys[1:]:
-            key_frame = key_frame + '\x1f' + d[k].astype(str)
-        cell_levels, cell_idx = np.unique(key_frame.to_numpy(), return_inverse=True)
+        cell_levels, cell_idx = np.unique(_cell_key_column(d, keys), return_inverse=True)
         sums = np.zeros((len(group_levels), len(cell_levels)), dtype=np.float64)
         counts = np.zeros((len(group_levels), len(cell_levels)), dtype=np.int64)
         flat = group_idx * len(cell_levels) + cell_idx
@@ -1069,12 +1102,87 @@ def build_category_cell_stats(df: pd.DataFrame,
         out[name] = {
             'keys': list(keys),
             'cells': [tuple(c.split('\x1f')) for c in cell_levels],
-            'row_cell': cell_idx.astype(np.int32),
+            'cell_levels': cell_levels,
             'sums': sums,
             'counts': counts,
         }
-        logger.info('Per-fold %s baseline stats: %d cells x %d %s groups.',
-                    name, len(cell_levels), len(group_levels), group_col)
+        logger.info('Per-fold %s baseline aggregates: %d cells x %d %s groups, '
+                    'fitted on %d pre-filter rows.',
+                    name, len(cell_levels), len(group_levels), group_col, len(d))
+    return out
+
+
+def index_category_cells(rows_df: pd.DataFrame, agg: Dict) -> Dict:
+    """Attach POSITIONAL row indexes, for the rows the feature matrix will hold.
+
+    Called after every row filter, so `row_cell` / `row_group` line up with X.
+    The cell and group levels come from `agg`, which was fitted on the wider
+    pre-filter frame — the rows here are a subset of those rows, so every key
+    resolves; a key that does not means the two frames are unrelated and this
+    raises rather than inventing a cell.
+
+    `rows_sums` / `rows_counts` are the same aggregates restricted to these rows.
+    They are NOT used to build any map. They exist so the trainer can re-derive
+    them from row_cell/row_group and prove the indexes describe the frame it is
+    holding, which is the one failure mode that would be silent: a positional
+    index from a different row order scores every row against the wrong cell and
+    produces better-looking numbers that mean nothing.
+    """
+    d = _slice_keys(rows_df.copy())
+    group_levels = np.asarray(agg['groups'], dtype=object).astype(str)
+    groups = d[agg['group_col']].fillna('__unknown__').astype(str).to_numpy()
+    order = np.argsort(group_levels)
+    pos = np.searchsorted(group_levels[order], groups)
+    if (pos >= len(group_levels)).any():
+        pos = np.clip(pos, 0, len(group_levels) - 1)
+    group_idx = order[pos]
+    missing = group_levels[group_idx] != groups
+    if missing.any():
+        raise CorpusContractError(
+            f'{int(missing.sum())} rows carry a {agg["group_col"]!r} the category '
+            f'aggregates were never fitted on (e.g. {groups[missing][0]!r}). The '
+            'aggregates are fitted on the pre-filter frame and these rows are a '
+            'subset of it, so this cannot happen unless the two came from '
+            'different runs.')
+
+    out: Dict = {k: v for k, v in agg.items() if k not in ('category', 'refined')}
+    out['rows'] = int(len(d))
+    out['row_group'] = group_idx.astype(np.int32)
+
+    y = d['busyness_pct'].to_numpy(dtype=float)
+    finite = np.isfinite(y)
+    for name in ('category', 'refined'):
+        block = agg[name]
+        levels = block['cell_levels']
+        keyed = _cell_key_column(d, block['keys'])
+        cell_idx = np.searchsorted(levels, keyed)
+        cell_idx = np.clip(cell_idx, 0, len(levels) - 1)
+        missing = levels[cell_idx] != keyed
+        if missing.any():
+            raise CorpusContractError(
+                f'{int(missing.sum())} rows fall in a {name!r} cell the aggregates '
+                f'were never fitted on (e.g. {keyed[missing][0]!r}).')
+        n_cells = len(levels)
+        flat = group_idx * n_cells + cell_idx
+        rows_sums = np.zeros(len(group_levels) * n_cells, dtype=np.float64)
+        rows_counts = np.zeros(len(group_levels) * n_cells, dtype=np.int64)
+        np.add.at(rows_sums, flat[finite], y[finite])
+        np.add.at(rows_counts, flat[finite], 1)
+        rows_counts = rows_counts.reshape(len(group_levels), n_cells)
+        if (rows_counts > block['counts']).any():
+            raise CorpusContractError(
+                f'the {name!r} cells of these rows are not a subset of the cells the '
+                'aggregates were fitted on. The aggregates must come from the '
+                'pre-filter frame these rows were filtered out of.')
+        out[name] = {
+            'keys': list(block['keys']),
+            'cells': block['cells'],
+            'sums': block['sums'],
+            'counts': block['counts'],
+            'row_cell': cell_idx.astype(np.int32),
+            'rows_sums': rows_sums.reshape(len(group_levels), n_cells),
+            'rows_counts': rows_counts,
+        }
     return out
 
 
@@ -1182,7 +1290,7 @@ def add_baseline_features(df: pd.DataFrame, cat_maps: Dict = None) -> Tuple[pd.D
     city that train_model.py's GroupKFold later holds out has already
     contributed to the category cells its own rows are scored against. The
     correction is a per-fold refit and it belongs in the trainer, for the reason
-    written above build_category_cell_stats — being constant within a fold is
+    written above build_category_cell_aggregates — being constant within a fold is
     what makes it correct, and this script has no folds. The statistics that
     make that refit a one-pass subtraction travel in features_train.pkl.
     """
@@ -1440,6 +1548,14 @@ def main():
     # the same serving_population_mask this filter uses (quick_eval.py imports
     # it). Audit finding 6: it was not, so the gate was decided partly on rows
     # production routes to the rule engine.
+    # Round 21. The per-fold category aggregates are fitted HERE, on the frame
+    # build_category_baseline_maps was fitted on, because the trainer's job is to
+    # rebuild THAT map minus one city. Doing it after the filter below made the
+    # confound fifty-four times the leak — see the round 21 paragraph above
+    # build_category_cell_aggregates. The positional row indexes are attached
+    # further down, once the frame is the one X will be built from.
+    cell_aggregates = build_category_cell_aggregates(train_df, LEAVE_OUT_COL)
+
     before_filter = len(train_df)
     # v2.3.1 BLEND: pure realtime-only training (v2.3.0) overpredicted
     # deviations on ordinary nights (weekly holdout MAE 0.2 -> 11.7) because
@@ -1582,11 +1698,13 @@ def main():
     # the length of the 2.07M-row filtered matrix, aligning unrelated rows — the
     # MAE-by-hour plot, the one diagnostic that would have caught a six-hour
     # clock skew, was drawn on scrambled pairs.
-    # Round 14. Computed HERE, after every row filter, so row_cell / row_group
+    # Round 14. Indexed HERE, after every row filter, so row_cell / row_group
     # are positionally aligned with X — the same alignment mistake audit finding
     # 10 found in evaluate_model.py is the one thing that would make these
-    # statistics silently wrong.
-    cell_stats = build_category_cell_stats(train_df, LEAVE_OUT_COL)
+    # statistics silently wrong. The SUMS were fitted earlier, before the
+    # serving-population filter, for the reason round 21 records; only the
+    # indexes belong here.
+    cell_stats = index_category_cells(train_df, cell_aggregates)
     if (len(cell_stats['row_group']) != len(train_df)
             or len(cell_stats['category']['row_cell']) != len(train_df)):
         raise CorpusContractError(
@@ -1604,30 +1722,41 @@ def main():
         'serving_map': 'training-frame maps, shipped as metadata.category_baselines / '
                        'refined_baselines',
         'residual_leak': (
-            'OPEN, and narrowed to one sentence: train_model.py holds out one city '
-            'per GroupKFold fold, and that city contributed to the category cells its '
-            'own rows are scored against, so training_metrics is optimistic. The ship '
-            'gate is unaffected — the holdout cities contribute to nothing. Measured '
-            'on a synthetic 10-city fixture over three draws, it understates the '
-            'reported MAE by 0.21-0.42 and overstates within-10 by 1.4-2.1 points. '
-            'The leave-one-city-out-computed-once formulation that looks like the '
-            'cheap fix understates by 1.52-3.05 MAE and 10.4-20.5 points of '
-            'within-10 — five to seven times worse — and must not be used. Only a '
-            'per-fold refit is honest, and it has to happen where the folds are.'),
+            'OPEN IN THIS FILE, BY NECESSITY, AND CLOSED WHERE IT MATTERS. This script '
+            'fits both maps on the frame it applies them to, and it cannot do '
+            'otherwise: being constant within a fold is what makes the correction '
+            'honest, and this script has no folds. What that leaks is the REPORTED '
+            'cross-validation number in train_model.py, which holds out one city per '
+            'GroupKFold fold — and train_model.py now rebuilds both maps from each '
+            'fold\'s own training groups using the aggregates below, so that number is '
+            'no longer optimistic. See model_metadata.training_contracts.'
+            'category_baselines_refit_per_fold. The ship gate never had this leak: it '
+            'is measured on the separate holdout cities, which contribute to nothing. '
+            'Measured on a synthetic 10-city fixture over three draws, the uncorrected '
+            'leak understates the reported MAE by 0.21-0.42 and overstates within-10 '
+            'by 1.4-2.1 points. The leave-one-city-out-computed-once formulation that '
+            'looks like the cheap fix understates by 1.52-3.05 MAE and 10.4-20.5 '
+            'points of within-10 — five to seven times worse — and must not be used.'),
         'per_fold_inputs_shipped': True,
         'per_fold_inputs': ('features_train.pkl -> category_cell_stats; see '
-                            'prepare_features.build_category_cell_stats'),
+                            'prepare_features.build_category_cell_aggregates'),
+        'per_fold_inputs_version': cell_stats['version'],
+        'per_fold_inputs_fit_population': cell_stats['fit_population'],
+        'per_fold_inputs_fit_rows': cell_stats['fit_rows'],
+        'per_fold_inputs_indexed_rows': cell_stats['rows'],
         'group_col': cell_stats['group_col'],
         'groups': len(cell_stats['groups']),
         'category_cells': len(cell_stats['category']['cells']),
         'refined_cells': len(cell_stats['refined']['cells']),
     }
-    logger.warning(
-        'category_baseline / refined_category_baseline are still fitted on the whole '
-        'training frame and applied to it. train_model.py holds out a city per fold, '
-        'so training_metrics will be optimistic (the ship gate is not affected). The '
-        'per-fold statistics are in features_train.pkl["category_cell_stats"]: %d '
-        'category cells and %d refined cells across %d %s groups.',
+    logger.info(
+        'category_baseline / refined_category_baseline are fitted on the whole '
+        'pre-filter training frame and applied to it; train_model.py rebuilds both '
+        'per fold from features_train.pkl["category_cell_stats"] (v%d, fitted on %d '
+        'pre-filter rows, indexed onto %d matrix rows): %d category cells and %d '
+        'refined cells across %d %s groups. Holding out no group reproduces the '
+        'shipped columns exactly, which is what the trainer asserts.',
+        cell_stats['version'], cell_stats['fit_rows'], cell_stats['rows'],
         len(cell_stats['category']['cells']), len(cell_stats['refined']['cells']),
         len(cell_stats['groups']), cell_stats['group_col'])
 

@@ -15,35 +15,45 @@ echo "================================================"
 echo ""
 
 # Step 1: Export data from PostgreSQL
-echo "[1/5] Exporting training data from database..."
+echo "[1/7] Exporting training data from database..."
 node export_training_data.js
 echo ""
 
 # Step 2: Feature engineering
-echo "[2/5] Preparing features..."
+echo "[2/7] Preparing features..."
 python prepare_features.py
 echo ""
 
-# Step 3: Train models
-echo "[3/5] Training models (XGBoost, LightGBM, Random Forest)..."
+# Step 3: The per-fold category baseline contract.
+# Cheap, synthetic, and it runs BEFORE the five-minute train because the
+# property it checks — hold out no city and the rebuilt category columns equal
+# the shipped ones exactly — is what stops train_model.py reporting a
+# cross-validation number for a model it is not saving. Its negative control
+# rebuilds the statistics the pre-round-21 way and requires the suite to catch it.
+echo "[3/7] Per-fold category baseline contract..."
+python test_fold_category_baselines.py
+echo ""
+
+# Step 4: Train models
+echo "[4/7] Training models (XGBoost, LightGBM, Random Forest)..."
 python train_model.py
 echo ""
 
-# Step 4: Evaluate
-echo "[4/6] Evaluating model..."
+# Step 5: Evaluate
+echo "[5/7] Evaluating model..."
 python evaluate_model.py
 echo ""
 
-# Step 5: Ship gate
+# Step 6: Ship gate
 # Round 10: mlPredictor.init() refuses to promote an artifact whose ship_gate
 # does not pass, so the gate has to be part of the pipeline — not an optional
 # follow-up step in RETRAIN.md. quick_eval.py must run AFTER evaluate_model.py.
-echo "[5/6] Ship gate (realtime-only holdout)..."
+echo "[6/7] Ship gate (realtime-only holdout)..."
 python quick_eval.py
 echo ""
 
-# Step 6: Export to ONNX
-echo "[6/6] Exporting to ONNX..."
+# Step 7: Export to ONNX
+echo "[7/7] Exporting to ONNX..."
 python export_model.py
 echo ""
 
