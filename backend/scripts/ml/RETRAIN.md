@@ -202,21 +202,23 @@ Still open in `run_training.sh`, which is not owned here: its summary reads
 seaborn unguarded under `set -e`, so a missing plotting dependency aborts the
 pipeline **before** the ship gate runs.
 
-Also still open, and deliberately **not** closed in that pass: the
-`category_baseline` / `refined_category_baseline` leak that
+Left open in that pass and **closed on 2026-08-16**: the `category_baseline` /
+`refined_category_baseline` leak that
 `metadata.training_contracts.known_residual_leak` names. `prepare_features.py`
 fits both on the whole training frame and applies them to it, so a city
-`train_model.py` later holds out has already built the cells its own rows are
-scored against. It makes `training_metrics` optimistic; it does **not** touch
-the ship gate, whose holdout cities contribute to neither map. Round 14
-attempted the fix, measured it, and rejected it — see next lever 2 for the
-numbers. What round 14 *did* ship is the raw material: `features_train.pkl`
-now carries `category_cell_stats` (per-city label sums and counts per category
-cell, plus each row's cell index), so the correct per-fold refit is a
-subtraction inside the fold loop rather than a second pass over the CSV, and
-`metadata.corpus_contract.category_baseline_fit` records where each map was
-fitted, where it was applied, and that the leak is still OPEN. Do not delete
-`known_residual_leak` until `train_model.py` consumes those statistics.
+`train_model.py` later holds out had already built the cells its own rows are
+scored against. It made `training_metrics` optimistic; it never touched the
+ship gate, whose holdout cities contribute to neither map. Round 14 attempted
+the fix, measured it, and rejected the cheap formulation — see lever 2 for the
+numbers — and shipped the raw material instead: `features_train.pkl` carries
+`category_cell_stats`, so the correct per-fold refit is a subtraction inside
+the fold loop rather than a second pass over the CSV. Round 21 consumed it, and
+found on the way that the statistics had to be fitted on the pre-filter frame
+or the correction would be swamped by a population confound fifty-four times
+its size. `known_residual_leak` stays as a key and now reads CLOSED FOR THE
+REPORTED METRICS, naming what remains by design; `corpus_contract
+.category_baseline_fit` reads OPEN IN THIS FILE, which is true of
+`prepare_features.py` and cannot be otherwise — it has no folds.
 
 ## The continuous-learning loop ("constantly machine learning")
 
@@ -387,17 +389,47 @@ FSQ/Overture instead; see vault note on the baseline provenance question).
    correct, and it is why the fix cannot live in `prepare_features.py`, which
    emits one feature matrix and has no folds.
 
-   What is already done, so this lever is small: `features_train.pkl` carries
-   `category_cell_stats` — per-city label sums and counts for every coarse and
-   refined category cell, each row's cell index and group index, and the recipe
-   string. A fold's map is
-   `round(sums[fold_train_groups].sum(0) / counts[fold_train_groups].sum(0), 1)`,
-   then the 0.6/0.2/0.2 adjacent-hour smoothing for the coarse map, then index
-   with `row_cell`. Verified cell-by-cell against
-   `build_category_baseline_maps` refitted on each fold's rows: 38,136 cells
-   compared over 10 folds, zero mismatches. Remaining work is inside
-   `train_model.py`'s fold loop, plus deleting
-   `metadata.training_contracts.known_residual_leak` once it is consumed.
+   **DONE (2026-08-16), and it took a second correction to get right.**
+   `train_model.FoldCategoryBaselines` rebuilds both maps from each fold's own
+   training cities, inside the LOCO loop and inside the early-stopping split,
+   before that fold is fitted or scored. The shipped artifact is still fitted on
+   the whole-frame matrix on purpose — that map is what `mlPredictor.js` is
+   handed and serves, and inference has no held-out group — so what moved is the
+   reported number, not the model.
+
+   **The trap on the way there, because it is the same shape as the leak.** The
+   statistics were first aggregated AFTER the serving-population filter, since
+   `row_cell` / `row_group` are positional indexes into `X` and `X` is the
+   filtered matrix. But the map they replace is fitted BEFORE that filter, on
+   3.57M rows rather than 1.93M. Measured on the shipped pickle:
+
+   | difference the fold map carried | rows moved | mean abs shift |
+   |---|---|---|
+   | population (aggregated post-filter vs the shipped pre-filter map) | 99.9% | **9.27 pts** |
+   | the leak itself (held-out city removed) | 74.9% | 0.17 pts |
+
+   The confound was **fifty-four times** the effect. Publishing that as "the
+   leak-corrected CV" would have described a model whose category feature is not
+   the shipped one — the same sin as the 84% confidence figure, in a new place.
+   `build_category_cell_aggregates` now runs on the pre-filter frame and
+   `index_category_cells` attaches the indexes afterwards.
+
+   **What makes it checkable rather than argued.** Hold out no city and the
+   rebuilt columns must equal the shipped columns bit for bit.
+   `FoldCategoryBaselines.verify_reproduces_shipped` asserts exactly that on the
+   real matrix before a single fold is fitted, and writes the max abs diff into
+   `metadata.training_contracts.category_baselines_refit_per_fold`.
+   `train/test_fold_category_baselines.py` (7 tests, `python
+   test_fold_category_baselines.py`, no pytest needed) runs the same property on
+   a synthetic corpus through the real pipeline functions, and its negative
+   control rebuilds the statistics the old way and requires the suite to catch
+   it. Invariance checks are not used and must not be: the compute-once
+   formulation in the table above passes one.
+
+   **This means an old `features_train.pkl` is refused.** `category_cell_stats`
+   is versioned; v1 stops the run with instructions. Re-run
+   `prepare_features.py` — which the 42-vs-44-column export contract already
+   forces anyway.
 3. Ensemble XGBoost + LightGBM (+0.02-0.05 R² typical).
 4. Absolute prediction head (second model for no-baseline venues) so the
    rule-engine fallback dies entirely.
