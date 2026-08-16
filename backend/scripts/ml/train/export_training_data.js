@@ -133,6 +133,47 @@
 // So: exported, available, excluded from the feature set at both ends, and
 // reported on every run so the moment coverage stops being zero is visible.
 //
+// ---------------------------------------------------------------------------
+// ROUND 23: venue_feedback AS A LABEL SOURCE (RETRAIN.md "next lever 1")
+//
+// Every label in this corpus comes from one vendor. A model trained on it can
+// only be rewarded for agreeing with BestTime, so the part of BestTime that is
+// wrong is indistinguishable from the part that is right. `venue_feedback` is
+// the one label source in this product that is not BestTime: a human who was at
+// the venue saying what it was like. That is the entire point of this path, and
+// the reason it is built now rather than when the rows arrive.
+//
+// FEEDBACK AS A FEATURE IS ALREADY SHIPPED AND IS A DIFFERENT THING. The
+// per-venue aggregate joined below (avg_user_crowd / user_feedback_count /
+// avg_prediction_error, consumed by prepare_features.add_user_feedback_features)
+// is a DESCRIPTION OF A VENUE attached to a row whose label came from BestTime:
+// "people who reported on this place tend to say X". Feedback as a LABEL is the
+// y of the row itself. Putting the same report on both sides is the textbook
+// leak — and here it is worse than the textbook case, because
+// avg_prediction_error is literally `mapped(crowd_level) - predicted_score`,
+// i.e. the candidate label minus a model output. A feedback-labelled row that
+// also carried that venue's feedback aggregate would be handed its own answer
+// with a venue-level smoother on it. So the rows this path emits carry EMPTY
+// feedback-feature fields; see feedbackCellToTrainingRow.
+//
+// THE MAPPING IS THE HARD PART, AND IT IS NOT SOLVED. See the long block above
+// FEEDBACK_CROWD_MAP_ENV. Short version: `crowd_level` is a 3-point human
+// perception (Quiet / Moderate / Very Busy) and `busyness_pct` is BestTime's
+// per-venue percentage of that venue's own typical peak. No function from the
+// first to the second can be justified from anything in this repository, and
+// nothing in this file invents one. The path is therefore OFF by default and
+// refuses to emit a row unless an operator supplies a mapping explicitly.
+//
+// IT ALSO CANNOT REACH TRAINING YET, ON PURPOSE. prepare_features.py pins
+// label_source to {'', 'live', 'forecast'} and recomputes label_provenance from
+// it, so a 'user_report' row raises CorpusContractError by name. That is the
+// correct interlock, not an oversight: the sample-weight tier for human reports
+// lives in prepare_features.py, this file may not edit it, and a row that
+// arrived without one would land in the `1.0` branch — a coarse human report
+// outranking every BestTime live observation in the corpus. Round 10 and round
+// 20 both exist because a label silently sat at weight 1.0. See the HANDOFF
+// comment at the labelProvenance() call site.
+//
 // EMPTY IS NOT ZERO. Both columns are written as an EMPTY FIELD when the row
 // does not carry a value, and 0 is a legal vendor forecast (a venue nobody is
 // at). pandas reads the empty field as NaN and prepare_features.py never
@@ -143,7 +184,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const { CITIES } = require('../config');
+const { CITIES, getSeason, isHoliday, isSchoolBreak } = require('../config');
 
 const HOLDOUT_CITIES = ['miami', 'tokyo', 'barcelona'];
 
@@ -306,9 +347,28 @@ function escapeCsv(val) {
 //   unknown  — realtime row collected before label_source existed; we cannot
 //              tell live from forecast retroactively, so it keeps the old
 //              treatment rather than silently reweighting the whole corpus.
+//   user_report — round 23: the label is a verified human report out of the
+//              venue_feedback table,
+//              not a BestTime number at all. Named rather than left to fall
+//              through to 'unknown', because 'unknown' is the weight-1.0 pool.
+//
+// HANDOFF — prepare_features.py MUST change before a 'user_report' row can
+// train, and this file may not make that change (another agent owns the file):
+//   1. LABEL_SOURCE_VALUES must gain 'user_report', and derive_label_provenance
+//      must recognise it, or enforce_label_contract raises on the first row.
+//   2. The sample-weight ladder must gain a tier for it. Today the ladder is
+//      `is_realtime != 1 -> 0.05, forecast -> 0.3, else 1.0`, so a user_report
+//      row would take the ELSE branch and outrank every live BestTime
+//      observation in the corpus on the strength of a 3-point tap. The tier
+//      argued for in the report is 0.15: above a weekly snapshot (which is not
+//      about the moment at all) and below a vendor forecast (which is at least
+//      denominated in the label's own units).
+// Until both land, a 'user_report' row stops prepare_features.py by name. That
+// interlock is deliberate and must not be softened from this side.
 function labelProvenance(row) {
   if (row.collection_mode !== 'realtime') return 'weekly';
   if (row.label_source === 'live' || row.label_source === 'forecast') return row.label_source;
+  if (row.label_source === FEEDBACK_LABEL_SOURCE) return FEEDBACK_LABEL_SOURCE;
   return 'unknown';
 }
 
@@ -351,6 +411,471 @@ function vendorForecastPct(row) {
   if (v === null || v === undefined || v === '') return '';
   const n = Number(v);
   return Number.isFinite(n) ? n : String(v);
+}
+
+// ===========================================================================
+// ROUND 23 — venue_feedback rows as LABELS.
+//
+// Everything below produces objects of exactly the shape rowToCsv() already
+// consumes, so the 44-column contract cannot drift for these rows: there is one
+// row builder and one header, and a column added to the contract is written for
+// vendor and feedback rows by the same code.
+// ===========================================================================
+
+// The value written into the `label_source` column of the CSV for these rows,
+// and (via labelProvenance) into `label_provenance`. Deliberately NOT a value
+// migration 025's CHECK allows: nothing may ever write it into
+// ml_training_data. It exists only in the export.
+const FEEDBACK_LABEL_SOURCE = 'user_report';
+
+// One row per (venue, dow, hour, local date) needs at least this many DISTINCT
+// reporters. Not a number picked here: it is the threshold this product already
+// uses everywhere a human-derived figure becomes publishable —
+// crowdEngine's calibration floor, the budget ceiling, ghost commit. The
+// argument crowdEngine.js gives for it applies verbatim to a training label and
+// is stronger: crowd_level has three settings, so one report is a 60-point-wide
+// opinion, and three is the first count at which one outlier is outvoted rather
+// than being the whole signal.
+const MIN_FEEDBACK_REPORTERS = 3;
+
+// The feedback candidates are grouped in memory rather than streamed through a
+// cursor, because verified feedback is orders of magnitude smaller than the
+// 3.9M-row vendor corpus and grouping in SQL would need a window function whose
+// correctness is much harder to test than the JS below. This cap is what stops
+// that assumption from becoming an out-of-memory crash in silence: crossing it
+// REFUSES the run and says to move the grouping into SQL.
+const FEEDBACK_ROW_CAP = 2000000;
+
+const FEEDBACK_ENABLE_ENV = 'FLOCK_EXPORT_FEEDBACK_LABELS';
+const FEEDBACK_CROWD_MAP_ENV = 'FLOCK_FEEDBACK_CROWD_MAP';
+
+// ---------------------------------------------------------------------------
+// WHY THERE IS NO DEFAULT MAPPING, AND WHY A WRONG ONE WOULD BE WORSE THAN NONE
+//
+// `venue_feedback.crowd_level` is 1 / 2 / 3, rendered in the app as
+// "Quiet" / "Moderate" / "Very Busy". `busyness_pct` is BestTime's number for a
+// venue-hour. Four reasons no function between them can be justified from
+// anything that exists in this repository today:
+//
+//   1. THEY ARE NOT THE SAME QUANTITY. busyness_pct is normalised per venue
+//      against that venue's own typical peak — 100 means "as busy as this place
+//      gets", not "full". A human answering "Very Busy" is reporting perceived
+//      crowding against their own expectations, with no venue normalisation in
+//      it at all. A quiet neighbourhood bar at its Saturday peak is busyness
+//      100 and will be reported "Moderate" by most people who go there. That
+//      error is not noise; it correlates with venue capacity and category, so
+//      it would enter the model as a systematic bias on exactly the venues the
+//      corpus is thinnest on.
+//   2. THE CONSTANTS THAT LOOK LIKE A MAPPING ARE A DISPLAY CONVENTION.
+//      `crowdEngine.CROWD_LEVEL_TO_SCORE = {1:20, 2:50, 3:80}` (mirrored in the
+//      SQL of mlPredictor.getVenueFeedback and in the aggregate join in this
+//      file) exists to blend a human report into a 0-100 number shown on a
+//      card. Its own comment defends the SPAN, because the calibration guard
+//      rails are derived from it — not the values. Reusing it as ground truth
+//      would promote a UI constant to a measurement, which is the same move as
+//      the 85%-confidence figure MODEL-METRICS.md exists to stop.
+//   3. IT CANNOT BE FITTED, BECAUSE THE CALIBRATION PAIRS DO NOT EXIST. The
+//      honest way to get this mapping is to measure it: take moments where a
+//      verified report and a BestTime observation describe the same
+//      (venue, dow, hour, date) and read off the conditional distribution of
+//      busyness_pct given crowd_level. There are zero verified feedback rows
+//      today, so there are zero such pairs. A mapping asserted before the pairs
+//      exist can never be checked against the pairs afterwards, because the
+//      model trained on it will have already moved.
+//   4. THE DELTA LABEL MAKES A POINT MAPPING ACTIVELY POISONOUS. This is a
+//      delta model: prepare_features trains on `busyness_pct - baseline`. With
+//      only three possible label values, `delta = map(level) - baseline` is,
+//      across a corpus whose baselines span 0-100, dominated by `-baseline`. Its
+//      correlation with the baseline is -1 by construction. The model has
+//      several features from which the baseline is largely recoverable
+//      (category_baseline, refined_category_baseline, the smoothed neighbour
+//      hours, neighbor_baseline_same_hour), so on this subpopulation the
+//      loss-minimising thing to learn is "predict minus the baseline" — and
+//      that is a rule about our own anchor, learned from human reports, that
+//      would then be applied to every venue the model serves.
+//
+// WHAT WOULD MAKE IT JUSTIFIABLE, smallest change first (see the report):
+//   a. venue_feedback needs the venue-local calendar DATE of the report, so a
+//      report and a BestTime observation of the same moment can be joined and
+//      the mapping measured. It is derivable today from
+//      `created_at AT TIME ZONE ml_venues.timezone` — which is what this file
+//      does — but only for venues in ml_venues; a stored column would cover
+//      the rest and would not depend on a join.
+//   b. Better, and it removes the mapping problem instead of measuring it:
+//      ask the venue-relative question. "Compared to a normal Friday here, was
+//      it quieter / about the same / busier?" is a report about the DELTA,
+//      which is what the model actually predicts, and it needs no absolute
+//      scale and no per-venue normalisation. It is a copy change to one sheet
+//      in App.js plus one column. Its sign is checkable against BestTime the
+//      day the first pair lands, which is more than any 0-100 mapping offers.
+//
+// So: an operator who has done the measurement supplies the mapping explicitly
+// and it is recorded in the run log. Nothing here fills it in.
+// ---------------------------------------------------------------------------
+const FEEDBACK_MAP_REQUIRED_MESSAGE =
+  `REFUSED: ${FEEDBACK_ENABLE_ENV} is set but ${FEEDBACK_CROWD_MAP_ENV} is not. `
+  + 'There is no default and there must not be one. crowd_level is a 3-point human '
+  + 'perception (Quiet/Moderate/Very Busy) and busyness_pct is BestTime\'s percentage of a '
+  + "venue's own typical peak; they are different quantities, and the {1:20, 2:50, 3:80} "
+  + 'constants in crowdEngine.js are a display convention for a card, not a measurement. '
+  + 'Because this is a delta model, a 3-valued point label makes `delta = map(level) - '
+  + 'baseline` almost perfectly anti-correlated with the baseline, so the model would learn '
+  + '"predict minus the anchor" from human reports. Measure the mapping first: join verified '
+  + 'reports to BestTime observations of the same (venue, dow, hour, date) and read off the '
+  + 'conditional distribution. Then pass e.g. '
+  + `${FEEDBACK_CROWD_MAP_ENV}='{"1":18,"2":47,"3":79}' with those measured numbers.`;
+
+// Parse and validate the operator-supplied mapping. Every rejection below is a
+// value that would otherwise become a silent label.
+function parseFeedbackCrowdMap(raw) {
+  if (raw === undefined || raw === null || String(raw).trim() === '') {
+    const err = new Error(FEEDBACK_MAP_REQUIRED_MESSAGE);
+    err.code = 'FEEDBACK_MAP_MISSING';
+    throw err;
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`${FEEDBACK_CROWD_MAP_ENV} is not valid JSON: ${e.message}`);
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`${FEEDBACK_CROWD_MAP_ENV} must be a JSON object keyed by crowd_level.`);
+  }
+  const keys = Object.keys(parsed).sort();
+  // Exactly the domain of the CHECK constraint on venue_feedback.crowd_level.
+  // A partial map is refused rather than treated as "skip the missing level":
+  // silently dropping every "Very Busy" report would bias the corpus toward
+  // quiet nights, which is the direction that flatters the metrics.
+  if (keys.join(',') !== '1,2,3') {
+    throw new Error(
+      `${FEEDBACK_CROWD_MAP_ENV} must have exactly the keys "1", "2", "3" `
+      + `(venue_feedback.crowd_level's CHECK domain); got [${keys.join(', ')}]. `
+      + 'A partial map would silently discard a whole level of report.'
+    );
+  }
+  const map = {};
+  for (const k of ['1', '2', '3']) {
+    const v = parsed[k];
+    if (typeof v !== 'number' || !Number.isFinite(v) || v < 0 || v > 100) {
+      throw new Error(
+        `${FEEDBACK_CROWD_MAP_ENV}["${k}"] must be a number in 0-100 (a busyness_pct); got ${JSON.stringify(v)}.`
+      );
+    }
+    map[Number(k)] = v;
+  }
+  if (!(map[1] < map[2] && map[2] < map[3])) {
+    throw new Error(
+      `${FEEDBACK_CROWD_MAP_ENV} must be strictly increasing in crowd_level `
+      + `(got ${map[1]}, ${map[2]}, ${map[3]}). crowd_level is an ORDINAL — `
+      + '1 is quieter than 2 is quieter than 3 — and a non-monotone map asserts otherwise.'
+    );
+  }
+  return map;
+}
+
+function feedbackExportRequested(env = process.env) {
+  const v = env[FEEDBACK_ENABLE_ENV];
+  return v === '1' || v === 'true' || v === 'yes';
+}
+
+// ---------------------------------------------------------------------------
+// THE CLOCK. venue_feedback.day_of_week / hour are BUCKET KEYS on the VENUE's
+// wall clock (routes/feedback.js venueLocalDayHour), and migration 021
+// backfilled every row that predated that fix. ml_training_data.hour has been
+// on the venue-local clock since migration 023. So the two agree — but that is
+// a claim about two migrations having run, and PRE-RETRAIN-AUDIT finding 13
+// named exactly this as the risk in doing what this file now does ("that is a
+// fourth clock; do not do it until finding #0.1 is resolved"). It is resolved,
+// and it is CHECKED rather than assumed: 021's own predicate is "the stored
+// keys disagree with created_at rendered in the venue's zone", which is a fixed
+// point of the current write path, so a single disagreeing row proves 021 has
+// not run on this database and the export REFUSES.
+//
+// The join to pg_timezone_names is not decoration either: `AT TIME ZONE` raises
+// on a zone string Postgres does not know, and one typo'd row in ml_venues
+// would otherwise abort the whole query. Rows it excludes are counted by the
+// census as `no_usable_timezone` rather than disappearing.
+// ---------------------------------------------------------------------------
+function feedbackCandidateQuery(city) {
+  return {
+    text: `
+      SELECT
+        f.id           AS feedback_id,
+        f.user_id,
+        f.crowd_level,
+        f.day_of_week,
+        f.hour,
+        f.created_at,
+        to_char(f.created_at AT TIME ZONE z.name, 'YYYY-MM-DD') AS local_date,
+        (EXTRACT(DOW  FROM (f.created_at AT TIME ZONE z.name))::int = f.day_of_week
+         AND EXTRACT(HOUR FROM (f.created_at AT TIME ZONE z.name))::int = f.hour) AS clock_agrees,
+        v.id           AS venue_id,
+        v.city,
+        v.google_place_id,
+        v.google_types, v.latitude, v.longitude,
+        a.venue_category, a.price_level, a.rating, a.review_count,
+        COALESCE(b.baseline, 0) AS baseline_busyness
+      -- verified = true is applied HERE, at the source, rather than in the
+      -- WHERE clause forty lines down: an unverified report must not be able to
+      -- reach any join, any aggregate or any reader in this query, and a filter
+      -- that sits beside the table it protects cannot be separated from it by a
+      -- later edit. Every other reader of this table in the codebase carries the
+      -- same restriction (routes/crowd.js, services/mlPredictor.js,
+      -- routes/venueDashboard.js) and __tests__/arrayShapeSweep.test.js pins
+      -- that none of them lose it.
+      FROM (SELECT * FROM venue_feedback WHERE verified = true) f
+      JOIN ml_venues v         ON v.google_place_id = f.venue_place_id
+      JOIN pg_timezone_names z ON z.name = v.timezone
+      -- Venue-level attributes are not on venue_feedback and not on ml_venues;
+      -- they are stamped onto each ml_training_data row at collection. Take the
+      -- most recent one for this venue. A venue with no corpus row at all has
+      -- no category, no baseline and no place in the category-baseline maps, so
+      -- it is excluded by name below rather than exported with nulls.
+      LEFT JOIN LATERAL (
+        SELECT t.venue_category, t.price_level, t.rating, t.review_count
+          FROM ml_training_data t
+         WHERE t.venue_id = v.id
+         ORDER BY t.collected_at DESC NULLS LAST, t.id DESC
+         LIMIT 1
+      ) a ON true
+      -- The SAME anchor definition every other row in this file gets. A
+      -- feedback row trains as a delta against the number production serves, or
+      -- it trains against nothing.
+      LEFT JOIN (${BASELINE_AGGREGATE_SQL}
+      ) b
+        ON b.google_place_id = v.google_place_id
+       AND b.day_of_week = f.day_of_week
+       AND b.hour = f.hour
+      WHERE v.city = $1
+      ORDER BY v.id, f.day_of_week, f.hour, local_date
+    `,
+    values: [city],
+  };
+}
+
+// Group candidate rows into one training row per (venue, dow, hour, date), one
+// vote per reporter.
+//
+// ONE VOTE PER ACCOUNT, for the reason crowdEngine.usableCalibrationReports
+// gives: a single account that filed six reports for the same venue-hour used
+// to arrive as six independent voices, which both cleared any sample floor by
+// itself and pushed the blend weight up the ladder. Newest report per user_id
+// wins — an account revising its own opinion is one opinion. A NULL user_id
+// counts individually, matching that function; venue_feedback.user_id CASCADEs
+// on account deletion so no such row exists today.
+function groupFeedbackCells(rows) {
+  const cells = new Map();
+  for (const row of rows) {
+    const key = `${row.venue_id}|${row.day_of_week}|${row.hour}|${row.local_date}`;
+    let cell = cells.get(key);
+    if (!cell) {
+      cell = { key, meta: row, votes: new Map() };
+      cells.set(key, cell);
+    }
+    const voter = row.user_id == null ? `anon:${row.feedback_id}` : `u:${row.user_id}`;
+    const prev = cell.votes.get(voter);
+    const at = row.created_at ? new Date(row.created_at).getTime() : 0;
+    if (!prev || at >= prev.at) cell.votes.set(voter, { row, at });
+  }
+  return [...cells.values()];
+}
+
+// Every exclusion reason this path can produce. Two kinds, and the difference
+// is the whole doctrine:
+//   ABSENCE  — the row is fine, we just cannot place it. Counted, logged, skipped.
+//   CORRUPT  — the row contradicts something the schema or a migration
+//              guarantees. Stops the run; a counted skip would hide it.
+const FEEDBACK_EXCLUSION_REASONS = {
+  no_observation_date: { kind: 'absence', why: 'created_at is NULL, so the venue-local date of the report is unknowable and the row cannot be dated, holiday-stamped or joined to a moment' },
+  no_venue_attributes: { kind: 'absence', why: 'the venue has no ml_training_data row, so it has no venue_category — it is in none of the category-baseline cells and cannot be featurised' },
+  below_reporter_floor: { kind: 'absence', why: `fewer than ${MIN_FEEDBACK_REPORTERS} distinct reporters for the venue-hour-date; one 3-point tap is a 60-point-wide opinion` },
+  clock_disagreement: { kind: 'corrupt', why: 'the stored day_of_week/hour disagree with created_at rendered in the venue timezone — migration 021 has not been applied to this database, so the bucket keys are on the UTC clock and the row would be a second clock in the hour column' },
+  unmappable_crowd_level: { kind: 'corrupt', why: "crowd_level is outside venue_feedback's CHECK domain of 1-3, so something wrote past the constraint and no mapping covers it" },
+};
+
+// Build the training row for one grouped cell, or say why not.
+function feedbackCellToTrainingRow(cell, crowdMap) {
+  const meta = cell.meta;
+  const votes = [...cell.votes.values()].map((v) => v.row);
+
+  for (const v of votes) {
+    if (v.clock_agrees === false) return { excluded: 'clock_disagreement', cell };
+    if (!Object.prototype.hasOwnProperty.call(crowdMap, v.crowd_level)) {
+      return { excluded: 'unmappable_crowd_level', cell, detail: v.crowd_level };
+    }
+  }
+  if (!meta.local_date) return { excluded: 'no_observation_date', cell };
+  if (meta.venue_category == null || meta.venue_category === '') {
+    return { excluded: 'no_venue_attributes', cell };
+  }
+  if (votes.length < MIN_FEEDBACK_REPORTERS) return { excluded: 'below_reporter_floor', cell };
+
+  const mean = votes.reduce((s, v) => s + crowdMap[v.crowd_level], 0) / votes.length;
+  const busyness = Math.round(mean);
+  const month = Number(meta.local_date.slice(5, 7));
+
+  return {
+    reporters: votes.length,
+    row: {
+      venue_id: meta.venue_id,
+      day_of_week: meta.day_of_week,
+      hour: meta.hour,
+      // From the report's OWN venue-local date. Not a guess and not the
+      // insert-time UTC month audit finding 5 was about.
+      month,
+      season: getSeason(month),
+      is_holiday: isHoliday(meta.local_date),
+      is_school_break: isSchoolBreak(meta.local_date),
+      venue_category: meta.venue_category,
+      price_level: meta.price_level,
+      rating: meta.rating,
+      review_count: meta.review_count,
+      // NO WEATHER, NO EVENTS. Nothing recorded either at the moment the report
+      // describes, and both are unrecoverable after the fact. Empty, never 0:
+      // 0°C and "no reading" are different facts, and recover_weather_codes
+      // already treats a missing reading honestly (weather_unknown).
+      // KNOWN BLOCKER, stated rather than papered over: prepare_features.py
+      // ends with a fillna(0) over the feature columns, which WOULD assert 0°C
+      // and drive the climate-anomaly feature hard negative on every one of
+      // these rows. That imputation has to become provenance-aware before a
+      // user_report row may train. It is in the handoff.
+      temperature: null,
+      humidity: null,
+      wind_speed: null,
+      weather_condition: null,
+      weather_condition_code: null,
+      is_raining: false,
+      event_nearby: false,
+      event_distance_km: null,
+      event_size: null,
+      event_type: null,
+      event_hours_until: null,
+      has_nearby_event: false,
+      nearest_event_distance_km: null,
+      nearest_event_attendance: null,
+      total_nearby_events: null,
+      total_nearby_attendance: null,
+      nearest_event_type: null,
+      baseline_busyness: meta.baseline_busyness,
+      // A human report is an observation of ONE MOMENT, not a synthetic typical
+      // week, so is_realtime=1 is the truthful value of that column and the
+      // weekly 0.05 pool would be a lie about what the row is. What separates
+      // this row from a BestTime live reading is label_provenance, which is
+      // what the weight ladder is keyed on.
+      collection_mode: 'realtime',
+      busyness_pct: busyness,
+      city: meta.city,
+      google_types: meta.google_types,
+      latitude: meta.latitude,
+      longitude: meta.longitude,
+      // THE FEEDBACK-AS-FEATURE CHANNEL IS OFF FOR THESE ROWS. The per-venue
+      // aggregate contains the very reports that produced this label, and
+      // avg_prediction_error is `mapped(crowd_level) - predicted_score`, i.e.
+      // this row's own label minus a model output. Empty rather than 0 so the
+      // CSV records "not supplied"; prepare_features will read NaN and fill it
+      // with the same 0 a venue with no feedback gets, which is the correct
+      // encoding of "this channel says nothing about this row".
+      avg_user_crowd: null,
+      user_feedback_count: null,
+      avg_prediction_error: null,
+      stored_observed_date: meta.local_date,
+      label_source: FEEDBACK_LABEL_SOURCE,
+      // BestTime was never asked about this moment. Empty, not 0.
+      vendor_forecast_pct: null,
+    },
+  };
+}
+
+// The census. Runs on EVERY export whether the path is enabled or not, for the
+// same reason the round-20 provenance census does: the number that matters is
+// the day it stops being zero, and the only way that day gets noticed is if the
+// export says so out loud every time.
+async function feedbackCensus(db, hasVerifiedColumn) {
+  if (!hasVerifiedColumn) {
+    return { available: false };
+  }
+  const { rows: [row] } = await db.query(
+    `SELECT
+       COUNT(*)::bigint AS verified_rows,
+       COUNT(*) FILTER (WHERE v.id IS NOT NULL)::bigint AS in_ml_venues,
+       COUNT(*) FILTER (WHERE z.name IS NOT NULL)::bigint AS with_usable_timezone,
+       COUNT(*) FILTER (
+         WHERE z.name IS NOT NULL
+           AND f.created_at IS NOT NULL
+           AND NOT (EXTRACT(DOW  FROM (f.created_at AT TIME ZONE z.name))::int = f.day_of_week
+                AND EXTRACT(HOUR FROM (f.created_at AT TIME ZONE z.name))::int = f.hour)
+       )::bigint AS clock_disagreements
+     FROM venue_feedback f
+     LEFT JOIN ml_venues v         ON v.google_place_id = f.venue_place_id
+     LEFT JOIN pg_timezone_names z ON z.name = v.timezone
+     WHERE f.verified = true`
+  );
+  return { available: true, ...row };
+}
+
+const FEEDBACK_CLOCK_REFUSAL_MESSAGE =
+  'REFUSED: verified venue_feedback rows whose stored (day_of_week, hour) disagree with '
+  + 'created_at rendered in their venue timezone. Those bucket keys are on the UTC clock '
+  + '(routes/feedback.js wrote EXTRACT(DOW/HOUR FROM NOW()) before the venue-local fix), so '
+  + 'exporting them would put a second clock in the hour column — the disease migration 023 '
+  + 'cured for ml_training_data, and the exact risk PRE-RETRAIN-AUDIT finding 13 raised '
+  + 'against this export path. Apply migration 021_backfill_feedback_local_buckets.sql '
+  + '(it runs on server boot and is idempotent), then export again.';
+
+// Export every eligible feedback cell for one city onto `stream`. Returns
+// counters; the caller aggregates and reports them.
+async function exportFeedbackCity(pool, city, stream, crowdMap, counters) {
+  const q = feedbackCandidateQuery(city);
+  const client = await pool.connect();
+  let rows;
+  try {
+    await client.query('BEGIN READ ONLY');
+    ({ rows } = await client.query(q.text, q.values));
+    await client.query('COMMIT');
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* already gone */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+
+  counters.candidates += rows.length;
+  if (counters.candidates > FEEDBACK_ROW_CAP) {
+    const err = new Error(
+      `REFUSED: more than ${FEEDBACK_ROW_CAP} verified feedback candidate rows. This path `
+      + 'groups them in memory on the assumption that verified feedback stays orders of '
+      + 'magnitude below the vendor corpus. That assumption has expired — move the '
+      + 'per-(venue, dow, hour, date) grouping into SQL rather than raising this cap.'
+    );
+    err.code = 'FEEDBACK_ROW_CAP';
+    throw err;
+  }
+
+  let chunk = '';
+  for (const cell of groupFeedbackCells(rows)) {
+    counters.cells += 1;
+    const out = feedbackCellToTrainingRow(cell, crowdMap);
+    if (out.excluded) {
+      counters.excluded[out.excluded] = (counters.excluded[out.excluded] || 0) + 1;
+      if (FEEDBACK_EXCLUSION_REASONS[out.excluded].kind === 'corrupt') {
+        counters.corrupt.push({ reason: out.excluded, city, key: cell.key, detail: out.detail });
+      }
+      continue;
+    }
+    counters.emitted += 1;
+    counters.reporters += out.reporters;
+    chunk += rowToCsv(out.row) + '\n';
+  }
+  if (chunk) {
+    const backpressure = write(stream, chunk);
+    if (backpressure) await backpressure;
+  }
+  return counters;
+}
+
+function newFeedbackCounters() {
+  return { candidates: 0, cells: 0, emitted: 0, reporters: 0, excluded: {}, corrupt: [] };
 }
 
 function rowToCsv(row) {
@@ -526,7 +1051,33 @@ async function preflight(db, log = console.log) {
     }
   }
 
-  return { optional, undeclaredWeekly, calendarGaps, provenance };
+  // Round 23: the venue_feedback census. Same doctrine as the round-20 block
+  // above — a REPORT, never a gate, because it is zero on the corpus today and
+  // a gate on it would block every retrain until the product has users.
+  //
+  // `verified` came in with migration 003. Without it there is no way to tell a
+  // presence-verified report from a Sybil one, and every other reader in the
+  // codebase (routes/crowd.js, mlPredictor, the aggregate join above) filters on
+  // it — so its absence disables the label path rather than widening it.
+  const feedbackColumns = await columnsPresent(db, 'venue_feedback');
+  const feedback = await feedbackCensus(db, feedbackColumns.has('verified'));
+  if (!feedback.available) {
+    log('[Export] NOTE: venue_feedback has no `verified` column (migration 003). The '
+      + 'feedback-label path is disabled: an unverified report must never become a '
+      + 'training label.');
+  } else {
+    log(`[Export] Feedback labels: ${feedback.verified_rows} verified venue_feedback rows — `
+      + `${feedback.in_ml_venues} at a venue in ml_venues, `
+      + `${feedback.with_usable_timezone} of those with a usable timezone.`);
+    if (Number(feedback.verified_rows) === 0) {
+      log('[Export] NOTE: no verified feedback exists yet, so the only label source in this '
+        + 'corpus is BestTime. Until that changes the model can only be rewarded for agreeing '
+        + `with one vendor. The path is built and dormant; set ${FEEDBACK_ENABLE_ENV}=1 with a `
+        + `measured ${FEEDBACK_CROWD_MAP_ENV} once there are rows.`);
+    }
+  }
+
+  return { optional, undeclaredWeekly, calendarGaps, provenance, feedback };
 }
 
 // One pass, both counts, and NULL-safe against a database missing either
@@ -680,6 +1231,29 @@ async function runExport({ pool, outDir = __dirname, log = console.log } = {}) {
   let holdoutCount = 0;
   const cityCounts = {};
 
+  // Round 23. Resolved BEFORE a single byte is written: an operator who set the
+  // flag without a mapping must find out in the first second, not after a
+  // two-hour vendor export.
+  const feedbackEnabled = feedbackExportRequested();
+  let crowdMap = null;
+  const feedbackCounters = newFeedbackCounters();
+  if (feedbackEnabled) {
+    if (!pre.feedback.available) {
+      const err = new Error(
+        `REFUSED: ${FEEDBACK_ENABLE_ENV} is set but venue_feedback has no \`verified\` column, `
+        + 'so unverified reports could not be excluded. Apply migration 003.'
+      );
+      err.code = 'FEEDBACK_UNVERIFIABLE';
+      throw err;
+    }
+    crowdMap = parseFeedbackCrowdMap(process.env[FEEDBACK_CROWD_MAP_ENV]);
+    log(`[Export] Feedback labels ENABLED. crowd_level -> busyness_pct map: `
+      + `1=${crowdMap[1]}, 2=${crowdMap[2]}, 3=${crowdMap[3]} (operator-supplied; there is no `
+      + 'default). Rows are emitted with label_source=' + FEEDBACK_LABEL_SOURCE
+      + ', which prepare_features.py currently REFUSES by name — see the handoff note above '
+      + 'labelProvenance(). That interlock is why this cannot silently reach training.');
+  }
+
   try {
     await write(trainStream, HEADER + '\n');
     await write(holdoutStream, HEADER + '\n');
@@ -700,6 +1274,40 @@ async function runExport({ pool, outDir = __dirname, log = console.log } = {}) {
       cityCounts[city] = n;
       if (isHoldout) holdoutCount += n; else trainCount += n;
       log(`  ${n} rows ${isHoldout ? '(holdout)' : '(train)'}`);
+
+      if (feedbackEnabled) {
+        const before = feedbackCounters.emitted;
+        await exportFeedbackCity(pool, city, stream, crowdMap, feedbackCounters);
+        const added = feedbackCounters.emitted - before;
+        if (added > 0) {
+          cityCounts[city] += added;
+          if (isHoldout) holdoutCount += added; else trainCount += added;
+          log(`  + ${added} feedback-labelled rows`);
+        }
+      }
+    }
+
+    // A corrupt row is never a counted skip. Reported AFTER every city so the
+    // message names all of them at once instead of one per re-run, and thrown
+    // before the .partial files are renamed, so a refused run leaves no CSV.
+    if (feedbackCounters.corrupt.length > 0) {
+      const byReason = {};
+      for (const c of feedbackCounters.corrupt) byReason[c.reason] = (byReason[c.reason] || 0) + 1;
+      const lines = Object.entries(byReason).map(([reason, n]) =>
+        `  ${n} cell(s): ${reason} — ${FEEDBACK_EXCLUSION_REASONS[reason].why}`);
+      const first = feedbackCounters.corrupt[0];
+      const err = new Error(
+        (byReason.clock_disagreement ? FEEDBACK_CLOCK_REFUSAL_MESSAGE + '\n' : '')
+        + 'REFUSED: venue_feedback cells that cannot be honestly labelled.\n'
+        + lines.join('\n')
+        + `\n  First offender: city=${first.city} cell=${first.key}`
+        + (first.detail !== undefined ? ` detail=${first.detail}` : '')
+        + '\n  These are not "absent" rows. Each one contradicts something the schema or a '
+        + 'migration guarantees, and letting it become a counted skip is how a bad label '
+        + 'stays invisible.'
+      );
+      err.code = 'FEEDBACK_CORRUPT_ROWS';
+      throw err;
     }
 
     trainStream.end();
@@ -727,13 +1335,31 @@ async function runExport({ pool, outDir = __dirname, log = console.log } = {}) {
   log(`[Export] Holdout cities: ${HOLDOUT_CITIES.join(', ')}`);
   log(`[Export] Elapsed: ${(elapsedMs / 1000).toFixed(1)}s for ${trainCount + holdoutCount} rows`);
 
+  if (feedbackEnabled) {
+    log(`\n[Export] Feedback labels: ${feedbackCounters.candidates} verified reports -> `
+      + `${feedbackCounters.cells} (venue, dow, hour, date) cells -> `
+      + `${feedbackCounters.emitted} rows from ${feedbackCounters.reporters} reporter-votes.`);
+    const skipped = Object.entries(feedbackCounters.excluded);
+    if (skipped.length === 0) {
+      log('[Export]   no cells excluded.');
+    } else {
+      for (const [reason, n] of skipped.sort((a, b) => b[1] - a[1])) {
+        log(`[Export]   excluded ${n} cell(s): ${reason} — ${FEEDBACK_EXCLUSION_REASONS[reason].why}`);
+      }
+    }
+  }
+
   log('\n[Export] City breakdown:');
   for (const [city, count] of Object.entries(cityCounts).sort((a, b) => b[1] - a[1])) {
     const set = HOLDOUT_CITIES.includes(city) ? '(holdout)' : '(train)';
     log(`  ${city.padEnd(16)} ${String(count).padStart(8)} rows  ${set}`);
   }
 
-  return { trainCount, holdoutCount, cityCounts, trainPath, holdoutPath, trainBytes, holdoutBytes, elapsedMs };
+  return {
+    trainCount, holdoutCount, cityCounts, trainPath, holdoutPath,
+    trainBytes, holdoutBytes, elapsedMs,
+    feedback: { enabled: feedbackEnabled, ...feedbackCounters },
+  };
 }
 
 // The pool is built HERE, not at module load. Requiring this file used to run
@@ -796,4 +1422,21 @@ module.exports = {
   HOLDOUT_CITIES,
   UNDECLARED_WEEKLY_MESSAGE,
   FETCH_SIZE,
+  // Round 23 — venue_feedback as a label source.
+  FEEDBACK_LABEL_SOURCE,
+  FEEDBACK_ENABLE_ENV,
+  FEEDBACK_CROWD_MAP_ENV,
+  FEEDBACK_MAP_REQUIRED_MESSAGE,
+  FEEDBACK_CLOCK_REFUSAL_MESSAGE,
+  FEEDBACK_EXCLUSION_REASONS,
+  MIN_FEEDBACK_REPORTERS,
+  FEEDBACK_ROW_CAP,
+  parseFeedbackCrowdMap,
+  feedbackExportRequested,
+  feedbackCandidateQuery,
+  groupFeedbackCells,
+  feedbackCellToTrainingRow,
+  feedbackCensus,
+  exportFeedbackCity,
+  newFeedbackCounters,
 };

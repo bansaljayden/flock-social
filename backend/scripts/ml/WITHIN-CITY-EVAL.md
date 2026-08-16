@@ -517,3 +517,199 @@ scan. Measured on the embedded-Postgres harness at two corpus sizes — **3 ms o
 5 rows, 17 ms on 1,000,005 rows** — so it is O(1) in the row count, unlike 023
 (9 minutes of closed port) and 024 (~2). `__tests__/mlLabelProvenance.test.js`
 fails if that ever stops being true.
+
+---
+
+## 10. Follow-up (2026-08-16): why philly and lehigh measure negative
+
+Section 4 recorded the delta layer lowering within-10 below baseline-alone in
+two of the three cities the product serves. This section is the mechanism.
+Everything below is arithmetic on `train/features_train.pkl` (1,934,988 rows,
+369,076 of them realtime-served) plus `train/best_model.pkl` predictions on the
+rows it was fitted on. **No refit was performed, so every model number in this
+section is IN-SAMPLE and is marked as such.** Nothing in `models/` was touched.
+
+There are two causes. One is a scoring mismatch worth about a point of
+within-10 in every city. The other is real and specific to philly.
+
+### 10.1 Within-10 was measured with an unrounded model against an integer baseline
+
+The corpus sits on a grid. **100.00% of realtime-served baselines are integers**
+(`buildBaselines.js` and `mlPredictor.js` both store `Math.round`) and
+**100.00% of labels are multiples of 5**. So `|actual − baseline|` is an
+integer, and a measurable share of rows lands *exactly* on 10, inside the
+inclusive `<= 10` test:
+
+| city | rows | \|err\| == 10 | \|err\| in (10, 11] | baseline W10 | baseline W10 without the ==10 mass |
+|---|---|---|---|---|---|
+| philly | 8,088 | 2.73% | 2.27% | 22.8% | 20.0% |
+| lehigh | 22,332 | 3.17% | 2.63% | 23.5% | 20.3% |
+| la | 53,791 | 2.80% | 2.33% | 23.7% | 20.9% |
+| nyc | 45,740 | 2.45% | 2.16% | 20.4% | 18.0% |
+| seoul | 8,235 | 3.75% | 3.05% | 32.6% | 28.8% |
+
+`within_city_eval.reconstruct()` returns an unrounded float on purpose, so the
+numbers stay comparable to `quick_eval.py`. **`mlPredictor.js` rounds:**
+`score = Math.round(baseline + clamp(delta, ±30))`. The evaluation therefore
+scored a predictor that can never land exactly on 10 against a baseline that
+lands there on 2.3–3.8% of rows. Production does not do that.
+
+Size of the effect, measured two ways on the realtime-served rows:
+
+| predictor | philly | lehigh | la | nyc | seoul |
+|---|---|---|---|---|---|
+| shipped model, ΔW10 unrounded (in-sample) | −0.17 | +1.93 | +1.88 | +1.85 | +4.00 |
+| shipped model, ΔW10 rounded (in-sample) | **+0.94** | +2.99 | +3.03 | +2.85 | +5.46 |
+| cross-fitted cell means, ΔW10 unrounded | +0.69 | +0.25 | −0.59 | +0.28 | +2.84 |
+| cross-fitted cell means, ΔW10 rounded | +1.64 | +1.25 | +0.38 | +1.19 | +4.32 |
+| **rounding bonus** (model / cell means) | +1.11 / +0.95 | +1.07 / +1.01 | +1.15 / +0.97 | +1.00 / +0.91 | +1.47 / +1.48 |
+
+Corpus-wide over all 369,076 realtime-served rows: baseline W10 22.37, model
+unrounded 24.15, model rounded 25.25, **bonus +1.10 pp**. MAE is 26.36 either
+way — identical to two decimals. The bonus lands between +0.82 and +1.48 in all
+seven cities measured, for both a memorising predictor and a deliberately weak
+cross-fitted one, because it is a property of the error density at the boundary
+and not of fit quality.
+
+**Consequence for section 4's table, as an estimate rather than a re-run:**
+philly −0.2 → ≈ **+0.8**, lehigh −1.2 → ≈ **−0.2**, la +0.1 → ≈ **+1.1**,
+headline +0.3 → ≈ **+1.3**. The MAE column does not move. Treat these as
+lower-ish bounds with about ±0.2 of slack: the bonus is roughly half the mass
+sitting exactly on the boundary, and the forward test window's baseline is
+weaker than the full corpus's (philly 17.4% W10 there against 22.8% here), so
+its boundary mass is slightly thinner.
+
+The fix is one line, and it must be applied to the model and the baseline
+together: score them the way production serves them. Re-running
+`within_city_eval.py` with `np.round` in `reconstruct()` replaces the estimate
+above with a measurement. The same boundary exists at within-15, and at the
+ship gate's realtime within-10 floor — `MODEL-METRICS.md`'s challenger 20.6%
+and incumbent 19.3% are both unrounded delta models and both gain about a
+point, while baseline-alone's 19.2% does not move. Gate criteria 1 (beat the
+baseline) and 3 (the absolute realtime within-10 floor) both move; criterion 2
+(MAE) does not move at all, and criterion 4 (incumbent comparison) does not
+move because both sides gain the same point.
+
+### 10.2 The real part: in philly there is almost nothing left to learn
+
+Four cheap hypotheses, all refuted by arithmetic before any speculation.
+
+**Not sample weight.** Share of a city's training weight carried by weight-0.05
+weekly anchors, whose delta label is 0 by construction: philly 28.8%, seoul
+27.3%, buenosaires 37.7%. Seoul and buenosaires are the two cities the delta
+layer helps *most* (+2.58 and +5.20 MAE, section 4).
+
+**Not live-row volume.** philly holds 8,088 live rows, 2.19% of the corpus's
+live rows. Seoul holds 8,235 (2.23%) and buenosaires 3,865 (1.05%).
+
+**Not "the baseline is already good, so there is no headroom."** philly's
+baseline is the worst of the three home cities: MAE 29.32, W10 22.8%, against
+seoul's 22.53 / 32.6%.
+
+**Not a sign error inherited from the corpus mean.** Mean predicted delta
+tracks the true city mean in all 30 cities (philly +4.87 predicted vs +5.82
+actual; la −6.46 vs −6.65). The model finds the level everywhere.
+
+What is actually different is **discrimination**, and the spread it has to
+discriminate against:
+
+| city | corr(pred, delta) in-sample | SD of predicted delta | SD of delta label | median within-cell SD | SD of cell means | share of delta variance addressable by (category, dow, hour) |
+|---|---|---|---|---|---|---|
+| **philly** | **0.260** | 5.83 | 35.49 | 33.63 | 11.01 | **9.7%** |
+| **lehigh** | 0.423 | 10.79 | 34.46 | 31.33 | 13.54 | 15.7% |
+| la | 0.450 | 12.84 | 35.06 | 31.36 | 14.07 | 16.8% |
+| seoul | 0.362 | 6.43 | 28.16 | 24.27 | 12.11 | 19.9% |
+| mexico | 0.538 | 14.94 | 32.70 | 27.63 | 14.05 | 20.6% |
+
+philly's 0.260 is the second-lowest correlation of the 30 cities, and it is
+in-sample: the model was fitted on those exact rows and still cannot order
+them. Cells are `(category, day_of_week, hour)` with at least 8 rows.
+
+**The ceiling that implies, measured rather than argued.** Fit
+`(category, dow, hour)` mean deltas on a random half of a city's live rows,
+score the other half, both directions — an oracle for the entire class of
+time-and-category-conditional corrections, and still optimistic, because random
+halves share venues and dates:
+
+| city | cell-model MAE | baseline MAE | ΔMAE | cell-model W10 | baseline W10 | ΔW10 |
+|---|---|---|---|---|---|---|
+| philly | 28.71 | 29.32 | +0.60 | 23.47 | 22.77 | **+0.69** |
+| lehigh | 26.86 | 27.93 | +1.07 | 23.74 | 23.49 | **+0.25** |
+| la | 27.44 | 28.78 | +1.33 | 23.10 | 23.69 | −0.59 |
+| seoul | 20.72 | 22.53 | +1.82 | 35.41 | 32.57 | +2.84 |
+| nyc | 28.95 | 30.53 | +1.59 | 20.72 | 20.44 | +0.28 |
+
+Unrounded, to match section 4. **In philly the best available answer from the
+whole class is +0.69 pp of within-10.** The shipped model gets −0.17 in-sample.
+The gap between what ships and what philly's own data can support is under one
+point.
+
+**And the one channel that might carry more is empty in philly.** All 14 event
+features are constant across philly's live rows, and `has_nearby_event` is 0 on
+all 73,640 philly rows, live and weekly alike. Ticketmaster
+enrichment reached 10 of 30 cities: london 25.9% of rows, nyc 22.0%, sydney
+13.9%, chicago 7.5%, la 4.2%, mexico 2.6%, boston 2.3%, lehigh 0.36%, dallas
+0.23%, dubai 0.08%. **philly 0.00%.** `is_holiday` is zero corpus-wide and all
+four season flags are constant, so in philly the model's whole reachable
+hypothesis space is the class the table above prices.
+
+**Where philly loses even in-sample** (rounded, so the 10.1 artifact is
+removed): gym, 1,424 rows and 17.6% of philly's live rows, baseline W10 24.2 →
+model 22.1; bar, 793 rows, 21.9 → 20.6. philly's gym mean delta is **+8.1**
+while la's is −4.4, and la + london + nyc + chicago supply **51.7%** of the
+corpus's live rows with mean deltas of −6.65, −5.02, −5.26 and −3.07.
+
+### 10.3 What would change the number, and what would not
+
+1. **Score the way production serves.** Free, and the largest single move:
+   about +1.0 pp of within-10 in every city, enough to flip philly's sign. It
+   is a measurement correction, not a model improvement — MAE does not move.
+   Apply it in `within_city_eval.py`, `quick_eval.py` and `evaluate_model.py`
+   in one change, to the model and the baseline alike, and re-derive the gate's
+   floor from rounded numbers.
+2. **Do not route PA to baseline-alone.** Measured cost: +1.09 MAE in philly
+   and +0.93 in lehigh (section 4), to buy +0.2 and +1.2 pp of *unrounded*
+   within-10 — and those two gains are inside the +1.0 pp the rounding
+   correction hands back. Serving the bare baseline in PA is worse on both
+   metrics the product could quote.
+3. **Do not add a per-city or per-region shift term.** The best per-city
+   constant that exists was swept over s ∈ [−10, +12]: philly's within-10 peaks
+   at s = +6..+10 (+0.9 pp) while its MAE is minimised at s = +8; lehigh's
+   within-10 peaks at s = −10 while its MAE is minimised at s = −4; la is −4 vs
+   −6; nyc is −10 vs −6. The two metrics disagree on direction in lehigh and
+   nyc, and the whole effect is under a point on an 8,088-row city.
+4. **Upweighting philly, or fitting philly alone, cannot pass +0.69 pp.** That
+   is the measured ceiling for the class of predictors philly's rows support,
+   and weight does not add features.
+5. **Collecting Ticketmaster events for philly is cheap, and the corpus gives
+   no evidence it pays.** The four cities with the most event coverage (london
+   25.9%, nyc 22.0%, chicago 7.5%, la 4.2%) are not the cities the delta layer
+   helps: london is −0.5 pp of within-10 and nyc +0.4. The five it helps most —
+   seoul, buenosaires, delhi, mumbai, saopaulo — have **0.00%** coverage. Fill
+   the gap because a zero-coverage major event market is a collection defect,
+   not because a within-10 gain is expected.
+
+### 10.4 Verdict
+
+**philly.** The delta layer is not negative once it is scored the way
+production serves it: estimated +0.8 pp of within-10 and a measured +1.09 MAE.
+It is also not worth much, and it cannot be made worth much with the data that
+exists — the ceiling for any correction philly's own rows can support is +0.69
+pp over the baseline, and the model already reaches within a point of it while
+fitted on those rows.
+
+**lehigh.** Approximately zero. In-sample the model is +2.99 pp rounded;
+honestly, forward in time, it is about −0.2 after the same correction. That gap
+is generalisation, not a ceiling: lehigh's addressable variance share is 15.7%
+against philly's 9.7%, and its cross-fitted ceiling is +0.25 pp.
+
+**Fixability with data already collected: no.** The limit in philly is the
+spread of the delta label inside a `(category, dow, hour)` cell — 33.63 points
+against 24.27 in seoul — and no reweighting, per-city term or extra capacity
+touches it. What would touch it is a feature that varies *within* a cell and
+correlates with the deviation. The corpus has one such family, events, and
+philly has none of it; the cities that do have it are not the cities the model
+helps. That is the honest state: **the routing decision should be "keep serving
+the model in PA", not because it is good there, but because baseline-alone is
+measurably worse and the delta layer's remaining upside in PA is under one
+point of within-10.**
