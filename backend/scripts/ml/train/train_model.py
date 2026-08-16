@@ -349,7 +349,7 @@ def assert_weighting_matches_provenance(sample_weight, is_realtime, provenance) 
 # IT UNREPEATABLE. The first version of these statistics was aggregated after the
 # serving-population filter, because row_cell/row_group are positional indexes
 # into X and X is the filtered matrix. But the map being replaced is fitted
-# BEFORE that filter, on 3.57M rows rather than 1.93M. Measured on the shipped
+# BEFORE that filter, on 3,516,876 rows rather than 1,934,988. Measured on the shipped
 # pickle: a fold map built that way moved category_baseline on 99.9% of rows by a
 # mean of 9.27 points, while removing the held-out city — the entire point — moved
 # it on 75% of rows by a mean of 0.17. Reporting the resulting cross-validation
