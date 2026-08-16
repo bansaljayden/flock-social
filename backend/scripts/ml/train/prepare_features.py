@@ -999,7 +999,7 @@ def build_category_baseline_maps(df: pd.DataFrame) -> Dict:
 # built after the serving-population filter, because row_cell / row_group are
 # positional indexes into X and X is the filtered matrix. But the map they stand
 # in for is fitted by build_category_baseline_maps BEFORE that filter, on all
-# 3.57M rows rather than the 1.93M with a real baseline. Measured on the shipped
+# 3,516,876 rows rather than the 1,934,988 with a real baseline. Measured on the shipped
 # pickle, a fold map built the old way moved category_baseline on 99.9% of rows
 # by a mean of 9.27 points, while removing the held-out city — the entire point —
 # moved it on 75% of rows by a mean of 0.17. The confound was fifty-four times

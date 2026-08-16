@@ -401,7 +401,7 @@ FSQ/Overture instead; see vault note on the baseline provenance question).
    statistics were first aggregated AFTER the serving-population filter, since
    `row_cell` / `row_group` are positional indexes into `X` and `X` is the
    filtered matrix. But the map they replace is fitted BEFORE that filter, on
-   3.57M rows rather than 1.93M. Measured on the shipped pickle:
+   3,516,876 rows rather than 1,934,988. Measured on the shipped pickle:
 
    | difference the fold map carried | rows moved | mean abs shift |
    |---|---|---|
