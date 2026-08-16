@@ -374,6 +374,45 @@ async function collectRealtime() {
     + `${duplicateRows > 0 ? `, ${duplicateRows} already recorded for this venue-hour-date` : ''}.`);
 
   await auditProvenance(runStartedAt, liveRows + forecastRows);
+
+  // A RUN THAT COLLECTED NOTHING MUST NOT REPORT SUCCESS, and for 90 days it did.
+  //
+  // The BestTime key went dead account-wide some time around 2026-05-18. Every
+  // three hours from then until 2026-08-16 the cron started, took a 403 on the
+  // first venue, aborted, printed a tidy summary, ran the provenance audit —
+  // which compared the 0 rows it expected against the 0 rows it found and passed
+  // — and exited 0. Railway recorded ~700 consecutive SUCCESSES. Nobody looked,
+  // because there was nothing to look at: the platform said green.
+  //
+  // The audit above is the wrong instrument for this. It asks "is what I wrote
+  // labelled", and it is scrupulously correct that nothing unlabelled was
+  // written. Zero rows are trivially all-labelled. Absence of bad data is not
+  // presence of good data, so the emptiness needs its own check.
+  //
+  // `aborted` is the unambiguous case: the run stopped early on an upstream
+  // error and must exit non-zero. A completed run that still wrote nothing is
+  // also wrong — 22,145 venues cannot all legitimately have nothing to say — but
+  // it is a softer signal, so it refuses too and names the benign explanation so
+  // the reader can rule it out rather than guess.
+  if (aborted) {
+    throw new Error(
+      `REFUSED: the run aborted after ${totalRows} rows. Exiting non-zero so the scheduler `
+      + 'records a failure. A 403 on every BestTime endpoint (live, forecasts-by-id, venues) '
+      + 'is an account-level rejection rather than a spent quota, which returns 402 — check '
+      + 'the BestTime subscription state before replacing the key, because a new key on a '
+      + 'lapsed account fails identically.');
+  }
+  // duplicateRows > 0 is the one benign way to write nothing: a re-run inside the
+  // same venue-hour-date, which migration 024's unique index correctly drops.
+  // That is the collector working, not failing, so it is excluded by the
+  // condition rather than only mentioned in the message.
+  if (totalRows === 0 && duplicateRows === 0 && skipped < venues.length) {
+    throw new Error(
+      `REFUSED: the run completed without aborting and wrote 0 rows, having skipped ${skipped} `
+      + `of ${venues.length} venues. That is not a plausible outcome of a healthy run. If every `
+      + 'venue was genuinely already recorded for this venue-hour-date, the duplicate counter '
+      + 'would say so; it says 0.');
+  }
 }
 
 // ---------------------------------------------------------------------------
