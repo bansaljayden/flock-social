@@ -341,18 +341,18 @@ describe('llms.txt stays true to the shipped model', () => {
   test('the five crowd-model figures match model_metadata.json', () => {
     // Same pinning AboutPage and the landing proof line get. A retrain that
     // changes the corpus must change llms.txt in the same commit.
-    expect(meta.training_rows).toBe(2070239);
-    expect(llms).toContain('2,070,239');
-    expect(meta.holdout_rows).toBe(419320);
-    expect(llms).toContain('419,320');
-    expect(meta.training_cities).toHaveLength(31);
-    expect(llms).toContain('across 31 cities');
+    expect(meta.training_rows).toBe(1934988);
+    expect(llms).toContain('1,934,988');
+    expect(meta.holdout_rows).toBe(395464);
+    expect(llms).toContain('395,464');
+    expect(meta.training_cities).toHaveLength(30);
+    expect(llms).toContain('across 30 cities');
     expect(meta.feature_names).toHaveLength(106);
     expect(llms).toContain('106 input signals');
-    expect(meta.ship_gate.realtime_mae_improvement).toBeCloseTo(2.29, 2);
-    expect(llms).toContain('2.29 points');
-    expect(meta.ship_gate.realtime_rows).toBe(68459);
-    expect(llms).toContain('68,459');
+    expect(meta.ship_gate.realtime_mae_improvement).toBeCloseTo(2.06, 2);
+    expect(llms).toContain('2.06 points');
+    expect(meta.ship_gate.realtime_rows).toBe(67249);
+    expect(llms).toContain('67,249');
   });
 
   test('the holdout cities named are the ones in the metadata, disjoint from training', () => {

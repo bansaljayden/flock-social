@@ -1,8 +1,24 @@
 # Contributing
 
-## The license situation, first
+## License
 
-This repo does not have a license file yet. Until one lands, all rights are reserved and **pull requests cannot be merged**, because there is no legal basis for accepting outside code. Feel free to read, run it locally, and open issues. Once a LICENSE file exists this section will be replaced.
+This repo is licensed under the **PolyForm Noncommercial License 1.0.0**. The full
+text is in [`LICENSE`](LICENSE) at the repo root.
+
+What that permits: read it, run it, modify it, and share it (including your
+modified versions) for any noncommercial purpose. Personal study, hobby projects,
+research, teaching, and use by schools, charities, public research bodies and
+government all count as noncommercial.
+
+What it does not permit: commercial use of any kind. If you want to use Flock, or
+anything derived from it, in a commercial product or service, that needs a
+separate agreement. Email social@flockcorp.com.
+
+Pull requests are welcome and are accepted under these same terms: by opening one
+you agree your contribution is licensed under PolyForm Noncommercial 1.0.0, and
+that the maintainer may also license the project (including your contribution)
+commercially. Keep the `Required Notice:` line in `LICENSE` intact in any copy you
+distribute; the license requires it to travel with the software.
 
 ## Running the test suites
 

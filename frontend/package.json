@@ -1,6 +1,7 @@
 {
   "name": "flock-app",
   "version": "0.1.0",
+  "license": "SEE LICENSE IN LICENSE",
   "private": true,
   "dependencies": {
     "@capacitor-community/apple-sign-in": "^7.1.0",

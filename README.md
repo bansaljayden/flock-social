@@ -71,16 +71,20 @@ popularity, per-venue baselines, and user feedback.
 - Venues the model doesn't know yet (no baseline, no popular-times signal)
   are answered by the rule engine in `crowdEngine.js` instead of guessing.
 
-> ⚠️ **`crowd_model.onnx` is tracked in git and does deploy — but `.gitignore`
-> line 48 names it anyway.** The rule is inert only because the file was committed
-> before it existed, and `.gitignore` never applies to already-tracked paths
-> (confirmed 2026-08-14: `git ls-files` lists both the 11 MB `.onnx` and
-> `model_metadata.json`). It is a live trap. If anyone ever runs
-> `git rm --cached` on it, or the file is re-added in a fresh clone, the rule
-> activates and the model silently stops shipping — after which production serves
-> the rule engine forever, announced by nothing but one `console.log` in
-> `mlPredictor.js`. **Delete line 48 or negate it**, so the file's intent and
-> git's behavior agree.
+> **The trained model is not in this repo.** `crowd_model.onnx` (11 MB) and
+> `model_metadata.json` are Flock's own artifacts, built from Flock's own
+> collected data, and they are not distributed with the source. Everything that
+> produced them is here: the collection scripts in `backend/scripts/ml/`, the
+> training pipeline in `backend/scripts/ml/train/`, and the runbook in
+> `backend/scripts/ml/RETRAIN.md`. See `backend/scripts/ml/models/README.md` for
+> how to train your own from your own data.
+>
+> With no artifact on disk, `mlPredictor.js` logs
+> `Model files not found — using rule engine` once at boot and every prediction
+> is answered by `crowdEngine.js`, tagged `predictionMethod: 'rule_engine'`. That
+> is a designed path, not a crash, but it does mean a clone of this repo serves
+> the rule engine and not the model. The ML test suites in `backend/__tests__/`
+> read the artifacts directly and will fail without them.
 
 The difference from busyness charts elsewhere: those measure who already
 showed up. Flock's venue votes also capture which venues groups are
@@ -103,7 +107,7 @@ flock-app/
 ├── frontend/          # React app + marketing site (frontend/src/website)
 │   └── ios/           # Capacitor iOS shell (built by Codemagic → TestFlight)
 ├── backend/           # Express API + Socket.io + ML predictor
-│   └── scripts/ml/    # Training pipeline + committed ONNX model artifacts (see warning)
+│   └── scripts/ml/    # Data collection + training pipeline (trained model not distributed)
 ├── flock-sensor/      # Raspberry Pi occupancy sensor pipeline (proven, hardware pending)
 └── mobile/            # React Native port (not the launch path)
 ```
@@ -148,6 +152,7 @@ flock-app/
 | `backend/scripts/ml/RETRAIN.md` | Crowd-model retrain runbook and ship gate |
 | `backend/scripts/ml/MODEL-METRICS.md` | Measured model numbers and what they mean |
 | `codemagic.yaml` | iOS CI: build, sign, auto-increment, TestFlight |
+| `LICENSE` / `CONTRIBUTING.md` | PolyForm Noncommercial 1.0.0, and how contributions are accepted under it |
 
 Internal working notes (submission packets, decision memos, session docs) are
 kept out of the repo on purpose.
@@ -182,6 +187,12 @@ no 010**; the number was skipped, not lost. Every migration the code needs is
 tracked, so a deploy from HEAD is complete.
 
 Backend tests: `cd backend && node --test` · local E2E: `npm run e2e`
+
+## License
+
+[PolyForm Noncommercial License 1.0.0](LICENSE). You may read, run, modify and
+share this code for any noncommercial purpose. Commercial use requires a separate
+agreement: email social@flockcorp.com.
 
 ---
 

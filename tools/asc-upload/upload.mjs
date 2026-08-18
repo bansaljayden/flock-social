@@ -40,7 +40,7 @@ const { values: args } = parseArgs({
     issuer: { type: 'string' },
     'dry-run': { type: 'boolean', default: false },
     doc: { type: 'string', default: join(REPO_ROOT, 'APP-STORE-SUBMISSION.md') },
-    'screenshots-dir': { type: 'string', default: join(REPO_ROOT, 'frontend', 'public', 'screenshots', 'appstore') },
+    'screenshots-dir': { type: 'string', default: join(REPO_ROOT, 'store-assets') },
     'bundle-id': { type: 'string', default: 'com.flockcorp.flock' },
     version: { type: 'string', default: '1.0' },
     locale: { type: 'string', default: 'en-US' },
@@ -56,7 +56,7 @@ if (args.help) {
   --issuer <uuid>         issuer ID from the API Keys page
   --dry-run               parse + validate + plan, no network writes
   --doc <path>            submission doc (default: APP-STORE-SUBMISSION.md at repo root)
-  --screenshots-dir <p>   default: frontend/public/screenshots/appstore
+  --screenshots-dir <p>   default: store-assets (repo root, gitignored)
   --bundle-id <id>        default: com.flockcorp.flock
   --version <v>           default: 1.0
   --locale <l>            default: en-US

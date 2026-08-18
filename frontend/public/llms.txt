@@ -52,11 +52,11 @@ as of the August 12, 2026 training run (version 2.5.0 "Starling").
   busyness chart.
 - The model predicts hourly venue busyness from 106 input signals: time patterns,
   weather, nearby events, venue category, and how that specific venue usually runs.
-- It was trained on 2,070,239 venue-hour observations across 31 cities.
-- It was evaluated on 419,320 held-out venue-hour observations from three cities
+- It was trained on 1,934,988 venue-hour observations across 30 cities.
+- It was evaluated on 395,464 held-out venue-hour observations from three cities
   the model never trained on: Barcelona, Miami, and Tokyo.
-- On the realtime slice of that holdout (68,459 observations), it reduces mean
-  absolute error by 2.29 points against the popular-times baseline it started from.
+- On the realtime slice of that holdout (67,249 observations), it reduces mean
+  absolute error by 2.06 points against the popular-times baseline it started from.
 - When a venue is too new or too small for the model to know it, a rule-based
   engine answers instead of guessing.
 

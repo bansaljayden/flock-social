@@ -25,9 +25,12 @@
  *     can still read are external API keys (Places, Gemini, weather), which
  *     make the screens real and never touch the production database.
  *
- * Outputs land in frontend/public/screenshots/ (web set, PNG + WebP) and
- * frontend/public/screenshots/appstore/ (PNG, alpha flattened per Apple spec),
- * plus manifest.json and WIRING.md next to them.
+ * Outputs land in frontend/public/screenshots/ (web set, PNG + WebP, deployed
+ * with the site) and store-assets/ at the repo root (App Store set, PNG, alpha
+ * flattened per Apple spec). The App Store set is deliberately OUTSIDE public/:
+ * it is 56 MB of submission material with no reason to be fetchable on the web,
+ * and store-assets/ is gitignored. manifest.json and WIRING.md are written into
+ * the web set.
  */
 
 import { createRequire } from 'node:module';
@@ -44,7 +47,7 @@ const FRONTEND_DIR = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(FRONTEND_DIR, '..');
 const BACKEND_DIR = path.join(REPO_ROOT, 'backend');
 const OUT_DIR = path.join(FRONTEND_DIR, 'public', 'screenshots');
-const APPSTORE_DIR = path.join(OUT_DIR, 'appstore');
+const APPSTORE_DIR = path.join(REPO_ROOT, 'store-assets');
 
 // CommonJS deps live in the two package roots; reach them explicitly so this
 // script works no matter what cwd it is launched from.
@@ -925,7 +928,7 @@ async function snap(page, sharp, manifest, { screen, size, mode }) {
     const inches = size.id.endsWith('6.9') ? '6.9' : '6.5';
     const file = `${screen.id}-${mode}-${inches}in.png`;
     await sharp(raw).flatten({ background: '#ffffff' }).removeAlpha().png({ compressionLevel: 9 }).toFile(path.join(APPSTORE_DIR, file));
-    manifest.push({ file: `screenshots/appstore/${file}`, screen: screen.id, title: screen.title, mode, set: `appstore-${inches}`, width: px.w, height: px.h, replaces: null });
+    manifest.push({ file: `store-assets/${file}`, screen: screen.id, title: screen.title, mode, set: `appstore-${inches}`, width: px.w, height: px.h, replaces: null });
   }
   log(`  ok ${screen.id} [${size.id}/${mode}]`);
 }
@@ -981,7 +984,7 @@ once the agents holding \`frontend/src/website/*\` land.
 
 ## App Store Connect
 
-Upload from \`screenshots/appstore/\`:
+Upload from \`store-assets/\` at the repo root (gitignored, not deployed):
 - \`*-6.9in.png\` (1320x2868) satisfies the REQUIRED 6.9-inch slot.
 - \`*-6.5in.png\` (1284x2778) fills the optional 6.5-inch slot.
 Both light and dark variants exist for every screen; pick one narrative set of
