@@ -145,9 +145,9 @@ describe('the page only sells things that exist', () => {
     ));
     const copy = visible.replace(/\s+/g, ' ');
 
-    expect(Math.round(meta.training_rows / 100000) / 10).toBeCloseTo(2.1, 5);
-    expect(meta.training_cities.length).toBe(31);
-    expect(copy).toMatch(/2\.1 million\s*venue-hour observations across 31 cities/);
+    expect(Math.round(meta.training_rows / 100000) / 10).toBeCloseTo(1.9, 5);
+    expect(meta.training_cities.length).toBe(30);
+    expect(copy).toMatch(/1\.9 million\s*venue-hour observations across 30 cities/);
   });
 
   test('nothing on the page claims a team that does not exist', () => {

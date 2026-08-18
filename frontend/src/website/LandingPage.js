@@ -569,12 +569,12 @@ export default function LandingPage() {
               and until now they only existed on /about, which is the page
               nobody reads. They belong here, one line above the demo that is
               about to run the model in front of you: "everything below is live"
-              is an assertion, and 2.1 million observations across 31 cities is
+              is an assertion, and 1.9 million observations across 30 cities is
               the reason to believe it.
 
               Both numbers are read straight out of
               backend/scripts/ml/models/model_metadata.json (training_rows
-              2,070,239 and 31 entries in training_cities) and are pinned
+              1,934,988 and 30 entries in training_cities) and are pinned
               against that file in landingPageClaims.test.js, the same way
               AboutPage's five figures are pinned. If the model is retrained and
               the corpus changes, that test goes red and this sentence gets
@@ -583,8 +583,8 @@ export default function LandingPage() {
               "hours" or "venues", which are different quantities. */}
           <p className="lp-demo-proof" id="try">
             Everything below is live. The map, the pins, and the numbers come
-            from the same model that ships inside Flock, trained on 2.1 million
-            venue-hour observations across 31 cities. Pick a pin.
+            from the same model that ships inside Flock, trained on 1.9 million
+            venue-hour observations across 30 cities. Pick a pin.
           </p>
           {/* 800px of lead: the demo is loading and drawing before it reaches
               the screen, so arriving here still feels like it was always

@@ -30,7 +30,7 @@ once the agents holding `frontend/src/website/*` land.
 
 ## App Store Connect
 
-Upload from `screenshots/appstore/`:
+Upload from `store-assets/` at the repo root (gitignored, not deployed):
 - `*-6.9in.png` (1320x2868) satisfies the REQUIRED 6.9-inch slot.
 - `*-6.5in.png` (1284x2778) fills the optional 6.5-inch slot.
 Both light and dark variants exist for every screen; pick one narrative set of
