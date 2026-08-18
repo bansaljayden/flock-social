@@ -84,63 +84,85 @@ function hedgeLabel(label) {
 // Returns the basis, whether the answer may be stated as fact, and the ceiling
 // (null = no cap; the model's confidence is a measured figure and stands).
 // ---------------------------------------------------------------------------
-// IS THE MODEL'S ANCHOR ON A CLOCK ANYBODY CAN VOUCH FOR? SINCE 2026-08-15,
-// YES — BUT THE SERVED WEIGHTS AND THEIR MEASURED METRICS STILL PREDATE THE
-// FIX, SO THIS STAYS FALSE UNTIL THE RETRAIN.
+// IS THE MODEL'S ANCHOR ON A CLOCK ANYBODY CAN VOUCH FOR? SINCE 2026-08-18,
+// YES. THE CORPUS, THE BASELINES AND NOW THE WEIGHTS ARE ALL ON THE VENUE'S
+// OWN CLOCK.
 //
-// Flip this to true in the SAME change that ships the retrain, and the model
-// goes back to stating its bands as fact. Nothing else has to move.
+// The history, kept because the bug took three layers to kill. Weekly rows
+// were stored on BestTime's day_raw array index, whose day starts at 06:00, so
+// a 6 PM lookup read the venue's overnight number. That is the packed
+// restaurant reading 20% at dinner.
 //
-// Why it is still false (updated 2026-08-18). The corpus and the baselines are
-// fixed: migration 023_backfill_ml_weekly_local_hours.sql moved every weekly
-// row onto the venue-local hour axis and rebuilt ml_venue_baselines from the
-// corrected rows (verified in production: 3,454,955 weekly rows on
-// hour_axis = 'venue_local', zero left on the BestTime index), and both
-// collectors now write and declare 'venue_local'. The shipped model is
-// `label_type: 'delta'` — services/mlPredictor.js returns
-// baseline + clamp(delta, ±30), so the ml_venue_baselines row IS most of the
-// answer — which means the corrected baselines already remove most of the
-// served symptom (the packed restaurant reading 20% at 6 PM). What is NOT
-// fixed is the model itself: the served v2.5.0-starling weights, and the
-// training_metrics.within_15 figure measured with them, were trained on the
-// pre-fix mixed-axis corpus. The confidence figure this flag would publish
-// therefore still does not describe what is served. Full history and status
-// are in the note above getBaseline in services/mlPredictor.js; the shipped
-// artifact's pre-fix arithmetic is pinned in
-// __tests__/dinnerPeakAccuracy.test.js.
+//   Layer 1, the collectors: both now write and declare hour_axis
+//     'venue_local'.
+//   Layer 2, the data: migration 023_backfill_ml_weekly_local_hours.sql moved
+//     every weekly row onto the venue-local axis and rebuilt
+//     ml_venue_baselines. Verified in production 2026-08-16: 3,454,955 weekly
+//     rows on 'venue_local', zero left on the BestTime index. Because the
+//     model is `label_type: 'delta'` (mlPredictor returns baseline + clamp(
+//     delta, ±30)), corrected baselines removed most of the served symptom on
+//     their own.
+//   Layer 3, the weights: v2.6.0-swift, trained on the corrected corpus and
+//     exported 2026-08-18. This is what makes the flag true. The proof is in
+//     the artifact rather than in a claim: category peaks in local 17:00-23:00
+//     went from 2 of 91 to 53 of 91, and lunchtime peaks from 35 of 91 to 9.
+//     Friday bar 15:00 -> 21:00, restaurant 14:00 -> 19:00, nightclub 17:00 ->
+//     23:00. Every one moved about six hours, which is the offset itself.
+//     Pinned by __tests__/dinnerPeakAccuracy.test.js, whose PART 3 now asserts
+//     the peaks are already evening peaks AND that adding the old six hours
+//     makes them worse, so a stale artifact fails.
 //
-// WHAT THIS FLAG DOES AND DOES NOT DO. It does NOT change a single score: the
-// model still runs, still serves, and the number is byte-for-byte what it was.
-// Turning the model off would be a product decision, not a bug fix. What the
-// flag does is stop the payload calling that number a measurement while the
-// figure behind it was measured on a corpus the served weights no longer
-// match — which is the one thing that can be said honestly from here. Flip it
-// with the retrain.
-const ML_BASELINE_AXIS_VERIFIED = false;
+// WHAT FLIPPING THIS DOES. It does not change a single score. It stops the
+// payload hedging: `describePredictionSupport` can return basis
+// 'model_holdout' with supported: true, so an ML answer states its band as
+// fact instead of "Usually busy", and confidenceMeans becomes
+// 'measured_accuracy'.
+//
+// WHAT IT DOES NOT LICENSE. The confidence integer is still
+// training_metrics_by_population.realtime_served.within_15, which is 33.3%,
+// NOT the blended 87.3% that mixes in weekly rows whose label equals the
+// baseline by construction. mlPredictor already publishes the served figure.
+// Do not "improve" this by pointing it at the blended number.
+//
+// TURN THIS BACK TO false if the served artifact is ever rolled back to a
+// pre-2026-08-18 model, because then the weights are on the old axis again.
+const ML_BASELINE_AXIS_VERIFIED = true;
 
 // ORDER MATTERS, and it is not the order you would guess. Verified reporters
-// are checked BEFORE the model, because while the model's weights still date
-// from the pre-fix corpus, three people who were actually in the building are
-// the better evidence — and because ordering it the other way silently downgraded
-// venues that DO have real reports, which is the one part of this system that
-// works end to end today.
+// are checked BEFORE the model, and that stayed true when the axis flag flipped
+// on 2026-08-18.
+//
+// The original reason was that the model's weights predated the axis fix, so
+// three people who were actually in the building were the better evidence. That
+// reason is gone. The ordering is not, because the second reason outlived it:
+// putting the model first silently downgrades exactly the venues that DO have
+// real reports. `model_holdout` is a claim about accuracy across a holdout;
+// `user_reports` is an observation of THIS building at THIS hour. When both are
+// available the observation is the stronger thing to stand on, and the venues
+// with reports are the one part of this system that works end to end.
+//
+// Both branches now return supported: true, so the user-visible label is the
+// same either way. What changes is `basis`, which is what an operator reads to
+// know WHY a number was trusted. Reporting 'model_holdout' for a venue three
+// people just walked out of would be the less true of two true answers.
 function describePredictionSupport(predictionMethod, verifiedReports) {
   const reports = Number.isFinite(verifiedReports) ? verifiedReports : 0;
-  if (predictionMethod === 'ml' && ML_BASELINE_AXIS_VERIFIED) {
-    return { basis: 'model_holdout', supported: true, confidenceMeans: 'measured_accuracy' };
-  }
   if (reports >= MIN_CALIBRATION_REPORTERS) {
     // Somebody was in the building and said so. The number is still mostly the
     // engine's (the blend weight is capped — see MAX_SINGLE_REPORT_LEVERAGE),
     // but it is no longer an unobserved guess about this venue.
     return { basis: 'user_reports', supported: true, confidenceMeans: 'input_completeness' };
   }
+  if (predictionMethod === 'ml' && ML_BASELINE_AXIS_VERIFIED) {
+    // v2.6.0-swift onward: trained on the corrected corpus, so
+    // training_metrics_by_population.realtime_served.within_15 describes the
+    // rows this card is drawn from. That is a measurement, and it may say so.
+    return { basis: 'model_holdout', supported: true, confidenceMeans: 'measured_accuracy' };
+  }
   if (predictionMethod === 'ml') {
-    // The model ran and metadata.training_metrics.within_15 was measured — but
-    // measured on the pre-fix mixed-axis corpus the served weights were
-    // trained on. The baselines anchoring the prediction are fixed now
-    // (migration 023), yet that figure still does not describe what this card
-    // is about to show; the basis flips with the retrain.
+    // Only reachable if the flag is turned back off, which means the served
+    // artifact was rolled back to a pre-2026-08-18 model whose weights sit on
+    // the old axis. Kept so that rollback degrades to honesty automatically.
     return { basis: 'model_unverified_axis', supported: false, confidenceMeans: 'input_completeness' };
   }
   return { basis: 'category_pattern', supported: false, confidenceMeans: 'input_completeness' };
