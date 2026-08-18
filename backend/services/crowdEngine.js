@@ -102,7 +102,7 @@ function hedgeLabel(label) {
 //     model is `label_type: 'delta'` (mlPredictor returns baseline + clamp(
 //     delta, ±30)), corrected baselines removed most of the served symptom on
 //     their own.
-//   Layer 3, the weights: v2.6.0-swift, trained on the corrected corpus and
+//   Layer 3, the weights: v2.6.0-starling, trained on the corrected corpus and
 //     exported 2026-08-18. This is what makes the flag true. The proof is in
 //     the artifact rather than in a claim: category peaks in local 17:00-23:00
 //     went from 2 of 91 to 53 of 91, and lunchtime peaks from 35 of 91 to 9.
@@ -154,7 +154,7 @@ function describePredictionSupport(predictionMethod, verifiedReports) {
     return { basis: 'user_reports', supported: true, confidenceMeans: 'input_completeness' };
   }
   if (predictionMethod === 'ml' && ML_BASELINE_AXIS_VERIFIED) {
-    // v2.6.0-swift onward: trained on the corrected corpus, so
+    // v2.6.0-starling onward: trained on the corrected corpus, so
     // training_metrics_by_population.realtime_served.within_15 describes the
     // rows this card is drawn from. That is a measurement, and it may say so.
     return { basis: 'model_holdout', supported: true, confidenceMeans: 'measured_accuracy' };
