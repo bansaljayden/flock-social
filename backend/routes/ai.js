@@ -6,6 +6,8 @@ const { body, validationResult } = require('express-validator');
 const { scalarOnly } = require('../validators/shape');
 const { authenticate } = require('../middleware/auth');
 const { GoogleGenAI } = require('@google/genai');
+const { PostHog } = require('posthog-node');
+const crypto = require('crypto');
 const pool = require('../config/database');
 const { getWeather } = require('../services/weatherService');
 const {
@@ -77,6 +79,100 @@ function getGenAI() {
     genAIClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
   }
   return genAIClient;
+}
+
+// ---------------------------------------------------------------------------
+// PostHog AI Observability — manual capture. @posthog/ai's Gemini wrapper only
+// instruments `models.generateContent`/`generateContentStream`/`embedContent`;
+// it has no `chats` property at all, so it can't sit under `genAI.chats.create()`
+// + `chat.sendMessage()` without losing the stateful chat object this route
+// relies on. Capturing $ai_generation/$ai_span directly, next to the existing
+// calls, avoids restructuring the tool loop and spend ledger above.
+//
+// METRICS ONLY. NO CONVERSATION CONTENT. DO NOT ADD IT BACK.
+//
+// The PostHog wizard that generated this originally sent four content fields:
+// $ai_input (the user's turn text), $ai_output_choices (Birdie's reply), and
+// $ai_input_state / $ai_output_state on the span (tool arguments and results,
+// which carry venue and location lookups). They were removed deliberately.
+//
+// Why, in one sentence: PrivacyPolicy.js names Google Gemini as THE recipient
+// of Birdie conversation content and then enumerates what is not sent, so
+// shipping the same text to a second processor the policy never mentions would
+// make that paragraph false. PostHog is disclosed nowhere in the policy, the
+// audience floor is 13 (utils/age.js MIN_AGE), and the Apple nutrition labels
+// declare PostHog as *usage data* rather than user content — which is exactly
+// what token counts and latency are, and exactly what message text is not.
+//
+// Everything the instrumentation exists for survives without the content:
+// $ai_input_tokens / $ai_output_tokens are the cost, $ai_latency is the speed,
+// and the trace/span structure still shows which tool call was slow. Nothing
+// about the Birdie spend question needs the words.
+//
+// If prompt-level debugging is ever genuinely wanted, that is a product
+// decision with a privacy policy update and an Apple label change attached. It
+// is not a thing to restore because a linter noticed an unused parameter.
+// ---------------------------------------------------------------------------
+// NEVER construct the client under `node --test`, for two separate reasons and
+// both were observed rather than theorised:
+//
+//   1. IT HANGS THE SUITE. posthog-node starts a background flush timer and
+//      holds an open connection. `node --test` waits for an empty event loop,
+//      so a single test that reaches the Birdie path leaves the whole run
+//      alive forever. Measured: the suite went from 24s to >10min and had to
+//      be killed. There is no `shutdown()` call anywhere in this route, and
+//      adding one would only paper over reason 2.
+//   2. IT POISONS REAL ANALYTICS. The setup wizard wrote a live
+//      POSTHOG_API_KEY into backend/.env, so without this guard every test run
+//      publishes fake $ai_generation events into production project 555076 and
+//      quietly corrupts the Birdie cost numbers this instrumentation exists to
+//      produce.
+let posthogClient = null;
+function getPostHog() {
+  if (process.env.NODE_ENV === 'test') return null;
+  if (!posthogClient && process.env.POSTHOG_API_KEY) {
+    posthogClient = new PostHog(process.env.POSTHOG_API_KEY, {
+      host: process.env.POSTHOG_HOST || 'https://us.i.posthog.com',
+    });
+  }
+  return posthogClient;
+}
+
+function captureAiGeneration({ userId, traceId, sessionId, resp, latencyMs }) {
+  const posthog = getPostHog();
+  if (!posthog) return;
+  const usage = resp?.usageMetadata;
+  posthog.capture({
+    distinctId: String(userId),
+    event: '$ai_generation',
+    properties: {
+      $ai_trace_id: traceId,
+      $ai_session_id: sessionId,
+      $ai_model: BIRDIE_MODEL,
+      $ai_provider: 'gemini',
+      $ai_input_tokens: usage?.promptTokenCount ?? undefined,
+      $ai_output_tokens: usage?.candidatesTokenCount ?? undefined,
+      $ai_latency: latencyMs / 1000,
+    },
+  });
+}
+
+// `name` is the tool's identifier (a fixed string from the tool table), not
+// user input. Its arguments and result are deliberately not captured.
+function captureAiToolSpan({ userId, traceId, sessionId, name, latencyMs }) {
+  const posthog = getPostHog();
+  if (!posthog) return;
+  posthog.capture({
+    distinctId: String(userId),
+    event: '$ai_span',
+    properties: {
+      $ai_trace_id: traceId,
+      $ai_session_id: sessionId,
+      $ai_span_id: crypto.randomUUID(),
+      $ai_span_name: name,
+      $ai_latency: latencyMs / 1000,
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -724,6 +820,14 @@ router.post('/chat',
       const { messages, location, currentContext } = req.body;
       const userId = req.user.id;
 
+      // PostHog AI Observability identity for this turn. No conversation/thread
+      // id crosses the wire (the client resends the whole history every call),
+      // so the session groups by user — every Birdie turn a user has ever sent,
+      // not a single chat window. The trace id is fresh per turn and shared by
+      // every Gemini call and tool span the tool loop below produces.
+      const aiSessionId = `birdie:${userId}`;
+      const aiTraceId = crypto.randomUUID();
+
       // The turn has to HAVE a message. `messages.*.text` is optional in the
       // validator above, so `{ messages: [{}] }` passed it, and the last element
       // is the current user input: userText came out undefined, and the location
@@ -877,6 +981,7 @@ router.post('/chat',
         const send = async () => {
           const estimate = estimateGeminiTokens(promptChars);
           if (!allowGeminiCall(userId, estimate)) throw new GeminiBudgetError();
+          const genStart = Date.now();
           const resp = await chat.sendMessage({
             message: payload,
             config: { ...chatConfig, abortSignal: upstreamSignal('gemini') },
@@ -886,6 +991,7 @@ router.post('/chat',
           // a systematically low estimate cannot accumulate into a free
           // allowance across a long tool loop.
           settleGeminiCall(userId, estimate, reportedTokens(resp));
+          captureAiGeneration({ userId, traceId: aiTraceId, sessionId: aiSessionId, resp, latencyMs: Date.now() - genStart });
           promptChars += responseChars(resp);
           return resp;
         };
@@ -984,7 +1090,9 @@ router.post('/chat',
             if (name === 'get_crowd_prediction') {
               toolOpts.includeForecast = !(await peekForecastAccess()).locked;
             }
+            const toolStart = Date.now();
             const result = await executeTool(name, args || {}, userId, toolOpts);
+            captureAiToolSpan({ userId, traceId: aiTraceId, sessionId: aiSessionId, name, latencyMs: Date.now() - toolStart });
             // Charged on DELIVERY, not on intent. `hourly_forecast` is the
             // paid payload itself, so its presence is the only honest trigger:
             // an upstream 404, a spent Places budget or a thrown tool all leave

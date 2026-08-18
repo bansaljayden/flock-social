@@ -29,6 +29,7 @@
     "multer": "^2.0.2",
     "onnxruntime-node": "^1.27.0",
     "pg": "^8.11.3",
+    "posthog-node": "^5.49.1",
     "resend": "^6.9.3",
     "socket.io": "^4.6.1",
     "xss": "^1.0.15"
