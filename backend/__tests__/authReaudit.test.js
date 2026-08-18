@@ -216,7 +216,7 @@ function evalAtom(atom, row, params) {
 function blankUser(overrides = {}) {
   return {
     id: null, email: null, name: null, phone: null, password: null,
-    interests: [], role: 'user', profile_image_url: null,
+    interests: [], role: 'user', profile_image_url: null, bio: null,
     oauth_provider: null, oauth_id: null, apple_refresh_token: null,
     is_banned: false, banned_at: null, token_version: 0,
     email_verified: false, verified_email: null, date_of_birth: null,

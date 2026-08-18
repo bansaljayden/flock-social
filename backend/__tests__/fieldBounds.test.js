@@ -75,6 +75,7 @@ const U = {
   PASSWORD: constIn('routes/users.js', 'MAX_PASSWORD'),
   INTERESTS: constIn('routes/users.js', 'MAX_INTERESTS'),
   INTEREST_LEN: constIn('routes/users.js', 'MAX_INTEREST_LEN'),
+  BIO: constIn('routes/users.js', 'MAX_BIO'),
   // Declared inline rather than as a constant; read the literal so a change to
   // it is still a change this file sees.
   ZELLE: num('routes/users.js',
@@ -287,7 +288,7 @@ const noWrites = () => log.filter((q) => /^(INSERT|UPDATE|DELETE)/i.test(q.sql))
 // rest of the file a policy rather than a snapshot.
 const PROBED_FIELDS = {
   'routes/users.js': new Set([
-    'name', 'email', 'phone', 'interests', 'current_password', 'new_password',
+    'name', 'email', 'phone', 'interests', 'bio', 'current_password', 'new_password',
     'url', 'venmo_username', 'cashapp_cashtag', 'zelle_identifier', 'q',
   ]),
   'routes/venueProfile.js': new Set([
@@ -462,6 +463,45 @@ test('a name at MAX_NAME is stored and one character more is refused', async () 
   const over = await call('PUT', '/api/users/profile', { name: pad(U.NAME + 1), current_password: PASSWORD });
   assert.equal(over.status, 400, 'one character past the column is a 400, never a Postgres 22001');
   assert.deepEqual(noWrites(), []);
+});
+
+test('a bio at MAX_BIO is stored and one character more is refused', async () => {
+  // users.bio is TEXT, so unlike name there is no column width behind this
+  // ceiling — the route's bound is the ONLY bound, which makes the refusal
+  // side of this probe the load-bearing half.
+  clearLimiters();
+  const at = await call('PUT', '/api/users/profile', { bio: pad(U.BIO), current_password: PASSWORD });
+  assert.equal(at.status, 200, `a ${U.BIO}-character bio must be accepted: ${at.text}`);
+  const update = wrote(/^UPDATE users SET name/i);
+  assert.equal(update.length, 1);
+  assert.equal(update[0].params[6], pad(U.BIO), 'the bio must reach the UPDATE as $7');
+
+  clearLimiters();
+  const over = await call('PUT', '/api/users/profile', { bio: pad(U.BIO + 1), current_password: PASSWORD });
+  assert.equal(over.status, 400, 'one character past the ceiling must be a 400, not a silently stored novel');
+  assert.deepEqual(noWrites(), []);
+});
+
+test('markup in a bio is stripped before it is stored, and the ceiling reads the stripped string', async () => {
+  // The bio is served to ANY authenticated user by GET /api/users/:id/card,
+  // so it takes the same freeText treatment as the name: what lands in the
+  // column is text, never markup.
+  clearLimiters();
+  const res = await call('PUT', '/api/users/profile', {
+    bio: 'plans <b>rooftop</b> nights<script>alert(1)</script>', current_password: PASSWORD,
+  });
+  assert.equal(res.status, 200, res.text);
+  const update = wrote(/^UPDATE users SET name/i)[0];
+  assert.equal(update.params[6], 'plans rooftop nights');
+
+  // Measured after the strip: a value whose markup pushes it past the ceiling
+  // but whose TEXT is inside it must be accepted, which is the same direction
+  // the name field documents.
+  clearLimiters();
+  const wrapped = `<b>${pad(U.BIO)}</b>`;
+  const stillFits = await call('PUT', '/api/users/profile', { bio: wrapped, current_password: PASSWORD });
+  assert.equal(stillFits.status, 200, stillFits.text);
+  assert.equal(wrote(/^UPDATE users SET name/i)[0].params[6], pad(U.BIO));
 });
 
 // MEASURED, NOT ASSUMED. The first draft of this test asserted that an address

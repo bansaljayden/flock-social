@@ -2,7 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
-const { body, query, validationResult } = require('express-validator');
+const { body, param, query, validationResult } = require('express-validator');
 const multer = require('multer');
 const path = require('path');
 const pool = require('../config/database');
@@ -24,9 +24,18 @@ const { revokeAppleToken, isConfigured: appleAuthConfigured } = require('../serv
 // refuses a number reaching a text column), so it keeps that check; every other
 // write in this file uses the shared predicate.
 const { scalarOnly, freeText } = require('../validators/shape');
+// The card route serves a fact about ANOTHER user, so it asks the block
+// question the way every cross-user surface does — through the single source
+// of truth, both directions at once.
+const { isBlockedBetween } = require('../utils/blocks');
 
 const router = express.Router();
 const SALT_ROUNDS = 10;
+
+// users.id is SERIAL (INT4). Same ceiling, same reason as routes/flocks.js:
+// an unbounded isInt() lets "9999999999" reach the query and come back a 500
+// ("integer out of range") instead of a clean 400.
+const INT4_MAX = 2147483647;
 
 // DELETE /api/users/me is defined FIRST, with its own ban-tolerant auth, and is
 // the only route in the app that runs without the ban check. See deleteAccount
@@ -158,7 +167,7 @@ const AVATAR_TOO_LARGE_MESSAGE =
 router.get('/profile', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, email, name, phone, interests, role, profile_image_url, venmo_username, cashapp_cashtag, zelle_identifier, is_premium, created_at, updated_at
+      `SELECT id, email, name, phone, interests, role, profile_image_url, bio, venmo_username, cashapp_cashtag, zelle_identifier, is_premium, created_at, updated_at
        FROM users WHERE id = $1`,
       [req.user.id]
     );
@@ -182,6 +191,53 @@ router.get('/profile', async (req, res) => {
     res.status(500).json({ error: 'Failed to get profile' });
   }
 });
+
+// GET /api/users/:id/card - Mini profile card for any user: id, name, avatar,
+// bio. Four fields, and only four — this is the surface a stranger's tap on an
+// avatar resolves to, so it must never grow an email, a phone number, or a
+// score without a deliberate decision.
+//
+// 404, not 403, for every refused case — a blocked pair (either direction), a
+// banned account, a deleted account — and it is the SAME 404 a made-up id gets.
+// User ids are sequential integers, so any distinction between "no such user"
+// and "you may not see this user" is an oracle: it would tell a blocked person
+// they are blocked, and tell anyone walking the id space which rows exist.
+router.get('/:id/card',
+  param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid user ID'),
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+      const targetId = parseInt(req.params.id, 10);
+
+      const result = await pool.query(
+        'SELECT id, name, profile_image_url, bio, is_banned FROM users WHERE id = $1',
+        [targetId]
+      );
+      // Banned reads as deleted: a banned account's content is withdrawn
+      // everywhere else, and its card must not be the one surface that still
+      // vouches for it.
+      if (result.rows.length === 0 || result.rows[0].is_banned) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      // Mutual invisibility (utils/blocks.js): if either side blocked the
+      // other, neither can pull the other's card. isBlockedBetween answers
+      // false for self, so viewing your own card stays allowed.
+      if (await isBlockedBetween(req.user.id, targetId)) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+
+      const u = result.rows[0];
+      res.json({ id: u.id, name: u.name, profile_image_url: u.profile_image_url, bio: u.bio });
+    } catch (err) {
+      console.error('Get user card error:', err);
+      res.status(500).json({ error: 'Failed to get user' });
+    }
+  }
+);
 
 // Mirrors express-validator's normalizeEmail() defaults, for COMPARISON only.
 // The submitted address is normalized by the validator; stored addresses are
@@ -637,6 +693,14 @@ const MAX_AVATAR_URL = 255;
 const MAX_PASSWORD = 1024;
 const MAX_INTERESTS = 30;
 const MAX_INTEREST_LEN = 40;
+// users.bio is TEXT (migration 026), so the column has no width of its own and
+// this ceiling is the whole bound. 200 is a product number: the card the bio
+// renders on is a mini profile, not a page. Measured AFTER freeText strips the
+// markup, i.e. against the string that will actually be stored — a real
+// 200-character bio fits, and a bio that is nothing but tags strips to '',
+// which is falsy and leaves the stored value alone like every other blank
+// field on this form.
+const MAX_BIO = 200;
 
 // interests is TEXT[] and node-pg will serialize whatever it is handed into it,
 // so the contents have to be checked and not merely the fact that an array
@@ -690,6 +754,12 @@ router.put('/profile',
     // chat row and push renders. Sanitize, then trim, then measure.
     freeText(body('name').optional({ nullable: true }), 'name')
       .isLength({ min: 1, max: MAX_NAME }).withMessage(`Name must be 1-${MAX_NAME} characters`),
+    // Same treatment as name: shape -> trim -> stripHtml -> trim, then the
+    // ceiling. Free text a stranger reads (the /:id/card route serves it to any
+    // authenticated user), so it takes the full freeText chain and the
+    // profanity screen in the handler below.
+    freeText(body('bio').optional({ nullable: true }), 'bio')
+      .isLength({ max: MAX_BIO }).withMessage(`Bio must be ${MAX_BIO} characters or fewer`),
     // normalizeEmail() matches signup and login (routes/auth.js), so
     // `v.ictim@gmail.com` cannot be stored as a distinct row that shadows
     // `victim@gmail.com` in the LOWER(email) lookups those paths use.
@@ -755,7 +825,7 @@ router.put('/profile',
         return res.status(400).json({ error: errors.array()[0].msg });
       }
 
-      const { name, email, phone, interests, current_password, new_password } = req.body;
+      const { name, email, phone, interests, bio, current_password, new_password } = req.body;
 
       // ARRAY-SHAPED FIELDS WALK PAST express-validator (round 16). Given
       // `{"phone": ["+12025550122"]}` the chain runs per ELEMENT, every element
@@ -768,7 +838,7 @@ router.put('/profile',
       // password fields (bcrypt throws on a non-string, which is another 500).
       // Validators check CONTENT; this checks TYPE, which is the half they
       // structurally cannot do.
-      for (const [field, value] of Object.entries({ name, email, phone, current_password, new_password })) {
+      for (const [field, value] of Object.entries({ name, email, phone, bio, current_password, new_password })) {
         if (value !== undefined && value !== null && typeof value !== 'string') {
           return res.status(400).json({ error: `Invalid ${field.replace('_', ' ')}` });
         }
@@ -778,6 +848,10 @@ router.put('/profile',
       // through stripHtml by this point (freeText applies it as a sanitizer), so
       // this screens the string that will actually be stored.
       if (name && rejectIfProfane(res, name)) return;
+
+      // Same UGC screen for the bio, on the stripped string (freeText already
+      // ran), for the same Apple 1.2 reason as the name above.
+      if (bio && rejectIfProfane(res, bio)) return;
 
       // interests is UGC that somebody other than its author reads: routes/
       // admin.js renders it into the moderation queue's profile evidence
@@ -1079,12 +1153,19 @@ router.put('/profile',
              interests = COALESCE($4, interests),
              password = COALESCE($5, password),
              token_version = token_version + CASE WHEN $5::text IS NULL THEN 0 ELSE 1 END,
+             bio = COALESCE($7, bio),
              updated_at = NOW()
          WHERE id = $6
-         RETURNING id, email, name, phone, interests, role, profile_image_url, email_verified, token_version, created_at, updated_at`,
+         RETURNING id, email, name, phone, interests, role, profile_image_url, bio, email_verified, token_version, created_at, updated_at`,
         // Only write the email column on a real change, so an unchanged form
         // never silently rewrites a stored address into its normalized form.
-        [name || null, changingEmail ? email : null, phone || null, safeInterests, hashedPassword, req.user.id]
+        //
+        // bio is $7, AFTER the id, out of textual order on purpose: several
+        // fixture dispatchers outside this file read params[5] as the user id
+        // on this statement, and re-numbering the id would silently hand every
+        // one of them a bio string where they expect an id. A parameter's
+        // number is a name, not a position in the SET list.
+        [name || null, changingEmail ? email : null, phone || null, safeInterests, hashedPassword, req.user.id, bio || null]
       );
 
       // A password change bumps token_version, which stops the thief's REST
@@ -1715,7 +1796,7 @@ router.get('/export', async (req, res) => {
     const userId = req.user.id;
 
     const u = await pool.query(
-      `SELECT id, email, name, phone, interests, role, profile_image_url,
+      `SELECT id, email, name, phone, interests, role, profile_image_url, bio,
               venmo_username, cashapp_cashtag, zelle_identifier, is_premium,
               oauth_provider, email_verified, terms_accepted_at, date_of_birth,
               reliability_score, total_plans_joined, total_plans_attended,
@@ -1947,6 +2028,9 @@ router.get('/export', async (req, res) => {
         interests: account.interests || [],
         role: account.role,
         profile_image_url: account.profile_image_url,
+        // bio is data the user typed about themselves — squarely inside the
+        // "data you provided to Flock" promise this export keeps.
+        bio: account.bio ?? null,
         venmo_username: account.venmo_username,
         cashapp_cashtag: account.cashapp_cashtag,
         zelle_identifier: account.zelle_identifier,

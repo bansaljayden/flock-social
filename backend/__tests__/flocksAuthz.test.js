@@ -182,6 +182,27 @@ async function dispatch(text, params = []) {
   if (has('AS can_see')) return { rows: [{ is_banned: false, actor_banned: false, can_see: true }], rowCount: 1 };
   if (has('SELECT settings FROM user_settings')) return { rows: [], rowCount: 0 };
 
+  // ── GET /history ── (before the home-list matcher: this SQL contains the
+  // same fm join fragment plus its own status predicate, and only this route
+  // aliases venue_id AS venue_place_id)
+  if (has('AS venue_place_id')) {
+    const me = Number(params[0]);
+    const rows = [];
+    for (const [fid, f] of flocks) {
+      const m = memberOf(fid, me);
+      if (!m || m.status !== 'accepted') continue;
+      if (f.status !== 'completed' && f.status !== 'cancelled') continue;
+      rows.push({
+        id: fid, name: f.name, status: f.status, event_time: f.event_time,
+        venue_name: f.venue_name, venue_address: f.venue_address,
+        venue_place_id: f.venue_id,
+        members: rowsOf(fid).filter((x) => x.status === 'accepted')
+          .map((x) => ({ id: x.user_id, name: USERS[x.user_id].name, profile_image_url: null })),
+      });
+    }
+    return { rows, rowCount: rows.length };
+  }
+
   // ── GET / (the home list) ──
   if (has('JOIN flock_members fm ON fm.flock_id = f.id AND fm.user_id = $1')) {
     const me = Number(params[0]);
@@ -1425,6 +1446,109 @@ test('cleanup: a plain member cannot delete a flock by leaving while anyone rema
   assertQueriesUnderstood();
 });
 
+// ── GET /history and POST /:id/rerun (the "do it again" pair) ───────────────
+
+test('history: only completed/cancelled flocks the caller was ACCEPTED into appear', async () => {
+  // Flock 10 is 'planning': nobody's history may show it, member or not.
+  const planning = await (await call('GET', '/api/flocks/history', 'alice')).json();
+  assert.deepStrictEqual(planning.flocks, [], 'a live plan is not history');
+
+  flocks.get(10).status = 'completed';
+  const res = await call('GET', '/api/flocks/history', 'bob');
+  assert.strictEqual(res.status, 200);
+  const body = await res.json();
+  assert.deepStrictEqual(body.flocks.map((f) => f.id), [10]);
+  // The contract the frontend is built against, field for field.
+  const entry = body.flocks[0];
+  assert.deepStrictEqual(Object.keys(entry).sort(),
+    ['event_time', 'id', 'members', 'name', 'status', 'venue_address', 'venue_name', 'venue_place_id']);
+  assert.strictEqual(entry.venue_place_id, FLOCK_10().venue_id);
+  // Accepted members only — Carol (invited) and Dave (declined) were never in it.
+  assert.deepStrictEqual(entry.members.map((m) => m.id).sort(), [1, 2, 6]);
+  assert.deepStrictEqual(Object.keys(entry.members[0]).sort(), ['id', 'name', 'profile_image_url']);
+
+  // Carol holds an invite to flock 10 and STILL does not see it in history.
+  const carol = await (await call('GET', '/api/flocks/history', 'carol')).json();
+  assert.deepStrictEqual(carol.flocks.map((f) => f.id), [],
+    'an invite is not membership, in history as everywhere else');
+  // Mallory sees only her own completed flock 20, never 10.
+  const mallory = await (await call('GET', '/api/flocks/history', 'mallory')).json();
+  assert.deepStrictEqual(mallory.flocks.map((f) => f.id), [20]);
+  assertQueriesUnderstood();
+});
+
+test('history: a blocked member\'s name and face are withheld from the roster', async () => {
+  flocks.get(10).status = 'cancelled';
+  blocks = [[2, 6]]; // Bob and Erin blocked each other (either direction)
+  const body = await (await call('GET', '/api/flocks/history', 'bob')).json();
+  assert.deepStrictEqual(body.flocks.map((f) => f.id), [10], 'cancelled counts as history too');
+  assert.deepStrictEqual(body.flocks[0].members.map((m) => m.id).sort(), [1, 2],
+    'the blocked member must be filtered the way GET /:id/members filters them');
+  assertQueriesUnderstood();
+});
+
+test('rerun: outsiders get 404, the merely-invited and the declined get 403', async () => {
+  flocks.get(10).status = 'completed';
+  assert.strictEqual((await call('POST', '/api/flocks/10/rerun', 'mallory')).status, 404,
+    'no membership row means the flock does not exist for you');
+  assert.strictEqual((await call('POST', '/api/flocks/10/rerun', 'carol')).status, 403);
+  assert.strictEqual((await call('POST', '/api/flocks/10/rerun', 'dave')).status, 403);
+  assert.strictEqual((await call('POST', `/api/flocks/${MISSING_ID}/rerun`, 'alice')).status, 404);
+  noWriteMatching('INSERT INTO flocks');
+  assertQueriesUnderstood();
+});
+
+test('rerun: a live flock cannot be cloned — completed or cancelled only', async () => {
+  // FLOCK_10 is 'planning' in the fixture.
+  const res = await call('POST', '/api/flocks/10/rerun', 'bob');
+  assert.strictEqual(res.status, 400);
+  noWriteMatching('INSERT INTO flocks');
+
+  flocks.get(10).status = 'confirmed';
+  assert.strictEqual((await call('POST', '/api/flocks/10/rerun', 'bob')).status, 400);
+  noWriteMatching('INSERT INTO flocks');
+  assertQueriesUnderstood();
+});
+
+test('rerun: a plain accepted member clones the plan and the old roster is invited', async () => {
+  flocks.get(10).status = 'completed';
+  const res = await call('POST', '/api/flocks/10/rerun', 'bob', { event_time: '2026-09-01T23:00:00.000Z' });
+  const body = await res.json();
+  assert.strictEqual(res.status, 201, JSON.stringify(body));
+
+  // Same shape as POST /: the client navigates straight into `flock`.
+  assert.ok(body.flock.id && body.flock.id !== 10, 'a NEW flock, not the old one');
+  assert.strictEqual(body.flock.name, FLOCK_10().name);
+  assert.strictEqual(body.flock.venue_name, FLOCK_10().venue_name);
+  assert.strictEqual(body.flock.venue_id, FLOCK_10().venue_id);
+  assert.strictEqual(body.flock.status, 'planning');
+
+  // The caller is the creator/accepted member; every OTHER accepted member of
+  // the source is invited. Carol (invited) and Dave (declined) are not.
+  const roster = rowsOf(body.flock.id);
+  assert.deepStrictEqual(roster.filter((m) => m.status === 'accepted').map((m) => m.user_id), [2]);
+  assert.deepStrictEqual(body.invited_user_ids.sort(), [1, 6]);
+  assert.deepStrictEqual(roster.filter((m) => m.status === 'invited').map((m) => m.user_id).sort(), [1, 6]);
+
+  // The SOURCE flock is untouched: same status, same roster.
+  assert.strictEqual(flocks.get(10).status, 'completed');
+  assert.strictEqual(rowsOf(10).length, 5);
+  assertQueriesUnderstood();
+});
+
+test('rerun: a block that happened since the old flock keeps the pair apart', async () => {
+  flocks.get(10).status = 'completed';
+  blocks = [[6, 2]]; // Erin blocked Bob after the old plan
+  const res = await call('POST', '/api/flocks/10/rerun', 'bob');
+  assert.strictEqual(res.status, 201);
+  const body = await res.json();
+  assert.deepStrictEqual(body.invited_user_ids, [1],
+    'the shared invite pipeline must re-apply blocks on a rerun');
+  assert.ok(!rowsOf(body.flock.id).some((m) => m.user_id === 6),
+    'a blocked pair must not be re-joined by replaying an old plan');
+  assertQueriesUnderstood();
+});
+
 // This sweep is only complete while the route list is. A new endpoint added to
 // flocks.js without a line here means an ungated surface nobody audited.
 test('inventory: every route in flocks.js is one this sweep actually covers', async () => {
@@ -1432,9 +1556,9 @@ test('inventory: every route in flocks.js is one this sweep actually covers', as
   const found = [...src.matchAll(/router\.(get|post|put|delete|patch|all)\(\s*'([^']+)'/g)]
     .map(([, method, p]) => `${method.toUpperCase()} ${p}`).sort();
   const audited = [
-    'GET /', 'POST /', 'GET /activity', 'GET /:id', 'PUT /:id', 'DELETE /:id',
-    'POST /:id/invite-link', 'POST /:id/join', 'POST /:id/invite',
-    'POST /:id/decline', 'POST /:id/leave', 'GET /:id/members',
+    'GET /', 'POST /', 'GET /activity', 'GET /history', 'GET /:id', 'PUT /:id',
+    'DELETE /:id', 'POST /:id/invite-link', 'POST /:id/join', 'POST /:id/invite',
+    'POST /:id/rerun', 'POST /:id/decline', 'POST /:id/leave', 'GET /:id/members',
     'POST /:id/attendance',
   ].sort();
   assert.deepStrictEqual(found, audited,
@@ -1456,6 +1580,7 @@ test('id confusion: a bounded-integer id is settled on every route before any qu
     ['POST', '/api/flocks/%s/leave'],
     ['POST', '/api/flocks/%s/invite-link'],
     ['POST', '/api/flocks/%s/invite'],
+    ['POST', '/api/flocks/%s/rerun'],
     ['POST', '/api/flocks/%s/attendance'],
   ];
   for (const [method, tpl] of paths) {

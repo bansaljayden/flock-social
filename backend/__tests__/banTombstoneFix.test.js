@@ -198,11 +198,16 @@ function handle(text, params = []) {
     return { rows: hit ? [{ id: hit.id }] : [], rowCount: hit ? 1 : 0 };
   }
   if (has('UPDATE users')) {
-    const u = USERS[params[params.length - 1]] || USERS[14];
-    if (params.length === 6) {
+    // The profile UPDATE keys its row on $6 and carries bio as a trailing $7
+    // (routes/users.js keeps the id at params[5] on purpose); other UPDATEs
+    // in this file still key on their last parameter.
+    const idParam = params.length === 7 ? params[5] : params[params.length - 1];
+    const u = USERS[idParam] || USERS[14];
+    if (params.length === 6 || params.length === 7) {
       if (params[0]) u.name = params[0];
       if (params[1]) u.email = params[1];
       if (params[2]) u.phone = params[2];
+      if (params.length === 7 && params[6]) u.bio = params[6];
     }
     return { rows: [{ ...u }], rowCount: 1 };
   }
