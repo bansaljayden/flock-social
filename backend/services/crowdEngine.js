@@ -84,39 +84,44 @@ function hedgeLabel(label) {
 // Returns the basis, whether the answer may be stated as fact, and the ceiling
 // (null = no cap; the model's confidence is a measured figure and stands).
 // ---------------------------------------------------------------------------
-// IS THE MODEL'S ANCHOR ON A CLOCK ANYBODY CAN VOUCH FOR? RIGHT NOW: NO.
+// IS THE MODEL'S ANCHOR ON A CLOCK ANYBODY CAN VOUCH FOR? SINCE 2026-08-15,
+// YES — BUT THE SERVED WEIGHTS AND THEIR MEASURED METRICS STILL PREDATE THE
+// FIX, SO THIS STAYS FALSE UNTIL THE RETRAIN.
 //
-// Flip this to true in the SAME change that lands the corpus fix and the
-// retrain, and the model goes back to stating its bands as fact. Nothing else
-// has to move.
+// Flip this to true in the SAME change that ships the retrain, and the model
+// goes back to stating its bands as fact. Nothing else has to move.
 //
-// Why it is false. The shipped model is `label_type: 'delta'`, so
-// services/mlPredictor.js returns baseline + clamp(delta, ±30) — the
-// ml_venue_baselines row IS the answer and the network only nudges it. That
-// table's `hour` column is not a venue-local hour: scripts/ml/collectWeekly.js
-// writes BestTime's day_raw ARRAY INDEX, and BestTime's day starts at 06:00, so
-// stored slot 18 holds the venue's midnight. getBaseline looks it up as a local
-// hour. The full proof, the second writer that disagrees with the first, and
-// the four steps that fix it are in the note above getBaseline in
-// services/mlPredictor.js; the arithmetic is pinned in
+// Why it is still false (updated 2026-08-18). The corpus and the baselines are
+// fixed: migration 023_backfill_ml_weekly_local_hours.sql moved every weekly
+// row onto the venue-local hour axis and rebuilt ml_venue_baselines from the
+// corrected rows (verified in production: 3,454,955 weekly rows on
+// hour_axis = 'venue_local', zero left on the BestTime index), and both
+// collectors now write and declare 'venue_local'. The shipped model is
+// `label_type: 'delta'` — services/mlPredictor.js returns
+// baseline + clamp(delta, ±30), so the ml_venue_baselines row IS most of the
+// answer — which means the corrected baselines already remove most of the
+// served symptom (the packed restaurant reading 20% at 6 PM). What is NOT
+// fixed is the model itself: the served v2.5.0-starling weights, and the
+// training_metrics.within_15 figure measured with them, were trained on the
+// pre-fix mixed-axis corpus. The confidence figure this flag would publish
+// therefore still does not describe what is served. Full history and status
+// are in the note above getBaseline in services/mlPredictor.js; the shipped
+// artifact's pre-fix arithmetic is pinned in
 // __tests__/dinnerPeakAccuracy.test.js.
-//
-// So a corpus venue's dinner-hour card is anchored on its overnight slot. That
-// is a user reporting a packed restaurant reading 20% at 6 PM.
 //
 // WHAT THIS FLAG DOES AND DOES NOT DO. It does NOT change a single score: the
 // model still runs, still serves, and the number is byte-for-byte what it was.
-// Shifting the lookup to compensate would be changing served numbers on a hunch
-// with no holdout to check it against, and turning the model off would be a
-// product decision, not a bug fix. What it does is stop the payload calling
-// that number a measurement while the axis under it is unverified — which is
-// the one thing that can be said honestly from here.
+// Turning the model off would be a product decision, not a bug fix. What the
+// flag does is stop the payload calling that number a measurement while the
+// figure behind it was measured on a corpus the served weights no longer
+// match — which is the one thing that can be said honestly from here. Flip it
+// with the retrain.
 const ML_BASELINE_AXIS_VERIFIED = false;
 
 // ORDER MATTERS, and it is not the order you would guess. Verified reporters
-// are checked BEFORE the model, because when the model's anchor is on a clock
-// nobody can vouch for, three people who were actually in the building are the
-// better evidence — and because ordering it the other way silently downgraded
+// are checked BEFORE the model, because while the model's weights still date
+// from the pre-fix corpus, three people who were actually in the building are
+// the better evidence — and because ordering it the other way silently downgraded
 // venues that DO have real reports, which is the one part of this system that
 // works end to end today.
 function describePredictionSupport(predictionMethod, verifiedReports) {
@@ -132,8 +137,10 @@ function describePredictionSupport(predictionMethod, verifiedReports) {
   }
   if (predictionMethod === 'ml') {
     // The model ran and metadata.training_metrics.within_15 was measured — but
-    // measured against labels on the same misaligned axis the prediction is
-    // anchored to, so it does not describe what this card is about to show.
+    // measured on the pre-fix mixed-axis corpus the served weights were
+    // trained on. The baselines anchoring the prediction are fixed now
+    // (migration 023), yet that figure still does not describe what this card
+    // is about to show; the basis flips with the retrain.
     return { basis: 'model_unverified_axis', supported: false, confidenceMeans: 'input_completeness' };
   }
   return { basis: 'category_pattern', supported: false, confidenceMeans: 'input_completeness' };
@@ -149,8 +156,9 @@ function describePredictionSupport(predictionMethod, verifiedReports) {
 // counts how richly GOOGLE describes a venue (review count, rating precision,
 // type count, price level, weather) and reaches 95 without one observation of
 // how full the room has ever been; on the model path it is
-// metadata.training_metrics.within_15, measured on the axis
-// ML_BASELINE_AXIS_VERIFIED says we cannot vouch for. Capping it would leave a
+// metadata.training_metrics.within_15, measured on the pre-fix mixed-axis
+// corpus ML_BASELINE_AXIS_VERIFIED still refuses to vouch for. Capping it
+// would leave a
 // smaller unqualified number, which is not more honest, just quieter.
 //
 // So `confidenceMeans` ships beside it and says which of the two it is, and the
