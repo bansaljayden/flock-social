@@ -69,13 +69,24 @@
 //    exactly what the site serves today, so the worst case is "no worse than
 //    before" rather than "broken preview forever".
 //
-// 2. HTML-escape every interpolated value. `flocks.name` is user-authored and
-//    is NOT stripped on write on every path: backend/routes/flocks.js applies
-//    `customSanitizer(stripHtml)` to `name` / `venue_name` on POST / (create)
-//    but the PUT /:id (update) validators do not, so a host can RENAME a flock
-//    to markup and it is stored raw. `rejectIfProfane` does not strip tags. So
-//    this file is the only thing standing between a renamed flock and script
-//    execution on flockcorp.com. esc() runs on every single value.
+// 2. HTML-escape every interpolated value. `flocks.name` and `venue_name` are
+//    user-authored, and the write path strips markup on BOTH routes that can
+//    set them: backend/routes/flocks.js applies `freeText` (= scalarOnly ->
+//    trim -> stripHtml -> trim) to `name` / `venue_name` / `venue_address` on
+//    POST / (create) and, since the rename fix, on PUT /:id (update) as well,
+//    so a host cannot store a tag by renaming a flock. That is the write-side
+//    control and it is deliberately NOT the control this file leans on.
+//
+//    esc() runs on every single interpolated value anyway, and that is defence
+//    in depth on purpose. A serverless OG renderer builds raw HTML out of
+//    values it did not write, fetched over the network from a service that can
+//    change without this file changing, so it has to be safe on its own: the
+//    only assumption that survives a refactor on the other side of that
+//    request is "trust nothing". It is the same principle the map popup fix
+//    applied: harden the sink whether or not the source is already clean.
+//    clean() strips C0/C1 controls and clamps by code point before esc() runs,
+//    so a clamp cannot slice an escaped entity in half, and the token is
+//    pinned to ^[A-Za-z0-9]{8,20}$ before it can reach og:url or the href.
 //
 // 3. Never log the token and never put it in an image URL. og:image is the
 //    static marketing image. (Vercel's own request logs still record the
