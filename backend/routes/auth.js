@@ -937,40 +937,134 @@ function clearLoginFailures(key) {
 // phone-number change and the full data export.
 //
 // It is one Map rather than two so the two paths cannot drift again. Collision
-// is not a concern: the key is SHA-256 of the token STRING, so an Apple token
-// and a Google token can only share a key by sharing every byte.
+// is not a concern: the key is namespaced by provider and built out of values
+// the provider's own signature fixes, so an Apple token and a Google token
+// cannot share one.
 //
-// The entry expires with the token itself, bounded by OAUTH_REPLAY_MAX_TTL_MS,
-// so the cache is bounded by the providers' own windows rather than growing. A
-// token is recorded only when the sign-in SUCCEEDS: a client retrying after a
-// transient 503 from Apple's code exchange must not be told its own token was
-// replayed, which would turn one upstream blip into a hard sign-in failure.
+// The entry outlives the token itself (see OAUTH_REPLAY_MAX_TTL_MS below), so
+// the cache is bounded by the providers' own acceptance windows rather than
+// growing. A token is recorded only when the sign-in SUCCEEDS: a client
+// retrying after a transient 503 from Apple's code exchange must not be told
+// its own token was replayed, which would turn one upstream blip into a hard
+// sign-in failure.
 //
 // In-memory, therefore per process — a real ceiling on the single-instance
 // Railway deployment and a partial one behind N instances, exactly like the
 // login throttle above. The nonce check below is the part that does not depend
 // on process affinity, once clients send one.
+//
+// KEYED ON THE VERIFIED IDENTITY, NOT ON THE WIRE STRING (round 23, R3-A2).
+// This cache used to key on SHA-256 of the credential STRING, and a JWT's wire
+// string is not a canonical encoding of the credential it carries. An RS256
+// signature is 256 bytes; its base64url segment is 342 characters carrying
+// 2,052 bits, of which 2,048 are used - so the FINAL character has 4 bits that
+// decode to nothing, i.e. 16 characters that decode to the identical
+// signature. Round 3 measured this against this repo's own installed copies:
+// google-auth-library and jsonwebtoken accept all 16, all 16 satisfy the shape
+// regex on the Google path, and all 16 hash differently. One captured
+// credential therefore minted SIXTEEN accepted sign-ins on BOTH providers,
+// each with a fresh `iat` - and a fresh `iat` is the whole sudo-mode proof for
+// account deletion, the phone-number change and the data export.
+//
+// The key is now derived from the DECODED token: the claims the provider's
+// signature fixes (iss/aud/azp/sub/iat/exp/nonce/jti/at_hash), plus the
+// canonical spelling of the DECODED signature bytes. Both halves are identical
+// across all 16 spellings of one credential - base64url decoding drops the
+// unused trailing bits, which is precisely why both verifiers accept all 16 -
+// and both differ for a genuinely new token. Nothing in the key can be varied
+// without breaking verification, so this is not a "canonicalise the input"
+// gamble: every part of it is read off the token the verifier just accepted.
+//
+// Why not `sub` alone, which is what the string key was originally chosen
+// over: that refuses the user's NEXT legitimate sign-in rather than the replay
+// of this one. Why the signature as well as the claims: two genuine tokens
+// minted for one user in the same wall-clock second share `iat` and `exp`, and
+// their bytes are the only thing that tells them apart.
+//
+// Because that identity only exists AFTER verification, the check moved to
+// after it at both call sites. The cheap pre-verify guards stay: the shape
+// regex on the Google path, jsonwebtoken's own parse on the Apple one, so a
+// malformed token still costs nothing.
 const OAUTH_REPLAY_MAX_KEYS = 20000;
-const OAUTH_REPLAY_MAX_TTL_MS = 15 * 60 * 1000;
+// RETENTION COVERS THE REAL ACCEPTANCE WINDOW (round 23, R3-A1). An entry has
+// to outlive the token it protects, and a token is accepted until `exp` PLUS
+// the verifier's clock skew:
+//   * Google - `exp` is `iat + 3600` (60 min) and google-auth-library adds
+//     OAuth2Client.CLOCK_SKEW_SECS_ = 300 s, so ~65 minutes of acceptance.
+//   * Apple  - `exp` is `iat + 600` (10 min) and jsonwebtoken's clockTolerance
+//     defaults to 0, so ~10 minutes.
+// The cap was 15 minutes, inherited from when this cache was Apple-only, where
+// 15 > 10 made it true. Against Google it lapsed ~50 minutes before the
+// credential did, so the same unmodified credential minted another session
+// after a 15-minute wait, with no encoding trick at all. The TTL is now
+// derived per token from that token's own `exp` + skew; the cap below is the
+// backstop for a token with no usable `exp`, and it must be at least the
+// longest acceptance window of the two providers: 70 >= 65.
+const OAUTH_VERIFIER_SKEW_MS = 5 * 60 * 1000;
+const OAUTH_REPLAY_MAX_TTL_MS = 70 * 60 * 1000;
+const OAUTH_REPLAY_MIN_TTL_MS = 60 * 1000;
 // Same low-water rule as the login throttle above and routes/publicCrowd.js.
+// Worst case the map holds 20,000 entries of a 64-character hex key and a
+// number, i.e. single-digit megabytes, for at most 70 minutes each.
 const OAUTH_REPLAY_LOW_WATER = Math.floor(OAUTH_REPLAY_MAX_KEYS * 0.9);
 const oauthTokensUsed = new Map();
 
-function oauthTokenKey(identityToken) {
-  return crypto.createHash('sha256').update(String(identityToken)).digest('hex');
+// The claims that identify ONE issuance of one credential. Every one of them
+// is covered by the provider's signature, so adding a claim can only make two
+// genuinely different tokens easier to tell apart - it can never let a replay
+// of the SAME token produce a different key.
+const OAUTH_IDENTITY_CLAIMS = ['iss', 'aud', 'azp', 'sub', 'iat', 'exp', 'nonce', 'jti', 'at_hash'];
+
+// Canonical spelling of the signature segment: decode, then re-encode. All 16
+// spellings of one RS256 signature decode to the same 256 bytes, so they all
+// re-encode to the same string. A segment too short to decode into even one
+// byte cannot be an RS256 signature (a real one is 256 bytes, and nothing that
+// short survives verifyIdToken or jwt.verify), so that degenerate case keeps
+// the raw segment rather than collapsing every such value onto one key.
+function canonicalJwtSignature(rawToken) {
+  const segments = String(rawToken == null ? '' : rawToken).split('.');
+  if (segments.length !== 3) return null;
+  const bytes = Buffer.from(segments[2], 'base64url');
+  return bytes.length > 0 ? bytes.toString('base64url') : segments[2];
 }
 
-function oauthTokenWasUsed(identityToken, now = Date.now()) {
-  const expiresAt = oauthTokensUsed.get(oauthTokenKey(identityToken));
+// Returns null when the token cannot be identified at all - no `sub`, or not
+// three segments. Callers FAIL CLOSED on null: a credential we cannot key is a
+// credential we cannot make single-use.
+function oauthIdentityKey(provider, payload, rawToken) {
+  if (!payload || typeof payload !== 'object') return null;
+  const sub = payload.sub == null ? '' : String(payload.sub);
+  if (!sub) return null;
+  const signature = canonicalJwtSignature(rawToken);
+  if (signature === null) return null;
+  const parts = [String(provider), signature];
+  for (const claim of OAUTH_IDENTITY_CLAIMS) {
+    const value = payload[claim];
+    // `aud` is an array in some issuers' tokens; everything else is scalar.
+    parts.push(Array.isArray(value) ? value.map(String).join(',') : (value == null ? '' : String(value)));
+  }
+  // Length-prefixed so no combination of claim values can spell another one.
+  return crypto.createHash('sha256')
+    .update(parts.map((part) => `${part.length}:${part}`).join('|'))
+    .digest('hex');
+}
+
+function oauthIdentityWasUsed(identityKey, now = Date.now()) {
+  if (!identityKey) return false;
+  const expiresAt = oauthTokensUsed.get(identityKey);
   if (!expiresAt) return false;
-  if (now >= expiresAt) {
-    oauthTokensUsed.delete(oauthTokenKey(identityToken));
+  // Strictly greater, so the entry is still remembered AT the last instant the
+  // verifier still accepts the token: google-auth-library refuses on
+  // `exp < now - skew`, so `exp + skew` itself is still an accepted instant.
+  if (now > expiresAt) {
+    oauthTokensUsed.delete(identityKey);
     return false;
   }
   return true;
 }
 
-function markOauthTokenUsed(identityToken, expSeconds, now = Date.now()) {
+function markOauthIdentityUsed(identityKey, expSeconds, now = Date.now()) {
+  if (!identityKey) return;
   if (oauthTokensUsed.size > OAUTH_REPLAY_MAX_KEYS) {
     for (const [k, v] of oauthTokensUsed) if (now >= v) oauthTokensUsed.delete(k);
     // R2-2's anti-pattern, on the map whose whole job is refusing replays: this
@@ -988,9 +1082,14 @@ function markOauthTokenUsed(identityToken, expSeconds, now = Date.now()) {
       }
     }
   }
-  const remaining = Number.isFinite(expSeconds) ? expSeconds * 1000 - now : OAUTH_REPLAY_MAX_TTL_MS;
-  const ttl = Math.min(Math.max(remaining, 60 * 1000), OAUTH_REPLAY_MAX_TTL_MS);
-  oauthTokensUsed.set(oauthTokenKey(identityToken), now + ttl);
+  // `exp + skew`, not `exp`: the last instant the verifier still accepts this
+  // credential is the last instant the entry has to exist for.
+  const exp = Number(expSeconds);
+  const acceptedUntil = Number.isFinite(exp)
+    ? exp * 1000 + OAUTH_VERIFIER_SKEW_MS
+    : now + OAUTH_REPLAY_MAX_TTL_MS;
+  const ttl = Math.min(Math.max(acceptedUntil - now, OAUTH_REPLAY_MIN_TTL_MS), OAUTH_REPLAY_MAX_TTL_MS);
+  oauthTokensUsed.set(identityKey, now + ttl);
 }
 
 // Server-issued OAuth nonces, shared by Apple and Google for the same reason
@@ -1036,7 +1135,7 @@ function issueOauthNonce(now = Date.now()) {
 // recorded on success: if a failed attempt burned the nonce, one transient 503
 // from Apple's code exchange would force the user back through the whole Apple
 // authorization sheet instead of letting the client retry. Validity is checked
-// early, the nonce is spent next to markOauthTokenUsed.
+// early, the nonce is spent next to markOauthIdentityUsed.
 function oauthNonceValid(nonce, now = Date.now()) {
   const expiresAt = oauthNonces.get(nonce);
   if (!expiresAt) return false;
@@ -2065,6 +2164,7 @@ router.post('/google', [
     // mistaken for an attack.
     const suppliedNonce = typeof req.body.nonce === 'string' ? req.body.nonce.trim() : '';
     let credentialExp = null;
+    let credentialIdentity = null;
 
     let googleId, email, name, picture, emailVerified;
     if (req.body.credential) {
@@ -2090,23 +2190,6 @@ router.post('/google', [
       if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(req.body.credential)) {
         return res.status(401).json({ error: 'Google sign-in expired, please try again' });
       }
-      // REPLAY (round 22, SECURITY-AUDIT-auth.md R2-3). The Apple branch has
-      // had this since round 16 and this one did not, while a Google ID token
-      // lives ~1 hour against Apple's ~10 minutes — so the LONGER window was
-      // the unprotected one. Checked here, before verifyIdToken's side effects
-      // and before any row is touched, exactly where the Apple check sits. The
-      // credential is only RECORDED as used once the sign-in succeeds (see the
-      // markOauthTokenUsed call at the end), so a client retrying after a
-      // transient failure is not told its own token was replayed.
-      //
-      // Keyed the same way as the Apple token, on SHA-256 of the credential
-      // STRING. That is the value that uniquely identifies this credential:
-      // Google ID tokens carry no `jti`, and keying on `sub` would refuse the
-      // user's NEXT legitimate sign-in rather than the replay of this one.
-      if (oauthTokenWasUsed(req.body.credential)) {
-        console.warn(`[auth] rejected replayed Google credential from ${req.ip}`);
-        return res.status(401).json({ error: 'Google sign-in expired, please try again' });
-      }
       // Verify the Google ID token
       const ticket = await googleClient.verifyIdToken({
         idToken: req.body.credential,
@@ -2119,6 +2202,30 @@ router.post('/google', [
       ({ sub: googleId, email, name, picture } = gp);
       emailVerified = gp.email_verified === true || gp.email_verified === 'true';
       credentialExp = gp.exp;
+
+      // REPLAY (round 22, R2-3), re-keyed round 23 (R3-A2). This check used to
+      // run BEFORE verifyIdToken, on SHA-256 of the credential string, so that
+      // a known-bad token cost no upstream work. The string is not a canonical
+      // encoding of the credential - 16 spellings of one signature all verify
+      // and all hash differently - so the check now runs on the identity of
+      // the token the verifier just accepted, which is the same value for all
+      // 16 and different for a real new token. What is lost is that a replay
+      // now reaches verifyIdToken; what is gained is that it is actually
+      // refused. The shape regex above is the pre-verify guard that still
+      // keeps malformed input away from the library.
+      //
+      // Still only RECORDED once the sign-in succeeds (markOauthIdentityUsed
+      // at the end), so a client retrying after a transient failure is never
+      // told its own credential was replayed.
+      credentialIdentity = oauthIdentityKey('google', gp, req.body.credential);
+      if (!credentialIdentity) {
+        console.warn(`[auth] refused Google sign-in: credential cannot be made single-use (${req.ip})`);
+        return res.status(401).json({ error: 'Google sign-in expired, please try again' });
+      }
+      if (oauthIdentityWasUsed(credentialIdentity)) {
+        console.warn(`[auth] rejected replayed Google credential from ${req.ip}`);
+        return res.status(401).json({ error: 'Google sign-in expired, please try again' });
+      }
 
       // NONCE BINDING (round 22, R2-3) — the same three cases, in the same
       // order, as the Apple path. google-auth-library verifies signature,
@@ -2352,7 +2459,7 @@ router.post('/google', [
     // the `credential` (ID token) path, which is the one that mints a session
     // from a value the client cannot re-fetch.
     if (req.body.credential) {
-      markOauthTokenUsed(req.body.credential, credentialExp);
+      markOauthIdentityUsed(credentialIdentity, credentialExp);
       spendOauthNonce(suppliedNonce);
     }
 
@@ -2442,17 +2549,6 @@ router.post('/apple', [
 
     const { identityToken, fullName, authorizationCode } = req.body;
 
-    // Round 16: an identity token was accepted as many times as it was
-    // presented, for the ~10 minutes it stays valid. Checked BEFORE the
-    // signature verification's side effects and before any row is touched.
-    // The token is only RECORDED as used once the sign-in succeeds (see the
-    // markOauthTokenUsed call at the end), so a retry after a transient
-    // upstream failure is not mistaken for an attack.
-    if (oauthTokenWasUsed(identityToken)) {
-      console.warn(`[auth] rejected replayed Apple identity token from ${req.ip}`);
-      return res.status(401).json({ error: 'Apple sign-in expired, please try again' });
-    }
-
     // Verify Apple's signed identity token using their rotating JWKS
     const payload = await new Promise((resolve, reject) => {
       jwt.verify(
@@ -2490,6 +2586,28 @@ router.post('/apple', [
     if (String(appleId).length > MAX_OAUTH_ID) {
       console.warn('[auth] refused Apple sign-in: provider identity is wider than users.oauth_id');
       return res.status(400).json({ error: "Apple sign-in didn't complete. Try again in a moment." });
+    }
+
+    // Round 16: an identity token was accepted as many times as it was
+    // presented, for the ~10 minutes it stays valid. Re-keyed round 23
+    // (R3-A2), which is why this now sits AFTER jwt.verify rather than before
+    // it: the old key was SHA-256 of the token string, and the last character
+    // of an RS256 signature has 16 spellings that all verify, so one captured
+    // token still bought 16 sign-ins here. The identity it keys on now only
+    // exists once the token is decoded. jwt.verify is itself the cheap
+    // pre-verify guard - a malformed token never gets past its parse.
+    //
+    // Still only RECORDED as used once the sign-in succeeds (see
+    // markOauthIdentityUsed at the end), so a retry after a transient upstream
+    // failure is not mistaken for an attack.
+    const identityKey = oauthIdentityKey('apple', payload, identityToken);
+    if (!identityKey) {
+      console.warn(`[auth] refused Apple sign-in: identity token cannot be made single-use (${req.ip})`);
+      return res.status(401).json({ error: 'Apple sign-in expired, please try again' });
+    }
+    if (oauthIdentityWasUsed(identityKey)) {
+      console.warn(`[auth] rejected replayed Apple identity token from ${req.ip}`);
+      return res.status(401).json({ error: 'Apple sign-in expired, please try again' });
     }
 
     // Nonce binding (round 16). Three cases, in order of how much we know:
@@ -2713,7 +2831,7 @@ router.post('/apple', [
     // Only now are the token and the nonce spent. Every failure path above
     // leaves both usable, so a client that retries after an upstream blip is
     // not locked out by its own replay protection.
-    markOauthTokenUsed(identityToken, payload.exp);
+    markOauthIdentityUsed(identityKey, payload.exp);
     spendOauthNonce(suppliedNonce);
 
     const token = signUserToken(user);
@@ -2765,14 +2883,24 @@ module.exports.__testing = {
   issueOauthNonce,
   oauthNonceValid,
   spendOauthNonce,
-  oauthTokenWasUsed,
-  markOauthTokenUsed,
+  // Round 23 (R3-A2/R3-A1): the replay cache keys on the VERIFIED identity, so
+  // these take the key oauthIdentityKey() derives rather than a token string.
+  // The token-shaped names below are kept as aliases because other suites name
+  // them; they are the same two functions.
+  oauthIdentityKey,
+  oauthIdentityWasUsed,
+  markOauthIdentityUsed,
+  canonicalJwtSignature,
+  OAUTH_REPLAY_MAX_TTL_MS,
+  OAUTH_VERIFIER_SKEW_MS,
+  oauthTokenWasUsed: oauthIdentityWasUsed,
+  markOauthTokenUsed: markOauthIdentityUsed,
   appleNonceClaimMatches: oauthNonceClaimMatches,
   issueAppleNonce: issueOauthNonce,
   appleNonceValid: oauthNonceValid,
   spendAppleNonce: spendOauthNonce,
-  appleTokenWasUsed: oauthTokenWasUsed,
-  markAppleTokenUsed: markOauthTokenUsed,
+  appleTokenWasUsed: oauthIdentityWasUsed,
+  markAppleTokenUsed: markOauthIdentityUsed,
   VERIFICATION_TTL_HOURS,
   RESEND_MIN_GAP_MS,
   RESEND_MAX_PER_HOUR_ACCOUNT,
