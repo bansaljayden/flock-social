@@ -66,7 +66,7 @@ function reset() {
     1: {
       id: 1, email: 'alice@example.com', name: 'Alice', role: 'user', email_verified: true,
       is_banned: false, banned_at: null, token_version: 0, password: PASSWORD_HASH,
-      phone: '+12025550101', interests: ['hiking'],
+      phone: '+12025550101', interests: ['hiking'], bio: 'my exported bio words',
       profile_image_url: null, venmo_username: null, cashapp_cashtag: null, zelle_identifier: null,
       is_premium: false, oauth_provider: null, oauth_id: null,
       apple_refresh_token: null, terms_accepted_at: '2026-01-01T00:00:00Z',
@@ -341,6 +341,9 @@ test('the export carries votes, reactions, reviews, crowd reports, bill splits, 
   assert.strictEqual(b.sos_alerts[0].latitude, 40.7128);
   assert.strictEqual(b.friends.length, 1);
   assert.strictEqual(b.friends[0].friend_user_id, 2);
+  // The bio is data the user typed about themselves, so the export carries it
+  // (migration 026 / routes/users.js profile pick list).
+  assert.strictEqual(b.profile.bio, 'my exported bio words');
 
   // Bill splits: own share always; the bill's total only where the caller paid.
   const owed = b.bill_splits.find((x) => x.you_paid === false);
@@ -473,8 +476,9 @@ test('privileged body fields never reach the UPDATE, together or alone', async (
   assert.ok(!/\brole\s*=/.test(setClause), 'the UPDATE writes role');
   // token_version appears only as the CASE-gated bump, and the gate ($5, the
   // hashed new password) is null because no new_password was sent — the body's
-  // raw `password` field must not have become one.
-  assert.deepStrictEqual(update.params, ['New Name', null, null, null, null, 1]);
+  // raw `password` field must not have become one. The trailing null is $7,
+  // bio (unsent here); it sits AFTER the id so params[5] stays the user id.
+  assert.deepStrictEqual(update.params, ['New Name', null, null, null, null, 1, null]);
   // And the response reflects the database, not the body.
   assert.strictEqual(res.body.user.role, 'user');
   assert.strictEqual(res.body.user.is_premium, undefined);
@@ -486,7 +490,7 @@ test('privileged body fields never reach the UPDATE, together or alone', async (
     assert.strictEqual(one.status, 200, `${field}: ${one.text}`);
     const u = updates().find((s) => s.text.includes('SET name = COALESCE'));
     assert.ok(u, `${field}: the profile UPDATE never ran`);
-    assert.deepStrictEqual(u.params, [null, null, null, null, null, 1],
+    assert.deepStrictEqual(u.params, [null, null, null, null, null, 1, null],
       `${field} altered the UPDATE's parameters`);
   }
 });
