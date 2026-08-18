@@ -12,12 +12,20 @@
 #    (created in App Store Connect → Users and Access → Integrations).
 #    Name the integration exactly:  FlockASC   (matches `app_store_connect` below).
 #
-# 2. Web build secrets — create a variable group named  flock_web  and add EVERY
-#    REACT_APP_* line from frontend/.env as Secure variables. Critical ones:
+# 2. Web build secrets — create a variable group named  flock_web  and add the
+#    REACT_APP_* lines listed in frontend/.env.example as Secure variables.
+#    Critical ones:
 #      REACT_APP_MAPTILER_KEY          (no map renders without it)
 #      REACT_APP_API_URL               (optional; defaults to the Railway prod URL)
-#      REACT_APP_FIREBASE_* / REACT_APP_GOOGLE_* / REACT_APP_GOOGLE_MAPS_API_KEY
+#      REACT_APP_FIREBASE_* / REACT_APP_GOOGLE_CLIENT_ID / REACT_APP_GOOGLE_IOS_CLIENT_ID
 #    CRA inlines these at `npm run build`, so they must exist in the build env.
+#    Add ONLY vars the app reads. CRA's DefinePlugin emits the whole process.env
+#    object, so any REACT_APP_* present in the build env is published verbatim in
+#    build/static/js/*.js whether or not a line of code reads it — an unused
+#    billable key in this group is an unused billable key on every visitor's
+#    machine. Maps are MapTiler + MapLibre (App.js), so there is NO Google Maps
+#    key here: REACT_APP_GOOGLE_MAPS_API_KEY has no consumer and must not be set.
+#    Enforced by frontend/src/__tests__/noUnusedGoogleApiKey.test.js.
 #    Non-REACT_APP vars the scripts below also read from this group:
 #      CM_CERTIFICATE_PRIVATE_KEY   (PEM private key; pins ONE distribution cert
 #                                    across builds — signing step fails without it)
