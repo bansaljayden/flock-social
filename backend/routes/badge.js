@@ -178,7 +178,7 @@ router.get('/:placeId.svg',
         return res.status(503).send('');
       }
 
-      const r = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
+      const r = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
         headers: {
           'X-Goog-Api-Key': GOOGLE_KEY,
           // Round 10: rating/userRatingCount/priceLevel are all consumed by the
