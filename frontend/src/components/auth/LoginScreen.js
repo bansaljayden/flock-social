@@ -108,7 +108,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
 
         {/* The retry field the error message points at. It sits first so
             "below" in that copy is literally true, and so it is the next
-            thing under the reader's eye on both the email and Google paths. */}
+            thing under the reader's eye on the email, Google and Apple paths. */}
         {needsDob && (
           <div className="auth-field-row">
             <label className="auth-label" htmlFor="login-dob">Date of birth</label>
@@ -193,8 +193,27 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
       </button>
 
       {/* Apple guideline 4.8: Google login is offered above, so the native
-          iOS app must offer Sign in with Apple too. Renders null on web. */}
-      <AppleSignInButton onSuccess={onLoginSuccess} onError={(m) => setError(m)} />
+          iOS app must offer Sign in with Apple too. Renders null on web.
+
+          `dob` and the needsDob branch are not decoration. Apple never sends a
+          date of birth, so the server refuses to CREATE an account without one
+          and answers 403 {needsDob:true}. Someone whose first ever tap is
+          Continue with Apple on this screen — a reviewer, say — used to get a
+          message pointing at a field that was not on the page and a button
+          that could never send it, which is a dead end on the first screen of
+          the app. Same field, same retry as the Google and email paths. */}
+      <AppleSignInButton
+        onSuccess={onLoginSuccess}
+        dob={needsDob && dob ? dob : undefined}
+        onError={(m, err) => {
+          if (err?.data?.needsDob) {
+            setNeedsDob(true);
+            setError(needsDob && dob ? m : 'Add your date of birth below, then tap Continue with Apple again.');
+          } else {
+            setError(m);
+          }
+        }}
+      />
 
       {/* The server will not say which addresses belong to Google or Apple
           accounts, because answering that turns login into an account

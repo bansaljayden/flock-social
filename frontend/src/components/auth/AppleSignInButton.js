@@ -45,8 +45,12 @@ const AppleSignInButton = ({ onSuccess, onError, dob }) => {
       onSuccess?.(data.user);
     } catch (err) {
       // User-cancelled flows should stay quiet; real failures surface.
+      // The raw error goes out as a second argument so a screen can read
+      // `err.data.needsDob` — the server answers 403 {needsDob:true} when a
+      // brand-new Apple account arrives with no date of birth, and a screen
+      // that only sees the message string cannot offer the retry field.
       const msg = String(err?.message || err);
-      if (!/cancel|1001/i.test(msg)) onError?.(msg || 'Apple sign-in failed');
+      if (!/cancel|1001/i.test(msg)) onError?.(msg || 'Apple sign-in failed', err);
     } finally {
       setBusy(false);
     }
