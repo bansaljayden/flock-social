@@ -91,6 +91,7 @@ is built on (see `MONEY-MODEL.md` and `VENUE-BILLING.md`).
 
 React 19 (CRA) on Vercel · Node + Express on Railway · PostgreSQL ·
 Socket.io · JWT auth (email, Google, Sign in with Apple) · Capacitor 8 for iOS ·
+MapLibre GL + MapTiler tiles for every map (no Google Maps SDK, no Maps key) ·
 RevenueCat + Apple IAP (consumer, dormant behind a flag) · Google Places, Google
 Cloud Vision (image moderation), Gemini (Birdie), OpenWeatherMap, Ticketmaster,
 Resend, FCM + APNs · PostHog, Sentry (dormant, DSN unset).
