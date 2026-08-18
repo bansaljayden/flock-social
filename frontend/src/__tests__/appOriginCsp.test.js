@@ -58,12 +58,37 @@ const HEADERS = GLOBAL_RULE.headers;
 const CSP = (HEADERS.find((h) => h.key === 'Content-Security-Policy') || {}).value || '';
 
 // "script-src 'self' https://x" -> ["'self'", "https://x"]
-const directive = (name) => {
-  const found = CSP.split(';')
+const directiveOf = (policy, name) => {
+  const found = policy.split(';')
     .map((d) => d.trim())
     .find((d) => d === name || d.startsWith(name + ' '));
   return found ? found.split(/\s+/).slice(1) : null;
 };
+const directive = (name) => directiveOf(CSP, name);
+
+// The SECOND copy of this policy: the <meta http-equiv> in public/index.html.
+// It exists because the App Store build serves this bundle from
+// capacitor://localhost and never sees a Vercel response header at all. Read
+// out of the file rather than retyped, for the same reason the host list below
+// is: two hand-maintained copies of a policy is one policy and one lie.
+const HTML = read('public', 'index.html');
+// The value is delimited by double quotes because it is full of the single
+// quotes CSP keywords need ('self', 'none', 'unsafe-inline'), so the capture
+// must not treat a single quote as a delimiter.
+const META = (
+  HTML.match(/<meta\s+http-equiv=["']Content-Security-Policy["']\s+content="([^"]*)"/i) || []
+)[1] || '';
+const metaDirective = (name) => directiveOf(META, name);
+
+// Directives a meta-delivered policy cannot express. Every browser ignores
+// them in <meta>, so the header in vercel.json is the only place they can
+// live, and asserting the meta copy against them would assert nothing.
+const META_IGNORED = ['frame-ancestors', 'report-uri', 'report-to', 'sandbox'];
+
+const namesIn = (policy) => policy.split(';')
+  .map((d) => d.trim())
+  .filter(Boolean)
+  .map((d) => d.split(/\s+/)[0]);
 
 // CSP host matching, enough of it for the sources this app uses: exact host,
 // or a leading `*.` wildcard that covers one or more leading labels.
@@ -271,5 +296,127 @@ describe('invite-preview.js documents the CURRENT write path (I-2)', () => {
     // applied, and the token still shape-checked, whatever the database does.
     expect(SRC).toMatch(/function esc\s*\(/);
     expect(SRC).toMatch(/\[A-Za-z0-9\]\{8,20\}/);
+  });
+});
+
+// ===========================================================================
+// The iOS half. C3-1 / X3-1: the enforcing CSP was an HTTP response header
+// from Vercel, and `webDir: 'build'` with no `server.url` means the Capacitor
+// shell serves the bundle out of the app package over capacitor://localhost
+// and never fetches that response. Same localStorage token, same
+// innerHTML/setHTML sinks, same 13-year-old audience floor, no policy at all.
+// A <meta http-equiv> is the only form that travels with the bundle.
+//
+// The trap this suite exists for: that tag applies on the WEB too, where the
+// header also applies. Two policies on one document are BOTH enforced and the
+// effective policy is their intersection, so a meta directive narrower than
+// the header's silently narrows the live website - a blank map, a dead
+// service worker, a white screen - and none of it shows up on iOS where the
+// change was being tested.
+// ===========================================================================
+describe('the meta CSP that ships inside the iOS binary', () => {
+  it('exists in public/index.html, so the policy travels with the bundle', () => {
+    expect(META).not.toBe('');
+    // Not Report-Only: <meta> cannot express Report-Only at all, so a policy
+    // here is always enforcing. Stated so nobody tries.
+    expect(HTML).not.toMatch(/http-equiv=["']Content-Security-Policy-Report-Only["']/i);
+  });
+
+  it('has a script-src, and it allows neither inline script nor eval', () => {
+    const script = metaDirective('script-src');
+    expect(script).toBeTruthy();
+    expect(script).toContain("'self'");
+    expect(script).not.toContain("'unsafe-inline'");
+    expect(script).not.toContain("'unsafe-eval'");
+    expect(metaDirective('object-src')).toEqual(["'none'"]);
+    expect(metaDirective('base-uri')).toEqual(["'none'"]);
+  });
+
+  it('is not NARROWER than the header for any directive both define', () => {
+    // The whole risk in one assertion. Both sides are read from source, so
+    // adding a host to vercel.json and forgetting index.html fails here
+    // instead of failing as a broken production website.
+    const shared = namesIn(CSP).filter((n) => !META_IGNORED.includes(n));
+    expect(shared.length).toBeGreaterThan(8);
+    for (const name of shared) {
+      const header = directiveOf(CSP, name) || [];
+      const meta = metaDirective(name);
+      // A directive the header defines and the meta omits is not "wider":
+      // the meta's own default-src would govern it instead, which for
+      // script-src/style-src/img-src and friends is narrower than the list
+      // the header spells out. Require it to be present.
+      expect([name, meta]).not.toEqual([name, null]);
+      const missing = header.filter((src) => !meta.includes(src));
+      expect([name, missing]).toEqual([name, []]);
+    }
+  });
+
+  it('drops the directives a meta policy cannot carry, and the header still has them', () => {
+    for (const name of META_IGNORED) {
+      expect([name, metaDirective(name)]).toEqual([name, null]);
+    }
+    // frame-ancestors is the one of the four that is actually in use. It is
+    // the reason the header is not redundant with this tag: dropping the
+    // header would lose clickjacking protection on the web, and a native
+    // WebView cannot be framed by anything, so nothing is lost on iOS.
+    expect(directive('frame-ancestors')).toEqual(["'self'"]);
+  });
+
+  it('names the native origin explicitly rather than loosening a directive', () => {
+    // On native, 'self' is capacitor://localhost. Spelling it out costs the
+    // web nothing (no https page can match a capacitor: source) and keeps the
+    // bundle loading if a WebKit build declines to match 'self' against a
+    // custom scheme. The alternative - widening a directive with a wildcard
+    // or a bare scheme-source like https: - would widen the WEB policy too.
+    for (const name of ['default-src', 'script-src', 'connect-src', 'img-src']) {
+      expect([name, metaDirective(name)]).toEqual([
+        name, expect.arrayContaining(['capacitor://localhost']),
+      ]);
+    }
+    // Nothing was widened to a bare scheme or a bare wildcard to get there.
+    expect(META.split(/[\s;]+/)).not.toContain('https:');
+    expect(META.split(/[\s;]+/)).not.toContain('*');
+    expect(META).not.toContain("'unsafe-eval'");
+  });
+
+  it('keeps the native app talking to its backend, over https and over the socket', () => {
+    // The iOS shell has no same-origin API: every request is the absolute
+    // Railway URL, and the socket is the wss:// form of it. If connect-src
+    // misses either, the app launches and then does nothing, which is the
+    // failure mode a meta CSP produces instead of an error anyone reads.
+    const APISRC = read('src', 'services', 'api.js');
+    const base = (APISRC.match(/https:\/\/flock-app-production\.up\.railway\.app/) || [])[0];
+    expect(base).toBeTruthy();
+    const connect = metaDirective('connect-src');
+    expect(allows(connect, base)).toBe(true);
+    expect(allows(connect, base.replace('https://', 'wss://'))).toBe(true);
+    expect(allows(metaDirective('img-src'), base)).toBe(true);
+  });
+
+  it('keeps MapLibre and the push worker alive on both origins', () => {
+    // Same two entries as the header suite above, asserted again on the copy
+    // that ships in the binary. worker-src blob: is the map; gstatic is
+    // firebase-messaging-sw.js's importScripts, which is a web concern - and
+    // it has to stay here anyway, because removing it would intersect it out
+    // of the web policy.
+    expect(metaDirective('worker-src')).toContain('blob:');
+    expect(metaDirective('img-src')).toContain('blob:');
+    expect(metaDirective('img-src')).toContain('data:');
+    const SW = read('public', 'firebase-messaging-sw.js');
+    const imported = SW.match(/importScripts\('(https:\/\/[^']+)'\)/g) || [];
+    expect(imported.length).toBeGreaterThan(0);
+    for (const line of imported) {
+      const url = line.match(/'(https:\/\/[^']+)'/)[1];
+      expect([url, allows(metaDirective('script-src'), url)]).toEqual([url, true]);
+    }
+  });
+
+  it('is parsed before the subresources below it', () => {
+    // A meta policy governs only what is parsed AFTER it. The icon and
+    // manifest links are real subresource loads, so the tag has to come first.
+    const at = HTML.search(/<meta\s+http-equiv=["']Content-Security-Policy["']/i);
+    expect(at).toBeGreaterThan(-1);
+    expect(at).toBeLessThan(HTML.indexOf('rel="manifest"'));
+    expect(at).toBeLessThan(HTML.indexOf('rel="icon"'));
   });
 });
