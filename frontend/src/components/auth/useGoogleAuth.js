@@ -51,6 +51,17 @@ import { googleLogin, googleLoginWithToken } from '../../services/api';
  * time the native button HIDES rather than throwing (see
  * isGoogleSignInAvailable) — a button that cannot work is the defect this file
  * was written to remove, not one to reintroduce with a nicer error message.
+ *
+ * SIGNING OUT IS NOT IN THIS FILE, and that is deliberate. GIDSignIn keeps its
+ * own session in the iOS keychain, so clearing localStorage does not end it and
+ * the next person holding the phone can re-authenticate as the previous user in
+ * one tap. The matching SocialLogin.logout() call therefore lives in
+ * services/api.js's clearLocalSession(), which is the single function every
+ * session-ending path converges on — logout(), the 401 handler and account
+ * deletion. Adding a second sign-out call here would create exactly the
+ * half-clearing second path that convergence exists to prevent. If a provider
+ * is ever added to the login path above, add it to endNativeGoogleSession()
+ * in that file in the same change.
  */
 
 // Same detection AppleSignInButton.js uses, and for the same reason: read it

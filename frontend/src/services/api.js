@@ -114,6 +114,51 @@ function sweepStore(store) {
 }
 
 /**
+ * THE ONE CREDENTIAL THAT IS NOT IN localStorage.
+ *
+ * On iOS, "Continue with Google" runs Google's own SDK through
+ * @capgo/capacitor-social-login (see components/auth/useGoogleAuth.js for why
+ * the web GIS popup cannot work inside the WebView). GIDSignIn keeps its own
+ * session in the iOS keychain, which is a store this file's sweep cannot see
+ * and the server cannot reach. So the wipe above could clear every flock* key
+ * perfectly and the previous user would still be ONE TAP from signing back in:
+ * hand the phone over, tap Continue with Google, and the native sheet
+ * completes against the account that is still authenticated, with no password.
+ * That is the shared-phone leak the sweep exists to close, one layer down.
+ *
+ * THREE RULES, and each of them is why this is shaped the way it is:
+ *
+ *  1. NATIVE iOS ONLY. The guard is read off the injected window.Capacitor
+ *     global rather than by importing @capacitor/core, the same way
+ *     useGoogleAuth.js and AppleSignInButton.js decide it — the web bundle
+ *     must not pull the native runtime in. It is duplicated here rather than
+ *     imported from useGoogleAuth.js on purpose: that module imports THIS one,
+ *     and it also imports React and @react-oauth/google, none of which belong
+ *     in the dependency graph of the API client.
+ *  2. LAZILY IMPORTED. The dynamic import sits behind the guard, so a web
+ *     sign-out never fetches the plugin chunk at all.
+ *  3. IT CANNOT BLOCK OR BREAK SIGN-OUT. Fire and forget: no await, and the
+ *     promise's rejection is swallowed. The plugin can be absent, disabled in
+ *     capacitor.config.ts, or reject outright (it does when Google was
+ *     initialized in offline mode, and when the GoogleSignIn dependency is not
+ *     linked) and the local wipe has already happened regardless. Same
+ *     property the server call has: signing out in a basement with no signal
+ *     still signs you out of the phone.
+ */
+function endNativeGoogleSession() {
+  try {
+    const native =
+      typeof window !== 'undefined' &&
+      window.Capacitor?.isNativePlatform?.() &&
+      window.Capacitor?.getPlatform?.() === 'ios';
+    if (!native) return;
+    import('@capgo/capacitor-social-login')
+      .then((m) => m.SocialLogin?.logout({ provider: 'google' }))
+      .catch(() => { /* see rule 3: sign-out has already happened */ });
+  } catch (_) { /* same */ }
+}
+
+/**
  * Wipe this device's copy of the signed-in account. Synchronous and total: it
  * never awaits anything, so no failure anywhere can leave a half-signed-out
  * device. Every caller that ends a session goes through here — logout(), the
@@ -129,6 +174,9 @@ export function clearLocalSession() {
   // Round 3: without reset, activity on a shared device stays attributed to
   // the previous account, and the next login can merge identities.
   withPostHog((posthog) => posthog.reset());
+  // LAST, and after the storage sweep has already run, so nothing this touches
+  // can come between a user tapping Log out and their data leaving the device.
+  endNativeGoogleSession();
 }
 
 /**
