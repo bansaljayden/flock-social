@@ -32,12 +32,40 @@
  *     account deletion all route through clearLocalSession(); App.js's
  *     endSession() clears nothing of its own. A second half-clearing path is
  *     how the leak survived this long.
+ *   - The wipe reaches the credential that is NOT in localStorage. On iOS,
+ *     "Continue with Google" runs Google's own SDK and GIDSignIn keeps its
+ *     session in the keychain, so a perfect storage sweep still left the
+ *     previous user one tap from signing back in on a handed-over phone.
+ *     clearLocalSession() now calls the plugin's logout as well - guarded to
+ *     native iOS, lazily imported so the web bundle never pulls the native
+ *     module in, and fire-and-forget so a plugin that is absent, disabled or
+ *     rejecting cannot hold a sign-out open or undo one.
  *
  * HOW TO RUN
  *   cd frontend && CI=true npx react-scripts test --watchAll=false
  */
 
 import { logout, clearLocalSession, isLoggedIn, getBlockedUsers } from '../services/api';
+
+// The native Google session. api.js reaches it through a dynamic import behind
+// an isNativeIos() guard, so the getter below is what proves the web build
+// never touches the module at all: on web it is never read.
+let mockNativeModuleLoads = 0;
+const mockSocialLogin = { logout: jest.fn() };
+jest.mock('@capgo/capacitor-social-login', () => ({
+  get SocialLogin() {
+    mockNativeModuleLoads += 1;
+    return mockSocialLogin;
+  },
+}));
+
+const asNativeIos = () => {
+  window.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'ios' };
+};
+const asWeb = () => { delete window.Capacitor; };
+// The plugin call is deliberately not awaited by anything, so a test has to
+// let the microtask queue and the dynamic import settle before reading it.
+const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
 const fs = require('fs');
 const path = require('path');
@@ -104,7 +132,11 @@ beforeEach(() => {
   global.fetch = jest.fn();
   localStorage.clear();
   sessionStorage.clear();
+  mockNativeModuleLoads = 0;
+  asWeb();
 });
+
+afterEach(() => { asWeb(); });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. Sign-out calls the server
@@ -331,5 +363,140 @@ describe('convergence', () => {
     expect(APP).toContain('endSession(sessionEndCopy(reason)');
     const del = APP.indexOf('await deleteAccount(');
     expect(APP.indexOf('if (onLogout) onLogout();', del)).toBeGreaterThan(del);
+  });
+});
+
+// ===========================================================================
+// 6. The credential that is not in localStorage
+//
+// f3db39c cleared the whole flock* namespace and told the server, and it was
+// still possible to hand the phone to someone else, tap "Continue with
+// Google", and land straight back in the previous user's account with no
+// password: @capgo/capacitor-social-login drives GIDSignIn, which keeps the
+// authenticated Google account in the iOS keychain, and nothing called its
+// logout(). That is the same shared-phone leak the sweep exists to close,
+// sitting one layer below the sweep.
+//
+// The three properties below are the ones that make this safe to put inside
+// clearLocalSession(), which is the function every session-ending path
+// converges on and which must never fail.
+// ===========================================================================
+describe('the native Google session', () => {
+  it('is ended on iOS when the user signs out', async () => {
+    asNativeIos();
+    seedDevice();
+    global.fetch.mockResolvedValue(jsonRes({ message: 'Logged out successfully' }));
+
+    await logout();
+    await flush();
+
+    expect(mockSocialLogin.logout).toHaveBeenCalledTimes(1);
+    expect(mockSocialLogin.logout).toHaveBeenCalledWith({ provider: 'google' });
+  });
+
+  it('is ended on the other two paths too, because they share one function', async () => {
+    // A 401 mid-session and account deletion are sign-outs the user did not
+    // tap. Routing them through clearLocalSession() is what stops this from
+    // becoming a second, partial teardown.
+    asNativeIos();
+    seedDevice();
+    global.fetch.mockResolvedValue(jsonRes({ error: 'Invalid token' }, 401));
+
+    await expect(getBlockedUsers()).rejects.toThrow();
+    await flush();
+
+    expect(mockSocialLogin.logout).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem('flockToken')).toBeNull();
+  });
+
+  it('is never reached on the web, and the plugin is never even imported', async () => {
+    // The guard is what keeps the native module out of the web bundle. If
+    // this ever fires, every web user downloads a GoogleSignIn shim they
+    // cannot use, and the web build starts depending on a native plugin.
+    asWeb();
+    seedDevice();
+    global.fetch.mockResolvedValue(jsonRes({ message: 'Logged out successfully' }));
+
+    await logout();
+    await flush();
+
+    expect(mockNativeModuleLoads).toBe(0);
+    expect(mockSocialLogin.logout).not.toHaveBeenCalled();
+    expect(localStorage.getItem('flockToken')).toBeNull();
+  });
+
+  it('cannot stop the sign-out when it rejects', async () => {
+    // The plugin rejects for real reasons: Google initialized in offline
+    // mode, the GoogleSignIn dependency not linked into the build. None of
+    // them is a reason to leave someone signed in on a borrowed phone.
+    asNativeIos();
+    seedDevice();
+    mockSocialLogin.logout.mockRejectedValue(new Error('logout is not implemented when using offline mode'));
+    global.fetch.mockResolvedValue(jsonRes({ message: 'Logged out successfully' }));
+
+    await expect(logout()).resolves.toBeUndefined();
+    await flush();
+
+    expect(localStorage.getItem('flockToken')).toBeNull();
+    expect(localStorage.getItem('flock_user_lat')).toBeNull();
+    expect(isLoggedIn()).toBe(false);
+  });
+
+  it('cannot stop the sign-out when it throws synchronously', async () => {
+    asNativeIos();
+    seedDevice();
+    mockSocialLogin.logout.mockImplementation(() => { throw new Error('bridge unavailable'); });
+    global.fetch.mockResolvedValue(jsonRes({ message: 'Logged out successfully' }));
+
+    await expect(logout()).resolves.toBeUndefined();
+    await flush();
+
+    expect(localStorage.getItem('flockToken')).toBeNull();
+    expect(localStorage.getItem('flock_deleted_dms')).toBeNull();
+  });
+
+  it('cannot stop the sign-out when the bridge is not there to call', async () => {
+    // A build where the provider is disabled in capacitor.config.ts, or where
+    // the GoogleSignIn dependency is not linked, resolves to a plugin object
+    // with nothing callable on it. That is a TypeError inside the promise
+    // chain, and it must land in the same place a rejection does.
+    asNativeIos();
+    seedDevice();
+    const real = mockSocialLogin.logout;
+    delete mockSocialLogin.logout;
+    try {
+      global.fetch.mockResolvedValue(jsonRes({ message: 'Logged out successfully' }));
+      await expect(logout()).resolves.toBeUndefined();
+      await flush();
+    } finally {
+      mockSocialLogin.logout = real;
+    }
+
+    expect(localStorage.getItem('flockToken')).toBeNull();
+    expect(isLoggedIn()).toBe(false);
+  });
+
+  it('runs AFTER the storage sweep, so nothing it does can come first', () => {
+    // Order is the reason a plugin failure is survivable at all: by the time
+    // the plugin is touched, the device is already wiped.
+    const fn = API.slice(API.indexOf('export function clearLocalSession'));
+    const body = fn.slice(0, fn.indexOf('\n}'));
+    expect(body.indexOf('sweepStore(window.localStorage)'))
+      .toBeLessThan(body.indexOf('endNativeGoogleSession()'));
+    // And it is fire-and-forget: clearLocalSession stays synchronous, so no
+    // caller can be held open by the native bridge.
+    expect(body).not.toContain('await');
+    expect(API).not.toContain('export async function clearLocalSession');
+  });
+
+  it('imports the plugin lazily, inside the guard', () => {
+    const fn = API.slice(API.indexOf('function endNativeGoogleSession'));
+    const body = fn.slice(0, fn.indexOf('\n}\n'));
+    // A static import at the top of api.js would put the native module in the
+    // web bundle no matter what the guard says.
+    expect(API).not.toMatch(/^import .*@capgo\/capacitor-social-login/m);
+    expect(body).toContain("import('@capgo/capacitor-social-login')");
+    expect(body).toContain("getPlatform?.() === 'ios'");
+    expect(body).toContain('.catch(');
   });
 });
