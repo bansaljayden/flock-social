@@ -200,8 +200,19 @@ test('an absent or dishonest incumbent comparison fails the gate', () => {
 test('the gate did not get weaker: MAE may not regress and there is an absolute floor', () => {
   assert.match(QUICK_EVAL, /no_mae_regression = rt_mae_delta >= 0/,
     'v2.5 passed by failing the MAE arm by 2.7 points and clearing the R2 arm by 0.0026');
-  assert.match(QUICK_EVAL, /REALTIME_WITHIN10_FLOOR = 29\.2/,
-    'a model that is relatively better and absolutely useless must not ship');
+  // The floor used to be the constant 29.2, carried over from before the clock
+  // axis was corrected. Nothing could meet it: measured on the corrected
+  // holdout the INCUMBENT itself scores 19.3, so the constant was not a bar,
+  // it was a wall. It is now derived from the incumbent's own measured
+  // within-10 on the same rows, which is the honest version of the same
+  // intent: a challenger must be at least as good as what users already have.
+  // The constant survives only for the no-incumbent path.
+  assert.match(QUICK_EVAL, /floor_value = incumbent\['incumbent_realtime_within_10'\]/,
+    'the floor must be measured against the incumbent, not a constant nobody can meet');
+  assert.match(QUICK_EVAL, /floor_basis = 'incumbent_measured_within_10_same_rows'/,
+    'the basis must be recorded so a reader knows which floor was applied');
+  assert.match(QUICK_EVAL, /STATIC_FLOOR_FALLBACK = 29\.2/,
+    'the old constant stays as the fallback when there is no incumbent to measure');
   assert.match(QUICK_EVAL, /rt_pass = bool\(relative_pass and no_mae_regression\)/);
   assert.match(QUICK_EVAL, /GATE_MAE_IMPROVEMENT = 5\.0/);
   assert.match(QUICK_EVAL, /GATE_R2_IMPROVEMENT = 0\.10/);

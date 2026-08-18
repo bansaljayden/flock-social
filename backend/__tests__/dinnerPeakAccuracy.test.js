@@ -18,16 +18,19 @@
 //           IS still open is the last-resort fallback, and this part pins
 //           exactly how far it can be wrong and what the payload says about it.
 //
-//   PART 3  THE CAUSE. The ML corpus's `hour` column held BestTime's day_raw
-//           ARRAY INDEX, and BestTime's day starts at 06:00 — so stored slot
-//           18 held the venue's MIDNIGHT. ml_venue_baselines inherited it
-//           verbatim, and this is a delta model, so that baseline IS the
-//           answer: a 6 PM request read the venue's overnight number.
-//           Migration 023 (2026-08-15) moved the corpus onto the venue clock
-//           and rebuilt the baselines, but model_metadata.json's
-//           category_baselines were derived pre-fix and stay on the bucket
-//           axis until the retrain — which is what PART 3 pins, by
-//           arithmetic on the artifact itself.
+//   PART 3  THE CAUSE, AND ITS END. The ML corpus's `hour` column held
+//           BestTime's day_raw ARRAY INDEX, and BestTime's day starts at
+//           06:00 — so stored slot 18 held the venue's MIDNIGHT.
+//           ml_venue_baselines inherited it verbatim, and this is a delta
+//           model, so that baseline IS the answer: a 6 PM request read the
+//           venue's overnight number. Migration 023 (2026-08-15) moved the
+//           corpus onto the venue clock; the retrain that exported
+//           v2.6.0-swift (2026-08-18) moved the ARTIFACT, so
+//           model_metadata.json's category_baselines are venue-local too.
+//           PART 3 was inverted on that date: it now pins that the stored
+//           peaks are already evening peaks, and that adding the old six
+//           hours makes them worse. Same arithmetic on the artifact itself,
+//           read in the other direction.
 //
 //   PART 4  THE HONESTY FIX THAT SHIPPED FIRST. The model-side fix is a
 //           retrain (the data fix has since shipped; see the note above
@@ -316,92 +319,121 @@ test('other zones and other peak hours land on their own wall clock, not the ser
 });
 
 // ===========================================================================
-// PART 3 — THE CAUSE: the hour axis was six hours off. Migration 023 fixed
-// the CORPUS on 2026-08-15; the ARTIFACT tested here predates the fix.
+// PART 3 — THE CAUSE, AND THE PROOF IT IS GONE. The hour axis was six hours
+// off. Migration 023 fixed the CORPUS on 2026-08-15; the ARTIFACT was fixed by
+// the retrain that exported v2.6.0-swift on 2026-08-18 from the corrected
+// corpus. Every assertion below was INVERTED on that date — see the note on
+// each one for what it used to say and why the flip is the pass condition.
 // ===========================================================================
 
 // Pre-fix, collectWeekly.js wrote BestTime's day_raw ARRAY INDEX as the hour;
 // day_raw runs 06:00-05:59, so the index was not the hour. (It now writes
-// (index + 6) % 24 and declares hour_axis = 'venue_local'.)
+// (index + 6) % 24 and declares hour_axis = 'venue_local'.) The constant is
+// kept because the *disproof* still needs it: the way to show the artifact is
+// no longer on the bucket axis is to add six and watch the peaks get WORSE.
 const BESTTIME_DAY_STARTS_AT = 6;
 
 function metadata() {
   return require(path.join(__dirname, '..', 'scripts', 'ml', 'models', 'model_metadata.json'));
 }
 
-test('the shipped artifact is on a BestTime bucket axis — trained pre-fix, until the retrain', () => {
+function peakSlotFor(cb, cat, day) {
+  let slot = null;
+  let val = -1;
+  for (let h = 0; h < 24; h++) {
+    const v = cb[`${cat}_${day}_${h}`];
+    if (v != null && v > val) { val = v; slot = h; }
+  }
+  return slot;
+}
+
+test('the shipped artifact is on the venue-local clock — the retrain reached the weights', () => {
+  // WAS: 'the shipped artifact is on a BestTime bucket axis'. It asserted that
+  // the stored peaks only made sense once you ADDED six hours, because
+  // model_metadata.json's category_baselines were derived from the pre-023
+  // corpus. v2.6.0-swift was exported from the corrected corpus, so the stored
+  // slots ARE venue-local hours and the shift is no longer needed. Read
+  // literally the old curves said restaurants peak at lunchtime and nightclubs
+  // at 5 PM; they now say restaurants peak at 19:00 and nightclubs at 23:00.
   const cb = metadata().category_baselines || {};
   assert.ok(Object.keys(cb).length > 0, 'no category_baselines in metadata — this proof needs them');
 
   const categories = [...new Set(Object.keys(cb).map((k) => k.replace(/_\d+_\d+$/, '')))];
+  let daytimeAsStored = 0;
   let daytimeAfterShift = 0;
   let total = 0;
 
   for (const cat of categories) {
     for (let day = 0; day < 7; day++) {
-      let peakSlot = null;
-      let peakVal = -1;
-      for (let slot = 0; slot < 24; slot++) {
-        const v = cb[`${cat}_${day}_${slot}`];
-        if (v != null && v > peakVal) { peakVal = v; peakSlot = slot; }
-      }
+      const peakSlot = peakSlotFor(cb, cat, day);
       if (peakSlot == null) continue;
       total++;
-      const localHour = (peakSlot + BESTTIME_DAY_STARTS_AT) % 24;
-      if (localHour >= 12 && localHour <= 23) daytimeAfterShift++;
+      if (peakSlot >= 12 && peakSlot <= 23) daytimeAsStored++;
+      const shifted = (peakSlot + BESTTIME_DAY_STARTS_AT) % 24;
+      if (shifted >= 12 && shifted <= 23) daytimeAfterShift++;
     }
   }
 
-  // Read literally, these curves say restaurants peak at lunchtime every day of
-  // the week, bars peak mid-afternoon, nightclubs peak at 5 PM and gyms peak at
-  // noon. Add six and every one of them lands in the afternoon or evening.
   assert.ok(total >= 80, `only ${total} (category, day) curves to test`);
-  assert.ok(daytimeAfterShift / total > 0.9,
-    `only ${daytimeAfterShift}/${total} peaks land in local 12:00-23:00 after adding ${BESTTIME_DAY_STARTS_AT}h; `
-    + 'if this has dropped, the artifact was likely re-exported from the corrected corpus — '
-    + 'in which case DELETE PART 3 and update the axis-bug note above services/mlPredictor.js getBaseline');
+  // The direction that used to hold, now inverted: the slots are already the
+  // venue's afternoon and evening with NO correction applied.
+  assert.ok(daytimeAsStored / total > 0.9,
+    `only ${daytimeAsStored}/${total} peaks land in local 12:00-23:00 as stored; `
+    + 'if this has dropped, the artifact was exported from an uncorrected corpus again — '
+    + 'check ml_training_data.hour_axis and migration 023 before trusting any prediction');
+  // And the disproof: adding six now makes it worse, not better. On the bucket
+  // axis this ratio was above 0.9; a corrected artifact must fail it.
+  assert.ok(daytimeAfterShift / total < daytimeAsStored / total,
+    `adding ${BESTTIME_DAY_STARTS_AT}h still improves the peaks `
+    + `(${daytimeAfterShift}/${total} shifted vs ${daytimeAsStored}/${total} stored) — `
+    + 'that is the signature of the pre-fix bucket axis, so the artifact is stale');
 });
 
-test('the night categories peak in the evening only after the shift, never before it', () => {
+test('the night categories peak in the evening as stored, and the old shift would ruin it', () => {
+  // WAS: 'the night categories peak in the evening ONLY AFTER the shift'. It
+  // required the stored Friday peak to be < 18 and to land in 18-23 once six
+  // hours were added. Both halves now flip: the stored slot IS the evening.
   const cb = metadata().category_baselines || {};
-  const peakSlot = (cat, day) => {
-    let s = null; let v = -1;
-    for (let h = 0; h < 24; h++) {
-      const x = cb[`${cat}_${day}_${h}`];
-      if (x != null && x > v) { v = x; s = h; }
-    }
-    return s;
-  };
   // Friday. A bar, a brewery and a nightclub cannot peak before dark.
   for (const cat of ['bar', 'brewery', 'nightclub', 'restaurant']) {
-    const slot = peakSlot(cat, 5);
+    const slot = peakSlotFor(cb, cat, 5);
     if (slot == null) continue;
-    assert.ok(slot < 18, `${cat} stored peak at slot ${slot}: read literally that is already evening, so the artifact may have been rebuilt post-fix`);
+    assert.ok(slot >= 18 && slot <= 23,
+      `${cat} peaks at stored slot ${slot}; on the venue-local axis a Friday night `
+      + 'category must peak between 18:00 and 23:00. A peak around midday is the '
+      + 'pre-fix BestTime bucket axis coming back.');
+    // The pre-fix reading of the same number is now nonsense, which is the point.
     const shifted = (slot + BESTTIME_DAY_STARTS_AT) % 24;
-    assert.ok(shifted >= 18 && shifted <= 23,
-      `${cat} peaks at stored slot ${slot} -> local ${shifted}; expected an evening peak after the shift`);
+    assert.ok(shifted < 18,
+      `${cat}: adding ${BESTTIME_DAY_STARTS_AT}h gives local ${shifted}, still an evening hour — `
+      + 'the artifact may not have been rebuilt from the corrected corpus');
   }
 });
 
-test('a 6 PM lookup on that axis reads the venue\'s late-evening slot', () => {
-  // The mechanism, in one line of arithmetic, preserved against the PRE-FIX
-  // artifact. getBaseline used to ask ml_venue_baselines for hour = 18 and get
-  // slot 18 = 18 + 6 = 24 -> midnight. Migration 023 rebuilt the DB table on
-  // the venue clock, but model_metadata.json's category_baselines were derived
-  // before the fix, so the bucket-axis arithmetic still holds in the artifact.
-  // This model is `label_type: 'delta'`, so
-  // score = baseline + clamp(delta, +/-30): the baseline IS the answer.
+test("a 6 PM lookup now reads the venue's 6 PM slot, not its midnight", () => {
+  // WAS: 'a 6 PM lookup on that axis reads the venue late-evening slot',
+  // asserting cb['restaurant_5_18'] < cb['restaurant_5_12'] because slot 18
+  // held midnight (18 + 6 = 24) while slot 12 held the true 6 PM. Both sides
+  // of that inequality swap on the corrected axis: slot 18 IS 18:00 and is the
+  // busy one; slot 12 is lunchtime and is quieter. This model is still
+  // `label_type: 'delta'`, so score = baseline + clamp(delta, +/-30) and the
+  // baseline IS the answer — which is why this arithmetic is worth pinning.
   const meta = metadata();
   assert.equal(meta.label_type, 'delta',
     'the model is no longer a delta model — re-derive how much the baseline slot matters before trusting this test');
 
   const cb = meta.category_baselines || {};
-  const readAt6pm = cb['restaurant_5_18'];   // what a pre-fix 6 PM read fetched
-  const trueAt6pm = cb['restaurant_5_12'];   // the slot that actually holds 6 PM
-  assert.ok(Number.isFinite(readAt6pm) && Number.isFinite(trueAt6pm));
-  assert.equal((18 + BESTTIME_DAY_STARTS_AT) % 24, 0, 'slot 18 is midnight on this axis');
-  assert.ok(readAt6pm < trueAt6pm,
-    `slot 18 (${readAt6pm}) should be quieter than the real 6 PM slot (${trueAt6pm})`);
+  const at6pm = cb['restaurant_5_18'];   // slot 18 = 18:00 on the venue clock
+  const atNoon = cb['restaurant_5_12'];  // slot 12 = 12:00, the lunch shoulder
+  const atMidnight = cb['restaurant_5_0'];
+  assert.ok(Number.isFinite(at6pm) && Number.isFinite(atNoon));
+  assert.ok(at6pm > atNoon,
+    `slot 18 (${at6pm}) should be busier than the lunch slot (${atNoon}) for a Friday restaurant`);
+  if (Number.isFinite(atMidnight)) {
+    assert.ok(at6pm > atMidnight,
+      `slot 18 (${at6pm}) should be busier than midnight (${atMidnight}); if it is not, `
+      + 'slot 18 is still holding the overnight number and the axis is bent');
+  }
 });
 
 // ===========================================================================
@@ -521,16 +553,18 @@ test('the model does not claim a measurement while its weights predate the axis 
   assert.equal(publishedConfidence(84, ml, 0), 84);
 });
 
-test('flipping the axis flag is the whole revert, and it is not flipped yet', () => {
-  // The tripwire. collectWeekly.js is fixed, and migration 023 backfilled
-  // ml_training_data and rebuilt ml_venue_baselines (2026-08-15); the one
-  // remaining step is the retrain. Whoever ships it flips
-  // ML_BASELINE_AXIS_VERIFIED, and this test tells them to delete PART 3.
+test('the axis flag is on, and turning it off is the whole rollback', () => {
+  // Flipped 2026-08-18 with v2.6.0-swift, the first artifact trained on the
+  // corrected corpus. PART 3 above proves the peaks land in the evening as
+  // stored, without the six-hour shift, so the weights are on the venue clock.
+  // If this ever reads false again, the served model was rolled back to a
+  // pre-fix artifact and the payload correctly stops calling its confidence a
+  // measurement.
   assert.equal(typeof crowdEngine.ML_BASELINE_AXIS_VERIFIED, 'boolean');
-  assert.equal(crowdEngine.ML_BASELINE_AXIS_VERIFIED, false,
-    'the flag is true — so the corpus fix and retrain are believed done. '
-    + 'Re-run PART 3 of this file: if those peaks now land in the evening WITHOUT '
-    + 'the six-hour shift, delete PART 3 and the getBaseline note in services/mlPredictor.js.');
+  assert.equal(crowdEngine.ML_BASELINE_AXIS_VERIFIED, true,
+    'the flag is false — either the artifact was rolled back to a pre-2026-08-18 '
+    + 'model, or someone flipped it without shipping one. Re-run PART 3: if those '
+    + 'peaks need the six-hour shift to land in the evening, the rollback is real.');
 });
 
 test('every honest refusal in mlPredictor is treated as a refusal here', () => {
