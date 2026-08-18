@@ -113,3 +113,6 @@ TESTFLIGHT_TEST_INFO.md
 /seo-audit/
 frontend/.env.example
 flock-sensor/flock_sensor.env.example
+
+# Abandoned React Native port. The launch path is the Capacitor shell in frontend/ios.
+/mobile/
