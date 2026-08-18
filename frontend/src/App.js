@@ -32,7 +32,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import EmergencySheet from './components/safety/EmergencySheet';
 import PaywallSheet from './components/PaywallSheet';
 import { initPurchases } from './services/purchases';
-import { getEntitlements, createFlockInviteLink, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime } from './services/api';
+import { getEntitlements, createFlockInviteLink, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock } from './services/api';
 import { motion, AnimatePresence } from 'framer-motion';
 // BirdieStill is the same photographed mascot with the animation machinery
 // left out — the dashboards get the mark, never the rAF loop. WARM_BIRD is
@@ -1396,12 +1396,21 @@ const SATELLITE_STYLE = MAPTILER_KEY
 // MapLibre heatmap-intensity: 2 ≈ Google maxIntensity: 0.5 (1/0.5 = 2× per-point contribution).
 const VENUE_HEAT_PAINT = {
   'heatmap-weight': ['coalesce', ['get', 'weight'], 0.5],
-  'heatmap-intensity': 4,
-  'heatmap-radius': 60,
+  /* Radius and intensity follow zoom so the heat reads as one continuous
+     field over the area instead of isolated blobs. At city zoom the points
+     are pushed wide enough to merge; street zoom pulls them back in so a hot
+     venue localizes to its block. The WEIGHTS stay the real crowd scores
+     (score/100, set where the features are built) — coverage comes from
+     radius, never from inflating what a venue actually says. */
+  'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 8, 5, 12, 4, 15, 3.2, 18, 2.6],
+  'heatmap-radius': ['interpolate', ['linear'], ['zoom'], 8, 120, 11, 95, 13, 72, 15, 55, 18, 40],
   'heatmap-opacity': 0.85,
   'heatmap-color': [
     'interpolate', ['linear'], ['heatmap-density'],
     0,    'rgba(0, 0, 0, 0)',
+    /* A quiet venue used to vanish below the 0.1 stop; low scores now stay
+       visibly cool instead of invisible. */
+    0.03, 'rgba(34, 197, 94, 0.4)',
     0.1,  'rgba(34, 197, 94, 0.6)',
     0.2,  'rgba(34, 197, 94, 0.7)',
     0.3,  'rgba(160, 220, 40, 0.75)',
@@ -1475,6 +1484,63 @@ function metersCirclePolygon(lat, lng, radiusMeters, points = 64) {
     coords.push([lng + (dLng * 180) / Math.PI, lat + (dLat * 180) / Math.PI]);
   }
   return { type: 'Feature', geometry: { type: 'Polygon', coordinates: [coords] }, properties: {} };
+}
+
+/* Pins stacked on one point are one pin: only the top one is visible or
+   tappable, and hiding or shrinking the rest was ruled out. So overlapping
+   pins are displaced a few screen pixels around their shared centroid — every
+   venue keeps a full-size pin, at the cost of a little positional accuracy.
+   The offsets are deterministic (members sorted by place_id, laid out on a
+   Vogel spiral) so a pin sits in the same spot on every render instead of
+   jittering, and the whole pass re-runs on zoomend only: as the user zooms in
+   the true positions separate, groups dissolve, and each pin snaps back to
+   its real location. O(n²) over ≤ ~20 markers, so no per-frame work. */
+const PIN_OVERLAP_PX = 46; // pin body is 44px; closer than this and they stack
+const PIN_RING_PX = 40;    // spacing between displaced neighbours
+
+function declutterMarkers(map, markerEntries) {
+  if (!map) return;
+  const entries = markerEntries.filter(({ venue }) => venue.location?.latitude && venue.location?.longitude);
+  if (entries.length === 0) return;
+  let pts;
+  try {
+    pts = entries.map(({ venue }) => map.project([venue.location.longitude, venue.location.latitude]));
+  } catch { return; } // container not measured yet — the next zoomend re-runs
+  // Union-find over pairs closer than one pin body.
+  const parent = entries.map((_, i) => i);
+  const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  for (let i = 0; i < pts.length; i++) {
+    for (let j = i + 1; j < pts.length; j++) {
+      const dx = pts[i].x - pts[j].x;
+      const dy = pts[i].y - pts[j].y;
+      if (dx * dx + dy * dy < PIN_OVERLAP_PX * PIN_OVERLAP_PX) parent[find(j)] = find(i);
+    }
+  }
+  const groups = new Map();
+  entries.forEach((_, i) => {
+    const root = find(i);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(i);
+  });
+  const GOLDEN_ANGLE = 2.399963229728653;
+  groups.forEach((idxs) => {
+    if (idxs.length === 1) {
+      // Alone again (or always was): the pin sits exactly where the venue is.
+      const { marker, venue } = entries[idxs[0]];
+      marker.setLngLat([venue.location.longitude, venue.location.latitude]);
+      return;
+    }
+    // Deterministic member order — same venue, same offset, every render.
+    idxs.sort((a, b) => String(entries[a].venue.place_id || entries[a].venue.id).localeCompare(String(entries[b].venue.place_id || entries[b].venue.id)));
+    const cx = idxs.reduce((s, i) => s + pts[i].x, 0) / idxs.length;
+    const cy = idxs.reduce((s, i) => s + pts[i].y, 0) / idxs.length;
+    idxs.forEach((i, k) => {
+      const r = PIN_RING_PX * Math.sqrt(k); // k=0 holds the centroid
+      const a = k * GOLDEN_ANGLE;
+      const lngLat = map.unproject([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
+      entries[i].marker.setLngLat(lngLat);
+    });
+  });
 }
 
 const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance }) => {
@@ -1790,6 +1856,11 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
 
       map.on('zoom', applyZoomTier);
 
+      // Re-space overlapping pins once the zoom settles (never per frame).
+      // Zooming in separates the true positions, so the displacement shrinks
+      // to zero on its own; zooming out regroups them.
+      map.on('zoomend', () => declutterMarkers(map, markersRef.current));
+
       // Click on empty map — clear active venue
       map.on('click', (e) => {
         if (e.originalEvent?.target?.closest?.('.mlb-venue-marker')) return;
@@ -1960,6 +2031,9 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     // Push heat data to the source
     const heatSrc = map.getSource('venue-heat');
     if (heatSrc) heatSrc.setData({ type: 'FeatureCollection', features: heatFeatures });
+
+    // Space out any pins that landed on top of each other (zoomend re-runs this).
+    declutterMarkers(map, markersRef.current);
 
     /* FRAME THE RESULTS. The map opened centred on the user at a fixed zoom,
        so a search could return 20 venues and show none of them: the chip said
@@ -3410,6 +3484,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [eventDetail, setEventDetail] = useState(null);
   const [eventDetailLoading, setEventDetailLoading] = useState(false);
   const [crowdPredictions, setCrowdPredictions] = useState({});
+  // Latest predictions for callers that must READ them without re-firing when
+  // a batch lands (requestCrowdScores dedupes against this).
+  const crowdPredictionsRef = useRef(crowdPredictions);
+  crowdPredictionsRef.current = crowdPredictions;
   const [crowdData, setCrowdData] = useState(null);
   const [crowdLoading, setCrowdLoading] = useState(false);
   const [crowdAlternatives, setCrowdAlternatives] = useState([]);
@@ -3571,6 +3649,38 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return q.trim();
   }, []);
 
+  // Fire one crowd-batch prediction for whatever venues do not have a score
+  // yet (non-blocking, dedupes against scores already in hand). This is the
+  // ONLY way scores reach the map: every venue list that feeds pins — the
+  // first nearby load, a search, the seed fallback — goes through here, so the
+  // heatmap has data from the very first render instead of only after a
+  // search. One /api/crowd/batch call per list, never one call per pin.
+  //
+  // utcOffsetMinutes is Google's offset for the VENUE, and /api/crowd/batch
+  // scores each row on its own wall clock when it arrives — without it every
+  // venue in the list is scored on the caller's clock, so a bar two time
+  // zones away got the viewer's 11pm instead of its own 8pm. Forwarded, never
+  // invented: the server takes it only when Number.isFinite and otherwise
+  // falls back exactly as before.
+  const requestCrowdScores = useCallback((venues) => {
+    const unscored = (venues || []).filter(v => v.place_id && !crowdPredictionsRef.current[v.place_id]);
+    if (unscored.length === 0) return;
+    const batchPayload = unscored.slice(0, 20).map(v => ({
+      place_id: v.place_id, name: v.name, rating: v.rating,
+      user_ratings_total: v.user_ratings_total, types: v.types,
+      price_level: v.price_level, location: v.location,
+      utcOffsetMinutes: v.utcOffsetMinutes != null ? v.utcOffsetMinutes : null,
+    }));
+    getCrowdBatch(batchPayload)
+      .then(res => {
+        const map = {};
+        (res.predictions || []).forEach(p => { map[p.placeId] = p; });
+        setCrowdPredictions(prev => ({ ...prev, ...map }));
+        if (res.weather) setLiveWeather(res.weather);
+      })
+      .catch(err => console.error('[Crowd] Batch prediction failed:', err));
+  }, []);
+
   // Convert venues array to map pin format, deduplicating by place_id
   const venuesToMapPins = useCallback((venues) => {
     const seen = new Set();
@@ -3623,7 +3733,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     if (cached && Date.now() - cached.timestamp < 300000) {
       const venues = cached.data;
       setVenueResults(venues);
-      if (venues.length > 0) { setAllVenues(venuesToMapPins(venues)); setActiveVenue(null); }
+      if (venues.length > 0) { setAllVenues(venuesToMapPins(venues)); setActiveVenue(null); requestCrowdScores(venues); }
       setShowSearchDropdown(true);
       return;
     }
@@ -3638,28 +3748,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       if (venues.length > 0) {
         setAllVenues(venuesToMapPins(venues));
         setActiveVenue(null);
-        // Fire batch crowd prediction (non-blocking)
-        // utcOffsetMinutes is Google's offset for the VENUE, and /api/crowd/batch
-        // scores each row on its own wall clock when it arrives — without it
-        // every venue in the list is scored on the caller's clock, so a bar two
-        // time zones away got the viewer's 11pm instead of its own 8pm, while
-        // that same bar's detail card (which fetches the offset itself) showed
-        // the right hour. Forwarded, never invented: the server takes it only
-        // when Number.isFinite and otherwise falls back exactly as before.
-        const batchPayload = venues.slice(0, 20).map(v => ({
-          place_id: v.place_id, name: v.name, rating: v.rating,
-          user_ratings_total: v.user_ratings_total, types: v.types,
-          price_level: v.price_level, location: v.location,
-          utcOffsetMinutes: v.utcOffsetMinutes != null ? v.utcOffsetMinutes : null,
-        }));
-        getCrowdBatch(batchPayload)
-          .then(res => {
-            const map = {};
-            (res.predictions || []).forEach(p => { map[p.placeId] = p; });
-            setCrowdPredictions(prev => ({ ...prev, ...map }));
-            if (res.weather) setLiveWeather(res.weather);
-          })
-          .catch(err => console.error('[Crowd] Batch prediction failed:', err));
+        // Fire batch crowd prediction (non-blocking, dedupes, feeds the heatmap)
+        requestCrowdScores(venues);
       }
     } catch (err) {
       console.error('Venue search error:', err);
@@ -3669,7 +3759,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     } finally {
       setVenueSearching(false);
     }
-  }, [enhanceQuery, venuesToMapPins, userLocation, showToast]);
+  }, [enhanceQuery, venuesToMapPins, userLocation, showToast, requestCrowdScores]);
 
   // Open the full venue details modal
   const openVenueDetail = useCallback(async (placeId, fallbackData, { panMap } = {}) => {
@@ -4290,6 +4380,94 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       .finally(() => setFlocksLoading(false));
   }, []);
 
+  // ── Past flocks ────────────────────────────────────────────────────────
+  // Completed and cancelled flocks, fetched when the Past screen opens.
+  // pastFlocks stays null until a fetch actually lands, so the empty state
+  // ("nothing here yet") can never be drawn by a failed load — a failure
+  // shows its own card with a retry instead.
+  const [pastFlocks, setPastFlocks] = useState(null);
+  const [pastFlocksLoading, setPastFlocksLoading] = useState(false);
+  const [pastFlocksError, setPastFlocksError] = useState('');
+  const [rerunningFlockId, setRerunningFlockId] = useState(null);
+
+  const loadPastFlocks = useCallback(() => {
+    setPastFlocksLoading(true);
+    setPastFlocksError('');
+    getFlockHistory()
+      .then(d => setPastFlocks(Array.isArray(d.flocks) ? d.flocks : []))
+      .catch(err => setPastFlocksError(err.message || "Couldn't load your past flocks."))
+      .finally(() => setPastFlocksLoading(false));
+  }, []);
+
+  useEffect(() => {
+    if (currentScreen === 'pastFlocks') loadPastFlocks();
+  }, [currentScreen, loadPastFlocks]);
+
+  // "Do it again": clone a past flock and land in its chat, exactly the way a
+  // freshly created flock does. The new plan needs a time that has not already
+  // happened, so the old event_time is rolled forward week by week — same
+  // weekday, same hour, first occurrence still ahead — and a past flock with
+  // no time at all becomes tomorrow evening.
+  const handleRerunFlock = useCallback(async (pf) => {
+    if (rerunningFlockId) return; // one at a time
+    setRerunningFlockId(pf.id);
+    const next = pf.event_time ? new Date(pf.event_time) : null;
+    let eventTime;
+    if (next && !Number.isNaN(next.getTime())) {
+      const now = Date.now();
+      while (next.getTime() <= now) next.setDate(next.getDate() + 7);
+      eventTime = next.toISOString();
+    } else {
+      const fallback = new Date();
+      fallback.setDate(fallback.getDate() + 1);
+      fallback.setHours(19, 0, 0, 0);
+      eventTime = fallback.toISOString();
+    }
+    try {
+      const data = await rerunFlock(pf.id, { event_time: eventTime });
+      const f = data.flock || data;
+      const newFlock = {
+        id: f.id,
+        name: f.name || pf.name,
+        host: authUser?.name || 'You',
+        creatorId: f.creator_id,
+        hostId: f.creator_id,
+        memberStatus: 'accepted',
+        members: [],
+        memberPreviews: [],
+        memberCount: f.going_count ?? f.member_count ?? 1,
+        time: formatEventTime(f.event_time || eventTime),
+        eventTime: f.event_time || eventTime,
+        status: f.status === 'planning' || !f.status ? 'voting' : f.status,
+        venue: f.venue_name || 'TBD',
+        venueAddress: f.venue_address || null,
+        venueId: f.venue_id || null,
+        venueLat: f.venue_latitude || null,
+        venueLng: f.venue_longitude || null,
+        venuePhoto: resolveVenuePhoto(f.venue_photo_url),
+        venueRating: f.venue_rating || null,
+        cashPool: null,
+        budgetEnabled: f.budget_enabled || false,
+        budgetContext: f.budget_context || null,
+        budgetLocked: false,
+        budgetCeiling: null,
+        ghostModeEnabled: f.ghost_mode_enabled || false,
+        votes: [],
+        messages: [],
+      };
+      // Same success path as handleCreate: remember it is brand new, put it in
+      // the list, open its chat.
+      newlyCreatedFlockRef.current = f.id;
+      setFlocks(prev => [...prev, newFlock]);
+      setSelectedFlockId(f.id);
+      setCurrentScreen('chatDetail');
+    } catch (err) {
+      if (!needsEmailVerification(err, 'start a flock')) showToast(err.message || "That didn't get set up. Try again.", 'error');
+    } finally {
+      setRerunningFlockId(null);
+    }
+  }, [rerunningFlockId, authUser, needsEmailVerification, showToast]);
+
   // Load trusted contacts on mount (for SOS modal)
   useEffect(() => {
     getTrustedContacts().then(d => setTrustedContacts(d.contacts || [])).catch(() => {});
@@ -4734,6 +4912,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // report path must not double as a way to see more of someone than you could
   // before you tapped.
   const [userProfileTarget, setUserProfileTarget] = useState(null);
+  // The card's lazily fetched extras (today: the bio). forId ties a reply to
+  // the person whose sheet is open, so a slow answer for the last person can
+  // never land on the next one. status 'loading' draws the skeleton line;
+  // anything the fetch cannot deliver — no bio, blocked either way (404), a
+  // dead network — resolves to bio null and the card simply stays as it was.
+  const [userProfileCard, setUserProfileCard] = useState({ forId: null, status: 'idle', bio: null });
   const [profileBlockStep, setProfileBlockStep] = useState(false);
   const [profileBlocking, setProfileBlocking] = useState(false);
   // Blocked accounts. Apple 1.2 wants the block, and a block nobody can lift is
@@ -4805,7 +4989,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [profileScreen, setProfileScreen] = useState('main');
   const [profileName, setProfileName] = useState(authUser?.name || '');
   const [profileHandle, setProfileHandle] = useState(authUser?.email?.split('@')[0] || '');
-  const [profileBio] = useState('Love exploring new places!'); // eslint-disable-line no-unused-vars
+  // Real bio from the account, never invented. (This used to be a hardcoded
+  // sample sentence about exploring places that no server ever saw.)
+  const [profileBio, setProfileBio] = useState(authUser?.bio || '');
   const [profilePic, setProfilePic] = useState(() => {
     const url = authUser?.profile_image_url;
     if (!url) return null;
@@ -5138,6 +5324,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     if (cached && Date.now() - cached.timestamp < 300000) {
       setAllVenues(venuesToMapPins(cached.data));
       setMapVenuesLoaded(true);
+      requestCrowdScores(cached.data);
       return;
     }
 
@@ -5148,11 +5335,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
         setAllVenues(venuesToMapPins(venues));
         setMapVenuesLoaded(true);
+        // This is the very first venue list of a session, and it used to skip
+        // crowd scoring entirely — which is why the heatmap was empty until
+        // the first manual search. Score it like any other list.
+        requestCrowdScores(venues);
       })
       .catch((err) => {
         console.error('[Geo] Nearby venue search failed:', err);
         setAllVenues(venuesToMapPins(seedVenues));
         setMapVenuesLoaded(true);
+        requestCrowdScores(seedVenues);
       });
 
     // Fetch featured events (non-blocking)
@@ -5165,7 +5357,28 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         .finally(() => setFeaturedEventsLoading(false));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [venuesToMapPins, seedVenues]);
+  }, [venuesToMapPins, seedVenues, requestCrowdScores]);
+
+  // Write freshly landed batch scores back into the pin list. Without this,
+  // scores that resolved AFTER venuesToMapPins ran stayed in crowdPredictions
+  // only: the list rows found them on the next lookup, but the map pins and
+  // the heatmap (both fed from allVenues) kept quoting nothing — the
+  // first-open heatmap was empty until a second search rebuilt the list.
+  // Returns prev when nothing changed so this cannot loop.
+  useEffect(() => {
+    setAllVenues(prev => {
+      let changed = false;
+      const next = prev.map(v => {
+        const p = crowdPredictions[v.place_id];
+        if (p && typeof p.score === 'number' && v.crowd !== p.score) {
+          changed = true;
+          return { ...v, crowd: p.score, crowdLabel: p.label || v.crowdLabel };
+        }
+        return v;
+      });
+      return changed ? next : prev;
+    });
+  }, [crowdPredictions]);
 
   // Request user geolocation and load venues
   // forceRefresh=true forces fresh GPS + reloads popular chains near user
@@ -7165,6 +7378,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       name: person.name || 'This person',
       image: person.image || null,
     });
+    // The bio arrives lazily; the sheet is complete without it. A miss (no
+    // bio yet, blocked either direction, backend without the route) renders
+    // nothing extra — never an error, because "this person has no bio" is
+    // not something to apologize for.
+    setUserProfileCard({ forId: person.id, status: 'loading', bio: null });
+    getUserCard(person.id)
+      .then((card) => {
+        setUserProfileCard(prev => {
+          if (String(prev.forId) !== String(person.id)) return prev;
+          const bio = card && typeof card.bio === 'string' && card.bio.trim() ? card.bio.trim() : null;
+          return { forId: person.id, status: 'done', bio };
+        });
+      })
+      .catch(() => {
+        setUserProfileCard(prev => (String(prev.forId) !== String(person.id) ? prev : { forId: person.id, status: 'done', bio: null }));
+      });
   }, []);
 
   const closeUserProfile = useCallback(() => {
@@ -9496,15 +9725,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {Icons.plus(isDark ? '#1e293b' : 'white', 16)} Start a flock
         </button>
 
-        {/* Flocks — header row with quiet Add-friends ghost */}
+        {/* Flocks — header row with quiet Past + Add-friends ghosts */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: '0 0 8px' }}>
           <h2 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>Your Flocks</h2>
-          <button className="hit44"
-            onClick={() => setCurrentScreen('addFriends')}
-            style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--border-default)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}
-          >
-            {Icons.userPlus('var(--text-secondary)', 12)} Add friends
-          </button>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button className="hit44"
+              onClick={() => setCurrentScreen('pastFlocks')}
+              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--border-default)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}
+            >
+              {Icons.clock('var(--text-secondary)', 12)} Past
+            </button>
+            <button className="hit44"
+              onClick={() => setCurrentScreen('addFriends')}
+              style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--border-default)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}
+            >
+              {Icons.userPlus('var(--text-secondary)', 12)} Add friends
+            </button>
+          </div>
         </div>
         </>)}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '14px' }}>
@@ -9533,6 +9770,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               </button>
               <button className="hit44" onClick={() => setCurrentScreen('addFriends')} style={{ width: '100%', maxWidth: '300px', height: '48px', marginTop: '10px', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                 {Icons.userPlus('var(--text-primary)', 16)} Add friends
+              </button>
+              {/* An active list can be empty while the history is not; without
+                  this, finished flocks would be unreachable from here. */}
+              <button className="hit44" onClick={() => setCurrentScreen('pastFlocks')} style={{ marginTop: '14px', padding: '8px 12px', borderRadius: '8px', border: 'none', background: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                {Icons.clock('var(--text-secondary)', 12)} Past flocks
               </button>
             </div>
           )}
@@ -9587,6 +9829,99 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {BottomNav()}
     </div>
   );
+  };
+
+  // PAST FLOCKS SCREEN — completed and cancelled plans, each one tap from
+  // happening again. Reached from the Your Flocks header on Home.
+  const PastFlocksScreen = () => {
+    const currentYear = new Date().getFullYear();
+    const formatPastDate = (iso) => {
+      if (!iso) return null;
+      const d = new Date(iso);
+      if (Number.isNaN(d.getTime())) return null;
+      const opts = { month: 'short', day: 'numeric' };
+      if (d.getFullYear() !== currentYear) opts.year = 'numeric';
+      return d.toLocaleDateString('en-US', opts);
+    };
+    return (
+      <div key="past-flocks-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
+        <DialogBehavior modal={false} onClose={() => setCurrentScreen('main')} />
+        <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
+          <button aria-label="Back" className="hit44" onClick={() => setCurrentScreen('main')} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-title)', cursor: 'pointer' }}>←</button>
+          <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>Past flocks</h1>
+        </div>
+
+        <div style={{ flex: 1, padding: '16px', overflowY: 'auto' }}>
+          {pastFlocksLoading && !pastFlocks && <ListSkeleton label="Loading past flocks" />}
+
+          {!pastFlocksLoading && pastFlocksError && (
+            <div style={{ ...styles.card, marginBottom: '10px' }}>
+              <p style={{ fontSize: 'var(--t-label)', color: colors.red, fontWeight: '600', margin: '0 0 10px' }}>{pastFlocksError}</p>
+              <button className="hit44 glass-btn glass-navy" onClick={loadPastFlocks} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>
+            </div>
+          )}
+
+          {/* A claim about the user's history, so it waits for a fetch that
+              actually landed (pastFlocks stays null until one does). */}
+          {!pastFlocksLoading && !pastFlocksError && pastFlocks && pastFlocks.length === 0 && (
+            <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', textAlign: 'center', margin: '48px 0 0' }}>Nothing here yet. Finished flocks land here.</p>
+          )}
+
+          {/* Not gated on the error flag: a failed refresh must not delete the
+              list on screen. The error card above says the refresh missed. */}
+          {pastFlocks && pastFlocks.length > 0 && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {pastFlocks.map(pf => {
+                const dateLabel = formatPastDate(pf.event_time);
+                const members = Array.isArray(pf.members) ? pf.members : [];
+                const busy = rerunningFlockId === pf.id;
+                const cancelled = pf.status === 'cancelled';
+                return (
+                  <div key={pf.id} style={{ padding: '14px 16px', borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', boxShadow: 'var(--card-shadow-sm)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', marginBottom: '8px' }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, lineHeight: 1.2 }}>{pf.name}</h3>
+                        {pf.venue_name && (
+                          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin(colors.textSecondary, 12)} {pf.venue_name}</p>
+                        )}
+                      </div>
+                      <span style={{ fontSize: 'var(--t-meta)', padding: '3px 8px', borderRadius: '10px', fontWeight: '500', flexShrink: 0, whiteSpace: 'nowrap', backgroundColor: 'var(--icon-bg)', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                        {cancelled ? Icons.x('var(--text-secondary)', 12) : Icons.check('var(--text-secondary)', 12)} {cancelled ? 'Cancelled' : 'Happened'}
+                      </span>
+                    </div>
+                    {/* flexWrap: at 320px a full avatar stack + date + button
+                        cannot share one line; the button wraps under instead
+                        of pushing the card into horizontal overflow. */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                        <div style={{ display: 'flex', flexShrink: 0 }}>
+                          {members.slice(0, 4).map((m, j) => (
+                            <div key={m.id ?? j} style={{ width: '24px', height: '24px', borderRadius: '50%', border: '2px solid var(--bg-card-solid)', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', marginLeft: j > 0 ? '-6px' : 0 }}>
+                              {m.profile_image_url
+                                ? <img src={m.profile_image_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                : <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white' }}>{m.name?.[0]?.toUpperCase() || '?'}</span>}
+                            </div>
+                          ))}
+                          {members.length > 4 && <div style={{ width: '24px', height: '24px', borderRadius: '50%', border: '2px solid var(--bg-card-solid)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, marginLeft: '-6px' }}>+{members.length - 4}</div>}
+                        </div>
+                        {dateLabel && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', padding: '2px 8px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', color: colors.navy, whiteSpace: 'nowrap' }}>{dateLabel}</span>}
+                      </div>
+                      <button
+                        className="hit44 glass-btn glass-navy"
+                        aria-label={`Do ${pf.name} again`}
+                        disabled={busy}
+                        onClick={() => handleRerunFlock(pf)}
+                        style={{ padding: '8px 14px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: busy ? 'wait' : 'pointer', opacity: busy ? 0.6 : 1, flexShrink: 0 }}
+                      >{busy ? 'Starting…' : 'Do it again'}</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    );
   };
 
   // CREATE SCREEN
@@ -13617,6 +13952,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 const [editName, setEditName] = React.useState(profileName);
                 const [editEmail, setEditEmail] = React.useState(authUser?.email || '');
                 const [editHandle, setEditHandle] = React.useState(profileHandle);
+                const [editBio, setEditBio] = React.useState(profileBio);
                 const [currentPw, setCurrentPw] = React.useState('');
                 const [newPw, setNewPw] = React.useState('');
                 const [confirmPw, setConfirmPw] = React.useState('');
@@ -13653,10 +13989,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   if (newPw && newPw !== confirmPw) { setEditError('New passwords do not match'); return; }
 
                   setEditLoading(true);
+                  // Optimistic: the bio shows everywhere it renders the moment
+                  // Save is tapped, and rolls back if the server says no.
+                  const trimmedBio = editBio.trim().slice(0, 200);
+                  const prevBio = profileBio;
+                  setProfileBio(trimmedBio);
                   try {
                     const payload = {
                       name: editName.trim(),
                       email: editEmail.trim(),
+                      bio: trimmedBio,
                       current_password: currentPw,
                     };
                     if (newPw) payload.new_password = newPw;
@@ -13664,11 +14006,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     const data = await updateProfile(payload);
                     setProfileName(data.user.name);
                     setProfileHandle(data.user.email.split('@')[0]);
+                    // Keep the server's word for the bio when it gives one; a
+                    // backend that has not learned the field yet answers
+                    // without it, and the optimistic value stands.
+                    if (typeof data.user.bio === 'string') setProfileBio(data.user.bio);
                     setEditSuccess('Profile updated successfully!');
                     setCurrentPw('');
                     setNewPw('');
                     setConfirmPw('');
                                      } catch (err) {
+                    setProfileBio(prevBio);
                     setEditError(err.message);
                   } finally {
                     setEditLoading(false);
@@ -13707,6 +14054,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <div style={{ marginBottom: '12px' }}>
                       <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }}>Email *</label>
                       <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} style={styles.input} autoComplete="off" />
+                    </div>
+                    <div style={{ marginBottom: '12px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '4px' }}>
+                        <label htmlFor="profile-bio-input" style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>Bio</label>
+                        <span aria-hidden style={{ fontSize: 'var(--t-meta)', color: editBio.length >= 200 ? colors.red : 'var(--text-tertiary)', fontWeight: '500' }}>{editBio.length}/200</span>
+                      </div>
+                      <textarea
+                        id="profile-bio-input"
+                        value={editBio}
+                        maxLength={200}
+                        rows={3}
+                        onChange={(e) => setEditBio(e.target.value.slice(0, 200))}
+                        placeholder="A line or two about you. Friends see it on your card."
+                        style={{ ...styles.input, width: '100%', resize: 'none', lineHeight: 1.4, fontFamily: 'inherit' }}
+                        autoComplete="off"
+                      />
                     </div>
 
                     <div style={{ borderTop: `1px solid ${colors.creamDark}`, marginTop: '16px', paddingTop: '16px' }}>
@@ -17567,6 +17930,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     if (currentScreen === 'nfcCheckin') return NfcCheckinScreen();
     if (currentScreen === 'addFriends') return AddFriendsScreen();
     if (currentScreen === 'create') return CreateScreen();
+    if (currentScreen === 'pastFlocks') return PastFlocksScreen();
     if (currentScreen === 'join') return JoinScreen();
     if (currentScreen === 'detail') return FlockDetailScreen();
     if (currentScreen === 'chatDetail') return ChatDetailScreen();
@@ -17806,6 +18170,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     </div>
                   )}
                   <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: 0, textAlign: 'center', wordBreak: 'break-word' }}>{userProfileTarget.name}</h3>
+                  {/* Bio, lazily fetched. Loading gets one quiet skeleton
+                      line; a person without one (or a 404 — blocked either
+                      way, or a backend without the route yet) gets nothing,
+                      because a missing bio is not an error. */}
+                  {String(userProfileCard.forId) === String(userProfileTarget.id) && userProfileCard.status === 'loading' && (
+                    <div className="skeleton" aria-hidden style={{ width: '180px', height: '12px', borderRadius: '4px', marginTop: '2px' }} />
+                  )}
+                  {String(userProfileCard.forId) === String(userProfileTarget.id) && userProfileCard.bio && (
+                    <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '2px 0 0', textAlign: 'center', lineHeight: 1.5, maxWidth: '320px', wordBreak: 'break-word', whiteSpace: 'pre-wrap', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical' }}>{userProfileCard.bio}</p>
+                  )}
                 </div>
 
                 {profileBlockStep ? (
