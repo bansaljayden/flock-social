@@ -1,6 +1,43 @@
 const express = require('express');
 const crypto = require('crypto');
-const bcrypt = require('bcryptjs');
+// ROUND 24 (R4-A2) — THE NATIVE `bcrypt`, NOT `bcryptjs`. Do not swap this back.
+//
+// `bcryptjs` is a pure-JavaScript implementation, so its work runs ON the single
+// V8 thread. Round 4 measured one compare at 48.5 ms here (slower on a Railway
+// shared vCPU), and POST /login below costs exactly one compare per attempt for
+// EVERY address, existing or not, because a constant-cost compare is what closes
+// the account-enumeration oracle. That made the enumeration defence into an
+// unauthenticated CPU-exhaustion lever: the per-account throttle is keyed on an
+// address the attacker chooses, so the only bound is authLimiter's 10/min per
+// IP, and ~60 rotating source addresses saturate the only thread there is. While
+// it is saturated every route in the app, socket handshakes included, is queued
+// behind bcrypt.
+//
+// The native package is the same Blowfish/bcrypt algorithm and the same `$2a$` /
+// `$2b$` stored format — every hash `bcryptjs` ever wrote to users.password
+// still verifies, pinned by a test in __tests__/loginThreadAndHashParity.test.js
+// rather than assumed — but it runs the work in libuv's threadpool. The
+// concurrency ceiling becomes UV_THREADPOOL_SIZE instead of one, and the event
+// loop stops blocking. Measured on this machine, 16 concurrent compares:
+//
+//   bcryptjs  704 ms wall, and unrelated event-loop work got 2 turns in that
+//             window — a single 703 ms head-of-line gap
+//   bcrypt    163 ms wall, unrelated work got 173,062 turns, max gap 0.8 ms
+//
+// bcrypt@6 ships prebuilt N-API binaries INSIDE the npm tarball (prebuildify +
+// node-gyp-build), including linux-x64 glibc AND musl, so there is no compiler
+// and no install-time download on Railway's builder, and N-API means the binary
+// survives Node major upgrades. `bcrypt.js` resolves the binary through
+// node-gyp-build at REQUIRE time, not only in the install script, so even an
+// `npm ci --ignore-scripts` build boots. That is why this is safe to depend on
+// where a node-pre-gyp-era native module (which downloads its binary during
+// install) would not have been. Keep `bcryptjs` in package.json: routes/users.js
+// and several suites still require it, and it is the rollback path.
+//
+// What this does NOT change: the constant-cost path for unknown addresses below.
+// Lowering SALT_ROUNDS would be the wrong lever and removing the dummy compare
+// would reopen the oracle; neither is what fixed this.
+const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const jwksClient = require('jwks-rsa');
 const { body, validationResult } = require('express-validator');
@@ -1092,6 +1129,57 @@ function markOauthIdentityUsed(identityKey, expSeconds, now = Date.now()) {
   oauthTokensUsed.set(identityKey, now + ttl);
 }
 
+// R4-A1 — CLAIM-AND-RELEASE. DO NOT "simplify" this back into
+// `if (oauthIdentityWasUsed(k)) return 401; … await …; markOauthIdentityUsed(k)`.
+//
+// That shape is what round 4 found. The CHECK and the RECORD were separated by
+// four-plus `await pool.query` calls, and every `await` yields the event loop,
+// so N SIMULTANEOUS presentations of one captured credential all read an empty
+// cache before any of them wrote to it. All N minted a session with a fresh
+// `iat`, and a fresh `iat` is the entire sudo-mode proof for an OAuth account
+// (hasFreshSession in routes/users.js): account deletion, the phone-number
+// change and the full data export are reachable from each one. Round 3's
+// re-keying (R3-A2) fixed WHICH key is written and left WHEN it is written
+// alone, so it closed sequential replay and did nothing to the parallel case.
+//
+// The contract, in two halves. Both halves are load-bearing:
+//
+//   CLAIM — check-and-record in ONE synchronous step, with no `await` between
+//   the read and the write. A Map get/set pair runs to completion inside a
+//   single event-loop turn, so the second concurrent presentation of the same
+//   credential observes the first one's entry and loses. This is the whole fix;
+//   it needs no lock because in-process JS has no preemption.
+//
+//   RELEASE — the pre-existing behaviour, which the round-22/23 comments on
+//   both handlers spell out, is that a REFUSED or FAILED sign-in must leave the
+//   credential USABLE: a `needsDob` 403 tells the client to collect a birthday
+//   and come back with the SAME credential, and a transient upstream 503 (Apple
+//   code exchange) must be retryable without pushing the user back through the
+//   provider sheet. Claiming up front burns the credential before those paths
+//   run, so every non-success exit has to hand it back. Both handlers do that
+//   in a `finally` rather than at each `return`, because there are a dozen-plus
+//   refusal branches between the claim and the success line and enumerating
+//   them is how one gets missed — and a missed release is not a small bug, it
+//   is a permanent lockout for a user whose first attempt hit a blip.
+//
+// The success line therefore does not re-record anything; it only sets the
+// committed flag that tells `finally` to keep the claim.
+function claimOauthIdentity(identityKey, expSeconds, now = Date.now()) {
+  if (!identityKey) return false;
+  // No `await` between these two calls. That is the invariant.
+  if (oauthIdentityWasUsed(identityKey, now)) return false;
+  markOauthIdentityUsed(identityKey, expSeconds, now);
+  return true;
+}
+
+// Only ever called by the request that WON the claim (a loser never records
+// `claimedIdentity`, so it can never delete the winner's entry), and only when
+// that request did not reach its success line.
+function releaseOauthIdentityClaim(identityKey) {
+  if (!identityKey) return;
+  oauthTokensUsed.delete(identityKey);
+}
+
 // Server-issued OAuth nonces, shared by Apple and Google for the same reason
 // the replay cache above is shared: two stores drift, and the drift is exactly
 // what R2-3 found. POST /api/auth/apple/nonce and POST /api/auth/google/nonce
@@ -2026,6 +2114,15 @@ router.post('/login', loginValidation, async (req, res) => {
     // sentence. DUMMY_PASSWORD_HASH is a real hash at the same cost factor, so
     // "no such address" and "address exists but signs in with Google" take the
     // same work as a genuine wrong password.
+    //
+    // ROUND 24 (R4-A2) left this line character-for-character alone and changed
+    // only which library `bcrypt` names — see the require at the top. The
+    // constant cost is the enumeration defence and had to survive; what changed
+    // is that the cost is now paid on a threadpool thread instead of on the one
+    // thread every other request needs. The equal-work property is pinned by
+    // __tests__/loginThreadAndHashParity.test.js, which counts the compares an
+    // unknown address and a wrong password each provoke and asserts both spend
+    // one against a real hash of the same cost factor.
     const validPassword = await bcrypt.compare(password, user?.password || DUMMY_PASSWORD_HASH);
     if (!user || !user.password || !validPassword) {
       recordLoginFailure(throttleKey);
@@ -2144,6 +2241,14 @@ router.post('/google', [
   // twin, and optional for the same reason — no shipped client sends one yet.
   body('nonce').optional({ nullable: true }).isString().isLength({ max: MAX_LINK_TOKEN }),
 ], async (req, res) => {
+  // R4-A1. Declared out here so the `finally` at the bottom can see them: the
+  // credential is CLAIMED at the check (atomically, see claimOauthIdentity) and
+  // released again unless this request reaches its success line. Every refusal
+  // between here and there — 401, 403 needsDob, 409, 400, an upstream throw —
+  // exits through that `finally` and hands the credential back, which is the
+  // behaviour the round-22 comments below describe and rely on.
+  let claimedIdentity = null;
+  let identityClaimCommitted = false;
   try {
     // TYPE before CONTENT — see rejectNonStringFields.
     if (rejectNonStringFields(req, res, ['credential', 'access_token', 'nonce', 'date_of_birth'],
@@ -2214,18 +2319,23 @@ router.post('/google', [
       // refused. The shape regex above is the pre-verify guard that still
       // keeps malformed input away from the library.
       //
-      // Still only RECORDED once the sign-in succeeds (markOauthIdentityUsed
-      // at the end), so a client retrying after a transient failure is never
-      // told its own credential was replayed.
+      // ROUND 24 (R4-A1): this was a CHECK here and a RECORD ~240 lines below,
+      // with four `await pool.query` calls in between, so ten simultaneous
+      // presentations of one credential all passed. It is now a single atomic
+      // CLAIM — check-and-record in one synchronous step — and the claim is
+      // RELEASED in the `finally` at the bottom on every path that is not a
+      // completed sign-in. The retry-after-a-blip property the previous comment
+      // protected is unchanged; see claimOauthIdentity for the full contract.
       credentialIdentity = oauthIdentityKey('google', gp, req.body.credential);
       if (!credentialIdentity) {
         console.warn(`[auth] refused Google sign-in: credential cannot be made single-use (${req.ip})`);
         return res.status(401).json({ error: 'Google sign-in expired, please try again' });
       }
-      if (oauthIdentityWasUsed(credentialIdentity)) {
+      if (!claimOauthIdentity(credentialIdentity, credentialExp)) {
         console.warn(`[auth] rejected replayed Google credential from ${req.ip}`);
         return res.status(401).json({ error: 'Google sign-in expired, please try again' });
       }
+      claimedIdentity = credentialIdentity;
 
       // NONCE BINDING (round 22, R2-3) — the same three cases, in the same
       // order, as the Apple path. google-auth-library verifies signature,
@@ -2448,10 +2558,11 @@ router.post('/google', [
 
         if (!(await enforceDobOnLogin(user, req, res))) return;
 
-    // Only now are the credential and the nonce spent — the same success-only
-    // rule as the Apple path. Every failure path above leaves both usable, so a
-    // client retrying after an upstream blip is not locked out by its own
-    // replay protection.
+    // The sign-in is complete: KEEP the claim taken at the check above, and
+    // spend the nonce. Every failure path above leaves both usable, so a client
+    // retrying after an upstream blip is not locked out by its own replay
+    // protection — the release half of the R4-A1 contract is what preserves
+    // that now that the record happens up front.
     //
     // The access_token branch has no equivalent: an access token is a
     // longer-lived credential a client may legitimately present more than once,
@@ -2459,7 +2570,7 @@ router.post('/google', [
     // the `credential` (ID token) path, which is the one that mints a session
     // from a value the client cannot re-fetch.
     if (req.body.credential) {
-      markOauthIdentityUsed(credentialIdentity, credentialExp);
+      identityClaimCommitted = true;
       spendOauthNonce(suppliedNonce);
     }
 
@@ -2472,6 +2583,11 @@ router.post('/google', [
       return res.status(401).json({ error: 'Google sign-in expired, please try again' });
     }
     res.status(500).json({ error: 'Google sign-in failed' });
+  } finally {
+    // The release half of R4-A1. One line, and it covers every refusal branch
+    // above plus anything that throws, which is exactly why it is here and not
+    // duplicated at each `return`.
+    if (claimedIdentity && !identityClaimCommitted) releaseOauthIdentityClaim(claimedIdentity);
   }
 });
 
@@ -2535,6 +2651,12 @@ router.post('/apple', [
   // so it reads as the same kind of number as the ones above.
   body('nonce').optional({ nullable: true }).isString().isLength({ max: MAX_LINK_TOKEN }),
 ], async (req, res) => {
+  // R4-A1, the Google twin. Declared out here so the `finally` at the bottom
+  // can see them. The Apple path is the one whose retry case is not
+  // hypothetical: the code exchange below answers 503 on an Apple outage, and
+  // that 503 must leave the identity token usable for the client's retry.
+  let claimedIdentity = null;
+  let identityClaimCommitted = false;
   try {
     // TYPE before CONTENT — see rejectNonStringFields. `fullName` is checked by
     // isObject() and is read defensively below; the three string fields are the
@@ -2597,18 +2719,23 @@ router.post('/apple', [
     // exists once the token is decoded. jwt.verify is itself the cheap
     // pre-verify guard - a malformed token never gets past its parse.
     //
-    // Still only RECORDED as used once the sign-in succeeds (see
-    // markOauthIdentityUsed at the end), so a retry after a transient upstream
-    // failure is not mistaken for an attack.
+    // ROUND 24 (R4-A1): CHECK here and RECORD ~230 lines below was defeated by
+    // firing the presentations in parallel — every `await` between the two
+    // yields the event loop, so they all read an empty cache. Now an atomic
+    // CLAIM, released in the `finally` at the bottom on every path that is not
+    // a completed sign-in, which is what keeps "a retry after a transient
+    // upstream failure is not mistaken for an attack" true. Full contract on
+    // claimOauthIdentity.
     const identityKey = oauthIdentityKey('apple', payload, identityToken);
     if (!identityKey) {
       console.warn(`[auth] refused Apple sign-in: identity token cannot be made single-use (${req.ip})`);
       return res.status(401).json({ error: 'Apple sign-in expired, please try again' });
     }
-    if (oauthIdentityWasUsed(identityKey)) {
+    if (!claimOauthIdentity(identityKey, payload.exp)) {
       console.warn(`[auth] rejected replayed Apple identity token from ${req.ip}`);
       return res.status(401).json({ error: 'Apple sign-in expired, please try again' });
     }
+    claimedIdentity = identityKey;
 
     // Nonce binding (round 16). Three cases, in order of how much we know:
     //   * client sent one — it must be one WE issued, unspent, and the token's
@@ -2828,10 +2955,12 @@ router.post('/apple', [
 
         if (!(await enforceDobOnLogin(user, req, res))) return;
 
-    // Only now are the token and the nonce spent. Every failure path above
-    // leaves both usable, so a client that retries after an upstream blip is
-    // not locked out by its own replay protection.
-    markOauthIdentityUsed(identityKey, payload.exp);
+    // The sign-in is complete: KEEP the claim taken at the check above, and
+    // spend the nonce. Every failure path above leaves both usable — including
+    // the 503s from the code exchange a few lines up, which are the reason the
+    // release half of R4-A1 exists — so a client that retries after an upstream
+    // blip is not locked out by its own replay protection.
+    identityClaimCommitted = true;
     spendOauthNonce(suppliedNonce);
 
     const token = signUserToken(user);
@@ -2846,6 +2975,11 @@ router.post('/apple', [
       return res.status(401).json({ error: 'Invalid Apple identity token' });
     }
     res.status(500).json({ error: 'Apple sign-in failed' });
+  } finally {
+    // The release half of R4-A1. Covers every refusal branch above plus
+    // anything that throws, which is why it is here rather than duplicated at
+    // each `return`.
+    if (claimedIdentity && !identityClaimCommitted) releaseOauthIdentityClaim(claimedIdentity);
   }
 });
 
@@ -2890,6 +3024,11 @@ module.exports.__testing = {
   oauthIdentityKey,
   oauthIdentityWasUsed,
   markOauthIdentityUsed,
+  // Round 24 (R4-A1): the atomic pair. Exported so
+  // __tests__/oauthReplayAtomicity.test.js can drive the claim and the release
+  // directly as well as through the two routes.
+  claimOauthIdentity,
+  releaseOauthIdentityClaim,
   canonicalJwtSignature,
   OAUTH_REPLAY_MAX_TTL_MS,
   OAUTH_VERIFIER_SKEW_MS,
