@@ -129,3 +129,23 @@ OSS-READINESS.md
 PRESHIP-SWEEP.md
 VIDEO-NOTES-*.md
 backend/scripts/ml/models/incumbent/
+
+# ---------------------------------------------------------------------------
+# ML training directory: DEFAULT-DENY, then re-admit source by name.
+#
+# Enumerating what to ignore has now failed three times, because a working file
+# only has to miss the pattern by one character. `*.pkl` does not match
+# `train_val_split.pkl.stale-2026-03-14` (208 MB), and `*.log` does not match
+# `train_v25.log.stale`. Both were sitting untracked and unignored, one
+# `git add -A` from a public repo.
+#
+# So the rule is inverted: everything in train/ is ignored, and the source
+# files are re-admitted explicitly. A new artifact with any suffix is ignored
+# by default; a new SOURCE file has to be named here, which is a one-line
+# change made by the person who added it, at the moment they add it.
+# ---------------------------------------------------------------------------
+backend/scripts/ml/train/*
+!backend/scripts/ml/train/*.py
+!backend/scripts/ml/train/*.js
+!backend/scripts/ml/train/*.sh
+!backend/scripts/ml/train/requirements.txt
