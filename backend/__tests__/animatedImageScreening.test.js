@@ -441,14 +441,21 @@ test('both REST message paths refuse on the verdict and explain it accurately', 
   // image_url, so both must screen, and neither may reach for the generic
   // constant — a multi-frame refusal told as "we couldn't verify that image is
   // safe" is both wrong and unactionable.
-  assert.strictEqual((src.match(/await moderateImage\(image_url\)/g) || []).length, 2,
-    'both the flock-message and DM handlers must screen image_url');
+  // The `{ userId: req.user.id }` half is not decoration: moderateImage's
+  // userId is optional, so a screen that omits it charges the process-wide
+  // Vision ceiling only and one account can spend the whole day on everyone
+  // else (utils/visionBudget.js, and __tests__/visionSpendBudget.test.js
+  // section 10, which owns that argument). Pinned here too because this is the
+  // assertion a refactor of these two handlers will read first.
+  assert.strictEqual((src.match(/await moderateImage\(image_url, \{ userId: req\.user\.id \}\)/g) || []).length, 2,
+    'both the flock-message and DM handlers must screen image_url, charged to the sender');
   assert.strictEqual((src.match(/imageRejectionMessage\(verdict\)/g) || []).length, 2);
   assert.ok(!/IMAGE_REJECTED_MESSAGE/.test(src),
     'routes/messages.js must not use the raw constant; the wording comes from the verdict');
 
   const users = fs.readFileSync(path.join(__dirname, '..', 'routes', 'users.js'), 'utf8');
-  assert.match(users, /await moderateImage\(dataUrl\)/, 'the avatar path must screen the bytes it is about to store');
+  assert.match(users, /await moderateImage\(dataUrl, \{ userId: req\.user\.id \}\)/,
+    'the avatar path must screen the bytes it is about to store, and charge the account storing them');
   assert.match(users, /imageRejectionMessage\(verdict\)/);
   assert.ok(!/IMAGE_REJECTED_MESSAGE/.test(users));
 });

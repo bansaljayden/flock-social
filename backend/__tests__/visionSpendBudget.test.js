@@ -465,3 +465,185 @@ test('nothing in the repo resets a spend counter outside a test', () => {
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// 10. THE CALL SITES ACTUALLY PASS AN IDENTITY
+// ---------------------------------------------------------------------------
+// Everything above proves the per-account leg WORKS. None of it proved it was
+// REACHED. moderateImage's `userId` is optional on purpose (a background caller
+// with no account charges the global leg only), which means a call site that
+// omits it does not fail, does not warn, and does not look wrong — it silently
+// drops back to the global-only path. That is the state commit 0f53910 shipped
+// in: all six billed doors screened without an id, so one account could still
+// walk the whole 2000-call day through the 10-per-60s limiter in server.js in
+// about three and a half hours and turn image uploads off for everyone until
+// 00:00 UTC. The bill was capped; the fairness was not.
+//
+// utils/visionBudget.js cannot detect that from the inside — it cannot tell
+// "this caller has no account" from "this caller forgot". So the call sites are
+// read here instead, both as source and, for the avatar door the audit names as
+// the cheapest one, for real over HTTP.
+
+const fs = require('node:fs');
+const path = require('node:path');
+const BACKEND = path.join(__dirname, '..');
+
+// Which file holds how many billed doors, and what each one charges.
+// REST routes carry req.user, set by middleware/auth's authenticate.
+// sockets/handlers.js closes over `const user = socket.user` (handlers.js:730),
+// which authenticateSocket sets to the users row it re-read from the database.
+const VISION_CALL_SITES = {
+  'routes/users.js':     { count: 1, identity: 'req.user.id', what: 'avatar upload' },
+  'routes/messages.js':  { count: 2, identity: 'req.user.id', what: 'flock photo and DM photo, REST' },
+  'routes/stories.js':   { count: 1, identity: 'req.user.id', what: 'story' },
+  'sockets/handlers.js': { count: 2, identity: 'user.id',     what: 'flock photo and DM photo, socket' },
+};
+
+// Comments in this repo quote call sites verbatim — utils/visionBudget.js has a
+// whole block of them — so a raw grep would happily assert against prose and
+// pass while the code said something else. Only code lines count.
+function moderateImageCallLines(relPath) {
+  const src = fs.readFileSync(path.join(BACKEND, relPath), 'utf8');
+  return src.split(/\r?\n/).filter((line) => {
+    const t = line.trim();
+    if (t.startsWith('//') || t.startsWith('*') || t.startsWith('/*')) return false;
+    if (/function\s+moderateImage\(/.test(t)) return false;   // the declaration itself
+    return /moderateImage\(/.test(t);
+  });
+}
+
+for (const [relPath, spec] of Object.entries(VISION_CALL_SITES)) {
+  test(`${relPath} charges the per-account Vision leg (${spec.what})`, () => {
+    const calls = moderateImageCallLines(relPath);
+    assert.strictEqual(calls.length, spec.count,
+      `${relPath} should hold exactly ${spec.count} billed Vision call site(s); found ${calls.length}. ` +
+      'If a door was added or removed, update VISION_CALL_SITES — do not delete the assertion.');
+    const wanted = new RegExp(
+      `moderateImage\\(.*,\\s*\\{\\s*userId:\\s*${spec.identity.replace(/\./g, '\\.')}\\s*\\}\\s*\\)`
+    );
+    for (const line of calls) {
+      assert.match(line.trim(), wanted,
+        `${relPath}: this screen must charge \`${spec.identity}\`. Without it the call falls back to the ` +
+        'global-only path and one account can spend the whole day on everybody else.');
+    }
+  });
+}
+
+test('no billed Vision call site anywhere in the backend screens without an identity', () => {
+  // The per-file table above pins the six that exist today; this catches a
+  // SEVENTH added later without one, which is the failure mode that put the
+  // fairness leg to sleep the first time.
+  const dirs = ['routes', 'services', 'sockets', 'utils', 'middleware'];
+  const found = [];
+  for (const dir of dirs) {
+    for (const f of fs.readdirSync(path.join(BACKEND, dir))) {
+      if (!f.endsWith('.js')) continue;
+      const rel = `${dir}/${f}`;
+      if (rel === 'utils/moderation.js') continue;   // the chokepoint, not a caller
+      for (const line of moderateImageCallLines(rel)) {
+        found.push(rel);
+        assert.match(line.trim(), /moderateImage\(.*,\s*\{\s*userId:/,
+          `${rel} screens an image without charging an account. Every caller that HAS an authenticated ` +
+          'user must pass one; a caller that genuinely has none belongs in this test as a documented exception.');
+      }
+    }
+  }
+  assert.deepStrictEqual(
+    found.sort(),
+    ['routes/messages.js', 'routes/messages.js', 'routes/stories.js', 'routes/users.js',
+      'sockets/handlers.js', 'sockets/handlers.js'],
+    'the set of billed Vision doors changed — re-read visionBudget.js CALL SITES and update both tables'
+  );
+});
+
+// ---------------------------------------------------------------------------
+// 11. The avatar door, end to end, per account
+// ---------------------------------------------------------------------------
+// Source assertions prove the argument is written. This proves it ARRIVES: the
+// avatar route is the one the money audit calls the cheapest door in the app —
+// no flock, no membership, no second party — so it is the one worth driving for
+// real. The test that matters is the second: an exhausted account must not be
+// able to take the door away from anybody else, which is exactly what the
+// global-only path could not promise.
+const express = require('express');
+const http = require('node:http');
+
+const pool = require('../config/database');
+// The route's only write. No database in this suite; the screen is the subject.
+pool.query = async () => ({ rows: [], rowCount: 1 });
+
+// Replaced BEFORE routes/users.js is required — it destructures `authenticate`
+// at module load, so a later assignment would not be seen.
+const authMod = require('../middleware/auth');
+let currentUserId = 9001;
+authMod.authenticate = (req, _res, next) => {
+  req.user = { id: currentUserId, name: 'Test', role: 'user' };
+  next();
+};
+
+const usersRouter = require('../routes/users');
+const avatarApp = express();
+avatarApp.use('/api/users', usersRouter);
+const avatarServer = http.createServer(avatarApp);
+let avatarBase;
+
+const PNG_BYTES = Buffer.from(TINY_PNG.split(',')[1], 'base64');
+
+test.before(() => new Promise((resolve) => {
+  avatarServer.listen(0, '127.0.0.1', () => {
+    avatarBase = `http://127.0.0.1:${avatarServer.address().port}`;
+    resolve();
+  });
+}));
+
+test.after(() => new Promise((resolve) => {
+  avatarServer.close(() => resolve());
+  pool.end?.().catch(() => {});
+}));
+
+async function uploadAvatar(userId) {
+  currentUserId = userId;
+  const form = new FormData();
+  form.append('image', new Blob([PNG_BYTES], { type: 'image/png' }), 'avatar.png');
+  // realFetch, not the stubbed global: the Vision stub is not an HTTP client.
+  const res = await realFetch(`${avatarBase}/api/users/upload-image`, { method: 'POST', body: form });
+  let body = null;
+  try { body = await res.json(); } catch { /* non-JSON */ }
+  return { status: res.status, body };
+}
+
+test('the avatar upload charges the uploader, not just the global ledger', async () => {
+  stubCleanVision();
+  const res = await uploadAvatar(9001);
+  assert.strictEqual(res.status, 200, 'an ordinary avatar still uploads');
+  assert.strictEqual(visionCalls, 1);
+  assert.strictEqual(visionBudgetStatus(9001).userRemaining.daily, VISION_USER_DAILY - 1,
+    'the screen has to land on the uploader ledger — if it does not, this door is still global-only');
+  assert.strictEqual(visionBudgetStatus(9002).userRemaining.daily, VISION_USER_DAILY,
+    'and on nobody else');
+});
+
+test('an account that spends its Vision budget cannot take the avatar door from anyone else', async () => {
+  stubCleanVision();
+  captureErrors();
+
+  // Spend 9101's hour directly, so this test is about the ROUTE's behaviour at
+  // the wall rather than about re-proving the counter.
+  for (let i = 0; i < VISION_USER_HOURLY; i++) {
+    assert.strictEqual(allowVisionCall(9101).allowed, true, `unit ${i + 1} should be granted`);
+  }
+
+  const spent = await uploadAvatar(9101);
+  assert.strictEqual(spent.status, 400, 'FAIL CLOSED — no screen, no avatar');
+  assert.strictEqual(spent.body.moderation, 'moderation_budget');
+  assert.strictEqual(spent.body.error, moderation.IMAGE_REJECTED_MESSAGE,
+    'and the user is told the same thing a provider outage tells them');
+  assert.strictEqual(visionCalls, 0, 'nothing was billed for the refusal');
+
+  const other = await uploadAvatar(9102);
+  assert.strictEqual(other.status, 200,
+    'the second account is untouched — this is the entire point of the per-account leg');
+  assert.strictEqual(visionCalls, 1);
+  assert.strictEqual(visionBudgetStatus().globalUsed, VISION_USER_HOURLY + 1,
+    'and one account nowhere near emptied the global allowance for everybody');
+});

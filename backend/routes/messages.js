@@ -302,7 +302,7 @@ router.post('/flocks/:id/messages',
       // transports cost roughly the same per minute. Until it existed, the only
       // ceiling in front of this call was apiLimiter at 3000 per 15 minutes.
       if (image_url) {
-        const verdict = await moderateImage(image_url);
+        const verdict = await moderateImage(image_url, { userId: req.user.id });
         if (!verdict.allowed) {
           return res.status(400).json({ error: imageRejectionMessage(verdict), moderation: verdict.reason });
         }
@@ -831,7 +831,7 @@ router.post('/dm/:userId',
       // including the byte-level multi-frame gate — and metered by the same
       // per-account billed-image limiter in server.js. See the note there.
       if (image_url) {
-        const verdict = await moderateImage(image_url);
+        const verdict = await moderateImage(image_url, { userId: req.user.id });
         if (!verdict.allowed) {
           return res.status(400).json({ error: imageRejectionMessage(verdict), moderation: verdict.reason });
         }
