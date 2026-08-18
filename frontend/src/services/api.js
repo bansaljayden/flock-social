@@ -38,8 +38,97 @@ function setToken(token) {
   sessionExpiryAnnounced = false; // fresh session, the expiry notice may fire again someday
 }
 
-function clearToken() {
-  localStorage.removeItem('flockToken');
+/**
+ * SIGN-OUT — what leaves the device, and what stays.
+ *
+ * Flock's audience is 13-22 and borrowed phones are normal, so everything the
+ * signed-in account wrote to this device has to go when they sign out. It used
+ * to be three keys (flockToken, flockUserMode, flockVenueOnboardingComplete),
+ * which left the previous user's last known location, pinned venues, interests
+ * and deleted-DM list sitting there for whoever signed in next.
+ *
+ * The rule here is DEFAULT DENY: every key this app owns is namespaced
+ * `flock*`, so sign-out removes every `flock*` key except the handful listed
+ * in KEEP_ON_SIGN_OUT below. A prefix family like `flock_checkin_<placeId>`
+ * therefore needs no enumeration, and a key added next month is covered
+ * without anyone remembering to come back here.
+ *
+ * The full inventory as of this change (derived by grepping localStorage
+ * writes across frontend/src), for the reader deciding where a new key goes:
+ *
+ *   CLEARED — belongs to the account, not the handset:
+ *     flockToken                 the credential itself
+ *     flockUserMode              user / venue / admin surface
+ *     flockOnboardingComplete    per-account onboarding
+ *     flockVenueOnboardingComplete
+ *     flockBirdBest              the bird game's personal high score
+ *     flock_user_lat/_lng        last known location. The worst leak of the set
+ *     flock_deleted_dms          which DMs this person hid
+ *     flock_pinned, flock_order  their flock list, pinned and ordered
+ *     flock_interests            their tastes
+ *     flock_checkin_<placeId>    where they physically were, and when
+ *     flock_loc_dismissed        which location prompts they dismissed
+ *     flock_safety_on            safety toggle. Server-side per account
+ *     flock_crowd_alerts         push opt-out. Server-side per account
+ *     flock_location_enabled     their location consent, re-asked per account
+ *     flock_birdie_corner, flock_sos_corner   synced per account
+ *     flock_push_token           the FCM registration this session owned
+ *     flock_pending_invite       an invite stashed for whoever redeems it
+ *     flock_guest_<token>        a guest identity from an invite page
+ *
+ *   KEPT — device facts, nothing personal in them, and every one of them is
+ *   overwritten by pullSettings() the moment the next account signs in:
+ *     flock-theme, flock-theme-mode   dark/light. Dropping it means the next
+ *                                     person gets a flash of the wrong theme
+ *                                     for zero privacy gain.
+ *     flock_map_type                  street vs satellite. A display choice.
+ *     flock_notif_denied              this BROWSER denied notification
+ *                                     permission. That is true of the handset
+ *                                     regardless of who holds it; clearing it
+ *                                     just re-prompts into a denial.
+ *
+ * sessionStorage is not written anywhere in the app today. It is swept on the
+ * same rule anyway so a future writer is covered by default rather than by
+ * remembering. Cookies are deliberately absent: the JWT rides in a header and
+ * Flock sets no auth cookie at all, so there is nothing there to clear.
+ */
+const KEEP_ON_SIGN_OUT = new Set([
+  'flock-theme',
+  'flock-theme-mode',
+  'flock_map_type',
+  'flock_notif_denied',
+]);
+
+function sweepStore(store) {
+  if (!store) return;
+  // Snapshot the names first: removing while iterating a live Storage
+  // re-indexes it and silently skips keys.
+  const keys = [];
+  for (let i = 0; i < store.length; i += 1) {
+    const key = store.key(i);
+    if (key && key.startsWith('flock') && !KEEP_ON_SIGN_OUT.has(key)) keys.push(key);
+  }
+  keys.forEach((key) => {
+    try { store.removeItem(key); } catch (_) { /* see below */ }
+  });
+}
+
+/**
+ * Wipe this device's copy of the signed-in account. Synchronous and total: it
+ * never awaits anything, so no failure anywhere can leave a half-signed-out
+ * device. Every caller that ends a session goes through here — logout(), the
+ * 401 handler, and account deletion — so there is exactly one answer to "what
+ * does sign-out clear".
+ *
+ * Safari private mode and "block all cookies" make storage access throw rather
+ * than return null, and a throw here would abort a sign-out. Hence the guards.
+ */
+export function clearLocalSession() {
+  try { sweepStore(window.localStorage); } catch (_) { /* storage blocked */ }
+  try { sweepStore(window.sessionStorage); } catch (_) { /* storage blocked */ }
+  // Round 3: without reset, activity on a shared device stays attributed to
+  // the previous account, and the next login can merge identities.
+  withPostHog((posthog) => posthog.reset());
 }
 
 /**
@@ -181,7 +270,11 @@ function badResponseGuard(res, data, method) {
 // Exclusions: the auth flows themselves (a wrong password is 401 and is not
 // an expired session), requests that carried no token, and account deletion
 // answering { reauthRequired } (that 401 is a re-prompt, not a dead session).
-const AUTH_FLOW_PREFIXES = ['/api/auth/login', '/api/auth/signup', '/api/auth/google', '/api/auth/apple'];
+// '/api/auth/logout' covers '/api/auth/logout-all' too: a 401 while telling
+// the server we are leaving is not an expired session needing a notice — we
+// are signing out on this device either way, and announcing "your session
+// expired" over a sign-out the user asked for is a lie with a toast on it.
+const AUTH_FLOW_PREFIXES = ['/api/auth/login', '/api/auth/signup', '/api/auth/google', '/api/auth/apple', '/api/auth/logout'];
 let sessionExpiryAnnounced = false;
 const SESSION_EXPIRED_COPY = 'Your session expired. Sign in again to pick up where you left off.';
 
@@ -189,7 +282,10 @@ function handleSessionExpiry(endpoint, hadToken, data) {
   if (!hadToken) return false;
   if (AUTH_FLOW_PREFIXES.some((p) => endpoint.startsWith(p))) return false;
   if (data && typeof data === 'object' && data.reauthRequired) return false;
-  clearToken();
+  // A dead token is a sign-out, so it clears what a sign-out clears. Dropping
+  // only the token here was the second half-clearing path that let the
+  // previous user's location and deleted-DM list outlive their session.
+  clearLocalSession();
   if (typeof window !== 'undefined' && !sessionExpiryAnnounced) {
     sessionExpiryAnnounced = true;
     window.dispatchEvent(new CustomEvent('flock-session-expired'));
@@ -357,7 +453,10 @@ export async function deleteAccount(password) {
     method: 'DELETE',
     ...(password ? { body: JSON.stringify({ password }) } : {}),
   });
-  clearToken();
+  // The account is gone, so there is no server left to tell and no token worth
+  // presenting — but the device wipe is the same one sign-out performs. The
+  // caller (App.js) still runs endSession() afterwards for the UI teardown.
+  clearLocalSession();
   return data;
 }
 
@@ -463,11 +562,39 @@ export async function getCurrentUser() {
   return request('/api/auth/me');
 }
 
-export function logout() {
-  clearToken();
-  // Round 3: without reset, activity on a shared device stays attributed to
-  // the previous account, and the next login can merge identities.
-  withPostHog((posthog) => posthog.reset());
+// Sign out: tell the server, then wipe the device. In that order, and the
+// second half is not conditional on the first.
+//
+// POST /api/auth/logout takes no body, requires the bearer token, and answers
+// { message }. Today the backend calls it advisory (tokens carry no per-session
+// id, so single-device revocation would have to bump token_version and sign the
+// user out of their laptop too) — but the call is made anyway, because the
+// client's job is to declare the session over and the day that route learns to
+// revoke, every shipped app already asks it to. POST /api/auth/logout-all is
+// the one that truly revokes, by bumping token_version; no UI reaches it, so
+// nothing here calls it.
+//
+// FAILURE BEHAVIOR, which is the whole point: the local wipe is synchronous and
+// runs whether the server answers, refuses, or never hears us. A user hitting
+// Log out in a basement with no signal is signed out of that phone, full stop.
+// A short timeout keeps a hung connection from holding the caller.
+const LOGOUT_TIMEOUT_MS = 4000;
+
+export async function logout() {
+  const token = getToken();
+  // Issued before the wipe so it carries a live credential, with the header
+  // pinned explicitly so the order of these two lines can never quietly become
+  // load-bearing. .catch() here, not try/await: nothing this returns can
+  // change what happens next.
+  const told = token
+    ? request('/api/auth/logout', {
+      method: 'POST',
+      timeout: LOGOUT_TIMEOUT_MS,
+      headers: { Authorization: `Bearer ${token}` },
+    }).catch(() => null)
+    : null;
+  clearLocalSession();
+  if (told) await told;
 }
 
 // Flock Pro — { isPremium, paywallEnabled, birdie: { limit, used, remaining } }.

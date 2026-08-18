@@ -19719,12 +19719,19 @@ const FlockApp = () => {
     sessionEndedByRevokeRef.current = !!note;
     unregisterPushToken().catch(() => {});
     disconnectSocket();
-    logout();
+    // The ONE sign-out. logout() tells the server the session is over and
+    // wipes every flock* key this account wrote to the device — the token,
+    // the user mode, the venue onboarding flag, and the personal residue this
+    // function used to leave behind for the next person on a shared phone
+    // (last known location, pinned venues, interests, deleted DMs, check-ins).
+    // It never rejects and never waits on the network to finish the local
+    // wipe, so a sign-out in a dead spot still signs you out. Nothing here may
+    // clear auth state itself: a second half-clearing path is how the leak
+    // survived. api.js clearLocalSession() is the single answer.
+    logout().catch(() => {});
     setAuthUser(null);
     setAuthScreen('login');
     setVenueLoginFlag(false);
-    localStorage.removeItem('flockUserMode');
-    localStorage.removeItem('flockVenueOnboardingComplete');
     setSessionNote(note || '');
   }, []);
 
