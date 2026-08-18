@@ -1482,7 +1482,7 @@ router.post('/upload-image', (req, res) => {
       // extension or MIME could not tell the two apart anyway (an APNG is
       // `image/png`). The frame count is decided from the bytes inside
       // moderateImage.
-      const verdict = await moderateImage(dataUrl);
+      const verdict = await moderateImage(dataUrl, { userId: req.user.id });
       if (!verdict.allowed) {
         return res.status(400).json({ error: imageRejectionMessage(verdict), moderation: verdict.reason });
       }

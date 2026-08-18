@@ -1153,7 +1153,7 @@ function registerHandlers(io, socket) {
           socket.emit('error', { message: 'Slow down a moment.' });
           return;
         }
-        const verdict = await moderateImage(image_url);
+        const verdict = await moderateImage(image_url, { userId: user.id });
         if (!verdict.allowed) {
           socket.emit('error', { message: imageRejectionMessage(verdict) });
           return;
@@ -1816,7 +1816,7 @@ function registerHandlers(io, socket) {
           socket.emit('error', { message: 'Slow down a moment.' });
           return;
         }
-        const verdict = await moderateImage(image_url);
+        const verdict = await moderateImage(image_url, { userId: user.id });
         if (!verdict.allowed) {
           socket.emit('error', { message: imageRejectionMessage(verdict) });
           return;
