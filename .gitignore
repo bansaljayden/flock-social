@@ -120,3 +120,12 @@ OSS-READINESS.md
 
 # Internal ops snapshot, not for the public repo.
 .claude/memory-snapshot.md
+
+# Security audit writeups and internal analysis. NEVER commit these: they are
+# step-by-step exploitation notes against production, and the repo goes public.
+SECURITY-AUDIT-*.md
+OSS-SECRET-SCAN.md
+OSS-READINESS.md
+PRESHIP-SWEEP.md
+VIDEO-NOTES-*.md
+backend/scripts/ml/models/incumbent/
