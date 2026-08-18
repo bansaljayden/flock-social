@@ -72,6 +72,39 @@ export default function AboutPage() {
       </section>
 
       <section>
+        <h2>Where Flock fits</h2>
+        <p>
+          The group chat is where plans start, and it is bad at finishing them.
+          A place gets suggested, a few people react, and the message scrolls
+          away under the next conversation. "Down" in a chat costs nothing, so
+          nobody knows who actually meant it. Money is worse: nobody wants to
+          ask what the table can afford, so the person with the tightest week
+          just quietly drops out.
+        </p>
+        <p>
+          Calendar and event apps sit at the other end. An invite assumes the
+          hard part already happened: someone picked the place, the time, and
+          the people before anything got sent. The stretch in between, where a
+          maybe becomes a plan, is the part those tools skip and the part Flock
+          is built for.
+        </p>
+        <p>
+          Flock makes the decision itself the product. RSVPs live inside the
+          flock, so a yes is on the record instead of buried in a thread. The
+          group votes on where to go. Budgets go in privately and only a
+          ceiling everyone can afford comes back. When the bill lands, it
+          splits into Venmo, Cash App, or Zelle links, and showing up counts:
+          your reliability score is built from the plans you joined and the
+          ones you kept.
+        </p>
+        <p>
+          Flock is not trying to be a feed, and it is not trying to replace
+          your group chat. There is nothing to scroll and nobody to follow. The
+          chat keeps the jokes. Flock keeps the plan.
+        </p>
+      </section>
+
+      <section>
         <h2>Our crowd model</h2>
         <p>
           Flock runs its own machine-learning crowd model, not a wrapper around

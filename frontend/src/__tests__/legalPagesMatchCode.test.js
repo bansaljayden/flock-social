@@ -138,21 +138,28 @@ describe('stories are not described as something a user can do', () => {
 });
 
 describe('Sign in with Apple revocation is described as it currently behaves', () => {
-  test('revocation is still gated on env that has to be configured', () => {
+  test('revocation is gated on env that is configured in production', () => {
     const appleAuth = read('backend', 'services', 'appleAuth.js');
     expect(appleAuth).toMatch(/function isConfigured\(\)\s*\{\s*return !!\(TEAM_ID && KEY_ID && PRIVATE_KEY\);/);
-    // Deletion only calls revoke when that gate passes, which is why the pages
-    // cannot promise it unconditionally.
+    // Deletion calls revoke only when that gate passes, and it passes in
+    // production: APPLE_TEAM_ID, APPLE_KEY_ID and APPLE_PRIVATE_KEY were
+    // confirmed set on the Railway service on 2026-08-16, which is what lets
+    // the pages promise revocation in the test below.
     const users = read('backend', 'routes', 'users.js');
     expect(users).toMatch(/appleAuthConfigured\(\)/);
   });
 
-  test('neither page promises revocation, and both tell the user how to do it themselves', () => {
-    // Revert both of these together, in the same commit that sets APPLE_TEAM_ID,
-    // APPLE_KEY_ID and APPLE_PRIVATE_KEY on the server. Not before.
-    expect(deletePage).not.toMatch(/we\s+also revoke Flock's Sign in with Apple access/i);
-    expect(deletePage).toMatch(/Stop using Apple ID/);
-    expect(privacy).toMatch(/we hold no Apple refresh token/i);
+  test('both pages promise revocation on deletion', () => {
+    // Inverted 2026-08-18, in the change that recorded the APPLE_* variables
+    // as set on the server. What would make these assertions wrong again is
+    // APPLE_TEAM_ID, APPLE_KEY_ID or APPLE_PRIVATE_KEY being removed from the
+    // server: isConfigured() goes false and revocation silently stops. If
+    // that happens, withdraw the promise from both pages and flip these back
+    // to asserting its absence. Apple 5.1.1(v) is checked by a human.
+    expect(deletePage).toMatch(/we\s+also revoke Flock's Sign in with Apple access/i);
+    expect(deletePage).not.toMatch(/built but\s+not switched on/i);
+    expect(privacy).toMatch(/we use it to revoke Flock's access to your Apple ID/i);
+    expect(privacy).not.toMatch(/we hold no Apple refresh token/i);
   });
 });
 

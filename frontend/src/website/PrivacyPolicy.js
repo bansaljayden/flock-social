@@ -208,14 +208,17 @@ export default function PrivacyPolicy() {
                 <li><strong>Venue owner details (optional):</strong> if you claim a venue, we store the profile you fill in and the promotions, events, and replies you post. Those are shown publicly in the app. Your account is the same kind of account as anyone else's and everything above applies to it too.</li>
                 <li><strong>Waitlist email:</strong> if you enter your email on flockcorp.com to hear when Flock launches, we store that address and send you one confirmation. It is not linked to any Flock account, we do not sell it, and we will delete it if you ask us at {mail}.</li>
                 {/*
-                  APPLE REVOCATION IS NOT LIVE. No APPLE_* variable is set on the
-                  server (verified 2026-08-14, TASKS.md A2), so
-                  services/appleAuth.js `isConfigured()` is false: no refresh token
-                  is ever exchanged or stored, and routes/users.js skips the
-                  revocation call on deletion. The moment those variables are set,
-                  restore the plain promise here and in DeleteAccount.js.
+                  APPLE REVOCATION IS LIVE (promise restored 2026-08-18).
+                  APPLE_TEAM_ID, APPLE_KEY_ID and APPLE_PRIVATE_KEY (plus
+                  APPLE_CLIENT_ID and APPLE_BUNDLE_ID) confirmed set on the
+                  Railway production service 2026-08-16, so
+                  services/appleAuth.js `isConfigured()` is true: routes/auth.js
+                  stores the refresh token at sign-in and routes/users.js
+                  revokes it on deletion. If those variables are ever removed,
+                  withdraw this promise again here and in DeleteAccount.js and
+                  flip the pinning test in legalPagesMatchCode.test.js back.
                 */}
-                <li><strong>Sign-in tokens:</strong> if you sign in with Apple or Google, we receive an identity token from the provider, verify it, and issue our own session token. Apple accounts have one extra piece: Apple's rules say deleting your Flock account should also revoke Flock's access to your Apple ID, and doing that needs a refresh token from Apple that we store for that single purpose. That connection is built but not switched on yet, so today we hold no Apple refresh token and deletion does not revoke the grant. Until it is on, you can disconnect Flock yourself on your iPhone: Settings, your name, Sign in with Apple, Flock, Stop using Apple ID.</li>
+                <li><strong>Sign-in tokens:</strong> if you sign in with Apple or Google, we receive an identity token from the provider, verify it, and issue our own session token. Apple accounts have one extra piece: Apple's rules say deleting your Flock account should also revoke Flock's access to your Apple ID, and doing that needs a refresh token from Apple that we store for that single purpose. When you delete your account, we use it to revoke Flock's access to your Apple ID, and the token is deleted with the rest of your data. After that, Flock no longer appears under Sign in with Apple in your Apple ID settings.</li>
               </ul>
 
               <h3>We collect automatically</h3>
