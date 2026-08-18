@@ -4,7 +4,13 @@ const pool = require('../config/database');
 const { getWeather } = require('../services/weatherService');
 const mlPredictor = require('../services/mlPredictor');
 const { upstreamSignal } = require('../utils/upstream');
-const { allowGlobalPlacesCall } = require('../utils/placesBudget');
+// The ONE shape rule for a Google place id. routes/checkin.js, flocks.js,
+// feedback.js, venueProfile.js, venueDashboard.js, venueSearch.js, crowd.js and
+// sockets/handlers.js all gate on this; the badge was the last paid Places
+// surface that did not. Imported, never re-typed: a second copy of the regex is
+// a second thing to keep in step with the first.
+const { isPlaceIdShaped } = require('../utils/places');
+const { allowGlobalPlacesCall, GLOBAL_DAILY } = require('../utils/placesBudget');
 const { weekdayOffset } = require('../services/crowdEngine');
 
 const router = express.Router();
@@ -57,8 +63,118 @@ const router = express.Router();
 // ---------------------------------------------------------------------------
 
 const GOOGLE_KEY = process.env.GOOGLE_PLACES_API_KEY;
+
+// ---------------------------------------------------------------------------
+// The badge cache (round 23: it had no bound at all).
+// ---------------------------------------------------------------------------
+// This was `const cache = new Map()` with a read-time TTL check and nothing
+// else — no maxEntries, no sweep. Writes are gated behind "the venue exists in
+// venue_profiles AND verified = true", so in practice the stored key space is
+// the verified-venue set and it is small today. That is an argument about the
+// data, not a bound in the code: the day the verified set is large, or the day
+// somebody relaxes that WHERE clause, this map grows until the process dies,
+// and an expired entry that is never read again is never deleted. Give it the
+// bound its siblings have (services/weatherService.js, routes/venueSearch.js):
+// expire first, then oldest-first down to a low-water mark, with a
+// delete-before-set so a refreshed key moves to the END of insertion order.
+// Without that, Map.set keeps a key's original position and oldest-first
+// evicts the HOTTEST badge in the map.
 const cache = new Map();
 const TTL = 15 * 60 * 1000;
+const BADGE_CACHE_MAX = 500;
+const BADGE_CACHE_LOW_WATER = Math.floor(BADGE_CACHE_MAX * 0.9);
+
+function getBadge(placeId) {
+  const hit = cache.get(placeId);
+  if (!hit) return null;
+  if (Date.now() - hit.ts >= TTL) { cache.delete(placeId); return null; }
+  return hit.svg;
+}
+
+function setBadge(placeId, svg) {
+  cache.delete(placeId);
+  cache.set(placeId, { ts: Date.now(), svg });
+  if (cache.size <= BADGE_CACHE_MAX) return;
+  const now = Date.now();
+  for (const [k, v] of cache) if (now - v.ts >= TTL) cache.delete(k);
+  if (cache.size <= BADGE_CACHE_MAX) return;
+  while (cache.size > BADGE_CACHE_LOW_WATER) cache.delete(cache.keys().next().value);
+}
+
+// ---------------------------------------------------------------------------
+// The badge's caller dimension (round 23).
+// ---------------------------------------------------------------------------
+// utils/placesBudget.js names this itself as "THE REMAINING HOLE": the paid
+// surfaces with no authenticated user charge GLOBAL_DAILY and nothing else, so
+// the shared 3000-call day is a denial lever for anyone who can show up often
+// enough. Of the three such doors, the public demo already carries a per-IP
+// gate (20/IP/hour) AND its own 600/day sub-ceiling, and the photo proxy
+// carries 300/IP/hour; the badge carried NEITHER. It had a 15-minute cache and
+// a verified-venue check, which bound how often ONE venue costs money but put
+// no ceiling at all on one address, and — before the shape gate below — no
+// ceiling on how many unauthenticated Postgres lookups one address could force
+// with 300-character junk.
+//
+// A per-account budget cannot apply where there is no account, so the honest
+// dimension here is the source address, in the same shape routes/publicCrowd.js
+// uses: expire first, evict LEAST CONSUMED first, never clear(). Consumption
+// order for the reason that file spells out — a flooder spends their allowance
+// and only then sprays fresh addresses, so their own entry is both the oldest
+// and the fullest, and any age-ordered drop deletes precisely the counter they
+// wanted gone.
+//
+// THE PIN: BADGE_DAILY (600) < GLOBAL_DAILY (3000). A sub-ceiling that sits
+// above the ceiling it is meant to be under is not a sub-ceiling, it is a
+// comment. (routes/venueSearch.js's photo leg was exactly that until this
+// round.) At 600 the badge surface can never spend more than a fifth of the
+// day's Google invoice, so a flood of badge misses cannot deny Places to the
+// authenticated product.
+//
+// Cache HITS are free and never counted: an embed on a busy venue page serves
+// thousands of readers off one entry, and charging them would refuse the badge
+// to the audience it exists to reach. Only a MISS — the thing that costs a
+// Postgres round trip and possibly a paid Place Details call — is metered.
+const BADGE_IP_HOURLY = 120;
+const BADGE_IP_WINDOW_MS = 3600_000;
+const BADGE_DAILY = 600;
+const BADGE_IP_MAX_ENTRIES = 5000;
+const BADGE_IP_LOW_WATER = Math.floor(BADGE_IP_MAX_ENTRIES * 0.9);
+const badgeIpHits = new Map(); // ip -> [timestamps]
+let badgeDayKey = new Date().toISOString().slice(0, 10);
+let badgeDayCount = 0;
+
+function evictBadgeIpHits(now) {
+  for (const [k, v] of badgeIpHits) {
+    const live = v.filter((t) => now - t < BADGE_IP_WINDOW_MS);
+    if (live.length === 0) badgeIpHits.delete(k);
+    else if (live.length !== v.length) badgeIpHits.set(k, live);
+  }
+  if (badgeIpHits.size <= BADGE_IP_MAX_ENTRIES) return;
+  const byConsumption = [...badgeIpHits.entries()].sort((a, b) => a[1].length - b[1].length);
+  for (const [k] of byConsumption) {
+    if (badgeIpHits.size <= BADGE_IP_LOW_WATER) break;
+    badgeIpHits.delete(k);
+  }
+}
+
+// True when this address may pay for one badge MISS. A refusal consumes
+// nothing, so a throttled address recovers on the window rather than being
+// pushed further out by its own retries.
+function allowBadgeMiss(req) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== badgeDayKey) { badgeDayKey = today; badgeDayCount = 0; }
+  if (badgeDayCount >= BADGE_DAILY) return false;
+
+  const now = Date.now();
+  const ip = req.ip || 'unknown';
+  const hits = (badgeIpHits.get(ip) || []).filter((t) => now - t < BADGE_IP_WINDOW_MS);
+  if (hits.length >= BADGE_IP_HOURLY) return false;
+  hits.push(now);
+  badgeIpHits.set(ip, hits);
+  if (badgeIpHits.size > BADGE_IP_MAX_ENTRIES) evictBadgeIpHits(now);
+  badgeDayCount++;
+  return true;
+}
 
 const LABEL_COLORS = {
   // label -> [dot, text] on the cream badge
@@ -151,12 +267,26 @@ router.get('/:placeId.svg',
       if (!errors.isEmpty()) return res.status(400).send('');
       const placeId = req.params.placeId;
 
-      const hit = cache.get(placeId);
-      if (hit && Date.now() - hit.ts < TTL) {
+      // SHAPE BEFORE ANYTHING THAT COSTS (round 23). `isLength({min:4,max:300})`
+      // was the only thing standing between an unauthenticated caller and a
+      // Postgres lookup: any 300-character string reached the query below, and a
+      // spray of distinct junk strings was a spray of distinct unauthenticated
+      // queries on the 20-connection primary pool. A non-shaped id cannot match
+      // a google_place_id row, so refusing it here loses nothing and costs
+      // nothing. 404 — the same answer an unknown venue already gets, so the
+      // refusal is not a new oracle for which ids are the right shape.
+      if (!isPlaceIdShaped(placeId)) return res.status(404).send('');
+
+      const cachedSvg = getBadge(placeId);
+      if (cachedSvg) {
         res.set('Content-Type', 'image/svg+xml');
         res.set('Cache-Control', 'public, max-age=900');
-        return res.send(hit.svg);
+        return res.send(cachedSvg);
       }
+
+      // Everything past this line costs: one Postgres round trip, and on a
+      // verified venue a paid Place Details call. Meter the MISS, per address.
+      if (!allowBadgeMiss(req)) return res.status(429).send('');
 
       // Claimed AND verified venues only — the badge burns Google quota and
       // speaks with Flock's name; unverified claims get neither.
@@ -217,7 +347,7 @@ router.get('/:placeId.svg',
         svg = svgBadge(text, dot);
       }
 
-      cache.set(placeId, { ts: Date.now(), svg });
+      setBadge(placeId, svg);
       res.set('Content-Type', 'image/svg+xml');
       res.set('Cache-Control', 'public, max-age=900');
       res.send(svg);
@@ -234,3 +364,26 @@ module.exports = router;
 // never a date), which is exactly why the six-days-in-the-future bug above
 // survived so long: no black-box test of this route could have seen it.
 module.exports.__testables = { venueLocalTime };
+
+// Round 23 — __tests__/badgeCacheBounds.test.js drives these directly. The
+// budget constants are exported so the test pins the INEQUALITY
+// (BADGE_DAILY < GLOBAL_DAILY) against both files' real numbers rather than
+// against two copies that can drift apart.
+module.exports.__test = {
+  BADGE_CACHE_MAX,
+  BADGE_CACHE_LOW_WATER,
+  BADGE_IP_HOURLY,
+  BADGE_DAILY,
+  GLOBAL_DAILY,
+  TTL,
+  getBadge,
+  setBadge,
+  allowBadgeMiss,
+  cacheSize: () => cache.size,
+  resetBadgeBudget({ clearIps = true } = {}) {
+    badgeDayKey = new Date().toISOString().slice(0, 10);
+    badgeDayCount = 0;
+    if (clearIps) badgeIpHits.clear();
+    cache.clear();
+  },
+};

@@ -1305,6 +1305,10 @@ const UNDERAGE_MSG = "We can't create a Flock account for you.";
 const UNDERAGE_EMAIL_TTL_MS = 24 * 60 * 60 * 1000;
 const UNDERAGE_IP_TTL_MS = 15 * 60 * 1000;
 const UNDERAGE_MAX_KEYS = 20000;
+// Evict down to 90%, not to the ceiling, for the reason evictLoginFailures
+// above spells out: a map held AT the ceiling sorts itself on every refused
+// signup, which is a CPU lever an unauthenticated caller controls.
+const UNDERAGE_LOW_WATER = Math.floor(UNDERAGE_MAX_KEYS * 0.9);
 const underageAttempts = new Map();
 
 function underageKey(kind, value) {
@@ -1315,12 +1319,61 @@ function underageKey(kind, value) {
     : crypto.createHash('sha256').update(`underage:${kind}:${canonical}`).digest('hex');
 }
 
-function recordUnderageAttempt(email, ip, now = Date.now()) {
-  // Bounded: a spray of refused signups must not grow this without limit.
-  if (underageAttempts.size > UNDERAGE_MAX_KEYS) {
-    for (const [k, v] of underageAttempts) if (now >= v) underageAttempts.delete(k);
-    if (underageAttempts.size > UNDERAGE_MAX_KEYS) underageAttempts.clear();
+// ROUND 23 (cache-key inventory sweep). This map's memory guard used to end in
+// `underageAttempts.clear()` — the LAST wholesale clear() on a caller-keyed map
+// in the backend, and the one with the worst thing behind it. Every sibling map
+// in this file (loginFailures ~400 lines up, oauthNonces ~100 lines up) was
+// converted to bounded eviction and this one was missed, ninety lines below the
+// second of those fixes.
+//
+// THE EXPLOIT IT ALLOWED. The email half of the key is chosen by an
+// UNAUTHENTICATED caller: POST /signup with any address and an under-13 date of
+// birth writes one entry. 20,001 refused signups with distinct addresses tipped
+// the map past the ceiling and wiped every remembered refusal at once — not
+// just the flooder's own, but every OTHER refused mailbox AND every IP block,
+// which are what the FTC FAQ's "steps against the child simply re-entering an
+// older date" actually rest on. The age gate on a 13+ service was resettable on
+// demand, by anyone, at a moment they chose. The control got weaker the harder
+// it was pushed, which is the exact anti-pattern the two maps above already
+// carry comments about.
+//
+// THE ORDER, and why it is not the one oauthNonces uses. Expire first, then
+// evict LONGEST-REMAINING-LIFETIME FIRST. That is this map's reading of
+// evictLoginFailures' least-consumed-first rule: there is no count here, so
+// what an entry has "consumed" is its lifetime, and the entry that has spent
+// the least of its TTL is the one that has enforced the least. Two properties
+// fall out, and both are the point:
+//
+//   1. AN ATTACKER CANNOT DISPLACE THE ENTRY THEY WANT GONE. Every write a
+//      flooder makes carries a LATER expiry than the block they are trying to
+//      clear (their own, recorded moments earlier), so their fresh entries are
+//      always ahead of their target in the eviction order. The flood evicts
+//      itself. Soonest-to-expire-first — oauthNonces' order, which is correct
+//      THERE because a nonce is server-minted and cannot be aimed — would do
+//      precisely the opposite here.
+//   2. THE IP BLOCKS SURVIVE. An IP entry lives 15 minutes and an email entry
+//      24 hours, so under soonest-first every IP block in the map is the first
+//      thing a flood deletes — and that is the half of the gate that stops the
+//      refused child in the room from back-buttoning. Under
+//      longest-remaining-first they are the last thing to go.
+//
+// What this does NOT claim: an attacker can still clear their OWN block by
+// waiting, which is what the TTLs are for (24h / 15 min). That was never the
+// finding. The finding was that one caller could clear EVERYONE's, instantly.
+function evictUnderageAttempts(now = Date.now()) {
+  for (const [k, v] of underageAttempts) if (now >= v) underageAttempts.delete(k);
+  if (underageAttempts.size <= UNDERAGE_MAX_KEYS) return;
+  const byRemaining = [...underageAttempts.entries()].sort((a, b) => b[1] - a[1]);
+  for (const [k] of byRemaining) {
+    if (underageAttempts.size <= UNDERAGE_LOW_WATER) break;
+    underageAttempts.delete(k);
   }
+}
+
+function recordUnderageAttempt(email, ip, now = Date.now()) {
+  // Bounded: a spray of refused signups must not grow this without limit — and
+  // must never be able to EMPTY it. Never clear().
+  if (underageAttempts.size > UNDERAGE_MAX_KEYS) evictUnderageAttempts(now);
   if (typeof email === 'string' && email.includes('@')) {
     underageAttempts.set(underageKey('email', email), now + UNDERAGE_EMAIL_TTL_MS);
   }
@@ -3076,6 +3129,14 @@ module.exports.__testing = {
   UNDERAGE_EMAIL_TTL_MS,
   UNDERAGE_IP_TTL_MS,
   UNDERAGE_MAX_KEYS,
+  UNDERAGE_LOW_WATER,
+  // Round 23: exported so __tests__/minorsCompliance.test.js can drive the
+  // eviction path directly and pin that a flood cannot empty the map, and that
+  // the entry a flooder is aiming at outlives their own writes.
+  evictUnderageAttempts,
+  underageKey,
+  seedUnderageAttempt: (key, expiresAt) => underageAttempts.set(key, expiresAt),
+  underageAttemptHas: (key) => underageAttempts.has(key),
   clearUnderageAttempts: () => underageAttempts.clear(),
   underageAttemptCount: () => underageAttempts.size,
   // The reset mail is dispatched without being awaited, so the response cannot
