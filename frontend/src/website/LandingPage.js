@@ -648,6 +648,25 @@ export default function LandingPage() {
               Ask Birdie the way you’d ask a friend who knows the city. It comes
               back with real places near you, not a list it made up.
             </p>
+            {/* FTC AI disclosure. The line above sells Birdie as a friend who
+                knows the city, which is the framing the FTC treats as
+                deceptive when the thing is software and the page never says
+                so. The privacy policy already names Google Gemini; this is
+                the same fact where the product is actually marketed, in the
+                page's own voice rather than a footnote. It also carries the
+                model attribution for the crowd numbers, so the claim sits
+                next to the thing that produces it.
+                Second .lp-lead in a row and `.lp :where(p)` zeroes every
+                paragraph margin, so the gap is set here: LandingPage.css is
+                owned elsewhere this pass and one inline value beats an
+                unreviewed rule.
+                MIRRORED in frontend/api/marketing-page.js PAGE_BLOCKS.home,
+                immediately after the paragraph above. aiCrawlerSurface.test.js
+                requires the two to match block for block. */}
+            <p className="lp-lead" style={{ marginTop: 14 }}>
+              Birdie is AI. It runs on Google Gemini, and the crowd numbers it
+              quotes are the app’s own.
+            </p>
             <ul className="lp-list">
               {/* No trailing periods, which is what every other list on this
                   page does. This one was the exception. */}
