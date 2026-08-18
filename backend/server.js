@@ -209,12 +209,27 @@ const allowedOrigins = [
   'https://localhost',
 ];
 
+// Vercel PREVIEW deploys for THIS project. The old pattern was
+// /^https:\/\/flock-app(-[a-z0-9]+)*\.vercel\.app$/, which matched ANY
+// flock-app-<anything>.vercel.app — including an attacker-registrable
+// `flock-app-evil.vercel.app` (SECURITY-AUDIT-config.md finding #1, MEDIUM).
+// This is pinned to the full production project slug `flock-app-w65m` AND
+// requires the preview URL STRUCTURE: `flock-app-w65m-` then a build-hash
+// label (or a `git-<branch>` label) then a deploy-scope label, then
+// `.vercel.app`. So `flock-app-w65m-<hash>-<scope>.vercel.app` and
+// `flock-app-w65m-git-<branch>-<scope>.vercel.app` (the two real Vercel
+// preview shapes) still pass, while `flock-app-evil.vercel.app`,
+// `flock-app-w65m.vercel.app.attacker.com` and any bare project-root host of a
+// different project no longer match. The exact production host
+// `flock-app-w65m.vercel.app` is covered by `allowedOrigins` above.
+const VERCEL_PREVIEW_ORIGIN = /^https:\/\/flock-app-w65m-(?:git-[a-z0-9-]+|[a-z0-9]+)-[a-z0-9-]+\.vercel\.app$/;
+
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (mobile apps, Postman, etc.)
     if (!origin) return callback(null, true);
     // Allow any Vercel preview/production deployment for this project
-    if (allowedOrigins.includes(origin) || /^https:\/\/flock-app(-[a-z0-9]+)*\.vercel\.app$/.test(origin)) {
+    if (allowedOrigins.includes(origin) || VERCEL_PREVIEW_ORIGIN.test(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -1084,7 +1099,7 @@ const io = new Server(server, {
   maxHttpBufferSize: 8 * 1024 * 1024,
   cors: {
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin) || /^https:\/\/flock-app(-[a-z0-9]+)*\.vercel\.app$/.test(origin)) {
+      if (!origin || allowedOrigins.includes(origin) || VERCEL_PREVIEW_ORIGIN.test(origin)) {
         callback(null, true);
       } else {
         callback(new Error('Not allowed by CORS'));
