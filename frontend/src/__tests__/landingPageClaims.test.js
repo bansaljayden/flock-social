@@ -45,14 +45,14 @@ const visible = JS
 // ───────────────────────────────────────────────────────────────────────────
 describe('the page only sells things that exist', () => {
   const REPO = path.join(__dirname, '..', '..', '..');
-  const claudeMd = fs.readFileSync(path.join(REPO, '.claude', 'CLAUDE.md'), 'utf8');
+  const readme = fs.readFileSync(path.join(REPO, 'README.md'), 'utf8');
 
-  test('the "Not built" list in CLAUDE.md still names the two features this page used to sell', () => {
+  test('the "Not built yet" list in README.md still names the two features this page used to sell', () => {
     // If this fails, one of two good things happened: the feature got built, or
     // the doc was reorganised. Either way the assertions below need re-reading
     // rather than deleting — they are only meaningful while the doc still says
     // these do not exist.
-    const notBuilt = claudeMd.slice(claudeMd.indexOf('**Not built:**'));
+    const notBuilt = readme.slice(readme.indexOf('**Not built yet**'));
     expect(notBuilt).toMatch(/promoted placement in vote lists/i);
     expect(notBuilt).toMatch(/slow-night push offers/i);
   });

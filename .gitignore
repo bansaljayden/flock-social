@@ -98,6 +98,7 @@ APPLE-2.1-REPLY.md
 DEFERRED.md
 DOMAIN.md
 FRIEND-FEEDBACK.md
+OSS-SECRET-SCAN.md
 PAYWALL-DECISION.md
 PAYWALL.md
 PRODUCT.md
@@ -111,8 +112,11 @@ TESTFLIGHT_TEST_INFO.md
 /README
 /.specify/
 /seo-audit/
-frontend/.env.example
 flock-sensor/flock_sensor.env.example
+OSS-READINESS.md
 
 # Abandoned React Native port. The launch path is the Capacitor shell in frontend/ios.
 /mobile/
+
+# Internal ops snapshot, not for the public repo.
+.claude/memory-snapshot.md
