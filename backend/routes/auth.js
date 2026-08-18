@@ -866,12 +866,45 @@ function loginLockedFor(key, now = Date.now()) {
   return entry.count >= LOGIN_FAIL_LIMIT ? entry.expiresAt - now : 0;
 }
 
+// Evict down to 90%, not to the ceiling: stopping exactly at the ceiling makes
+// a map held at the ceiling sort itself on every failed login, which is a CPU
+// lever an unauthenticated caller controls. Same low-water rule and the same
+// number as routes/publicCrowd.js and utils/probeBudget.js.
+const LOGIN_FAIL_LOW_WATER = Math.floor(LOGIN_FAIL_MAX_KEYS * 0.9);
+
+// SECURITY-AUDIT-auth.md R2-2 (MEDIUM). This used to end in
+// `loginFailures.clear()`, which reset EVERY account's counter at once — and
+// `key` is a canonical address off an UNAUTHENTICATED route, so the caller
+// chose when that happened. Credential-stuff `victim@example.com` to the
+// 10-failure lockout, then fire 20,001 failures at distinct random addresses;
+// the 20,001st wiped the victim's counter and the run resumed from zero. The
+// control got weaker the harder it was pushed, which is the exact anti-pattern
+// routes/publicCrowd.js, routes/venueSearch.js, routes/safety.js,
+// routes/checkin.js, routes/friends.js and utils/blocks.js each already carry a
+// comment about. The two maps in this file were the ones that sweep missed.
+//
+// Expire first, then evict LEAST CONSUMED first — never clear(). Consumption
+// order, not insertion age, for the reason publicCrowd.js spells out and which
+// is sharpest here: the entry the attacker wants gone is the victim's, and the
+// victim's entry is both the OLDEST and the FULLEST (count 10). An age-ordered
+// drop would delete precisely that one. Lowest-count-first deletes the
+// flooder's own single-failure entries instead, so displacing a locked entry
+// costs ~20,000 addresses that have EACH already been failed 10 times — two
+// hundred thousand attempts through a 10/min per-IP limiter, which is no longer
+// a shortcut past the throttle, it is the throttle.
+function evictLoginFailures(now) {
+  for (const [k, v] of loginFailures) if (now >= v.expiresAt) loginFailures.delete(k);
+  if (loginFailures.size <= LOGIN_FAIL_MAX_KEYS) return;
+  const byConsumption = [...loginFailures.entries()].sort((a, b) => a[1].count - b[1].count);
+  for (const [k] of byConsumption) {
+    if (loginFailures.size <= LOGIN_FAIL_LOW_WATER) break;
+    loginFailures.delete(k);
+  }
+}
+
 function recordLoginFailure(key, now = Date.now()) {
   // Bounded: an attacker cycling addresses must not grow this without limit.
-  if (loginFailures.size > LOGIN_FAIL_MAX_KEYS) {
-    for (const [k, v] of loginFailures) if (now >= v.expiresAt) loginFailures.delete(k);
-    if (loginFailures.size > LOGIN_FAIL_MAX_KEYS) loginFailures.clear();
-  }
+  if (loginFailures.size > LOGIN_FAIL_MAX_KEYS) evictLoginFailures(now);
   const entry = loginFailures.get(key);
   if (!entry || now >= entry.expiresAt) {
     loginFailures.set(key, { count: 1, expiresAt: now + LOGIN_FAIL_WINDOW_MS });
@@ -885,17 +918,30 @@ function clearLoginFailures(key) {
 }
 
 // ---------------------------------------------------------------------------
-// Apple identity token replay (round 16)
+// Provider ID token replay — Apple (round 16) AND Google (round 22)
 // ---------------------------------------------------------------------------
-// An Apple identity token is a bearer credential that is valid for about ten
-// minutes and was accepted here as many times as anyone cared to present it.
-// Anything that saw one once — a proxy log, a crash report, an analytics SDK
-// that captured the request body, a shared device's URL history — could sign in
-// as that user for the rest of the window. Nothing in the previous code made a
-// token single-use.
+// A provider identity token is a bearer credential and was accepted here as
+// many times as anyone cared to present it. Anything that saw one once — a
+// proxy log, a crash report, an analytics SDK that captured the request body, a
+// shared device's URL history — could sign in as that user for the rest of the
+// window. Nothing in the previous code made a token single-use.
 //
-// The cache is keyed on SHA-256 of the token and expires with the token itself,
-// so it is bounded by Apple's own ten-minute window rather than growing. A
+// ONE cache for BOTH providers (SECURITY-AUDIT-auth.md R2-3). Round 16 built
+// this for Apple only, and the Google handler sitting immediately below it in
+// the same file got neither this nor the nonce check — so the provider with the
+// LONGER window was the unprotected one: a Google ID token lives ~1 hour
+// against Apple's ~10 minutes. That mattered more than "one extra session",
+// because the Flock JWT a replay mints carries a fresh `iat`, and a fresh `iat`
+// is the entire sudo-mode proof for an OAuth account (hasFreshSession in
+// routes/users.js) — so one captured credential reached account deletion, the
+// phone-number change and the full data export.
+//
+// It is one Map rather than two so the two paths cannot drift again. Collision
+// is not a concern: the key is SHA-256 of the token STRING, so an Apple token
+// and a Google token can only share a key by sharing every byte.
+//
+// The entry expires with the token itself, bounded by OAUTH_REPLAY_MAX_TTL_MS,
+// so the cache is bounded by the providers' own windows rather than growing. A
 // token is recorded only when the sign-in SUCCEEDS: a client retrying after a
 // transient 503 from Apple's code exchange must not be told its own token was
 // replayed, which would turn one upstream blip into a hard sign-in failure.
@@ -904,55 +950,85 @@ function clearLoginFailures(key) {
 // Railway deployment and a partial one behind N instances, exactly like the
 // login throttle above. The nonce check below is the part that does not depend
 // on process affinity, once clients send one.
-const APPLE_REPLAY_MAX_KEYS = 20000;
-const APPLE_REPLAY_MAX_TTL_MS = 15 * 60 * 1000;
-const appleTokensUsed = new Map();
+const OAUTH_REPLAY_MAX_KEYS = 20000;
+const OAUTH_REPLAY_MAX_TTL_MS = 15 * 60 * 1000;
+// Same low-water rule as the login throttle above and routes/publicCrowd.js.
+const OAUTH_REPLAY_LOW_WATER = Math.floor(OAUTH_REPLAY_MAX_KEYS * 0.9);
+const oauthTokensUsed = new Map();
 
-function appleTokenKey(identityToken) {
+function oauthTokenKey(identityToken) {
   return crypto.createHash('sha256').update(String(identityToken)).digest('hex');
 }
 
-function appleTokenWasUsed(identityToken, now = Date.now()) {
-  const expiresAt = appleTokensUsed.get(appleTokenKey(identityToken));
+function oauthTokenWasUsed(identityToken, now = Date.now()) {
+  const expiresAt = oauthTokensUsed.get(oauthTokenKey(identityToken));
   if (!expiresAt) return false;
   if (now >= expiresAt) {
-    appleTokensUsed.delete(appleTokenKey(identityToken));
+    oauthTokensUsed.delete(oauthTokenKey(identityToken));
     return false;
   }
   return true;
 }
 
-function markAppleTokenUsed(identityToken, expSeconds, now = Date.now()) {
-  if (appleTokensUsed.size > APPLE_REPLAY_MAX_KEYS) {
-    for (const [k, v] of appleTokensUsed) if (now >= v) appleTokensUsed.delete(k);
-    if (appleTokensUsed.size > APPLE_REPLAY_MAX_KEYS) appleTokensUsed.clear();
+function markOauthTokenUsed(identityToken, expSeconds, now = Date.now()) {
+  if (oauthTokensUsed.size > OAUTH_REPLAY_MAX_KEYS) {
+    for (const [k, v] of oauthTokensUsed) if (now >= v) oauthTokensUsed.delete(k);
+    // R2-2's anti-pattern, on the map whose whole job is refusing replays: this
+    // was `oauthTokensUsed.clear()`, so flooding it made every token in it
+    // replayable again — the cache got weaker exactly when it was pushed. Evict
+    // SOONEST-TO-EXPIRE first instead, down to a low-water mark. A fresh junk
+    // entry always carries a later expiry than a real one already sitting in
+    // the map, so a flooder can only push out entries that were about to lapse
+    // anyway, and never the whole cache.
+    if (oauthTokensUsed.size > OAUTH_REPLAY_MAX_KEYS) {
+      const bySoonest = [...oauthTokensUsed.entries()].sort((a, b) => a[1] - b[1]);
+      for (const [k] of bySoonest) {
+        if (oauthTokensUsed.size <= OAUTH_REPLAY_LOW_WATER) break;
+        oauthTokensUsed.delete(k);
+      }
+    }
   }
-  const remaining = Number.isFinite(expSeconds) ? expSeconds * 1000 - now : APPLE_REPLAY_MAX_TTL_MS;
-  const ttl = Math.min(Math.max(remaining, 60 * 1000), APPLE_REPLAY_MAX_TTL_MS);
-  appleTokensUsed.set(appleTokenKey(identityToken), now + ttl);
+  const remaining = Number.isFinite(expSeconds) ? expSeconds * 1000 - now : OAUTH_REPLAY_MAX_TTL_MS;
+  const ttl = Math.min(Math.max(remaining, 60 * 1000), OAUTH_REPLAY_MAX_TTL_MS);
+  oauthTokensUsed.set(oauthTokenKey(identityToken), now + ttl);
 }
 
-// Server-issued Apple nonces. POST /api/auth/apple/nonce hands one out; the
-// client passes it to Apple (native SDKs want SHA-256 of it, Apple's JS SDK
-// hashes it for you) and sends the raw value back with the identity token. We
-// accept either spelling in the token's `nonce` claim, compared in constant
-// time, and the nonce is spent on first use.
+// Server-issued OAuth nonces, shared by Apple and Google for the same reason
+// the replay cache above is shared: two stores drift, and the drift is exactly
+// what R2-3 found. POST /api/auth/apple/nonce and POST /api/auth/google/nonce
+// both hand one out of this store; the client passes it to the provider (Apple
+// native SDKs want SHA-256 of it, Apple's JS SDK hashes it for you, Google
+// Identity Services echoes the raw value) and sends the raw value back with the
+// identity token. We accept either spelling in the token's `nonce` claim,
+// compared in constant time, and the nonce is spent on first use.
 //
-// Not yet required, because no shipped client sends one and hard-requiring it
-// would break every existing Apple sign-in on deploy. APPLE_REQUIRE_NONCE=true
-// flips it to mandatory once the iOS client is updated. Until then the replay
-// cache above is what actually stops a replayed token.
-const APPLE_NONCE_TTL_MS = 10 * 60 * 1000;
-const APPLE_NONCE_MAX_KEYS = 20000;
-const appleNonces = new Map();
+// Not yet required on either provider, because no shipped client sends one and
+// hard-requiring it would break every existing OAuth sign-in on deploy.
+// APPLE_REQUIRE_NONCE=true / GOOGLE_REQUIRE_NONCE=true flip each to mandatory
+// once that client is updated. Until then the replay cache above is what
+// actually stops a replayed token.
+const OAUTH_NONCE_TTL_MS = 10 * 60 * 1000;
+const OAUTH_NONCE_MAX_KEYS = 20000;
+const OAUTH_NONCE_LOW_WATER = Math.floor(OAUTH_NONCE_MAX_KEYS * 0.9);
+const oauthNonces = new Map();
 
-function issueAppleNonce(now = Date.now()) {
-  if (appleNonces.size > APPLE_NONCE_MAX_KEYS) {
-    for (const [k, v] of appleNonces) if (now >= v) appleNonces.delete(k);
-    if (appleNonces.size > APPLE_NONCE_MAX_KEYS) appleNonces.clear();
+function issueOauthNonce(now = Date.now()) {
+  if (oauthNonces.size > OAUTH_NONCE_MAX_KEYS) {
+    for (const [k, v] of oauthNonces) if (now >= v) oauthNonces.delete(k);
+    // R2-10: `oauthNonces.clear()` here was reachable from the unauthenticated
+    // nonce endpoints, so anyone could invalidate every outstanding nonce and
+    // make in-flight sign-ins fail. Bounded eviction, soonest-to-expire first,
+    // for the same reason the replay cache above uses it.
+    if (oauthNonces.size > OAUTH_NONCE_MAX_KEYS) {
+      const bySoonest = [...oauthNonces.entries()].sort((a, b) => a[1] - b[1]);
+      for (const [k] of bySoonest) {
+        if (oauthNonces.size <= OAUTH_NONCE_LOW_WATER) break;
+        oauthNonces.delete(k);
+      }
+    }
   }
   const nonce = crypto.randomBytes(24).toString('base64url');
-  appleNonces.set(nonce, now + APPLE_NONCE_TTL_MS);
+  oauthNonces.set(nonce, now + OAUTH_NONCE_TTL_MS);
   return nonce;
 }
 
@@ -960,16 +1036,16 @@ function issueAppleNonce(now = Date.now()) {
 // recorded on success: if a failed attempt burned the nonce, one transient 503
 // from Apple's code exchange would force the user back through the whole Apple
 // authorization sheet instead of letting the client retry. Validity is checked
-// early, the nonce is spent next to markAppleTokenUsed.
-function appleNonceValid(nonce, now = Date.now()) {
-  const expiresAt = appleNonces.get(nonce);
+// early, the nonce is spent next to markOauthTokenUsed.
+function oauthNonceValid(nonce, now = Date.now()) {
+  const expiresAt = oauthNonces.get(nonce);
   if (!expiresAt) return false;
-  if (now >= expiresAt) { appleNonces.delete(nonce); return false; }
+  if (now >= expiresAt) { oauthNonces.delete(nonce); return false; }
   return true;
 }
 
-function spendAppleNonce(nonce) {
-  if (nonce) appleNonces.delete(nonce);
+function spendOauthNonce(nonce) {
+  if (nonce) oauthNonces.delete(nonce);
 }
 
 // Constant-time string equality that tolerates different lengths.
@@ -984,9 +1060,9 @@ function constantTimeEquals(a, b) {
 }
 
 // The token's `nonce` claim is either the raw nonce (Apple's JS SDK hashes it
-// itself and echoes the hash; native SDKs echo whatever was set) or its SHA-256
-// hex digest. Accept both, in constant time.
-function appleNonceClaimMatches(tokenNonce, suppliedNonce) {
+// itself and echoes the hash; native SDKs echo whatever was set; Google echoes
+// the raw value) or its SHA-256 hex digest. Accept both, in constant time.
+function oauthNonceClaimMatches(tokenNonce, suppliedNonce) {
   const hashed = crypto.createHash('sha256').update(String(suppliedNonce)).digest('hex');
   const rawOk = constantTimeEquals(tokenNonce, suppliedNonce);
   const hashOk = constantTimeEquals(tokenNonce, hashed);
@@ -1939,6 +2015,15 @@ router.post('/logout-all', authenticate, async (req, res) => {
 //     issued to, so we check tokeninfo.aud against our client id before
 //     trusting userinfo — otherwise any third-party app's token could log
 //     its users into Flock accounts.
+
+// POST /api/auth/google/nonce — hand out a single-use nonce for the next Google
+// sign-in. The Apple twin below is the same endpoint over the same store; see
+// the oauthNonces block above for why this exists and why sending one is not
+// mandatory yet.
+router.post('/google/nonce', (req, res) => {
+  res.json({ nonce: issueOauthNonce(), expiresInSeconds: OAUTH_NONCE_TTL_MS / 1000 });
+});
+
 router.post('/google', [
   // `optional({ nullable: true })` (round 20): `optional()` skips only
   // `undefined`, and the handler below already reads a missing credential as
@@ -1955,10 +2040,14 @@ router.post('/google', [
     .isLength({ max: MAX_OAUTH_TOKEN }).withMessage('Google sign-in failed'),
   body('access_token').optional({ nullable: true }).isString()
     .isLength({ max: MAX_OAUTH_ACCESS_TOKEN }).withMessage('Google sign-in failed'),
+  // Round 22 (R2-3): the nonce the client asked us for at POST
+  // /api/auth/google/nonce and then handed to Google. Same bound as the Apple
+  // twin, and optional for the same reason — no shipped client sends one yet.
+  body('nonce').optional({ nullable: true }).isString().isLength({ max: MAX_LINK_TOKEN }),
 ], async (req, res) => {
   try {
     // TYPE before CONTENT — see rejectNonStringFields.
-    if (rejectNonStringFields(req, res, ['credential', 'access_token', 'date_of_birth'],
+    if (rejectNonStringFields(req, res, ['credential', 'access_token', 'nonce', 'date_of_birth'],
       'Google sign-in failed')) return;
 
     const errors = validationResult(req);
@@ -1968,6 +2057,14 @@ router.post('/google', [
     if (!req.body.credential && !req.body.access_token) {
       return res.status(400).json({ error: 'Google credential is required' });
     }
+
+    // Round 22 (R2-3). The nonce the client says it bound this sign-in to, and
+    // the token's `exp`, both need to outlive the `if` below: the nonce is only
+    // SPENT and the credential is only RECORDED once the sign-in succeeds, the
+    // same success-only rule the Apple path uses so an upstream blip is not
+    // mistaken for an attack.
+    const suppliedNonce = typeof req.body.nonce === 'string' ? req.body.nonce.trim() : '';
+    let credentialExp = null;
 
     let googleId, email, name, picture, emailVerified;
     if (req.body.credential) {
@@ -1993,6 +2090,23 @@ router.post('/google', [
       if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(req.body.credential)) {
         return res.status(401).json({ error: 'Google sign-in expired, please try again' });
       }
+      // REPLAY (round 22, SECURITY-AUDIT-auth.md R2-3). The Apple branch has
+      // had this since round 16 and this one did not, while a Google ID token
+      // lives ~1 hour against Apple's ~10 minutes — so the LONGER window was
+      // the unprotected one. Checked here, before verifyIdToken's side effects
+      // and before any row is touched, exactly where the Apple check sits. The
+      // credential is only RECORDED as used once the sign-in succeeds (see the
+      // markOauthTokenUsed call at the end), so a client retrying after a
+      // transient failure is not told its own token was replayed.
+      //
+      // Keyed the same way as the Apple token, on SHA-256 of the credential
+      // STRING. That is the value that uniquely identifies this credential:
+      // Google ID tokens carry no `jti`, and keying on `sub` would refuse the
+      // user's NEXT legitimate sign-in rather than the replay of this one.
+      if (oauthTokenWasUsed(req.body.credential)) {
+        console.warn(`[auth] rejected replayed Google credential from ${req.ip}`);
+        return res.status(401).json({ error: 'Google sign-in expired, please try again' });
+      }
       // Verify the Google ID token
       const ticket = await googleClient.verifyIdToken({
         idToken: req.body.credential,
@@ -2004,6 +2118,35 @@ router.post('/google', [
       const gp = ticket.getPayload();
       ({ sub: googleId, email, name, picture } = gp);
       emailVerified = gp.email_verified === true || gp.email_verified === 'true';
+      credentialExp = gp.exp;
+
+      // NONCE BINDING (round 22, R2-3) — the same three cases, in the same
+      // order, as the Apple path. google-auth-library verifies signature,
+      // issuer, expiry and audience; it has no nonce parameter at all, so the
+      // caller has to compare the claim itself or the claim means nothing.
+      //   * client sent one — it must be one WE issued, unspent, and the
+      //     token's `nonce` claim must match it (raw or SHA-256, constant time);
+      //   * client sent none but the token carries a nonce — the token is bound
+      //     to a value we cannot check, so we refuse rather than pretend;
+      //   * neither — allowed today, refused once GOOGLE_REQUIRE_NONCE is on.
+      {
+        const tokenNonce = typeof gp.nonce === 'string' ? gp.nonce : '';
+        if (suppliedNonce) {
+          if (!oauthNonceValid(suppliedNonce)) {
+            console.warn(`[auth] Google sign-in with unknown or spent nonce from ${req.ip}`);
+            return res.status(401).json({ error: 'Google sign-in expired, please try again' });
+          }
+          if (!oauthNonceClaimMatches(tokenNonce, suppliedNonce)) {
+            console.warn(`[auth] Google ID token nonce did not match the issued nonce (${req.ip})`);
+            return res.status(401).json({ error: 'Google sign-in expired, please try again' });
+          }
+        } else if (tokenNonce) {
+          console.warn(`[auth] Google ID token carries a nonce the client did not send (${req.ip})`);
+          return res.status(401).json({ error: 'Google sign-in expired, please try again' });
+        } else if (process.env.GOOGLE_REQUIRE_NONCE === 'true') {
+          return res.status(400).json({ error: 'Google sign-in failed' });
+        }
+      }
     } else {
       const at = req.body.access_token;
       // Round 12: sign-in blocked on Google with no deadline — a Google
@@ -2198,6 +2341,21 @@ router.post('/google', [
 
         if (!(await enforceDobOnLogin(user, req, res))) return;
 
+    // Only now are the credential and the nonce spent — the same success-only
+    // rule as the Apple path. Every failure path above leaves both usable, so a
+    // client retrying after an upstream blip is not locked out by its own
+    // replay protection.
+    //
+    // The access_token branch has no equivalent: an access token is a
+    // longer-lived credential a client may legitimately present more than once,
+    // and Google re-validates it live at tokeninfo on every call. R2-3 is about
+    // the `credential` (ID token) path, which is the one that mints a session
+    // from a value the client cannot re-fetch.
+    if (req.body.credential) {
+      markOauthTokenUsed(req.body.credential, credentialExp);
+      spendOauthNonce(suppliedNonce);
+    }
+
     const token = signUserToken(user);
     const { password: _, apple_refresh_token: _art, token_version: _tv, ...safeUser } = user;
     res.json({ token, user: safeUser });
@@ -2224,10 +2382,10 @@ router.post('/google', [
 //     in the `fullName` field of the body, which we use to seed `name`
 //     for new accounts.
 // POST /api/auth/apple/nonce — hand out a single-use nonce for the next Apple
-// sign-in. See the appleNonces block above for why this exists and why sending
+// sign-in. See the oauthNonces block above for why this exists and why sending
 // one is not mandatory yet.
 router.post('/apple/nonce', (req, res) => {
-  res.json({ nonce: issueAppleNonce(), expiresInSeconds: APPLE_NONCE_TTL_MS / 1000 });
+  res.json({ nonce: issueOauthNonce(), expiresInSeconds: OAUTH_NONCE_TTL_MS / 1000 });
 });
 
 router.post('/apple', [
@@ -2288,9 +2446,9 @@ router.post('/apple', [
     // presented, for the ~10 minutes it stays valid. Checked BEFORE the
     // signature verification's side effects and before any row is touched.
     // The token is only RECORDED as used once the sign-in succeeds (see the
-    // markAppleTokenUsed call at the end), so a retry after a transient
+    // markOauthTokenUsed call at the end), so a retry after a transient
     // upstream failure is not mistaken for an attack.
-    if (appleTokenWasUsed(identityToken)) {
+    if (oauthTokenWasUsed(identityToken)) {
       console.warn(`[auth] rejected replayed Apple identity token from ${req.ip}`);
       return res.status(401).json({ error: 'Apple sign-in expired, please try again' });
     }
@@ -2344,11 +2502,11 @@ router.post('/apple', [
     {
       const tokenNonce = typeof payload.nonce === 'string' ? payload.nonce : '';
       if (suppliedNonce) {
-        if (!appleNonceValid(suppliedNonce)) {
+        if (!oauthNonceValid(suppliedNonce)) {
           console.warn(`[auth] Apple sign-in with unknown or spent nonce from ${req.ip}`);
           return res.status(401).json({ error: 'Apple sign-in expired, please try again' });
         }
-        if (!appleNonceClaimMatches(tokenNonce, suppliedNonce)) {
+        if (!oauthNonceClaimMatches(tokenNonce, suppliedNonce)) {
           console.warn(`[auth] Apple identity token nonce did not match the issued nonce (${req.ip})`);
           return res.status(401).json({ error: 'Apple sign-in expired, please try again' });
         }
@@ -2555,8 +2713,8 @@ router.post('/apple', [
     // Only now are the token and the nonce spent. Every failure path above
     // leaves both usable, so a client that retries after an upstream blip is
     // not locked out by its own replay protection.
-    markAppleTokenUsed(identityToken, payload.exp);
-    spendAppleNonce(suppliedNonce);
+    markOauthTokenUsed(identityToken, payload.exp);
+    spendOauthNonce(suppliedNonce);
 
     const token = signUserToken(user);
     const { password: _, apple_refresh_token: _art, token_version: _tv, ...safeUser } = user;
@@ -2600,12 +2758,21 @@ module.exports.__testing = {
   isMailableAddress,
   suppliedDob,
   constantTimeEquals,
-  appleNonceClaimMatches,
-  issueAppleNonce,
-  appleNonceValid,
-  spendAppleNonce,
-  appleTokenWasUsed,
-  markAppleTokenUsed,
+  // Round 22: these are now one provider-agnostic mechanism shared by the
+  // Apple and Google paths (R2-3). The apple* export names are kept so existing
+  // tests keep naming what they already name.
+  oauthNonceClaimMatches,
+  issueOauthNonce,
+  oauthNonceValid,
+  spendOauthNonce,
+  oauthTokenWasUsed,
+  markOauthTokenUsed,
+  appleNonceClaimMatches: oauthNonceClaimMatches,
+  issueAppleNonce: issueOauthNonce,
+  appleNonceValid: oauthNonceValid,
+  spendAppleNonce: spendOauthNonce,
+  appleTokenWasUsed: oauthTokenWasUsed,
+  markAppleTokenUsed: markOauthTokenUsed,
   VERIFICATION_TTL_HOURS,
   RESEND_MIN_GAP_MS,
   RESEND_MAX_PER_HOUR_ACCOUNT,
