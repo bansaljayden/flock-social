@@ -57,21 +57,25 @@ export default function DeleteAccount() {
           Your account and data are then deleted immediately.
         </p>
         {/*
-          APPLE REVOCATION IS NOT LIVE. `services/appleAuth.js` needs APPLE_TEAM_ID,
-          APPLE_KEY_ID and APPLE_PRIVATE_KEY; none is set on the server (verified
-          2026-08-14, TASKS.md A2), so `isConfigured()` is false, no refresh token
-          is stored at sign-in, and routes/users.js skips revocation on deletion.
-          When those variables are set, replace this paragraph with the plain
-          statement that deletion revokes the Apple grant, and update the matching
-          note in PrivacyPolicy.js. Do not restore the promise before the
-          variables exist: Apple 5.1.1(v) is checked by a human.
+          APPLE REVOCATION IS LIVE (promise restored 2026-08-18). All five
+          APPLE_* variables (APPLE_TEAM_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY,
+          APPLE_CLIENT_ID, APPLE_BUNDLE_ID) were confirmed set on the Railway
+          production service on 2026-08-16, so `services/appleAuth.js`
+          `isConfigured()` is true, routes/auth.js stores the refresh token at
+          sign-in, and routes/users.js revokes it on deletion. If those
+          variables are ever removed, revocation silently stops: withdraw this
+          promise again, update the matching note in PrivacyPolicy.js, and flip
+          the pinning test in legalPagesMatchCode.test.js back. Apple 5.1.1(v)
+          is checked by a human.
         */}
         <p>
-          <strong>If you signed in with Apple:</strong> deleting your account is meant to
-          revoke Flock's access to your Apple ID at the same time. That step is built but
-          not switched on yet, so for now disconnect it yourself: on your iPhone open{' '}
-          <strong>Settings</strong>, tap your name, then <strong>Sign in with Apple</strong>,
-          then <strong>Flock</strong>, then <strong>Stop using Apple ID</strong>.
+          <strong>If you signed in with Apple:</strong> when you delete your account, we
+          also revoke Flock's Sign in with Apple access, so Flock stops appearing as a
+          connected app on your Apple ID. You can check this yourself: on your iPhone
+          open <strong>Settings</strong>, tap your name, then{' '}
+          <strong>Sign in with Apple</strong>. If Flock still shows there, tap{' '}
+          <strong>Flock</strong>, then <strong>Stop using Apple ID</strong> to remove it
+          by hand.
         </p>
       </section>
 
