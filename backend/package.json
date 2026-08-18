@@ -1,6 +1,7 @@
 {
   "name": "flock-backend",
   "version": "1.0.0",
+  "license": "SEE LICENSE IN LICENSE",
   "description": "Backend API for Flock - a real-time social coordination app",
   "main": "server.js",
   "scripts": {
