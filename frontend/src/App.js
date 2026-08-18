@@ -1555,6 +1555,10 @@ function declutterMarkers(map, markerEntries) {
     // the radius grows with every skip, so the arm always escapes a crowded
     // patch; the guard is a hard stop, not the normal exit.
     let k = 0;
+    // Parameterized so the loop below carries no closure over its own
+    // mutating coordinates (CRA builds with CI=true, where no-loop-func
+    // is fatal; Vercel deploy 2026-08-18 died on exactly that).
+    const collides = (qx, qy) => placedPts.some((p) => (p.x - qx) * (p.x - qx) + (p.y - qy) * (p.y - qy) < PIN_RING_PX * PIN_RING_PX);
     idxs.forEach((i) => {
       let x, y;
       let guard = 0;
@@ -1565,10 +1569,7 @@ function declutterMarkers(map, markerEntries) {
         y = cy + r * Math.sin(a);
         k += 1;
         guard += 1;
-      } while (
-        guard < idxs.length + 60 &&
-        placedPts.some((p) => (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y) < PIN_RING_PX * PIN_RING_PX)
-      );
+      } while (guard < idxs.length + 60 && collides(x, y));
       entries[i].marker.setLngLat(map.unproject([x, y]));
       placedPts.push({ x, y });
     });
