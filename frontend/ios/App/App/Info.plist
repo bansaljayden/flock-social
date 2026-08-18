@@ -142,8 +142,45 @@
 	     needed, scope it to the one domain with NSExceptionDomains rather than
 	     reaching for NSAllowsArbitraryLoads. -->
 
-	<!-- No CFBundleURLTypes and no com.apple.developer.associated-domains, so
-	     iOS currently delivers NO deep link to this app. Both halves of
+	<!-- ONE URL scheme, and it is not a deep link. Google's iOS SDK completes
+	     sign-in by redirecting to the REVERSED form of the app's iOS OAuth
+	     client id, so that scheme has to be declared here or the sheet opens
+	     and never comes back. Nothing in the app builds or receives such a URL
+	     itself; it exists only as the callback GoogleSignIn hands to
+	     ASWebAuthenticationSession.
+
+	     ⚠️ THE VALUE BELOW IS A PLACEHOLDER AND MUST BE REPLACED BEFORE THE
+	     NEXT BUILD. Google Cloud console → APIs & Services → Credentials →
+	     Create credentials → OAuth client ID → Application type "iOS" →
+	     Bundle ID com.flockcorp.flock. The client id it issues looks like
+	     123456789012-abcdefghijklmnop.apps.googleusercontent.com; the reversed
+	     form (which is what goes in the <string> below) is the same thing with
+	     the two halves swapped:
+	         com.googleusercontent.apps.123456789012-abcdefghijklmnop
+	     The UNreversed client id also has to be set as REACT_APP_GOOGLE_IOS_-
+	     CLIENT_ID in the Codemagic `flock_web` env group; the two are read
+	     together by src/components/auth/useGoogleAuth.js, and while the env
+	     var is unset the Google button hides itself on native rather than
+	     shipping a button that cannot work.
+
+	     This is deliberately NOT a `flock://` deep-link entry. Nothing in the
+	     repo emits a flock: URL (push payloads carry relative paths, invites
+	     carry https links), so declaring one would be a capability no code
+	     uses — see the associated-domains note below, which is unchanged. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.flockcorp.flock.googlesignin</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.PASTE-REVERSED-IOS-CLIENT-ID</string>
+			</array>
+		</dict>
+	</array>
+
+	<!-- No com.apple.developer.associated-domains, so
+	     iOS currently delivers NO universal link to this app. Both halves of
 	     services/pushNavigation.js `intentFromUrl` are therefore unreachable on
 	     device today: the custom-scheme branch (flock://flock/123) and the
 	     universal-link paths (/f/123, /dm/45). Push taps still route correctly,
@@ -152,21 +189,21 @@
 
 	     Neither is added here on purpose, and the reasons are different.
 
-	     CFBundleURLTypes was re-examined on 2026-08-14 and deliberately stayed
-	     out. It needs no Apple portal capability and no server file, so it is
-	     the half that COULD be declared from this repo. It is still a
-	     declaration nothing produces: a repo-wide search for a flock scheme URL
-	     finds this comment, services/pushNavigation.js's own comment, and the
-	     abandoned mobile/ React Native port, and nothing that builds one.
+	     A `flock://` CFBundleURLTypes entry stays out, and the array above is
+	     not one: that entry is Google's OAuth callback, which the SDK itself
+	     produces and consumes. An app-owned scheme would be a declaration
+	     nothing produces — a repo-wide search for a flock scheme URL finds this
+	     comment, services/pushNavigation.js's own comment, and the abandoned
+	     mobile/ React Native port, and nothing that builds one.
 	     backend/services/firebaseService.js deepLinkPath emits relative paths
 	     (/?flock=12, /?dm=45, /?tab=you); routes/flocks.js emits
 	     PUBLIC_WEB_URL/i/<token>; emailService.js emits https links. Declaring
 	     an entry point no push, no email, no invite and no web page ever hands
 	     out is the "capability declared that no code uses" defect this shell's
 	     test file exists to catch, and iosShellConfigMatchesCode.test.js pins
-	     the absence. It also would not move the problem people actually hit,
-	     which is the next paragraph. Add it in the SAME change as the first
-	     thing that emits such a URL, not before.
+	     the absence of a flock scheme. It also would not move the problem
+	     people actually hit, which is the next paragraph. Add it in the SAME
+	     change as the first thing that emits such a URL, not before.
 
 	     Associated domains cannot be fixed from this repo at all: the
 	     entitlement only signs once the Associated Domains capability is

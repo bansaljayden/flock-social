@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { login, signup, googleLoginWithToken, resendVerificationEmail } from '../../services/api';
-import { useGoogleLogin } from '@react-oauth/google';
+import { login, signup, resendVerificationEmail } from '../../services/api';
+import useGoogleAuth, { isGoogleSignInAvailable } from './useGoogleAuth';
 import AppleSignInButton from './AppleSignInButton';
 import AuthShell, { AUTH, AuthError, AuthRule, GoogleG, PasswordEye } from './AuthShell';
 import Icons from '../ui/Icons';
@@ -97,24 +97,19 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
     return d.toISOString().split('T')[0];
   })();
 
-  const startGoogle = useGoogleLogin({
-    onSuccess: async (tokenResponse) => {
-      setLoading(true);
-      try {
-        const data = await googleLoginWithToken(tokenResponse.access_token, dob || undefined);
-        onLoginSuccess(data.user);
-      } catch (err) {
-        if (err.data?.needsDob) {
-          setNeedsDob(true);
-          setError('Add your date of birth below, then tap Continue with Google again.');
-        } else {
-          setError(err.message || 'Google sign-in failed');
-        }
-      } finally {
-        setLoading(false);
+  // Native iOS runs Google's own SDK, everything else the GIS browser flow;
+  // one hook, one backend route, and the needsDob 403 handled the same on both.
+  const startGoogle = useGoogleAuth({
+    onSuccess: onLoginSuccess,
+    onError: (msg, err) => {
+      if (err?.data?.needsDob) {
+        setNeedsDob(true);
+        setError('Add your date of birth below, then tap Continue with Google again.');
+      } else {
+        setError(msg || 'Google sign-in failed');
       }
     },
-    onError: () => setError('Google sign-in failed'),
+    setBusy: setLoading,
   });
 
   const handleSubmit = async (e) => {
@@ -343,29 +338,33 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
 
       <AuthRule label={isSignup ? 'or sign up with' : 'or continue with'} />
 
-      <button
-        type="button"
-        className="auth-provider"
-        disabled={loading}
-        onClick={() => {
-          setError('');
-          if (isSignup) {
-            // Age gate the Google path the same way the email path is gated.
-            const age = ageFromDob(dob);
-            if (age === null) {
-              setError('Add your date of birth above first, then continue with Google.');
-              return;
+      {/* Hidden only when a native build carries no iOS Google client id, i.e.
+          when the button could not work by any route. On web it always shows. */}
+      {isGoogleSignInAvailable() && (
+        <button
+          type="button"
+          className="auth-provider"
+          disabled={loading}
+          onClick={() => {
+            setError('');
+            if (isSignup) {
+              // Age gate the Google path the same way the email path is gated.
+              const age = ageFromDob(dob);
+              if (age === null) {
+                setError('Add your date of birth above first, then continue with Google.');
+                return;
+              }
+              if (age < MIN_AGE) {
+                setError(`You must be at least ${MIN_AGE} to use Flock`);
+                return;
+              }
             }
-            if (age < MIN_AGE) {
-              setError(`You must be at least ${MIN_AGE} to use Flock`);
-              return;
-            }
-          }
-          startGoogle();
-        }}
-      >
-        <GoogleG /> Continue with Google
-      </button>
+            startGoogle({ dob: dob || undefined });
+          }}
+        >
+          <GoogleG /> Continue with Google
+        </button>
+      )}
 
       {/* Apple guideline 4.8: the venue portal ships inside the same iOS binary
           and offers Google above, so it must offer Sign in with Apple too.

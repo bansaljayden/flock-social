@@ -10,6 +10,7 @@
     "@capacitor/cli": "^8.4.0",
     "@capacitor/core": "^8.4.0",
     "@capacitor/ios": "^8.4.0",
+    "@capgo/capacitor-social-login": "^8.4.3",
     "@googlemaps/markerclusterer": "^2.6.2",
     "@radix-ui/react-slot": "^1.2.5",
     "@react-oauth/google": "^0.13.5",
