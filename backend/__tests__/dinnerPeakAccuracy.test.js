@@ -25,7 +25,7 @@
 //           model, so that baseline IS the answer: a 6 PM request read the
 //           venue's overnight number. Migration 023 (2026-08-15) moved the
 //           corpus onto the venue clock; the retrain that exported
-//           v2.6.0-swift (2026-08-18) moved the ARTIFACT, so
+//           v2.6.0-starling (2026-08-18) moved the ARTIFACT, so
 //           model_metadata.json's category_baselines are venue-local too.
 //           PART 3 was inverted on that date: it now pins that the stored
 //           peaks are already evening peaks, and that adding the old six
@@ -321,7 +321,7 @@ test('other zones and other peak hours land on their own wall clock, not the ser
 // ===========================================================================
 // PART 3 — THE CAUSE, AND THE PROOF IT IS GONE. The hour axis was six hours
 // off. Migration 023 fixed the CORPUS on 2026-08-15; the ARTIFACT was fixed by
-// the retrain that exported v2.6.0-swift on 2026-08-18 from the corrected
+// the retrain that exported v2.6.0-starling on 2026-08-18 from the corrected
 // corpus. Every assertion below was INVERTED on that date — see the note on
 // each one for what it used to say and why the flip is the pass condition.
 // ===========================================================================
@@ -351,7 +351,7 @@ test('the shipped artifact is on the venue-local clock — the retrain reached t
   // WAS: 'the shipped artifact is on a BestTime bucket axis'. It asserted that
   // the stored peaks only made sense once you ADDED six hours, because
   // model_metadata.json's category_baselines were derived from the pre-023
-  // corpus. v2.6.0-swift was exported from the corrected corpus, so the stored
+  // corpus. v2.6.0-starling was exported from the corrected corpus, so the stored
   // slots ARE venue-local hours and the shift is no longer needed. Read
   // literally the old curves said restaurants peak at lunchtime and nightclubs
   // at 5 PM; they now say restaurants peak at 19:00 and nightclubs at 23:00.
@@ -554,7 +554,7 @@ test('the model does not claim a measurement while its weights predate the axis 
 });
 
 test('the axis flag is on, and turning it off is the whole rollback', () => {
-  // Flipped 2026-08-18 with v2.6.0-swift, the first artifact trained on the
+  // Flipped 2026-08-18 with v2.6.0-starling, the first artifact trained on the
   // corrected corpus. PART 3 above proves the peaks land in the evening as
   // stored, without the six-hour shift, so the weights are on the venue clock.
   // If this ever reads false again, the served model was rolled back to a
