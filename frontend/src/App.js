@@ -617,6 +617,18 @@ const EmptyMark = ({ name, height = 160, style }) => (
 // Resolve to the API origin whenever a stored value is rendered.
 const resolveVenuePhoto = (u) => (u && u.startsWith('/api/') ? `${BASE_URL}${u}` : u || null);
 
+// HTML-escape a user-derived string before it is interpolated into any raw
+// HTML sink (e.g. MapLibre Popup.setHTML, which assigns innerHTML). This must
+// be safe on its own — do NOT rely on upstream stripHtml on the write path.
+// Escapes the five characters that can break out of text or an attribute.
+const escapeHtml = (s) =>
+  String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
 // Chat photos travel INSIDE the message body as a data: URL, on whichever
 // transport is up. Socket.IO was raised to 8MB for exactly that; express.json()
 // is still 1mb, so a photo over roughly 750KB sends fine on the socket and 413s
@@ -2288,7 +2300,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       });
       Object.entries(flockMemberLocations).forEach(([uid, loc]) => {
         const lng = loc.lng, lat = loc.lat;
-        const initial = (loc.name || '?')[0].toUpperCase();
+        const initial = escapeHtml((loc.name || '?')[0].toUpperCase());
         const dist = userLocation ? calcDistance(userLocation.lat, userLocation.lng, loc.lat, loc.lng) : '';
         const age = Math.round((Date.now() - loc.timestamp) / 1000);
         const ageStr = age < 10 ? 'just now' : age < 60 ? `${age}s ago` : `${Math.round(age / 60)}m ago`;
@@ -2297,7 +2309,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
             <span style="color:white;font-size:15px;font-weight:700">${initial}</span>
           </div>
           <div style="flex:1;min-width:0">
-            <div style="font-size:13px;font-weight:700;color:#1e293b;margin:0 0 2px">${loc.name}</div>
+            <div style="font-size:13px;font-weight:700;color:#1e293b;margin:0 0 2px">${escapeHtml(loc.name)}</div>
             <div style="display:flex;align-items:center;gap:4px">
               <span style="width:6px;height:6px;border-radius:3px;background:#22c55e;display:inline-block"></span>
               <span style="font-size: 12px;color:#4b5563;font-weight:500">${dist ? dist + ' away · ' + ageStr : 'Live'}</span>
