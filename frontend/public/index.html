@@ -2,6 +2,81 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         CONTENT SECURITY POLICY — the copy that reaches the iOS binary.
+
+         There are two origins that run this app and only one of them was
+         covered. frontend/vercel.json sends an enforcing CSP as an HTTP
+         response header, which is www.flockcorp.com and nothing else. The
+         App Store build is a Capacitor shell with `webDir: 'build'` and no
+         `server.url`, so it serves this same bundle out of the app package
+         over capacitor://localhost and never fetches a Vercel response at
+         all. Same localStorage token, same innerHTML/setHTML sinks, same
+         13-year-old audience floor, and until this tag it had no policy of
+         any kind. A meta CSP is the only form that travels with the bundle.
+
+         THIS TAG APPLIES ON THE WEB TOO, and that is the constraint that
+         shapes it. When a document carries both a header policy and a meta
+         policy, BOTH are enforced and the effective policy is their
+         INTERSECTION — the narrower of the two wins for every directive. So
+         this value is derived from vercel.json's header and is a
+         SUPERSET-OR-EQUAL of it, directive for directive: every source in
+         the header is here, and the only additions are the two native
+         schemes, which no browser origin can ever match. The intersection on
+         www.flockcorp.com is therefore exactly the header, unchanged.
+         `frontend/src/__tests__/appOriginCsp.test.js` reads both out of
+         source and fails if this stops being true. Do not tighten a
+         directive here to harden native — tightening here narrows the WEB
+         app as well. Native-only tightening belongs in a separate file, or
+         nowhere.
+
+         WHAT WAS DROPPED, and why it is not a loss:
+           frame-ancestors — IGNORED in a meta policy by every browser
+             (HTML-delivered policies cannot govern who frames the document).
+             vercel.json still sends `frame-ancestors 'self'` for the web,
+             alongside X-Frame-Options: SAMEORIGIN. A native WebView cannot be
+             framed by anything, so there is nothing to lose on that side.
+           report-uri / report-to / sandbox — also meta-ignored. The header
+             carries none of them today; if one is ever added to vercel.json
+             it stays header-only for the same reason.
+         Those three are why the header is NOT redundant with this tag. The
+         two are complementary and both have to stay.
+
+         WHY capacitor://localhost AND ionic://localhost ARE SPELLED OUT.
+         On native, 'self' resolves to the custom-scheme origin the WebView
+         was loaded from, which is capacitor://localhost for this config
+         (`ios` block in capacitor.config.ts, no `server` override, so the
+         Capacitor default). Listing it literally costs nothing on the web —
+         a page on https://www.flockcorp.com can never match a
+         capacitor:-scheme source — and it means a WebKit build that declines
+         to match 'self' against a custom scheme still loads the bundle
+         instead of white-screening. ionic://localhost is the other scheme
+         Capacitor has shipped as a default; it is here for the same reason.
+         They are added, never substituted, so the web behaviour is untouched.
+
+         THE TWO ENTRIES THAT LOOK REMOVABLE ON NATIVE AND ARE NOT REMOVABLE
+         HERE. Native does not need https://accounts.google.com in script-src
+         (useGoogleAuth.js guards the GSI web script behind isNativeIos() and
+         the native path is the plugin) and it does not need
+         https://www.gstatic.com (there is no service worker under
+         capacitor://; push is @capacitor-firebase/messaging). Both stay
+         because THE WEB NEEDS THEM: gstatic is load-bearing for
+         firebase-messaging-sw.js's importScripts — dropping it does not lose
+         a script tag, it makes serviceWorker.register() reject and web push
+         silently stops registering anyone. Removing either from this tag
+         would intersect them out of the web policy.
+
+         `worker-src blob:` and `img-src blob: data:` are MapLibre. Without
+         them the map is a blank rectangle and nothing logs an error anyone
+         reads.
+
+         This tag sits directly after <meta charset> because a meta policy
+         governs only what is parsed after it, and the icon/manifest links
+         below are real subresource loads.
+         ═══════════════════════════════════════════════════════════════════ -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' capacitor://localhost ionic://localhost; base-uri 'none'; object-src 'none'; form-action 'self'; script-src 'self' capacitor://localhost ionic://localhost https://accounts.google.com https://www.gstatic.com https://us-assets.i.posthog.com; style-src 'self' capacitor://localhost ionic://localhost 'unsafe-inline'; img-src 'self' capacitor://localhost ionic://localhost data: blob: https://flock-app-production.up.railway.app https://api.maptiler.com https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com https://server.arcgisonline.com https://api.dicebear.com https://*.googleusercontent.com https://maps.googleapis.com https://www.gstatic.com; font-src 'self' capacitor://localhost ionic://localhost data:; media-src 'self' capacitor://localhost ionic://localhost; worker-src 'self' capacitor://localhost ionic://localhost blob:; child-src 'self' capacitor://localhost ionic://localhost blob:; frame-src 'self' capacitor://localhost ionic://localhost https://accounts.google.com; connect-src 'self' capacitor://localhost ionic://localhost https://flock-app-production.up.railway.app wss://flock-app-production.up.railway.app https://api.maptiler.com https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com https://server.arcgisonline.com https://us.i.posthog.com https://us-assets.i.posthog.com https://accounts.google.com https://*.googleapis.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io; manifest-src 'self' capacitor://localhost ionic://localhost" />
+
     <!-- viewport-fit=cover is REQUIRED and must not be removed: it is what makes
          the Capacitor WebView edge to edge, so the app paints into the rounded
          screen corners like a native app instead of sitting in a letterboxed
