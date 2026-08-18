@@ -45,6 +45,55 @@ let lastReminderSweep = 0;
 // dollars stay whole ("$25", not "$25.00"), anything else keeps its cents.
 const formatMoney = (n) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
 
+// PRIVACY: the published ceiling is BANDED, never the raw MIN.
+// (Money security audit 2026-08-16, finding M1 — HIGH.)
+//
+// The ceiling is MIN(amount) over the non-skipped submissions, published once
+// three non-skipped submissions exist. That threshold was picked to beat the
+// n=2 subtraction case, but it counts SUBMISSIONS, not independent people, and
+// the flock creator picks who is in the flock. An attacker plus one sockpuppet
+// account can pin two non-skips at $9,999; the third person's real amount is
+// then the MIN, and the group is handed that person's exact number.
+//
+// No submission threshold can prevent that: people acting together always know
+// their own amounts and can subtract them out. What a threshold CAN stop is the
+// published number being anyone's exact figure, so the reveal is banded:
+//
+//   under $1      -> $0.01   (the only band below a dollar that is not $0)
+//   $1 to $4.99   -> nearest $1 down
+//   $5 to $49.99  -> nearest $5 down
+//   $50 and above -> nearest $10 down
+//
+// ALWAYS DOWN. Rounding up would publish a cap that someone in the flock cannot
+// actually afford, and the one thing the ceiling has to guarantee is that any
+// venue under it works for everybody. Down is also what makes the function safe
+// to apply twice: flocks.budget_ceiling now caches the banded value, and
+// re-banding a banded value is a no-op, so rows cached before this fix get
+// banded on their way out instead of leaking a stale MIN.
+//
+// A MIN sitting exactly on a band edge still reads as its band: $50 publishes
+// $50, and the group learns "somewhere in [$50, $60)", not "exactly $50".
+//
+// Zero is deliberately not reachable. The frontend reads `ceiling` for
+// truthiness (a 0 would render as "no ceiling yet"), and a $0 cap says nothing
+// useful, so the sub-dollar band is a cent rather than nothing.
+const CEILING_BANDS = [
+  { from: 50, step: 10 },
+  { from: 5, step: 5 },
+  { from: 1, step: 1 },
+];
+const SUB_DOLLAR_CEILING = 0.01;
+
+function bandCeiling(raw) {
+  if (raw === null || raw === undefined) return null;
+  const n = typeof raw === 'number' ? raw : parseFloat(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  for (const { from, step } of CEILING_BANDS) {
+    if (n >= from) return Math.floor(n / step) * step;
+  }
+  return SUB_DOLLAR_CEILING;
+}
+
 function sweepReminderCooldowns(now) {
   if (now - lastReminderSweep < REMINDER_SWEEP_INTERVAL_MS && reminderCooldowns.size <= REMINDER_MAX_ENTRIES) return;
   lastReminderSweep = now;
@@ -129,6 +178,8 @@ router.post('/:flockId/submit',
       // ONE transaction holding the flock row lock. As autocommit queries, a
       // concurrent skip could slip between this route's checks and /lock's
       // count, letting the lock emit a ceiling backed by <3 submissions.
+      // Individual amounts never leave the server on any path; the aggregate
+      // that does leave is the BANDED ceiling, see bandCeiling above.
       const client = await pool.connect();
       let countRow;
       let ceiling;
@@ -175,7 +226,12 @@ router.post('/:flockId/submit',
           'SELECT MIN(amount) AS ceiling FROM budget_submissions WHERE flock_id = $1 AND skipped = false',
           [flockId]
         );
-        ceiling = ceilingResult.rows[0].ceiling ? parseFloat(ceilingResult.rows[0].ceiling) : null;
+        // Band it before anything else can see it. The cached column is read by
+        // GET /api/budget/:flockId here, by the flock list and flock detail in
+        // routes/flocks.js, and by the ghost commit in routes/billing.js —
+        // banding on the way IN is what makes every one of those surfaces
+        // publish the band rather than one person's exact amount.
+        ceiling = bandCeiling(ceilingResult.rows[0].ceiling);
 
         // Update cached ceiling on flocks table
         await client.query(
@@ -224,7 +280,8 @@ router.post('/:flockId/submit',
       );
       const totalMembers = parseInt(memberResult.rows[0].total);
 
-      // Privacy: ceiling only visible when 3+ non-skip submissions
+      // Privacy: ceiling only visible when 3+ non-skip submissions, and even
+      // then it is the band, not the MIN (`ceiling` was banded above).
       const isReady = nonSkipCount >= 3;
       const visibleCeiling = isReady ? ceiling : null;
 
@@ -234,8 +291,11 @@ router.post('/:flockId/submit',
         // Per-member fan-out, not the `flock:{id}` room, so a member sitting
         // anywhere else in the app still gets the budget-ready signal. Payload
         // is aggregate-only (visibleCeiling is null below the 3-submission
-        // threshold); no individual amount is ever put on the wire. Guarded so a
-        // fan-out failure cannot 500 a submission that already committed.
+        // threshold, and banded above it); no individual amount is ever put on
+        // the wire. This carries the SAME value the REST response below carries,
+        // which matters: a raw MIN reaching the socket while REST published a
+        // band would hand the whole fix back. Guarded so a fan-out failure
+        // cannot 500 a submission that already committed.
         await emitToFlockMembers(io, flockId, 'budget_updated', {
           flockId,
           ceiling: visibleCeiling,
@@ -350,7 +410,11 @@ router.get('/:flockId',
       const userSubmission = userResult.rows[0] || null;
 
       const isReady = nonSkipCount >= 3;
-      const ceiling = flock.budget_ceiling ? parseFloat(flock.budget_ceiling) : null;
+      // Re-band on read. Submissions cache the banded value, so this is a no-op
+      // for anything written since the M1 fix; for a flock whose ceiling was
+      // cached as a raw MIN before it, this is what keeps that MIN off the wire
+      // until someone submits again.
+      const ceiling = bandCeiling(flock.budget_ceiling);
       const visibleCeiling = isReady ? ceiling : null;
 
       res.json({
@@ -391,7 +455,9 @@ router.post('/:flockId/lock',
       // individual's exact budget. The threshold check, lock, and ceiling read
       // happen in ONE transaction holding the flock row lock — otherwise a
       // concurrent skip between the count and the response could leave this
-      // emitting a ceiling backed by fewer than 3 submissions.
+      // emitting a ceiling backed by fewer than 3 submissions. Above the
+      // threshold the number published here is the BANDED ceiling, for the
+      // collusion reason spelled out at bandCeiling.
       const client = await pool.connect();
       let ceiling;
       try {
@@ -440,7 +506,9 @@ router.post('/:flockId/lock',
           'SELECT MIN(amount) AS ceiling FROM budget_submissions WHERE flock_id = $1 AND skipped = false',
           [flockId]
         );
-        ceiling = ceilingResult.rows[0].ceiling ? parseFloat(ceilingResult.rows[0].ceiling) : null;
+        // Same banding as the submit path, and the locked value is what gets
+        // cached, so the lock cannot re-publish a raw MIN a submit had banded.
+        ceiling = bandCeiling(ceilingResult.rows[0].ceiling);
 
         await client.query(
           'UPDATE flocks SET budget_locked = true, budget_ceiling = $2, updated_at = NOW() WHERE id = $1',
@@ -458,8 +526,9 @@ router.post('/:flockId/lock',
       const io = req.app.get('io');
       if (io) {
         // Per-member fan-out so the lock reaches members wherever they are.
-        // `ceiling` here is only computed after the >=3 non-skip check above, so
-        // it is never an individual's amount. Guarded (post-commit work).
+        // `ceiling` here is only computed after the >=3 non-skip check above and
+        // is banded, so it is never an individual's exact amount, and it is the
+        // same value the response below returns. Guarded (post-commit work).
         await emitToFlockMembers(io, flockId, 'budget_locked', {
           flockId,
           ceiling,
@@ -561,6 +630,13 @@ router.post('/:flockId/remind',
 );
 
 module.exports = router;
+
+// Exported so the regression tests can drive the banding rule from the route
+// that owns it instead of retyping the thresholds, and so a future reader of
+// flocks.js / billing.js can see where their cached ceiling was banded.
+module.exports.bandCeiling = bandCeiling;
+module.exports.CEILING_BANDS = CEILING_BANDS;
+module.exports.SUB_DOLLAR_CEILING = SUB_DOLLAR_CEILING;
 
 // Test hook only — the reminder cooldown is process-wide in-memory state, so a
 // test suite needs a way to start each case from a clean window.
