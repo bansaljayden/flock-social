@@ -24,6 +24,11 @@ const SYNCED_KEYS = {
   // only, from whichever device happened to change them last.
   safetyOn: 'flock_safety_on',
   userInterests: 'flock_interests',
+  // Crowd alerts opt-out (the pre-peak push). The backend reads
+  // settings.crowdAlerts with absent = ON (backend/services/pushHelper.js),
+  // so this key only ever carries an explicit choice. Boolean-ish: its
+  // readers in App.js compare !== 'false', per the String() landmine below.
+  crowdAlerts: 'flock_crowd_alerts',
 };
 
 const JSON_KEYS = new Set(['pinnedFlockIds', 'flockOrder', 'userInterests']);
