@@ -37,16 +37,12 @@ invariant (see below).
 | Social | Friends (codes + search), DMs, post-hangout feedback |
 | Accounts | Email + Google + Sign in with Apple (iOS only), DOB age gate at 13, email verification, disposable-domain blocking |
 
-One honest caveat on that table, verified 2026-08-14:
-
-- **Stories are not user-facing yet.** The backend is now complete — `GET`, `POST`
-  and `DELETE` on `/api/stories` — but the client never calls it: `getStories()` is
-  the only wrapper in `frontend/src/services/api.js` and it has **zero callers**,
-  and there is no story UI in the app. So the feature exists over HTTP and not in
-  the product. The Social row used to list stories outright, which was wrong.
-  This one is actively changing; the backend grew from 88 to 450 lines on
-  2026-08-14. (The iOS camera and photo permission strings promise stories too —
-  see `SUBMIT-CHECKLIST.md` §D5.)
+**Not built yet**, so nothing in this repo or on the site sells it: Stripe or
+venue billing of any kind (tier enforcement is real, charging is not),
+promoted placement in vote lists, slow-night push offers, paywall funnel
+analytics, and any story UI. Stories are a settled decision (2026-08-14): the
+backend routes exist and are tested, no story surface will ship, and the
+client has zero callers by design.
 
 Blocking used to be listed here as one-way. It is not any more: a Blocked-accounts
 screen with a working unblock shipped on 2026-08-14, so report, block and unblock
@@ -129,20 +125,18 @@ flock-app/
 
 | File | What |
 |---|---|
-| `SLOP-AUDIT.md` | Design/copy standard + per-rule audit status |
+| `SLOP-AUDIT.md` | Design and copy standard, with per-rule audit status. Binds every UI or copy change |
 | `MONEY-MODEL.md` | Monetization reality: venue B2B first, consumer Pro later |
-| `PAYWALL-DECISION.md` | **The current decision memo on when to charge anyone.** Sourced; supersedes the timing language in `PAYWALL.md` and `MONEY-MODEL.md` |
 | `VENUE-BILLING.md` | Venue subscriptions. Tier enforcement is built; the Stripe half is a design spec with no code. Authoritative on price: $35 Premium / $75 Pro, FINAL as of 2026-08-14 (matches the app) |
-| `PAYWALL.md` | Consumer Flock Pro operator runbook. The client, webhook and kill switch are built and dormant; **none of the runbook's dashboard steps have been executed** |
-| `BACKUP-AND-VERIFICATION.md` | Backup/restore research memo, not a runbook |
-| `SUBMIT-CHECKLIST.md` | App Store submission: assets, ordered steps, privacy labels — **the current submission doc** |
-| `SUBMISSION-PACKET.md` · `TESTFLIGHT_TEST_INFO.md` | Paste-ready store metadata + TestFlight reviewer notes |
-| `SUBMISSION.md` · `STAGING.md` · `ADVERSARIAL-REVIEW.md` | Older compliance-era docs. Partly superseded — each carries a status banner |
-| `DOMAIN.md` | flockcorp.com DNS cutover runbook (done 2026-08-12) |
-| `PRODUCT.md` | Nav model + design intent |
-| `PUSH-SETUP.md` | FCM / APNs console steps |
-| `backend/scripts/ml/RETRAIN.md` | Crowd-model retrain runbook + ship gate |
+| `MODERATION-LEGAL.md` | Moderation and legal commitments the code must keep |
+| `BACKUP-AND-VERIFICATION.md` | Backup and restore: what is verified, what is only researched |
+| `SUBMIT-CHECKLIST.md` | App Store submission: assets, ordered steps, privacy labels |
+| `backend/scripts/ml/RETRAIN.md` | Crowd-model retrain runbook and ship gate |
+| `backend/scripts/ml/MODEL-METRICS.md` | Measured model numbers and what they mean |
 | `codemagic.yaml` | iOS CI: build, sign, auto-increment, TestFlight |
+
+Internal working notes (submission packets, decision memos, session docs) are
+kept out of the repo on purpose.
 
 ## Running it
 
@@ -169,10 +163,9 @@ half-migrated schema. `migrations/000_bootstrap.sql` carries the core
 schema step. `backend/database/schema.sql` is the same content kept separately,
 and `npm run db:init` applies it directly if you want it explicit.
 
-Migrations run 000 through 018 and are still being added (017 and 018 landed on
-2026-08-14). **There is no 010** — the number was skipped, not lost. As of
-2026-08-14 `015_password_reset.sql` is untracked in git along with the
-password-reset UI, so a deploy from HEAD does not have that feature.
+Migrations are numbered from 000 upward in `backend/migrations/`. **There is
+no 010**; the number was skipped, not lost. Every migration the code needs is
+tracked, so a deploy from HEAD is complete.
 
 Backend tests: `cd backend && node --test` · local E2E: `npm run e2e`
 
