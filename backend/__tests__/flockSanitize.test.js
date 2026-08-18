@@ -286,6 +286,21 @@ test('renaming a flock stores stripped text, not the markup that was sent', asyn
   assert.ok(!/[<>]/.test(w.params[0]));
 });
 
+test('a rename with <b> in the name stores it stripped (SECURITY-AUDIT-upload-xss #3)', async () => {
+  // The upload/XSS audit called out the flock rename path specifically: a host
+  // could rename a flock to carry markup that the live-map popup and the invite
+  // preview read back. A <b> tag is the minimal case — it survives isLength and
+  // reaches the column unless the update validator strips it.
+  const res = await call('PUT', `/api/flocks/${FLOCK_ID}`, 1, { name: '<b>Party</b> at the Roof' });
+  assert.strictEqual(res.status, 200);
+  assertQueriesUnderstood();
+
+  const w = lastWrite('UPDATE flocks SET name = COALESCE($1, name)');
+  assert.ok(w, 'the update ran');
+  assert.strictEqual(w.params[0], 'Party at the Roof', 'the <b> markup is stripped, not stored');
+  assert.ok(!/[<>]/.test(w.params[0]), 'no angle brackets reach the column');
+});
+
 test('create and rename agree on what a name is', async () => {
   // The bug was a DIFFERENCE between the two routes, so the regression test is
   // the equality, not either value on its own.

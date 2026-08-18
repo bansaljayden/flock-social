@@ -410,7 +410,10 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         return { error: 'Too many venue lookups right now. Ask again in a little while.' };
       }
       const placeId = toolInput.place_id;
-      const resp = await fetch(`https://places.googleapis.com/v1/places/${placeId}`, {
+      // encodeURIComponent for parity with routes/crowd.js fetchVenueFromGoogle:
+      // place_id is interpolated into the outbound URL PATH, so it must be
+      // percent-encoded (SECURITY-AUDIT-injection-idor.md finding, LOW/INFO).
+      const resp = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
         signal: upstreamSignal('places'),
         headers: {
           'X-Goog-Api-Key': PLACES_API_KEY,
