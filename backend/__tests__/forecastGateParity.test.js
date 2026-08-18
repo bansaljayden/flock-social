@@ -660,11 +660,14 @@ test('what Birdie is told about the free tier matches what the gate does', async
     'Birdie is told the forecast is Pro outright, while the gate in fact gives the first 10 away');
   assert.ok(!/hour-by-hour crowd forecasts are a Flock Pro feature/.test(prompt),
     'the prompt still carries the pre-gate claim');
-  // Scoped to the tier sentence, not the whole prompt: the app-description
-  // block above it has used em dashes as structure since it was written, and
-  // the prompt separately instructs the model never to emit one. What must stay
-  // clean is the sentence that describes the paywall, because that is the one
-  // Birdie paraphrases straight back to the user.
+  // Scoped to the tier sentence, not the whole prompt, because that is the one
+  // Birdie paraphrases straight back to the user. This used to be scoped out of
+  // necessity: the app-description block above it used em dashes as structure,
+  // contradicting the prompt's own instruction never to emit one. The
+  // 2026-08-18 voice rewrite removed them, and __tests__/birdieVoice.test.js
+  // now sweeps the WHOLE prompt for em dashes in every bracket and tier. This
+  // assertion stays anyway: it is the paywall lane's own guard, and it is the
+  // one that fires on the sentence that matters most.
   const tierLine = prompt.split('\n').find((l) => l.includes('free tier'));
   assert.ok(!tierLine.includes('—'), `em dash in the paywall line: ${tierLine}`);
 
