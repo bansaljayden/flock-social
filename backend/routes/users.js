@@ -231,6 +231,49 @@ router.get('/profile', async (req, res) => {
 // ---------------------------------------------------------------------------
 const cardProbeBudget = createUserBudget({ name: 'card-probe', hourly: 120, daily: 400 });
 
+// ---------------------------------------------------------------------------
+// THE SECOND DOOR INTO THE SAME DIRECTORY — audit round 4, R4-I1
+// ---------------------------------------------------------------------------
+// The budget above closed `GET /:id/card`. It did not close the CLASS, because
+// `GET /search` answers the same question — "who is behind this identity, and
+// what are they called?" — and answers it more efficiently, since it does not
+// require guessing an id. Everything else about that route was already right
+// (LIKE metacharacters escaped, `q` capped at users.name's width, blocked pairs
+// mutually invisible, caller excluded, no email in the projection) and none of
+// it is a ceiling. Iterating `q` over two-character substrings is 676 requests,
+// well inside one 15-minute apiLimiter window, and each 200 returns up to 20
+// {id, name, avatar}. For any realistic user base that is the whole table.
+//
+// This is the pattern the round-4 audit asked to be fixed as a class rather
+// than as an instance: **a spend counter is a security control, and applying it
+// to the route that was reported rather than to every route that answers the
+// question leaves the control complete on paper and absent in practice.**
+//
+// WHY 90/HOUR AND 300/DAY, below the card's 120/400. A search is TYPED and a
+// card open is a TAP. A person types a few characters, reads the twenty results
+// and taps one; they do not type ninety searches in an hour, whereas they
+// genuinely can open a hundred cards scrolling a single roster.
+//
+// The number is set by the worst legitimate case rather than the typical one,
+// and that case is a DEBOUNCED SEARCH BOX: the client sends a request per
+// settled prefix, so a six-character name typed slowly is six requests, and ten
+// such searches in one hour is 60. A first pass at 60/hour put the ceiling
+// exactly on that figure — the test in __tests__/searchProbeBudget.test.js that
+// walks a real typing session is what caught it, which is the reason that case
+// asserts headroom rather than asserting the constant. 90 leaves a third of the
+// allowance spare on top of the heaviest hour anyone has described.
+//
+// It still cuts the two-character walk from ~288,000 requests a day to 300, a
+// ~960x reduction, and the fresh lane costs a fresh account rather than a fresh
+// proxy.
+//
+// CHARGED PER REQUEST, NOT PER ROW. The rows are a consequence of the probe,
+// not the probe itself, and per-row charging would make a query that matched
+// nothing free — which is exactly the "the free answers are the misses" signal
+// the card budget refuses to emit.
+// ---------------------------------------------------------------------------
+const searchProbeBudget = createUserBudget({ name: 'search-probe', hourly: 90, daily: 300 });
+
 // GET /api/users/:id/card - Mini profile card for any user: id, name, avatar,
 // bio. Four fields, and only four — this is the surface a stranger's tap on an
 // avatar resolves to, so it must never grow an email, a phone number, or a
@@ -1361,6 +1404,37 @@ router.get('/search',
         return res.status(400).json({ error: errors.array()[0].msg });
       }
 
+      // R4-I1. Charged per request, hit or miss, BEFORE the query — and unlike
+      // /card this route returns early rather than querying anyway.
+      //
+      // THAT DIVERGENCE IS DELIBERATE AND IT IS THE WHOLE POINT HERE. /card's
+      // lookup is a primary-key seek, so running it unconditionally costs
+      // almost nothing and buys timing parity between an exhausted budget and a
+      // genuine miss. This route's query is the only leading-wildcard
+      // `ILIKE '%…%'` in the backend: no index can serve it, so every call is a
+      // sequential scan of `users` on the 20-connection primary pool. Running
+      // it anyway would preserve the timing parity and leave the load
+      // amplification — which is half of what the budget is for — completely
+      // untouched. The expensive query IS the metered resource, so the meter
+      // has to sit in front of it.
+      //
+      // What that trades away is small and already spent: the only thing the
+      // timing difference separates is "my own budget is exhausted" from "no
+      // rows matched", and an attacker who exhausted the budget did so by
+      // counting their own requests. That is the same bit the /card analysis
+      // concluded exhaust-then-observe already yields.
+      //
+      // THE REFUSAL MUST NOT BECOME A NEW ORACLE, which is the rule /card
+      // established and the reason this returns 200 `{users: []}` rather than a
+      // 429: an empty result set is a completely ordinary answer here (most
+      // substrings match nobody), so the refusal is shaped exactly like the
+      // most common success. A 429 would instead confirm that the request
+      // reached the budget, and would hand an enumerator a free signal for
+      // pacing their walk to stay just under the ceiling.
+      if (!searchProbeBudget.allow(req.user.id)) {
+        return res.json({ users: [] });
+      }
+
       // ILIKE wildcards have to be escaped, not interpolated. `q=%` built the
       // pattern '%%%', which matches every row: 20 arbitrary accounts (id,
       // name, avatar) per request, and patterns like `a%` / `_` let a caller
@@ -2390,6 +2464,10 @@ module.exports.__testing = {
   // suite needs a way to start each case from a clean allowance. Nothing in the
   // running server calls this.
   resetCardProbeBudget: () => cardProbeBudget.reset(),
+  // R4-I1. Same seam, same reason: the search budget is process-wide in-memory
+  // state, so a suite needs a clean allowance per case.
+  searchProbeBudget,
+  resetSearchProbeBudget: () => searchProbeBudget.reset(),
   detectImageFormat,
   DETECTED_MIME,
   MAX_AVATAR_DATA_URL_BYTES,

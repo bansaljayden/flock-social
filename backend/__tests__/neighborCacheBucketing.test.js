@@ -218,12 +218,20 @@ test('the range-scan SQL carries no place id, and the cache key is coordinates o
   const source = fs
     .readFileSync(path.join(__dirname, '..', 'services', 'mlPredictor.js'), 'utf8')
     .replace(/\r\n/g, '\n');
-  const start = source.indexOf('async function getNeighborActivity');
-  assert.notStrictEqual(start, -1, 'getNeighborActivity is gone from mlPredictor.js');
-  const fn = source.slice(start);
+  // The slice starts at scanNeighborBox, not at getNeighborActivity. R4-I2
+  // split the range scan out into that helper so the budget gate could sit in
+  // front of it, and a slice that started at getNeighborActivity would no
+  // longer contain the SQL this case exists to pin — it would pass every
+  // assertion below by looking at the wrong function.
+  const start = source.indexOf('async function scanNeighborBox');
+  assert.notStrictEqual(start, -1, 'scanNeighborBox is gone from mlPredictor.js');
+  const end = source.indexOf('async function getNeighborActivity', start);
+  assert.notStrictEqual(end, -1, 'getNeighborActivity is gone from mlPredictor.js');
+  const fn = source.slice(end);
   const close = fn.indexOf('\n}\n');
   assert.notStrictEqual(close, -1, 'could not find the end of getNeighborActivity');
-  const body = fn.slice(0, close + 2);
+  // Both halves of the neighbour lookup: the scan and its caller.
+  const body = source.slice(start, end) + fn.slice(0, close + 2);
 
   assert.ok(!/google_place_id != /.test(body),
     'the `!=` exclusion is back in the query, which puts the caller\'s place id in the cache key again');
@@ -248,4 +256,152 @@ test('the box width is one constant, shared by the scan and the self check', () 
   const literals = code.match(/0\.0075/g) || [];
   assert.strictEqual(literals.length, 1,
     'the ~1 km box width is written more than once; it must be the one constant');
+});
+
+// ── 5. R4-I2: the bucket is the caller's number too ─────────────────────────
+//
+// Round 3 took `place_id` out of the key. Round 4's answer was that what
+// replaced it — `lat.toFixed(3)_lng.toFixed(3)` — is just as much the caller's
+// to pick: routes/crowd.js rounds the batch coordinates to 2 decimals, which
+// still leaves ~648 million reachable buckets, so twenty DISTINCT coordinate
+// pairs in one POST /api/crowd/batch were still twenty guaranteed range scans
+// on no budget at all. Every case above holds ONE coordinate fixed and varies
+// the place id, which is exactly why none of them caught it.
+//
+// The control can no longer be the cache, because no part of the key is
+// server-derived. It is a per-account budget on the MISS.
+
+const uid = (() => { let n = 900000; return () => ++n; })();
+
+test('R4-I2: twenty DISTINCT buckets no longer buy twenty unmetered scans', async () => {
+  // Un-metered (no userId, i.e. crowdAlerts and the public demo) this is
+  // twenty range scans and always was — that is the finding, reproduced.
+  for (let i = 0; i < 20; i++) {
+    await getNeighborActivity('spoof-a', 40.71 + i * 0.01, -74.01, DOW, HOUR);
+  }
+  assert.strictEqual(rangeScans.length, 20,
+    'fixture broken: twenty distinct buckets must genuinely miss');
+
+  // Charged to an account, the same walk stops at that account's ceiling.
+  _internals.__resetNeighborCaches();
+  rangeScans = [];
+  const attacker = uid();
+  const walk = _internals.NEIGHBOR_USER_HOURLY + 50;
+  for (let i = 0; i < walk; i++) {
+    await getNeighborActivity('spoof-a', 40.71 + i * 0.01, -74.01, DOW, HOUR, attacker);
+  }
+  assert.strictEqual(rangeScans.length, _internals.NEIGHBOR_USER_HOURLY,
+    `an account walked past its own ceiling: ${rangeScans.length} scans for ${walk} buckets`);
+  assert.strictEqual(_internals.neighborBudgetRemaining(attacker).hourly, 0);
+  assertModelled();
+});
+
+test('R4-I2: a refused miss runs no query AND writes no cache entry', async () => {
+  const attacker = uid();
+  for (let i = 0; i < _internals.NEIGHBOR_USER_HOURLY; i++) {
+    await getNeighborActivity('spoof-a', 40.71 + i * 0.01, -74.01, DOW, HOUR, attacker);
+  }
+  const scansAtCeiling = rangeScans.length;
+  const sizeAtCeiling = _internals.neighborCacheSize();
+
+  const refused = await getNeighborActivity('spoof-a', 45.0, -80.0, DOW, HOUR, attacker);
+  assert.deepStrictEqual(refused, { count: 0, mean: 0 },
+    'a refused lookup must degrade to the same `none` every other failure path returns');
+  assert.strictEqual(rangeScans.length, scansAtCeiling,
+    'the refused caller still ran the range scan — the gate is on the wrong side of the query');
+  // The eviction half of R4-I2: twenty fresh buckets a request against a
+  // 2,000-entry FIFO churns real users' entries out, so a refused account must
+  // also be unable to WRITE.
+  assert.strictEqual(_internals.neighborCacheSize(), sizeAtCeiling,
+    'a refused caller still wrote a cache entry, so it can still evict real users');
+  assertModelled();
+});
+
+test('R4-I2: exhausting one account refuses neither another account nor the unmetered callers', async () => {
+  const attacker = uid();
+  for (let i = 0; i < _internals.NEIGHBOR_USER_HOURLY + 5; i++) {
+    await getNeighborActivity('spoof-a', 40.71 + i * 0.01, -74.01, DOW, HOUR, attacker);
+  }
+  assert.strictEqual(_internals.neighborBudgetRemaining(attacker).hourly, 0);
+
+  // Per-account, so this is not the global denial lever the Vision ceiling is.
+  const victim = uid();
+  const before = rangeScans.length;
+  const got = await getNeighborActivity('ChIJ_la_a', 34.05, -118.24, DOW, HOUR, victim);
+  assert.strictEqual(rangeScans.length, before + 1,
+    'a second account was refused a scan the first account had spent');
+  assert.deepStrictEqual(got, { count: 0, mean: 0 }); // LA holds only the caller
+
+  // And the callers with no account at all keep the un-metered behaviour
+  // allowEventFetch already grants them. `!allow(undefined)` would have
+  // refused every one of them, because createUserBudget fails closed.
+  const before2 = rangeScans.length;
+  await getNeighborActivity('ChIJ_nyc_a', 41.9, -75.5, DOW, HOUR);
+  assert.strictEqual(rangeScans.length, before2 + 1,
+    'an unmetered caller (crowdAlerts, the public demo) was refused');
+  assertModelled();
+});
+
+test('R4-I2: a supplied-but-malformed userId is refused, not waved through', async () => {
+  const before = rangeScans.length;
+  let n = 0;
+  for (const bad of ['', 0, -1, 1.5, 'abc', true, [9], {}, NaN]) {
+    n += 1;
+    const got = await getNeighborActivity('spoof-a', 47.11 + n * 0.01, -87.01, DOW, HOUR, bad);
+    assert.deepStrictEqual(got, { count: 0, mean: 0 }, `malformed id ${String(bad)} was served`);
+  }
+  assert.strictEqual(rangeScans.length, before,
+    'a malformed userId bought an unmetered range scan — the free lane is back');
+  assertModelled();
+});
+
+test('R4-I2: concurrent callers on one bucket coalesce into ONE scan and ONE charge', async () => {
+  // routes/crowd.js scores its twenty venues in a Promise.all, so all twenty
+  // reach the miss branch before any of them has written an entry. A cache is
+  // a memory of a FINISHED query; without coalescing this stayed at twenty
+  // scans no matter how well the key space collapsed.
+  const user = uid();
+  const results = await Promise.all(
+    Array.from({ length: 20 }, (_, i) => getNeighborActivity(`spoof-${i}`, 40.71, -74.01, DOW, HOUR, user))
+  );
+  assert.strictEqual(rangeScans.length, 1,
+    `twenty simultaneous callers on one bucket ran ${rangeScans.length} scans`);
+  assert.strictEqual(
+    _internals.neighborBudgetRemaining(user).hourly,
+    _internals.NEIGHBOR_USER_HOURLY - 1,
+    'the nineteen coalesced followers were charged for a query nobody ran');
+  for (const r of results) assert.deepStrictEqual(r, { count: 3, mean: 60 });
+  assert.strictEqual(_internals.neighborInflightSize(), 0,
+    'the in-flight map leaked a key, so that bucket is now permanently poisoned');
+  assertModelled();
+});
+
+test('R4-I2: the ceilings are the ones the comment argues for', () => {
+  assert.ok(_internals.NEIGHBOR_USER_DAILY > _internals.NEIGHBOR_USER_HOURLY,
+    'a daily ceiling at or below the hourly one makes the hourly limit dead code');
+  // The unit is one uncached ~1 km bucket, not a request and not a venue.
+  assert.strictEqual(_internals.NEIGHBOR_USER_HOURLY, 120);
+  assert.strictEqual(_internals.NEIGHBOR_USER_DAILY, 400);
+});
+
+test('R4-I2: the budget gate sits in FRONT of the query, pinned against the source', () => {
+  const source = fs
+    .readFileSync(path.join(__dirname, '..', 'services', 'mlPredictor.js'), 'utf8')
+    .replace(/\r\n/g, '\n');
+  const start = source.indexOf('async function scanNeighborBox');
+  const end = source.indexOf('async function getNeighborActivity', start);
+  assert.ok(start !== -1 && end > start, 'scanNeighborBox is gone from mlPredictor.js');
+  const scan = source.slice(start, end);
+
+  const gate = scan.indexOf('neighborUserBudget.allow');
+  const q = scan.indexOf('pool.query');
+  assert.notStrictEqual(gate, -1, 'the neighbour range scan lost its budget gate');
+  assert.ok(gate < q,
+    'the budget is charged AFTER the range scan, so the scan it exists to prevent still runs');
+
+  // The optional-identity contract. `!allow(undefined)` refuses every
+  // background producer and the whole unauthenticated demo, because
+  // createUserBudget.allow fails closed on anything that is not an id.
+  assert.match(scan, /userId != null && !neighborUserBudget\.allow\(userId\)/,
+    'the identity guard must be `userId != null && !allow(userId)`, matching allowEventFetch');
 });
