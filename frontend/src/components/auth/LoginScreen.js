@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { login, googleLoginWithToken } from '../../services/api';
-import { useGoogleLogin } from '@react-oauth/google';
+import { login } from '../../services/api';
+import useGoogleAuth, { isGoogleSignInAvailable } from './useGoogleAuth';
 import AppleSignInButton from './AppleSignInButton';
 import AuthShell, { AuthError, AuthLabelRow, AuthNotice, AuthRule, GoogleG, PasswordEye } from './AuthShell';
 import {
@@ -27,26 +27,20 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
   const [dob, setDob] = useState('');
 
   // Custom-styled Google button (the rendered GIS button ignores dark theming
-  // when it shows the personalized "Continue as ..." variant). Access token is
-  // verified server-side against our client id.
-  const startGoogle = useGoogleLogin({
-    onSuccess: async (tokenResponse) => {
-      setLoading(true);
-      try {
-        const data = await googleLoginWithToken(tokenResponse.access_token, needsDob && dob ? dob : undefined);
-        onLoginSuccess(data.user);
-      } catch (err) {
-        if (err.data?.needsDob) {
-          setNeedsDob(true);
-          setError('Add your date of birth below, then tap Continue with Google again.');
-        } else {
-          setError(err.message || 'Google sign-in failed');
-        }
-      } finally {
-        setLoading(false);
+  // when it shows the personalized "Continue as ..." variant). The hook picks
+  // the path: native Google Sign-In on iOS, the GIS browser flow everywhere
+  // else. Both end at POST /api/auth/google and both surface needsDob here.
+  const startGoogle = useGoogleAuth({
+    onSuccess: onLoginSuccess,
+    onError: (msg, err) => {
+      if (err?.data?.needsDob) {
+        setNeedsDob(true);
+        setError('Add your date of birth below, then tap Continue with Google again.');
+      } else {
+        setError(msg || 'Google sign-in failed');
       }
     },
-    onError: () => setError('Google sign-in failed'),
+    setBusy: setLoading,
   });
 
   const handleSubmit = async (e) => {
@@ -183,14 +177,18 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
 
       <AuthRule label="or continue with" />
 
-      <button
-        type="button"
-        className="auth-provider"
-        onClick={() => { setError(''); startGoogle(); }}
-        disabled={loading}
-      >
-        <GoogleG /> Continue with Google
-      </button>
+      {/* Hidden only when a native build carries no iOS Google client id, i.e.
+          when the button could not work by any route. On web it always shows. */}
+      {isGoogleSignInAvailable() && (
+        <button
+          type="button"
+          className="auth-provider"
+          onClick={() => { setError(''); startGoogle({ dob: needsDob && dob ? dob : undefined }); }}
+          disabled={loading}
+        >
+          <GoogleG /> Continue with Google
+        </button>
+      )}
 
       {/* Apple guideline 4.8: Google login is offered above, so the native
           iOS app must offer Sign in with Apple too. Renders null on web.

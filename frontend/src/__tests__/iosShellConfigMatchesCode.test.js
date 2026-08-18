@@ -395,7 +395,28 @@ describe('entitlements match the shipping code and the signing pipeline', () => 
     // served, so adding this key fails the archive rather than enabling
     // universal links. Tracked as a human step, not a code change.
     expect(hasKey(entitlements, 'com.apple.developer.associated-domains')).toBe(false);
-    expect(hasKey(infoPlist, 'CFBundleURLTypes')).toBe(false);
+  });
+
+  test('the only URL scheme declared is the one Google Sign-In hands back', () => {
+    // CFBundleURLTypes used to be absent, and the absence was the assertion.
+    // It is present now for exactly one reason: GoogleSignIn completes the
+    // native flow by redirecting to the REVERSED form of the app's iOS OAuth
+    // client id, so without that scheme the sheet opens and never returns —
+    // which is the dead-button defect useGoogleAuth.js exists to fix.
+    //
+    // What is still pinned is the shape. An app-owned `flock://` scheme would
+    // be a declared entry point nothing in the repo emits (see the plist's own
+    // comment), so the array must stay at one member, and that member must be
+    // a reversed Google client id.
+    expect(hasKey(infoPlist, 'CFBundleURLTypes')).toBe(true);
+    const schemes = plistArray(infoPlist, 'CFBundleURLSchemes');
+    expect(schemes).toEqual([expect.stringMatching(/^com\.googleusercontent\.apps\./)]);
+    expect(stripComments(infoPlist)).not.toMatch(/<string>flock<\/string>/);
+
+    // The native button reads the UNreversed id from this env var, and hides
+    // itself when the var is missing, so the two are one setting in two files.
+    expect(read('frontend', 'src', 'components', 'auth', 'useGoogleAuth.js'))
+      .toContain('REACT_APP_GOOGLE_IOS_CLIENT_ID');
   });
 
   test('the project signs with this entitlements file in both configurations', () => {
@@ -456,6 +477,19 @@ describe('capacitor.config.ts and the copy under ios/ agree', () => {
     }
   });
 
+  test('SocialLogin bundles Google only, and the bundled copy says so too', () => {
+    // This block is not cosmetic: the plugin's own sync hook reads it and
+    // comments the unwanted SDKs out of its Package.swift. Leaving facebook on
+    // would link the Facebook SDK (and its AppTrackingTransparency code) into
+    // the binary, which contradicts the written answer given to App Review
+    // that this app does no cross-app tracking and shows no ATT prompt.
+    expect(json.plugins.SocialLogin.providers).toEqual({
+      google: true, facebook: false, apple: false, twitter: false,
+    });
+    expect(capConfigTs).toMatch(/SocialLogin:\s*\{[\s\S]*?facebook:\s*false/);
+    expect(hasKey(infoPlist, 'NSUserTrackingUsageDescription')).toBe(false);
+  });
+
   test('the generated packageClassList covers every Capacitor plugin dependency', () => {
     // Each native plugin package contributes exactly one plugin class. A
     // missing entry means the plugin is not registered and its JS calls reject
@@ -465,13 +499,17 @@ describe('capacitor.config.ts and the copy under ios/ agree', () => {
       '@capacitor-firebase/app': 'FirebaseAppPlugin',
       '@capacitor-firebase/messaging': 'FirebaseMessagingPlugin',
       '@capacitor/app': 'AppPlugin',
+      '@capgo/capacitor-social-login': 'SocialLoginPlugin',
       '@revenuecat/purchases-capacitor': 'PurchasesPlugin',
     };
     // Everything in package.json that is a Capacitor plugin, less the three
-    // packages that are the runtime itself rather than plugins.
+    // packages that are the runtime itself rather than plugins. @capgo is here
+    // because a plugin scope that the filter does not know about is invisible
+    // to this test in the one direction that matters: it would ship a native
+    // plugin nobody asserted anything about.
     const NOT_PLUGINS = ['@capacitor/core', '@capacitor/cli', '@capacitor/ios'];
     const installed = Object.keys(pkg.dependencies).filter(
-      (d) => /^@capacitor(-community|-firebase)?\//.test(d) || /-capacitor$/.test(d)
+      (d) => /^@(capacitor(-community|-firebase)?|capgo)\//.test(d) || /-capacitor$/.test(d)
     ).filter((d) => !NOT_PLUGINS.includes(d));
 
     expect(installed.sort()).toEqual(Object.keys(PLUGIN_CLASSES).sort());
