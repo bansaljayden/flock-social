@@ -45,10 +45,21 @@ GATE_R2_IMPROVEMENT = 0.10
 
 # Absolute floor (audit finding 8). The gate is `baseline + clamp(delta)` versus
 # `baseline` on the same rows, so any error SHARED by both sides cancels and the
-# gate cannot see corpus-wide corruption. 29.2% is v2.5's realtime within-10 on
-# the unfiltered slice; the filtered slice must at least match it, or the model
-# is relatively better and absolutely useless.
-REALTIME_WITHIN10_FLOOR = 29.2
+# gate cannot see corpus-wide corruption.
+#
+# 2026-08-18: the floor is now DERIVED FROM MEASUREMENT, not a constant. The old
+# constant (29.2, kept below as the no-incumbent fallback) was v2.5's realtime
+# within-10 measured on the PRE-clock-fix axis; on the corrected axis the
+# incumbent itself scores far below it, so the constant stopped meaning "do not
+# ship something users would be worse off with" and started meaning "ship
+# nothing". Per RETRAIN.md / MODEL-METRICS.md: re-derive the floor from
+# measurement, do not lower it to admit a model. The honest measurement of
+# "worse off" is the incumbent scored on the SAME corrected holdout rows, so
+# the floor is the incumbent's measured within-10 on the head-to-head slice,
+# and the challenger's within-10 is compared on those identical rows. The
+# derivation is recorded in ship_gate.floor_derivation.
+STATIC_FLOOR_FALLBACK = 29.2  # pre-clock-fix v2.5 figure; used only when no
+                              # incumbent exists (ML_ALLOW_NO_INCUMBENT path).
 
 # Explicit, recorded escape hatches. Neither may be used for a release.
 ALLOW_NO_INCUMBENT = os.environ.get('ML_ALLOW_NO_INCUMBENT', '').lower() == 'true'
@@ -219,6 +230,7 @@ def compare_incumbent(gate_mask, hold_y_actual, challenger_pred, current_feature
         'incumbent_realtime_r2': inc_metrics['r2'],
         'incumbent_realtime_within_10': inc_metrics['within_10'],
         'new_realtime_mae': new_metrics['mae'],
+        'new_realtime_within_10': new_metrics['within_10'],
         'mae_improvement_vs_incumbent': mae_change,
         'no_regression': bool(no_regression),
         'rows_note': rows_note,
@@ -411,8 +423,37 @@ def main():
     logger.info('  1. vs popular_times on the gate slice: MAE down ≥%.0f OR R² up ≥%.2f',
                 GATE_MAE_IMPROVEMENT, GATE_R2_IMPROVEMENT)
     logger.info('  2. the MAE arm must not REGRESS (Δ MAE ≥ 0) even when the R² arm carries it')
-    logger.info('  3. absolute floor: realtime within-10 ≥ %.1f%%', REALTIME_WITHIN10_FLOOR)
+    logger.info('  3. absolute floor: realtime within-10 ≥ the incumbent\'s measured within-10 '
+                'on the same corrected holdout rows (fallback %.1f%% only if no incumbent)',
+                STATIC_FLOOR_FALLBACK)
     logger.info('  4. no regression against the incumbent artifact')
+
+    # ---- Floor derivation (2026-08-18). RETRAIN.md: re-derive the floor from
+    # measurement, do not lower it to admit a model. "Worse off" means "worse
+    # than the incumbent users get today", so the floor is the incumbent's
+    # within-10 measured THIS RUN on the corrected holdout (head-to-head slice,
+    # rows where both models have a baseline), and the challenger's within-10 is
+    # taken on those identical rows so the comparison is apples to apples.
+    if incumbent and incumbent.get('status') == 'compared':
+        floor_value = incumbent['incumbent_realtime_within_10']
+        floor_basis = 'incumbent_measured_within_10_same_rows'
+        floor_subject_within10 = incumbent['new_realtime_within_10']
+        floor_derivation = (
+            f"floor = incumbent {incumbent.get('incumbent_version') or '(unversioned)'} "
+            f"within-10 = {floor_value}%, measured this run on the same "
+            f"{incumbent['comparable_rows']} corrected-axis holdout rows "
+            f"({incumbent['basis']}); challenger within-10 on those rows = "
+            f"{floor_subject_within10}%. Replaces the stale pre-clock-fix "
+            f"constant {STATIC_FLOOR_FALLBACK}% per RETRAIN.md/MODEL-METRICS.md."
+        )
+    else:
+        floor_value = STATIC_FLOOR_FALLBACK
+        floor_basis = 'static_fallback_pre_clock_fix'
+        floor_subject_within10 = rt_model_metrics['within_10'] if rt_model_metrics else None
+        floor_derivation = (
+            f'no measured incumbent available — stale pre-clock-fix constant '
+            f'{STATIC_FLOOR_FALLBACK}% used as the floor. Not acceptable for a release.'
+        )
 
     train_pass = (train_mae_delta >= GATE_MAE_IMPROVEMENT) or (train_r2_delta >= GATE_R2_IMPROVEMENT)
     hold_pass = (hold_mae_delta >= GATE_MAE_IMPROVEMENT) or (hold_r2_delta >= GATE_R2_IMPROVEMENT)
@@ -422,11 +463,12 @@ def main():
         relative_pass = (rt_mae_delta >= GATE_MAE_IMPROVEMENT) or (rt_r2_delta >= GATE_R2_IMPROVEMENT)
         no_mae_regression = rt_mae_delta >= 0
         rt_pass = bool(relative_pass and no_mae_regression)
-        floor_pass = bool(rt_model_metrics['within_10'] >= REALTIME_WITHIN10_FLOOR)
+        floor_pass = bool(floor_subject_within10 is not None
+                          and floor_subject_within10 >= floor_value)
         logger.info(f'  1+2 relative:  MAE Δ={rt_mae_delta:+.2f}  R² Δ={rt_r2_delta:+.3f}  '
                     f'→ {"PASS" if rt_pass else "FAIL"}')
-        logger.info(f'  3   floor:     within-10 ={rt_model_metrics["within_10"]}% vs floor '
-                    f'{REALTIME_WITHIN10_FLOOR}%  → {"PASS" if floor_pass else "FAIL"}')
+        logger.info(f'  3   floor:     within-10 ={floor_subject_within10}% vs floor '
+                    f'{floor_value}% ({floor_basis})  → {"PASS" if floor_pass else "FAIL"}')
         logger.info(f'  4   incumbent: → {"PASS" if incumbent_pass else "FAIL"}')
 
     logger.info(f'Diagnostics — training (LOCO CV) {"PASS" if train_pass else "FAIL"}, '
@@ -446,7 +488,7 @@ def main():
             if not rt_pass:
                 reasons.append('does not beat the popular_times baseline on the gate slice')
             if not floor_pass:
-                reasons.append(f'realtime within-10 below the {REALTIME_WITHIN10_FLOOR}% floor')
+                reasons.append(f'realtime within-10 below the {floor_value}% floor ({floor_basis})')
             if not incumbent_pass:
                 reasons.append('no honest incumbent comparison, or a regression against it')
             logger.info('VERDICT: ❌ DO NOT SHIP — %s.', '; '.join(reasons))
@@ -469,7 +511,10 @@ def main():
         'realtime_mae_improvement': round(rt_mae_delta, 4) if rt_mae_delta is not None else None,
         'realtime_r2_improvement': round(rt_r2_delta, 4) if rt_r2_delta is not None else None,
         'realtime_within_10': rt_model_metrics['within_10'] if rt_model_metrics else None,
-        'realtime_within_10_floor': REALTIME_WITHIN10_FLOOR,
+        'realtime_within_10_floor': floor_value,
+        'floor_basis': floor_basis,
+        'floor_subject_within_10': floor_subject_within10,
+        'floor_derivation': floor_derivation,
         'realtime_pass': rt_pass,
         'floor_pass': floor_pass,
         'incumbent_pass': incumbent_pass,
@@ -490,7 +535,8 @@ def main():
             f'baseline_busyness > 0, the same serving_population_mask prepare_features '
             f'filters training with): MAE down ≥{GATE_MAE_IMPROVEMENT} OR R² up '
             f'≥{GATE_R2_IMPROVEMENT} vs the popular_times baseline, AND no MAE regression '
-            f'vs that baseline, AND within-10 ≥{REALTIME_WITHIN10_FLOOR}%, AND no MAE '
+            f'vs that baseline, AND within-10 ≥ the incumbent measured on the same rows '
+            f'this run ({floor_value}%, {floor_basis}), AND no MAE '
             f'regression vs the incumbent artifact.'
         ),
     }
