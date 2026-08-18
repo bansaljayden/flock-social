@@ -238,7 +238,23 @@ test('R2-3: a captured Google credential cannot be replayed', async () => {
   assert.strictEqual(again.json().user.id, victimId);
 });
 
-test('R2-3: the replay is refused BEFORE the token is verified and before any row is read', async () => {
+// UPDATED in round 23 (R3-A2). This test used to pin the opposite ordering:
+// the replay check ran BEFORE verifyIdToken, so a known-replayed token cost no
+// upstream work. That ordering was only possible because the key was SHA-256 of
+// the credential STRING, and the string is not a canonical encoding of the
+// credential: the last character of an RS256 signature has 16 spellings that
+// all verify and all hash differently, so the cheap check was cheap and wrong -
+// one captured credential minted 16 sessions. The key is now derived from the
+// VERIFIED payload plus the DECODED signature bytes, which is identical for all
+// 16 spellings, and that value does not exist until the token is verified.
+//
+// So the property this test pins has changed: "refused before verifyIdToken" is
+// replaced by "refused before ANY row is read and before any session is
+// minted". Reaching verifyIdToken is now expected - it is a signature check on
+// data already in memory, with the certificate cache in front of it - and the
+// shape regex is still what keeps malformed input away from it (covered by
+// authShapeGuards.test.js).
+test('R2-3: a replay is refused after verification but before any row is read', async () => {
   reset();
   const credential = googleCredential({ sub: 'g-early', email: 'early@gmail.com' });
   assert.strictEqual((await post('/api/auth/google', { credential, date_of_birth: '2000-01-01' })).status, 200);
@@ -247,8 +263,17 @@ test('R2-3: the replay is refused BEFORE the token is verified and before any ro
   statements = [];
   const replay = await post('/api/auth/google', { credential, date_of_birth: '2000-01-01' });
   assert.strictEqual(replay.status, 401);
-  assert.strictEqual(verifyCalls, verifiesBefore, 'a known-replayed token must not reach verifyIdToken');
-  assert.deepStrictEqual(statements, [], 'a known-replayed token must not reach the database');
+  assert.strictEqual(replay.json().token, undefined, 'a replay must not mint a session');
+  assert.strictEqual(verifyCalls, verifiesBefore + 1,
+    'the replay check now runs on the VERIFIED identity, so it verifies exactly once and refuses');
+  assert.deepStrictEqual(statements, [], 'a replayed token must not reach the database');
+
+  // The pre-verify guard that survived: a credential that is not three
+  // base64url segments never reaches the library at all.
+  const before = verifyCalls;
+  const malformed = await post('/api/auth/google', { credential: 'not-a-jwt', date_of_birth: '2000-01-01' });
+  assert.strictEqual(malformed.status, 401);
+  assert.strictEqual(verifyCalls, before, 'the shape guard must still run before verifyIdToken');
 });
 
 test('R2-3: a credential is only spent on SUCCESS, so a client can retry', async () => {
