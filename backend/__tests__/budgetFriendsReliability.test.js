@@ -33,6 +33,13 @@
 // ceiling is withheld below 3 non-skips on every surface (response, socket
 // payload, GET), and GET's count-before-ceiling statement order is asserted
 // because the reveal decision must never be paired with an older ceiling.
+//
+// And, since the money security audit of 2026-08-16 (finding M1), the banding
+// pins in section 1b: what the ceiling publishes above the threshold is a BAND,
+// not the raw MIN, because three submissions are not three independent people.
+// Those tests execute the actual exploit — two colluding accounts pinned high,
+// a victim's real amount as the MIN — and assert the number that leaves is the
+// band on every surface the ceiling can leave by.
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
@@ -466,10 +473,17 @@ test('budget: GET exposes exactly the documented keys plus the caller own row, a
     'budgetContext', 'budgetEnabled', 'budgetLocked', 'ceiling', 'isReady',
     'skipCount', 'submissionCount', 'totalMembers', 'userAmount', 'userSkipped', 'userSubmitted',
   ]);
-  // At 3 non-skips the aggregate MIN is allowed out — the control that this
-  // suite has not silently pushed the feature into never-reveal.
+  // At 3 non-skips an aggregate is allowed out — the control that this suite
+  // has not silently pushed the feature into never-reveal.
+  //
+  // This used to assert VICTIM_AMOUNT exactly, and that was the bug: the MIN a
+  // three-person flock publishes IS one person's number, and two of those three
+  // can be the attacker and a sockpuppet (audit finding M1). The reveal is now
+  // banded, so 47.13 publishes as 45 and the value the wire carries is not
+  // anybody's figure.
   assert.strictEqual(res.body.isReady, true);
-  assert.strictEqual(res.body.ceiling, VICTIM_AMOUNT);
+  assert.strictEqual(res.body.ceiling, 45);
+  assert.ok(!res.text.includes('47.13'), `banded GET still leaked the exact MIN: ${res.text}`);
   // Only the CALLER's own amount, never a neighbour's, in the user fields.
   assert.strictEqual(res.body.userAmount, 90);
   assertQueriesUnderstood();
@@ -513,6 +527,182 @@ test('budget: lock refuses below 3 non-skips and leaks no amount doing it', asyn
 
   assert.strictEqual(res.status, 400, res.text);
   assert.ok(!res.text.includes('47.13'), `lock refusal leaked an amount: ${res.text}`);
+  assertQueriesUnderstood();
+});
+
+// ===========================================================================
+// 1b. Banding: the published ceiling is never one person's exact number
+// ===========================================================================
+//
+// Money security audit 2026-08-16, finding M1 (HIGH). The >= 3 threshold counts
+// SUBMISSIONS, not independent people, and the flock creator chooses who is in
+// the flock. Two accounts under one attacker submitting $9,999 each make the
+// third person's amount the MIN, and the MIN used to be published verbatim: the
+// victim's exact budget, handed to the person who arranged it.
+//
+// Collusion cannot be designed away, because colluders know their own numbers
+// and can subtract them out. What CAN be removed is the exactness, so these
+// pin that the number leaving the server is a band, that the band is never
+// above the true MIN, and that every surface publishes the SAME band.
+
+// raw MIN -> what the group is allowed to see.
+const RAW_TO_BAND = [
+  [0.01, 0.01], [0.75, 0.01], [0.99, 0.01],   // below the smallest band
+  [1, 1], [1.01, 1], [4.99, 4],               // nearest $1 down
+  [5, 5], [12.5, 10], [47.13, 45], [49.99, 45], // nearest $5 down
+  [50, 50], [55, 50], [59.99, 50],            // nearest $10 down
+  [100, 100], [9999, 9990], [10000, 10000],   // and up to the validator's max
+];
+
+test('budget: the banding rule rounds to the band, never upward, and is idempotent', () => {
+  for (const [raw, want] of RAW_TO_BAND) {
+    assert.strictEqual(budgetRouter.bandCeiling(raw), want, `bandCeiling(${raw})`);
+  }
+
+  // The correctness invariant, swept rather than sampled. A banded ceiling must
+  // never exceed the true MIN: the group picks venues under this number, so
+  // rounding UP would put a venue somebody cannot afford inside the cap. And it
+  // must never be 0, which the app reads as "no ceiling yet".
+  for (let cents = 1; cents <= 1000000; cents += 137) {
+    const raw = cents / 100;
+    const banded = budgetRouter.bandCeiling(raw);
+    assert.ok(banded <= raw, `bandCeiling(${raw}) rounded UP to ${banded}`);
+    assert.ok(banded > 0, `bandCeiling(${raw}) published 0, which reads as "no ceiling"`);
+  }
+
+  // Idempotent, which is what lets flocks.budget_ceiling cache the BANDED value
+  // and still be re-banded on every read. Without this, a value would shrink a
+  // band each time it round-tripped.
+  for (const [raw] of RAW_TO_BAND) {
+    const once = budgetRouter.bandCeiling(raw);
+    assert.strictEqual(budgetRouter.bandCeiling(once), once,
+      `bandCeiling is not idempotent at ${raw}`);
+  }
+
+  // No submissions, no ceiling. Not 0, which would read as a real cap of zero.
+  assert.strictEqual(budgetRouter.bandCeiling(null), null);
+  assert.strictEqual(budgetRouter.bandCeiling(undefined), null);
+});
+
+test('budget: two colluding submissions cannot read the third person exact amount', async () => {
+  // The M1 exploit, executed. User 1 is the flock creator, user 3 is the
+  // sockpuppet; both pin $9,999 so the MIN can only be user 2's real number.
+  budgets.set(2, { amount: VICTIM_AMOUNT, skipped: false });
+  budgets.set(3, { amount: 9999, skipped: false });
+
+  const res = await call('POST', `/api/budget/${FLOCK_ID}/submit`, 1, { amount: 9999 });
+
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.isReady, true, 'three non-skips must still reveal');
+  assert.strictEqual(res.body.ceiling, 45, 'the reveal must be the band, not the MIN');
+  assert.notStrictEqual(res.body.ceiling, VICTIM_AMOUNT);
+  assert.ok(!res.text.includes('47.13'), `the victim's exact amount left the server: ${res.text}`);
+  assertQueriesUnderstood();
+});
+
+test('budget: the socket fan-out publishes the same banded ceiling the response does', async () => {
+  // A raw MIN slipping out through the socket while REST published a band would
+  // hand the whole fix back, so the two are compared to each other, not just to
+  // a literal.
+  budgets.set(2, { amount: VICTIM_AMOUNT, skipped: false });
+  budgets.set(3, { amount: 9999, skipped: false });
+
+  const res = await call('POST', `/api/budget/${FLOCK_ID}/submit`, 1, { amount: 9999 });
+
+  const updates = emitted.filter((e) => e.event === 'budget_updated');
+  assert.ok(updates.length > 0, 'no budget_updated fan-out');
+  for (const u of updates) {
+    assert.strictEqual(u.payload.ceiling, res.body.ceiling,
+      'the socket and the REST response disagree about the ceiling');
+    assert.strictEqual(u.payload.ceiling, 45);
+    assert.ok(!JSON.stringify(u.payload).includes('47.13'), 'the raw MIN reached the socket wire');
+  }
+  assertQueriesUnderstood();
+});
+
+test('budget: the lock response, its socket event and the cached column all carry the band', async () => {
+  budgets.set(1, { amount: 9999, skipped: false });
+  budgets.set(2, { amount: VICTIM_AMOUNT, skipped: false });
+  budgets.set(3, { amount: 9999, skipped: false });
+
+  const res = await call('POST', `/api/budget/${FLOCK_ID}/lock`, 1);
+
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.ceiling, 45);
+  assert.ok(!res.text.includes('47.13'), `the lock leaked the raw MIN: ${res.text}`);
+
+  const locks = emitted.filter((e) => e.event === 'budget_locked');
+  assert.ok(locks.length > 0, 'no budget_locked fan-out');
+  for (const l of locks) {
+    assert.strictEqual(l.payload.ceiling, res.body.ceiling,
+      'the lock socket event and the lock response disagree');
+    assert.ok(!JSON.stringify(l.payload).includes('47.13'), 'the raw MIN reached the socket wire');
+  }
+
+  // What gets CACHED is the band. This is the part that covers the two readers
+  // outside this route — the flock list in routes/flocks.js and the ghost commit
+  // in routes/billing.js both read flocks.budget_ceiling and never recompute it.
+  assert.strictEqual(Number(flock.budget_ceiling), 45);
+  assertQueriesUnderstood();
+});
+
+test('budget: a submit caches the band, not the MIN, so downstream readers cannot unbank it', async () => {
+  budgets.set(2, { amount: VICTIM_AMOUNT, skipped: false });
+  budgets.set(3, { amount: 9999, skipped: false });
+
+  await call('POST', `/api/budget/${FLOCK_ID}/submit`, 1, { amount: 9999 });
+
+  assert.strictEqual(Number(flock.budget_ceiling), 45,
+    'flocks.budget_ceiling still holds the raw MIN');
+  assertQueriesUnderstood();
+});
+
+test('budget: GET re-bands a ceiling that was cached raw before this fix', async () => {
+  // Rows written by the pre-M1 code hold the exact MIN. Banding is idempotent,
+  // so re-banding on read costs nothing and keeps those rows from publishing an
+  // exact amount before someone happens to resubmit.
+  budgets.set(1, { amount: 9999, skipped: false });
+  budgets.set(2, { amount: VICTIM_AMOUNT, skipped: false });
+  budgets.set(3, { amount: 9999, skipped: false });
+  flock.budget_ceiling = String(VICTIM_AMOUNT);
+
+  const res = await call('GET', `/api/budget/${FLOCK_ID}`, 1);
+
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.isReady, true);
+  assert.strictEqual(res.body.ceiling, 45);
+  assert.ok(!res.text.includes('47.13'), `a legacy cached MIN reached the wire: ${res.text}`);
+  assertQueriesUnderstood();
+});
+
+test('budget: banding did not move the threshold or change what a skip means', async () => {
+  // Two people shared an amount, two skipped. Still withheld, on the response
+  // and on the socket, and submissionCount still counts skips while the
+  // threshold does not.
+  budgets.set(2, { amount: VICTIM_AMOUNT, skipped: false });
+  budgets.set(3, { amount: null, skipped: true });
+  budgets.set(4, { amount: null, skipped: true });
+
+  const res = await call('POST', `/api/budget/${FLOCK_ID}/submit`, 1, { amount: 9999 });
+
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.isReady, false, 'skips must not count toward the three');
+  assert.strictEqual(res.body.ceiling, null, 'a band is still a reveal, and it is still gated');
+  assert.strictEqual(res.body.submissionCount, 4, 'submissionCount still counts skips');
+  assert.strictEqual(res.body.skipCount, 2);
+  for (const u of emitted.filter((e) => e.event === 'budget_updated')) {
+    assert.strictEqual(u.payload.ceiling, null, 'the socket revealed below the threshold');
+  }
+
+  // And a skip still writes NULL rather than an amount, so it cannot drag the
+  // MIN down or push the flock over the threshold.
+  const skipRes = await call('POST', `/api/budget/${FLOCK_ID}/submit`, 1, { amount: 0, skipped: true });
+
+  assert.strictEqual(skipRes.status, 200, skipRes.text);
+  assert.strictEqual(budgets.get(1).amount, null);
+  assert.strictEqual(budgets.get(1).skipped, true);
+  assert.strictEqual(skipRes.body.isReady, false);
+  assert.strictEqual(skipRes.body.ceiling, null);
   assertQueriesUnderstood();
 });
 
