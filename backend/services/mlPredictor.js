@@ -26,6 +26,10 @@ let useML = false;
 
 // Event cache: key = "lat,lng,YYYY-MM-DDTHH" (UTC) → { data, ts }
 const eventCache = new Map();
+// key -> in-flight Promise, so concurrent misses on one key make ONE call.
+// See the block in getNearbyEvents; entries live only for the duration of a
+// single fetch and are removed in a finally.
+const eventInflight = new Map();
 const EVENT_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 const EVENT_CACHE_MAX = 500;
 // Upstream budget (round 6): the public demo builds current + 12h + 24h
@@ -34,10 +38,82 @@ const EVENT_CACHE_MAX = 500;
 let eventDayKey = new Date().toISOString().slice(0, 10);
 let eventDayCount = 0;
 const EVENT_DAILY_BUDGET = 1500;
-function allowEventFetch() {
+
+// ---------------------------------------------------------------------------
+// THE PER-ACCOUNT LEG OF THE EVENT BUDGET (money audit round 2, finding M1).
+//
+// EVENT_DAILY_BUDGET above is process-wide and has no caller dimension, and it
+// was the only spend counter in this repo built that way — utils/placesBudget.js
+// and services/birdieUsage.js both carry a per-account leg and both explain at
+// length why. What that missing dimension bought:
+//
+//   POST /api/crowd/batch fans one request out to twenty predictions, so one
+//   request is up to twenty cache-missing Ticketmaster calls. 1500 / 20 = 75
+//   requests, and apiLimiter allows 200 a minute — about twenty-three seconds
+//   of ONE authenticated session. After that allowEventFetch() answered false
+//   for every user until UTC midnight and every crowd surface in the product
+//   silently lost its event enrichment: the card, the vote list, the
+//   alternatives list, the marketing demo, the owner dashboard.
+//
+// So the ceiling that matters is per ACCOUNT, and it is deliberately set below
+// two other numbers in this file. Both relationships are load-bearing; a test
+// pins each (__tests__/crowdBatchAmplification.test.js):
+//
+//   EVENT_USER_DAILY (400) < EVENT_DAILY_BUDGET (1500)
+//       One account can no longer exhaust the global allowance for everybody
+//       else. It takes four cooperating accounts to do what one used to do in
+//       twenty-three seconds, and the per-account hourly cap stretches that
+//       over hours rather than seconds.
+//
+//   EVENT_USER_DAILY (400) < EVENT_CACHE_MAX (500)
+//       This is the answer to the cache-FLUSH variant of the same attack. An
+//       entry is only ever written to eventCache after a real upstream call
+//       (cacheEvents runs downstream of this gate on every branch), so the
+//       number of entries one account can write is exactly the number of units
+//       it is allowed to spend. 400 < 500 means a single account that spends
+//       its entire day cannot evict everything other users have cached. Keep
+//       this inequality if either constant is ever changed.
+//
+// WHY 200/HOUR AND 400/DAY and not something tighter. A cold area costs a real
+// session about twenty calls for a vote list, plus up to twenty-five for the
+// first venue card in that area (the card scores now plus a 24-hour forecast,
+// and each forecast hour is its own UTC hour slot in the cache key). Everything
+// after that in the same ~1 km bucket and the same hour is free. 200 an hour is
+// therefore roughly eight cold venue cards an hour, which is well past what
+// browsing looks like, and 400 a day leaves 2x headroom on top. Exceeding it
+// degrades gracefully: getNearbyEvents returns "no events", the prediction
+// still ships, nothing errors.
+//
+// WHO IS CHARGED. Only callers that HAVE an account. Background producers
+// (services/crowdAlerts.js) and the unauthenticated marketing demo pass no
+// userId and keep the old global-only behavior — the demo already has its own
+// per-IP gate (routes/publicCrowd.js allowDemo) and coordinates bucketed to
+// ~1 km, which is the same treatment the authenticated batch route now gets. A
+// userId that is supplied but MALFORMED is refused rather than waved through:
+// createUserBudget.allow() fails closed on anything that is not a positive
+// integer id, matching placesBudget.keyOf().
+// ---------------------------------------------------------------------------
+const { createUserBudget } = require('../utils/probeBudget');
+const EVENT_USER_HOURLY = 200;
+const EVENT_USER_DAILY = 400;
+const eventUserBudget = createUserBudget({
+  name: 'crowd-events',
+  hourly: EVENT_USER_HOURLY,
+  daily: EVENT_USER_DAILY,
+});
+
+// `userId` is optional; see WHO IS CHARGED above.
+//
+// ORDER MATTERS. The global ceiling is READ first and INCREMENTED last, with
+// the per-account charge in between, so a call the global budget was going to
+// refuse never eats one of the caller's units. Same all-or-nothing rule
+// utils/placesBudget.js states: a partial charge must never leave the caller
+// believing it may proceed.
+function allowEventFetch(userId) {
   const today = new Date().toISOString().slice(0, 10);
   if (today !== eventDayKey) { eventDayKey = today; eventDayCount = 0; }
   if (eventDayCount >= EVENT_DAILY_BUDGET) return false;
+  if (userId != null && !eventUserBudget.allow(userId)) return false;
   eventDayCount++;
   return true;
 }
@@ -783,7 +859,12 @@ function trueEventInstant(timestamp, utcOffsetMinutes) {
   return new Date(ts.getTime() - (ts.getTimezoneOffset() + off) * 60 * 1000);
 }
 
-async function getNearbyEvents(lat, lng, timestamp) {
+// `userId` (optional) is the account this cache MISS is charged to. Passing it
+// is what gives the Ticketmaster budget a caller dimension — see the block above
+// allowEventFetch. Cache HITS are answered before the gate and cost nothing,
+// which is the rule utils/placesBudget.js states: charging for a call you did
+// not make masks the real burn rate.
+async function getNearbyEvents(lat, lng, timestamp, userId) {
   const apiKey = process.env.TICKETMASTER_API_KEY;
   const noEvents = {
     hasEvent: false, nearestAttendance: 0, totalEvents: 0,
@@ -803,8 +884,46 @@ async function getNearbyEvents(lat, lng, timestamp) {
   const cacheKey = `${lat.toFixed(3)},${lng.toFixed(3)},${slot}`;
   const cached = eventCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < EVENT_CACHE_TTL) return cached.data;
+
+  // IN-FLIGHT COALESCING — the half of the cache that a cache alone cannot do.
+  //
+  // Found while pinning the batch route (money audit round 2, M1): bucketing
+  // the coordinates makes twenty venues in one metro area share ONE cache key,
+  // but routes/crowd.js scores those twenty venues in a Promise.all, so all
+  // twenty reach this line before any of them has written a cache entry. A
+  // cache is a memory of a FINISHED call; twenty simultaneous misses on the
+  // same key were still twenty Ticketmaster calls, and the cache only ever saw
+  // the last one. So the worst case of one request stayed at twenty upstream
+  // calls no matter how well the key space collapsed.
+  //
+  // A promise per key closes that: the first caller starts the call, the other
+  // nineteen await the same promise and are answered with the same object. It
+  // is charged ONCE, because the budget gate lives on the far side of this
+  // check — which is the correct reading of "charge what you spend", not a
+  // discount.
+  //
+  // Deleted in a finally, so a rejection (impossible today — the fetch is
+  // wrapped below — but not something this line should depend on) cannot leave
+  // a permanently poisoned key behind. The map is therefore bounded by
+  // concurrency rather than by time and needs no eviction policy of its own.
+  const inflight = eventInflight.get(cacheKey);
+  if (inflight) return inflight;
+  const pending = fetchNearbyEvents(cacheKey, lat, lng, timestamp, userId, noEvents);
+  eventInflight.set(cacheKey, pending);
+  try {
+    return await pending;
+  } finally {
+    eventInflight.delete(cacheKey);
+  }
+}
+
+// The uncoalesced half of getNearbyEvents. Never call this directly: it neither
+// reads the cache nor dedupes concurrent callers, so a direct call is an
+// unshared paid Ticketmaster request.
+async function fetchNearbyEvents(cacheKey, lat, lng, timestamp, userId, noEvents) {
+  const apiKey = process.env.TICKETMASTER_API_KEY;
   // Budget applies only to cache MISSES (real upstream calls).
-  if (!allowEventFetch()) return noEvents;
+  if (!allowEventFetch(userId)) return noEvents;
 
   try {
     const ts = timestamp ? new Date(timestamp) : new Date();
@@ -1313,8 +1432,16 @@ function guessCategory(types) {
 // Prediction Functions
 // ---------------------------------------------------------------------------
 
-async function predictBusyness(venue, weather, timestamp) {
+// `options.userId` — the authenticated account this prediction is being served
+// to, when there is one. It is threaded through for exactly one reason: it is
+// the identity the Ticketmaster budget is charged against (see allowEventFetch).
+// Optional and backward compatible: a caller that omits it gets the old
+// global-only metering, which is the right answer for background producers and
+// for the unauthenticated demo. Nothing else in the prediction depends on it,
+// and it never reaches a cache key or the feature vector.
+async function predictBusyness(venue, weather, timestamp, options = {}) {
   await init();
+  const userId = options && options.userId != null ? options.userId : undefined;
 
   if (!useML) {
     const result = crowdEngine.calculateCrowdScore(venue, weather, timestamp);
@@ -1336,7 +1463,7 @@ async function predictBusyness(venue, weather, timestamp) {
       venue.utcOffsetMinutes ?? venue.utc_offset_minutes ?? venue.utc_offset ?? null);
 
     const [eventData, feedback, storedBaseline, neighbors] = await Promise.all([
-      getNearbyEvents(lat, lng, eventInstant),
+      getNearbyEvents(lat, lng, eventInstant, userId),
       getUserFeedback(placeId),
       getBaseline(placeId, ts.getDay(), ts.getHours()),
       getNeighborActivity(placeId, lat, lng, ts.getDay(), ts.getHours()),
@@ -1523,7 +1650,12 @@ async function predictBusyness(venue, weather, timestamp) {
   }
 }
 
-async function predictHourlyForecast(venue, weather, startHour, count, baseTimestamp) {
+// `options.userId` is forwarded to every hour's predictBusyness. This path is
+// the largest single-request event fan-out in the app — 24 hours, each its own
+// UTC hour slot in the event cache key, so a cold venue can be 24 upstream calls
+// from ONE card view — which makes it the path that most needs to be charged to
+// somebody.
+async function predictHourlyForecast(venue, weather, startHour, count, baseTimestamp, options = {}) {
   await init();
 
   if (!useML) {
@@ -1565,7 +1697,7 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
   for (let i = 0; i < hours; i++) {
     const ts = new Date(base.getTime() + i * 60 * 60 * 1000);
     try {
-      const result = await predictBusyness(venue, weather, ts);
+      const result = await predictBusyness(venue, weather, ts, options);
       forecast.push({ hour: labelFor(ts), score: result.score, label: result.label });
     } catch (err) {
       // Fallback for this hour
@@ -1615,6 +1747,23 @@ module.exports = {
     PREDICTOR_CACHE_MAX,
     EVENT_CACHE_MAX,
     eventCacheSize: () => eventCache.size,
+    // The event budget, for __tests__/crowdBatchAmplification.test.js. The two
+    // ceilings are exported so a test can pin the inequalities the comment
+    // above allowEventFetch declares load-bearing, rather than re-stating the
+    // numbers and drifting from them.
+    allowEventFetch,
+    EVENT_DAILY_BUDGET,
+    EVENT_USER_HOURLY,
+    EVENT_USER_DAILY,
+    eventBudgetRemaining: (userId) => eventUserBudget.remaining(userId),
+    // Tests only. Production code must never reset a spending counter.
+    eventInflightSize: () => eventInflight.size,
+    __resetEventBudget: () => {
+      eventUserBudget.reset();
+      eventDayKey = new Date().toISOString().slice(0, 10);
+      eventDayCount = 0;
+      eventCache.clear();
+    },
     getMetadata: () => metadata,
     getSession: () => session,
   },
