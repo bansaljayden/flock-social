@@ -102,6 +102,94 @@ const eventUserBudget = createUserBudget({
   daily: EVENT_USER_DAILY,
 });
 
+// ---------------------------------------------------------------------------
+// THE THREE PLACE-KEYED CACHES NOBODY METERED — found by the round-5 sweep
+// ---------------------------------------------------------------------------
+// The round-4 audit asked for every cache key and every spend counter to be
+// enumerated against "which part of this can the caller pick" rather than for
+// the reported instance to be patched again. Doing that turned up an instance
+// nobody had reported, sitting in this file next to the one that was:
+//
+//   baselineCache      key `${placeId}_${dow}_${hour}`   miss = 1 Postgres query
+//   feedbackCache      key placeId                        miss = 1 Postgres query
+//   selfBaselineCache  key placeId                        miss = 1 Postgres query
+//
+// `placeId` on POST /api/crowd/batch is `v.place_id.slice(0, 256)` — routes/
+// crowd.js deliberately does NOT shape-check it, and the comment that argues
+// for that reasons only about paid Google calls and about writes. It does not
+// account for cache thrash against Postgres. So the key space is every string
+// up to 256 characters, against three 2,000-entry FIFOs, and NOTHING meters the
+// database leg: twenty venues a request times three caches is up to sixty
+// forced round trips per request that can never be served from memory, at
+// apiLimiter's 3,000 requests per 15 minutes.
+//
+// That is R4-I2's arithmetic on a different set of maps, and it is worse in one
+// respect: eventCache is protected by the pinned inequality
+// EVENT_USER_DAILY(400) < EVENT_CACHE_MAX(500), so one account cannot flush
+// what everybody else cached. These three had no equivalent, so the same loop
+// also evicts real venues' baselines and feedback and makes THEIR next request
+// pay a query too.
+//
+// TWO GATES, IN THIS ORDER, AND THE ORDER IS THE POINT.
+//
+//   1. SHAPE, free. A place id that cannot match PLACE_ID_RE cannot match a row
+//      in ml_venue_baselines, venue_feedback or ml_venues, because everything
+//      that writes those tables writes a real Google place id (the corpus
+//      loader, and routes/feedback.js, which shape-checks). So refusing it is
+//      not a degradation, it is answering a question whose answer is already
+//      known — and it must be FREE, or junk would spend a real user's
+//      allowance. This is what collapses the arbitrary-256-char half of the key
+//      space, and it costs nothing to be wrong about: the failure contract
+//      below is the one a genuine miss already returns.
+//   2. BUDGET, charged. Shape alone is not enough and it is important to say
+//      why: `spoof-000001`, `spoof-000002`, … are all perfectly well shaped, so
+//      an attacker who reads this file simply generates shaped ids instead.
+//      The bounded key space is a nice-to-have; the budget is the control.
+//
+// WHY 1500/HOUR AND 5000/DAY, which are much larger numbers than anything else
+// in this file. The unit here is one uncached DATABASE lookup, not one request
+// and not one venue, and a single cold venue costs THREE of them. A batch of
+// twenty venues in an area this process has never seen is therefore up to 60
+// units, and a heavy hour of exploring genuinely new cities — say twenty such
+// cold lists, which is already well past browsing — is 1,200. 1,500 leaves
+// headroom on top of that and still cuts the walk from ~180,000 round trips an
+// hour to 1,500, a ~120x reduction. These are cheap indexed lookups, not paid
+// API calls, so the right ceiling is the one that a real session cannot reach
+// rather than the tightest one that still works.
+//
+// FAILING IS SAFE HERE, which is why a ceiling this loose is acceptable. Each
+// of the three already has a documented degradation: getBaseline returns 0 (and
+// predictBusyness then reads the venue's own popular_times, or hands the whole
+// prediction to the rule engine), getUserFeedback returns noFeedback, and
+// getSelfBaselines returns null so nothing is subtracted and the neighbour
+// count is one too high rather than wrong in the model's favour. A refused
+// lookup takes exactly the branch a database error already takes.
+// ---------------------------------------------------------------------------
+// The shape predicate is IMPORTED, not restated. utils/places.js already owns
+// `/^[A-Za-z0-9_-]{6,128}$/` and eight other surfaces already gate on it; a
+// second copy here would be two definitions of "could this match a row" free to
+// drift apart, which is the same mistake NEIGHBOR_BOX_DEG has a test pinning
+// against. (No require cycle: utils/places.js pulls in config/database and
+// nothing else.)
+const { isPlaceIdShaped } = require('../utils/places');
+const VENUE_LOOKUP_USER_HOURLY = 1500;
+const VENUE_LOOKUP_USER_DAILY = 5000;
+const venueLookupBudget = createUserBudget({
+  name: 'crowd-venue-lookup',
+  hourly: VENUE_LOOKUP_USER_HOURLY,
+  daily: VENUE_LOOKUP_USER_DAILY,
+});
+
+// True when this caller may spend one uncached place-keyed Postgres lookup.
+// Callers with no account (services/crowdAlerts.js, the unauthenticated demo)
+// pass no userId and keep the un-metered behaviour, exactly as allowEventFetch
+// decides it; a SUPPLIED but malformed id is refused rather than waved through.
+function allowVenueLookup(placeId, userId) {
+  if (!isPlaceIdShaped(placeId)) return false;
+  if (userId != null && !venueLookupBudget.allow(userId)) return false;
+  return true;
+}
+
 // `userId` is optional; see WHO IS CHARGED above.
 //
 // ORDER MATTERS. The global ceiling is READ first and INCREMENTED last, with
@@ -607,12 +695,19 @@ async function loadModel() {
 // crowdEngine.describePredictionSupport), so an ML answer is labeled by what
 // stands behind it instead of being asserted as a measurement.
 // ---------------------------------------------------------------------------
-async function getBaseline(placeId, dayOfWeek, hour) {
+// `userId` (optional) is the account a cache MISS is charged to — see
+// allowVenueLookup. Hits are answered above the gate and cost nothing.
+async function getBaseline(placeId, dayOfWeek, hour, userId) {
   if (!pool || !placeId) return 0;
 
   const cacheKey = `${placeId}_${dayOfWeek}_${hour}`;
   const cached = baselineCache.get(cacheKey);
   if (cached && Date.now() - cached.ts < BASELINE_CACHE_TTL) return cached.data;
+
+  // Refused misses take the same branch a query error takes, and crucially do
+  // NOT write a cache entry — an account that cannot query must also be unable
+  // to evict a real venue's baseline.
+  if (!allowVenueLookup(placeId, userId)) return 0;
 
   try {
     // Fetch current hour + neighbors for smoothing
@@ -709,12 +804,18 @@ function baselineFromPopularTimes(popularTimes, dayOfWeek, hour) {
 // User Feedback Lookup
 // ---------------------------------------------------------------------------
 
-async function getUserFeedback(placeId) {
+// `userId` (optional) is the account a cache MISS is charged to — see
+// allowVenueLookup.
+async function getUserFeedback(placeId, userId) {
   const noFeedback = { avgCrowd: 0, count: 0, avgErrorMapped: 0, avgErrorLegacy: 0 };
   if (!pool || !placeId) return noFeedback;
 
   const cached = feedbackCache.get(placeId);
   if (cached && Date.now() - cached.ts < FEEDBACK_CACHE_TTL) return cached.data;
+
+  // Same contract as getBaseline: a refused miss returns what a query error
+  // returns and writes nothing.
+  if (!allowVenueLookup(placeId, userId)) return noFeedback;
 
   try {
     const { rows } = await pool.query(
@@ -1103,16 +1204,106 @@ const NEIGHBOR_BOX_DEG = 0.0075;
 const neighborCache = new Map();      // "lat.toFixed(3)_lng.toFixed(3)" -> box totals
 const selfBaselineCache = new Map();  // place_id -> that venue's own baselines
 
+// ---------------------------------------------------------------------------
+// THE BUCKET IS STILL THE CALLER'S NUMBER — audit round 4, R4-I2
+// ---------------------------------------------------------------------------
+// Round 3 took `place_id` out of the key above and the round-4 audit confirmed
+// the correctness half of that held in every case it could construct. The
+// DENIAL half did not, and the reason is one sentence: the key stopped being
+// the caller's STRING and became the caller's NUMBER.
+//
+//     {"venues":[{"place_id":"x","location":{"latitude":40.11,"longitude":-74.01}},
+//                {"place_id":"x","location":{"latitude":40.12,"longitude":-74.01}}, …]}
+//
+// routes/crowd.js rounds the batch route's coordinates to 2 decimals, so the
+// reachable key space is ~648 million buckets, and twenty distinct coordinate
+// pairs in one request are still twenty guaranteed misses — twenty bounding-box
+// range scans over ml_venues ⋈ ml_venue_baselines, which is the same figure
+// round 3 measured for the place_id version. At apiLimiter's 3,000 requests per
+// 15 minutes that is ~4,000 range scans a minute from one account, aimed at the
+// primary pool. The 2,000-entry FIFO makes it worse than a wasted query: the
+// map is fully churned in 100 requests, so real users' buckets miss too.
+//
+// RAISING PREDICTOR_CACHE_MAX IS NOT A FIX. No cache size beats a 648-million-
+// wide key space. The rule the round-4 audit asked to be applied to the CLASS
+// rather than to the instance is: **a cache key is a security control, and it
+// is only as good as the part of the key the caller cannot choose.** When no
+// part of the key is server-derived, the cache cannot be the control, and the
+// control has to be a budget denominated in the work a MISS actually does.
+//
+// So the two halves below, in the order getNearbyEvents already uses for the
+// identical problem on the Ticketmaster leg (M1):
+//
+//   1. IN-FLIGHT COALESCING. routes/crowd.js scores twenty venues in a
+//      Promise.all, so twenty callers on one bucket all reach the miss branch
+//      before any of them has written an entry. A cache is a memory of a
+//      FINISHED query; without coalescing, twenty simultaneous misses on one
+//      key were still twenty range scans and the cache only ever saw the last.
+//      This is the half that makes the legitimate case free: a vote list in one
+//      downtown collapses to ONE scan.
+//   2. A PER-ACCOUNT BUDGET ON MISSES ONLY. Hits are answered above the gate
+//      and cost nothing — charging for a query you did not run masks the real
+//      burn rate (utils/placesBudget.js states the same rule). A refused miss
+//      does not run the scan AND does not write a cache entry, so the same
+//      gate closes the eviction-churn variant: an account that cannot scan
+//      cannot evict anybody either.
+//
+// WHY 120/HOUR AND 400/DAY. The unit is one uncached ~1 km bucket, not one
+// request and not one venue. A batch of twenty venues in one metro collapses to
+// a handful of 0.01-degree buckets after routes/crowd.js's rounding, and the
+// entry then lives 24 hours, so a real session in a new city costs single
+// digits and a session in a city the user already browsed costs zero. 120 an
+// hour is therefore roughly twenty cold vote lists an hour, far past what
+// browsing looks like, and 400 a day leaves headroom for a heavy day of travel.
+// It cuts the walk from ~4,000 range scans a minute to 2, a ~2,000x reduction,
+// and unlike apiLimiter a fresh lane costs a fresh account rather than a fresh
+// proxy.
+//
+// WHY REFUSAL RETURNS `none` AND NOT AN ERROR, and why that is not train/serve
+// skew. `{count: 0, mean: 0}` is already this function's failure contract on
+// every other path — no pool, no coordinates, a thrown query — and it is also
+// what a genuinely empty box returns. buildFeatureMap consumes it as
+// log_neighbor_count = log1p(0) and neighbor_baseline_same_hour = 0, values the
+// model saw during training for isolated venues. The subtraction arithmetic
+// above is UNTOUCHED by this change: parity with prepare_features.py's
+// add_neighbor_features (window totals first, self removed afterwards) is
+// decided entirely inside the hit branch, which a budget refusal never reaches.
+//
+// WHO IS CHARGED. Only callers that HAVE an account, exactly as allowEventFetch
+// decides it: background producers (services/crowdAlerts.js) and the
+// unauthenticated marketing demo pass no userId and keep the un-metered
+// behaviour, because routes/publicCrowd.js already gates the demo per IP and
+// buckets its coordinates. A userId that is SUPPLIED but malformed is refused
+// rather than waved through — createUserBudget.allow() fails closed on anything
+// that is not a positive integer id.
+// ---------------------------------------------------------------------------
+const NEIGHBOR_USER_HOURLY = 120;
+const NEIGHBOR_USER_DAILY = 400;
+const neighborUserBudget = createUserBudget({
+  name: 'crowd-neighbors',
+  hourly: NEIGHBOR_USER_HOURLY,
+  daily: NEIGHBOR_USER_DAILY,
+});
+// key -> Promise<entry|null>. Bounded by concurrency rather than by time: every
+// entry is deleted in a `finally`, so a rejection cannot leave a poisoned key.
+const neighborInflight = new Map();
+
 // The venue's own contribution to the box it sits in: its coordinates (so the
 // caller can check it really is inside the box the totals were taken over) and
 // its baseline per dow/hour. Returns null when the venue is not in the corpus
 // at all — the common case for a fabricated place id — and null on failure, in
 // which case nothing is subtracted and the neighbour count is one too high
 // rather than wrong in the model's favour.
-async function getSelfBaselines(placeId) {
+// `userId` (optional) is the account a cache MISS is charged to — see
+// allowVenueLookup. A refusal returns null, which is the same value a failed
+// query returns and which the caller reads as "subtract nothing", so the
+// neighbour count comes back one too high rather than wrong in the model's
+// favour. The self-subtraction arithmetic itself is untouched.
+async function getSelfBaselines(placeId, userId) {
   if (!pool || !placeId) return null;
   const cached = selfBaselineCache.get(placeId);
   if (cached && Date.now() - cached.ts < NEIGHBOR_CACHE_TTL) return cached.data;
+  if (!allowVenueLookup(placeId, userId)) return null;
   try {
     const r = await pool.query(
       `SELECT v.latitude AS lat, v.longitude AS lng, b.day_of_week AS dow, b.hour, b.baseline
@@ -1136,7 +1327,50 @@ async function getSelfBaselines(placeId) {
   }
 }
 
-async function getNeighborActivity(placeId, lat, lng, dayOfWeek, hour) {
+// The uncoalesced, unmetered half of getNeighborActivity. Never call this
+// directly: it neither reads the cache nor dedupes concurrent callers, so a
+// direct call is an unshared bounding-box range scan on the primary pool.
+// Returns null when the scan did not happen or failed, which the caller reads
+// as `none` — see the `none` note in the block above.
+async function scanNeighborBox(key, bLat, bLng, userId) {
+  // Budget applies only to cache MISSES (real range scans), and it is read
+  // BEFORE the query so a refused caller neither scans nor writes an entry.
+  //
+  // `userId != null` is the same optional-identity contract allowEventFetch
+  // uses, and the guard has to be written this way round: allow() fails CLOSED
+  // on anything that is not a positive integer id, so `!allow(undefined)` would
+  // have refused every background producer and the whole unauthenticated demo.
+  // A SUPPLIED but malformed id still goes to allow() and is still refused.
+  if (userId != null && !neighborUserBudget.allow(userId)) return null;
+  try {
+    const r = await pool.query(
+      `SELECT b.day_of_week AS dow, b.hour, COUNT(*)::int AS cnt, COALESCE(SUM(b.baseline), 0) AS sum_bl
+       FROM ml_venues v
+       JOIN ml_venue_baselines b ON b.google_place_id = v.google_place_id
+       WHERE v.latitude BETWEEN $1 - $3::float AND $1 + $3::float
+         AND v.longitude BETWEEN $2 - $3::float AND $2 + $3::float
+       GROUP BY b.day_of_week, b.hour`,
+      [Number(bLat), Number(bLng), NEIGHBOR_BOX_DEG]
+    );
+    const byDowHour = new Map();
+    for (const row of r.rows) {
+      byDowHour.set(`${row.dow}_${row.hour}`, {
+        cnt: row.cnt,
+        sum: parseFloat(row.sum_bl) || 0,
+      });
+    }
+    const entry = { ts: Date.now(), byDowHour };
+    boundedSet(neighborCache, key, entry);
+    return entry;
+  } catch {
+    return null;
+  }
+}
+
+// `userId` (optional) is the account a cache MISS is charged to — see the
+// R4-I2 block above. Omitting it keeps the un-metered behaviour, which is the
+// right answer for background producers and the unauthenticated demo.
+async function getNeighborActivity(placeId, lat, lng, dayOfWeek, hour, userId) {
   const none = { count: 0, mean: 0 };
   if (!pool || !lat || !lng) return none;
   // The key IS the box. Query on the bucketed coordinates so the cached entry
@@ -1146,28 +1380,23 @@ async function getNeighborActivity(placeId, lat, lng, dayOfWeek, hour) {
   const key = `${bLat}_${bLng}`;
   let entry = neighborCache.get(key);
   if (!entry || Date.now() - entry.ts >= NEIGHBOR_CACHE_TTL) {
-    try {
-      const r = await pool.query(
-        `SELECT b.day_of_week AS dow, b.hour, COUNT(*)::int AS cnt, COALESCE(SUM(b.baseline), 0) AS sum_bl
-         FROM ml_venues v
-         JOIN ml_venue_baselines b ON b.google_place_id = v.google_place_id
-         WHERE v.latitude BETWEEN $1 - $3::float AND $1 + $3::float
-           AND v.longitude BETWEEN $2 - $3::float AND $2 + $3::float
-         GROUP BY b.day_of_week, b.hour`,
-        [Number(bLat), Number(bLng), NEIGHBOR_BOX_DEG]
-      );
-      const byDowHour = new Map();
-      for (const row of r.rows) {
-        byDowHour.set(`${row.dow}_${row.hour}`, {
-          cnt: row.cnt,
-          sum: parseFloat(row.sum_bl) || 0,
-        });
+    // Coalesce first, charge second. Nineteen of the twenty callers on one
+    // bucket await the same promise and are charged nothing, because the gate
+    // lives on the far side of this check. That is the correct reading of
+    // "charge what you spend", not a discount: only one scan is spent.
+    const inflight = neighborInflight.get(key);
+    if (inflight) {
+      entry = await inflight;
+    } else {
+      const pending = scanNeighborBox(key, bLat, bLng, userId);
+      neighborInflight.set(key, pending);
+      try {
+        entry = await pending;
+      } finally {
+        neighborInflight.delete(key);
       }
-      entry = { ts: Date.now(), byDowHour };
-      boundedSet(neighborCache, key, entry);
-    } catch {
-      return none;
     }
+    if (!entry) return none;
   }
 
   const slot = entry.byDowHour.get(`${dayOfWeek}_${hour}`);
@@ -1176,7 +1405,7 @@ async function getNeighborActivity(placeId, lat, lng, dayOfWeek, hour) {
   // Take self back out, the way add_neighbor_features does. Only if this venue
   // really is one of the rows the totals counted: it needs a baseline for THIS
   // slot and its stored coordinates have to fall inside the box.
-  const self = await getSelfBaselines(placeId);
+  const self = await getSelfBaselines(placeId, userId);
   const inBox = !!self
     && Math.abs(self.lat - Number(bLat)) <= NEIGHBOR_BOX_DEG
     && Math.abs(self.lng - Number(bLng)) <= NEIGHBOR_BOX_DEG;
@@ -1575,9 +1804,9 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
 
     const [eventData, feedback, storedBaseline, neighbors] = await Promise.all([
       getNearbyEvents(lat, lng, eventInstant, userId),
-      getUserFeedback(placeId),
-      getBaseline(placeId, ts.getDay(), ts.getHours()),
-      getNeighborActivity(placeId, lat, lng, ts.getDay(), ts.getHours()),
+      getUserFeedback(placeId, userId),
+      getBaseline(placeId, ts.getDay(), ts.getHours(), userId),
+      getNeighborActivity(placeId, lat, lng, ts.getDay(), ts.getHours(), userId),
     ]);
 
     // Best-available baseline: stored table first, else read it directly off
@@ -1881,9 +2110,41 @@ module.exports = {
     // scans two different place ids at the same bucket produce.
     getNeighborActivity,
     getSelfBaselines,
+    // The round-5 sweep's finding: the three place-keyed Postgres caches, for
+    // __tests__/venueLookupBudget.test.js. Exported rather than restated in the
+    // test so the numbers cannot drift from the comment that argues for them.
+    getBaseline,
+    getUserFeedback,
+    allowVenueLookup,
+    isPlaceIdShaped,
+    VENUE_LOOKUP_USER_HOURLY,
+    VENUE_LOOKUP_USER_DAILY,
+    venueLookupBudgetRemaining: (userId) => venueLookupBudget.remaining(userId),
+    baselineCacheSize: () => baselineCache.size,
+    feedbackCacheSize: () => feedbackCache.size,
+    // Tests only. Production code must never reset a spending counter.
+    __resetVenueLookupCaches: () => {
+      baselineCache.clear();
+      feedbackCache.clear();
+      selfBaselineCache.clear();
+      venueLookupBudget.reset();
+    },
     neighborCacheSize: () => neighborCache.size,
     selfBaselineCacheSize: () => selfBaselineCache.size,
-    __resetNeighborCaches: () => { neighborCache.clear(); selfBaselineCache.clear(); },
+    // The R4-I2 budget on neighbour range scans, for
+    // __tests__/neighborCacheBucketing.test.js. Exported rather than restated
+    // in the test so the numbers cannot drift from the comment that argues for
+    // them.
+    NEIGHBOR_USER_HOURLY,
+    NEIGHBOR_USER_DAILY,
+    neighborBudgetRemaining: (userId) => neighborUserBudget.remaining(userId),
+    neighborInflightSize: () => neighborInflight.size,
+    __resetNeighborCaches: () => {
+      neighborCache.clear();
+      selfBaselineCache.clear();
+      // Tests only. Production code must never reset a spending counter.
+      neighborUserBudget.reset();
+    },
     getMetadata: () => metadata,
     getSession: () => session,
   },
