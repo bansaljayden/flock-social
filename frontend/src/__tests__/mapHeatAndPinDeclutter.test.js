@@ -153,6 +153,24 @@ describe('pin declutter', () => {
     expect(APP).toContain('const size = isActive ? 54 : 44;');
   });
 
+  it('a spiral slot that lands on another pin is skipped, not taken', () => {
+    // Within-group spacing was never the whole problem: a big group's outer
+    // arm reaches 40·√k px from its centroid, and verified live on a real
+    // 20-venue load it parked a pin 16px from a venue that was never in its
+    // group. Every placement is checked against every pin already placed —
+    // and singletons claim their spots FIRST, so an arm can never cover a
+    // lone pin standing exactly on its venue.
+    expect(fnCode).toContain('placedPts.some(');
+    expect(fnCode).toContain('placedPts.push(pts[idxs[0]])');
+    const singletonPass = fnCode.indexOf('placedPts.push(pts[idxs[0]])');
+    const spiralPass = fnCode.indexOf('multiGroups.forEach');
+    expect(singletonPass).toBeGreaterThan(-1);
+    expect(spiralPass).toBeGreaterThan(singletonPass);
+    // The slot cursor is shared across the group, so a slot skipped for a
+    // foreign collision stays skipped — the layout stays deterministic.
+    expect(fnCode).toMatch(/let k = 0;/);
+  });
+
   it('runs when markers are (re)built and again when the zoom settles', () => {
     expect(codeOnly(APP)).toContain('declutterMarkers(map, markersRef.current)');
     expect(codeOnly(APP)).toContain("map.on('zoomend', () => declutterMarkers(map, markersRef.current))");
