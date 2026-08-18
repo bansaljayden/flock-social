@@ -54,7 +54,11 @@
 // listed below for completeness but are not scanned, since they are per-factory
 // instances rather than module state.
 //
-// LAST FULL SWEEP: round 5 (this file's creation). Entries marked
+// LAST FULL SWEEP: round 5 (this file's creation), reworked in round 23, which
+// closed five of its OPEN rows: underageAttempts' clear(), weatherCache's cap,
+// badge's missing shape gate / missing bound / missing caller dimension,
+// venueCache's cap, and the unauthenticated-door dimension on the Places day
+// counter. Entries marked
 //   FIXED-THIS-ROUND  were closed in the same change.
 //   OPEN              are live findings with an exploit written out; each names
 //                     why it was not fixed here.
@@ -113,21 +117,32 @@ const INVENTORY = [
     callerControls: 'the whole email half',
     protects: 'the COPPA age gate — stops a refused under-13 retrying with a new birthday',
     denominator: 'distinct refused identities (presence + expiry, not a count)',
-    bound: '20k keys, then **underageAttempts.clear()**',
-    verdict: 'OPEN',
-    why: 'The last surviving wholesale clear() on a caller-keyed map in the backend: 20,001 refused signups with distinct emails wipe every remembered under-13 refusal, IP blocks included. Every sibling map in the same file was converted to bounded eviction and this one, ~90 lines below oauthNonces, was missed. NOT FIXED HERE — routes/auth.js was being edited concurrently and is out of this change\'s scope. Fix: replace the clear() with the same expire-then-least-consumed-first eviction oauthNonces uses.',
+    bound: '20k keys, low-water 18k, expire-then-LONGEST-REMAINING-LIFETIME-first',
+    verdict: 'FIXED-THIS-ROUND',
+    why: 'Was the last surviving wholesale clear() in the backend: 20,001 refused signups with distinct emails wiped every remembered under-13 refusal, IP blocks included, so the age gate on a 13+ service was resettable on demand by an unauthenticated caller. Now evictUnderageAttempts, the same shape as evictLoginFailures 400 lines up. The ORDER is this map\'s reading of least-consumed-first: with no count to sort on, what an entry has consumed is its lifetime, so longest-remaining goes first. Two consequences and both are the point — every write a flooder makes expires LATER than the block they are aiming at, so their flood evicts itself before their target; and IP entries (15 min) outrank email entries (24h) in survival, which keeps the half of the gate that stops the refused child back-buttoning. Soonest-to-expire-first, oauthNonces\' order, would invert both.',
   },
 
   // ── routes/badge.js ───────────────────────────────────────────────────────
   {
     file: 'routes/badge.js', name: 'cache', kind: 'cache',
-    key: 'req.params.placeId, validated only by isLength({min:4, max:300})',
-    callerControls: 'all of it, and UNAUTHENTICATED',
-    protects: 'a paid Google Place Details call, a weather call and an ML prediction',
-    denominator: 'cached SVGs; the spend leg is allowGlobalPlacesCall(1) per miss',
-    bound: 'NONE — no maxEntries, no sweep, only a read-time TTL check',
-    verdict: 'OPEN',
-    why: 'Writes are gated behind a `venue_profiles WHERE verified = true` check, so stored keys are bounded by the verified-venue set and the paid leg is metered — but a MISS on an arbitrary 300-char string still costs one unauthenticated Postgres query, and the map has no eviction policy at all if that set ever grows. It is also the one paid Places surface with no isPlaceIdShaped check. NOT FIXED HERE — routes/badge.js is outside this change\'s permitted files. Fix: shape-gate placeId with PLACE_ID_RE before the query (a non-shaped id cannot match a row), and give the map the bounded eviction its siblings have.',
+    key: 'req.params.placeId, now gated by utils/places.js isPlaceIdShaped before anything reads it',
+    callerControls: 'all of it, and UNAUTHENTICATED — but only within PLACE_ID_RE',
+    protects: 'a paid Google Place Details call, a weather call and an ML prediction, plus one unauthenticated Postgres query per miss',
+    denominator: 'cached SVGs; the spend leg is allowGlobalPlacesCall(1) per miss, now under allowBadgeMiss (120/IP/hr, 600/day)',
+    bound: 'BADGE_CACHE_MAX 500, low-water 450, expire-then-oldest-first with delete-before-set',
+    verdict: 'FIXED-THIS-ROUND',
+    why: 'Three things were missing and all three are in now. (1) It was the one paid Places surface with no isPlaceIdShaped check, so any 300-char string bought an unauthenticated Postgres lookup; the shape gate refuses those for free and answers 404, the same answer an unknown venue already gets, so it is not a new oracle. (2) The map had no maxEntries and no sweep at all — the verified-venue set bounded it in practice, which is an argument about the data rather than a bound in the code; it now has the house eviction, and delete-before-set so a refreshed badge is not treated as the oldest. (3) It was the only unauthenticated Places door with NO caller dimension whatsoever, so allowBadgeMiss adds a per-IP hourly gate on the MISS (hits stay free) plus a BADGE_DAILY sub-ceiling pinned BELOW GLOBAL_DAILY.',
+  },
+
+  {
+    file: 'routes/badge.js', name: 'badgeIpHits', kind: 'counter',
+    key: 'req.ip',
+    callerControls: 'nothing but the source address',
+    protects: 'the badge MISS path — one unauthenticated Postgres query plus a paid Place Details call, on a door with no account to charge',
+    denominator: 'badge cache MISSES per address per rolling hour (120), under a 600/UTC-day badge leg',
+    bound: '5k addresses, expire-then-least-consumed-first, low-water 4.5k',
+    verdict: 'SAFE',
+    why: 'Added this round because the badge was the only unauthenticated Places door with no caller dimension at all. Cache hits are free and never counted, so an embed on a busy venue page serves its whole audience off one entry; only the metered miss can be flooded. Least-consumed eviction means a spray of fresh addresses deletes its own one-hit entries before any spent counter, and BADGE_DAILY(600) < GLOBAL_DAILY(3000) is pinned by a test so the badge can never spend more than a fifth of the shared Google day.',
   },
 
   // ── routes/budget.js ──────────────────────────────────────────────────────
@@ -378,10 +393,10 @@ const INVENTORY = [
     key: 'req.ip',
     callerControls: 'nothing but the source address',
     protects: 'paid Places /media calls on the UNAUTHENTICATED photo proxy',
-    denominator: 'requests per IP per hour (300), under a 4000/day global leg',
+    denominator: 'requests per IP per hour (300), under a 1500/day photo leg',
     bound: '5k entries, expire-then-least-consumed-first',
     verdict: 'SAFE',
-    why: 'Least-consumed eviction; a flood self-evicts before any real counter.',
+    why: 'Least-consumed eviction; a flood self-evicts before any real counter. Round 23 fixed the number BEHIND it: PUBLIC_PHOTO_BUDGET was 4000 against a GLOBAL_DAILY of 3000, and a sub-ceiling above the ceiling it sits under never binds — 10 addresses at 300/hr could spend the entire shared Places day in about an hour. Now 1500, pinned by a test as PUBLIC_PHOTO_BUDGET < GLOBAL_DAILY, so this door can take at most half the invoice.',
   },
   {
     file: 'routes/venueSearch.js', name: 'photoCache', kind: 'cache',
@@ -419,9 +434,9 @@ const INVENTORY = [
     callerControls: 'the ~80-char free-text query; placeId is shape-checked',
     protects: 'paid Places Text Search + Place Details',
     denominator: 'cache entries, 5 min TTL',
-    bound: '200 entries, expire-then-hard-oldest-first',
-    verdict: 'OPEN',
-    why: 'Authenticated and each miss charges allowPlacesSearch (30/hr/user), so spend is capped — but 200 entries against an 80-char free-text key space means ~200 unique queries flush the whole SHARED cache, and every flushed entry is a fresh paid call for the next user. The eviction ORDER is fine; the CAP is the weak number. NOT FIXED HERE — outside this change\'s permitted files. Fix: raise the cap above what one account\'s daily budget can write, the way EVENT_USER_DAILY(400) < EVENT_CACHE_MAX(500) is pinned in mlPredictor.',
+    bound: 'VENUE_CACHE_MAX 750, low-water 675, expire-then-oldest-first with delete-before-set',
+    verdict: 'FIXED-THIS-ROUND',
+    why: 'The key and the eviction ORDER were always fine; the CAP was the weak number — 200 entries against an 80-char free-text key space meant a few hundred unique queries flushed the SHARED cache, and every flushed entry is a fresh paid call the next user makes. Every write here is one allowPlacesSearch unit, so an account\'s writes ARE its Places allowance, which makes the ceiling pinnable as an inequality: PER_USER_HOURLY(30) x 24 = 720 < VENUE_CACHE_MAX(750). One account spending every unit it has, around the clock, still cannot evict the shared working set. Same shape as EVENT_USER_DAILY(400) < EVENT_CACHE_MAX(500), and the test reads PER_USER_HOURLY from placesBudget rather than retyping 30. The 24 is the pessimistic reading (the 5-minute TTL means the real figure is 30) because a TTL is a freshness decision somebody will change.',
   },
 
   // ── routes/waitlist.js ────────────────────────────────────────────────────
@@ -613,9 +628,9 @@ const INVENTORY = [
     callerControls: 'ALL of it on GET /api/weather, which passes the caller\'s lat/lon straight through',
     protects: 'OpenWeatherMap (free tier, a real 1000/day quota)',
     denominator: 'cache entries; misses charge allowWeatherFetch',
-    bound: '100 entries, 30 min TTL, expire-then-oldest-first',
-    verdict: 'OPEN',
-    why: 'Exactly R4-I2\'s shape on a different map: ~6.5e8 keys at 0.01 degrees against a 100-entry cache, and a miss is a paid upstream call. Spend is capped (40/hr/user, 55/min and 950/day global) but the FLUSH is not — 100 entries evict in about three requests, so every other consumer\'s crowd score loses its weather. The file already names the walk; what it lacks is a floor under the shared cache. NOT FIXED HERE — services/weatherService.js is outside this change\'s permitted files. Fix: raise MAX_CACHE_ENTRIES above what one account\'s hourly budget can write (the EVENT_USER_DAILY < EVENT_CACHE_MAX pattern), and give the global daily leg a per-account sub-ceiling.',
+    bound: 'MAX_CACHE_ENTRIES 1000, 30 min TTL, expire-then-oldest-first',
+    verdict: 'FIXED-THIS-ROUND',
+    why: 'Was R4-I2\'s shape on a different map: ~6.5e8 reachable keys at 0.01 degrees against a 100-entry cache, so about three requests\' worth of fresh coordinates evicted every entry and every other consumer\'s crowd score lost its weather. Bucketing was the first move and it is NOT sufficient on its own: the key was already on the 2dp (~1.1 km) grid publicCrowd and the crowd batch route use, and 2dp still leaves 6.5e8 buckets — coarsening further would buy key space with accuracy the ML feature vector is trained on. What bucketing DID fix is that the rounding is now single-sourced (bucketCoord) instead of three independent toFixed(2) sites, so the key and the coordinate actually sent upstream cannot drift apart. The control is the CAP: every write here follows a charged allowWeatherFetch unit, so the pin WX_DAILY(950) < MAX_CACHE_ENTRIES(1000) means a whole UTC day of paid calls cannot evict one unexpired entry. Same shape as EVENT_USER_DAILY < EVENT_CACHE_MAX.',
   },
   {
     file: 'services/weatherService.js', name: 'wxUserHits', kind: 'counter',
@@ -677,7 +692,7 @@ const INVENTORY = [
     denominator: 'paid calls',
     bound: 'reset on UTC date change or process restart',
     verdict: 'OPEN',
-    why: 'The file names this itself as "THE REMAINING HOLE": the unauthenticated surfaces that charge it (badge, publicCrowd, the photo proxy) have per-IP gates but no per-ACCOUNT ceiling, so it is a shared denial lever reachable by anyone with enough addresses, and it resets on every deploy so it is a brake rather than a cap. NOT FIXED HERE — the change lives in files outside this one. Fix: give each unauthenticated door (badge, publicCrowd, the photo proxy) a per-IP sub-ceiling on this leg, so no single source can spend the shared 3000, and move the daily counter to Postgres so a deploy stops handing out a fresh allowance.',
+    why: 'The file calls this "THE REMAINING HOLE". Round 23 closed the half that could be closed and states plainly why the other half cannot be. A per-ACCOUNT ceiling is not available on a door with no account, so the honest dimension is the source address, and all three unauthenticated doors now carry one AND a daily sub-ceiling strictly below GLOBAL_DAILY: publicCrowd 20/IP/hr under 600/day (already had both), the photo proxy 300/IP/hr under 1500/day (the leg was 4000 — above the 3000 it was meant to be under, so it never bound), and badge 120/IP/hr under 600/day (had neither). 600 + 1500 + 600 = 2700 < 3000, so the unauthenticated surfaces together cannot spend the whole day and starve the authenticated product. STILL OPEN, and only for the reason the file gives itself: the counter is in heap, so it resets on every deploy and divides by the instance count, which makes it a brake rather than a cap no matter how well the doors are dimensioned. Fix: move dayCount to Postgres (single row, INSERT ... ON CONFLICT DO UPDATE ... RETURNING), keeping the in-memory counter in front of it as a cheap first gate.',
   },
   {
     file: 'utils/visionBudget.js', name: 'dayCount (global)', kind: 'counter',
@@ -687,7 +702,7 @@ const INVENTORY = [
     denominator: 'billed images (2000/UTC day = $3.00)',
     bound: 'reset on UTC date change',
     verdict: 'OPEN',
-    why: 'Round 4 R4-I3, a documented residual rather than an oversight: fail-closed means ~34 cooperating accounts (2000/60) turn off every image upload until 00:00 UTC for about three dollars. Failing open would be worse — it would convert a spend cap into a moderation bypass anyone could buy. NOT FIXED HERE. What is missing is not a different policy but an alarm. Fix: emit a real alert (Sentry, or the moderation alert channel) when the global leg crosses 80%, rather than a throttled console.error nobody reads, so the denial is noticed on the day it happens instead of through user reports.',
+    why: 'Round 4 R4-I3, a documented residual rather than an oversight: fail-closed means ~34 cooperating accounts (2000/60) turn off every image upload until 00:00 UTC for about three dollars. Failing open would be worse — it would convert a spend cap into a moderation bypass anyone could buy. Round 23 asked the per-IP question that was asked of the Places leg and answered NO, with the reason: there is no unauthenticated Vision door. allowVisionCall has exactly one caller, utils/moderation.js moderateImage, and its callers are routes/messages.js, routes/stories.js, routes/users.js and sockets/handlers.js — every one of them behind authenticate or a verified socket, every one passing req.user.id, all four under the account-keyed imageSpendLimiter (10/min, mounted once globally so alternating doors cannot buy their sum). A per-IP budget here would be a control with nothing to control: it would refuse nobody the account budget does not already refuse, and adding it would make the row LOOK closed while changing nothing, which is the failure this whole inventory exists to prevent. STILL OPEN, and what is missing is still not a different policy but an alarm. Fix: emit a real alert (Sentry, or the moderation alert channel) when the global leg crosses 80%, rather than a throttled console.error nobody reads, so the denial is noticed on the day it happens instead of through user reports.',
   },
   {
     file: 'utils/visionBudget.js', name: 'userBudget', kind: 'counter',
