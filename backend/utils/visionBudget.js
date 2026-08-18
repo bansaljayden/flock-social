@@ -135,23 +135,25 @@
 // moderateImage() in utils/moderation.js — and every billed Vision call in the
 // repo goes through it, so the GLOBAL ceiling already covers all of them.
 //
-// The PER-ACCOUNT ceiling only bites when the caller passes `{ userId }`, and
-// as of this commit NONE of the four do. They are:
+// The PER-ACCOUNT ceiling bites only when the caller passes `{ userId }`, and
+// as of 2026-08-18 ALL SIX call sites do. They are:
 //
-//   routes/users.js:~1485        avatar upload   — `moderateImage(dataUrl)`
-//   routes/messages.js:~305      flock photo     — `moderateImage(image_url)`
-//   routes/messages.js:~834      DM photo        — `moderateImage(image_url)`
-//   routes/stories.js:~417       story           — `moderation.moderateImage(image_url)`
-//   sockets/handlers.js:~1156    flock photo     — `moderateImage(image_url)`
-//   sockets/handlers.js:~1819    DM photo        — `moderateImage(image_url)`
+//   routes/users.js:~1485        avatar upload   req.user.id
+//   routes/messages.js:~305      flock photo     req.user.id
+//   routes/messages.js:~834      DM photo        req.user.id
+//   routes/stories.js:~417       story           req.user.id
+//   sockets/handlers.js:~1156    flock photo     socket.user.id
+//   sockets/handlers.js:~1819    DM photo        socket.user.id
 //
-// Each is a one-argument change (`, { userId: req.user.id }` / `socket.user.id`)
-// and each was left alone here only because those files were being edited
-// concurrently. UNTIL THEY ARE WIRED, the per-account leg is dormant and the
-// only thing between one account and the whole day's global allowance is the
-// 10-per-60-seconds limiter in server.js — which is 2,000 calls in ~3.5 hours,
-// i.e. one account can still take the day from everybody else. The bill is
-// capped either way; the fairness is not. Wire them.
+// The REST doors sit behind `authenticate`, and both socket doors close over
+// `socket.user`, which authenticateSocket loads from the users table rather
+// than trusting the JWT claim, so every id here is a real row id. The
+// `identity` refusal below is therefore reachable only through a caller bug.
+//
+// __tests__/visionSpendBudget.test.js pins this list two ways: each site's
+// call count and identity expression, and a sweep over routes/ services/
+// sockets/ utils/ middleware/ that fails on any moderateImage( without a
+// userId. A seventh door cannot land silently.
 //
 // The avatar path is the one to do first: the audit names it as the cheapest
 // door in the app, because it needs no flock, no membership and no second
