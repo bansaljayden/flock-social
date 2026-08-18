@@ -10,6 +10,12 @@
 //   the provider errors, times out, or exhausts quota, the upload is REJECTED
 //   rather than letting unmoderated imagery through during a degradation.
 //
+// IMAGE SPEND: Vision is a PAID upstream and every screen is an invoice line.
+//   utils/visionBudget.js holds the two ceilings (per-account and process-wide
+//   daily) and the arithmetic behind them. Exhausting either one REJECTS the
+//   upload for the same reason every other failed screen does — read the
+//   FAIL CLOSED block in that file before changing it.
+//
 // LEGAL POSTURE (18 U.S.C. § 2258A — see MODERATION-LEGAL.md in the repo root):
 //   this screening is VOLUNTARY. § 2258A(f) imposes no duty to scan, and
 //   SafeSearch is NOT a CSAM detector — its 'adult' category cannot judge age,
@@ -87,6 +93,10 @@ const IMAGE_MODERATION_REQUIRED =
 // Maps key is never reused server-side.
 const VISION_API_KEY = process.env.VISION_API_KEY || process.env.GOOGLE_VISION_API_KEY;
 const IMAGE_PROVIDER_CONFIGURED = !!VISION_API_KEY;
+
+// The spend ceilings on that provider. Required here rather than restated,
+// because the numbers and the reasoning behind them belong in one file.
+const { allowVisionCall } = require('./visionBudget');
 
 // Say it once, at boot, where a deploy log will show it. Previously the only
 // signal that image moderation was misconfigured arrived one line at a time,
@@ -462,10 +472,21 @@ function inspectImageFramesUnguarded(buf, depth = 0) {
 
 /**
  * Screen an uploaded image before it becomes visible. FAIL-CLOSED.
+ *
  * @param {string} imageUrl  data: URL or publicly-fetchable https URL
+ * @param {object} [opts]
+ * @param {number|string} [opts.userId]  the account the billed Vision call is
+ *   charged to. OPTIONAL, and the omission is deliberate rather than lazy: a
+ *   caller with no account (or one not yet wired) charges the process-wide
+ *   daily ceiling only, exactly the way services/mlPredictor.js's
+ *   allowEventFetch treats its background producers. Supplying a MALFORMED id
+ *   is refused rather than waved through. Every call site that HAS a user
+ *   should pass one — without it the per-account leg cannot bite and the only
+ *   thing standing between one account and the whole day's global allowance is
+ *   the 10-per-60s limiter in server.js.
  * @returns {Promise<{ allowed: boolean, reason: string|null }>}
  */
-async function moderateImage(imageUrl) {
+async function moderateImage(imageUrl, { userId } = {}) {
   // No provider configured AND screening is mandatory: nothing below can change
   // the answer, so refuse before spending a fetch on it.
   if (!IMAGE_PROVIDER_CONFIGURED && IMAGE_MODERATION_REQUIRED) {
@@ -503,6 +524,32 @@ async function moderateImage(imageUrl) {
   if (!IMAGE_PROVIDER_CONFIGURED) {
     console.warn('⚠️ Image moderation provider not configured, allowing upload (dev only). Set VISION_API_KEY + IMAGE_MODERATION_REQUIRED=true before store submission.');
     return { allowed: true, reason: null };
+  }
+
+  // MONEY GATE — utils/visionBudget.js. Charged HERE and nowhere earlier, which
+  // is the placesBudget rule ("charge before the fetch, and only for a call you
+  // are actually going to make"): everything above this line refuses an image
+  // for free, and a free refusal must not spend a unit the user needs for a
+  // photo that would have worked.
+  //
+  // EXHAUSTION FAILS CLOSED — the upload is REFUSED, not allowed through
+  // unscreened. Do not "fix" this into an allow. Every other way this function
+  // can fail to obtain a verdict (no provider, unreadable bytes, provider 5xx,
+  // timeout, a 200 with no annotation) rejects the upload, and a spend ceiling
+  // that failed open would be strictly worse than all of them: it would be an
+  // image-moderation bypass that any attacker could buy for the price of the
+  // day's budget, on an app whose age floor is 13. The full argument, and the
+  // denial-of-service cost it accepts in exchange, is in visionBudget.js under
+  // "WHAT HAPPENS WHEN A CEILING IS HIT".
+  const budget = allowVisionCall(userId);
+  if (!budget.allowed) {
+    // visionBudget already logged this loudly and greppably (with the account
+    // id, and throttled so it cannot be used to flood the logs), so this does
+    // not log a second line. The distinct `reason` exists so a route or a test
+    // can tell "we ran out of money" apart from "the provider broke"; both
+    // refuse the upload and both show the user the same sentence, because from
+    // the user's side they are the same event.
+    return { allowed: false, reason: 'moderation_budget' };
   }
 
   try {
@@ -729,6 +776,13 @@ const ANIMATED_IMAGE_REJECTED_MESSAGE =
  * The message that belongs with a moderateImage() verdict. Call sites should
  * use this rather than reaching for IMAGE_REJECTED_MESSAGE directly, so a new
  * reason cannot be introduced with a message that misdescribes it.
+ *
+ * 'moderation_budget' deliberately takes the generic message. "We couldn't
+ * verify that image is safe to share" is literally what happened — we did not
+ * screen it, so we did not post it — and it is the same sentence a provider
+ * outage produces, which is right: telling a user we ran out of moderation
+ * budget invites them to retry until it comes back, and tells an attacker
+ * exactly when their spend attack landed.
  * @param {{ reason: string|null }|string|null} verdict
  */
 function imageRejectionMessage(verdict) {
