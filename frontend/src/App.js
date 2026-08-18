@@ -5042,6 +5042,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     localStorage.setItem('flock_safety_on', on ? 'true' : 'false');
     queueSync({ safetyOn: on ? 'true' : 'false' });
   }, []);
+  // Crowd alerts, the pre-peak "about to get busy" push. Absent means ON to
+  // match the backend default (backend/services/pushHelper.js wantsCrowdAlerts),
+  // so only an explicit choice is ever written. The settings sync stores
+  // booleans through String(), so a synced false comes back as the STRING
+  // 'false' - the initializer must compare against that string, never truthiness.
+  const [crowdAlertsOn, setCrowdAlertsOn] = useState(() => localStorage.getItem('flock_crowd_alerts') !== 'false');
+  const setCrowdAlertsEnabled = useCallback((on) => {
+    setCrowdAlertsOn(on);
+    localStorage.setItem('flock_crowd_alerts', on ? 'true' : 'false');
+    queueSync({ crowdAlerts: on ? 'true' : 'false' });
+  }, []);
 
   // Flock Pro — entitlements come from the backend (users.is_premium via the
   // RevenueCat webhook), fetched once at boot and re-fetched after a purchase.
@@ -5219,6 +5230,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         const on = String(s.safetyOn) !== 'false';
         setSafetyOn(on);
         localStorage.setItem('flock_safety_on', on ? 'true' : 'false');
+      }
+      if (s.crowdAlerts !== undefined && s.crowdAlerts !== null) {
+        const on = String(s.crowdAlerts) !== 'false';
+        setCrowdAlertsOn(on);
+        localStorage.setItem('flock_crowd_alerts', on ? 'true' : 'false');
       }
       if (Array.isArray(s.userInterests)) setUserInterests(s.userInterests);
     };
@@ -14529,6 +14545,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       else { setNotifStatus(getNotificationStatus()); showToast("Notifications aren't on. Check your device settings.", 'error'); }
                     }).catch(() => showToast("Notifications aren't on. Check your device settings.", 'error'))} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Enable</button>
                 )}
+              </div>
+              {/* Crowd alerts opt-out. This switch controls ONLY the pre-peak
+                  crowd push (backend/services/crowdAlerts.js), so the label
+                  stays that narrow. The backend treats an absent key as ON. */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--border-light)' }}>
+                <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.users(colors.navy, 18)}</div>
+                <div style={{ flex: 1 }}>
+                  <span style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, display: 'block' }}>Crowd alerts</span>
+                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>A heads up before your flock's venue gets busy</span>
+                </div>
+                <Toggle label="Crowd alerts" on={crowdAlertsOn} onChange={() => setCrowdAlertsEnabled(!crowdAlertsOn)} />
               </div>
             </div>
             {/* Flock Pro — hidden until the backend flips PAYWALL_ENABLED (or the user is already Pro) */}
