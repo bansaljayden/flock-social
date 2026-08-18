@@ -18,20 +18,20 @@
 //           IS still open is the last-resort fallback, and this part pins
 //           exactly how far it can be wrong and what the payload says about it.
 //
-//   PART 3  THE CAUSE. The ML corpus's `hour` column is not a venue-local hour.
-//           scripts/ml/collectWeekly.js writes BestTime's day_raw ARRAY INDEX,
-//           and BestTime's day starts at 06:00 — so stored slot 18 holds the
-//           venue's MIDNIGHT. ml_venue_baselines inherits it verbatim, and this
-//           model is a delta model, so that baseline IS the answer. A 6 PM
-//           request on a corpus venue reads its overnight number. The proof
-//           here is arithmetic on the shipped artifact, not on the vendor's
-//           documentation: read literally, every category in
-//           model_metadata.json peaks at an impossible hour, and adding six
-//           puts all of them where they belong.
+//   PART 3  THE CAUSE. The ML corpus's `hour` column held BestTime's day_raw
+//           ARRAY INDEX, and BestTime's day starts at 06:00 — so stored slot
+//           18 held the venue's MIDNIGHT. ml_venue_baselines inherited it
+//           verbatim, and this is a delta model, so that baseline IS the
+//           answer: a 6 PM request read the venue's overnight number.
+//           Migration 023 (2026-08-15) moved the corpus onto the venue clock
+//           and rebuilt the baselines, but model_metadata.json's
+//           category_baselines were derived pre-fix and stay on the bucket
+//           axis until the retrain — which is what PART 3 pins, by
+//           arithmetic on the artifact itself.
 //
-//   PART 4  THE FIX THAT SHIPPED. The corpus fix needs a retrain and is not a
-//           serving-side patch (see the long note above getBaseline in
-//           services/mlPredictor.js). What ships instead is the honesty half:
+//   PART 4  THE HONESTY FIX THAT SHIPPED FIRST. The model-side fix is a
+//           retrain (the data fix has since shipped; see the note above
+//           getBaseline in services/mlPredictor.js). This is the honesty half:
 //           for a venue with no baseline and no verified reports — which is
 //           nearly every venue a real user searches, since the corpus is 34
 //           seed cities — the answer is a hand-written CATEGORY curve, and the
@@ -316,20 +316,20 @@ test('other zones and other peak hours land on their own wall clock, not the ser
 });
 
 // ===========================================================================
-// PART 3 — THE CAUSE: the corpus hour axis is six hours off
+// PART 3 — THE CAUSE: the hour axis was six hours off. Migration 023 fixed
+// the CORPUS on 2026-08-15; the ARTIFACT tested here predates the fix.
 // ===========================================================================
 
-// scripts/ml/collectWeekly.js:
-//     for (let hour = 0; hour < day.hours.length && hour < 24; hour++)
-//         ... venue.id, jsDayOfWeek, hour ...      // day.hours = day.day_raw
-// BestTime's day_raw runs 06:00 to 05:59, so the index is not the hour.
+// Pre-fix, collectWeekly.js wrote BestTime's day_raw ARRAY INDEX as the hour;
+// day_raw runs 06:00-05:59, so the index was not the hour. (It now writes
+// (index + 6) % 24 and declares hour_axis = 'venue_local'.)
 const BESTTIME_DAY_STARTS_AT = 6;
 
 function metadata() {
   return require(path.join(__dirname, '..', 'scripts', 'ml', 'models', 'model_metadata.json'));
 }
 
-test('the shipped corpus is on a BestTime bucket axis, not a venue-local one', () => {
+test('the shipped artifact is on a BestTime bucket axis — trained pre-fix, until the retrain', () => {
   const cb = metadata().category_baselines || {};
   assert.ok(Object.keys(cb).length > 0, 'no category_baselines in metadata — this proof needs them');
 
@@ -358,8 +358,8 @@ test('the shipped corpus is on a BestTime bucket axis, not a venue-local one', (
   assert.ok(total >= 80, `only ${total} (category, day) curves to test`);
   assert.ok(daytimeAfterShift / total > 0.9,
     `only ${daytimeAfterShift}/${total} peaks land in local 12:00-23:00 after adding ${BESTTIME_DAY_STARTS_AT}h; `
-    + 'if this has dropped, the corpus may have been rebuilt on a venue-local axis — '
-    + 'in which case DELETE this test and the compensation notes in services/mlPredictor.js getBaseline');
+    + 'if this has dropped, the artifact was likely re-exported from the corrected corpus — '
+    + 'in which case DELETE PART 3 and update the axis-bug note above services/mlPredictor.js getBaseline');
 });
 
 test('the night categories peak in the evening only after the shift, never before it', () => {
@@ -376,7 +376,7 @@ test('the night categories peak in the evening only after the shift, never befor
   for (const cat of ['bar', 'brewery', 'nightclub', 'restaurant']) {
     const slot = peakSlot(cat, 5);
     if (slot == null) continue;
-    assert.ok(slot < 18, `${cat} stored peak at slot ${slot}: read literally that is already evening, so the axis may be fixed`);
+    assert.ok(slot < 18, `${cat} stored peak at slot ${slot}: read literally that is already evening, so the artifact may have been rebuilt post-fix`);
     const shifted = (slot + BESTTIME_DAY_STARTS_AT) % 24;
     assert.ok(shifted >= 18 && shifted <= 23,
       `${cat} peaks at stored slot ${slot} -> local ${shifted}; expected an evening peak after the shift`);
@@ -384,16 +384,19 @@ test('the night categories peak in the evening only after the shift, never befor
 });
 
 test('a 6 PM lookup on that axis reads the venue\'s late-evening slot', () => {
-  // The mechanism, in one line of arithmetic. services/mlPredictor.js
-  // getBaseline asks ml_venue_baselines for hour = 18, and slot 18 is
-  // 18 + 6 = 24 -> midnight. This model is `label_type: 'delta'`, so
+  // The mechanism, in one line of arithmetic, preserved against the PRE-FIX
+  // artifact. getBaseline used to ask ml_venue_baselines for hour = 18 and get
+  // slot 18 = 18 + 6 = 24 -> midnight. Migration 023 rebuilt the DB table on
+  // the venue clock, but model_metadata.json's category_baselines were derived
+  // before the fix, so the bucket-axis arithmetic still holds in the artifact.
+  // This model is `label_type: 'delta'`, so
   // score = baseline + clamp(delta, +/-30): the baseline IS the answer.
   const meta = metadata();
   assert.equal(meta.label_type, 'delta',
     'the model is no longer a delta model — re-derive how much the baseline slot matters before trusting this test');
 
   const cb = meta.category_baselines || {};
-  const readAt6pm = cb['restaurant_5_18'];   // what getBaseline fetches for 6 PM
+  const readAt6pm = cb['restaurant_5_18'];   // what a pre-fix 6 PM read fetched
   const trueAt6pm = cb['restaurant_5_12'];   // the slot that actually holds 6 PM
   assert.ok(Number.isFinite(readAt6pm) && Number.isFinite(trueAt6pm));
   assert.equal((18 + BESTTIME_DAY_STARTS_AT) % 24, 0, 'slot 18 is midnight on this axis');
@@ -481,7 +484,7 @@ test('verified reporters are evidence, and lift the hedge', () => {
     'the boost real reporters earn reaches the wire');
 });
 
-test('real reporters outrank a model whose anchor cannot be vouched for', () => {
+test('real reporters outrank a model whose weights predate the axis fix', () => {
   // Ordering pin. Checking the model first silently downgraded exactly the
   // venues that DO have verified reports — the one part of this system that
   // works end to end — because the unverified-axis branch swallowed them.
@@ -494,12 +497,12 @@ test('real reporters outrank a model whose anchor cannot be vouched for', () => 
   assert.equal(unobserved.supported, crowdEngine.ML_BASELINE_AXIS_VERIFIED);
 });
 
-test('the model does not claim a measurement while its anchor is on an unverified clock', () => {
+test('the model does not claim a measurement while its weights predate the axis fix', () => {
   // Lehigh Valley and Miami ARE corpus cities, so this is not hypothetical:
-  // real venues near real users take the ML path and are anchored on the
-  // baseline slot PART 3 shows is six hours off. Until the corpus is fixed and
-  // the model retrained, an ML answer is exactly as unvouchable as a category
-  // prior, and it says so.
+  // real venues near real users take the ML path. The baselines anchoring it
+  // were fixed by migration 023, but the served weights and their measured
+  // training_metrics still come from the pre-fix corpus, so an ML answer's
+  // confidence is still not a measurement of what is served, and it says so.
   const ml = describePredictionSupport('ml', 0);
   if (crowdEngine.ML_BASELINE_AXIS_VERIFIED) {
     // The retrain landed. The model's holdout figure describes what it serves.
@@ -511,7 +514,7 @@ test('the model does not claim a measurement while its anchor is on an unverifie
     assert.equal(ml.basis, 'model_unverified_axis');
     assert.equal(ml.supported, false);
     assert.equal(ml.confidenceMeans, 'input_completeness',
-      'within_15 was measured on the misaligned axis, so it does not describe what is served');
+      'within_15 was measured on the pre-fix mixed-axis corpus, so it does not describe what is served');
     assert.equal(publishedLabel(85, ml), 'Usually very busy');
   }
   // Either way the number stays inside its contract.
@@ -519,9 +522,10 @@ test('the model does not claim a measurement while its anchor is on an unverifie
 });
 
 test('flipping the axis flag is the whole revert, and it is not flipped yet', () => {
-  // The tripwire. When somebody fixes scripts/ml/collectWeekly.js, backfills
-  // ml_training_data, rebuilds ml_venue_baselines and retrains, they flip
-  // ML_BASELINE_AXIS_VERIFIED and this test tells them to delete PART 3.
+  // The tripwire. collectWeekly.js is fixed, and migration 023 backfilled
+  // ml_training_data and rebuilt ml_venue_baselines (2026-08-15); the one
+  // remaining step is the retrain. Whoever ships it flips
+  // ML_BASELINE_AXIS_VERIFIED, and this test tells them to delete PART 3.
   assert.equal(typeof crowdEngine.ML_BASELINE_AXIS_VERIFIED, 'boolean');
   assert.equal(crowdEngine.ML_BASELINE_AXIS_VERIFIED, false,
     'the flag is true — so the corpus fix and retrain are believed done. '
