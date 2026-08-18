@@ -11,7 +11,12 @@ const { isPlaceIdShaped } = require('../utils/places');
 // crowd.js and ai.js so every paid Places fetch draws from the SAME pool
 // (round 8). allowGlobalPlacesCall is the door for surfaces with no
 // authenticated user to charge — here, the public photo proxy (round 15).
-const { allowPlacesSearch, allowGlobalPlacesCall } = require('../utils/placesBudget');
+// PER_USER_HOURLY and GLOBAL_DAILY are imported, not retyped: two numbers in
+// this file are sized AGAINST them (VENUE_CACHE_MAX and PUBLIC_PHOTO_BUDGET)
+// and a copied constant is an inequality that silently stops holding.
+const {
+  allowPlacesSearch, allowGlobalPlacesCall, PER_USER_HOURLY, GLOBAL_DAILY,
+} = require('../utils/placesBudget');
 
 const router = express.Router();
 
@@ -23,7 +28,22 @@ const API_KEY = process.env.GOOGLE_PLACES_API_KEY;
 const photoIpHits = new Map();
 let photoDayKey = new Date().toISOString().slice(0, 10);
 let photoDayCount = 0;
-const PUBLIC_PHOTO_BUDGET = 4000;
+// ---------------------------------------------------------------------------
+// PUBLIC_PHOTO_BUDGET, and why 4000 was not a ceiling (round 23).
+// ---------------------------------------------------------------------------
+// This was 4000 against a GLOBAL_DAILY of 3000. A sub-ceiling ABOVE the ceiling
+// it sits under never binds: the effective limit on this unauthenticated door
+// was the whole shared Places day, so 10 addresses at the 300/hour per-IP rate
+// could spend every paid Google call the authenticated product had for the rest
+// of the UTC day, in about an hour. The per-IP dimension existed; the thing it
+// was supposed to be a fraction OF did not.
+//
+// THE PIN: PUBLIC_PHOTO_BUDGET (1500) < GLOBAL_DAILY (3000). Half the day, so
+// the photo proxy can never starve venue search, the crowd card, the owner
+// dashboard or Birdie — the four surfaces that charge the same ledger with a
+// real user behind them. Pinned by __tests__/placesProxyAbuse.test.js against
+// both files' real numbers.
+const PUBLIC_PHOTO_BUDGET = 1500;
 function allowPhotoFetch(req) {
   const today = new Date().toISOString().slice(0, 10);
   if (today !== photoDayKey) { photoDayKey = today; photoDayCount = 0; }
@@ -237,9 +257,43 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey) {
 // All other routes require authentication
 router.use(authenticate);
 
-// Server-side venue search cache (5 min TTL)
+// ---------------------------------------------------------------------------
+// Server-side venue search cache (5 min TTL), and the number that was wrong.
+// ---------------------------------------------------------------------------
+// The KEY here is fine and the eviction ORDER is fine. The CAP was the weak
+// number. At 200 entries against an ~80-character free-text query space, a few
+// hundred unique searches flushed the SHARED cache, and every flushed entry is
+// a fresh PAID Google call the next user makes — the eviction half of the
+// amplification/eviction pair this repo's inventory is organised around. A
+// cache whose ceiling one caller's allowance can reach is not protecting
+// anybody but its own memory.
+//
+// THE PIN: PER_USER_HOURLY * 24 (720) < VENUE_CACHE_MAX (750).
+// Every write to this map is behind allowPlacesSearch, one unit per entry
+// (runTextSearch and the details worker each charge before they call and each
+// write exactly one key), so an account's writes are its Places allowance and
+// nothing else. 30/hour spent around the clock is 720 entries in a day, which
+// is less than the cache holds: ONE ACCOUNT CANNOT EVICT THE SHARED WORKING SET
+// EVEN BY SPENDING EVERY UNIT IT HAS, ALL DAY. Same shape as
+// EVENT_USER_DAILY(400) < EVENT_CACHE_MAX(500) in services/mlPredictor.js and
+// VISION_USER_DAILY < VISION_GLOBAL_DAILY in utils/visionBudget.js, and pinned
+// the same way by a test that reads PER_USER_HOURLY from placesBudget rather
+// than retyping 30.
+//
+// The 24 is deliberately the pessimistic reading. The real figure is far
+// smaller: entries live 5 minutes, so what one account can actually hold in a
+// live cache is the 30 units its rolling hour allows, not 720. The pin is
+// written against the number an attacker could reach if the TTL were removed,
+// because the TTL is a freshness decision and someone will change it.
+//
+// MEMORY. 750 entries is not 750 entries' worth of risk: the cache can never
+// hold more than the number of charged calls made inside one 5-minute TTL
+// window, and GLOBAL_DAILY caps that at 3000 for the whole day. The ceiling is
+// there so eviction is unreachable, not because it is expected to fill.
 const venueCache = new Map();
 const CACHE_TTL = 5 * 60 * 1000;
+const VENUE_CACHE_MAX = 750;
+const VENUE_CACHE_LOW_WATER = Math.floor(VENUE_CACHE_MAX * 0.9);
 
 function getCached(key) {
   const entry = venueCache.get(key);
@@ -249,15 +303,25 @@ function getCached(key) {
 }
 
 function setCache(key, data) {
+  // Delete first so a refreshed key moves to the END of insertion order.
+  // Map.set on an existing key keeps its original position, which would make
+  // the oldest-first fallback below evict the most frequently refreshed (i.e.
+  // hottest) query. Same fix as services/weatherService.js's setCache.
+  venueCache.delete(key);
   venueCache.set(key, { data, ts: Date.now() });
   // Evict old entries if cache grows too large
-  if (venueCache.size > 200) {
+  if (venueCache.size > VENUE_CACHE_MAX) {
     const now = Date.now();
     for (const [k, v] of venueCache) {
       if (now - v.ts > CACHE_TTL) venueCache.delete(k);
     }
-    // Fresh-but-oversized: evict oldest so unique-query spam can't grow it
-    while (venueCache.size > 200) venueCache.delete(venueCache.keys().next().value);
+    // Fresh-but-oversized: evict oldest, down to a low-water mark rather than
+    // to exactly the ceiling. Stopping at the ceiling makes a full cache pay a
+    // full scan on every write, which is a CPU lever; same rule as
+    // utils/probeBudget.js and routes/publicCrowd.js.
+    while (venueCache.size > VENUE_CACHE_LOW_WATER) {
+      venueCache.delete(venueCache.keys().next().value);
+    }
   }
 }
 
@@ -600,6 +664,18 @@ module.exports = router;
 // midnight does; the per-IP table survives it, which is why the flood pin can
 // exist at all. Production code must never reset a spending counter.
 module.exports.__test = {
+  // Round 23 — the two sized-against-something numbers and the constants they
+  // are sized against, so the inequalities are pinned from one source.
+  VENUE_CACHE_MAX,
+  VENUE_CACHE_LOW_WATER,
+  PUBLIC_PHOTO_BUDGET,
+  PER_USER_HOURLY,
+  GLOBAL_DAILY,
+  CACHE_TTL,
+  setCache,
+  getCached,
+  venueCacheSize: () => venueCache.size,
+  clearVenueCache: () => venueCache.clear(),
   allowPhotoFetch,
   resetPhotoBudget({ clearIps = true } = {}) {
     photoDayKey = new Date().toISOString().slice(0, 10);
