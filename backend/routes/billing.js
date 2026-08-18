@@ -59,6 +59,11 @@ const INT4_MAX = 2147483647;
 // ---------------------------------------------------------------------------
 const { emitToFlockMembers, emitToFlockExcludingBlocked } = require('../sockets/handlers');
 const { getInvisibleUserIds, isBlockedBetween } = require('../utils/blocks');
+// PRIVACY: ghost commit derives the estimated share from the CACHED
+// flocks.budget_ceiling, which is only as banded as whatever last wrote it.
+// Imported from routes/budget.js — the route that owns the banding rule — so
+// there is one implementation of the thresholds rather than two that can drift.
+const { bandCeiling } = require('./budget');
 // Shape before content — see validators/shape.js.
 const { scalarOnly } = require('../validators/shape');
 
@@ -811,7 +816,10 @@ router.post('/:flockId/ghost-commit',
         return res.status(400).json({ error: 'Ghost commit opens after at least 3 people have submitted budgets' });
       }
 
-      const ceiling = flockResult.rows[0].budget_ceiling ? parseFloat(flockResult.rows[0].budget_ceiling) : null;
+      // Banded, not raw: a row cached before 1fdea72 still holds the exact MIN,
+      // and estimatedShare below IS this number on the wire. bandCeiling is a
+      // no-op on an already-banded value, so this only ever repairs a legacy row.
+      const ceiling = bandCeiling(flockResult.rows[0].budget_ceiling);
       if (!ceiling) {
         return res.status(400).json({ error: 'No budget ceiling set, so we cannot estimate a share' });
       }
