@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { signup, googleLoginWithToken, resendVerificationEmail } from '../../services/api';
-import { useGoogleLogin } from '@react-oauth/google';
+import { signup, resendVerificationEmail } from '../../services/api';
+import useGoogleAuth, { isGoogleSignInAvailable } from './useGoogleAuth';
 import AppleSignInButton from './AppleSignInButton';
 import AuthShell, { AUTH, AuthError, AuthRule, GoogleG, PasswordEye } from './AuthShell';
 import Icons from '../ui/Icons';
@@ -48,19 +48,15 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
 
   // Custom-styled Google button; DOB is validated in onClick BEFORE this
   // launches (the server re-checks age on account creation regardless).
-  const startGoogle = useGoogleLogin({
-    onSuccess: async (tokenResponse) => {
-      setLoading(true);
-      try {
-        const data = await googleLoginWithToken(tokenResponse.access_token, dob);
-        onSignupSuccess(data.user);
-      } catch (err) {
-        setError(err.message || 'Google sign-in failed');
-      } finally {
-        setLoading(false);
-      }
-    },
-    onError: () => setError('Google sign-up failed'),
+  // The hook routes native iOS through Google's own SDK and everything else
+  // through the GIS browser flow; both post to the same /api/auth/google.
+  const startGoogle = useGoogleAuth({
+    onSuccess: onSignupSuccess,
+    // The DOB is already collected and age-gated above before this can fire,
+    // so a needsDob 403 is not reachable from this screen; the message is
+    // surfaced verbatim either way, exactly as before.
+    onError: (msg) => setError(msg || 'Google sign-in failed'),
+    setBusy: setLoading,
   });
 
   // Flock requires users to be at least 13 (matches Terms of Service + the
@@ -296,28 +292,32 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
 
       <AuthRule label="or sign up with" />
 
-      <button
-        type="button"
-        className="auth-provider"
-        disabled={loading}
-        onClick={() => {
-          setError('');
-          // Age gate the Google sign-up path too: DOB must be entered and
-          // >= 13 before we create an account (parity with email signup).
-          const age = ageFromDob(dob);
-          if (age === null) {
-            setError('Add your date of birth above first, then continue with Google.');
-            return;
-          }
-          if (age < MIN_AGE) {
-            setError(`You must be at least ${MIN_AGE} to use Flock`);
-            return;
-          }
-          startGoogle();
-        }}
-      >
-        <GoogleG /> Continue with Google
-      </button>
+      {/* Hidden only when a native build carries no iOS Google client id, i.e.
+          when the button could not work by any route. On web it always shows. */}
+      {isGoogleSignInAvailable() && (
+        <button
+          type="button"
+          className="auth-provider"
+          disabled={loading}
+          onClick={() => {
+            setError('');
+            // Age gate the Google sign-up path too: DOB must be entered and
+            // >= 13 before we create an account (parity with email signup).
+            const age = ageFromDob(dob);
+            if (age === null) {
+              setError('Add your date of birth above first, then continue with Google.');
+              return;
+            }
+            if (age < MIN_AGE) {
+              setError(`You must be at least ${MIN_AGE} to use Flock`);
+              return;
+            }
+            startGoogle({ dob });
+          }}
+        >
+          <GoogleG /> Continue with Google
+        </button>
+      )}
 
       {/* Apple guideline 4.8 parity with the Google button above; native
           iOS only (returns null on web). Apple accounts don't carry DOB,

@@ -23,6 +23,34 @@ const config: CapacitorConfig = {
     // colour is fully covered in both light and dark mode.
     backgroundColor: '#0b1a2e',
   },
+  plugins: {
+    // @capgo/capacitor-social-login ships four providers and links all four
+    // SDKs unless told otherwise. Only Google is wanted here, and the other
+    // three are not neutral omissions:
+    //
+    //   facebook: false — otherwise the Facebook SDK is linked into the binary.
+    //     It carries AppTrackingTransparency code, and the 2.1 reply to Apple
+    //     states in writing that this app does no cross-app tracking and shows
+    //     no ATT prompt. Nothing in Flock offers Facebook login.
+    //   apple:    false — Sign in with Apple is already shipped by
+    //     @capacitor-community/apple-sign-in (see AppleSignInButton.js). This
+    //     flag governs only THIS plugin's Apple provider, which nothing calls;
+    //     turning it off also drops Alamofire.
+    //   twitter:  false — no such login exists in the app.
+    //
+    // The plugin reads this block in its own `capacitor:sync:before` hook and
+    // comments the matching entries out of its Package.swift, so `npx cap sync
+    // ios` is what makes it take effect. Every provider's Swift source is
+    // guarded with `#if canImport(...)`, which is why disabling them compiles.
+    SocialLogin: {
+      providers: {
+        google: true,
+        facebook: false,
+        apple: false,
+        twitter: false,
+      },
+    },
+  },
   experimental: {
     ios: {
       spm: {

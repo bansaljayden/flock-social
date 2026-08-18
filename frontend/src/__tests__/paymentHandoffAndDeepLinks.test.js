@@ -888,14 +888,24 @@ describe('the iOS URL entry points are declared exactly when something produces 
     }
   });
 
-  test('so CFBundleURLTypes stays out, and the day that changes this test says so', () => {
-    // Not an oversight and not blocked by Apple: this key needs no portal
-    // capability and no server file. It is out because it would declare an
-    // entry point that no push, no email, no invite link and no web page ever
-    // hands out, which is the "declared capability nothing uses" defect the
-    // rest of the iOS shell config is checked against. If the assertion above
-    // ever fails, add the key in the SAME change as the producer.
-    expect(hasKey(infoPlist, 'CFBundleURLTypes')).toBe(false);
+  test('so no APP-OWNED scheme is declared, and the day that changes this says so', () => {
+    // Not an oversight and not blocked by Apple: an app-owned scheme needs no
+    // portal capability and no server file. It is out because it would declare
+    // an entry point that no push, no email, no invite link and no web page
+    // ever hands out, which is the "declared capability nothing uses" defect
+    // the rest of the iOS shell config is checked against. If the assertion
+    // above ever fails, add the scheme in the SAME change as the producer.
+    //
+    // CFBundleURLTypes itself is no longer empty, and that is not this rule
+    // being relaxed. Its one member is `com.googleusercontent.apps.…`, the
+    // callback GoogleSignIn redirects to at the end of the native sign-in
+    // added in useGoogleAuth.js — a URL the SDK both produces and consumes,
+    // which is precisely the producer this test asks for. Nothing else may
+    // join it without one.
+    const schemes = [...stripComments(infoPlist)
+      .matchAll(/<key>CFBundleURLSchemes<\/key>\s*<array>([\s\S]*?)<\/array>/g)]
+      .flatMap((m) => [...m[1].matchAll(/<string>([\s\S]*?)<\/string>/g)].map((s) => s[1]));
+    expect(schemes).toEqual([expect.stringMatching(/^com\.googleusercontent\.apps\./)]);
   });
 
   test('associated domains stay out because they cannot be signed from this repo', () => {
