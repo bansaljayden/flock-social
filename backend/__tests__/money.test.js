@@ -162,7 +162,11 @@ test('budget status exposes only the four aggregate fields plus the caller own r
   const res = await call('GET', '/api/budget/42');
 
   assert.strictEqual(res.status, 200);
-  assert.strictEqual(res.body.ceiling, 55);
+  // 55 is the cached MIN; 50 is the band it publishes. The reveal is rounded
+  // down to the nearest $10 above $50 so that the number on the wire is never
+  // one identifiable person's exact amount (audit finding M1). Down, never up:
+  // a venue at $50 is still inside everyone's budget.
+  assert.strictEqual(res.body.ceiling, 50);
   assert.strictEqual(res.body.isReady, true);
   assert.strictEqual(res.body.submissionCount, 4);
   assert.strictEqual(res.body.skipCount, 1);
