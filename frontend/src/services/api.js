@@ -542,11 +542,23 @@ export function isLoggedIn() {
 }
 
 // Profile
-export async function updateProfile({ name, email, current_password, new_password }) {
+// `bio` rides the same PUT (server caps it at 200 characters). It is optional
+// here for the same express-validator reason saveFlockVenue strips nullish:
+// undefined keys fall out of JSON.stringify, so an older backend that has not
+// learned the field yet simply never sees it.
+export async function updateProfile({ name, email, bio, current_password, new_password }) {
   return request('/api/users/profile', {
     method: 'PUT',
-    body: JSON.stringify({ name, email, current_password, new_password }),
+    body: JSON.stringify({ name, email, bio, current_password, new_password }),
   });
+}
+
+// The person card behind a tap on someone's face: id, name, photo, bio.
+// Answers 404 when either side has blocked the other (and on a backend that
+// does not ship the route yet), so callers treat any failure as "no card",
+// never as an error worth showing.
+export async function getUserCard(id) {
+  return request(`/api/users/${id}/card`);
 }
 
 // Flocks
@@ -569,6 +581,26 @@ export async function createFlock({ name, venue_name, venue_address, venue_id, v
 
 export async function deleteFlock(id) {
   return request(`/api/flocks/${id}`, { method: 'DELETE' });
+}
+
+// Completed and cancelled flocks, newest first. Answers { flocks: [...] } with
+// each row carrying its venue fields and a members array of
+// { id, name, profile_image_url }.
+export async function getFlockHistory() {
+  return request('/api/flocks/history');
+}
+
+// "Do it again": clone a finished flock into a fresh one. Mirrors createFlock's
+// contract — event_time is the one field POST /api/flocks requires from this
+// client, so the caller passes the fresh time and gets back { flock } exactly
+// like createFlock does.
+export async function rerunFlock(id, { event_time } = {}) {
+  const data = await request(`/api/flocks/${id}/rerun`, {
+    method: 'POST',
+    body: JSON.stringify({ event_time }),
+  });
+  track('flock_rerun', {});
+  return data;
 }
 
 // --- Flock edits (PUT /api/flocks/:id, creator only) ---
