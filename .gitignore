@@ -87,3 +87,29 @@ flock-sensor/__pycache__/
 __pycache__/
 *.pyc
 frontend/public/birdie/flap-src.png
+
+# Local working docs and internal notes. They live on disk, not in the repo.
+# Docs that stay tracked are the ones tests read: README.md, SLOP-AUDIT.md,
+# BACKUP-AND-VERIFICATION.md, MODERATION-LEGAL.md, MONEY-MODEL.md,
+# SUBMIT-CHECKLIST.md, VENUE-BILLING.md, backend/.env.example.
+ADVERSARIAL-REVIEW.md
+APP-STORE-SUBMISSION.md
+APPLE-2.1-REPLY.md
+DEFERRED.md
+DOMAIN.md
+FRIEND-FEEDBACK.md
+PAYWALL-DECISION.md
+PAYWALL.md
+PRODUCT.md
+PUSH-SETUP.md
+REVIEW-ROUND*.md
+STAGING.md
+SUBMISSION-PACKET.md
+SUBMISSION.md
+TASKS.md
+TESTFLIGHT_TEST_INFO.md
+/README
+/.specify/
+/seo-audit/
+frontend/.env.example
+flock-sensor/flock_sensor.env.example
