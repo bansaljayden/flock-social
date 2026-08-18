@@ -290,6 +290,18 @@ async function nameIsTakenDown(run, flockId, name) {
 }
 
 // Resolve a link token to its live flock, or null.
+//
+// SECURITY-AUDIT-auth.md R2-4 (MEDIUM): `revoked = false` used to be the whole
+// liveness test. Nothing else bounded a link in TIME — flockIsOver only catches
+// a flock somebody manually marked completed/cancelled, and no code path does
+// that on its own — so a token shared into a group chat stayed a working bearer
+// credential to accepted membership indefinitely. `expires_at` (migration 028)
+// is the deadline that applies when nobody revokes.
+//
+// An expired link resolves to NULL, which is the SAME answer an invented token
+// gets: every caller of this function turns NULL into the not-found response,
+// so the surface never tells a holder whether the link is expired, revoked, or
+// was never real.
 async function resolveLink(token) {
   const r = await pool.query(
     `SELECT il.flock_id, f.name, f.event_time, f.venue_name,
@@ -297,7 +309,8 @@ async function resolveLink(token) {
      FROM flock_invite_links il
      JOIN flocks f ON f.id = il.flock_id
      JOIN users u ON u.id = f.creator_id
-     WHERE il.token = $1 AND il.revoked = false`,
+     WHERE il.token = $1 AND il.revoked = false
+       AND il.expires_at > NOW()`,
     [token]
   );
   return r.rows[0] || null;

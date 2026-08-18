@@ -209,27 +209,54 @@ const allowedOrigins = [
   'https://localhost',
 ];
 
-// Vercel PREVIEW deploys for THIS project. The old pattern was
-// /^https:\/\/flock-app(-[a-z0-9]+)*\.vercel\.app$/, which matched ANY
-// flock-app-<anything>.vercel.app — including an attacker-registrable
-// `flock-app-evil.vercel.app` (SECURITY-AUDIT-config.md finding #1, MEDIUM).
-// This is pinned to the full production project slug `flock-app-w65m` AND
-// requires the preview URL STRUCTURE: `flock-app-w65m-` then a build-hash
-// label (or a `git-<branch>` label) then a deploy-scope label, then
-// `.vercel.app`. So `flock-app-w65m-<hash>-<scope>.vercel.app` and
-// `flock-app-w65m-git-<branch>-<scope>.vercel.app` (the two real Vercel
-// preview shapes) still pass, while `flock-app-evil.vercel.app`,
-// `flock-app-w65m.vercel.app.attacker.com` and any bare project-root host of a
-// different project no longer match. The exact production host
-// `flock-app-w65m.vercel.app` is covered by `allowedOrigins` above.
-const VERCEL_PREVIEW_ORIGIN = /^https:\/\/flock-app-w65m-(?:git-[a-z0-9-]+|[a-z0-9]+)-[a-z0-9-]+\.vercel\.app$/;
+// WHY THERE IS NO PREVIEW PATTERN HERE ANY MORE (SECURITY-AUDIT-auth.md R2-1).
+//
+// Two pattern-matching attempts have now been bypassed on this exact line:
+//
+//   1. /^https:\/\/flock-app(-[a-z0-9]+)*\.vercel\.app$/ admitted ANY
+//      `flock-app-<anything>.vercel.app`, so `flock-app-evil.vercel.app` — a
+//      Vercel project name anyone can register — was an allowed origin.
+//   2. Its replacement pinned the production slug and demanded the preview URL
+//      SHAPE: /^https:\/\/flock-app-w65m-(?:git-[a-z0-9-]+|[a-z0-9]+)-[a-z0-9-]+\.vercel\.app$/.
+//      But that shape is `<pinned-slug>-<label>-<label>`, and a Vercel project
+//      name is free text, so `flock-app-w65m-evil-x` is registrable and its
+//      origin `https://flock-app-w65m-evil-x.vercel.app` matched.
+//
+// The root problem is not the regex, it is the namespace: `*.vercel.app` is a
+// shared, self-service namespace, so ANY pattern over it is a pattern over
+// hostnames an attacker can mint. Pinning the slug does not help — the repo is
+// going public, and the slug is also simply the production origin, so it was
+// never a secret. A third, tighter regex would be the same bet a third time.
+//
+// So the allowlist is now EXACT HOSTS only. Preview deploys are opt-in per
+// deploy through EXTRA_CORS_ORIGIN (comma-separated absolute origins), which is
+// UNSET in production: a preview that wants to talk to this backend adds its own
+// origin to its own deploy's env, and nothing an attacker registers is admitted
+// by default. Production is flockcorp.com and is listed above verbatim.
+const EXTRA_CORS_ORIGINS = String(process.env.EXTRA_CORS_ORIGIN || '')
+  .split(',')
+  .map((s) => s.trim())
+  // Absolute origins only. A bare hostname or a path fragment would never equal
+  // a browser-sent Origin header anyway, and refusing it here keeps a typo in a
+  // deploy variable from reading as "allowlist entry that silently does nothing".
+  .filter((s) => /^[a-z][a-z0-9+.-]*:\/\/[^\s/]+$/i.test(s));
+
+if (EXTRA_CORS_ORIGINS.length > 0) {
+  console.warn(`[cors] EXTRA_CORS_ORIGIN is set — additionally allowing: ${EXTRA_CORS_ORIGINS.join(', ')}`);
+}
+
+for (const extra of EXTRA_CORS_ORIGINS) allowedOrigins.push(extra);
+
+// THE one predicate. The REST cors() callback and the Socket.io handshake
+// callback both call this, so the two cannot drift apart (that de-duplication
+// came in with the previous fix and is kept deliberately).
+const isAllowedOrigin = (origin) => allowedOrigins.includes(origin);
 
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (mobile apps, Postman, etc.)
     if (!origin) return callback(null, true);
-    // Allow any Vercel preview/production deployment for this project
-    if (allowedOrigins.includes(origin) || VERCEL_PREVIEW_ORIGIN.test(origin)) {
+    if (isAllowedOrigin(origin)) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
@@ -1099,7 +1126,9 @@ const io = new Server(server, {
   maxHttpBufferSize: 8 * 1024 * 1024,
   cors: {
     origin: (origin, callback) => {
-      if (!origin || allowedOrigins.includes(origin) || VERCEL_PREVIEW_ORIGIN.test(origin)) {
+      // Same predicate as the REST callback above, on purpose — see
+      // isAllowedOrigin and the comment block above it.
+      if (!origin || isAllowedOrigin(origin)) {
         callback(null, true);
       } else {
         callback(new Error('Not allowed by CORS'));
