@@ -93,8 +93,13 @@ require.cache[appleAuthPath] = {
 // The counting mock for finding 1: every bcrypt.compare that routes/auth.js
 // runs is recorded here. Wall-clock timing tests pass by accident on a fast
 // machine and flake on a slow one; a call counter does neither.
-const bcryptPath = require.resolve('bcryptjs');
-const realBcrypt = require('bcryptjs');
+//
+// ROUND 24 (R4-A2): routes/auth.js now requires the NATIVE `bcrypt` rather than
+// pure-JS `bcryptjs`, so this interposer follows it. Stubbing `bcryptjs` here
+// would still load and still pass its own assertions while counting nothing the
+// route does — the counter would silently stop being a counter.
+const bcryptPath = require.resolve('bcrypt');
+const realBcrypt = require('bcrypt');
 let compareLog = [];
 require.cache[bcryptPath].exports = {
   ...realBcrypt,
