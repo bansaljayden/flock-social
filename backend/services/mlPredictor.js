@@ -1043,29 +1043,124 @@ function astronomyFeatures(lat, month, hour) {
 // venue view (now + 12h + 24h forecasts = ~37 predictions at different
 // hours) fired ~37 sequential SQL round trips — the "10 seconds to load a
 // venue" bug. Now it's one query per venue per 24h.
-const neighborCache = new Map();
+//
+// ---------------------------------------------------------------------------
+// THE CACHE KEY MUST NOT CONTAIN A VALUE THE CALLER PICKS (audit round 3, I3-2)
+// ---------------------------------------------------------------------------
+// 2878da5 bucketed the caller's coordinates to 2 decimals in
+// POST /api/crowd/batch so this cache and the event cache would collapse. It
+// did not work here, because the key was
+// `lat.toFixed(3)_lng.toFixed(3)_place_id` and `place_id` on that route is
+// deliberately not shape-checked. A caller sending 20 arbitrary place ids per
+// request therefore missed 20 times per request, forever — and a miss is the
+// lat/lng RANGE SCAN below, the dominant database cost on this path. The audit
+// measured ~4,000 range scans a minute from one account.
+//
+// WHY IT IS SAFE TO SHARE ONE ENTRY ACROSS EVERY VENUE IN A BUCKET. The query
+// is a geographic range scan: its WHERE clause names only latitude, longitude
+// and the ml_venues/ml_venue_baselines join. The ONLY thing the venue's own
+// identity ever did in it was the `v.google_place_id != $3` exclusion, i.e.
+// "do not count myself as my own neighbour". So the expensive half of the
+// answer — which venues surround this point, and what their same-hour
+// baselines are — genuinely depends on the coordinates and the time slot
+// alone, and two venues inside the same ~1.1 km bucket have the same
+// neighbourhood by construction.
+//
+// SO THE EXCLUSION IS ARITHMETIC, NOT A FILTER. The cached entry now holds the
+// COUNT and the SUM over the whole box, self included, and self is subtracted
+// at read time. That is exactly what the training pipeline does — read
+// scripts/ml/train/prepare_features.py add_neighbor_features:
+//
+//     neighbor_count               = w_cnt - 1
+//     neighbor_baseline_same_hour  = (w_sum - bl) / neighbor_count
+//
+// window totals first, self taken off afterwards. Serving it the same way is
+// parity by construction rather than by coincidence.
+//
+// Dropping the exclusion instead would NOT have been immaterial, and this is
+// worth stating because it is the tempting shortcut: a venue alone in its box
+// would go from `{count: 0, mean: 0}` to `{count: 1, mean: <its own
+// baseline>}`, which feeds the venue's own baseline into a feature the model
+// learned means "the activity around me". The model has never seen that during
+// training. It is a train/serve skew and a self-referential feature at once.
+//
+// The self lookup that pays for the subtraction is keyed on google_place_id,
+// so it is an INDEX SEEK returning at most 168 rows, not a range scan, and it
+// is cached per place for 24h (negative results included, which is the
+// fabricated-id case). An attacker cycling place ids still pays one seek each
+// — the same class of per-id cost getBaseline and getUserFeedback already
+// carry on this path — but the range scan, which is the finding, now happens
+// once per bucket per day no matter how many ids are thrown at it.
+//
+// The query coordinates are the BUCKETED ones, not the raw ones. Before, the
+// key was rounded but the box was centred on whichever caller happened to
+// populate the entry, so the cached value was not actually a function of its
+// own key. It is now.
+const NEIGHBOR_CACHE_TTL = 24 * 60 * 60 * 1000;
+// ~0.0075 degrees is ~830 m of latitude, i.e. the ~1 km neighbourhood the
+// training pipeline's 3x3 grid of 500 m buckets covers.
+const NEIGHBOR_BOX_DEG = 0.0075;
+const neighborCache = new Map();      // "lat.toFixed(3)_lng.toFixed(3)" -> box totals
+const selfBaselineCache = new Map();  // place_id -> that venue's own baselines
+
+// The venue's own contribution to the box it sits in: its coordinates (so the
+// caller can check it really is inside the box the totals were taken over) and
+// its baseline per dow/hour. Returns null when the venue is not in the corpus
+// at all — the common case for a fabricated place id — and null on failure, in
+// which case nothing is subtracted and the neighbour count is one too high
+// rather than wrong in the model's favour.
+async function getSelfBaselines(placeId) {
+  if (!pool || !placeId) return null;
+  const cached = selfBaselineCache.get(placeId);
+  if (cached && Date.now() - cached.ts < NEIGHBOR_CACHE_TTL) return cached.data;
+  try {
+    const r = await pool.query(
+      `SELECT v.latitude AS lat, v.longitude AS lng, b.day_of_week AS dow, b.hour, b.baseline
+         FROM ml_venues v
+         JOIN ml_venue_baselines b ON b.google_place_id = v.google_place_id
+        WHERE v.google_place_id = $1`,
+      [placeId]
+    );
+    let data = null;
+    if (r.rows.length > 0) {
+      const byDowHour = new Map();
+      for (const row of r.rows) {
+        byDowHour.set(`${row.dow}_${row.hour}`, parseFloat(row.baseline) || 0);
+      }
+      data = { lat: parseFloat(r.rows[0].lat), lng: parseFloat(r.rows[0].lng), byDowHour };
+    }
+    boundedSet(selfBaselineCache, placeId, { ts: Date.now(), data });
+    return data;
+  } catch {
+    return null;
+  }
+}
+
 async function getNeighborActivity(placeId, lat, lng, dayOfWeek, hour) {
   const none = { count: 0, mean: 0 };
   if (!pool || !lat || !lng) return none;
-  const key = `${(+lat).toFixed(3)}_${(+lng).toFixed(3)}_${placeId || ''}`;
+  // The key IS the box. Query on the bucketed coordinates so the cached entry
+  // is a function of nothing else.
+  const bLat = (+lat).toFixed(3);
+  const bLng = (+lng).toFixed(3);
+  const key = `${bLat}_${bLng}`;
   let entry = neighborCache.get(key);
-  if (!entry || Date.now() - entry.ts >= 24 * 60 * 60 * 1000) {
+  if (!entry || Date.now() - entry.ts >= NEIGHBOR_CACHE_TTL) {
     try {
       const r = await pool.query(
-        `SELECT b.day_of_week AS dow, b.hour, COUNT(*)::int AS cnt, COALESCE(AVG(b.baseline), 0) AS mean_bl
+        `SELECT b.day_of_week AS dow, b.hour, COUNT(*)::int AS cnt, COALESCE(SUM(b.baseline), 0) AS sum_bl
          FROM ml_venues v
          JOIN ml_venue_baselines b ON b.google_place_id = v.google_place_id
-         WHERE v.latitude BETWEEN $1 - 0.0075 AND $1 + 0.0075
-           AND v.longitude BETWEEN $2 - 0.0075 AND $2 + 0.0075
-           AND ($3::text IS NULL OR v.google_place_id != $3)
+         WHERE v.latitude BETWEEN $1 - $3::float AND $1 + $3::float
+           AND v.longitude BETWEEN $2 - $3::float AND $2 + $3::float
          GROUP BY b.day_of_week, b.hour`,
-        [lat, lng, placeId || null]
+        [Number(bLat), Number(bLng), NEIGHBOR_BOX_DEG]
       );
       const byDowHour = new Map();
       for (const row of r.rows) {
         byDowHour.set(`${row.dow}_${row.hour}`, {
-          count: row.cnt,
-          mean: Math.max(0, Math.min(100, parseFloat(row.mean_bl) || 0)),
+          cnt: row.cnt,
+          sum: parseFloat(row.sum_bl) || 0,
         });
       }
       entry = { ts: Date.now(), byDowHour };
@@ -1074,7 +1169,23 @@ async function getNeighborActivity(placeId, lat, lng, dayOfWeek, hour) {
       return none;
     }
   }
-  return entry.byDowHour.get(`${dayOfWeek}_${hour}`) || none;
+
+  const slot = entry.byDowHour.get(`${dayOfWeek}_${hour}`);
+  if (!slot || slot.cnt <= 0) return none;
+
+  // Take self back out, the way add_neighbor_features does. Only if this venue
+  // really is one of the rows the totals counted: it needs a baseline for THIS
+  // slot and its stored coordinates have to fall inside the box.
+  const self = await getSelfBaselines(placeId);
+  const inBox = !!self
+    && Math.abs(self.lat - Number(bLat)) <= NEIGHBOR_BOX_DEG
+    && Math.abs(self.lng - Number(bLng)) <= NEIGHBOR_BOX_DEG;
+  const own = inBox ? self.byDowHour.get(`${dayOfWeek}_${hour}`) : undefined;
+
+  const count = Math.max(0, slot.cnt - (own === undefined ? 0 : 1));
+  if (count === 0) return none;
+  const mean = Math.max(0, Math.min(100, (slot.sum - (own || 0)) / count));
+  return { count, mean };
 }
 
 // ---------------------------------------------------------------------------
@@ -1764,6 +1875,15 @@ module.exports = {
       eventDayCount = 0;
       eventCache.clear();
     },
+    // The neighbour cache, for __tests__/neighborCacheBucketing.test.js. The
+    // whole point of the round-3 fix is that this cache is keyed on the
+    // BUCKETED COORDINATES alone, so a test has to be able to count the range
+    // scans two different place ids at the same bucket produce.
+    getNeighborActivity,
+    getSelfBaselines,
+    neighborCacheSize: () => neighborCache.size,
+    selfBaselineCacheSize: () => selfBaselineCache.size,
+    __resetNeighborCaches: () => { neighborCache.clear(); selfBaselineCache.clear(); },
     getMetadata: () => metadata,
     getSession: () => session,
   },

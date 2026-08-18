@@ -28,6 +28,9 @@ const { scalarOnly, freeText } = require('../validators/shape');
 // question the way every cross-user surface does — through the single source
 // of truth, both directions at once.
 const { isBlockedBetween } = require('../utils/blocks');
+// The card answers a question about SOMEBODY ELSE by bare sequential id, which
+// is the exact shape utils/probeBudget.js was written for. See cardProbeBudget.
+const { createUserBudget } = require('../utils/probeBudget');
 
 const router = express.Router();
 const SALT_ROUNDS = 10;
@@ -192,6 +195,42 @@ router.get('/profile', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Directory-probe budget for the person card (audit round 3, I3-1)
+//
+// GET /:id/card answers "is there a user behind this id, and what are they
+// called?" — the same question routes/friends.js already meters with
+// friendProbeBudget, and it answers it with MORE than the friend probe leaked
+// (name, avatar and the free-text bio). It shipped with no probe budget, so the
+// only ceiling in front of it was the router-wide apiLimiter: 3,000 requests
+// per 15 minutes PER IP, i.e. ~288,000 sequential ids a day, and rotating IPs
+// multiplies that while the account stays the same.
+//
+// WHY 120/hour AND 400/day, and not friends.js's 20/60. Opening a person card
+// is a far more frequent gesture than adding a friend: it is what a tap on a
+// face resolves to, from a flock roster, a chat, a friends list and the past-
+// flocks list. The largest single legitimate surface is a full roster
+// (LINK_JOIN_MEMBER_CAP = 50 members), and a heavy session might open most of
+// one plus a scroll through friends — call it ~100 cards. 120 an hour covers
+// that burst with room to spare; 400 a day covers three or four such sessions
+// back to back. It still cuts a directory walk from ~288,000 ids/day to 400
+// (a ~720x reduction), and unlike the IP limiter a fresh lane costs a fresh
+// account rather than a fresh proxy.
+//
+// A SEPARATE budget from friendProbeBudget, not a shared one: these are
+// different gestures at very different rates, and folding the card's 400 into
+// the friend probe's 60 would either starve the card or hand an enumerator a
+// 400-wide lane into /request's push notifications.
+//
+// Viewing your OWN card is free — it is not a probe, it tells the caller
+// nothing they did not already know, and the profile screen reads it.
+// Deliberately NOT exempting friends/co-members the way friends.js exempts an
+// existing friendship row: that exemption would cost a relationship query on
+// every single card open, and at 400/day there is no legitimate session the
+// unconditional charge can starve.
+// ---------------------------------------------------------------------------
+const cardProbeBudget = createUserBudget({ name: 'card-probe', hourly: 120, daily: 400 });
+
 // GET /api/users/:id/card - Mini profile card for any user: id, name, avatar,
 // bio. Four fields, and only four — this is the surface a stranger's tap on an
 // avatar resolves to, so it must never grow an email, a phone number, or a
@@ -212,6 +251,21 @@ router.get('/:id/card',
       }
       const targetId = parseInt(req.params.id, 10);
 
+      // Charged on every probe at somebody else, hit or miss. Charging only on
+      // hits would leave the misses free and unbounded, and "the free answers
+      // are the misses" is the enumeration signal itself (routes/friends.js
+      // makes the same call for the same reason).
+      const withinBudget = targetId === req.user.id || cardProbeBudget.allow(req.user.id);
+
+      // Queried even when the budget is spent, so the exhausted path does the
+      // same one lookup a genuine miss does and cannot be separated from it by
+      // response time. THE REFUSAL MUST NOT BECOME A NEW ORACLE: an exhausted
+      // budget returns the same 404 body as a nonexistent id, at the same query
+      // cost, so a walker who runs out learns nothing about the ids they could
+      // no longer read. (A 429 would be honest to a real client, but it would
+      // also confirm that the request got as far as the budget — and, more to
+      // the point, the whole class of "this refusal is shaped differently" is
+      // what the uniform 404 on this route exists to prevent.)
       const result = await pool.query(
         'SELECT id, name, profile_image_url, bio, is_banned FROM users WHERE id = $1',
         [targetId]
@@ -219,7 +273,7 @@ router.get('/:id/card',
       // Banned reads as deleted: a banned account's content is withdrawn
       // everywhere else, and its card must not be the one surface that still
       // vouches for it.
-      if (result.rows.length === 0 || result.rows[0].is_banned) {
+      if (!withinBudget || result.rows.length === 0 || result.rows[0].is_banned) {
         return res.status(404).json({ error: 'User not found' });
       }
 
@@ -2331,6 +2385,11 @@ module.exports.isIdentityBanned = isIdentityBanned;
 module.exports.rejectIfBannedIdentity = rejectIfBannedIdentity;
 module.exports.purgeExpiredBannedIdentities = purgeExpiredBannedIdentities;
 module.exports.__testing = {
+  cardProbeBudget,
+  // Test hook only. The budget above is process-wide in-memory state, so a
+  // suite needs a way to start each case from a clean allowance. Nothing in the
+  // running server calls this.
+  resetCardProbeBudget: () => cardProbeBudget.reset(),
   detectImageFormat,
   DETECTED_MIME,
   MAX_AVATAR_DATA_URL_BYTES,
