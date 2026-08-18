@@ -1,6 +1,7 @@
 {
   "name": "flock-asc-upload",
   "private": true,
+  "license": "SEE LICENSE IN LICENSE",
   "type": "module",
   "main": "asc-upload.test.js",
   "description": "App Store Connect metadata + screenshot uploader for Flock. Zero dependencies; pure Node (node:crypto ES256 JWT, global fetch).",

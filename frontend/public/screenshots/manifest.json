@@ -4,7 +4,7 @@
   "note": "Real captures of the shipping app against a seeded local stack. See WIRING.md for the swap plan.",
   "captures": [
     {
-      "file": "screenshots/appstore/birdie-dark-6.5in.png",
+      "file": "store-assets/birdie-dark-6.5in.png",
       "screen": "birdie",
       "title": "Birdie answering with real venue cards",
       "mode": "dark",
@@ -14,7 +14,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/birdie-dark-6.9in.png",
+      "file": "store-assets/birdie-dark-6.9in.png",
       "screen": "birdie",
       "title": "Birdie answering with real venue cards",
       "mode": "dark",
@@ -24,7 +24,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/birdie-light-6.5in.png",
+      "file": "store-assets/birdie-light-6.5in.png",
       "screen": "birdie",
       "title": "Birdie answering with real venue cards",
       "mode": "light",
@@ -34,7 +34,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/birdie-light-6.9in.png",
+      "file": "store-assets/birdie-light-6.9in.png",
       "screen": "birdie",
       "title": "Birdie answering with real venue cards",
       "mode": "light",
@@ -44,7 +44,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/chat-dark-6.5in.png",
+      "file": "store-assets/chat-dark-6.5in.png",
       "screen": "chat",
       "title": "Flock chat with a venue card",
       "mode": "dark",
@@ -54,7 +54,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/chat-dark-6.9in.png",
+      "file": "store-assets/chat-dark-6.9in.png",
       "screen": "chat",
       "title": "Flock chat with a venue card",
       "mode": "dark",
@@ -64,7 +64,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/chat-light-6.5in.png",
+      "file": "store-assets/chat-light-6.5in.png",
       "screen": "chat",
       "title": "Flock chat with a venue card",
       "mode": "light",
@@ -74,7 +74,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/chat-light-6.9in.png",
+      "file": "store-assets/chat-light-6.9in.png",
       "screen": "chat",
       "title": "Flock chat with a venue card",
       "mode": "light",
@@ -84,7 +84,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/create-dark-6.5in.png",
+      "file": "store-assets/create-dark-6.5in.png",
       "screen": "create",
       "title": "Start a flock form",
       "mode": "dark",
@@ -94,7 +94,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/create-dark-6.9in.png",
+      "file": "store-assets/create-dark-6.9in.png",
       "screen": "create",
       "title": "Start a flock form",
       "mode": "dark",
@@ -104,7 +104,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/create-light-6.5in.png",
+      "file": "store-assets/create-light-6.5in.png",
       "screen": "create",
       "title": "Start a flock form",
       "mode": "light",
@@ -114,7 +114,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/create-light-6.9in.png",
+      "file": "store-assets/create-light-6.9in.png",
       "screen": "create",
       "title": "Start a flock form",
       "mode": "light",
@@ -124,7 +124,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/crowd-dark-6.5in.png",
+      "file": "store-assets/crowd-dark-6.5in.png",
       "screen": "crowd",
       "title": "Venue search results with live crowd scores",
       "mode": "dark",
@@ -134,7 +134,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/crowd-dark-6.9in.png",
+      "file": "store-assets/crowd-dark-6.9in.png",
       "screen": "crowd",
       "title": "Venue search results with live crowd scores",
       "mode": "dark",
@@ -144,7 +144,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/crowd-light-6.5in.png",
+      "file": "store-assets/crowd-light-6.5in.png",
       "screen": "crowd",
       "title": "Venue search results with live crowd scores",
       "mode": "light",
@@ -154,7 +154,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/crowd-light-6.9in.png",
+      "file": "store-assets/crowd-light-6.9in.png",
       "screen": "crowd",
       "title": "Venue search results with live crowd scores",
       "mode": "light",
@@ -164,7 +164,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/discover-dark-6.5in.png",
+      "file": "store-assets/discover-dark-6.5in.png",
       "screen": "discover",
       "title": "Discover map with venue pins",
       "mode": "dark",
@@ -174,7 +174,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/discover-dark-6.9in.png",
+      "file": "store-assets/discover-dark-6.9in.png",
       "screen": "discover",
       "title": "Discover map with venue pins",
       "mode": "dark",
@@ -184,7 +184,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/discover-light-6.5in.png",
+      "file": "store-assets/discover-light-6.5in.png",
       "screen": "discover",
       "title": "Discover map with venue pins",
       "mode": "light",
@@ -194,7 +194,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/discover-light-6.9in.png",
+      "file": "store-assets/discover-light-6.9in.png",
       "screen": "discover",
       "title": "Discover map with venue pins",
       "mode": "light",
@@ -204,7 +204,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/nest-dark-6.5in.png",
+      "file": "store-assets/nest-dark-6.5in.png",
       "screen": "nest",
       "title": "Nest (home): tonight status + flock list",
       "mode": "dark",
@@ -214,7 +214,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/nest-dark-6.9in.png",
+      "file": "store-assets/nest-dark-6.9in.png",
       "screen": "nest",
       "title": "Nest (home): tonight status + flock list",
       "mode": "dark",
@@ -224,7 +224,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/nest-light-6.5in.png",
+      "file": "store-assets/nest-light-6.5in.png",
       "screen": "nest",
       "title": "Nest (home): tonight status + flock list",
       "mode": "light",
@@ -234,7 +234,7 @@
       "replaces": null
     },
     {
-      "file": "screenshots/appstore/nest-light-6.9in.png",
+      "file": "store-assets/nest-light-6.9in.png",
       "screen": "nest",
       "title": "Nest (home): tonight status + flock list",
       "mode": "light",

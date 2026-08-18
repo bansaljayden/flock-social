@@ -29,7 +29,8 @@ read-only discovery so the plan shows the exact PATCH-vs-POST decisions.
   what's new, support URL, marketing URL (6.4 to 6.7)
 - **en-US app info localization**: name, subtitle, privacy policy URL (6.1,
   6.2, 6.7)
-- **Screenshots** from `frontend/public/screenshots/appstore/`
+- **Screenshots** from `store-assets/` at the repo root (gitignored, so a fresh
+  clone has to re-run `frontend/scripts/capture-screenshots.mjs`)
   (`NN-slug-{light|dark}.png`, section 8 plan): sets are created per display
   type (detected from PNG pixel size: 1290x2796 / 1320x2868 -> APP_IPHONE_67,
   1284x2778 / 1242x2688 -> APP_IPHONE_65), light uploads first in slot order,

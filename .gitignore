@@ -53,13 +53,25 @@ backend/scripts/ml/models/incumbent/*.json
 # step 0 says how to populate it, and the gate FAILS rather than shrugging when
 # it is absent, so an unpopulated directory can never quietly skip the check.
 
-# NOT ignored: backend/scripts/ml/models/crowd_model.onnx is the SHIPPING model.
-# It was committed before this rule existed, and git ignores .gitignore for
-# already-tracked files, so the rule was inert and the model kept deploying. It
-# was also a trap: one `git rm --cached` and the 11MB model silently stops
-# shipping, mlPredictor finds no artifact, and production falls back to the rule
-# engine forever with no error anyone would notice. The rule is removed rather
-# than left sitting there looking authoritative.
+# The trained crowd model is NOT distributed with this repo. Both artifacts were
+# tracked until 2026-08-18, when the repo was prepared to go public under
+# PolyForm Noncommercial; they were removed from the index with `git rm --cached`
+# (which is why these rules are live now and were inert before -- .gitignore never
+# applies to an already-tracked path).
+#
+# READ THIS BEFORE CHANGING IT, because the failure is silent by design. With no
+# artifact on disk, mlPredictor.loadModel() logs one line ("Model files not found
+# -- using rule engine"), returns false, and every prediction for the life of the
+# process is answered by crowdEngine.js and tagged predictionMethod
+# 'rule_engine'. That is the honest-refusal path and it is correct behaviour, but
+# it means the PRODUCTION DEPLOY MUST NOW DELIVER THESE TWO FILES TO THE RAILWAY
+# CONTAINER BY SOME ROUTE OTHER THAN GIT. Nothing in the boot sequence fails if
+# they are absent; the API just serves the rule engine and no alarm fires.
+#
+# A cloner is not expected to have them. backend/scripts/ml/models/README.md
+# explains how to train their own from their own data using ../train/.
+backend/scripts/ml/models/crowd_model.onnx
+backend/scripts/ml/models/model_metadata.json
 
 # ML collection-run scratch output (local only)
 backend/collection_log*.txt
@@ -80,6 +92,18 @@ frontend/ios/App/App/GoogleService-Info.plist.b64
 # Higgsfield source renders and unused mascot video (kept out of the deployment)
 frontend/public/birdie/birdie.png
 frontend/public/birdie/birdie-idle.mp4
+
+# App Store submission screenshots. 56 MB of 1320x2868 / 1284x2778 PNGs that were
+# sitting in frontend/public/screenshots/appstore/, which means every one of them
+# was deployed to the web root and publicly fetchable at flockcorp.com. No code
+# referenced them; they exist to be dragged into App Store Connect. Moved here on
+# 2026-08-18 and untracked. SUBMIT-CHECKLIST.md points at this directory.
+#
+# The @2x captures under frontend/public/screenshots/ STAY tracked and stay in
+# public/: LandingPage.js, public/manifest.json and public/index.html all
+# reference them, and websiteA11y.test.js pins two of them.
+store-assets/
+
 
 # python bytecode
 flock-sensor/__pycache__/

@@ -861,18 +861,18 @@ describe('copy rules (SLOP-AUDIT)', () => {
     expect(meta.feature_count).toBe(106);
     expect(copy).toMatch(/106 signals/);
 
-    // "2.1 million ... across 31 cities and held out another 419,000"
-    expect(Math.round(meta.training_rows / 100000) / 10).toBeCloseTo(2.1, 5);
-    expect(meta.training_cities.length).toBe(31);
-    expect(Math.round(meta.holdout_rows / 1000)).toBe(419);
-    expect(copy).toMatch(/2\.1 million/);
-    expect(copy).toMatch(/31 cities/);
-    expect(copy).toMatch(/419,000/);
+    // "1.9 million ... across 30 cities and held out another 395,000"
+    expect(Math.round(meta.training_rows / 100000) / 10).toBeCloseTo(1.9, 5);
+    expect(meta.training_cities.length).toBe(30);
+    expect(Math.round(meta.holdout_rows / 1000)).toBe(395);
+    expect(copy).toMatch(/1\.9 million/);
+    expect(copy).toMatch(/30 cities/);
+    expect(copy).toMatch(/395,000/);
 
     // "on 68,000 realtime observations it cuts the average error by 2.3 points"
-    expect(Math.round(meta.ship_gate.realtime_rows / 1000)).toBe(68);
-    expect(meta.ship_gate.realtime_mae_improvement).toBeCloseTo(2.29, 2);
-    expect(copy).toMatch(/68,000 realtime observations/);
-    expect(copy).toMatch(/2\.3 points/);
+    expect(Math.round(meta.ship_gate.realtime_rows / 1000)).toBe(67);
+    expect(meta.ship_gate.realtime_mae_improvement).toBeCloseTo(2.06, 2);
+    expect(copy).toMatch(/67,000 realtime observations/);
+    expect(copy).toMatch(/2\.1 points/);
   });
 });
