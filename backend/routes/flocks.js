@@ -558,6 +558,60 @@ router.get('/activity', async (req, res) => {
   }
 });
 
+// GET /api/flocks/history - Flocks the caller was an accepted member of that
+// have finished, one way or the other: status IN ('completed', 'cancelled'),
+// newest event first, capped at 50.
+//
+// Registered BEFORE /:id — Express matches in order, and "history" satisfies
+// :id's pattern position, so the other order would answer this path with
+// "Invalid flock ID".
+//
+// Shape note for the frontend being built against this in parallel: each entry
+// is { id, name, status, event_time, venue_name, venue_address, venue_place_id,
+// members: [{ id, name, profile_image_url }] }. venue_place_id is flocks.venue_id
+// under the name the client-side venue code uses everywhere else.
+//
+// ONE roster subquery per flock via json_agg rather than a per-flock members
+// query — the N+1 shape is the one GET / already refuses. Blocks are handled
+// exactly the way GET /:id/members handles them: the aggregate carries the FULL
+// accepted roster and the blocked members are filtered out here, per caller,
+// with the same getInvisibleUserIds set. Two queries total.
+router.get('/history', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT f.id, f.name, f.status, f.event_time, f.venue_name, f.venue_address,
+              f.venue_id AS venue_place_id,
+              (SELECT COALESCE(json_agg(json_build_object(
+                        'id', hu.id,
+                        'name', hu.name,
+                        'profile_image_url', hu.profile_image_url)
+                        ORDER BY hm.joined_at, hu.id), '[]'::json)
+                 FROM flock_members hm
+                 JOIN users hu ON hu.id = hm.user_id
+                WHERE hm.flock_id = f.id AND hm.status = 'accepted') AS members
+         FROM flocks f
+         JOIN flock_members fm ON fm.flock_id = f.id AND fm.user_id = $1 AND fm.status = 'accepted'
+        WHERE f.status IN ('completed', 'cancelled')
+        ORDER BY f.event_time DESC NULLS LAST, f.id DESC
+        LIMIT 50`,
+      [req.user.id]
+    );
+
+    // Same block rule as GET /:id/members: the names and faces of blocked
+    // users are withheld from the caller's copy of the roster.
+    const invisible = new Set(await getInvisibleUserIds(req.user.id));
+    const flocks = result.rows.map((f) => ({
+      ...f,
+      members: (f.members || []).filter((m) => !invisible.has(m.id)),
+    }));
+
+    res.json({ flocks });
+  } catch (err) {
+    console.error('Get flock history error:', err);
+    res.status(500).json({ error: 'Failed to get flock history' });
+  }
+});
+
 // GET /api/flocks/:id - Get a specific flock with members
 router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res) => {
   try {
@@ -1207,6 +1261,327 @@ router.post('/:id/join', requireVerified, param('id').isInt({ min: 1, max: INT4_
   }
 });
 
+// ---------------------------------------------------------------------------
+// The invite rules, as ONE function (rerun round)
+// ---------------------------------------------------------------------------
+// POST /:id/invite and POST /:id/rerun both invite a set of users into a flock
+// the caller is an accepted member of, and the rules are not allowed to drift
+// apart: the seat and row ceilings, the per-inviter budget, the existence
+// check, the block check, the declined-row reuse, and the notification fan-out
+// are ONE policy with two doors. So the whole pipeline lives here, verbatim
+// from the invite route it was lifted out of — every query keeps its exact
+// spelling (fixture dispatchers and queryReliability.test.js match on the
+// text), and the replay loop keeps its exact order of decisions.
+//
+// The caller has already established that `inviter` is an accepted member of
+// `flockId` and that the flock exists; this function does everything after
+// that. Returns { invited, throttled, full }:
+//   invited   [{ user_id, user_name }] — the rows actually written
+//   throttled the inviter's personal budget ran out mid-list
+//   full      the flock ran out of seats, or of rows
+// It never touches `res`; each route owns its own response shape.
+async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds }) {
+  // Bound the flock itself, not just the caller — on BOTH of its ceilings
+  // (see MAX_FLOCK_MEMBERSHIPS and MAX_FLOCK_ROWS). `n` is the seats:
+  // declined rows do not hold one, because someone who said no is not
+  // occupying the plan. `total` is every row, declined included, because
+  // every row is read back on every roster load. Soft caps: two invite calls
+  // racing can overshoot either slightly, which is fine for a spam ceiling
+  // and not worth a lock.
+  //
+  // ONE ROUND TRIP, and the shape is chosen so that `n` keeps the exact
+  // spelling it has always had. Several fixture dispatchers outside this
+  // rotation's files match the seat count on its literal SQL text; a
+  // `COUNT(*) FILTER (...) AS n` rewrite would have been tidier to read and
+  // would have silently handed those fixtures an undefined seat count —
+  // turning `seatsLeft` into NaN and quietly deleting the cap in four test
+  // files that never mention it. The total goes in front as a scalar
+  // subquery so the seat count stays the last item and its text stays
+  // contiguous. A fixture that models only `n` therefore keeps the seat cap
+  // exactly as it was and simply reports no rows for the row cap, which is
+  // the harmless direction for a ceiling being introduced.
+  const rosterSize = await pool.query(
+    // The inner table is aliased so nothing here reads as correlated: an
+    // unaliased `flock_id` inside a subquery over the same table binds to the
+    // INNER reference, which is what is wanted, but only a reader who knows
+    // that can tell it apart from a correlation bug.
+    `SELECT (SELECT COUNT(*)::int FROM flock_members fm_all WHERE fm_all.flock_id = $1) AS total,
+            COUNT(*)::int AS n FROM flock_members WHERE flock_id = $1 AND status IN ('invited', 'accepted')`,
+    [flockId]
+  );
+  let seatsLeft = MAX_FLOCK_MEMBERSHIPS - (rosterSize.rows[0]?.n || 0);
+  let rowsLeft = MAX_FLOCK_ROWS - (rosterSize.rows[0]?.total || 0);
+  if (seatsLeft <= 0) {
+    // Nothing was consulted and nothing is written; the caller turns an empty
+    // `invited` plus `full` into the same 400 the old early return sent.
+    return { invited: [], throttled: false, full: true };
+  }
+
+  // ── THIS WAS AN N+1. IT IS BATCHED NOW (landed 2026-08-14) ─────────────
+  //
+  // What it used to be: per submitted id, up to FOUR round trips — the
+  // membership lookup, the user lookup, isBlockedBetween (which talks to the
+  // POOL, so it borrowed a SECOND connection while this request already held
+  // one), and the write. Measured on the fixture harness at a 4ms simulated
+  // round trip, 25 ids (the validator's cap):
+  //
+  //     before   103 queries   1594ms   25 extra pool checkouts
+  //     after      7 queries    105ms    0 extra pool checkouts
+  //
+  // and the count is now FLAT: one invitee and twenty-five invitees issue
+  // the same 7 (8 if the call both re-invites and invites, because the two
+  // writes are separate statements). That flatness, not the absolute number,
+  // is what __tests__/queryReliability.test.js pins — see the note there
+  // about what replaced the old `countForMany === 103` ceiling.
+  //
+  // The shape is three set-based reads, copied from POST / above rather than
+  // re-derived, then ONE replay loop over the candidates in submission
+  // order, then at most two array writes:
+  //
+  //   SELECT user_id, status FROM flock_members WHERE flock_id = $1 AND user_id = ANY($2::int[])
+  //   SELECT id, name FROM users WHERE id = ANY($1::int[])
+  //   SELECT blocker_id, blocked_id FROM user_blocks ...   (verbatim from POST /)
+  //
+  // utils/blocks.js is UNCHANGED and isBlockedBetween keeps every other
+  // caller it has. The set-based block query is the same rule asked once,
+  // and it is deliberately the same TEXT as the one in POST / — two
+  // spellings of one safety rule is how the drift bugs in this file start.
+  //
+  // NO ASSERTED BEHAVIOUR CHANGES. The replay loop below runs the same
+  // decisions in the same order the per-id loop did: the free skip for the
+  // already-invited and already-accepted, then the seat ceiling, then the
+  // row ceiling, then the budget charge, then existence, then blocks. Both
+  // ceilings are still decremented AS rows are taken, inside the loop, so
+  // "the ceiling is charged as rows are created" still holds; the budget is
+  // still charged before existence is consulted and still stops the whole
+  // list, so the response still cannot be read as "4193 exists, 4194 does
+  // not".
+  //
+  // TWO GATES SAY THE SAME THING ON PURPOSE. The already-invited and the
+  // already-accepted are dropped both from `pending` (so they are never
+  // looked up) and again at the top of the replay loop (so they can never be
+  // charged or written). Removing either one alone changes no behaviour,
+  // which is exactly why neither should be "tidied" away: the first is what
+  // keeps a repeat invite free, the second is what keeps it correct.
+  //
+  // ATOMICITY, since the writes moved. This is still autocommit — there is
+  // no transaction here and there never was — but it is now at most TWO
+  // statements instead of up to fifty, so the window in which a request can
+  // half-apply shrank by an order of magnitude. Both statements are
+  // idempotent (`ON CONFLICT DO NOTHING`, and an UPDATE guarded on the
+  // status it is replacing), so the client's retry is safe.
+  //
+  // WHY THE READS ARE NOT SLICED TO `inviteBudget.remaining()`. Two earlier
+  // rotations wrote that they were, and it is not sound: the set of ids the
+  // loop actually charges is not a prefix of the candidate list, because the
+  // ROW ceiling skips a brand-new id WITHOUT charging it (`continue`, not
+  // `break`) and a later re-invite is then charged after it. So a slice can
+  // cut off an id the loop really does reach — e.g. one row left, ids
+  // [new, new, declined], two units of allowance: the loop charges the first
+  // and the third. The reads therefore cover every candidate that is not
+  // already invited or accepted, which is at most 25 ids in one round trip
+  // and is invisible from outside: nothing past an exhausted budget is ever
+  // CONSULTED, which is the property that mattered. The one sound saving is
+  // kept — an allowance of zero skips both reads entirely.
+  const invited = [];
+  let throttled = false; // ran out of personal allowance
+  let full = false;      // ran out of seats, or of rows, in this flock
+
+  // Candidate pass — pure bookkeeping, no I/O, same filters as before.
+  // Duplicate ids in one call must not each buy a seat or a budget unit.
+  const seen = new Set();
+  const candidates = [];
+  for (const userId of userIds) {
+    const uid = parseInt(userId, 10);
+    if (!Number.isInteger(uid) || uid < 1 || uid > INT4_MAX || uid === inviter.id) continue;
+    if (seen.has(uid)) continue;
+    seen.add(uid);
+    candidates.push(uid);
+  }
+
+  // Read 1 — who already has a row here. Flock-scoped, tells the caller
+  // nothing about the user directory, so it stays ahead of the budget: a
+  // repeat invite is still free.
+  const statusByUid = new Map();
+  if (candidates.length > 0) {
+    const existingRows = await pool.query(
+      'SELECT user_id, status FROM flock_members WHERE flock_id = $1 AND user_id = ANY($2::int[])',
+      [flockId, candidates]
+    );
+    for (const row of existingRows.rows) statusByUid.set(Number(row.user_id), row.status);
+  }
+
+  // Everyone who could still cost something. The already-invited and the
+  // already-accepted are dropped here, exactly as the old loop's two free
+  // `continue`s dropped them before it ever looked them up.
+  const pending = candidates.filter((uid) => {
+    const st = statusByUid.get(uid);
+    if (st === 'accepted') { console.log('[Invite] User', uid, 'already accepted member, skipping'); return false; }
+    if (st === 'invited') { console.log('[Invite] User', uid, 'already invited, skipping'); return false; }
+    return true;
+  });
+
+  // Reads 2 and 3 — the directory and the block set, one round trip each.
+  const allowance = inviteBudget.remaining(inviter.id);
+  const names = new Map();
+  const blocked = new Set();
+  if (pending.length > 0 && Math.min(allowance.hourly, allowance.daily) > 0) {
+    const userRows = await pool.query(
+      'SELECT id, name FROM users WHERE id = ANY($1::int[])',
+      [pending]
+    );
+    // `set`, not a truthiness test: a NULL display name is an EXISTING user,
+    // and the per-id version pushed that null through to the response.
+    for (const row of userRows.rows) names.set(Number(row.id), row.name);
+
+    // Same bidirectional rule as utils/blocks.js, asked once. Verbatim from
+    // POST / — do not respell it.
+    const blockRows = await pool.query(
+      `SELECT blocker_id, blocked_id FROM user_blocks
+       WHERE (blocker_id = $1 AND blocked_id = ANY($2::int[]))
+          OR (blocked_id = $1 AND blocker_id = ANY($2::int[]))`,
+      [inviter.id, pending]
+    );
+    for (const row of blockRows.rows) {
+      blocked.add(Number(row.blocker_id === inviter.id ? row.blocked_id : row.blocker_id));
+    }
+  }
+
+  // The replay. Same order of decisions as the per-id loop, no I/O.
+  const reinviteIds = [];
+  const newIds = [];
+  for (const uid of candidates) {
+    const status = statusByUid.get(uid);
+    if (status === 'accepted' || status === 'invited') continue;
+
+    if (seatsLeft <= 0) { full = true; break; }
+
+    // The ROW ceiling, charged only on a BRAND NEW row. `continue`, not
+    // `break`, and that difference is the whole point: a flock can be out of
+    // rows while it still has seats (50 seats, 200 rows, 150 of them
+    // declines), and in exactly that state re-inviting somebody who declined
+    // is the call that must still work — it re-uses their row and costs
+    // nothing. Breaking here would refuse the one person the ceiling was
+    // never aimed at.
+    //
+    // Before the budget charge, for the same reason as the seat check above:
+    // a ceiling the caller can do nothing about must not also cost them
+    // their allowance.
+    if (status === undefined && rowsLeft <= 0) { full = true; continue; }
+
+    // Charged BEFORE existence is consulted and stops the whole loop, so an
+    // exhausted caller gets no per-id answers at all: the response cannot
+    // be read as "id 4193 exists but id 4194 does not".
+    if (!inviteBudget.allow(inviter.id)) { throttled = true; break; }
+
+    if (!names.has(uid)) continue;
+
+    // Blocked pairs never invite each other (round 3: filtering only the
+    // socket notification still created the membership row)
+    if (blocked.has(uid)) continue;
+
+    seatsLeft -= 1;
+    // A row is only spent when one is created. The re-invite branch writes
+    // into a row that is already counted in `total`.
+    if (status === undefined) rowsLeft -= 1;
+
+    if (status === 'declined') {
+      reinviteIds.push(uid);
+      console.log('[Invite] Re-invited declined user', uid);
+    } else {
+      newIds.push(uid);
+      console.log('[Invite] Invited new user', uid);
+    }
+    invited.push({ user_id: uid, user_name: names.get(uid) });
+  }
+
+  if (reinviteIds.length > 0) {
+    // Re-invite.
+    //
+    // `AND status = 'declined'` is load-bearing. Without it this statement
+    // has no predicate on the status it is overwriting, so if a target
+    // ACCEPTED an invite between the read above and this write, the
+    // re-invite DEMOTED an accepted member back to `invited` — silently
+    // removing them from the roster, the chat, the votes and every count, on
+    // a plan they had already joined. Batching WIDENS that window (the read
+    // now happens once, at the top), which makes the clause more important,
+    // not less: it is what makes the write safe to issue late.
+    await pool.query(
+      `UPDATE flock_members SET status = 'invited'
+       WHERE flock_id = $1 AND user_id = ANY($2::int[]) AND status = 'declined'`,
+      [flockId, reinviteIds]
+    );
+  }
+
+  if (newIds.length > 0) {
+    // New invites, one statement — the same UNNEST form POST / uses.
+    //
+    // ON CONFLICT DO NOTHING: two invite calls naming the same person at the
+    // same moment raced UNIQUE(flock_id, user_id) into a 23505, and a
+    // partially applied invite reported as a total failure is the worst of
+    // both, because the client's only sane response (retry) then re-notifies
+    // everyone it already reached.
+    //
+    // $1::int is explicit on purpose: in INSERT ... SELECT (unlike
+    // INSERT ... VALUES) Postgres does NOT infer a parameter's type from the
+    // target column, so an uncast $1 resolves to text and the insert fails on
+    // the integer column at runtime.
+    await pool.query(
+      `INSERT INTO flock_members (flock_id, user_id, status)
+       SELECT $1::int, t.uid, 'invited' FROM UNNEST($2::int[]) AS t(uid)
+       ON CONFLICT (flock_id, user_id) DO NOTHING`,
+      [flockId, newIds]
+    );
+  }
+
+  // Notify invited users via socket
+  if (invited.length > 0 && io) {
+    for (const inv of invited) {
+      io.to(`user:${inv.user_id}`).emit('flock_invite_received', {
+        flockId,
+        flockName,
+        invitedBy: { userId: inviter.id, name: inviter.name },
+      });
+    }
+    // `invitedBy` names the inviter, so the room broadcast leaked that
+    // name to anyone in the flock who had blocked them. Per-member,
+    // block-aware fan-out — and it also reaches members who are in the
+    // app but not sitting on this flock's screen, who were never in the
+    // room to begin with.
+    await emitToFlockExcludingBlocked(io, flockId, inviter.id, 'flock_members_invited', {
+      flockId,
+      invitedBy: { userId: inviter.id, name: inviter.name },
+      invitedUserIds: invited.map(i => i.user_id),
+    }).catch((e) => console.error('flock_members_invited fan-out failed:', e.message));
+  }
+
+  return { invited, throttled, full };
+}
+
+// The offline-push half of an invite, AFTER the response. A 25-person invite
+// was 25 Firebase round trips the inviter sat through before their own screen
+// updated, and the rows were already written. Concurrent + allSettled so one
+// failure does not abort the rest. fromUserId lets the block-gate suppress a
+// push that names the inviter. Own try/catch: the response is gone by the time
+// this runs, so nothing here may reach a route's outer handler and try to send
+// a second one.
+async function pushInvitesToOffline({ io, inviter, flockId, flockName, invited }) {
+  if (invited.length === 0) return;
+  try {
+    if (io) {
+      await Promise.allSettled(
+        invited.map((inv) => pushIfOffline(io, inv.user_id,
+          `${inviter.name} invited you to a flock`,
+          flockName,
+          { type: 'flock_invite', flockId: String(flockId), fromUserId: String(inviter.id) }
+        ))
+      );
+    }
+  } catch (pushErr) {
+    console.error('[Invite] push error:', pushErr.message);
+  }
+}
+
 // POST /api/flocks/:id/invite - Invite users to an existing flock
 //
 // ---------------------------------------------------------------------------
@@ -1286,281 +1661,16 @@ router.post('/:id/invite',
         return res.status(404).json({ error: 'Flock not found' });
       }
 
-      // Bound the flock itself, not just the caller — on BOTH of its ceilings
-      // (see MAX_FLOCK_MEMBERSHIPS and MAX_FLOCK_ROWS). `n` is the seats:
-      // declined rows do not hold one, because someone who said no is not
-      // occupying the plan. `total` is every row, declined included, because
-      // every row is read back on every roster load. Soft caps: two invite calls
-      // racing can overshoot either slightly, which is fine for a spam ceiling
-      // and not worth a lock.
-      //
-      // ONE ROUND TRIP, and the shape is chosen so that `n` keeps the exact
-      // spelling it has always had. Several fixture dispatchers outside this
-      // rotation's files match the seat count on its literal SQL text; a
-      // `COUNT(*) FILTER (...) AS n` rewrite would have been tidier to read and
-      // would have silently handed those fixtures an undefined seat count —
-      // turning `seatsLeft` into NaN and quietly deleting the cap in four test
-      // files that never mention it. The total goes in front as a scalar
-      // subquery so the seat count stays the last item and its text stays
-      // contiguous. A fixture that models only `n` therefore keeps the seat cap
-      // exactly as it was and simply reports no rows for the row cap, which is
-      // the harmless direction for a ceiling being introduced.
-      const rosterSize = await pool.query(
-        // The inner table is aliased so nothing here reads as correlated: an
-        // unaliased `flock_id` inside a subquery over the same table binds to the
-        // INNER reference, which is what is wanted, but only a reader who knows
-        // that can tell it apart from a correlation bug.
-        `SELECT (SELECT COUNT(*)::int FROM flock_members fm_all WHERE fm_all.flock_id = $1) AS total,
-                COUNT(*)::int AS n FROM flock_members WHERE flock_id = $1 AND status IN ('invited', 'accepted')`,
-        [flockId]
-      );
-      let seatsLeft = MAX_FLOCK_MEMBERSHIPS - (rosterSize.rows[0]?.n || 0);
-      let rowsLeft = MAX_FLOCK_ROWS - (rosterSize.rows[0]?.total || 0);
-      if (seatsLeft <= 0) {
-        return res.status(400).json({ error: 'This flock already has as many people as it can hold' });
-      }
-
-      // ── THIS WAS AN N+1. IT IS BATCHED NOW (landed 2026-08-14) ─────────────
-      //
-      // What it used to be: per submitted id, up to FOUR round trips — the
-      // membership lookup, the user lookup, isBlockedBetween (which talks to the
-      // POOL, so it borrowed a SECOND connection while this request already held
-      // one), and the write. Measured on the fixture harness at a 4ms simulated
-      // round trip, 25 ids (the validator's cap):
-      //
-      //     before   103 queries   1594ms   25 extra pool checkouts
-      //     after      7 queries    105ms    0 extra pool checkouts
-      //
-      // and the count is now FLAT: one invitee and twenty-five invitees issue
-      // the same 7 (8 if the call both re-invites and invites, because the two
-      // writes are separate statements). That flatness, not the absolute number,
-      // is what __tests__/queryReliability.test.js pins — see the note there
-      // about what replaced the old `countForMany === 103` ceiling.
-      //
-      // The shape is three set-based reads, copied from POST / above rather than
-      // re-derived, then ONE replay loop over the candidates in submission
-      // order, then at most two array writes:
-      //
-      //   SELECT user_id, status FROM flock_members WHERE flock_id = $1 AND user_id = ANY($2::int[])
-      //   SELECT id, name FROM users WHERE id = ANY($1::int[])
-      //   SELECT blocker_id, blocked_id FROM user_blocks ...   (verbatim from POST /)
-      //
-      // utils/blocks.js is UNCHANGED and isBlockedBetween keeps every other
-      // caller it has. The set-based block query is the same rule asked once,
-      // and it is deliberately the same TEXT as the one in POST / — two
-      // spellings of one safety rule is how the drift bugs in this file start.
-      //
-      // NO ASSERTED BEHAVIOUR CHANGES. The replay loop below runs the same
-      // decisions in the same order the per-id loop did: the free skip for the
-      // already-invited and already-accepted, then the seat ceiling, then the
-      // row ceiling, then the budget charge, then existence, then blocks. Both
-      // ceilings are still decremented AS rows are taken, inside the loop, so
-      // "the ceiling is charged as rows are created" still holds; the budget is
-      // still charged before existence is consulted and still stops the whole
-      // list, so the response still cannot be read as "4193 exists, 4194 does
-      // not".
-      //
-      // TWO GATES SAY THE SAME THING ON PURPOSE. The already-invited and the
-      // already-accepted are dropped both from `pending` (so they are never
-      // looked up) and again at the top of the replay loop (so they can never be
-      // charged or written). Removing either one alone changes no behaviour,
-      // which is exactly why neither should be "tidied" away: the first is what
-      // keeps a repeat invite free, the second is what keeps it correct.
-      //
-      // ATOMICITY, since the writes moved. This is still autocommit — there is
-      // no transaction here and there never was — but it is now at most TWO
-      // statements instead of up to fifty, so the window in which a request can
-      // half-apply shrank by an order of magnitude. Both statements are
-      // idempotent (`ON CONFLICT DO NOTHING`, and an UPDATE guarded on the
-      // status it is replacing), so the client's retry is safe.
-      //
-      // WHY THE READS ARE NOT SLICED TO `inviteBudget.remaining()`. Two earlier
-      // rotations wrote that they were, and it is not sound: the set of ids the
-      // loop actually charges is not a prefix of the candidate list, because the
-      // ROW ceiling skips a brand-new id WITHOUT charging it (`continue`, not
-      // `break`) and a later re-invite is then charged after it. So a slice can
-      // cut off an id the loop really does reach — e.g. one row left, ids
-      // [new, new, declined], two units of allowance: the loop charges the first
-      // and the third. The reads therefore cover every candidate that is not
-      // already invited or accepted, which is at most 25 ids in one round trip
-      // and is invisible from outside: nothing past an exhausted budget is ever
-      // CONSULTED, which is the property that mattered. The one sound saving is
-      // kept — an allowance of zero skips both reads entirely.
-      const invited = [];
-      let throttled = false; // ran out of personal allowance
-      let full = false;      // ran out of seats, or of rows, in this flock
-
-      // Candidate pass — pure bookkeeping, no I/O, same filters as before.
-      // Duplicate ids in one call must not each buy a seat or a budget unit.
-      const seen = new Set();
-      const candidates = [];
-      for (const userId of user_ids) {
-        const uid = parseInt(userId, 10);
-        if (!Number.isInteger(uid) || uid < 1 || uid > INT4_MAX || uid === req.user.id) continue;
-        if (seen.has(uid)) continue;
-        seen.add(uid);
-        candidates.push(uid);
-      }
-
-      // Read 1 — who already has a row here. Flock-scoped, tells the caller
-      // nothing about the user directory, so it stays ahead of the budget: a
-      // repeat invite is still free.
-      const statusByUid = new Map();
-      if (candidates.length > 0) {
-        const existingRows = await pool.query(
-          'SELECT user_id, status FROM flock_members WHERE flock_id = $1 AND user_id = ANY($2::int[])',
-          [flockId, candidates]
-        );
-        for (const row of existingRows.rows) statusByUid.set(Number(row.user_id), row.status);
-      }
-
-      // Everyone who could still cost something. The already-invited and the
-      // already-accepted are dropped here, exactly as the old loop's two free
-      // `continue`s dropped them before it ever looked them up.
-      const pending = candidates.filter((uid) => {
-        const st = statusByUid.get(uid);
-        if (st === 'accepted') { console.log('[Invite] User', uid, 'already accepted member, skipping'); return false; }
-        if (st === 'invited') { console.log('[Invite] User', uid, 'already invited, skipping'); return false; }
-        return true;
+      // Everything from the roster ceilings to the socket fan-out is the
+      // shared pipeline — see inviteUsersToFlock above. POST /:id/rerun runs
+      // the same function, so the rules cannot drift between the two doors.
+      const { invited, throttled, full } = await inviteUsersToFlock({
+        io: req.app.get('io'),
+        inviter: req.user,
+        flockId,
+        flockName: flockResult.rows[0].name,
+        userIds: user_ids,
       });
-
-      // Reads 2 and 3 — the directory and the block set, one round trip each.
-      const allowance = inviteBudget.remaining(req.user.id);
-      const names = new Map();
-      const blocked = new Set();
-      if (pending.length > 0 && Math.min(allowance.hourly, allowance.daily) > 0) {
-        const userRows = await pool.query(
-          'SELECT id, name FROM users WHERE id = ANY($1::int[])',
-          [pending]
-        );
-        // `set`, not a truthiness test: a NULL display name is an EXISTING user,
-        // and the per-id version pushed that null through to the response.
-        for (const row of userRows.rows) names.set(Number(row.id), row.name);
-
-        // Same bidirectional rule as utils/blocks.js, asked once. Verbatim from
-        // POST / — do not respell it.
-        const blockRows = await pool.query(
-          `SELECT blocker_id, blocked_id FROM user_blocks
-           WHERE (blocker_id = $1 AND blocked_id = ANY($2::int[]))
-              OR (blocked_id = $1 AND blocker_id = ANY($2::int[]))`,
-          [req.user.id, pending]
-        );
-        for (const row of blockRows.rows) {
-          blocked.add(Number(row.blocker_id === req.user.id ? row.blocked_id : row.blocker_id));
-        }
-      }
-
-      // The replay. Same order of decisions as the per-id loop, no I/O.
-      const reinviteIds = [];
-      const newIds = [];
-      for (const uid of candidates) {
-        const status = statusByUid.get(uid);
-        if (status === 'accepted' || status === 'invited') continue;
-
-        if (seatsLeft <= 0) { full = true; break; }
-
-        // The ROW ceiling, charged only on a BRAND NEW row. `continue`, not
-        // `break`, and that difference is the whole point: a flock can be out of
-        // rows while it still has seats (50 seats, 200 rows, 150 of them
-        // declines), and in exactly that state re-inviting somebody who declined
-        // is the call that must still work — it re-uses their row and costs
-        // nothing. Breaking here would refuse the one person the ceiling was
-        // never aimed at.
-        //
-        // Before the budget charge, for the same reason as the seat check above:
-        // a ceiling the caller can do nothing about must not also cost them
-        // their allowance.
-        if (status === undefined && rowsLeft <= 0) { full = true; continue; }
-
-        // Charged BEFORE existence is consulted and stops the whole loop, so an
-        // exhausted caller gets no per-id answers at all: the response cannot
-        // be read as "id 4193 exists but id 4194 does not".
-        if (!inviteBudget.allow(req.user.id)) { throttled = true; break; }
-
-        if (!names.has(uid)) continue;
-
-        // Blocked pairs never invite each other (round 3: filtering only the
-        // socket notification still created the membership row)
-        if (blocked.has(uid)) continue;
-
-        seatsLeft -= 1;
-        // A row is only spent when one is created. The re-invite branch writes
-        // into a row that is already counted in `total`.
-        if (status === undefined) rowsLeft -= 1;
-
-        if (status === 'declined') {
-          reinviteIds.push(uid);
-          console.log('[Invite] Re-invited declined user', uid);
-        } else {
-          newIds.push(uid);
-          console.log('[Invite] Invited new user', uid);
-        }
-        invited.push({ user_id: uid, user_name: names.get(uid) });
-      }
-
-      if (reinviteIds.length > 0) {
-        // Re-invite.
-        //
-        // `AND status = 'declined'` is load-bearing. Without it this statement
-        // has no predicate on the status it is overwriting, so if a target
-        // ACCEPTED an invite between the read above and this write, the
-        // re-invite DEMOTED an accepted member back to `invited` — silently
-        // removing them from the roster, the chat, the votes and every count, on
-        // a plan they had already joined. Batching WIDENS that window (the read
-        // now happens once, at the top), which makes the clause more important,
-        // not less: it is what makes the write safe to issue late.
-        await pool.query(
-          `UPDATE flock_members SET status = 'invited'
-           WHERE flock_id = $1 AND user_id = ANY($2::int[]) AND status = 'declined'`,
-          [flockId, reinviteIds]
-        );
-      }
-
-      if (newIds.length > 0) {
-        // New invites, one statement — the same UNNEST form POST / uses.
-        //
-        // ON CONFLICT DO NOTHING: two invite calls naming the same person at the
-        // same moment raced UNIQUE(flock_id, user_id) into a 23505, and a
-        // partially applied invite reported as a total failure is the worst of
-        // both, because the client's only sane response (retry) then re-notifies
-        // everyone it already reached.
-        //
-        // $1::int is explicit on purpose: in INSERT ... SELECT (unlike
-        // INSERT ... VALUES) Postgres does NOT infer a parameter's type from the
-        // target column, so an uncast $1 resolves to text and the insert fails on
-        // the integer column at runtime.
-        await pool.query(
-          `INSERT INTO flock_members (flock_id, user_id, status)
-           SELECT $1::int, t.uid, 'invited' FROM UNNEST($2::int[]) AS t(uid)
-           ON CONFLICT (flock_id, user_id) DO NOTHING`,
-          [flockId, newIds]
-        );
-      }
-
-      // Notify invited users via socket
-      if (invited.length > 0) {
-        const io = req.app.get('io');
-        if (io) {
-          const flockName = flockResult.rows[0].name;
-          for (const inv of invited) {
-            io.to(`user:${inv.user_id}`).emit('flock_invite_received', {
-              flockId,
-              flockName,
-              invitedBy: { userId: req.user.id, name: req.user.name },
-            });
-          }
-          // `invitedBy` names the inviter, so the room broadcast leaked that
-          // name to anyone in the flock who had blocked them. Per-member,
-          // block-aware fan-out — and it also reaches members who are in the
-          // app but not sitting on this flock's screen, who were never in the
-          // room to begin with.
-          await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_members_invited', {
-            flockId,
-            invitedBy: { userId: req.user.id, name: req.user.name },
-            invitedUserIds: invited.map(i => i.user_id),
-          }).catch((e) => console.error('flock_members_invited fan-out failed:', e.message));
-        }
-      }
 
       if (invited.length === 0 && full) {
         return res.status(400).json({ error: 'This flock already has as many people as it can hold' });
@@ -1577,32 +1687,151 @@ router.post('/:id/invite',
         flock: flockResult.rows[0],
       });
 
-      // Push notifications for offline invited users, AFTER the response. A
-      // 25-person invite was 25 Firebase round trips the inviter sat through
-      // before their own screen updated, and the rows were already written.
-      // Concurrent + allSettled so one failure does not abort the rest.
-      // fromUserId lets the block-gate suppress a push that names the inviter.
-      // Own try/catch: the response is gone, so nothing here may reach the
-      // outer handler and try to send a second one.
-      if (invited.length > 0) {
-        try {
-          const io = req.app.get('io');
-          if (io) {
-            await Promise.allSettled(
-              invited.map((inv) => pushIfOffline(io, inv.user_id,
-                `${req.user.name} invited you to a flock`,
-                flockResult.rows[0].name,
-                { type: 'flock_invite', flockId: String(flockId), fromUserId: String(req.user.id) }
-              ))
-            );
-          }
-        } catch (pushErr) {
-          console.error('[Invite] push error:', pushErr.message);
-        }
-      }
+      // Offline pushes, after the response — shared with rerun for the same
+      // reason as the pipeline above (see pushInvitesToOffline).
+      await pushInvitesToOffline({
+        io: req.app.get('io'),
+        inviter: req.user,
+        flockId,
+        flockName: flockResult.rows[0].name,
+        invited,
+      });
     } catch (err) {
       console.error('[Invite] Error:', err.message, err.detail || '');
       if (!res.headersSent) res.status(500).json({ error: 'Failed to invite users' });
+    }
+  }
+);
+
+// POST /api/flocks/:id/rerun - "Do it again": clone a finished flock
+//
+// Any ACCEPTED member of a completed or cancelled flock can spin up a fresh
+// one from it: same name, same venue fields, same budget settings, status
+// 'planning', with every OTHER accepted member of the source invited to the
+// new plan. The copied fields come out of our own flocks row, which was
+// sanitized, profanity-screened and photo-proxied when it was written, so they
+// are not re-screened here — this route accepts no free text of its own.
+//
+// event_time: POST / treats it as optional (a plan can exist before a time is
+// picked), so this route does too — same validator, NULL when absent. The old
+// flock's time is deliberately NOT copied: it is in the past, which is the one
+// value a new plan can never want.
+//
+// requireVerified for the same reason POST / has it: creating a flock makes
+// you its first accepted member, the exact asset the unverified-account gate
+// withholds.
+//
+// The invites reuse inviteUsersToFlock — the SAME pipeline as POST /:id/invite,
+// blocks, budget, ceilings and notifications included, not a re-derivation.
+// That means a rerun draws on the caller's invite budget exactly like creating
+// a flock with invited_user_ids does; a throttled or partially full result
+// still returns the new flock, and the caller can invite the rest later.
+//
+// Response: the same shape POST / returns — 201 { flock, invited_user_ids } —
+// so the client can navigate straight into the new flock.
+router.post('/:id/rerun',
+  requireVerified,
+  [
+    param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'),
+    scalarOnly(body('event_time').optional(), 'event time').isISO8601().withMessage('Invalid event time'),
+  ],
+  async (req, res) => {
+    try {
+      if (rejectInvalid(req, res)) return;
+      const sourceId = parseInt(req.params.id);
+      const { event_time } = req.body;
+
+      // Same existence-oracle rule as every other route here: no membership
+      // row, no admission the flock exists. A member whose row never reached
+      // 'accepted' (invited, declined) was not part of the plan and does not
+      // get to replay it — but they already know it exists, so 403 is honest.
+      const membership = await pool.query(
+        'SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2',
+        [sourceId, req.user.id]
+      );
+      if (membership.rows.length === 0) {
+        return res.status(404).json({ error: 'Flock not found' });
+      }
+      if (membership.rows[0].status !== 'accepted') {
+        return res.status(403).json({ error: 'Only members of this flock can run it again' });
+      }
+
+      const source = await pool.query(
+        'SELECT name, status, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, budget_enabled, budget_context, ghost_mode_enabled FROM flocks WHERE id = $1',
+        [sourceId]
+      );
+      if (source.rows.length === 0) {
+        return res.status(404).json({ error: 'Flock not found' });
+      }
+      const src = source.rows[0];
+      // A live plan is not rerun, it is continued. Only a finished one clones.
+      if (src.status !== 'completed' && src.status !== 'cancelled') {
+        return res.status(400).json({ error: 'Only a completed or cancelled flock can be run again' });
+      }
+
+      // Same transaction shape as POST /: the flock and its creator row land
+      // together or not at all.
+      const client = await pool.connect();
+      let flock;
+      try {
+        await client.query('BEGIN');
+        const flockResult = await client.query(
+          `INSERT INTO flocks (name, creator_id, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, budget_enabled, budget_context, ghost_mode_enabled)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+           RETURNING *`,
+          [src.name, req.user.id, src.venue_name, src.venue_address, src.venue_id, src.venue_latitude, src.venue_longitude, src.venue_rating, src.venue_photo_url, event_time || null, !!src.budget_enabled, src.budget_context, src.budget_enabled ? !!src.ghost_mode_enabled : false]
+        );
+        flock = flockResult.rows[0];
+        await client.query(
+          `INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, 'accepted')`,
+          [flock.id, req.user.id]
+        );
+        await client.query('COMMIT');
+      } catch (txErr) {
+        // Guarded for the same reason as POST /: a throwing ROLLBACK must not
+        // swallow the error that caused it.
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
+      console.log('[Rerun] Flock', sourceId, 'cloned as', flock.id, 'by user', req.user.id);
+
+      // Everyone who was actually IN the old plan, except the caller — the
+      // set the "do it again" button means. The shared pipeline re-applies
+      // blocks and the rest, so a pair that blocked each other since the old
+      // flock is not re-joined by replaying it.
+      const prior = await pool.query(
+        "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+        [sourceId, req.user.id]
+      );
+
+      const io = req.app.get('io');
+      const outcome = prior.rows.length > 0
+        ? await inviteUsersToFlock({
+            io,
+            inviter: req.user,
+            flockId: flock.id,
+            flockName: flock.name,
+            userIds: prior.rows.map((r) => r.user_id),
+          })
+        : { invited: [], throttled: false, full: false };
+
+      // Same shape as POST /, and like POST / the id list is who actually got
+      // a row — blocks or an exhausted budget can make it shorter than the
+      // old roster, and the client must not display members nobody invited.
+      res.status(201).json({ flock, invited_user_ids: outcome.invited.map((i) => i.user_id) });
+
+      await pushInvitesToOffline({
+        io,
+        inviter: req.user,
+        flockId: flock.id,
+        flockName: flock.name,
+        invited: outcome.invited,
+      });
+    } catch (err) {
+      console.error('[Rerun] Error:', err.message, err.detail || '');
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to rerun flock' });
     }
   }
 );
