@@ -45,7 +45,49 @@ const { upstreamSignal } = require('../utils/upstream');
 
 const weatherCache = new Map();
 const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
-const MAX_CACHE_ENTRIES = 100;
+
+// ---------------------------------------------------------------------------
+// MAX_CACHE_ENTRIES, and the inequality it has to satisfy (round 23).
+// ---------------------------------------------------------------------------
+// This was 100, and 100 was the whole finding. GET /api/weather hands the
+// caller's own lat/lon straight through, so the key is entirely caller-chosen:
+// at the 2-decimal bucketing below there are ~6.5e8 reachable keys (18,001
+// latitude buckets x 36,001 longitude buckets) against a cache of 100. Roughly
+// three requests' worth of fresh coordinates evicted every entry in it, and
+// every evicted entry is a paid OpenWeatherMap call the next crowd score,
+// public demo card or venue dashboard has to make again. The SPEND was capped
+// (40/user/hour, 55/minute, 950/UTC day); the FLUSH was not, and a flush is how
+// you make everyone else spend.
+//
+// BUCKETING FIRST, AND WHY IT IS NOT ENOUGH ON ITS OWN. getCacheKey buckets to
+// two decimals (~1.1 km), the same grid routes/publicCrowd.js and the crowd
+// batch route snap to before they key anything. That is the right first move
+// and it is now single-sourced (bucketCoord, below) so the key and the
+// coordinate actually SENT upstream can never drift apart. But 2dp still
+// leaves ~6.5e8 buckets, which is unbounded for every practical purpose, so
+// bucketing alone does not make this cache a control. Coarsening further would
+// buy key space with accuracy the ML feature vector is trained on — the
+// training data was collected through this same 2dp function — so the answer
+// is not a coarser key. The answer is a cache that a day's worth of paid calls
+// cannot flush.
+//
+// THE PIN: WX_DAILY (950) < MAX_CACHE_ENTRIES (1000).
+// Every cache write in this file, including the negative ones, happens strictly
+// AFTER allowWeatherFetch() charged a unit — nothing writes on a cache hit and
+// nothing writes on a refusal. So the number of entries this map can be made to
+// take in one UTC day is exactly the number of units in the daily ceiling, and
+// keeping the cache larger than that ceiling means A WHOLE DAY OF SPENDING
+// CANNOT EVICT A SINGLE ENTRY THAT HAS NOT ALREADY EXPIRED. The eviction path
+// below still exists, and still evicts oldest-first, but it is now only
+// reachable across a UTC day boundary rather than by the third request of the
+// morning. Same shape as EVENT_USER_DAILY(400) < EVENT_CACHE_MAX(500) in
+// services/mlPredictor.js and VISION_USER_DAILY < VISION_GLOBAL_DAILY in
+// utils/visionBudget.js, and pinned by a test the same way: if WX_DAILY is ever
+// raised (see the free-tier note above), this number moves with it.
+//
+// The memory cost is nothing to weigh against that: an entry is a frozen object
+// of seven numbers and two short strings, so 1000 of them is tens of kilobytes.
+const MAX_CACHE_ENTRIES = 1000;
 
 // A failure is remembered for sixty seconds. Without this, an outage, a revoked
 // key or a coordinate OpenWeatherMap has no data for is an uncached miss that
@@ -60,8 +102,19 @@ const WX_NEGATIVE_TTL = 60 * 1000;
 
 let warnedOnce = false;
 
+// The ONE place a caller's coordinate becomes a bucket. It was three places —
+// getCacheKey and the two request URLs each ran their own `toFixed(2)` — and
+// three copies of a rounding rule is how a key stops describing the thing
+// stored under it. Bucket once, then use the bucketed value for BOTH the key
+// and the upstream request, so two callers who share a cache key provably
+// asked OpenWeatherMap the same question. Two decimals is ~1.1 km, the same
+// grid routes/publicCrowd.js and the crowd batch route snap to.
+function bucketCoord(v) {
+  return Number(v).toFixed(2);
+}
+
 function getCacheKey(lat, lon) {
-  return `${Number(lat).toFixed(2)},${Number(lon).toFixed(2)}`;
+  return `${bucketCoord(lat)},${bucketCoord(lon)}`;
 }
 
 // A coordinate that cannot be a coordinate must never reach the vendor. Without
@@ -300,7 +353,7 @@ async function getWeather(lat, lon, opts = {}) {
       // vendor. See utils/upstream.js.
       if (!allowWeatherFetch(o.userId)) return null; // weather is an enhancer, fail soft
 
-      const url = `https://api.openweathermap.org/data/2.5/weather?lat=${Number(lat).toFixed(2)}&lon=${Number(lon).toFixed(2)}&appid=${apiKey}&units=imperial`;
+      const url = `https://api.openweathermap.org/data/2.5/weather?lat=${bucketCoord(lat)}&lon=${bucketCoord(lon)}&appid=${apiKey}&units=imperial`;
       // Round 12: weather is an enhancer on the critical path of crowd scoring —
       // a hung OpenWeather socket used to hold the whole prediction request open.
       // The catch below already degrades to null. See utils/upstream.js.
@@ -397,7 +450,7 @@ async function getForecast(lat, lon, opts = {}) {
 
       if (!allowWeatherFetch(o.userId)) return null; // same budget as getWeather (round 8)
 
-      const url = `https://api.openweathermap.org/data/2.5/forecast?lat=${Number(lat).toFixed(2)}&lon=${Number(lon).toFixed(2)}&appid=${apiKey}&units=imperial`;
+      const url = `https://api.openweathermap.org/data/2.5/forecast?lat=${bucketCoord(lat)}&lon=${bucketCoord(lon)}&appid=${apiKey}&units=imperial`;
       let response;
       try {
         response = await fetch(url, { signal: upstreamSignal('weather') }); // round 12
@@ -492,3 +545,20 @@ function __resetWeatherState() {
 }
 
 module.exports = { getWeather, getForecast, weatherBudgetStatus, __resetWeatherState };
+
+// Exported for __tests__/weatherCacheFlush.test.js, which pins the inequality
+// WX_DAILY < MAX_CACHE_ENTRIES and the single-sourced 2dp bucketing. Reading
+// them from here rather than retyping them is the point: a test that repeats a
+// constant stops testing the code the moment somebody edits the code.
+module.exports.__test = {
+  WX_DAILY,
+  WX_PER_MINUTE,
+  WX_PER_USER_HOURLY,
+  MAX_CACHE_ENTRIES,
+  CACHE_TTL,
+  bucketCoord,
+  getCacheKey,
+  setCache,
+  cacheSize: () => weatherCache.size,
+  cacheHas: (key) => weatherCache.has(key),
+};
