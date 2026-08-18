@@ -20,9 +20,9 @@ mechanism: RSVP in one tap, throw venues in, vote, lock it in.
 
 Money is the other silent killer. Nobody wants to type "that's too expensive"
 in front of six people. In Flock, everyone enters what they can spend
-privately and the group only ever sees the ceiling. Individual amounts are
-never shown to anyone, including the flock's creator. This is a hard product
-invariant (see below).
+privately and the group only ever sees a rounded ceiling. Individual amounts
+are never shown to anyone, including the flock's creator. This is a hard
+product invariant (see below, including what it does not cover).
 
 ## What ships today
 
@@ -112,8 +112,21 @@ flock-app/
 1. **Other people's** budget amounts never leave the server. A client only ever
    sees the aggregate `{ ceiling, submissionCount, isReady, skipCount }`, plus
    the amount that caller submitted themselves. `ceiling` is withheld entirely
-   until at least three non-skipped submissions exist, so a two-person flock
-   cannot be used to read one person's number by subtraction.
+   until at least three non-skipped submissions exist, and what it publishes is
+   a **band**, not the raw minimum: rounded down to the nearest $10 at $50 and
+   up, the nearest $5 from $5 to $50, the nearest $1 below that. It only ever
+   rounds down, so every venue under the published ceiling is still inside
+   everyone's real budget.
+
+   What this does not do: the ceiling is the minimum of the submitted amounts,
+   so participants who compare notes can narrow down what a remaining
+   participant submitted. Two people who both submit a deliberately high amount
+   learn that the published band contains the third person's number. A
+   submission threshold cannot prevent that, because colluding participants
+   already know their own amounts and can subtract them out. Banding is what
+   limits the result to a range instead of an exact figure. Flock is built for
+   small groups of friends, and the ceiling is the one number the group is
+   meant to share.
 2. No secrets in the repo, ever. All keys live in the Vercel / Railway /
    Codemagic dashboards. A gitleaks pre-commit hook enforces this.
 3. Server-side enforcement behind every client gate. Frontend gating is UX,

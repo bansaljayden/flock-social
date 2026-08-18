@@ -856,6 +856,14 @@ test('budget: a non-skip with no usable amount is still refused, in words', asyn
 // of $12.50 was announced as "up to $12" while the app said $12.50, and a
 // ceiling under a dollar was announced as "up to $0". Currency is not an
 // integer; floor is not a formatter.
+//
+// The numbers below moved once, for a different reason: the published ceiling
+// is now BANDED (audit finding M1), so a MIN of $12.50 publishes as $10 on
+// every surface. What these tests still exist to pin is that the push and the
+// API agree, and that the formatter never turns a real number into $0 — the
+// two failures that motivated them. The banded value is read out of
+// routes/budget.js rather than retyped, so the band table and the expectation
+// cannot drift apart.
 async function threeSubmissions(amounts) {
   fresh();
   for (let i = 0; i < amounts.length; i++) {
@@ -864,21 +872,29 @@ async function threeSubmissions(amounts) {
   }
 }
 
-test('budget: the pushed ceiling is the ceiling, not its floor', async () => {
+test('budget: the pushed ceiling is the banded ceiling, and the API agrees with it', async () => {
   await threeSubmissions([40, 12.5, 30]);
+  const banded = budgetRouter.bandCeiling(12.5); // 10 — nearest $5 down under $50
   const ready = pushes.filter((p) => p.data && p.data.type === 'budget_ready');
   assert.ok(ready.length > 0, 'the threshold push never fired');
   for (const p of ready) {
-    assert.match(p.body, /\$12\.50\b/, `push said: ${p.body}`);
-    assert.doesNotMatch(p.body, /\$12\b(?!\.)/, `push rounded the budget down: ${p.body}`);
+    assert.match(p.body, new RegExp(`\\$${banded}\\b`), `push said: ${p.body}`);
+    assert.doesNotMatch(p.body, /\$12\.50/, `the push published the raw MIN: ${p.body}`);
   }
+  const status = await call('GET', '/api/budget/10', undefined, 1);
+  assert.strictEqual(status.json.ceiling, banded,
+    'the push and the API must publish the same number, banded on both');
 });
 
 test('budget: a sub-dollar ceiling is not announced as $0', async () => {
+  // $0.75 is below the smallest band, and the band below $1 is $0 — which the
+  // app reads as "no ceiling yet" and which tells the group nothing. So the
+  // sub-dollar reveal is a cent: never zero, never above the true MIN.
   await threeSubmissions([5, 0.75, 9]);
   const ready = pushes.filter((p) => p.data && p.data.type === 'budget_ready');
   assert.ok(ready.length > 0, 'the threshold push never fired');
-  assert.match(ready[0].body, /\$0\.75\b/, `push said: ${ready[0].body}`);
+  assert.match(ready[0].body, /\$0\.01\b/, `push said: ${ready[0].body}`);
+  assert.doesNotMatch(ready[0].body, /\$0\b(?!\.)/, `push announced $0: ${ready[0].body}`);
 });
 
 test('budget: a whole-dollar ceiling still reads as a whole dollar', async () => {
@@ -893,12 +909,18 @@ test('budget: a whole-dollar ceiling still reads as a whole dollar', async () =>
 // they can agree: Math.round(1.005 * 100) / 100 is 1.00 in JS and 1.01 in
 // Postgres, because 1.005 * 100 is 100.49999999999999. This pins the route to
 // reading the stored value back rather than computing its own.
-test('budget: the ceiling the API reports is the value the column stores', async () => {
+//
+// The CALLER'S OWN amount is still reported to the cent, because it is their
+// own number and no band applies to it. The group ceiling is banded, so a
+// stored MIN of 1.01 publishes as 1 — the one place these two now differ, and
+// the difference is the point.
+test('budget: the caller sees their own amount to the cent, and the group sees a band', async () => {
   await threeSubmissions([1.005, 20, 30]);
   const stored = db.budget_submissions.find((r) => r.user_id === 1).amount;
   assert.strictEqual(stored, '1.01', `NUMERIC(8,2) stored ${stored}`);
   const status = await call('GET', '/api/budget/10', undefined, 1);
-  assert.strictEqual(status.json.ceiling, 1.01, JSON.stringify(status.json));
+  assert.strictEqual(status.json.ceiling, budgetRouter.bandCeiling('1.01'), JSON.stringify(status.json));
+  assert.strictEqual(status.json.ceiling, 1, JSON.stringify(status.json));
   assert.strictEqual(status.json.userAmount, 1.01, JSON.stringify(status.json));
 });
 
@@ -944,12 +966,17 @@ test('budget lock: the refusal explains that skips do not count', async () => {
     `the refusal does not mention amounts, so it contradicts "4 of 4 submitted": ${locked.json.error}`);
 });
 
-test('budget lock: three real amounts do lock, and the ceiling is the minimum', async () => {
+test('budget lock: three real amounts do lock, and the locked ceiling is the banded minimum', async () => {
   await threeSubmissions([40, 12.5, 30]);
   const res = await call('POST', '/api/budget/10/lock', undefined, 1);
   assert.strictEqual(res.status, 200, res.raw);
-  assert.strictEqual(res.json.ceiling, 12.5);
+  // Was 12.5, the raw MIN. The lock publishes the same band every other surface
+  // does (finding M1) — otherwise locking would be a second door to the exact
+  // number the submit path had just banded.
+  assert.strictEqual(res.json.ceiling, 10);
   assert.strictEqual(db.flocks.find((f) => f.id === 10).budget_locked, true);
+  // And the band is what gets cached, so nothing downstream re-publishes 12.5.
+  assert.strictEqual(Number(db.flocks.find((f) => f.id === 10).budget_ceiling), 10);
 });
 
 // ===========================================================================
