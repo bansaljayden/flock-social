@@ -19744,6 +19744,19 @@ const FlockApp = () => {
     setAuthUser(user);
   }, []);
 
+  // The tab title. public/index.html ships the marketing title, "Flock | Plans
+  // that actually happen", and nothing in the app ever overwrote it: /app, every
+  // screen inside it, and any bookmark a user made from it all read as the
+  // landing page. The marketing and legal pages each write their own title in a
+  // mount effect (LandingPage, AboutPage, PrivacyPolicy and the rest), so this
+  // is the same pattern, one line, for the product shell. Plain "Flock" and not
+  // the headline: the headline is an ad, and this is the tab someone keeps open
+  // while the night is being planned. Runs once, on purpose. Per-screen titles
+  // would need a real router, and the app navigates by state.
+  useEffect(() => {
+    document.title = 'Flock';
+  }, []);
+
   // The server can cut a live session mid-flight: a ban, an account deletion,
   // a password change, an OAuth account claim. Without these two listeners the
   // app stayed on screen, quietly read-only, failing every action.
