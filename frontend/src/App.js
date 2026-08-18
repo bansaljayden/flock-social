@@ -1523,22 +1523,54 @@ function declutterMarkers(map, markerEntries) {
     groups.get(root).push(i);
   });
   const GOLDEN_ANGLE = 2.399963229728653;
+  /* Spiral slots are only spaced against their OWN group, but a big group's
+     outer arm reaches 40·√k px from its centroid — measured live, a
+     17-member downtown cluster parked a pin 16px from a venue 129px away
+     that was never in its group. So placement is checked against every pin
+     already placed, across groups. Singletons go first: they never move, so
+     they must be in the occupied set before any spiral slot is chosen near
+     them, and no arm can cover a lone pin standing exactly on its venue. */
+  const placedPts = [];
+  const multiGroups = [];
   groups.forEach((idxs) => {
     if (idxs.length === 1) {
       // Alone again (or always was): the pin sits exactly where the venue is.
       const { marker, venue } = entries[idxs[0]];
       marker.setLngLat([venue.location.longitude, venue.location.latitude]);
+      placedPts.push(pts[idxs[0]]);
       return;
     }
+    multiGroups.push(idxs);
+  });
+  multiGroups.forEach((idxs) => {
     // Deterministic member order — same venue, same offset, every render.
     idxs.sort((a, b) => String(entries[a].venue.place_id || entries[a].venue.id).localeCompare(String(entries[b].venue.place_id || entries[b].venue.id)));
     const cx = idxs.reduce((s, i) => s + pts[i].x, 0) / idxs.length;
     const cy = idxs.reduce((s, i) => s + pts[i].y, 0) / idxs.length;
-    idxs.forEach((i, k) => {
-      const r = PIN_RING_PX * Math.sqrt(k); // k=0 holds the centroid
-      const a = k * GOLDEN_ANGLE;
-      const lngLat = map.unproject([cx + r * Math.cos(a), cy + r * Math.sin(a)]);
-      entries[i].marker.setLngLat(lngLat);
+    // One shared slot cursor per group: a slot skipped for landing on a
+    // foreign pin stays skipped, so the assignment stays deterministic.
+    // Within a group the spiral itself keeps neighbours >= PIN_RING_PX apart
+    // (k0→k1 is exactly PIN_RING_PX, strict < below admits it), so the
+    // occupancy test only ever rejects slots that hit OTHER pins. Bounded:
+    // the radius grows with every skip, so the arm always escapes a crowded
+    // patch; the guard is a hard stop, not the normal exit.
+    let k = 0;
+    idxs.forEach((i) => {
+      let x, y;
+      let guard = 0;
+      do {
+        const r = PIN_RING_PX * Math.sqrt(k); // k=0 holds the centroid
+        const a = k * GOLDEN_ANGLE;
+        x = cx + r * Math.cos(a);
+        y = cy + r * Math.sin(a);
+        k += 1;
+        guard += 1;
+      } while (
+        guard < idxs.length + 60 &&
+        placedPts.some((p) => (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y) < PIN_RING_PX * PIN_RING_PX)
+      );
+      entries[i].marker.setLngLat(map.unproject([x, y]));
+      placedPts.push({ x, y });
     });
   });
 }
