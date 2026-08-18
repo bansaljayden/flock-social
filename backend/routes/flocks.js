@@ -14,6 +14,15 @@ const { GUEST_RSVP_SELECT, toGuestEntry, combineRsvpCounts } = require('../utils
 const { createUserBudget } = require('../utils/probeBudget');
 const { isPlaceIdShaped } = require('../utils/places');
 const { emitToFlockExcludingBlocked, emitToFlockMembers } = require('../sockets/handlers');
+// PRIVACY: the ceiling this file serves is a CACHED column, and it is only as
+// banded as whatever last wrote it. bandCeiling is imported from the route that
+// owns the banding rule (see the long comment above it in budget.js) rather
+// than reimplemented here, because a second copy of the thresholds is exactly
+// how the two sides drift apart. Re-banding a banded value is a no-op, so this
+// costs nothing on rows written since 1fdea72 and repairs the ones written
+// before it (migration 027 backfills the column; this is the belt to its
+// suspenders, and it holds regardless of what wrote the row).
+const { bandCeiling } = require('./budget');
 
 const { pushIfOffline } = require('../services/pushHelper');
 
@@ -301,7 +310,11 @@ router.get('/', async (req, res) => {
     // still handing invitees f.*, coordinates, and member previews even
     // after the detail route got its minimal DTO)
     const flocks = result.rows.map((f) => {
-      if (f.member_status === 'accepted') return f;
+      // The CASE in the SQL above withholds the ceiling below three non-skips;
+      // bandCeiling is what stops the value it DOES publish from being one
+      // member's exact figure. Threshold and band are independent gates and
+      // both apply.
+      if (f.member_status === 'accepted') return { ...f, budget_ceiling: bandCeiling(f.budget_ceiling) };
       return {
         id: f.id,
         name: f.name,
@@ -704,6 +717,9 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
 
     // ── Momentum Meter calculation ──
     const flock = flockResult.rows[0];
+    // Same pair of gates as the list route: the SQL withheld this below three
+    // non-skips, and this bands whatever survived that.
+    flock.budget_ceiling = bandCeiling(flock.budget_ceiling);
     const members = membersResult.rows;
     // Counts come from the FULL roster on purpose (see visibleMembers below).
     const counts = combineRsvpCounts(members, guests);
@@ -993,6 +1009,11 @@ router.put('/:id',
           [flockId]
         );
         if ((thr.rows[0]?.n || 0) < 3) flockResponse.budget_ceiling = null;
+        // Past the threshold the column is served as stored, so it is banded
+        // here for the same reason the list and detail routes band it: this
+        // UPDATE never touches budget_ceiling, so RETURNING * hands back
+        // whatever was cached, including a pre-1fdea72 raw MIN.
+        else flockResponse.budget_ceiling = bandCeiling(flockResponse.budget_ceiling);
       }
       res.json({ flock: flockResponse });
 
@@ -1096,7 +1117,8 @@ router.delete('/:id', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('
 // POST /api/flocks/:id/invite-link — create (or return) the flock's shareable
 // guest link. Any accepted member can share it; guests RSVP + vote from the
 // link with no account (routes/guest.js). One active link per flock; calling
-// with { regenerate: true } revokes the old one (kills a leaked link).
+// with { regenerate: true } revokes the old one (kills a leaked link) and is
+// CREATOR-ONLY (see below).
 router.post('/:id/invite-link', requireVerified, param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID'), async (req, res) => {
   try {
     if (rejectInvalid(req, res)) return;
@@ -1110,21 +1132,63 @@ router.post('/:id/invite-link', requireVerified, param('id').isInt({ min: 1, max
     }
 
     if (req.body?.regenerate) {
+      // SECURITY-AUDIT-auth.md R2-4, step 4: this used to run on ACCEPTED
+      // MEMBERSHIP alone, which is a privilege inversion. Anyone who walked up
+      // through a leaked link and joined became an accepted member, and could
+      // then revoke the host's link and mint one only they hold — taking the
+      // link away from the person who created the flock. Revocation is a
+      // destructive act on somebody else's plan, so it belongs to the creator,
+      // the same place every other destructive flock action already sits
+      // (PUT /:id, DELETE /:id).
+      //
+      // Same existence-oracle rule as those two: the caller is already known to
+      // be an accepted member, so 403 leaks nothing they did not know.
+      const owner = await pool.query('SELECT creator_id FROM flocks WHERE id = $1', [flockId]);
+      if (!owner.rows[0]) {
+        return res.status(404).json({ error: 'Flock not found' });
+      }
+      if (owner.rows[0].creator_id !== req.user.id) {
+        return res.status(403).json({ error: 'Only the creator can replace this invite link' });
+      }
       await pool.query('UPDATE flock_invite_links SET revoked = true WHERE flock_id = $1', [flockId]);
     }
 
+    // R2-4: `revoked = false` was the whole liveness test, so a link that was
+    // never revoked was a permanent bearer credential. An expired row is dead
+    // here for the same reason it is dead in resolveLink — otherwise this route
+    // would keep handing back a token the join path already refuses.
     const existing = await pool.query(
-      'SELECT token FROM flock_invite_links WHERE flock_id = $1 AND revoked = false LIMIT 1',
+      'SELECT token FROM flock_invite_links WHERE flock_id = $1 AND revoked = false AND expires_at > NOW() LIMIT 1',
       [flockId]
     );
     let token = existing.rows[0]?.token;
     if (!token) {
       const { newLinkToken } = require('./guest');
       token = newLinkToken();
-      await pool.query(
-        'INSERT INTO flock_invite_links (token, flock_id, created_by) VALUES ($1, $2, $3)',
+      // expires_at is computed in SQL from the flock's own event_time so the
+      // deadline follows the plan rather than the moment somebody pressed
+      // share. The formula and the reasoning behind both terms live in
+      // migrations/028_invite_link_expiry.sql, which uses the identical
+      // expression to backfill the rows that predate the column — one rule, so
+      // an old link and a new one cannot mean different things.
+      //
+      // INSERT ... SELECT rather than VALUES: the flock row is the source of
+      // event_time. A flock deleted between the membership check above and this
+      // statement selects zero rows, which writes nothing instead of writing a
+      // link to a plan that no longer exists.
+      const inserted = await pool.query(
+        `INSERT INTO flock_invite_links (token, flock_id, created_by, expires_at)
+         SELECT $1, f.id, $3, GREATEST(
+                  NOW() + INTERVAL '14 days',
+                  COALESCE(f.event_time, NOW()) + INTERVAL '7 days'
+                )
+         FROM flocks f WHERE f.id = $2
+         RETURNING token`,
         [token, flockId, req.user.id]
       );
+      if (inserted.rowCount === 0) {
+        return res.status(404).json({ error: 'Flock not found' });
+      }
     }
 
     const base = process.env.PUBLIC_WEB_URL || 'https://flock-app-w65m.vercel.app';
@@ -1565,16 +1629,95 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds }) 
 // push that names the inviter. Own try/catch: the response is gone by the time
 // this runs, so nothing here may reach a route's outer handler and try to send
 // a second one.
+// ---------------------------------------------------------------------------
+// THE DEBOUNCE IS KEYED ON THE RECIPIENT, NOT ON THE FLOCK (money audit round 2,
+// finding M3).
+//
+// services/pushHelper.js debounces per CONVERSATION — `${userId}|${type}|f${flockId}`
+// — and that is the right key for chat, which is what it was written for: a DM
+// from one friend must not swallow a message in a different flock.
+//
+// An INVITE is not a conversation. Its flock id is brand new by construction,
+// so a flock-scoped key is a fresh key every single time and can never fire.
+// POST /:id/rerun made that concrete: it mints a new flock from an old roster
+// with no free text and no user ids to supply, so the full 25/hour and 60/day
+// invite allowance converted 1:1 into distinct lock-screen notifications on one
+// person, each a separate flock they have to open and decline. pushIfOffline
+// only fires when the recipient has NO live socket, which is exactly when a
+// notification is most disruptive.
+//
+// So the window below is keyed on (recipient, notification type) and nothing
+// else. N invites to the same person from N different flocks now collapse to
+// one push, which is the whole point; N invites to N different people are
+// untouched, because the recipient is in the key.
+//
+// WHAT THIS DOES NOT CHANGE: who receives an invite. The membership row, the
+// socket event (`flock_invite_received`, emitted per invitee in
+// inviteUsersToFlock) and the response body are all written before this runs
+// and are not gated by it. A suppressed push is a notification the recipient
+// does not get buzzed for; the invite is in their list either way.
+//
+// WHY IT LIVES HERE rather than in pushHelper: this is the only invite-push
+// site in the app — POST /:id/invite and POST /:id/rerun both call this
+// function, and POST / with `invited_user_ids` sends sockets only — so one
+// window here covers every door. Changing pushHelper's debounceKey instead
+// would change the DM and chat behavior it was designed for.
+//
+// The window matches pushHelper's DEBOUNCE_MS (30 s) on purpose: one rule about
+// how often a phone may buzz, applied to a second key dimension rather than a
+// second number. It bounds a BURST. It does not bound 25 invites spread evenly
+// across an hour — that is the invite-volume half of the same finding, and it
+// belongs to inviteBudget above, not to a debounce.
+const INVITE_PUSH_DEBOUNCE_MS = 30 * 1000;
+const lastInvitePush = new Map(); // recipient key -> ms timestamp
+
+// Bounded, and swept rather than cleared: a wholesale clear would hand every
+// recipient a fresh window, so whoever pushes the map over the threshold
+// releases their own victim's suppression. Entries older than two windows are
+// dead by definition — nothing reads a timestamp past DEBOUNCE_MS.
+const INVITE_PUSH_MAX = 20000;
+function sweepInvitePushes(now) {
+  for (const [k, ts] of lastInvitePush) {
+    if (now - ts > INVITE_PUSH_DEBOUNCE_MS * 2) lastInvitePush.delete(k);
+  }
+  // Still oversized after the sweep means live windows, so drop the OLDEST —
+  // the ones closest to expiring anyway (Map iteration is insertion order and
+  // the claim below deletes before it sets, so order tracks recency).
+  while (lastInvitePush.size > INVITE_PUSH_MAX) {
+    lastInvitePush.delete(lastInvitePush.keys().next().value);
+  }
+}
+
 async function pushInvitesToOffline({ io, inviter, flockId, flockName, invited }) {
   if (invited.length === 0) return;
   try {
     if (io) {
+      const now = Date.now();
+      sweepInvitePushes(now);
       await Promise.allSettled(
-        invited.map((inv) => pushIfOffline(io, inv.user_id,
-          `${inviter.name} invited you to a flock`,
-          flockName,
-          { type: 'flock_invite', flockId: String(flockId), fromUserId: String(inviter.id) }
-        ))
+        invited.map(async (inv) => {
+          const key = `${inv.user_id}|flock_invite`;
+          const last = lastInvitePush.get(key);
+          if (last != null && now - last < INVITE_PUSH_DEBOUNCE_MS) {
+            return { skipped: true, reason: 'debounced' };
+          }
+          // Claimed BEFORE the send so two concurrent invites cannot both pass,
+          // and released below if nothing actually went out — the same
+          // claim-then-roll-back shape pushIfOfflineDebounced uses. A recipient
+          // who was online, blocked, banned or had no registered device must
+          // not have their next thirty seconds suppressed on the strength of a
+          // delivery that never happened.
+          lastInvitePush.delete(key);
+          lastInvitePush.set(key, now);
+          const result = await pushIfOffline(io, inv.user_id,
+            `${inviter.name} invited you to a flock`,
+            flockName,
+            { type: 'flock_invite', flockId: String(flockId), fromUserId: String(inviter.id) }
+          );
+          const nothingSent = !result || result.skipped || result.sent === 0;
+          if (nothingSent && lastInvitePush.get(key) === now) lastInvitePush.delete(key);
+          return result;
+        })
       );
     }
   } catch (pushErr) {
@@ -2323,6 +2466,19 @@ router.post('/:id/attendance',
 
 module.exports = router;
 
+// Test seam. `pushInvitesToOffline` is the ONE invite-push site in the app —
+// POST /:id/invite and POST /:id/rerun both call it — so pinning its debounce
+// here pins both doors at once, which is the whole reason the window lives in
+// the shared helper rather than at a call site.
+// See __tests__/crowdBatchAmplification.test.js.
+module.exports.__testables = { pushInvitesToOffline };
+
 // Test hook only — the invite budget is process-wide in-memory state, so a test
 // suite needs a way to start each case from a clean allowance.
-module.exports.__resetBudgets = () => { inviteBudget.reset(); };
+module.exports.__resetBudgets = () => {
+  inviteBudget.reset();
+  // The invite-push debounce is process-wide in-memory state for the same
+  // reason and needs the same seam, or one test's suppression window leaks into
+  // the next test's expectations.
+  lastInvitePush.clear();
+};
