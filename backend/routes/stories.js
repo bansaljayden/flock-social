@@ -414,7 +414,7 @@ router.post('/',
       // teen app with photo UGC there is no failure mode that stores the image.
       let verdict;
       try {
-        verdict = await moderation.moderateImage(image_url);
+        verdict = await moderation.moderateImage(image_url, { userId: req.user.id });
       } catch (modErr) {
         console.error('🛡️ Story image moderation threw, rejecting (fail-closed):', modErr.message);
         verdict = { allowed: false, reason: 'moderation_error' };
