@@ -509,14 +509,18 @@ router.get('/:placeId',
       clientTime.setDate(clientTime.getDate() + crowdEngine.weekdayOffset(clientTime.getDay(), localDay));
       clientTime.setHours(localHour, 0, 0, 0);
 
-      const crowdResult = await mlPredictor.predictBusyness(venue, weather, clientTime);
+      // Same event-budget identity as the batch route below. This path is the
+      // bigger per-request event fan-out of the two — the 24-hour forecast on
+      // the next line is up to 24 more Ticketmaster calls for a cold venue,
+      // one per UTC hour slot — so it is charged to the caller too.
+      const crowdResult = await mlPredictor.predictBusyness(venue, weather, clientTime, { userId: req.user.id });
 
       // Round 13: this 24-hour forecast used to start at 6 AM, so "best time"
       // could name an hour that already happened and "now" was read off the
       // 6 AM entry instead of the score on screen. It starts at the current
       // hour and runs forward now, and the hourly strip is its first 12 entries
       // so the chart and the recommendation can never disagree.
-      const fullDay = await mlPredictor.predictHourlyForecast(venue, weather, localHour, 24, clientTime);
+      const fullDay = await mlPredictor.predictHourlyForecast(venue, weather, localHour, 24, clientTime, { userId: req.user.id });
       const hourly = fullDay.slice(0, 12);
       // Peak comes off the same 12 hours the forecast meter draws, so it names
       // a rush the user can see rather than tomorrow evening.
@@ -854,8 +858,43 @@ router.post('/batch',
         user_ratings_total: Number.isFinite(v?.user_ratings_total) ? v.user_ratings_total : 0,
         price_level: Number.isInteger(v?.price_level) ? v.price_level : null,
         types: Array.isArray(v?.types) ? v.types.filter((t) => typeof t === 'string').slice(0, 10) : [],
+        // BUCKETED TO ~1 km BEFORE ANYTHING DOWNSTREAM SEES THEM.
+        //
+        // Money audit round 2, finding M1. These coordinates are floats the
+        // CALLER supplies, and services/mlPredictor.js keys two of its caches
+        // on them: eventCache on `lat.toFixed(3),lng.toFixed(3),<UTC hour>`
+        // (a paid Ticketmaster call per miss) and neighborCache on
+        // `lat.toFixed(3)_lng.toFixed(3)_place_id` (a bounding-box range scan
+        // over ml_venues per miss). Unbucketed, a caller who walks the FOURTH
+        // decimal place misses both caches on every item of every request,
+        // forever — twenty venues per POST, so twenty Ticketmaster calls and
+        // sixty database queries per request that can never be served from
+        // memory.
+        //
+        // 2 decimals, and that number is not chosen fresh here: it is the
+        // precision routes/publicCrowd.js has always applied to ITS caller
+        // coordinates ("~1km buckets = shared cache"), on the endpoint that is
+        // not even authenticated. This is the same defence on the
+        // authenticated door, which was the one without it. It collapses the
+        // key space by ~100x per axis, i.e. ~10,000x over the pair.
+        //
+        // It costs nothing real. The event lookup has a 2 km radius and the
+        // neighbour scan a ~1.7 km box, so ~1.1 km of rounding is inside the
+        // noise of both questions — "what is on near this venue" is not a
+        // question that changes across a city block. The rounded value is what
+        // the feature vector carries too (latitude bands are 5 degrees wide for
+        // the climate norm, and specialNightContext resolves a city), so no
+        // downstream consumer notices.
+        //
+        // `+(+x).toFixed(2)` rather than a hand-rolled multiply/round for the
+        // same reason publicCrowd writes it that way: one expression, no
+        // floating-point residue in the key, and the two files stay greppable
+        // as the same fix.
         location: (v?.location && Number.isFinite(v.location.latitude) && Number.isFinite(v.location.longitude))
-          ? { latitude: v.location.latitude, longitude: v.location.longitude }
+          ? {
+            latitude: +(+v.location.latitude).toFixed(2),
+            longitude: +(+v.location.longitude).toFixed(2),
+          }
           : null,
         isOpen: typeof v?.isOpen === 'boolean' ? v.isOpen : null,
         openHour: Number.isInteger(v?.openHour) ? v.openHour : null,
@@ -1017,7 +1056,16 @@ router.post('/batch',
       const predictions = (await Promise.all(venues.map(async (v, i) => {
         const clock = clocks[i];
         try {
-          const result = await mlPredictor.predictBusyness(v, weather, clock.at);
+          // `userId` is what gives the Ticketmaster leg of this fan-out a
+          // caller dimension. Before it, this route's only identified upstream
+          // was the ONE weather call; the twenty event calls it can trigger
+          // were charged to a process-wide counter with no user on it, so one
+          // account could spend everybody's daily allowance in about twenty
+          // seconds. See the block above allowEventFetch in
+          // services/mlPredictor.js. Charged per real upstream call rather
+          // than per request, so a cache hit — which bucketing above makes the
+          // common case — still costs nothing.
+          const result = await mlPredictor.predictBusyness(v, weather, clock.at, { userId: req.user.id });
           const cal = buildCalibrationAdjustment(feedbackByVenue[v.place_id] || [], result.score);
           const boost = cal.feedbackUsed ? Math.min(15, cal.reportCount * 3) : 0;
           // Same evidence rule as the card above, and it has to be the same one:
@@ -1182,7 +1230,7 @@ router.get('/:placeId/alternatives',
       clientTime.setHours(localHour, 0, 0, 0);
 
       // Score the target venue
-      const targetResult = await mlPredictor.predictBusyness(target, weather, clientTime);
+      const targetResult = await mlPredictor.predictBusyness(target, weather, clientTime, { userId: req.user.id });
 
       // Search nearby venues of similar type
       const primaryType = target.types[0] || 'restaurant';
@@ -1286,7 +1334,11 @@ router.get('/:placeId/alternatives',
       const targetScore = targetCal.adjustedScore;
       const scoredNearby = await Promise.all(nearby.map(async (v) => {
         try {
-          const r = await mlPredictor.predictBusyness(v, weather, clientTime);
+          // Ten neighbours, ten possible Ticketmaster calls, one request —
+          // charged to the caller like the two routes above. These coordinates
+          // came from Google rather than the body, so they need no bucketing;
+          // what they need is an identity on the spend.
+          const r = await mlPredictor.predictBusyness(v, weather, clientTime, { userId: req.user.id });
           const cal = buildCalibrationAdjustment(feedbackByVenue[v.place_id] || [], r.score);
           const score = cal.adjustedScore;
           // Third copy of the evidence rule, for the same reason the feedback
