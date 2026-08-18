@@ -10,8 +10,7 @@ Apps, Apple, Google, Snapchat+, BeReal, Gas). This is the honest version, not th
 > conditions. Two things here have changed since 2026-08-11:
 >
 > - **Reason 2 below is out of date on the legal point.** The Apple Developer
->   account has a lawful signer of record
->   and payee. Under-18 status is no longer a blocker on the Apple side. It is
+Under-18 status is no longer a blocker on the Apple side. It is
 >   still a blocker on the Stripe/venue side, where no account exists yet. What
 >   remains true is the *product* point: teen purchases route through a parent's
 >   card and Ask to Buy, so a $24.99 annual charge is an "ask a parent" conversation.
