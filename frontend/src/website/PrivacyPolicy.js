@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'August 14, 2026';
+const EFFECTIVE_DATE = 'August 18, 2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // EVERY CLAIM ON THIS PAGE IS SOURCED TO CODE. If you change behaviour in the
