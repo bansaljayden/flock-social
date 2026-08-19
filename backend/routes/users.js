@@ -1,5 +1,33 @@
 const express = require('express');
-const bcrypt = require('bcryptjs');
+// SECURITY-AUDIT-auth.md A5-1 (MEDIUM). This file was the half of the bcrypt
+// swap that f9699d1 missed. routes/auth.js moved its login compare to the
+// native library so the pure-JS key schedule stops running on the only thread;
+// this file kept `bcryptjs` and kept running THREE compares and one hash on it
+// — and one of those is repeatable at will, which the login compare is not.
+//
+// THE DOOR. PUT /api/users/profile clears the proof throttle on a CORRECT
+// password (deliberately: a user who mistypes and then gets it right must not
+// be held back), so a caller who owns an account and knows its password is
+// never throttled by proofFailures and is bounded only by apiLimiter at
+// 3000/15 min per IP, about 200/min. Measured by the audit: one `bcryptjs`
+// compare is 43 ms and 8 concurrent compares are 341 ms of wall time with
+// exactly ONE event-loop turn available inside it — 8.6 s of head-of-line
+// blocking per minute per address. Seven addresses and one free account
+// saturate the process. That is R4-A2's mechanism at an eighth of the address
+// cost, because apiLimiter is 300x looser than authLimiter's 10/min.
+//
+// Hash parity across the swap is total in both directions and across the
+// $2a/$2b/$2y/$2x prefixes, so no stored hash becomes unverifiable and
+// `bcryptjs` stays in package.json as the rollback path (the seed scripts and
+// most of the test suites still write their fixtures with it). Proven for THIS
+// file's four call sites by __tests__/usersBcryptAndProofEviction.test.js
+// rather than assumed to carry over from the auth suite.
+//
+// The concurrency ceiling this buys is UV_THREADPOOL_SIZE, which nothing here
+// sets, so it is Node's default 4 — a queue on the libuv pool rather than a
+// stall of the HTTP server. If authLimiter or apiLimiter is ever raised, that
+// is the number to raise with it.
+const bcrypt = require('bcrypt');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { body, param, query, validationResult } = require('express-validator');
@@ -432,6 +460,41 @@ function hasFreshSession(req, now = Date.now()) {
 // on the login throttle, and the same bounded map so an attacker cycling ids
 // cannot grow it without limit.
 const ATTEMPT_MAX_KEYS = 20000;
+// Evict down to 90%, not to the ceiling. Stopping exactly at the ceiling makes
+// a map held AT the ceiling sort itself on every single record(), which is a
+// CPU lever the caller controls. Same low-water rule and the same number as
+// routes/auth.js evictLoginFailures, routes/publicCrowd.js and
+// utils/probeBudget.js.
+const ATTEMPT_LOW_WATER = Math.floor(ATTEMPT_MAX_KEYS * 0.9);
+
+// SECURITY-AUDIT-auth.md A5-3 (LOW), and the class round 23 swept everywhere
+// else. This memory guard used to end in `hits.clear()` — the last wholesale
+// clear() left on a live path in the backend, and it sits under FOUR counters
+// including proofFailures, the password-guess throttle on account deletion,
+// data export and profile edit. Round 2 triaged the clear as unreachable
+// ("filling it requires 20,000 real accounts"), and that judgement still holds
+// for proofFailures because its key is an authenticated users.id — but
+// `emailChangeAttempts` and `phoneChangeAttempts` are keyed the same way and
+// the argument is about the data rather than about the code. A control that
+// gets WEAKER the harder it is pushed does not get to stay in the tree on the
+// strength of an argument about how many accounts exist.
+//
+// EXPIRE FIRST, THEN EVICT LEAST CONSUMED FIRST — never clear(). Consumption
+// order rather than insertion age, for the reason evictLoginFailures spells
+// out: the entry an attacker wants gone is the throttled one, and a throttled
+// entry is both the OLDEST and the FULLEST, so an age-ordered drop deletes
+// precisely the entry that was doing the work. Lowest-count-first deletes the
+// flooder's own one-hit entries instead, so displacing a locked entry costs
+// ~20,000 accounts that have EACH already been failed to the limit.
+function evictAttempts(hits, now) {
+  for (const [k, v] of hits) if (now >= v.expiresAt) hits.delete(k);
+  if (hits.size <= ATTEMPT_MAX_KEYS) return;
+  const byConsumption = [...hits.entries()].sort((a, b) => a[1].count - b[1].count);
+  for (const [k] of byConsumption) {
+    if (hits.size <= ATTEMPT_LOW_WATER) break;
+    hits.delete(k);
+  }
+}
 
 function attemptLimiter({ limit, windowMs }) {
   const hits = new Map();
@@ -443,10 +506,9 @@ function attemptLimiter({ limit, windowMs }) {
       return entry.count >= limit ? entry.expiresAt - now : 0;
     },
     record(key, now = Date.now()) {
-      if (hits.size > ATTEMPT_MAX_KEYS) {
-        for (const [k, v] of hits) if (now >= v.expiresAt) hits.delete(k);
-        if (hits.size > ATTEMPT_MAX_KEYS) hits.clear();
-      }
+      // Bounded: a caller cycling keys must not grow this without limit — and
+      // must never be able to EMPTY it.
+      if (hits.size > ATTEMPT_MAX_KEYS) evictAttempts(hits, now);
       const entry = hits.get(key);
       if (!entry || now >= entry.expiresAt) {
         hits.set(key, { count: 1, expiresAt: now + windowMs });
@@ -454,8 +516,14 @@ function attemptLimiter({ limit, windowMs }) {
       }
       entry.count += 1;
     },
+    // Per-KEY, not wholesale: this deletes the caller's own entry and nothing
+    // else. proofFailures uses it on a correct password so a user who mistypes
+    // and then gets it right is not held back; the key is the authenticated
+    // users.id, so the only counter a caller can clear here is their own.
     clear(key) { hits.delete(key); },
+    // Tests only. Production code must never reset a throttle wholesale.
     clearAll() { hits.clear(); },
+    size() { return hits.size; },
   };
 }
 
@@ -2484,6 +2552,13 @@ module.exports.__testing = {
   proofFailures,
   phoneChangeAttempts,
   emailChangeAttempts,
+  // A5-1 / A5-3. Exported so __tests__/usersBcryptAndProofEviction.test.js can
+  // drive the throttle's memory guard directly and pin that a flood cannot
+  // empty it, rather than reasoning about how many accounts exist.
+  attemptLimiter,
+  ATTEMPT_MAX_KEYS,
+  ATTEMPT_LOW_WATER,
+  SALT_ROUNDS,
   exportRequests,
   EXPORT_ROW_CAP,
   EXPORT_MESSAGE_ROW_CAP,
