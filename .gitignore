@@ -185,3 +185,4 @@ backend/scripts/ml/train/*
 # repo, so anything not ignored here reaches it -- these are the working
 # documents where a decision is argued rather than announced.
 PAYMENTS-ROUTING.md
+VENUE-ADVISOR.md
