@@ -52,17 +52,70 @@ are all real.
 
 Flock runs its own trained model, not a wrapper around someone else's busyness
 chart. `backend/services/mlPredictor.js` serves an XGBoost model (ONNX,
-**v2.5.0 "Starling"**, trained 2026-08-12) with **106 features**: time patterns,
+**v2.6.0 "Starling"**, trained 2026-08-18) with **106 features**: time patterns,
 weather, nearby events, holiday/holiday-eve calendars, venue category and
-popularity, per-venue baselines, and user feedback.
+popularity, per-venue baselines, and user feedback. It predicts a *delta* from
+each venue's popular-times baseline, clamped to ±30 points, rather than an
+absolute busyness figure.
 
-- Trained on **2.07M venue-hour observations across 31 cities**
-  (plus a 419K-row holdout), validated leave-one-city-out.
-- Leave-one-city-out CV: **R² 0.766** vs **0.672** for the popular-times
-  baseline it starts from, **MAE 6.50**, **83.6% of predictions within 15
-  points**.
-- Held-out cities (Barcelona, Miami, Tokyo): **R² 0.837**, **MAE 5.81**,
-  **85.1% within 15 points**, vs an 0.790 / 6.09 baseline.
+Trained on **1,934,988 venue-hour observations across 30 cities**, with a
+separate **395,464-row holdout** (Barcelona, Miami, Tokyo), validated
+leave-one-city-out.
+
+One model, three populations. Which one gets quoted decides whether the number
+means anything at all:
+
+| Population | Rows | MAE | R² | Within 10 |
+|---|---|---|---|---|
+| Every training row | 1,934,988 | 6.89 | 0.653 | 85.1% |
+| **Realtime rows — what production actually scores** | **369,076** | **27.54** | **0.127** | **22.8%** |
+| Weekly snapshots (diagnostic only) | 1,565,912 | 2.02 | 0.986 | 99.8% |
+
+Those three rows are the same model. The first looks four times better than the
+second purely because 81% of the corpus is weekly popular-times snapshots, and
+on those rows the label is zero *by construction* — the model is asked to
+predict that a venue matches its own baseline, which it does almost perfectly
+and which proves nothing. Averaging them together produces a number that is
+arithmetically correct and completely misleading. `model_metadata.json` labels
+that row `"close to a tautology on that majority"` in the artifact itself, and
+the ship gate refuses to score against it.
+
+What the model is actually measured on is the realtime slice, and it is measured
+against what it replaced rather than against nothing. Predicting how full a specific bar
+will be at 9pm on a specific Friday is a genuinely open problem, and the yardstick
+says so: the popular-times baseline this model starts from — the strongest freely
+available signal for the question — scores **R² −0.075** on those rows, which is
+worse than always guessing the average. That is the bar. Two generations of the
+model have moved it:
+
+| On the same 67,249 holdout rows | MAE | R² | Within 10 |
+|---|---|---|---|
+| Popular-times baseline alone | 31.48 | −0.075 | 19.2% |
+| v2.5.0-starling (previous) | 30.77 | −0.043 | 19.3% |
+| **v2.6.0-starling (serving)** | **29.42** | **+0.040** | **20.7%** |
+
+Crossing zero is the part that matters: v2.6 is the first version whose
+predictions carry more information than the mean of the data. Both margins are
+small and both are real, measured on identical rows with identical features.
+
+Getting that measurement right was most of the work. Three things had to be
+true before the number meant anything:
+
+- **The ship gate scores only the realtime slice.** It is structurally incapable
+  of reporting the 85% figure, because that figure is dominated by rows whose
+  answer is zero by definition.
+- **The floor is re-derived every run** from the incumbent's own measured
+  within-10 on the same rows. It was a hardcoded 29.2% until that constant was
+  traced back to a measurement taken *before* the clock-axis bug was fixed,
+  which made it a number no honest model could ever clear.
+- **The corpus was on the wrong clock.** Category peaks were landing at lunchtime
+  because 3,454,955 weekly rows were stored six hours off local time. Fixing it moved
+  restaurant, bar and nightclub peaks into 17:00–23:00 — 53 of 91 categories,
+  up from 2 — and only then did the weights get retrained on a corrected axis.
+
+`backend/scripts/ml/MODEL-METRICS.md` carries the full measurement, including
+the per-city breakdown and what the gate refused along the way.
+
 - Every number above is read from
   `backend/scripts/ml/models/model_metadata.json`. Quote it, not this table —
   and re-run the incumbent on the same holdout before claiming an improvement,
@@ -71,11 +124,11 @@ popularity, per-venue baselines, and user feedback.
 - Venues the model doesn't know yet (no baseline, no popular-times signal)
   are answered by the rule engine in `crowdEngine.js` instead of guessing.
 
-> **The trained model is not in this repo.** `crowd_model.onnx` (11 MB) and
-> `model_metadata.json` are Flock's own artifacts, built from Flock's own
-> collected data, and they are not distributed with the source. Everything that
-> produced them is here: the collection scripts in `backend/scripts/ml/`, the
-> training pipeline in `backend/scripts/ml/train/`, and the runbook in
+> **The trained model is not in this repository.** `crowd_model.onnx` (11.4 MB)
+> and `model_metadata.json` are Flock's own artifacts, built from Flock's own
+> collected data, and they are not published. Everything that produced them is
+> here: the collection scripts in `backend/scripts/ml/`, the training pipeline
+> in `backend/scripts/ml/train/`, and the runbook in
 > `backend/scripts/ml/RETRAIN.md`. See `backend/scripts/ml/models/README.md` for
 > how to train your own from your own data.
 >
@@ -108,9 +161,11 @@ flock-app/
 │   └── ios/           # Capacitor iOS shell (built by Codemagic → TestFlight)
 ├── backend/           # Express API + Socket.io + ML predictor
 │   └── scripts/ml/    # Data collection + training pipeline (trained model not distributed)
-├── flock-sensor/      # Raspberry Pi occupancy sensor pipeline (proven, hardware pending)
-└── mobile/            # React Native port (not the launch path)
+└── flock-sensor/      # Raspberry Pi occupancy sensor pipeline (proven, hardware pending)
 ```
+
+An abandoned React Native port lived in `mobile/` until 2026-08-13 and was
+removed; Capacitor is the launch path and the RN tree was two months stale.
 
 ## Hard invariants (do not break)
 
