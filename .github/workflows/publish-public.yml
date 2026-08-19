@@ -1,0 +1,97 @@
+# Regenerate the public mirror (bansaljayden/flock-social) from this repo.
+#
+# The public repository is this one with a set of paths erased from every commit
+# that ever contained them: the trained model, the old .env files, the Android
+# debug keystore, and the App Store screenshots. Erasing a path rewrites every
+# commit after it, so the public history is a different chain of hashes and
+# there is no shared ancestor to push against.
+#
+# git-filter-repo is deterministic. The same commits filtered with the same path
+# list always produce the same output hashes, so this job regenerates every old
+# commit identically and appends only what is new — which is why the push below
+# is an ordinary fast-forward and not a force. If it is ever rejected, the strip
+# list changed and the entire public history was renumbered. That is a decision
+# to make deliberately, not a failure to paper over with --force.
+#
+# The path list here and in tools/publish/publish-public.sh must stay identical.
+# The script is the manual escape hatch; this is the automatic path.
+name: Publish public mirror
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # Two pushes in quick succession would otherwise race, and the loser's push
+  # fails as non-fast-forward against a mirror the winner already advanced.
+  # Queue instead of cancelling: every commit should reach the mirror.
+  group: publish-public-mirror
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    # This file is itself mirrored to flock-social. Without this guard it would
+    # run there too, find no secret, and email a failure on every sync.
+    if: github.repository == 'bansaljayden/Flock-app-'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@v4
+        with:
+          # filter-repo rewrites every commit, so it needs every commit. A
+          # shallow clone would silently publish a truncated history and destroy
+          # the seven-month commit record this mirror exists to show.
+          fetch-depth: 0
+
+      - name: Install git-filter-repo
+        run: pip install git-filter-repo
+
+      - name: Erase excluded paths from all history
+        run: |
+          set -euo pipefail
+          git filter-repo --force --invert-paths --prune-empty=never \
+            --path backend/scripts/ml/models/crowd_model.onnx \
+            --path backend/scripts/ml/models/model_metadata.json \
+            --path backend/.env \
+            --path frontend/.env.production \
+            --path mobile/android/app/debug.keystore \
+            --path frontend/public/birdie/flap-src.png \
+            --path frontend/public/birdie/birdie-idle.mp4 \
+            --path-glob 'frontend/public/screenshots/appstore/*'
+
+      - name: Refuse to publish if anything excluded survived
+        run: |
+          set -euo pipefail
+          fail=0
+          for p in backend/scripts/ml/models/crowd_model.onnx \
+                   backend/scripts/ml/models/model_metadata.json \
+                   backend/.env \
+                   frontend/.env.production \
+                   mobile/android/app/debug.keystore; do
+            n=$(git log --all --oneline -- "$p" | wc -l)
+            if [ "$n" != "0" ]; then echo "LEAK: $p survives in $n commits"; fail=1; fi
+          done
+          n=$(git log --all --oneline -- 'frontend/public/screenshots/appstore' | wc -l)
+          if [ "$n" != "0" ]; then echo "LEAK: appstore screenshots survive in $n commits"; fail=1; fi
+          # Belt and braces: the filter is path-based, so a key pasted into a
+          # source file would pass it. gitleaks guards that on the private side;
+          # this catches the specific shape that was on GitHub before the scrub.
+          if git grep -I -q -E 'AIzaSy[A-Za-z0-9_-]{20,}' $(git rev-list --all) -- 2>/dev/null; then
+            echo "LEAK: a Google API key shape appears in the filtered history"; fail=1
+          fi
+          [ "$fail" = "0" ] || { echo "REFUSING TO PUBLISH"; exit 1; }
+          echo "clean: $(git rev-list --count HEAD) commits, $(git count-objects -vH | awk '/size-pack/{print $2, $3}')"
+
+      - name: Push to the public mirror
+        env:
+          KEY: ${{ secrets.PUBLIC_MIRROR_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/mirror
+          chmod 600 ~/.ssh/mirror
+          ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i ~/.ssh/mirror -o IdentitiesOnly=yes"
+          git remote add public git@github.com:bansaljayden/flock-social.git
+          git push public HEAD:main

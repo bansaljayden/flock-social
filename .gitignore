@@ -180,3 +180,8 @@ backend/scripts/ml/train/*
 !backend/scripts/ml/train/*.js
 !backend/scripts/ml/train/*.sh
 !backend/scripts/ml/train/requirements.txt
+
+# Strategy notes that stay private. The public mirror is generated from this
+# repo, so anything not ignored here reaches it -- these are the working
+# documents where a decision is argued rather than announced.
+PAYMENTS-ROUTING.md
