@@ -106,11 +106,16 @@ export default function SupportPage() {
 
   return (
     <main className="pp">
+      {/* First focusable element on the page (SLOP-AUDIT Q1), off-screen
+          until focused. The header carries tabIndex -1 so activating this
+          moves focus with the scroll instead of leaving it behind here. */}
+      <a className="pp-skip" href="#pp-content">Skip to the main content</a>
+
       <a href="/" className="pp-back" style={READABLE}>
         <span aria-hidden="true">&larr;</span> flockcorp.com
       </a>
 
-      <header className="pp-header">
+      <header className="pp-header" id="pp-content" tabIndex={-1}>
         <h1>Support</h1>
         {/* "We're a small team" was neither true nor the strongest thing this
             page could say. /about names one person, a student founder in

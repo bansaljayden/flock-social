@@ -229,7 +229,7 @@ const PAGE_BLOCKS = {
   ],
   privacy: [
     ["h1", "Privacy Policy"],
-    ["p", "Effective August 14, 2026"],
+    ["p", "Effective August 18, 2026"],
     ["h2", "The short version"],
     ["li", "We collect what Flock needs to work: your account, your plans, your messages."],
     ["li", "Location is used only while you're using the app. Never in the background."],
@@ -344,7 +344,7 @@ const PAGE_BLOCKS = {
   ],
   terms: [
     ["h1", "Terms of Service & EULA"],
-    ["p", "Effective August 14, 2026"],
+    ["p", "Effective August 18, 2026"],
     ["p", "These Terms of Service (\"Terms\") are a binding agreement between you and Flock Corp (\"Flock\", \"we\", \"us\"). By creating an account or using the Flock app, you agree to these Terms and to our Privacy Policy and Community Guidelines. If you do not agree, do not use Flock."],
     ["h2", "1. Eligibility"],
     ["p", "You must be at least 13 years old to use Flock. By using Flock you represent that you are 13 or older and that you can form a binding contract with us."],

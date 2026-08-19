@@ -208,6 +208,10 @@ function Feedback({ where, feedback }) {
 function Shell({ children }) {
   return (
     <main className="gi">
+      {/* First focusable element on the page (SLOP-AUDIT Q1), off-screen
+          until focused. The target div carries tabIndex -1 so activating
+          this moves focus past the letterhead with the scroll. */}
+      <a className="gi-skip" href="#gi-content">Skip to the invitation</a>
       <div className="gi-wrap">
         <p className="gi-brand">
           <a className="gi-mark" href="/">
@@ -216,7 +220,9 @@ function Shell({ children }) {
           </a>
           <span className="gi-brand-line">Where a group picks the place and the time.</span>
         </p>
-        {children}
+        <div id="gi-content" tabIndex={-1}>
+          {children}
+        </div>
       </div>
     </main>
   );
