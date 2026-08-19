@@ -186,3 +186,4 @@ backend/scripts/ml/train/*
 # documents where a decision is argued rather than announced.
 PAYMENTS-ROUTING.md
 VENUE-ADVISOR.md
+MODEL-EPOCH-FINDING.md
