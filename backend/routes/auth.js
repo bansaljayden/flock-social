@@ -31,8 +31,11 @@ const crypto = require('crypto');
 // node-gyp-build at REQUIRE time, not only in the install script, so even an
 // `npm ci --ignore-scripts` build boots. That is why this is safe to depend on
 // where a node-pre-gyp-era native module (which downloads its binary during
-// install) would not have been. Keep `bcryptjs` in package.json: routes/users.js
-// and several suites still require it, and it is the rollback path.
+// install) would not have been. Keep `bcryptjs` in package.json: the seed
+// scripts and most of the test suites still write their fixtures with it, and
+// it is the rollback path. Round 5 (A5-1) finished the swap — routes/users.js
+// was the other half of this file's fix and still ran three compares and a
+// hash on the event loop; it is native now too.
 //
 // What this does NOT change: the constant-cost path for unknown addresses below.
 // Lowering SALT_ROUNDS would be the wrong lever and removing the dummy compare
@@ -1304,19 +1307,48 @@ const UNDERAGE_MSG = "We can't create a Flock account for you.";
 // process, reset on deploy, a real ceiling on the single-instance deployment.
 const UNDERAGE_EMAIL_TTL_MS = 24 * 60 * 60 * 1000;
 const UNDERAGE_IP_TTL_MS = 15 * 60 * 1000;
+// The whole map's ceiling, and the only thing that triggers an eviction pass.
 const UNDERAGE_MAX_KEYS = 20000;
-// Evict down to 90%, not to the ceiling, for the reason evictLoginFailures
-// above spells out: a map held AT the ceiling sorts itself on every refused
-// signup, which is a CPU lever an unauthenticated caller controls.
-const UNDERAGE_LOW_WATER = Math.floor(UNDERAGE_MAX_KEYS * 0.9);
+// SECURITY-AUDIT-auth.md A5-2 (MEDIUM): the two kinds of entry get SEPARATE
+// budgets, and the two shares add up to exactly UNDERAGE_MAX_KEYS. That
+// equality is load-bearing — see evictUnderageAttempts for why an eviction pass
+// can never run and find nothing to do.
+//
+// The split is 90/10 because the two classes hold wildly different populations:
+// an email entry lives 24 hours and an IP entry 15 minutes, so at any real
+// arrival rate there are one to two orders of magnitude more live email
+// entries. 2,000 distinct source addresses inside a fifteen-minute window is
+// already an extraordinary flood, and giving IP more would only shrink the
+// email class it can no longer touch.
+const UNDERAGE_EMAIL_MAX_KEYS = 18000;
+const UNDERAGE_IP_MAX_KEYS = 2000;
+// Evict down to a low water rather than to the ceiling, for the reason
+// evictLoginFailures above spells out: a class held AT its ceiling sorts itself
+// on every refused signup, which is a CPU lever an unauthenticated caller
+// controls. The email class uses the house 90%. The IP class uses 50% instead,
+// because it is a tenth the size and a proportional gap would leave only 200
+// writes between full passes; at 50% there are at least a thousand.
+const UNDERAGE_EMAIL_LOW_WATER = Math.floor(UNDERAGE_EMAIL_MAX_KEYS * 0.9);
+const UNDERAGE_IP_LOW_WATER = Math.floor(UNDERAGE_IP_MAX_KEYS * 0.5);
+// The floor no flood can push the map below. Exported under the old name
+// because that is what it has always meant: the count the eviction may not go
+// under. It is the email class's low water because the email class is the one
+// with a caller-chosen key.
+const UNDERAGE_LOW_WATER = UNDERAGE_EMAIL_LOW_WATER;
 const underageAttempts = new Map();
 
+// The key carries its CLASS in plaintext ahead of the digest. That is what lets
+// the eviction below tell an email entry from an IP entry without a second map
+// and without changing the value shape, and it leaks nothing: the kind is
+// already implied by which argument the caller filled in, and the address
+// itself stays inside the keyed digest.
 function underageKey(kind, value) {
   const pepper = process.env.BAN_TOMBSTONE_SECRET || process.env.JWT_SECRET || '';
   const canonical = kind === 'email' ? canonicalEmail(value) : String(value);
-  return pepper
+  const digest = pepper
     ? crypto.createHmac('sha256', pepper).update(`underage:${kind}:${canonical}`).digest('hex')
     : crypto.createHash('sha256').update(`underage:${kind}:${canonical}`).digest('hex');
+  return `${kind}:${digest}`;
 }
 
 // ROUND 23 (cache-key inventory sweep). This map's memory guard used to end in
@@ -1337,37 +1369,98 @@ function underageKey(kind, value) {
 // it was pushed, which is the exact anti-pattern the two maps above already
 // carry comments about.
 //
-// THE ORDER, and why it is not the one oauthNonces uses. Expire first, then
-// evict LONGEST-REMAINING-LIFETIME FIRST. That is this map's reading of
-// evictLoginFailures' least-consumed-first rule: there is no count here, so
-// what an entry has "consumed" is its lifetime, and the entry that has spent
-// the least of its TTL is the one that has enforced the least. Two properties
-// fall out, and both are the point:
+// ROUND 5 (SECURITY-AUDIT-auth.md A5-2, MEDIUM) — THE ORDER, CORRECTED.
 //
-//   1. AN ATTACKER CANNOT DISPLACE THE ENTRY THEY WANT GONE. Every write a
-//      flooder makes carries a LATER expiry than the block they are trying to
-//      clear (their own, recorded moments earlier), so their fresh entries are
-//      always ahead of their target in the eviction order. The flood evicts
-//      itself. Soonest-to-expire-first — oauthNonces' order, which is correct
-//      THERE because a nonce is server-minted and cannot be aimed — would do
-//      precisely the opposite here.
-//   2. THE IP BLOCKS SURVIVE. An IP entry lives 15 minutes and an email entry
-//      24 hours, so under soonest-first every IP block in the map is the first
-//      thing a flood deletes — and that is the half of the gate that stops the
-//      refused child in the room from back-buttoning. Under
-//      longest-remaining-first they are the last thing to go.
+// Round 23 evicted longest-remaining-lifetime first over ONE undivided map and
+// claimed two properties for it. The audit executed both. The second held
+// absolutely (600,000 refusals never touched an IP block). The first was FALSE
+// the moment the flood rotated its source address, and the auditor built the
+// counter-example: **18,009 refused signups from rotating addresses evicted a
+// pre-existing 24-hour email block.**
 //
-// What this does NOT claim: an attacker can still clear their OWN block by
-// waiting, which is what the TTLs are for (24h / 15 min). That was never the
-// finding. The finding was that one caller could clear EVERYONE's, instantly.
+// WHY IT FAILED. One refusal writes TWO entries, not one: an email entry at
+// now + 24h and an IP entry at now + 15 min. With a single source address the
+// IP key is rewritten in place, the map is ~100% email entries, and the
+// argument below works exactly as it was written. With rotating addresses half
+// of every write is a 15-minute IP entry, and under longest-remaining-first
+// those sort to the IMMUNE end of one shared ordering — they can never be
+// reached while any email entry remains. So every eviction pass spent its whole
+// 2,000-entry budget on email entries while only ~1,000 email entries had
+// arrived since the last pass, and the email population was eaten backwards,
+// newest to oldest, at a net 1,000 per pass, until it reached the oldest entry
+// in the map: the victim's.
+//
+// THE FIX: TWO BUDGETS, NOT ONE ORDERING. Email entries and IP entries are now
+// counted, capped and evicted SEPARATELY (UNDERAGE_EMAIL_MAX_KEYS /
+// UNDERAGE_IP_MAX_KEYS). Neither class can spend a single deletion on the
+// other, so the "immune end" that made the flood work does not exist. Two
+// alternatives were weighed and rejected:
+//   * sorting on remaining lifetime as a FRACTION of each entry's own TTL —
+//     one line, but it makes the two classes compete on a scale that has no
+//     operational meaning, and a later change to either TTL silently re-tunes
+//     which class gets deleted;
+//   * evicting by insertion age within one map — the ordering the round-23
+//     comment argues AGAINST, correctly: the victim's entry is the oldest one
+//     there, so age-first deletes precisely the entry the attacker wants gone.
+// Segmenting is the one that makes the property structural rather than a
+// consequence of arithmetic between two constants.
+//
+// WITHIN A CLASS, still longest-remaining-first — and now that is exactly
+// newest-first, because every entry in a class carries the same TTL. That is
+// what makes the round-23 claim TRUE for the first time: a flooder's writes are
+// the newest entries in their class, so they are always ahead of anything that
+// predates them, and a flood consumes itself before it can reach an older
+// block. This is the property the test pins, at the auditor's own scale.
+//
+// WHAT THIS GUARANTEES, stated so the next round can check it rather than
+// trust it:
+//   1. NO FLOOD CAN EVICT AN ENTRY THAT PREDATES IT, in either class, at any
+//      address-rotation rate. 18,009 rotating-address refusals — and 200,000 —
+//      leave a victim's email block and a victim's IP block both intact.
+//   2. THE TWO CLASSES CANNOT DISPLACE EACH OTHER. An email flood cannot reach
+//      an IP block and an IP flood cannot reach an email block, by construction
+//      rather than by which TTL happens to be longer.
+//
+// WHAT IT DOES NOT GUARANTEE, which is the honest residual and is NOT what the
+// finding was about:
+//   * A caller can still clear their OWN block by waiting out its TTL (24h /
+//     15 min). That is what the TTLs are for.
+//   * While a flood holds a class at its ceiling, refusals recorded DURING the
+//     flood are themselves the newest entries and are the first thing the next
+//     pass deletes. A flood cannot erase the past, but it can crowd out the
+//     present for as long as it is paying for it. That is inherent to any
+//     bounded in-heap map, and the fix for it is not an ordering — it is moving
+//     this map out of the heap (Postgres or Redis), which is the same open item
+//     the inventory records against every in-memory counter here.
+//
+// The eviction PASS is triggered by the whole map crossing UNDERAGE_MAX_KEYS,
+// and the two class ceilings sum to exactly that number. That equality is what
+// makes a pass always find work: if the total is over 20,000 then by pigeonhole
+// at least one class is over its own ceiling. Without it, a map sitting at
+// 18,000 email + 2,000 IP would sort 20,000 entries on every single refused
+// signup and delete nothing — the exact CPU lever the low-water rule exists to
+// prevent.
+function evictUnderageClass(prefix, maxKeys, lowWater) {
+  const mine = [];
+  for (const entry of underageAttempts) if (entry[0].startsWith(prefix)) mine.push(entry);
+  if (mine.length <= maxKeys) return;
+  // Longest remaining first. Within one class every TTL is identical, so this
+  // is newest-first: the flooder's own writes, never the older block they are
+  // aimed at.
+  mine.sort((a, b) => b[1] - a[1]);
+  let size = mine.length;
+  for (const [k] of mine) {
+    if (size <= lowWater) break;
+    underageAttempts.delete(k);
+    size -= 1;
+  }
+}
+
 function evictUnderageAttempts(now = Date.now()) {
   for (const [k, v] of underageAttempts) if (now >= v) underageAttempts.delete(k);
   if (underageAttempts.size <= UNDERAGE_MAX_KEYS) return;
-  const byRemaining = [...underageAttempts.entries()].sort((a, b) => b[1] - a[1]);
-  for (const [k] of byRemaining) {
-    if (underageAttempts.size <= UNDERAGE_LOW_WATER) break;
-    underageAttempts.delete(k);
-  }
+  evictUnderageClass('email:', UNDERAGE_EMAIL_MAX_KEYS, UNDERAGE_EMAIL_LOW_WATER);
+  evictUnderageClass('ip:', UNDERAGE_IP_MAX_KEYS, UNDERAGE_IP_LOW_WATER);
 }
 
 function recordUnderageAttempt(email, ip, now = Date.now()) {
@@ -3130,6 +3223,11 @@ module.exports.__testing = {
   UNDERAGE_IP_TTL_MS,
   UNDERAGE_MAX_KEYS,
   UNDERAGE_LOW_WATER,
+  // Round 5 (A5-2): the two class budgets that replaced the single ordering.
+  UNDERAGE_EMAIL_MAX_KEYS,
+  UNDERAGE_EMAIL_LOW_WATER,
+  UNDERAGE_IP_MAX_KEYS,
+  UNDERAGE_IP_LOW_WATER,
   // Round 23: exported so __tests__/minorsCompliance.test.js can drive the
   // eviction path directly and pin that a flood cannot empty the map, and that
   // the entry a flooder is aiming at outlives their own writes.

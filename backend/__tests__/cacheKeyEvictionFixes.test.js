@@ -444,9 +444,17 @@ test('every unauthenticated Places door has a daily sub-ceiling under the shared
   const DEMO_DAILY = Number(demoLeg[1]);
   assert.ok(DEMO_DAILY < vs.GLOBAL_DAILY);
 
-  // And together they cannot take the whole invoice. This is the number that
-  // matters: the authenticated product keeps a share of the day no flood of
-  // unauthenticated traffic can reach.
+  // And together they cannot take the whole invoice.
+  //
+  // SECURITY-AUDIT-money.md M5-1 corrected what this assertion is allowed to
+  // mean. The sum is 2700 against 3000, which is 90%, so "they cannot starve
+  // the signed-in product" was never what it proved — it left the authenticated
+  // product 300 calls a day, about 40 addresses' worth of work to reach. The
+  // share the product actually keeps comes from UNAUTH_DAILY, which
+  // allowGlobalPlacesCall enforces across all three doors at once; that is
+  // pinned in __tests__/unauthPlacesReserve.test.js. What is checked HERE is
+  // the weaker thing this file can check: the per-door ceilings still sum to
+  // less than the whole day, so no door is decorative.
   const unauthenticatedTotal = badge.BADGE_DAILY + vs.PUBLIC_PHOTO_BUDGET + DEMO_DAILY;
   assert.ok(unauthenticatedTotal < vs.GLOBAL_DAILY,
     `the three unauthenticated doors can together spend ${unauthenticatedTotal} of a `
