@@ -15,6 +15,7 @@ const { UPSTREAM_TIMEOUT_MS, upstreamSignal } = require('../utils/upstream');
 const {
   allowPlacesSearch,
   allowGlobalPlacesCall,
+  UNAUTH_DAILY,
   placesBudgetStatus,
   __resetPlacesBudget,
   PER_USER_HOURLY,
@@ -118,8 +119,10 @@ test('the stated limits are the enforced limits', () => {
   // written down for a human. If someone edits one they must edit both.
   assert.strictEqual(PER_USER_HOURLY, 30);
   assert.strictEqual(GLOBAL_DAILY, 3000);
+  assert.strictEqual(UNAUTH_DAILY, 1800);
   const status = placesBudgetStatus(1);
-  assert.deepStrictEqual(status.limits, { perUserHourly: 30, globalDaily: 3000 });
+  assert.deepStrictEqual(status.limits,
+    { perUserHourly: 30, globalDaily: 3000, unauthDaily: 1800 });
   assert.strictEqual(status.inMemory, true, 'callers must be able to see this is process-local');
 });
 
