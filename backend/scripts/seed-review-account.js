@@ -73,9 +73,14 @@ if (!isLocal && process.env.SEED_REVIEW_CONFIRM !== '1') {
   process.exit(1);
 }
 
-// Overridable so the reviewer build does not have to use a password that is
-// public in the repo. Defaults match SUBMISSION.md, which is what App Review
-// is handed today.
+// These defaults are LOCAL FIXTURES ONLY. They are the credentials
+// scripts/e2e-local.js logs in with against its embedded Postgres, and they are
+// public in this repository, which is exactly why the live review account does
+// not use them: production was re-seeded with SEED_REVIEWER_PASSWORD set, and
+// the value handed to App Review is recorded outside version control. Setting
+// the env vars is not optional for any database that is not a throwaway -- the
+// production guard above exists because a bare run once wrote these very
+// strings into the live database.
 const REVIEWER_PASSWORD = process.env.SEED_REVIEWER_PASSWORD || 'ReviewPass123';
 const BUDDY_PASSWORD = process.env.SEED_BUDDY_PASSWORD || 'BuddyPass123';
 
