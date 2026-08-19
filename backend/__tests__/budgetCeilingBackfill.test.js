@@ -44,17 +44,29 @@ const path = require('node:path');
 const { Pool } = require('pg');
 const EP = require('embedded-postgres');
 const EmbeddedPostgres = EP.default || EP;
+const {
+  pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
+} = require('./helpers/embeddedPgPort');
 
 const { bandCeiling } = require('../routes/budget');
 
 const MIGRATION_FILE = '027_backfill_banded_budget_ceilings.sql';
 const MIGRATION_PATH = path.join(__dirname, '..', 'migrations', MIGRATION_FILE);
 
-// Distinct from e2e-local.js's 59595, feedbackBackfillMigration's 59641,
-// mlClockAxisBackfill's 59643, mlCorpusDedupe's 59647, mlLabelProvenance's
-// 59651, mlExportContracts' 59723, mlFeedbackLabels' 59751 and
-// mlExportColumnGrowth's 59761.
-const PG_PORT = 59787;
+// This suite boots its own embedded Postgres, so its port must be distinct from
+// e2e-local.js's 59595 and from every sibling suite that does the same. It used
+// to be the hardcoded 59787, which held right up until a run was killed: the
+// orphaned postgres kept the port and broke every LATER run of this file
+// permanently, reported only as `hookFailed: undefined`.
+//
+// pickEmbeddedPgPort keeps the distinctness, by giving each suite a disjoint
+// range of its own, and adds orphan-immunity on top of it. The candidate port
+// starts from a process.pid-derived offset, so a fresh run never starts where an
+// orphan of some dead process sits, and it is then confirmed free by an actual
+// bind. See __tests__/helpers/embeddedPgPort.js.
+// It resolves SYNCHRONOUSLY, so it is usable at module scope like the constant
+// it replaces.
+const PG_PORT = pickEmbeddedPgPort('budgetCeilingBackfill');
 
 // tag -> the value the pre-fix code cached. `null` means the column was never
 // written. Strings, because that is how a DECIMAL arrives and leaves pg.
@@ -106,12 +118,12 @@ const asNumber = (v) => (v === null ? null : Number(v));
 
 test.before(async () => {
   dataDir = path.join(os.tmpdir(), 'flock-ceilingband-pg-' + Date.now());
-  pg = new EmbeddedPostgres({
-    databaseDir: dataDir,
-    user: 'postgres', password: 'postgres', port: PG_PORT, persistent: false,
+  pg = createEmbeddedPostgres(EmbeddedPostgres, {
+    suite: 'budgetCeilingBackfill', port: PG_PORT, databaseDir: dataDir,
   });
-  await pg.initialise();
-  await pg.start();
+  // Not pg.start(): the wrapper turns embedded-postgres's bare reject() into an
+  // error that names the suite, the port, and whether an orphan is holding it.
+  await startEmbeddedPostgres(pg);
   await pg.createDatabase('flock_ceilingband_test');
 
   pool = new Pool({

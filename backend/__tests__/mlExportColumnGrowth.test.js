@@ -49,11 +49,25 @@ const { spawnSync } = require('node:child_process');
 const { Pool } = require('pg');
 const EP = require('embedded-postgres');
 const EmbeddedPostgres = EP.default || EP;
+const {
+  pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
+} = require('./helpers/embeddedPgPort');
 
-// Distinct from e2e-local.js's 59595, feedbackBackfillMigration's 59641,
-// mlClockAxisBackfill's 59643, mlCorpusDedupe's 59647, mlLabelProvenance's
-// 59651 and mlExportContracts' 59723.
-const PG_PORT = 59761;
+// This suite boots its own embedded Postgres, so its port must be distinct from
+// e2e-local.js's 59595 and from every sibling suite that does the same. It used
+// to be the hardcoded 59761, which held right up until a run was killed: the
+// orphaned postgres kept the port and broke every LATER run of this file
+// permanently, reported only as `hookFailed: undefined`.
+//
+// pickEmbeddedPgPort keeps the distinctness, by giving each suite a disjoint
+// range of its own, and adds orphan-immunity on top of it. The candidate port
+// starts from a process.pid-derived offset, so a fresh run never starts where an
+// orphan of some dead process sits, and it is then confirmed free by an actual
+// bind. See __tests__/helpers/embeddedPgPort.js.
+// It resolves SYNCHRONOUSLY, which is not a nicety: CONN below is assigned to
+// process.env.DATABASE_URL at module scope, before the requires, for the reason
+// the next comment gives. An awaited port would arrive far too late.
+const PG_PORT = pickEmbeddedPgPort('mlExportColumnGrowth');
 const DB_NAME = 'flock_column_growth_test';
 const CONN = `postgresql://postgres:postgres@127.0.0.1:${PG_PORT}/${DB_NAME}`;
 
@@ -346,12 +360,12 @@ let venueId;
 test.before(async () => {
   outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flock-growth-out-'));
   dataDir = path.join(os.tmpdir(), 'flock-growth-pg-' + Date.now());
-  pg = new EmbeddedPostgres({
-    databaseDir: dataDir, user: 'postgres', password: 'postgres',
-    port: PG_PORT, persistent: false,
+  pg = createEmbeddedPostgres(EmbeddedPostgres, {
+    suite: 'mlExportColumnGrowth', port: PG_PORT, databaseDir: dataDir,
   });
-  await pg.initialise();
-  await pg.start();
+  // Not pg.start(): the wrapper turns embedded-postgres's bare reject() into an
+  // error that names the suite, the port, and whether an orphan is holding it.
+  await startEmbeddedPostgres(pg);
   await pg.createDatabase(DB_NAME);
   pool = new Pool({ connectionString: CONN });
 
