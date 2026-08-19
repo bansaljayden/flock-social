@@ -17,12 +17,17 @@ separate agreement. Email social@flockcorp.com.
 Pull requests are welcome and are accepted under these same terms: by opening one
 you agree your contribution is licensed under PolyForm Noncommercial 1.0.0, and
 that the maintainer may also license the project (including your contribution)
-commercially. Keep the `Required Notice:` line in `LICENSE` intact in any copy you
-distribute; the license requires it to travel with the software.
+commercially.
+
+Anyone you hand a copy to has to get these terms, or the URL for them, along with
+the `Required Notice:` line at the top of `LICENSE`. The Notices section is what
+requires all of it to travel with the software.
 
 ## Running the test suites
 
-Backend (Node's built-in test runner, no database needed for the unit suites):
+Backend (Node's built-in test runner; several migration suites start their own
+throwaway Postgres through `embedded-postgres`, so you do not have to provide
+one):
 
 ```bash
 cd backend
@@ -44,4 +49,4 @@ Both suites are expected to pass before any change is proposed. Many tests pin r
 
 ## Setup
 
-See the "Running it" section of `README.md`. Copy `backend/.env.example` to `backend/.env` and fill it in; each variable's comment says what breaks without it.
+See the "Running it" section of `README.md`. Copy `backend/.env.example` to `backend/.env` and `frontend/.env.example` to `frontend/.env`, then fill them in; each variable's comment says what breaks without it.
