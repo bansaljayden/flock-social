@@ -666,7 +666,8 @@ async function loadModel() {
 // halves, and there was no holdout on this side to check a guess against. So
 // the fix went to the data, not to the read — which is what has now happened:
 //
-// STATUS 2026-08-18 — steps 1-3 SHIPPED, step 4 (the retrain) PENDING.
+// STATUS 2026-08-18 — ALL FOUR STEPS SHIPPED. The collector, the backfill, the
+// single baseline writer and now the weights are all on the venue-local clock.
 //   1. DONE. scripts/ml/collectWeekly.js writes (index + 6) % 24 as the hour,
 //      rolls day_of_week forward for slots 18-23, and declares
 //      hour_axis = 'venue_local' on every row it writes.
@@ -681,19 +682,30 @@ async function loadModel() {
 //      with the collection_mode = 'weekly' filter), and its per-row baseline
 //      stamp filters on collection_mode = 'weekly' AND
 //      hour_axis = 'venue_local'. The two-clock blend cannot recur.
-//   4. NOT DONE. The served ONNX artifact (v2.5.0-starling) and
-//      model_metadata.json's category_baselines were trained on the pre-fix
-//      mixed-axis corpus. Because the corrected ml_venue_baselines now anchor
-//      the delta model, most of the served symptom is already gone — but the
-//      trained weights, and the training_metrics measured with them, still
-//      date from the old axis. The retrain is blocked on a fresh DB re-export:
-//      training_data.csv is 42 columns against the 44-column contract, and
-//      features_train.pkl is v1, which the trainer refuses. See
-//      scripts/ml/RETRAIN.md.
-// Until step 4 lands, crowdEngine.ML_BASELINE_AXIS_VERIFIED stays false and
-// routes/crowd.js publishes the provenance of every number it serves (see
-// crowdEngine.describePredictionSupport), so an ML answer is labeled by what
-// stands behind it instead of being asserted as a measurement.
+//   4. DONE 2026-08-18. v2.6.0-starling is trained on the corrected corpus and
+//      exported from the fresh 44-column re-export, so the WEIGHTS now sit on
+//      the same wall clock this query reads. The proof is in the artifact, not
+//      in this comment: category peaks in local 17:00-23:00 went from 2 of 91
+//      to 53 of 91 and lunchtime peaks from 35 to 9, and
+//      __tests__/dinnerPeakAccuracy.test.js PART 3 fails if a pre-fix artifact
+//      is ever served again. The predecessor (v2.5.0-starling) was trained on
+//      the mixed-axis corpus and is the artifact that flag exists to catch.
+// All four layers now agree, so crowdEngine.ML_BASELINE_AXIS_VERIFIED is TRUE
+// as of v2.6.0-starling and describePredictionSupport may return basis
+// 'model_holdout' with supported: true for the ML path. routes/crowd.js still
+// publishes the provenance of every number it serves, because the point was
+// never the hedge — it was that an ML answer is labeled by what stands behind
+// it rather than asserted, and that is as true when the label is good news.
+//
+// WHAT THE FLIP DOES NOT COVER, because the caution still applies here: the
+// confidence integer. It is training_metrics_by_population.realtime_served
+// .within_15 (33.3%), NOT the blended 87.3% that mixes in weekly rows whose
+// label equals the baseline by construction — see readServedAccuracy below.
+// A verified axis makes the measurement describable; it does not make a
+// different, larger number true.
+//
+// TURN THE FLAG BACK TO false if the served artifact is ever rolled back to a
+// pre-2026-08-18 model, because then the weights are on the old axis again.
 // ---------------------------------------------------------------------------
 // `userId` (optional) is the account a cache MISS is charged to — see
 // allowVenueLookup. Hits are answered above the gate and cost nothing.
@@ -717,7 +729,12 @@ async function getBaseline(placeId, dayOfWeek, hour, userId) {
     const nextDay = nextHour === 0 ? (dayOfWeek + 1) % 7 : dayOfWeek;
 
     const { rows } = await pool.query(
-      `SELECT day_of_week, hour, baseline FROM ml_venue_baselines
+      // `source, updated_at` join the SELECT so the answer can say how old it
+      // is — see BASELINE_STALE_AFTER_MS. They are read, never filtered on: a
+      // stale baseline is still the best number this venue has, and refusing to
+      // serve it would drop the venue to the rule engine, which is worse. The
+      // fix is to LABEL it, not to withhold it.
+      `SELECT day_of_week, hour, baseline, source, updated_at FROM ml_venue_baselines
        WHERE google_place_id = $1 AND (
          (day_of_week = $2 AND hour = $3) OR
          (day_of_week = $4 AND hour = $5) OR
@@ -727,22 +744,23 @@ async function getBaseline(placeId, dayOfWeek, hour, userId) {
     );
 
     if (rows.length === 0) {
-      boundedSet(baselineCache, cacheKey, { data: 0, ts: Date.now() });
+      boundedSet(baselineCache, cacheKey, { data: 0, ts: Date.now(), meta: null });
       return 0;
     }
 
     // Weighted average: current hour 60%, neighbors 20% each
     let current = 0, prev = 0, next = 0;
     let hasCurrent = false;
+    let currentRow = null;
     for (const r of rows) {
       const val = parseInt(r.baseline);
-      if (r.day_of_week === dayOfWeek && r.hour === hour) { current = val; hasCurrent = true; }
+      if (r.day_of_week === dayOfWeek && r.hour === hour) { current = val; hasCurrent = true; currentRow = r; }
       else if (r.hour === prevHour) prev = val;
       else if (r.hour === nextHour) next = val;
     }
 
     if (!hasCurrent) {
-      boundedSet(baselineCache, cacheKey, { data: 0, ts: Date.now() });
+      boundedSet(baselineCache, cacheKey, { data: 0, ts: Date.now(), meta: null });
       return 0;
     }
 
@@ -752,7 +770,15 @@ async function getBaseline(placeId, dayOfWeek, hour, userId) {
       ? Math.round(current * 0.6 + (prev || current) * 0.2 + (next || current) * 0.2)
       : current;
 
-    boundedSet(baselineCache, cacheKey, { data: val, ts: Date.now() });
+    // Provenance of the row the answer is anchored on (the current hour; the
+    // neighbours only smooth it). Stored alongside the value so the serve path
+    // can publish the age without a second query — see baselineProvenanceFor.
+    boundedSet(baselineCache, cacheKey, {
+      data: val,
+      ts: Date.now(),
+      meta: baselineMeta(currentRow ? currentRow.source : null,
+        currentRow ? currentRow.updated_at : null),
+    });
     return val;
   } catch (err) {
     console.error('[MLPredictor] Baseline lookup failed:', err.message);
@@ -760,7 +786,87 @@ async function getBaseline(placeId, dayOfWeek, hour, userId) {
   }
 }
 
-// Store Google popular_times as baselines on first encounter
+// ---------------------------------------------------------------------------
+// BASELINE FRESHNESS
+//
+// THE DEFECT THIS EXISTS FOR. ml_venue_baselines had no freshness anywhere:
+// storeGoogleBaselines wrote ON CONFLICT DO NOTHING, so a row written once was
+// never written again, and no read path looked at its age. Realtime collection
+// stopped 2026-05-18. Checked read-only against production 2026-08-18: all
+// 3,454,955 baseline rows are source='collected', covering 20,569 venues, and
+// there is not one source='google' row. A user in December would have been
+// served a spring number with nothing on the card saying so.
+//
+// WHAT `updated_at` ACTUALLY MEANS, because publishing it as "data age" without
+// this caveat would be a second dishonesty on top of the first. It is when the
+// ROW was last written, not when the venue was last observed. Every collected
+// row in production carries 2026-08-15, which is when migration
+// 023_backfill_ml_weekly_local_hours.sql rebuilt the table from the corrected
+// weekly corpus — months after the observations behind it were taken. So this
+// timestamp is an UPPER BOUND on freshness: the underlying data can only be
+// older than the row that holds it, never fresher. `basis` says exactly that in
+// the payload so nobody has to re-derive it from a migration file.
+//
+// 90 DAYS, because a baseline is a WEEKLY pattern and a weekly pattern is
+// stable across weeks and unstable across seasons: a college bar in August and
+// the same bar in November are different venues. One quarter is the shortest
+// interval over which the thing being modelled reliably changes. It is a
+// labelling threshold, not a gate — nothing stops being served for being stale.
+const BASELINE_STALE_AFTER_MS = 90 * 24 * 60 * 60 * 1000;
+
+// 30 DAYS for a Google-sourced row to be rewritten from a fresh popular_times
+// payload. Google's popular_times is itself a multi-week aggregate of Google's
+// own history, so rewriting it faster than it moves would spend writes on
+// noise; a month is inside the 90-day staleness threshold with room to spare,
+// so a venue that is looked at even once a month can never go stale by neglect.
+const GOOGLE_BASELINE_REFRESH_DAYS = 30;
+
+function baselineMeta(source, updatedAt) {
+  const t = updatedAt ? new Date(updatedAt).getTime() : NaN;
+  const asOf = Number.isFinite(t) ? t : null;
+  return {
+    source: source || null,
+    // Absolute, never a duration: this object is CACHED (both here and in the
+    // crowd route's card cache), and an age baked into a cached object is wrong
+    // by the age of the cache. The serve path derives age_ms from this, the way
+    // routes/publicCrowd.js already derives it from as_of.
+    asOf,
+    basis: 'baseline_row_written',
+    stale: asOf == null ? null : (Date.now() - asOf) > BASELINE_STALE_AFTER_MS,
+    staleAfterMs: BASELINE_STALE_AFTER_MS,
+  };
+}
+
+// Provenance of the baseline getBaseline just answered with, read back out of
+// the same cache entry. Split out rather than folded into getBaseline's return
+// because that return is a NUMBER on which the whole delta reconstruction and
+// every existing caller depends; widening it would be a shape change for a
+// label. Returns null when there is nothing to say (no row, refused lookup,
+// query error, or the entry aged out between the two calls).
+function baselineProvenanceFor(placeId, dayOfWeek, hour) {
+  if (!placeId) return null;
+  const cached = baselineCache.get(`${placeId}_${dayOfWeek}_${hour}`);
+  if (!cached || Date.now() - cached.ts >= BASELINE_CACHE_TTL) return null;
+  return cached.meta || null;
+}
+
+// Store Google popular_times as baselines, and REFRESH them once they age out.
+//
+// This was `DO NOTHING`, which made every row here write-once-forever: the
+// first request that ever touched a venue with no collected baseline fixed its
+// numbers permanently, and no later request could correct them however much the
+// venue changed. `DO NOTHING` was the right instinct for the wrong clause — the
+// thing that must not be overwritten is a COLLECTED row, not an old google one.
+//
+// Hence the WHERE. A collected row is measured data on the corrected clock
+// axis, and it is what the delta model's `baseline_busyness` label was computed
+// against (see the axis note above getBaseline); overwriting it with Google's
+// coarser popular_times would move the anchor out from under the trained
+// weights and bias every score for that venue. A google row has no such claim
+// on it, so once it is older than GOOGLE_BASELINE_REFRESH_DAYS the fresh
+// payload — which is already in hand, fetched for this very request — replaces
+// it. Rows fresher than that are left alone, so a busy venue does not pay 168
+// writes per request.
 async function storeGoogleBaselines(placeId, popularTimes) {
   if (!pool || !placeId || !popularTimes || !Array.isArray(popularTimes)) return;
   try {
@@ -772,10 +878,16 @@ async function storeGoogleBaselines(placeId, popularTimes) {
         const val = hours[h];
         if (val == null) continue;
         await pool.query(
-          `INSERT INTO ml_venue_baselines (google_place_id, day_of_week, hour, baseline, source)
-           VALUES ($1, $2, $3, $4, 'google')
-           ON CONFLICT (google_place_id, day_of_week, hour) DO NOTHING`,
-          [placeId, dow, h, Math.max(0, Math.min(100, Math.round(val)))]
+          // The refresh horizon is BOUND, not interpolated: no SQL in this
+          // repo is built by string concatenation, and a constant is not an
+          // exception worth making.
+          `INSERT INTO ml_venue_baselines (google_place_id, day_of_week, hour, baseline, source, updated_at)
+           VALUES ($1, $2, $3, $4, 'google', NOW())
+           ON CONFLICT (google_place_id, day_of_week, hour) DO UPDATE
+             SET baseline = EXCLUDED.baseline, updated_at = NOW()
+             WHERE ml_venue_baselines.source = 'google'
+               AND ml_venue_baselines.updated_at < NOW() - make_interval(days => $5::int)`,
+          [placeId, dow, h, Math.max(0, Math.min(100, Math.round(val))), GOOGLE_BASELINE_REFRESH_DAYS]
         );
       }
     }
@@ -1754,9 +1866,39 @@ function missingFeatureNames(meta) {
   return (meta.feature_names || []).filter(name => !(name in map));
 }
 
+// Maps Google Places types to the venue_category the model was TRAINED on.
+//
+// This has to agree with how the corpus was labelled or the category feature is
+// simply wrong at serve time. Training labels come from two places, and both
+// emit categories this function could not:
+//   - scripts/ml/discoverBestTime.js:84  mapCategory(), which emits nightclub
+//     and park by name
+//   - scripts/ml/config.js               per-query category assignment, which
+//     emits entertainment for bowling alleys, arcades and amusement parks
+//
+// Until 2026-08-19 this function could emit only 10 of the model's 13 encoded
+// categories. nightclub, entertainment and park were unreachable — they have
+// encodings in category_encoding AND their own curves in category_baselines,
+// and nothing live could ever select them.
+//
+// night_club was the expensive one, because it was actively routed to 'bar'.
+// Those two curves are not close. Friday, from the shipped artifact:
+//
+//     bar        peaks 20:00 at 52.6   (23:00 -> 40.5)
+//     nightclub  peaks 23:00 at 34.9   (20:00 -> 25.1)
+//
+// So a nightclub was told 52.6 at 20:00 where its own cohort says 25.1. A
+// 27-point error from the category label alone, against a model whose whole
+// realtime MAE is 29.4 — the mis-mapping was worth about as much error as
+// everything else in the model combined, on the venue category most likely to
+// pay for a dashboard.
+//
+// Order matters below: night_club is tested BEFORE bar, because Google returns
+// both types on most clubs and the first match wins.
 function guessCategory(types) {
   if (!types || !types.length) return 'restaurant';
-  if (types.includes('bar') || types.includes('night_club')) return 'bar';
+  if (types.includes('night_club')) return 'nightclub';
+  if (types.includes('bar') || types.includes('pub')) return 'bar';
   if (types.includes('cafe') || types.includes('coffee_shop')) return 'cafe';
   if (types.includes('gym') || types.includes('fitness_center')) return 'gym';
   if (types.includes('shopping_mall')) return 'mall';
@@ -1765,6 +1907,14 @@ function guessCategory(types) {
   if (types.includes('fast_food_restaurant') || types.includes('meal_takeaway')) return 'fast_food';
   if (types.includes('bakery') || types.includes('ice_cream_shop')) return 'dessert';
   if (types.includes('brewery')) return 'brewery';
+  // config.js assigns 'entertainment' to bowling alleys, arcades and amusement
+  // parks, so those three are what may claim it here and nothing wider.
+  if (types.includes('bowling_alley') || types.includes('amusement_park')
+      || types.includes('video_arcade')) return 'entertainment';
+  // Checked after amusement_park on purpose: Google returns 'park' on many
+  // amusement parks, and config.js counted those as entertainment.
+  if (types.includes('park') || types.includes('national_park')
+      || types.includes('state_park')) return 'park';
   return 'restaurant';
 }
 
@@ -1813,8 +1963,23 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
     // the venue's Google popular_times payload so even the FIRST request for
     // a venue runs through the ML model instead of the fallback.
     let baseline = storedBaseline;
+    // How old the number under this score is. Captured HERE, where the branch
+    // that chose the baseline is still visible, because the two branches have
+    // genuinely different ages: a stored row can be months old, while a
+    // popular_times payload was fetched for this request.
+    let baselineData = baselineProvenanceFor(placeId, ts.getDay(), ts.getHours());
     if ((!baseline || baseline <= 0) && venue.popular_times) {
       baseline = baselineFromPopularTimes(venue.popular_times, ts.getDay(), ts.getHours());
+      baselineData = {
+        source: 'google_popular_times',
+        asOf: Date.now(),
+        // Not 'baseline_row_written': this one did not come out of the table at
+        // all, it came off the live Places payload, so its age is real rather
+        // than an upper bound.
+        basis: 'live_places_payload',
+        stale: false,
+        staleAfterMs: BASELINE_STALE_AFTER_MS,
+      };
       // Persist for future requests/hours (async, non-blocking).
       storeGoogleBaselines(placeId, venue.popular_times).catch(() => {});
     }
@@ -1962,12 +2127,25 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       // `status`/`means` rather than on the presence of keys.
       //
       // `means: 'measured_accuracy'` describes THE NUMBER's provenance, not the
-      // card's standing. crowdEngine.describePredictionSupport still returns
-      // supported:false for the ML path while ML_BASELINE_AXIS_VERIFIED is
-      // false, and that hedge is about the baseline axis, a separate open
-      // question. Both can be true at once: a figure genuinely measured on the
-      // served rows, anchored on an axis nobody has vouched for yet.
+      // card's standing. Those are two separate questions and they are answered
+      // in two places: this field says which metric produced the integer, and
+      // crowdEngine.describePredictionSupport says whether anything vouches for
+      // the axis it sits on. Since v2.6.0-starling flipped
+      // ML_BASELINE_AXIS_VERIFIED to true they happen to agree for the ML path
+      // (basis 'model_holdout', supported: true) — but they are still not the
+      // same claim, and they come apart again the moment a pre-2026-08-18
+      // artifact is served or a venue has three verified reporters, which
+      // outrank the holdout and return basis 'user_reports'.
       confidenceMeasurement,
+      // HOW OLD THE NUMBER UNDER THE SCORE IS. This model is `label_type:
+      // 'delta'` — score = baseline + clamp(delta, ±30) — so the baseline is
+      // most of the answer, and until now nothing anywhere said when it was
+      // measured. `asOf` is absolute and `stale` is a boolean, so a client can
+      // caption the card without doing date arithmetic against a migration
+      // history. Null when there is nothing honest to say (no stored row and no
+      // popular_times), which cannot co-occur with a served ML score under a
+      // delta model but is possible under an absolute-head one.
+      baselineData: baselineData || null,
     };
 
     // Add event alert when large event nearby
@@ -2068,6 +2246,13 @@ module.exports = {
   // Internals exported for backend/__tests__/mlPipeline.test.js — the
   // train/inference parity surface. Not part of the serving API.
   _internals: {
+    // The Places-types -> venue_category mapper, for
+    // __tests__/venueCategoryMapping.test.js. Exported because the test's whole
+    // job is to pin that this function can reach every category the shipped
+    // artifact was trained on -- a property no other test could observe, and
+    // one that was silently false for nightclub, entertainment and park until
+    // 2026-08-19.
+    guessCategory,
     buildFeatureMap,
     buildFeatureVector,
     missingFeatureNames,
@@ -2114,6 +2299,11 @@ module.exports = {
     // __tests__/venueLookupBudget.test.js. Exported rather than restated in the
     // test so the numbers cannot drift from the comment that argues for them.
     getBaseline,
+    // Baseline freshness, for __tests__/baselineFreshness.test.js.
+    baselineProvenanceFor,
+    baselineMeta,
+    BASELINE_STALE_AFTER_MS,
+    GOOGLE_BASELINE_REFRESH_DAYS,
     getUserFeedback,
     allowVenueLookup,
     isPlaceIdShaped,
