@@ -70,8 +70,15 @@ backend/scripts/ml/models/incumbent/*.json
 #
 # A cloner is not expected to have them. backend/scripts/ml/models/README.md
 # explains how to train their own from their own data using ../train/.
-backend/scripts/ml/models/crowd_model.onnx
-backend/scripts/ml/models/model_metadata.json
+#
+# WHICH IS WHY THEY ARE TRACKED AGAIN. Ignoring them here was the wrong lever.
+# This repo is private and is the one Railway builds from, so ignoring the
+# artifacts did not keep them out of anyone's hands -- it only cut the wire
+# between the trained model and production, silently, at the next deploy. The
+# open-source release is a fresh repository without this history, because the
+# 129 MiB pack retains both the model and the deleted screenshots no matter
+# what the working tree says; excluding the weights is that copy's job, not
+# this file's. Re-tracking costs nothing: the blob is already in the pack.
 
 # ML collection-run scratch output (local only)
 backend/collection_log*.txt

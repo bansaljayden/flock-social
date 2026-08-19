@@ -1,10 +1,12 @@
 # Trained model artifacts
 
 This directory is where `crowd_model.onnx` and `model_metadata.json` live at
-runtime. Neither file is in this repo.
+runtime. Both are tracked in the private repository, because that is the one
+Railway builds from and there is no other route by which a deploy could receive
+them. Neither is distributed with the public source.
 
-They are Flock's own artifacts, built from data Flock collected, and they are not
-distributed with the source. The pipeline that produces them is here in full:
+They are Flock's own artifacts, built from data Flock collected. The pipeline
+that produces them is published in full:
 data collection in `../` (`runCollection.js`, `collectWeekly.js`,
 `collectRealtime.js`, `collectEvents.js`), feature engineering and training in
 `../train/`, and the runbook in `../RETRAIN.md`.
