@@ -130,9 +130,20 @@ const CONTENT_TEXT_SQL = {
   venue_event: (t) => `NULLIF(CONCAT_WS(chr(10), NULLIF(${t}.title, ''), NULLIF(CONCAT_WS(' · ', ${t}.event_date, ${t}.event_time), '')), '')`,
   // A guest has no account: the reported content IS the self-chosen name.
   guest_rsvp: (t) => `NULLIF(${t}.name, '')`,
-  // The profile IS the reported content. users has no bio column, so name plus
-  // interests plus the avatar (served by /reports/:id/image) is all of it.
-  profile: (t) => `NULLIF(CONCAT_WS(' / ', ${t}.name, NULLIF(ARRAY_TO_STRING(${t}.interests, ', '), '')), '')`,
+  // The profile IS the reported content, so every field a stranger can see has to
+  // reach the moderator. That is name, interests, the bio, and the avatar (served
+  // by /reports/:id/image).
+  //
+  // bio was missing here until 2026-08-18. This comment used to say "users has no
+  // bio column", which was true when it was written and stopped being true at
+  // migration 026 — the column shipped, GET /users/:id/card serves it to any
+  // stranger who taps the person card (routes/users.js), and 200 characters of
+  // free text is exactly the surface a harassing or contact-soliciting profile
+  // uses. A profile reported FOR its bio therefore arrived in the queue with the
+  // offending string not displayed, and the moderator was asked to judge content
+  // they could not read. Same shape as the avatar gap the paragraph above exists
+  // to close, one field over.
+  profile: (t) => `NULLIF(CONCAT_WS(' / ', ${t}.name, NULLIF(ARRAY_TO_STRING(${t}.interests, ', '), ''), NULLIF(${t}.bio, '')), '')`,
 };
 
 // GET /api/admin/analytics - Research analytics dashboard data
