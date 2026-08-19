@@ -96,16 +96,20 @@ You will know because the alert is distinct: the email subject starts with
    action.** Do not hide it yet, do not ban yet, do not resolve the report yet.
    The database will not preserve this for you:
    - Account deletion (`DELETE /api/users/me`) hard-deletes the user's
-     messages and cascades away their stories and DMs, reported or not. The
-     offender can destroy the evidence with one authenticated request at any
-     moment.
+     messages and cascades away their stories and DMs, reported or not. It
+     asks for a re-auth first - the account password, or for an OAuth account a
+     token minted in the last five minutes - which the offender has, and it is
+     the one route in the API a BANNED account is still allowed to call
+     (`authenticateAllowBanned`), so banning them does not close this door. The
+     offender can destroy the evidence at any moment.
    - The story purge keeps rows only while a report is `open`/`under_review`;
      after resolution the row is deleted on the normal retention schedule.
 
    Export now, to an encrypted disk or encrypted archive OFF the production
    database, access limited to you. Image bytes live inline in the rows as
    `data:` URLs (`stories.image_url`, `messages.image_url`,
-   `direct_messages.image_url`), so a row export IS the image export.
+   `direct_messages.image_url`, and `users.profile_image_url` for an avatar),
+   so a row export IS the image export.
    From a machine with prod `PG*` credentials (see the Railway dashboard):
 
    ```
@@ -114,8 +118,10 @@ You will know because the alert is distinct: the email subject starts with
    \copy (SELECT * FROM stories WHERE id = <CONTENT_ID>) TO 'story.csv' CSV HEADER
    \copy (SELECT * FROM messages WHERE id = <CONTENT_ID>) TO 'message.csv' CSV HEADER
    \copy (SELECT * FROM direct_messages WHERE id = <CONTENT_ID>) TO 'dm.csv' CSV HEADER
-   -- Context: the uploader's account and their other recent content.
-   \copy (SELECT id, email, phone, name, oauth_provider, oauth_id, date_of_birth, created_at FROM users WHERE id = <UPLOADER_ID>) TO 'account.csv' CSV HEADER
+   -- Context: the uploader's account and their other recent content. For a
+   -- content_type of 'profile' there IS no content_id - the account row below
+   -- is the reported content, and profile_image_url is the reported image.
+   \copy (SELECT id, email, phone, name, bio, profile_image_url, interests, oauth_provider, oauth_id, date_of_birth, created_at FROM users WHERE id = <UPLOADER_ID>) TO 'account.csv' CSV HEADER
    ```
 
    Also record: report id, timestamps, uploader user id, reporter user id, and
@@ -152,6 +158,12 @@ You will know because the alert is distinct: the email subject starts with
 - `backend/utils/moderation.js` - voluntary SafeSearch gate; emits
   `[CHILD-SAFETY]` at error level when an upload scores adult LIKELY or
   VERY_LIKELY (a pattern signal, not knowledge; the image was never stored).
+  `moderateImage()` is the single chokepoint for all six image doors (avatar,
+  flock photo and DM photo over both REST and socket, story) and it FAILS
+  CLOSED - a provider error, a timeout, an incomplete answer, or an exhausted
+  Cloud Vision budget (`backend/utils/visionBudget.js`: 30/hour and 60/day per
+  account, 2,000/day process-wide, in-memory so a deploy resets the day) all
+  refuse the upload rather than store it unscreened.
 - `backend/services/moderationAlerts.js` - reports with reason `sexual` get a
   distinct log token, a "CHILD SAFETY:" mail subject, a statutory note in the
   mail body, and a separate email rate window so report spam cannot starve
@@ -163,8 +175,13 @@ You will know because the alert is distinct: the email subject starts with
   deletion destroys the author's content including reported content, which is
   the other reason step 2 says preserve first.
 - Takedown (`backend/routes/admin.js`) hides content (`is_hidden = true`)
-  rather than deleting it, and bans write `banned_identities` tombstones that
-  outlive the account.
+  rather than deleting it. A ban there writes nothing but
+  `users.is_banned`/`banned_at`; the `banned_identities` tombstone that
+  outlives the account is written later, by `deleteAccount` in
+  `backend/routes/users.js`, if and when the banned account deletes itself -
+  keyed one-way digests of email/phone/OAuth subject only, kept 365 days, and
+  skipped entirely when there is no usable identifier or no pepper configured.
+  It is a ban-evasion control, not an evidence store.
 
 ## 6. One-time setup (human steps, in order of value)
 

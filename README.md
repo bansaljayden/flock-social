@@ -29,7 +29,7 @@ product invariant (see below, including what it does not cover).
 | Area | What's real |
 |---|---|
 | Planning | Flocks, invites, RSVP, venue voting, group chat with venue cards, plans calendar |
-| Money | Anonymous budget matching (aggregate ceiling only), bill splitting with Venmo / Cash App / Zelle deep links |
+| Money | Anonymous budget matching (aggregate ceiling only), bill splitting with Venmo and Cash App deep links, Zelle by instructions (it has no shared URL scheme to open) |
 | Crowd intelligence | Own ML model live in production (see below), with a rule-based fallback engine |
 | Birdie | AI assistant for venue ideas ("somewhere quiet and cheap nearby") |
 | Safety | Live location inside a flock (off by default, never background), one-tap SOS to trusted contacts, report + block, account deletion in-app (with re-authentication) |
@@ -148,7 +148,8 @@ is built on (see `MONEY-MODEL.md` and `VENUE-BILLING.md`).
 
 React 19 (CRA) on Vercel · Node + Express on Railway · PostgreSQL ·
 Socket.io · JWT auth (email, Google, Sign in with Apple) · Capacitor 8 for iOS ·
-MapLibre GL + MapTiler tiles for every map (no Google Maps SDK, no Maps key) ·
+MapLibre GL for every map, on MapTiler tiles with a keyless Carto fallback
+(no Google Maps SDK, no Maps key) ·
 RevenueCat + Apple IAP (consumer, dormant behind a flag) · Google Places, Google
 Cloud Vision (image moderation), Gemini (Birdie), OpenWeatherMap, Ticketmaster,
 Resend, FCM + APNs · PostHog, Sentry (dormant, DSN unset).
@@ -161,22 +162,25 @@ flock-app/
 │   └── ios/           # Capacitor iOS shell (built by Codemagic → TestFlight)
 ├── backend/           # Express API + Socket.io + ML predictor
 │   └── scripts/ml/    # Data collection + training pipeline (trained model not distributed)
-└── flock-sensor/      # Raspberry Pi occupancy sensor pipeline (proven, hardware pending)
+├── flock-sensor/      # Raspberry Pi occupancy sensor pipeline (proven, hardware pending)
+└── tools/             # publish-public.sh (the public mirror) + the ASC upload helper
 ```
 
-An abandoned React Native port lived in `mobile/` until 2026-08-13 and was
-removed; Capacitor is the launch path and the RN tree was two months stale.
+An abandoned React Native port lived in `mobile/` until 2026-08-18 and was
+removed. Capacitor has been the launch path since 2026-06-17, and the RN tree
+was never carried forward with the app after that.
 
 ## Hard invariants (do not break)
 
 1. **Other people's** budget amounts never leave the server. A client only ever
-   sees the aggregate `{ ceiling, submissionCount, isReady, skipCount }`, plus
-   the amount that caller submitted themselves. `ceiling` is withheld entirely
-   until at least three non-skipped submissions exist, and what it publishes is
-   a **band**, not the raw minimum: rounded down to the nearest $10 at $50 and
-   up, the nearest $5 from $5 to $50, the nearest $1 below that. It only ever
-   rounds down, so every venue under the published ceiling is still inside
-   everyone's real budget.
+   sees the aggregate `{ ceiling, submissionCount, totalMembers, isReady,
+   skipCount }`, plus the amount that caller submitted themselves. `ceiling` is
+   withheld entirely until at least three non-skipped submissions exist, and
+   what it publishes is a **band**, not the raw minimum: rounded down to the
+   nearest $10 at $50 and up, the nearest $5 from $5 to $50, the nearest $1 from
+   $1 to $5, and a flat $0.01 below a dollar (never $0, which the client reads
+   as "no ceiling yet"). It only ever rounds down, so every venue under the
+   published ceiling is still inside everyone's real budget.
 
    What this does not do: the ceiling is the minimum of the submitted amounts,
    so participants who compare notes can narrow down what a remaining
@@ -188,7 +192,8 @@ removed; Capacitor is the launch path and the RN tree was two months stale.
    small groups of friends, and the ceiling is the one number the group is
    meant to share.
 2. No secrets in the repo, ever. All keys live in the Vercel / Railway /
-   Codemagic dashboards. A gitleaks pre-commit hook enforces this.
+   Codemagic dashboards. A gitleaks pre-commit hook enforces this, and a
+   GitHub Actions job re-scans the whole history on every push.
 3. Server-side enforcement behind every client gate. Frontend gating is UX,
    not security.
 4. Nothing on any marketing surface may claim a feature that doesn't ship
@@ -225,23 +230,30 @@ cd frontend && cp .env.example .env
 npm install && npm start
 ```
 
-Both `.env.example` files list every variable the code actually reads, with a
-line per variable saying what breaks when it is missing. Several fail *open*
+Both `.env.example` files carry the variables you need to boot it, with a
+line per variable saying what breaks when it is missing. Three fail *open*
 (image moderation, NFC trust, admin provisioning) — read those before deploying.
+They are not an exhaustive index of `process.env`: a handful of tuning knobs,
+platform-injected values and destructive-operation guards are read by the code
+without appearing there.
 
 `backend/db/migrate.js` runs every file in `backend/migrations/` in filename
 order before `server.listen()`, inside an advisory lock, recording what it applied
 in `schema_migrations`; a failure exits the process rather than serving a
 half-migrated schema. `migrations/000_bootstrap.sql` carries the core
 `CREATE TABLE`s, so **a fresh database boots from migrations alone** — no manual
-schema step. `backend/database/schema.sql` is the same content kept separately,
-and `npm run db:init` applies it directly if you want it explicit.
+schema step. `backend/database/schema.sql` is the same content kept separately —
+the base shape, for reading — and `npm run db:init` applies just that. It is not
+a substitute for the migrations: it has not moved since the bootstrap was cut,
+so everything 001 onward adds is missing from it.
 
 Migrations are numbered from 000 upward in `backend/migrations/`. **There is
 no 010**; the number was skipped, not lost. Every migration the code needs is
 tracked, so a deploy from HEAD is complete.
 
-Backend tests: `cd backend && node --test` · local E2E: `npm run e2e`
+Backend tests: `cd backend && node --test` · local E2E: `npm run e2e`. Neither
+needs a database you provide: the migration suites and the E2E script each start
+a throwaway Postgres through `embedded-postgres`, which the first run downloads.
 
 ## License
 
