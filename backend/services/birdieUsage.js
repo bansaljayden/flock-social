@@ -235,14 +235,41 @@ const HOUR_MS = 60 * 60 * 1000;
 // rounds, ~200,000 tokens for one "message") gets about 20 turns a day instead
 // of 150, and about 5 an hour, which is the bite that matters.
 //
-// THE GLOBAL FIGURE IS THE ONE DENOMINATED IN MONEY. At flash-lite rates of
-// roughly $0.10 per million input and $0.40 per million output tokens, 30M mixed
-// tokens is on the order of $5 for a day spent entirely at the ceiling — about
-// $150 for a full month at the wall. That is a number this project can survive
-// being surprised by, which is the only property a ceiling has to have. It is
-// deliberately a hard constant and not an env var: a spending ceiling that can
-// be widened from a dashboard is a spending ceiling somebody widens at 2am
-// during an incident. Raising it is a code change and a deploy, on purpose.
+// THE GLOBAL FIGURE IS THE ONE DENOMINATED IN MONEY, AND THE RATE IT IS
+// DENOMINATED AT IS NOT A CONSTANT. This paragraph used to price 30M mixed
+// tokens at "roughly $0.10 per million input and $0.40 per million output",
+// giving ~$5 a day and ~$150 a month at the wall. Those are Gemini 2.5
+// Flash-Lite's rates. routes/ai.js:69 defaults BIRDIE_MODEL to
+// gemini-3.5-flash-lite, which is $0.30 and $2.50 — three times the input and
+// six times the output (ai.google.dev/gemini-api/docs/pricing, checked
+// 2026-08-19).
+//
+// settleGeminiCall charges usageMetadata.totalTokenCount, a single mixed
+// figure, so pricing it needs a split. Birdie is input-heavy by construction —
+// every call re-sends the ~2,000-token system prompt and the whole conversation
+// — so output is roughly 5-10% of the total. At that mix, 30M tokens is:
+//
+//     gemini-2.5-flash-lite   ~$3.45-3.90/day   ~$105-120/month
+//     gemini-3.5-flash-lite   ~$12.30-15.60/day  ~$370-470/month
+//
+// Both are numbers this project can survive being surprised by, which is the
+// only property a ceiling has to have. The point of writing them both down is
+// that the ceiling's meaning moved without the ceiling moving.
+//
+// WHICH IS THE HOLE THE PARAGRAPH BELOW USED TO CLAIM WAS CLOSED. The token
+// count is a hard constant and not an env var, on the reasoning that a spending
+// ceiling widenable from a dashboard is one somebody widens at 2am during an
+// incident. That reasoning is right and it is incomplete: BIRDIE_MODEL *is* an
+// env var, switchable from Railway with no deploy (routes/ai.js:64 advertises
+// this as a feature), and switching it multiplies what this constant costs by
+// up to 6x on output. The number of tokens is protected. The number of dollars
+// is not.
+//
+// So a model change is a spend change, and anyone making one has to re-read
+// this block and re-derive the two lines above for the new rate card. That is
+// the actual invariant, and it could not be enforced in code without pinning
+// the model here — which would cost the ability to switch away from a model
+// that is failing, and that is worth more than the guardrail.
 //
 // THE TRADE THIS MAKES, STATED PLAINLY. 30M global against 4M per account means
 // about EIGHT accounts spending their full daily allowance exhaust the process
