@@ -37,14 +37,26 @@ delete process.env.PAYWALL_ENABLED;
 // --- the real spending ledger ----------------------------------------------
 const placesBudget = require('../utils/placesBudget');
 const {
-  allowGlobalPlacesCall, placesBudgetStatus, __resetPlacesBudget, GLOBAL_DAILY,
+  allowPlacesSearch, allowGlobalPlacesCall, placesBudgetStatus, __resetPlacesBudget,
+  GLOBAL_DAILY, PER_USER_HOURLY,
 } = placesBudget;
 
-// Spend the whole day without touching the per-user map, the way ~200 real
-// accounts would.
+// Spend the whole day the way ~200 real accounts would.
+//
+// M5-1 changed the shape of this helper. The unauthenticated doors can now
+// reach only UNAUTH_DAILY of the day (allowGlobalPlacesCall refuses past it),
+// so draining the ledger through that one door alone loops forever. Spend the
+// unauthenticated share through it first — that is still the fastest way to
+// prove the shared ceiling is shared — and then walk the authenticated reserve
+// down through fresh accounts, which is exactly who the reserve is for.
 function exhaustGlobalBudget() {
+  while (placesBudgetStatus(1).unauthRemaining > 0) {
+    allowGlobalPlacesCall(Math.min(30, placesBudgetStatus(1).unauthRemaining));
+  }
+  let id = 900000;
   while (placesBudgetStatus(1).globalRemaining > 0) {
-    allowGlobalPlacesCall(Math.min(30, placesBudgetStatus(1).globalRemaining));
+    const cost = Math.min(PER_USER_HOURLY, placesBudgetStatus(1).globalRemaining);
+    assert.strictEqual(allowPlacesSearch(id++, cost), true, 'the reserve must be spendable by accounts');
   }
   assert.strictEqual(placesBudgetStatus(1).globalRemaining, 0);
 }

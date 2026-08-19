@@ -27,6 +27,12 @@
 //                           trade here — the right fix is moving this counter
 //                           to Postgres (see below), where a rolling window is
 //                           a WHERE clause rather than an array.
+//   UNAUTH_DAILY    = 1800  of those 3000, the most the doors with NO
+//                           authenticated caller (the photo proxy, the venue
+//                           badge, the public demo) may spend between them, per
+//                           the same UTC day. The remaining 1200 is a RESERVE
+//                           the signed-in product cannot be flooded out of.
+//                           See SECURITY-AUDIT-money.md M5-1 below.
 //
 // CHARGE BEFORE YOU CALL, AND CHARGE WHAT YOU SPEND.
 //   * A request that makes N paid Google calls must charge N. Use the `cost`
@@ -40,7 +46,7 @@
 //     did not make is only wasteful, but it also masks the real burn rate.
 //
 // IN-MEMORY STATE — READ THIS BEFORE TRUSTING THE NUMBERS.
-//   Both counters live in this process's heap. That means:
+//   All three counters live in this process's heap. That means:
 //     * They reset to zero on every Railway deploy, crash and restart. A day
 //       with ten deploys has no 3000/day ceiling in any real sense; it has ten
 //       fresh 3000-call allowances. GLOBAL_DAILY is therefore a brake, not a
@@ -83,7 +89,8 @@
 //     routes/venueDashboard.js 1 per owner-dashboard Place Details and 1 per
 //                             competitor searchNearby.
 //
-//   allowGlobalPlacesCall(cost)      — no user to charge, so GLOBAL_DAILY only.
+//   allowGlobalPlacesCall(cost)      — no user to charge, so GLOBAL_DAILY and
+//                                      UNAUTH_DAILY (M5-1), never PER_USER_HOURLY.
 //     Each keeps its own per-IP or per-venue gate; this module is what makes
 //     the daily ceiling cover them too.
 //     routes/badge.js         1 per cache miss, behind "claimed AND verified"
@@ -100,10 +107,50 @@
 //                             CDN. If an invoice ever shows otherwise, that is
 //                             the one number here that should become a 2.
 //
+//   THE UNAUTHENTICATED SHARE, and the sentence that used to be wrong.
+//   SECURITY-AUDIT-money.md M5-1 (MEDIUM). Round 23's commit message said the
+//   three unauthenticated doors "now sum to 2700 against 3000, so they cannot
+//   starve the signed in product". The arithmetic is right and the conclusion
+//   was not: 2700 of 3000 is 90%, so after the public surfaces have spent their
+//   own sub-ceilings the entire authenticated product — venue search, the crowd
+//   card, the owner dashboard, Birdie — was left 300 paid calls for the rest of
+//   the UTC day. That is ten accounts' hourly allowance at PER_USER_HOURLY, and
+//   the cost of reaching it was about 40 source addresses sustained for an hour
+//   (5 at the photo proxy's 300/IP/hr, 5 at the badge's 120/IP/hr, 30 at the
+//   demo's 20/IP/hr). "Cannot starve" was not what the numbers bought.
+//
+//   The three per-door sub-ceilings still sum to 2700, and they are not what
+//   makes the claim true — an inequality between three constants in three
+//   route files is a coincidence maintained by hand. UNAUTH_DAILY is the
+//   control: allowGlobalPlacesCall, which is the ONLY door for a caller with no
+//   account, refuses past 1800 whatever the per-door ceilings say. So the
+//   signed-in product keeps 1200 calls a day (40%) that no volume of
+//   unauthenticated traffic can reach, from any number of addresses, through
+//   any of the three doors or a fourth one added later.
+//
+//   WHY 1800/1200 AND NOT SOME OTHER SPLIT. Two constraints pin it. Upward:
+//   the largest per-door sub-ceiling is the photo proxy's 1500, and a sub-
+//   ceiling ABOVE the ceiling it sits under never binds — that was round 23's
+//   own finding about PUBLIC_PHOTO_BUDGET at 4000 — so the unauthenticated
+//   aggregate has to stay strictly above 1500 or it silently repeals the
+//   per-door limit that is doing the per-address work. Downward: 1200 reserved
+//   is 40 account-hours at PER_USER_HOURLY = 30, or roughly 240 real sessions
+//   a day once the 5- and 10-minute response caches are counted, against an
+//   authenticated population that is currently two orders of magnitude below
+//   that. 1800 is the smallest round number above 1500, so it is the largest
+//   reserve available without breaking the first constraint.
+//
+//   __tests__/unauthPlacesReserve.test.js pins both halves: that the three
+//   sub-ceilings stay strictly under UNAUTH_DAILY, and that an unauthenticated
+//   flood which spends the whole unauthenticated share still leaves an
+//   authenticated caller able to spend.
+//
 //   THE REMAINING HOLE is not a surface, it is a dimension: those three charge
 //   no per-user ceiling because they have no user. An unauthenticated caller is
-//   therefore bounded by GLOBAL_DAILY and their own per-IP gate alone, and
-//   GLOBAL_DAILY resets on every deploy (see IN-MEMORY STATE above).
+//   therefore bounded by their own per-IP gate, their door's daily sub-ceiling
+//   and UNAUTH_DAILY — but never by anything keyed to who they are. And every
+//   one of those counters resets on every deploy (see IN-MEMORY STATE above),
+//   which is what keeps the inventory row OPEN.
 //
 //   backend/scripts/ml/* calls Places directly and charges nothing. That is
 //   correct — they are operator-run batch jobs, not request paths — but their
@@ -119,6 +166,11 @@ const HOUR_MS = 60 * 60 * 1000;
 
 const PER_USER_HOURLY = 30;
 const GLOBAL_DAILY = 3000;
+// M5-1. The most the doors with no authenticated caller may take out of
+// GLOBAL_DAILY in one UTC day; GLOBAL_DAILY - UNAUTH_DAILY is the authenticated
+// product's reserve. Enforced in allowGlobalPlacesCall, which is the only
+// entry point those doors have.
+const UNAUTH_DAILY = 1800;
 
 // Soft ceiling on tracked users. Deliberately generous: the entries are tiny
 // and dropping them is what costs money, not keeping them.
@@ -133,6 +185,10 @@ const EVICT_TARGET = 18000;
 const userHits = new Map(); // userId (number) -> number[] of charge timestamps
 let dayKey = utcDay();
 let dayCount = 0;
+// The unauthenticated slice of dayCount. Charged in addition to it, never
+// instead of it: an unauthenticated call still counts against the invoice
+// ceiling like any other, this only says how much of that ceiling it may reach.
+let unauthDayCount = 0;
 
 function utcDay() {
   return new Date().toISOString().slice(0, 10);
@@ -166,6 +222,7 @@ function rollDay() {
   if (today !== dayKey) {
     dayKey = today;
     dayCount = 0;
+    unauthDayCount = 0;
   }
 }
 
@@ -233,11 +290,16 @@ function allowPlacesSearch(userId, cost = 1) {
 }
 
 /**
- * Charge ONLY the global daily ceiling, for paid Places surfaces that have no
- * authenticated user to charge (the public marketing demo, the venue badge, the
- * photo proxy). Those endpoints keep their own per-IP gate; this exists so the
- * daily ceiling is genuinely a ceiling on the Google invoice rather than a
- * ceiling on the authenticated slice of it.
+ * Charge the global daily ceiling AND the unauthenticated share of it, for paid
+ * Places surfaces that have no authenticated user to charge (the public
+ * marketing demo, the venue badge, the photo proxy). Those endpoints keep their
+ * own per-IP gate and their own per-door daily sub-ceiling; this is where the
+ * daily ceiling becomes a ceiling on the Google invoice rather than a ceiling on
+ * the authenticated slice of it, and where M5-1's reserve is enforced.
+ *
+ * All-or-nothing on BOTH ceilings, for allowPlacesSearch's reason: a request
+ * refused by either one is charged nothing, so a partial charge can never leave
+ * a caller believing it may proceed.
  *
  * @param {number} [cost=1] how many PAID Google calls this request makes
  * @returns {boolean} true when the caller may proceed
@@ -247,7 +309,13 @@ function allowGlobalPlacesCall(cost = 1) {
   const units = cost;
   rollDay();
   if (dayCount + units > GLOBAL_DAILY) return false;
+  // M5-1. Checked BEFORE either counter moves. This is the whole reserve: no
+  // number of addresses, and no door added later, can push the authenticated
+  // product below GLOBAL_DAILY - UNAUTH_DAILY calls for the rest of the day,
+  // because every door with no account comes through here.
+  if (unauthDayCount + units > UNAUTH_DAILY) return false;
   dayCount += units;
+  unauthDayCount += units;
   return true;
 }
 
@@ -265,9 +333,14 @@ function placesBudgetStatus(userId) {
     day: dayKey,
     globalUsed: dayCount,
     globalRemaining: Math.max(0, GLOBAL_DAILY - dayCount),
+    // M5-1. `unauthRemaining` is what the doors with no account have left;
+    // `globalRemaining` is what the whole process has left. They are different
+    // numbers on purpose, and the gap between them is the reserve.
+    unauthUsed: unauthDayCount,
+    unauthRemaining: Math.max(0, UNAUTH_DAILY - unauthDayCount),
     userRemaining: id === null ? 0 : Math.max(0, PER_USER_HOURLY - hits.length),
     trackedUsers: userHits.size,
-    limits: { perUserHourly: PER_USER_HOURLY, globalDaily: GLOBAL_DAILY },
+    limits: { perUserHourly: PER_USER_HOURLY, globalDaily: GLOBAL_DAILY, unauthDaily: UNAUTH_DAILY },
     // Say it out loud everywhere the numbers are read: this is process-local.
     inMemory: true,
   };
@@ -281,6 +354,7 @@ function __resetPlacesBudget({ keepUsers = false } = {}) {
   if (!keepUsers) userHits.clear();
   dayKey = utcDay();
   dayCount = 0;
+  unauthDayCount = 0;
 }
 
 module.exports = {
@@ -290,4 +364,5 @@ module.exports = {
   __resetPlacesBudget,
   PER_USER_HOURLY,
   GLOBAL_DAILY,
+  UNAUTH_DAILY,
 };
