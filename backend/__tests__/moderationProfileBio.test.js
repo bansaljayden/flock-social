@@ -32,10 +32,26 @@ const path = require('node:path');
 const { Pool } = require('pg');
 const EP = require('embedded-postgres');
 const EmbeddedPostgres = EP.default || EP;
+const {
+  pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
+} = require('./helpers/embeddedPgPort');
 
 const { CONTENT_TEXT_SQL } = require('../routes/admin').__test;
 
-const PG_PORT = 54411;
+// This suite boots its own embedded Postgres, so its port must be distinct from
+// e2e-local.js's 59595 and from every sibling suite that does the same. It used
+// to be the hardcoded 54411, which held right up until a run was killed: the
+// orphaned postgres kept the port and broke every LATER run of this file
+// permanently, reported only as `hookFailed: undefined`.
+//
+// pickEmbeddedPgPort keeps the distinctness, by giving each suite a disjoint
+// range of its own, and adds orphan-immunity on top of it. The candidate port
+// starts from a process.pid-derived offset, so a fresh run never starts where an
+// orphan of some dead process sits, and it is then confirmed free by an actual
+// bind. See __tests__/helpers/embeddedPgPort.js.
+// It resolves SYNCHRONOUSLY, so it is usable at module scope like the constant
+// it replaces.
+const PG_PORT = pickEmbeddedPgPort('moderationProfileBio');
 let pg;
 let pool;
 let dataDir;
@@ -61,12 +77,12 @@ const makeUser = async ({ email, name, bio = null, interests = null }) => {
 
 test.before(async () => {
   dataDir = path.join(os.tmpdir(), 'flock-modbio-pg-' + process.pid);
-  pg = new EmbeddedPostgres({
-    databaseDir: dataDir,
-    user: 'postgres', password: 'postgres', port: PG_PORT, persistent: false,
+  pg = createEmbeddedPostgres(EmbeddedPostgres, {
+    suite: 'moderationProfileBio', port: PG_PORT, databaseDir: dataDir,
   });
-  await pg.initialise();
-  await pg.start();
+  // Not pg.start(): the wrapper turns embedded-postgres's bare reject() into an
+  // error that names the suite, the port, and whether an orphan is holding it.
+  await startEmbeddedPostgres(pg);
   await pg.createDatabase('flock_modbio_test');
 
   pool = new Pool({

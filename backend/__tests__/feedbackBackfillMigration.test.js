@@ -44,12 +44,27 @@ const path = require('node:path');
 const { Pool } = require('pg');
 const EP = require('embedded-postgres');
 const EmbeddedPostgres = EP.default || EP;
+const {
+  pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
+} = require('./helpers/embeddedPgPort');
 
 const MIGRATION_FILE = '021_backfill_feedback_local_buckets.sql';
 const MIGRATION_PATH = path.join(__dirname, '..', 'migrations', MIGRATION_FILE);
 
-// Distinct from e2e-local.js's 59595 so the two harnesses can never collide.
-const PG_PORT = 59641;
+// This suite boots its own embedded Postgres, so its port must be distinct from
+// e2e-local.js's 59595 and from every sibling suite that does the same. It used
+// to be the hardcoded 59641, which held right up until a run was killed: the
+// orphaned postgres kept the port and broke every LATER run of this file
+// permanently, reported only as `hookFailed: undefined`.
+//
+// pickEmbeddedPgPort keeps the distinctness, by giving each suite a disjoint
+// range of its own, and adds orphan-immunity on top of it. The candidate port
+// starts from a process.pid-derived offset, so a fresh run never starts where an
+// orphan of some dead process sits, and it is then confirmed free by an actual
+// bind. See __tests__/helpers/embeddedPgPort.js.
+// It resolves SYNCHRONOUSLY, so it is usable at module scope like the constant
+// it replaces.
+const PG_PORT = pickEmbeddedPgPort('feedbackBackfillMigration');
 
 const KNOWN_PLACE = 'ChIJbackfillKnownNY01';   // in ml_venues, America/New_York
 const UTC_PLACE = 'ChIJbackfillUtcVenue1';     // in ml_venues, UTC
@@ -119,12 +134,12 @@ const runMigrationSql = () => pool.query(fs.readFileSync(MIGRATION_PATH, 'utf8')
 
 test.before(async () => {
   dataDir = path.join(os.tmpdir(), 'flock-backfill-pg-' + Date.now());
-  pg = new EmbeddedPostgres({
-    databaseDir: dataDir,
-    user: 'postgres', password: 'postgres', port: PG_PORT, persistent: false,
+  pg = createEmbeddedPostgres(EmbeddedPostgres, {
+    suite: 'feedbackBackfillMigration', port: PG_PORT, databaseDir: dataDir,
   });
-  await pg.initialise();
-  await pg.start();
+  // Not pg.start(): the wrapper turns embedded-postgres's bare reject() into an
+  // error that names the suite, the port, and whether an orphan is holding it.
+  await startEmbeddedPostgres(pg);
   await pg.createDatabase('flock_backfill_test');
 
   pool = new Pool({
