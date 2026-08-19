@@ -284,6 +284,38 @@
   border-bottom: 1px solid color-mix(in srgb, var(--gi-accent) 40%, transparent);
 }
 
+/* Skip link. Same pattern as PrivacyPolicy.css: first focusable thing on the
+   page, off-screen until focused, which is an accepted skip-link pattern and
+   not a scroll reveal. Qualified with `a` for the same reason .gi-mark is:
+   the generic `.gi a` rule above is (0,1,1) and a bare class would lose
+   `color` and `border-bottom` to it. Answers :focus as well as
+   :focus-visible so an engine that declines to call keyboard focus "visible"
+   cannot leave the link off-screen while it holds focus. Ink-on-paper
+   reversed, so it reads in both themes with the same ratios as headings. */
+.gi a.gi-skip {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 100;
+  transform: translateY(-200%);
+  padding: 12px 18px;
+  border-radius: 10px;
+  background: var(--gi-ink);
+  color: var(--gi-paper);
+  font-size: 15px;
+  font-weight: 700;
+  text-decoration: none;
+  border: 0;
+}
+.gi a.gi-skip:focus,
+.gi a.gi-skip:focus-visible {
+  transform: none;
+  /* Drawn inside the block in paper-on-ink, like the label itself, so the
+     ring never depends on what the page paints behind it. */
+  outline: 3px solid var(--gi-paper);
+  outline-offset: -6px;
+}
+
 /* ---------- the roster ---------- */
 
 /* Three numerals on one ruled row. The fastest possible read of "is this

@@ -31,13 +31,18 @@ export default function DeleteAccount() {
 
   return (
     <main className="pp">
+      {/* First focusable element on the page (SLOP-AUDIT Q1), off-screen
+          until focused. The header carries tabIndex -1 so activating this
+          moves focus with the scroll instead of leaving it behind here. */}
+      <a className="pp-skip" href="#pp-content">Skip to the main content</a>
+
       {/* The arrow is decoration and must stay out of the link's accessible
           name, or it is announced as "left arrow flockcorp.com". */}
       <a href="/" className="pp-back">
         <span aria-hidden="true">&larr;</span> flockcorp.com
       </a>
 
-      <header className="pp-header">
+      <header className="pp-header" id="pp-content" tabIndex={-1}>
         <h1>Delete your Flock account</h1>
       </header>
 

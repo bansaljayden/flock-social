@@ -550,3 +550,63 @@
   from { transform: translateY(8px); }
   to   { transform: none; }
 }
+
+/* ---------- print ---------- */
+
+/* The people who print a legal page are an App Store reviewer and a venue's
+   lawyer (SLOP-AUDIT Q6), and both get ink on white regardless of the screen
+   theme: a dark-mode page would spend a toner cartridge painting navy behind
+   the same words. Tokens are overridden rather than individual rules, so
+   every surface that reads them (headings, body, rules, markers) moves at
+   once, and this block being last in the file is what lets its `.pp` win the
+   dark-scheme block at equal specificity. */
+@media print {
+  .pp {
+    --pp-paper: #fff;
+    --pp-paper-2: #fff;
+    --pp-ink: #000;
+    --pp-ink-2: #111;
+    --pp-ink-3: #444;
+    --pp-accent: #000;
+    --pp-rule: rgba(0, 0, 0, 0.4);
+    --pp-rule-soft: rgba(0, 0, 0, 0.2);
+    background: #fff;
+    color: var(--pp-ink-2);
+    min-height: 0;
+    padding: 0;
+  }
+
+  /* Navigation chrome has no meaning on paper. */
+  .pp a.pp-skip,
+  .pp-back,
+  .pp-toc { display: none; }
+
+  /* One flowing column instead of the sticky-rail grid, and no reserved
+     scroll runway after the last section: that space exists so a contents
+     jump can land the final short sections at the top of the viewport,
+     which is not a thing paper does. */
+  .pp-shell { display: block; }
+  .pp-doc { padding-bottom: 0; }
+
+  /* A printed link is just text unless it says where it went. Content links
+     get their destination spelled out; the footer's four legal links do not,
+     because a footer that reads "(flockcorp.com/privacy)" four times over is
+     noise on every page of the document. mailto links already show the
+     address as their text. */
+  .pp a[href^='/']::after { content: ' (flockcorp.com' attr(href) ')'; font-size: 0.85em; }
+  .pp a[href^='http']::after { content: ' (' attr(href) ')'; font-size: 0.85em; word-break: break-all; }
+  .pp-footer a::after { content: none; }
+
+  /* Underline instead of the border-bottom hover affordance. */
+  .pp a {
+    border-bottom: 0;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  /* Keep a heading with the text it introduces, and keep a list item, the
+     summary panel and the contact panel each on one page. */
+  .pp h1, .pp h2, .pp h3 { break-after: avoid; page-break-after: avoid; }
+  .pp li, .pp-summary, .pp-contact { break-inside: avoid; page-break-inside: avoid; }
+  .pp p { orphans: 3; widows: 3; }
+}

@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'August 14, 2026';
+const EFFECTIVE_DATE = 'August 18, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 // Deliberately the same mailbox as SUPPORT_EMAIL. A designated child-safety
 // contact is a real commitment, and safety@ was named here before it existed,
@@ -28,13 +28,18 @@ export default function CommunityGuidelines() {
 
   return (
     <main className="pp">
+      {/* First focusable element on the page (SLOP-AUDIT Q1), off-screen
+          until focused. The header carries tabIndex -1 so activating this
+          moves focus with the scroll instead of leaving it behind here. */}
+      <a className="pp-skip" href="#pp-content">Skip to the guidelines</a>
+
       {/* The arrow is decoration and must stay out of the link's accessible
           name, or it is announced as "left arrow flockcorp.com". */}
       <a href="/" className="pp-back">
         <span aria-hidden="true">&larr;</span> flockcorp.com
       </a>
 
-      <header className="pp-header">
+      <header className="pp-header" id="pp-content" tabIndex={-1}>
         <h1>Community Guidelines</h1>
         <p className="pp-meta">Effective {EFFECTIVE_DATE}</p>
       </header>
