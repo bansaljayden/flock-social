@@ -10,7 +10,8 @@ Apps, Apple, Google, Snapchat+, BeReal, Gas). This is the honest version, not th
 > conditions. Two things here have changed since 2026-08-11:
 >
 > - **Reason 2 below is out of date on the legal point.** The Apple Developer
-Under-18 status is no longer a blocker on the Apple side. It is
+>   under-18 status is no longer a blocker on the Apple side: the account is
+>   held by an adult (`PAYWALL-DECISION.md`, 2026-08-14 correction). It is
 >   still a blocker on the Stripe/venue side, where no account exists yet. What
 >   remains true is the *product* point: teen purchases route through a parent's
 >   card and Ask to Buy, so a $24.99 annual charge is an "ask a parent" conversation.
@@ -24,6 +25,17 @@ Under-18 status is no longer a blocker on the Apple side. It is
 >   The old "roughly ten venues" framing came from the superseded higher-price
 >   proposal and understates the count at the decided prices.
 
+> **Fact-checked again 2026-08-18, the day this repo was published under
+> PolyForm Noncommercial 1.0.0 and strangers could start reading it.** Every
+> price, meter, route and flag below was re-read against the code that day.
+> Four things were wrong and are corrected inline: the RevenueCat "$1,000 a
+> month" statistic is a **first-year** figure, not a two-year one; the
+> annual-churn line now uses the sourced 25% renewal rate instead of an
+> invented ~70%; the venue tier that the unbuilt ad features hang off is
+> called **Pro**, not "Boost" (that name died with the superseded higher-price
+> proposal); and both kill switches are still off, so *nothing is metered and
+> no tier is enforced today*. **Nobody has ever been charged on either path.**
+
 ---
 
 ## The 30-second answer
@@ -31,7 +43,9 @@ Under-18 status is no longer a blocker on the Apple side. It is
 **Your idea:** let people see the AI "how busy is this venue / best time to go" forecast
 10 times a month for free; after that they pay **$25/year** to keep seeing it.
 
-**Does it make money?** The plumbing is built and it *can* charge people — but as the
+**Does it make money?** The plumbing is built, though nothing is purchasable yet — the Paid
+Applications agreement is unsigned, no App Store Connect products exist, and `PAYWALL_ENABLED`
+is unset (`PAYWALL.md` §1, `APP-STORE-SUBMISSION.md`). Even once all of that is done, as the
 *only* way you make money, it will make roughly **$0 until Flock has tens of thousands of
 users**, for three honest reasons:
 
@@ -53,13 +67,18 @@ users**, for three honest reasons:
 make right now is on the venue side** — you already built the venue-owner dashboard. Fourteen
 bars on the $75 Pro tier clears your $1k/month goal (about 19 at an even $35 Premium / $75 Pro
 mix — see the banner above for the arithmetic), with *zero* consumer users required, and it
-makes the app *better* for users (deals) instead of worse (paywalls).
+makes the app *better* for users (deals) instead of worse (paywalls). Two honest asterisks on
+that sentence, both spelled out below: there is **no way to charge a venue yet** (no Stripe
+code exists), and the features that separate $75 Pro from $35 Premium are **not built**, so the
+sellable product today is Premium.
 
 ---
 
 ## The funnel math (why 5-figure users is the real number)
 
-At **$25/yr**, Apple takes 15% (Small Business Program, under $1M/yr) → you net **~$21/sub/yr ≈ $1.77/sub/month**.
+At **$25/yr**, Apple takes 15% (Small Business Program, under $1M/yr — enrolling is step 1a in
+`PAYWALL.md` and has not been done yet; at the standard 30% every number below halves) → you net
+**~$21/sub/yr ≈ $1.77/sub/month**.
 
 | You want (net) | Paying subs needed | If 4% of users pay | If 2% pay | Realistic (~0.5–1%)* |
 |---|---|---|---|---|
@@ -69,11 +88,14 @@ At **$25/yr**, Apple takes 15% (Small Business Program, under $1M/yr) → you ne
 \* Why under 1% is the honest number: the "2–4% pay" benchmark is for people who actually hit
 the paywall. Only heavy forecast-users (>10/month) ever see your wall — maybe 10–25% of users —
 and only a few percent of *those* pay, on a teen base with payment friction. Multiply it out and
-it's well under 1% of all users. On top of that, ~70% of annual subscribers don't renew year two,
-so you have to re-win most of those 565 subs every single year just to stay flat.
+it's well under 1% of all users. On top of that, annual renewal in the Social/Lifestyle
+category runs about **25%** (RevenueCat renewal-rate benchmarks, cited in
+`PAYWALL-DECISION.md` §1), so roughly three quarters of those 565 subs have to be re-won every
+single year just to stay flat.
 
-Industry reality check: only **17% of new subscription apps ever reach $1,000/month** within two
-years (RevenueCat, 2024–2026).
+Industry reality check: only **17.2% of subscription apps ever reach $1,000/month in their first
+year** (RevenueCat, *State of Subscription Apps 2024*). This file used to say "within two years",
+which is not what the report measures.
 
 ---
 
@@ -108,32 +130,50 @@ years (RevenueCat, 2024–2026).
 **Now — Flock Pro (built, dormant behind a kill switch):**
 - **$3.99/month** (lead with this) or **$24.99/year** with a 7-day free trial — mirrors Snapchat+.
   (`PAYWALL-DECISION.md` §4 argues for $29.99/year instead; not yet decided.)
-- Free limits that *nudge* toward Pro (not a single wall). What the code actually meters,
-  verified 2026-08-14:
-  - **AI crowd forecast: 10 views/month free**, then Pro (`services/forecastUsage.js`).
-  - **Birdie AI: 10 messages/day free, 150/day with Pro** (`services/birdieUsage.js`).
-    Not unlimited — the paywall sheet says "150 a day, up from 10", and it must keep
-    matching the code.
-  - Proactive "go now / it's about to peak" venue alerts → Pro (`services/crowdAlerts.js`).
+- Free limits that *nudge* toward Pro (not a single wall). What the code will meter **the day
+  the flag flips** — re-read 2026-08-18, and with `PAYWALL_ENABLED` unset none of it is metered
+  today, every user gets the unmetered behaviour:
+  - **AI crowd forecast: 10 views/month free**, then Pro
+    (`backend/services/forecastUsage.js`; the gate is `forecastAccess`/`gateForecast` in
+    `backend/routes/crowd.js`, which returns unmetered access outright while the flag is off).
+    The "how busy is it right now" score is never metered.
+  - **Birdie AI: 10 messages/day free, 150/day with Pro** (`backend/services/birdieUsage.js`,
+    `FREE_DAILY_LIMIT` / `PREMIUM_DAILY_LIMIT`). Not unlimited — the paywall sheet says
+    "150 Birdie messages a day, up from 10", and it must keep matching the code.
+  - Proactive "go now / it's about to peak" venue alerts → Pro
+    (`backend/services/crowdAlerts.js`, which narrows the recipient query to
+    `is_premium = true` only when the flag is on).
   - ~~Pro badge / flair.~~ **Cut.** It was listed on the paywall sheet but never rendered
     anywhere, so it was removed rather than shipped as a lie.
 - Both meters are **in-memory and reset on every deploy**. Fine as a nudge, not fine once
   someone pays to remove a limit. Back them with a table before flipping the wall.
 - Everything core stays free (plans, chat, voting, SOS) — required for a social app to grow.
-- Nothing charges anyone until you flip `PAYWALL_ENABLED=true`. Full setup in `PAYWALL.md`;
-  the *timing* rules are in `PAYWALL-DECISION.md`.
+- Nothing charges anyone today, and the flag is only the last step: the Paid Applications
+  agreement has to be signed, the two products created in App Store Connect, RevenueCat's
+  `default` offering wired up, `REVENUECAT_WEBHOOK_SECRET` set (without it the webhook fails
+  closed with a 503 and no purchase can ever grant Pro), and only then
+  `PAYWALL_ENABLED=true`. Full setup in `PAYWALL.md`; the *timing* rules are in
+  `PAYWALL-DECISION.md`.
 - **Honest expectation: ~$0 until users are in the 5 figures.** Ship it to exercise the Apple
   billing pipe and to have it ready — not because it pays the bills yet.
 
 **Next — where the real near-term money is, ranked:**
 1. **Venue B2B (partly built — read this carefully, it is less finished than it sounds).**
-   What is **real and sellable today**: a claimed venue profile with logo, promotions CRUD,
+   What is **real and demoable today** (collection would be by hand — `POST
+   /api/admin/venues/:userId/tier` in `backend/routes/admin.js` is the only way to grant a
+   venue a tier, and nothing expires it): a claimed venue profile with logo, promotions CRUD,
    events CRUD, reviews with owner reply, and the `incoming-flocks` feed (a real query over
    `venue_votes` — the "40 groups considered you Friday" pitch), all server-side gated by
-   tier. What is **not built**: promoted placement in vote lists and "slow-night" push offers
-   do not exist in the code, and there is **no Stripe integration at all** — `VENUE-BILLING.md`
-   is a design document, not a deployed system. Do not sell the Boost tier on features that
-   are not there.
+   tier in `backend/routes/venueDashboard.js`. That enforcement is real server-side code
+   (`backend/services/venueEntitlements.js`, fails closed on an unknown tier), but it sits
+   behind its own kill switch, `VENUE_BILLING_ENABLED`, which is unset — so today every
+   claimed venue acts Pro and nothing is actually withheld. What is **not built**: promoted
+   placement in vote lists and "slow-night" push offers do not exist in the code, and there is
+   **no Stripe integration at all** (no checkout, no webhook, no `stripe` dependency) —
+   `VENUE-BILLING.md` is a design document, not a deployed system. Those two missing features
+   are the entire difference between $75 Pro and $35 Premium, so **do not sell the Pro tier**
+   on them. ("Boost" was the name for this tier in the superseded higher-price proposal; the
+   tiers are `premium` and `pro`.)
    Fourteen Pro venues, or about 19 at an even Premium/Pro mix, covers the ~$1k/mo goal
    with *zero* consumer scale needed (see `VENUE-BILLING.md` for the $35 / $75 tiers,
    FINAL as of 2026-08-14, and the banner above for the arithmetic). This is the BeReal lesson:
