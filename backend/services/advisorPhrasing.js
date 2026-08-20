@@ -33,8 +33,10 @@
 //
 // SPEND. Charge before the call, fail closed, never refund — the
 // services/birdieUsage.js pattern, with the grounding doc's numbers:
-//   * maxOutputTokens 512, ACTUALLY passed to the API (closing the gap
-//     birdieUsage.js documents in itself).
+//   * maxOutputTokens ACTUALLY passed to the API (closing the gap
+//     birdieUsage.js documents in itself). It is sized for a THINKING model:
+//     see ADVISOR_MAX_OUTPUT_TOKENS below for why the number is not a length
+//     limit and why it stopped being 512 on 2026-08-20.
 //   * 50 phrased answers per venue per UTC day (product cap; templates are
 //     uncapped, they cost nothing).
 //   * 150,000 tokens per venue per UTC day.
@@ -51,7 +53,7 @@
 
 const { GoogleGenAI } = require('@google/genai');
 const pool = require('../config/database');
-const { boolFlag } = require('./entitlements');
+const { boolFlag, warnOnce } = require('./entitlements');
 const { upstreamSignal } = require('../utils/upstream');
 
 // ── The intent registry (Layer A) ───────────────────────────────────────────
@@ -183,11 +185,18 @@ function isKnownIntent(intentId) {
 }
 
 // ── Flag ─────────────────────────────────────────────────────────────────────
-// Default OFF. With the flag off (or the key missing, or any ceiling hit, or
-// the valve tripped) the deterministic template twin serves, so the chat
-// surface works on day one with zero LLM calls.
+// DEFAULT ON since 2026-08-20. It shipped default OFF and stayed there, which
+// meant the whole phrasing layer, and with it the typed question field that
+// depends on it, was dark on every deploy including Jayden's own preview: he
+// had never once seen the feature he asked for. A flag whose off state is
+// invisible is not a safe default, it is a feature nobody can find.
+//
+// Off is still one env var away (ADVISOR_PHRASING_ENABLED=false), and every
+// guard below is unchanged: with the flag off, or the key missing, or any
+// ceiling hit, or the valve tripped, the deterministic template twin serves,
+// carrying every number, so the chip surface works with zero LLM calls.
 function phrasingEnabled() {
-  return boolFlag('ADVISOR_PHRASING_ENABLED');
+  return boolFlag('ADVISOR_PHRASING_ENABLED', true);
 }
 
 // ── Model ────────────────────────────────────────────────────────────────────
@@ -220,7 +229,31 @@ function getGenAI() {
 
 // ── Ceilings (grounding doc section 4 — hard constants, not env vars, for the
 // 2am reason birdieUsage.js states) ─────────────────────────────────────────
-const ADVISOR_MAX_OUTPUT_TOKENS = 512;
+// A THINKING MODEL SPENDS THIS BUDGET BEFORE IT WRITES A WORD, and that is
+// what broke this layer silently for its whole life. gemini-3.7-flash reasons
+// first and the reasoning is billed out of maxOutputTokens: at 512 it spent
+// 490 tokens thinking and 18 writing, so every phrased answer came back cut
+// off mid-placeholder, failed the valve, and served the template twin instead.
+// Nothing logged, because a template IS a valid answer. Measured 2026-08-20
+// across ninety live questions: an easy block finishes with roughly 540
+// thinking tokens and 55 written, and the hardest one seen spent 1904 thinking
+// and was still writing at 140, which truncated at half this ceiling. The
+// number is a bound the model does not reach, not a guillotine it walks into,
+// and responseText below refuses a truncated answer outright so a future model
+// with a longer inner voice fails loudly instead of quietly.
+//
+// This is a CEILING, not a bill. The pre-charge below adds it to the ledger and
+// settleTokens then trues the row to what the call actually metered, so raising
+// it buys headroom rather than spend.
+const ADVISOR_MAX_OUTPUT_TOKENS = 4096;
+// Roost never needs deep reasoning: the phrasing model rewrites a fact block
+// into two sentences, the router picks one id from a closed list, and the
+// advice model follows a contract rather than deriving anything. Low is the
+// floor gemini-3.7-flash accepts (MINIMAL is refused outright by this model),
+// and models that do not think at all ignore the field, so the fallback takes
+// it unchanged. This is a cost control, not a quality one: thinking tokens are
+// billed and they count against every ceiling below.
+const ADVISOR_THINKING_LEVEL = 'low';
 const PER_VENUE_DAILY_ANSWERS = 50;
 const PER_VENUE_DAILY_TOKENS = 150_000;
 const ADVISOR_GLOBAL_DAILY_TOKENS = 2_000_000;
@@ -337,22 +370,36 @@ async function allowGlobalTokens(tokens) {
 // birdieUsage.settleGeminiCall's rule, applied to both ledgers.
 function settleTokens(userId, estimated, actual) {
   if (!Number.isFinite(actual) || !Number.isFinite(estimated)) return;
+  // BOTH DIRECTIONS, and the distinction that makes that safe: what was charged
+  // before the call is an ESTIMATE, and what comes back on a successful call is
+  // the metered figure. Reconciling an estimate to a measurement is what the
+  // word settle means; it is not a refund, and the header's rule still stands
+  // whole, because a call that FAILS never reaches this line at all. An aborted
+  // or errored request keeps its full estimated charge, which is correct: the
+  // upstream billed it whether or not we read the answer.
+  //
+  // It has to work downward now. The estimate adds maxOutputTokens, which on a
+  // thinking model is deliberately far above what any answer spends: a phrased
+  // call estimates around thirteen thousand tokens and meters around eight. One
+  // way settling made a venue's daily token cap bite at roughly eleven answers
+  // when the product cap is fifty, so the cheaper the model got, the earlier
+  // the surface silently fell back to templates.
   const delta = Math.ceil(actual - estimated);
-  if (!(delta > 0)) return;
+  if (delta === 0) return;
   const id = accountKey(userId);
   if (id !== null) {
-    // The venue ledger is trued up unconditionally, exactly like the global one
+    // The venue ledger is trued unconditionally, exactly like the global one
     // below: a true-up may carry a day's row past its cap, and the NEXT charge
-    // is the thing that then refuses. Capping the settle instead would be a
-    // refund by another name.
+    // is the thing that then refuses. GREATEST pins the row at zero so a
+    // downward settle can never hand a venue free budget it never spent.
     pool.query(
-      `UPDATE advisor_venue_spend SET tokens = tokens + $1
+      `UPDATE advisor_venue_spend SET tokens = GREATEST(0, tokens + $1)
         WHERE day = CURRENT_DATE AND venue_user_id = $2`,
       [delta, id]
     ).catch((err) => console.error('advisorPhrasing: venue settle failed:', err.message));
   }
   pool.query(
-    'UPDATE advisor_spend SET tokens = tokens + $1 WHERE day = CURRENT_DATE',
+    'UPDATE advisor_spend SET tokens = GREATEST(0, tokens + $1) WHERE day = CURRENT_DATE',
     [delta]
   ).catch((err) => console.error('advisorPhrasing: settle failed:', err.message));
 }
@@ -414,15 +461,129 @@ function shortAsOf(asOf) {
   return d.toLocaleDateString('en-US', opts);
 }
 
+// '21:00' is a database value. Every other surface in this product renders an
+// hour as "9 PM" (advisorFacts.hour12, the insight cards, the templates), and a
+// phrased answer that says "your kitchen stops at 21:00" beside a card that
+// says "9 PM" is one room described in two vocabularies.
+const CLOCK_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+function clock12(h, minutes) {
+  const n = ((Number(h) % 24) + 24) % 24;
+  const twelve = n % 12 === 0 ? 12 : n % 12;
+  const mm = minutes && minutes !== '00' ? `:${minutes}` : '';
+  return `${twelve}${mm} ${n < 12 ? 'AM' : 'PM'}`;
+}
+
+// ── The vocabulary the owner picked from, spelled the way a person says it ──
+//
+// Intake enums are stored as the option token the form posted, and the token is
+// not English: an answer that told a restaurant "your nearby anchors are
+// theater_music_hall, shopping_center" printed two column values in the middle
+// of a sentence. Everything the owner CHOSE (rather than typed) goes through
+// this map on its way into prose. Unlisted tokens fall back to their own words
+// with the underscores opened out, so a new option added to the form reads as
+// English on the day it ships rather than on the day someone remembers this
+// file. Owner-typed prose never reaches here: it is not an enum, it is theirs.
+const ENUM_WORDS = Object.freeze({
+  // venueIntake.js SERVICE_STYLES
+  seated_table: 'seated table service',
+  counter_order: 'counter service',
+  bar_standing: 'standing room, ordering at the bar',
+  mixed: 'a mix of seated and standing service',
+  // RESERVATION_POLICIES
+  walk_in_only: 'walk ins only',
+  reservations_accepted: 'reservations and walk ins',
+  reservations_required: 'reservations only',
+  // AGE_POLICIES
+  all_ages: 'all ages',
+  eighteen_plus: 'eighteen and over',
+  twenty_one_plus: 'twenty one and over',
+  // WEEKDAYS. Stored lowercase because that is the option token the form
+  // posts; a weekday is a proper noun in the sentence it lands in, and
+  // "you told us you want to build tuesday" is a database value in prose.
+  monday: 'Monday',
+  tuesday: 'Tuesday',
+  wednesday: 'Wednesday',
+  thursday: 'Thursday',
+  friday: 'Friday',
+  saturday: 'Saturday',
+  sunday: 'Sunday',
+  // ANCHOR_TYPES
+  stadium_arena: 'a stadium or arena',
+  college_campus: 'a college campus',
+  transit_hub: 'a transit hub',
+  office_district: 'an office district',
+  theater_music_hall: 'a theater or music hall',
+  hotel_cluster: 'a cluster of hotels',
+  beach_boardwalk: 'a beach or boardwalk',
+  nightlife_strip: 'a nightlife strip',
+  highway_stop: 'a highway stop',
+  hospital: 'a hospital',
+  shopping_center: 'a shopping center',
+  // venue_profiles.corpus_status. These follow the words "a status of" in
+  // practice, so they are adjectival rather than noun phrases: "a status of a
+  // weekly pattern we collected" is what the noun version produced.
+  baselines: 'collected',
+  absent: 'not collected',
+  pending: 'still being collected',
+});
+// Multi-word tokens only, for the generic fallback: a bare word is far more
+// likely to be someone's prose than an option token, and opening out
+// underscores that are not there would change nothing anyway. Exact hits in the
+// table above are honoured whatever their shape, which is how the single-word
+// weekdays and corpus statuses get through.
+const ENUM_RE = /^[a-z][a-z0-9]*(_[a-z0-9]+)+$/;
+function enumWords(v) {
+  if (Object.prototype.hasOwnProperty.call(ENUM_WORDS, v)) return ENUM_WORDS[v];
+  if (ENUM_RE.test(v)) return v.replace(/_/g, ' ');
+  return null;
+}
+
+// SUBSTITUTION CAN STUTTER, and only after the fact. The model writes the noun
+// it expects to need ("you run {{fact:service_style}} service", "drawn from
+// {{fact:window}} days") and the server substitutes a value that already
+// carries that noun, so the owner reads "seated table service service" and
+// "drawn from seven days days". Both were live answers. The prompt now tells
+// the model not to supply the noun, which is the fix; this is the net under it,
+// because a prompt rule is a tendency and a rendered sentence is a promise.
+// Only an EXACT adjacent repeat is touched, so no sentence is ever rewritten,
+// only de-stuttered. English does write a doubled word ("had had", "that
+// that"), and none of them can occur here: this register is short declarative
+// sentences about hours and counts, and the check runs after substitution on
+// text a machine assembled rather than on anything a person typed.
+const STUTTER_RE = /\b([A-Za-z]+)\s+\1\b/gi;
+function dedupeAdjacentWords(text) {
+  return String(text).replace(STUTTER_RE, '$1');
+}
+
 function formatFactValue(fact) {
   const v = fact.value;
-  if (fact.unit === 'hour' && Number.isFinite(Number(v))) {
-    const h = ((Number(v) % 24) + 24) % 24;
-    const twelve = h % 12 === 0 ? 12 : h % 12;
-    return `${twelve}${h < 12 ? 'am' : 'pm'}`;
+  if (fact.unit === 'hour' && Number.isFinite(Number(v))) return clock12(v);
+  // A CALENDAR DAY IS NOT A COLUMN. '2026-08-25' reached the owner inside
+  // sentences like "your highest peak lands on Tuesday, 2026-08-25" because the
+  // date rode in as a scalar part of a composite fact and was transcribed
+  // verbatim. Every card on the same screen writes "Aug 25".
+  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) {
+    const short = shortAsOf(v);
+    if (short) return short;
+  }
+  if (typeof v === 'string') {
+    const m = v.match(CLOCK_RE);
+    if (m) return clock12(m[1], m[2]);
+    const words = enumWords(v);
+    if (words) return words;
   }
   if (fact.unit === 'percent' && Number.isFinite(Number(v))) return `${v}%`;
-  if (Array.isArray(v)) return v.join(', ');
+  if (fact.unit === 'km' && Number.isFinite(Number(v))) return `${v} km`;
+  if (fact.unit === 'days' && Number.isFinite(Number(v))) return `${v} days`;
+  if (fact.unit === 'tempF' && Number.isFinite(Number(v))) return `${v} F`;
+  // "a theater or music hall, a shopping center" is a list a database wrote.
+  // The last comma becomes "and", which is what the owner would say out loud.
+  if (Array.isArray(v)) {
+    const words = v.map((x) => (typeof x === 'string' && enumWords(x)) || x);
+    if (words.length <= 1) return words.join('');
+    if (words.length === 2) return `${words[0]} and ${words[1]}`;
+    return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1]}`;
+  }
   if (v !== null && typeof v === 'object') {
     // Object values are flattened before the LLM ever sees them (below); this
     // path only serves the template twin's no-label fallback.
@@ -447,13 +608,39 @@ function factSources(facts) {
 // digit-free alias. `sourceId` keeps the original id for the sources chip.
 // The template twin uses the RAW facts (their labels are Layer B's own hedged
 // sentences); only the LLM path is conditioned.
+// A UNIT THAT DESCRIBED THE WHOLE OBJECT DOES NOT DESCRIBE EACH OF ITS PARTS,
+// and inheriting it wholesale is how "9 PM" reached the owner as "21". The peak
+// fact is { weekday, peakHour, peakScore } carrying unit '0-100 index', which
+// is true of peakScore and false of peakHour; the part inherited it, missed the
+// unit === 'hour' branch in formatFactValue, and the server substituted a raw
+// 24-hour integer into a sentence. The template twin never had the bug because
+// it renders the fact's own label, which is why this survived until the
+// phrasing layer was switched on for the first time on 2026-08-20.
+//
+// So a split part carries a unit derived from its OWN key, and nothing else.
+// An unrecognised key gets no unit at all, which prints the value plainly, and
+// plainly is the honest default: a wrong unit is a wrong claim, a missing one
+// is only a plain number.
+function partUnit(key) {
+  if (/(^|[a-z])hour$/i.test(key)) return 'hour';
+  if (/(^|[a-z])(lastorder|lastcall)$/i.test(key)) return 'hour';
+  if (/(^|[a-z])(date|checkedat)$/i.test(key)) return 'date';
+  if (/km$/i.test(key)) return 'km';
+  if (/days$/i.test(key)) return 'days';
+  // A temperature without its scale is a number with two readings, and the
+  // parts of the weather fact used to inherit one from their parent. A live
+  // answer read "scattered clouds at 63 for Friday".
+  if (/tempf$/i.test(key)) return 'tempF';
+  return undefined;
+}
+
 function flattenFacts(facts) {
   const out = [];
   for (const f of facts) {
     if (f && f.value !== null && typeof f.value === 'object' && !Array.isArray(f.value)) {
       for (const [k, v] of Object.entries(f.value)) {
         if (v === null || typeof v === 'object') continue;
-        out.push({ ...f, sourceId: f.sourceId || f.id, id: `${f.id}_${k}`, value: v });
+        out.push({ ...f, sourceId: f.sourceId || f.id, id: `${f.id}_${k}`, value: v, unit: partUnit(k) });
       }
     } else if (f) {
       out.push(f);
@@ -618,13 +805,28 @@ function hasBannedDash(text) {
   return false;
 }
 
+// A VALVE REJECTION IS INVISIBLE FROM THE OUTSIDE, because the template twin
+// answers and a template is a perfectly good answer. That is the right
+// behaviour for the owner and the wrong behaviour for whoever has to work out
+// why a surface that is switched on never phrases anything. Every exit below
+// says which rule it was, once per process per rule, so the next silent
+// degradation is one grep away instead of one bisect away.
+function valveReject(reason) {
+  warnOnce(
+    `advisor:valve:${reason}`,
+    `[advisor] the phrasing model's answer was rejected by the valve (${reason}) and the template served instead. `
+    + 'This is safe but it is not free: the surface is running on templates until it stops.'
+  );
+  return null;
+}
+
 function applyValve(raw, block) {
   if (typeof raw !== 'string') return null;
   const text = raw.trim();
-  if (!text) return null;
-  if (hasNumerals(text)) return null;
-  if (hasBannedDash(text)) return null;
-  if (CAUSAL_VERBS.test(text)) return null;
+  if (!text) return valveReject('empty');
+  if (hasNumerals(text)) return valveReject('digit in model output');
+  if (hasBannedDash(text)) return valveReject('em dash');
+  if (CAUSAL_VERBS.test(text)) return valveReject('causal verb');
 
   const facts = Array.isArray(block?.facts) ? block.facts : [];
   const byId = new Map(facts.map((f) => [String(f.id), f]));
@@ -632,7 +834,7 @@ function applyValve(raw, block) {
   const sentences = text
     .split(/(?<=[.!?])\s+/)
     .filter((s) => /\{\{fact:/.test(s));
-  if (sentences.length === 0) return null;
+  if (sentences.length === 0) return valveReject('no sentence cited a fact');
 
   // Spelled-out numbers are checked HERE, against the sentences that will
   // actually reach the owner, rather than against the whole draft. Numerals
@@ -641,7 +843,7 @@ function applyValve(raw, block) {
   // renders, and the sentences dropped for citing nothing are exactly where
   // harmless prose ("these two line up") lives. Checked BEFORE substitution so
   // a venue called Seven Bar cannot reject its own answer.
-  if (NUMBER_WORDS.test(sentences.join(' '))) return null;
+  if (NUMBER_WORDS.test(sentences.join(' '))) return valveReject('number written as a word');
 
   const used = new Set();
   let unknownId = false;
@@ -653,13 +855,13 @@ function applyValve(raw, block) {
       return formatFactValue(f);
     }))
     .join(' ');
-  if (unknownId) return null;
+  if (unknownId) return valveReject('placeholder id not in the block');
   // A malformed placeholder that survived substitution (bad id charset,
   // unbalanced braces) is a failure, not a decoration.
-  if (rendered.includes('{{') || rendered.includes('}}')) return null;
+  if (rendered.includes('{{') || rendered.includes('}}')) return valveReject('malformed placeholder');
 
   return {
-    text: rendered,
+    text: dedupeAdjacentWords(rendered),
     sources: [...used].map((id) => {
       const f = byId.get(id);
       return { id: f.sourceId || id, source: f.source, asOf: f.asOf };
@@ -735,17 +937,52 @@ async function callModel(genAI, model, payload) {
       systemInstruction: SYSTEM_PROMPT,
       maxOutputTokens: ADVISOR_MAX_OUTPUT_TOKENS,
       temperature: 0.2,
-      abortSignal: upstreamSignal('gemini'),
+      thinkingConfig: { thinkingLevel: ADVISOR_THINKING_LEVEL },
+      abortSignal: upstreamSignal('geminiAdvisor'),
     },
   });
 }
 
+/**
+ * The model's answer, or null if there isn't a whole one.
+ *
+ * A REPLY THAT RAN OUT OF ROOM IS NOT A REPLY. finishReason MAX_TOKENS means
+ * the model was still writing when the budget ended, so what came back is a
+ * sentence fragment: "The forecast estimates your busiest stretch on {{fact:"
+ * is a real observed value here. The valve happens to reject that one because
+ * the placeholder is broken, but "your quietest stretch is early in the" is
+ * also a truncation and the valve would pass it. Refusing the whole response
+ * at the seam is the only check that catches both, and it turns a silent
+ * half-sentence into the template twin, which is a complete answer.
+ *
+ * It is also the tripwire. Every caller logs this, so the next time a model's
+ * inner monologue outgrows its budget the line says so instead of the surface
+ * quietly reverting to templates for months, which is exactly what happened
+ * between 2026-08-19 and 2026-08-20.
+ */
 function responseText(resp) {
   if (!resp) return null;
+  if (truncated(resp)) return null;
   if (typeof resp.text === 'string') return resp.text;
   const parts = resp.candidates?.[0]?.content?.parts;
   if (Array.isArray(parts)) return parts.map((p) => p.text || '').join('');
   return null;
+}
+
+function truncated(resp) {
+  return resp?.candidates?.[0]?.finishReason === 'MAX_TOKENS';
+}
+
+// One line, once per process, naming the ceiling and what it cost. Repeating it
+// per request would bury a real incident under its own alarm.
+function warnTruncated(where, resp) {
+  const u = resp?.usageMetadata || {};
+  warnOnce(
+    `advisor:truncated:${where}`,
+    `[advisor] ${where}: the model hit its output ceiling before it finished writing `
+    + `(thinking ${u.thoughtsTokenCount || 0} tokens, wrote ${u.candidatesTokenCount || 0}). `
+    + 'The answer was discarded rather than served half written. Raise the ceiling for this call.'
+  );
 }
 
 /**
@@ -814,6 +1051,7 @@ async function phrase(block, { venueUserId } = {}) {
 
   settleTokens(venueUserId, estimate, resp?.usageMetadata?.totalTokenCount);
 
+  if (truncated(resp)) warnTruncated('phrasing', resp);
   const valved = applyValve(responseText(resp), { facts: llmFacts });
   if (!valved) return template;
   return { mode: 'phrased', text: valved.text, sources: valved.sources, model: activeModel };
@@ -836,10 +1074,14 @@ function noteModelNotFound() {
 }
 
 const internals = {
+  dedupeAdjacentWords,
   getGenAI,
   isModelNotFound,
   noteModelNotFound,
   responseText,
+  truncated,
+  warnTruncated,
+  ADVISOR_THINKING_LEVEL,
   allowVenuePhrasing,
   allowVenueQuestion,
   allowGlobalTokens,
@@ -898,6 +1140,7 @@ module.exports = {
   ADVISOR_INTENTS,
   SYSTEM_PROMPT,
   ADVISOR_MAX_OUTPUT_TOKENS,
+  ADVISOR_THINKING_LEVEL,
   PER_VENUE_DAILY_ANSWERS,
   PER_VENUE_DAILY_TOKENS,
   PER_VENUE_DAILY_QUESTIONS,

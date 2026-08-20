@@ -5,10 +5,22 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 //
 // TWO WAYS IN, AND THE ANSWER ALWAYS SAYS WHICH KIND IT IS.
 //
-// Suggested questions (chips) are the starting points, four of them, chosen by
-// the server from what this venue's data can actually answer. Below them is a
-// text field: the owner can ask anything about their business, and the server
-// routes it to exactly one of three answers.
+// The FIELD IS THE SURFACE. A text box sits at the bottom of the card, always
+// drawn, always the last thing the eye lands on, exactly the way Birdie's box
+// sits under Birdie's thread. Suggested questions (chips) are starting points
+// above it, four of them, chosen by the server from what this venue's data can
+// actually answer; they are not the way in, they are a shortcut past the way
+// in. The owner can ask anything about their business, and the server routes
+// it to exactly one of three answers.
+//
+// It did not start that way. The field rendered only when the server said
+// `freeText: true`, and the server said false on every deploy because both of
+// its flags defaulted off, so a built and tested feature reached its owner as
+// an ABSENCE: no field, no explanation, nothing to notice was missing. Both
+// flags now default on (services/advisorFreeText.js), and this file no longer
+// has a state where the field is gone: when the server declines, the box is
+// still there, disabled, with the server's own sentence under it. A decline
+// the owner can read is a decline. A decline they cannot see is a bug.
 //
 //   grounded  built from typed facts about this venue, with sources and dates.
 //             Renders with its source line, exactly as a chip answer does,
@@ -22,8 +34,9 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 //             carries an upsell.
 //
 // The product name and the free-text field's availability both arrive from the
-// server (`name` and `freeText` on /questions), so a rename is one backend line
-// and the input never renders when the server would decline it.
+// server (`name` and `freeText` on /questions), so a rename is one backend
+// line and the field explains itself rather than vanishing when the server
+// would decline it.
 //
 // WIRING (App.js, venue dashboard). Render below <VenueInsightCards ...>:
 //
@@ -41,7 +54,15 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 // this file has no dependency on the contended api.js and tests hand it
 // fixtures.
 
+// THE BRAND IS SAID ONCE ON THIS SCREEN. VenueInsightCards titles the surface
+// "Roost"; this block sits a few hundred pixels below it in the same scroll, so
+// titling it "Roost" too printed the product name twice on one screen and told
+// the owner nothing either time. It is titled for what it is instead. The name
+// still arrives from the server for the places it belongs (the field's screen
+// reader label, the locked and error states, which can be read without the
+// cards above them in view), so a rename is still one backend line.
 const ADVISOR_NAME = 'Roost';
+const BLOCK_TITLE = 'Ask a question';
 
 const CARD_STYLE = {
   backgroundColor: 'var(--bg-card-solid)',
@@ -104,59 +125,97 @@ const AnswerText = ({ text, tone }) => (
   </>
 );
 
-// The one visible difference between the two kinds of answer. A grounded
-// answer carries its source line and nothing else, because its sources ARE its
-// claim to be believed. An advice answer carries this instead, quietly, so the
-// owner is never left guessing whether a sentence came from their data.
+// How the two kinds of answer are told apart, and why it is drawn twice.
+//
+// A grounded answer is flush with the question above it and carries its source
+// line, because its sources ARE its claim to be believed. An advice answer is
+// inset behind a hairline rule and carries this sentence, so the difference is
+// legible before a word is read and unambiguous after. Colour alone would not
+// do it: the two answers are the same ink, on purpose, because advice is not a
+// lesser answer, it is a different KIND of answer.
 const ADVICE_MARKER = 'General advice, not from your data.';
 
-const ThreadTurn = ({ turn, first, navy, onRetry }) => (
-  <div style={{ padding: '10px 0', borderTop: first ? 'none' : '1px solid var(--border-light)' }}>
-    <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: navy, margin: 0, lineHeight: 1.4 }}>{turn.question}</p>
-    <div style={{ margin: '6px 0 0' }}>
-      {turn.status === 'pending' && (
-        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Reading your numbers…</p>
-      )}
-      {turn.status === 'error' && (
-        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>
-          That did not go through.{' '}
-          <button
-            type="button"
-            onClick={onRetry}
-            style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: navy, textDecoration: 'underline', cursor: 'pointer' }}
-          >
-            Try again
-          </button>
-        </p>
-      )}
-      {turn.status === 'done' && (
-        <>
-          {/* A refusal wears the same chrome as an answer: quieter ink, no
-              lock icon, no upsell. The text itself says what is missing. */}
-          <AnswerText
-            text={turn.answer.text}
-            tone={turn.answer.mode === 'refusal' ? 'var(--text-secondary)' : 'var(--text-primary)'}
-          />
-          {turn.answer.mode === 'advice' && (
-            <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>
-              {ADVICE_MARKER}
-            </p>
-          )}
-          {sourcesLine(turn.answer.sources) && (
-            <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>
-              {sourcesLine(turn.answer.sources)}
-            </p>
-          )}
-        </>
-      )}
+// What the owner reads while the server works. Which sentence is true depends
+// on which door the question came in by: a chip is already routed, so we are
+// genuinely reading their numbers. A typed question has not been routed yet,
+// and the router may well send it somewhere their numbers cannot go, so
+// promising to read them would be a small lie told several times a day.
+const PENDING_CHIP = 'Reading your numbers…';
+const PENDING_TYPED = 'Working on it…';
+
+const ThreadTurn = ({ turn, first, navy, onRetry }) => {
+  const advice = turn.status === 'done' && turn.answer && turn.answer.mode === 'advice';
+  return (
+    <div style={{ padding: '10px 0', borderTop: first ? 'none' : '1px solid var(--border-light)' }}>
+      <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: navy, margin: 0, lineHeight: 1.4 }}>{turn.question}</p>
+      <div
+        style={{
+          margin: '6px 0 0',
+          paddingLeft: advice ? '10px' : '0px',
+          // Longhand, not the `border-left` shorthand: a shorthand carrying a
+          // custom property is dropped by the CSS parser the test suite runs
+          // on, so the rule would be invisible to any check that it is there.
+          borderLeftWidth: advice ? '2px' : '0px',
+          borderLeftStyle: advice ? 'solid' : 'none',
+          borderLeftColor: 'var(--border-light)',
+        }}
+      >
+        {turn.status === 'pending' && (
+          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>
+            {turn.typed ? PENDING_TYPED : PENDING_CHIP}
+          </p>
+        )}
+        {turn.status === 'error' && (
+          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>
+            That did not go through.{' '}
+            <button
+              type="button"
+              onClick={onRetry}
+              style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: navy, textDecoration: 'underline', cursor: 'pointer' }}
+            >
+              Try again
+            </button>
+          </p>
+        )}
+        {turn.status === 'done' && (
+          <>
+            {/* A refusal wears the same chrome as an answer: quieter ink, no
+                lock icon, no upsell. The text itself says what is missing. */}
+            <AnswerText
+              text={turn.answer.text}
+              tone={turn.answer.mode === 'refusal' ? 'var(--text-secondary)' : 'var(--text-primary)'}
+            />
+            {advice && (
+              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>
+                {ADVICE_MARKER}
+              </p>
+            )}
+            {sourcesLine(turn.answer.sources) && (
+              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>
+                {sourcesLine(turn.answer.sources)}
+              </p>
+            )}
+          </>
+        )}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 // Matches services/advisorFreeText.js FREE_TEXT_MAX_CHARS. The server rejects
 // anything longer with a plain message; this stops the owner writing past it in
 // the first place, which is the kinder half of the same rule.
 const QUESTION_MAX_CHARS = 280;
+// Where the character count starts showing itself.
+const COUNTER_FROM = 220;
+
+// The invitation. It names both halves of what the field takes, because an
+// owner who reads "ask about your venue" will only ever ask for numbers, and
+// half of what Roost is good at is the other kind of question.
+const PLACEHOLDER_TEXT = 'Your numbers, or how to run the room';
+const PLACEHOLDER_OFF = 'Typed questions are off right now';
+// Said where the field is, not instead of it.
+const FREE_TEXT_OFF_NOTE = 'Typed questions are off for now. The suggested questions above still work, and every answer they give comes from your own numbers.';
 
 const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
   const navy = colors?.navy || 'var(--text-primary)';
@@ -168,6 +227,7 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
   const [freeText, setFreeText] = useState(false);
   const [showMore, setShowMore] = useState(false);
   const [draft, setDraft] = useState('');
+  const [focused, setFocused] = useState(false);
   const [lockedReason, setLockedReason] = useState(null);
   const [thread, setThread] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -214,9 +274,9 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
   // One turn, whichever door it came in by. `run` is the call that produces the
   // answer; the thread does not care which endpoint answered, only that the
   // answer arrived carrying its own mode.
-  const runTurn = useCallback(async (key, question, run) => {
+  const runTurn = useCallback(async (key, question, run, typed = false) => {
     setBusy(true);
-    setThread((t) => [...t, { key, question, status: 'pending', answer: null }]);
+    setThread((t) => [...t, { key, question, typed, status: 'pending', answer: null }]);
     try {
       const answer = await run();
       if (!alive.current) return;
@@ -239,13 +299,16 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
     const text = draft.trim();
     if (busy || !text || typeof askQuestion !== 'function') return;
     setDraft('');
-    runTurn(`typed-${Date.now()}`, text, () => askQuestion(text));
+    runTurn(`typed-${Date.now()}`, text, () => askQuestion(text), true);
   }, [askQuestion, busy, draft, runTurn]);
+
+  // One value for the send control's look and its behaviour.
+  const canAsk = !busy && freeText && draft.trim().length > 0;
 
   const retry = useCallback((turn) => {
     setThread((t) => t.filter((x) => x.key !== turn.key));
     if (turn.key.startsWith('typed-')) {
-      if (typeof askQuestion === 'function') runTurn(`typed-${Date.now()}`, turn.question, () => askQuestion(turn.question));
+      if (typeof askQuestion === 'function') runTurn(`typed-${Date.now()}`, turn.question, () => askQuestion(turn.question), true);
       return;
     }
     askIntent(turn.key.slice(0, turn.key.lastIndexOf('-')), turn.question);
@@ -289,10 +352,10 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
 
   return (
     <div style={CARD_STYLE}>
-      <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: navy, margin: 0 }}>{name}</p>
+      <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: navy, margin: 0 }}>{BLOCK_TITLE}</p>
       <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '3px 0 0', lineHeight: 1.5 }}>
         {freeText
-          ? 'Ask about your own numbers or about running the room. Answers from your data name their sources and dates. What we cannot answer, we say so.'
+          ? 'Answers from your own numbers name their sources and dates. Anything from the trade is marked as advice. What we cannot answer, we say so.'
           : 'Pick a question. Every answer comes from measured data about your venue, with its sources named. What we cannot answer yet, we say so.'}
       </p>
 
@@ -319,42 +382,6 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
           </button>
         ))}
       </div>
-
-      {freeText && (
-        <form onSubmit={submitQuestion} style={{ display: 'flex', gap: '6px', marginTop: '8px' }}>
-          <input
-            type="text"
-            value={draft}
-            maxLength={QUESTION_MAX_CHARS}
-            onChange={(e) => setDraft(e.target.value)}
-            disabled={busy}
-            placeholder="Ask your own question"
-            aria-label={`Ask ${name} a question`}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              padding: '8px 10px',
-              fontSize: 'var(--t-meta)',
-              color: 'var(--text-primary)',
-              backgroundColor: 'transparent',
-              border: '1px solid var(--border-light)',
-              borderRadius: '8px',
-            }}
-          />
-          <button
-            type="submit"
-            disabled={busy || !draft.trim()}
-            style={{
-              ...CHIP_STYLE,
-              margin: 0,
-              opacity: busy || !draft.trim() ? 0.5 : 1,
-              cursor: busy || !draft.trim() ? 'default' : 'pointer',
-            }}
-          >
-            Ask
-          </button>
-        </form>
-      )}
 
       {groups.length > 0 && (
         <div style={{ marginTop: '8px' }}>
@@ -386,6 +413,99 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
           ))}
         </div>
       )}
+
+      {/* THE FIELD. Last thing in the card, so it is the last thing the eye
+          lands on and the thing a thumb reaches first, which is where Birdie
+          puts its box for the same reason. It is drawn in every state: when
+          the server declines free text the box stays and goes quiet, with the
+          server's reason under it, because an owner who can see a disabled
+          field knows the feature exists and knows why it is not answering,
+          and an owner shown nothing at all knows neither. */}
+      <form onSubmit={submitQuestion} style={{ marginTop: '12px' }}>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            padding: '4px 4px 4px 12px',
+            borderRadius: '20px',
+            backgroundColor: 'var(--bg-hover)',
+            border: '1.5px solid',
+            borderColor: focused ? 'rgba(30,58,92,0.30)' : 'var(--border-subtle)',
+            boxShadow: focused ? '0 0 0 1px rgba(45,90,135,0.15)' : 'none',
+            transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
+            opacity: freeText ? 1 : 0.6,
+          }}
+        >
+          <input
+            type="text"
+            value={draft}
+            maxLength={QUESTION_MAX_CHARS}
+            onChange={(e) => setDraft(e.target.value)}
+            onFocus={() => setFocused(true)}
+            onBlur={() => setFocused(false)}
+            disabled={busy || !freeText}
+            placeholder={freeText ? PLACEHOLDER_TEXT : PLACEHOLDER_OFF}
+            aria-label={`Ask ${name} a question`}
+            autoComplete="off"
+            style={{
+              flex: 1,
+              minWidth: 0,
+              padding: '9px 0',
+              fontSize: 'var(--t-meta)',
+              lineHeight: 1.4,
+              color: 'var(--text-primary)',
+              backgroundColor: 'transparent',
+              border: 'none',
+              outline: 'none',
+            }}
+          />
+          {/* One value drives the look AND the behaviour, the fix App.js's own
+              Birdie button records having needed: a control drawn at half
+              opacity that still accepts a press is a control that lies. */}
+          {/* hit44: drawn at thirty two so it sits inside the pill without
+              growing it, with a transparent forty four point target laid over
+              it (index.css). The pill does not clip its overflow, which is the
+              one condition that class has. */}
+          <button
+            className="hit44"
+            type="submit"
+            disabled={!canAsk}
+            aria-label={`Send your question to ${name}`}
+            style={{
+              width: '32px',
+              height: '32px',
+              minWidth: '32px',
+              borderRadius: '16px',
+              border: 'none',
+              backgroundColor: canAsk ? navy : 'transparent',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: canAsk ? 'pointer' : 'default',
+              transition: 'background-color 0.2s ease',
+            }}
+          >
+            <svg aria-hidden="true" focusable="false" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={canAsk ? 'white' : 'var(--text-tertiary)'} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
+            </svg>
+          </button>
+        </div>
+
+        {/* The count appears only once it matters. A counter sitting under an
+            empty box is noise; a counter that appears as the room runs out is
+            the warning the server would otherwise deliver as a rejection. */}
+        {freeText && draft.length > COUNTER_FROM && (
+          <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '4px 0 0', textAlign: 'right' }}>
+            {QUESTION_MAX_CHARS - draft.length} characters left
+          </p>
+        )}
+        {!freeText && (
+          <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '5px 0 0', lineHeight: 1.5 }}>
+            {FREE_TEXT_OFF_NOTE}
+          </p>
+        )}
+      </form>
     </div>
   );
 };
