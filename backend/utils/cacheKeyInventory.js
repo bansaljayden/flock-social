@@ -410,8 +410,8 @@ const INVENTORY = [
   },
   {
     file: 'routes/venueSearch.js', name: 'inflight', kind: 'inflight',
-    key: '`search:${normalizedQuery}|${coords}` / `detail:${placeId}`',
-    callerControls: 'the query text (NFKC-normalised, whitespace-collapsed, lowercased, 80 chars) and a shape-checked placeId',
+    key: '`search:${normalizedQuery}|${coords}` (the `detail:${placeId}` half moved to services/placeDetailsCache.js)',
+    callerControls: 'the query text (NFKC-normalised, whitespace-collapsed, lowercased, 80 chars)',
     protects: 'deduplicates concurrent paid Google calls — only the leader charges',
     denominator: 'in-flight promises',
     bound: 'none, deleted on settle',
@@ -430,8 +430,8 @@ const INVENTORY = [
   },
   {
     file: 'routes/venueSearch.js', name: 'venueCache', kind: 'cache',
-    key: '`search:${normalized}|${lat2dp,lng2dp}` / `detail:${placeId}`',
-    callerControls: 'the ~80-char free-text query; placeId is shape-checked',
+    key: '`search:${normalized}|${lat2dp,lng2dp}` (the `detail:${placeId}` half moved to services/placeDetailsCache.js on 2026-08-20, so the duplicate Place Details call the venue detail screen was making could be collapsed onto one shared payload)',
+    callerControls: 'the ~80-char free-text query',
     protects: 'paid Places Text Search + Place Details',
     denominator: 'cache entries, 5 min TTL',
     bound: 'VENUE_CACHE_MAX 750, low-water 675, expire-then-oldest-first with delete-before-set',
@@ -619,6 +619,28 @@ const INVENTORY = [
     bound: 'probeBudget: 20k, least-consumed-first',
     verdict: 'FIXED-THIS-ROUND',
     why: 'The unit is a bucket, not a request and not a venue, so a batch of 20 venues in one metro costs single digits after coalescing.',
+  },
+
+  // ── services/placeDetailsCache.js ─────────────────────────────────────────
+  {
+    file: 'services/placeDetailsCache.js', name: 'detailsCache', kind: 'cache',
+    key: 'placeId, and nothing else',
+    callerControls: 'the place id, shape-checked by utils/places.js isPlaceIdShaped ([A-Za-z0-9_-]{6,128}) at every route that reaches this',
+    protects: 'the paid Enterprise Place Details SKU, $20 per 1,000 against a 1,000-call monthly free allowance',
+    denominator: 'cache entries, 10 min TTL',
+    bound: 'PLACE_DETAILS_CACHE_MAX 500, low-water 450, expire-then-oldest-first with delete-before-set',
+    verdict: 'FIXED-THIS-ROUND',
+    why: 'This map is why the venue detail screen costs ONE Place Details call instead of two. routes/venueSearch.js /details and routes/crowd.js were each buying the same payload for the same place id in the same tick (App.js openVenueDetail fires both in one Promise.allSettled), with the crowd mask a strict subset of the details mask, from two caches that could not see each other. The KEY drops the hour that routes/crowd.js carries on its own full:placeId:localHour:localDay entries: that hour protects the DERIVED PREDICTION, which really does change hour to hour, and never protected the Places payload, which does not — so the old key re-bought an identical response on every hour boundary. The CAP is sized the way VENUE_CACHE_MAX is, against what one account can mint: every write is behind one allowPlacesSearch unit and PER_USER_HOURLY is 30 against a 10-minute TTL, so a single account can hold at most 30 live entries against a ceiling of 500. One caller cannot evict the shared working set. The TTL is bounded by currentOpeningHours.openNow, the only field Google computes at request time; everything else in the payload is immutable or moves over days.',
+  },
+  {
+    file: 'services/placeDetailsCache.js', name: 'detailsInflight', kind: 'inflight',
+    key: 'the same placeId',
+    callerControls: 'same as detailsCache',
+    protects: 'the same paid call, for the CONCURRENT case the cache cannot reach',
+    denominator: 'in-flight promises',
+    bound: 'none, deleted on settle',
+    verdict: 'FIXED-THIS-ROUND',
+    why: 'The load-bearing half. The two duplicate requests are simultaneous, so the second one looks at a cache the first has not filled yet — deduplication has to happen on the FLIGHT. The leader charges utils/placesBudget.js and calls Google; every follower rides the same promise for nothing, which is the round-18 reading of "charge what you spend". Self-draining: the worker never rejects, so the cleanup .then() cannot leak, and a FAILED fetch is never written to the cache, so a bad minute is not pinned for a whole TTL.',
   },
 
   // ── services/pushHelper.js ────────────────────────────────────────────────

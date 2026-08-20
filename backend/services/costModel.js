@@ -75,18 +75,43 @@
 // __tests__/placesFieldMaskModelInputs.test.js now pins all ten masks so this
 // cannot be re-proposed as a billing change; it is a retrain.
 //
-// THE SAVING THAT IS REAL AND IS NOT A TIER CHANGE: opening one venue's detail
-// screen makes TWO paid Enterprise Place Details calls for the same place id.
-// frontend/src/App.js openVenueDetail fires getVenueDetails and
-// getCrowdPrediction in one Promise.allSettled; the first is
-// routes/venueSearch.js runPlaceDetails and the second is routes/crowd.js
-// fetchVenueFromGoogle, and the second mask is a strict subset of the first.
-// They cache separately (5 min on place id; 10 min on place id + hour, so it
-// misses on every hour boundary) and charge the shared ledger twice. Collapsing
-// them onto one cached raw Places response halves the Place Details SKU — 50%
-// against the 15% the tier question was worth — and touches no field mask, so
-// it carries none of the model risk above. Not done here: it spans two route
-// files and one of them is the model's serving path.
+// THE SAVING THAT IS REAL AND IS NOT A TIER CHANGE: TAKEN, in ${THIS_COMMIT}
+// (2026-08-20). Opening one venue's detail screen used to make TWO paid
+// Enterprise Place Details calls for the same place id. frontend/src/App.js
+// openVenueDetail fires getVenueDetails and getCrowdPrediction in one
+// Promise.allSettled; the first was routes/venueSearch.js runPlaceDetails and
+// the second routes/crowd.js fetchVenueFromGoogle, whose mask was a strict
+// subset of the first's. They cached separately (5 min on place id; 10 min on
+// place id + hour, so the second missed on every hour boundary) and charged the
+// shared ledger twice.
+//
+// Both now read one raw Places response from services/placeDetailsCache.js and
+// project the fields they need out of it. NO FIELD MASK CHANGED: the shared
+// mask is venueSearch's old DETAILS_FIELD_MASK, the superset, so this carries
+// none of the model risk above, which is exactly why it was available when the
+// tier change was not. The key dropped the hour, because that hour protects the
+// DERIVED PREDICTION (which really does change hour to hour) and never
+// protected the Places payload, whose only request-time field is
+// currentOpeningHours.openNow. The in-flight coalescing is the load-bearing
+// half: the duplicate pair is SIMULTANEOUS, so a cache the leader has not
+// filled yet cannot help the follower.
+//
+// WHAT IT DOES TO THE NUMBERS ON THIS PAGE. One venue-detail open costs ONE
+// Place Details call instead of two, so the Place Details half of the
+// `places-other` line below is halved at the source. Nothing here needed a
+// constant changed, and that is a property worth stating rather than a
+// coincidence: buildObserved reads the live ledger
+// (placesBudgetStatus().globalUsed) and buildWorstCase reads the live ceiling,
+// so both follow the real call volume down on their own. There is no hardcoded
+// "calls per venue open" anywhere in this file, and routes/admin.js passes
+// meter readings rather than assumptions, so the admin Costs panel needed no
+// change either. The band it quotes is the same WIDTH and lower at both bounds.
+// Measured on the real routers: two concurrent requests for one place id, one
+// upstream call, one ledger unit (__tests__/placeDetailsSharedCache.test.js).
+//
+// The two were never alternatives, which is worth saying plainly: 50% of the
+// calls beats 15% of the rate on the same SKU, and it does it without touching
+// a trained column.
 // ---------------------------------------------------------------------------
 
 const { VISION_UNIT_PRICE_USD } = require('../utils/visionBudget');
@@ -674,7 +699,7 @@ function buildObserved(counts = {}) {
       usdHigh: other === null ? null : round(priceCalls(other, sk.textSearchEnterprise.perThousand), 4),
       window: 'today, this process only',
       durable: false,
-      note: 'The shared Places ledger counts calls without recording the SKU, so this is a band: everything priced as Place Details at the low end, everything as Text Search at the high end.',
+      note: 'The shared Places ledger counts calls without recording the SKU, so this is a band: everything priced as Place Details at the low end, everything as Text Search at the high end. Since 2026-08-20 the Place Details half of this counts ONE call per venue-detail open rather than two — services/placeDetailsCache.js gives the detail card and the crowd card one shared payload — so the count itself is lower; the band is derived from it and needed no adjustment.',
     });
   }
 

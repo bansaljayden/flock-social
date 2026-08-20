@@ -45,8 +45,8 @@
 // survives in the two venueSearch masks, so the note about utcOffsetMinutes being
 // free stays true. It would stay green if `rating` and `priceLevel` were struck
 // and only `currentOpeningHours` remained. This one names the three model inputs
-// and checks EVERY venue-shaped mask in routes/, including the ones reached
-// through a constant.
+// and checks EVERY venue-shaped mask in routes/ AND services/, including the ones
+// reached through a constant.
 //
 // currentOpeningHours is deliberately NOT asserted here. It is not a model input
 // — it drives the closed-hours zeroing, `isOpen`, the "Closed right now" badge
@@ -65,7 +65,19 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const ROUTES_DIR = path.join(__dirname, '..', 'routes');
+// routes/ AND services/. The sweep was routes-only until 2026-08-20, when the
+// duplicate Place Details call on the venue detail screen was collapsed: the
+// details mask moved out of routes/venueSearch.js into
+// services/placeDetailsCache.js, which is now the single owner of that payload
+// for BOTH the detail card and the crowd card. A routes-only sweep would have
+// gone quietly from covering ten masks to covering eight, including losing
+// sight of the one that feeds the model's serving path — which is the exact
+// failure mode the floor assertion below exists to catch. A mask is covered by
+// where it IS, not by which directory it started in.
+const MASK_DIRS = [
+  path.join(__dirname, '..', 'routes'),
+  path.join(__dirname, '..', 'services'),
+];
 
 // The three trained columns, in the spelling Google's mask uses.
 const MODEL_INPUTS = ['rating', 'userRatingCount', 'priceLevel'];
@@ -83,10 +95,10 @@ const VENUE_SHAPED = 'displayName';
 //
 // Two forms appear in routes/: an inline string literal, and a reference to a
 // module-level constant. The constant form is the one a naive grep misses, and
-// it is where two of the ten masks live (routes/venueSearch.js SEARCH_FIELD_MASK
-// and DETAILS_FIELD_MASK, both built by .join(',') over an array), so resolving
-// it is the difference between this test covering the file it most needs to and
-// passing vacuously over it.
+// it is where two of the masks live (routes/venueSearch.js SEARCH_FIELD_MASK and
+// services/placeDetailsCache.js PLACE_DETAILS_FIELD_MASK, both built by
+// .join(',') over an array), so resolving it is the difference between this test
+// covering the files it most needs to and passing vacuously over them.
 function resolveMask(src, rawValue) {
   const literal = rawValue.match(/^['"`]([^'"`]*)['"`]/);
   if (literal) return literal[1];
@@ -99,7 +111,14 @@ function resolveMask(src, rawValue) {
   // Slice from the declaration to its terminating semicolon and take every
   // quoted fragment inside. That covers `= 'a,b,c';` and
   // `= ['a', 'b'].join(',');` with one rule.
-  const decl = new RegExp(`const\\s+${ident[1]}\\s*=([\\s\\S]*?);\\n`);
+  //
+  // `\r?\n`, not `\n`. This repo is cloned with core.autocrlf=true, so
+  // the working tree is CRLF and a declaration ends `;\r\n`. Anchoring on a
+  // bare `;\n` matched nothing on a CRLF checkout, which made resolveMask
+  // return null for exactly the two masks it exists to resolve (the ones behind
+  // a constant) and turned this file red about masks that were perfectly fine.
+  // A test that reads source text has to be indifferent to line endings.
+  const decl = new RegExp(`const\\s+${ident[1]}\\s*=([\\s\\S]*?);\\r?\\n`);
   const body = src.match(decl);
   if (!body) return null;
   return (body[1].match(/['"`]([^'"`]*)['"`]/g) || [])
@@ -109,8 +128,11 @@ function resolveMask(src, rawValue) {
 
 function collectMasks() {
   const found = [];
-  for (const file of fs.readdirSync(ROUTES_DIR).filter((f) => f.endsWith('.js'))) {
-    const src = fs.readFileSync(path.join(ROUTES_DIR, file), 'utf8');
+  const files = MASK_DIRS.flatMap((dir) => fs.readdirSync(dir)
+    .filter((f) => f.endsWith('.js'))
+    .map((f) => ({ file: `${path.basename(dir)}/${f}`, full: path.join(dir, f) })));
+  for (const { file, full } of files) {
+    const src = fs.readFileSync(full, 'utf8');
     // Capture to end of line, NOT to the first comma: a mask literal is one
     // long comma-separated string, so a comma-terminated capture stops after
     // its first field and every assertion below then passes on a one-field
@@ -126,14 +148,22 @@ function collectMasks() {
   return found;
 }
 
-test('every Places field mask in routes/ resolves — an unresolved one is an untested one', () => {
+test('every Places field mask in routes/ and services/ resolves — an unresolved one is an untested one', () => {
   const masks = collectMasks();
 
-  // Ten today: ai.js x2, badge.js, crowd.js x2, publicCrowd.js x2,
-  // venueDashboard.js x2, venueSearch.js x2. The floor is what stops a broken
-  // regex from turning this whole file green by finding nothing.
+  // TEN today, and the one that went is a saving rather than a gap. It was
+  // ELEVEN: ai.js x2, badge.js, crowd.js x2, publicCrowd.js x2,
+  // venueDashboard.js x2, venueSearch.js x2. (The floor here used to read 10
+  // against a real count of 11 — a floor one below the truth is a floor that
+  // lets exactly one mask disappear unnoticed, so it is set to the real number
+  // now.) On 2026-08-20 the two Place Details masks that were fetching the SAME
+  // place id in the SAME tick — venueSearch's DETAILS_FIELD_MASK and crowd's
+  // inline one, the second a strict subset of the first — became one mask in
+  // services/placeDetailsCache.js, halving that SKU. Two masks became one; the
+  // field list did not change. The floor is also what stops a broken regex from
+  // turning this whole file green by finding nothing.
   assert.ok(masks.length >= 10,
-    `expected at least 10 Places field masks under routes/, found ${masks.length}`);
+    `expected at least 10 Places field masks under routes/ and services/, found ${masks.length}`);
 
   for (const { file, line, mask } of masks) {
     assert.ok(mask, `${file}:${line} — could not resolve the mask; extend resolveMask()`);
@@ -147,6 +177,13 @@ test('every venue-shaped mask still asks for the three model inputs', () => {
 
   assert.ok(venueShaped.length >= 10,
     `expected at least 10 venue-shaped masks, found ${venueShaped.length}`);
+
+  // The shared one is named explicitly. It is the mask the crowd model's serving
+  // path now eats from, and it is the only one that lives outside routes/, so a
+  // future sweep that quietly narrows the directory list fails here rather than
+  // passing with one fewer mask.
+  assert.ok(venueShaped.some((m) => m.file === 'services/placeDetailsCache.js'),
+    'the shared Place Details mask must still be swept — it feeds both the detail card and the crowd card');
 
   for (const { file, line, mask } of venueShaped) {
     for (const field of MODEL_INPUTS) {
