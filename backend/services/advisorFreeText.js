@@ -74,9 +74,17 @@ const {
   getGenAI, isModelNotFound, noteModelNotFound, responseText,
   truncated, warnTruncated, ADVISOR_THINKING_LEVEL,
   allowVenueQuestion, allowVenuePhrasing, allowGlobalTokens, settleTokens,
+  ceilingResetPhrase, CHARGE_OK, CHARGE_CEILING,
   hasNumerals, hasBannedDash, formatFactValue,
   NUMBER_WORDS, PLACEHOLDER, CAUSAL_VERBS, CHARS_PER_TOKEN,
 } = advisorPhrasing.internals;
+
+// chargedCall answers with the model's text, or with one of two refusals, and
+// the owner has to be told which. A symbol rather than a string or a shaped
+// object because the success value is itself an arbitrary string: any sentinel
+// the model could conceivably emit is not a sentinel. Nothing outside this
+// module ever sees it.
+const CEILING = Symbol('advisorFreeText.ceiling');
 
 // ── Ceilings and bounds (hard constants, same reasoning as advisorPhrasing) ──
 
@@ -274,6 +282,29 @@ const REFUSAL_VALVE = "We can't answer that yet. What we put together did not pa
 // would teach them to rephrase a question that was fine.
 const REFUSAL_BUSY = "We can't answer that yet. We could not get to it just now. The questions above still work, and this will take another go shortly.";
 
+// A SPENT ALLOWANCE IS NOT A FAULT, and until 2026-08-20 it was reported as
+// one. Both refusals came out of a charge that returned a bare false, so an
+// owner who had used the day's twenty typed questions read that we could not
+// get to it just now and that it would take another go shortly. Jayden hit this
+// on his own preview and spent several minutes diagnosing a broken product,
+// which is the exact cost of a sentence that misdescribes itself: the copy
+// promised a retry that would refuse identically until midnight.
+//
+// So the ceiling says what it is and when it lifts, and it does not apologise,
+// does not say please, and does not offer a way to buy more. There is no plan
+// that raises this number, so mentioning one would be the upsell-inside-a-
+// refusal that ADVISOR-PRODUCT-SHAPE calls the darkest pattern available here.
+//
+// It names no count. Three meters can produce this refusal (the question cap,
+// the answer cap, and the shared daily token budget), and only one of them is a
+// number of questions, so "you have used all twenty" would be false whenever
+// the token budget was the one that bit. Measured on the preview: the ledger
+// read nineteen questions of twenty and 148,480 tokens of 150,000, and it was
+// the token budget that refused.
+function refusalCeiling(resetPhrase) {
+  return `Today's questions are used up. They come back ${resetPhrase}, and the questions above still work in the meantime.`;
+}
+
 function screen(text) {
   for (const re of INJECTION_PATTERNS) {
     if (re.test(text)) return REFUSAL_INJECTION;
@@ -305,7 +336,14 @@ async function chargedCall({ userId, charge, systemInstruction, payload, maxOutp
   const genAI = getGenAI();
   if (!genAI) return null;
   const estimate = Math.ceil((systemInstruction.length + payload.length) / CHARS_PER_TOKEN) + maxOutputTokens;
-  if (!(await charge(userId, estimate))) return null;
+  const charged = await charge(userId, estimate);
+  if (charged === CHARGE_CEILING) return CEILING;
+  if (charged !== CHARGE_OK) return null;
+  // The GLOBAL wall stays a plain null on purpose. It is not this owner's
+  // allowance and it carries no promise about their tomorrow, so telling them
+  // their day is used up would be a second sentence that misdescribes itself.
+  // Every venue in the product shares that ceiling and it is genuinely a "we
+  // could not get to it just now".
   if (!(await allowGlobalTokens(estimate))) return null;
 
   const config = {
@@ -333,7 +371,9 @@ async function chargedCall({ userId, charge, systemInstruction, payload, maxOutp
     }
     const swapped = noteModelNotFound();
     if (!swapped) return null;
-    if (!(await charge(userId, estimate))) return null;
+    const recharged = await charge(userId, estimate);
+    if (recharged === CHARGE_CEILING) return CEILING;
+    if (recharged !== CHARGE_OK) return null;
     if (!(await allowGlobalTokens(estimate))) return null;
     try {
       resp = await once(swapped);
@@ -404,8 +444,12 @@ async function classify({ userId, question }) {
     json: true,
     label: 'router',
   });
-  // null means the call never happened: a ceiling refused it, or the model was
-  // unreachable. That is not the same answer as "we could not understand you".
+  // Neither of these is "we could not understand you", and they are not each
+  // other either. CEILING is the owner's own daily allowance, spent, with a
+  // time on it. null is the call never happening for a reason on our side.
+  if (raw === CEILING) {
+    return { mode: 'refused', intentId: null, refusal: refusalCeiling(await ceilingResetPhrase()) };
+  }
   if (raw === null) return { mode: 'refused', intentId: null, refusal: REFUSAL_BUSY };
 
   const route = parseRoute(raw);
@@ -598,6 +642,9 @@ async function advise({ userId, question, ctx, groundedFacts = [] }) {
     json: false,
     label: 'advice',
   });
+  if (out === CEILING) {
+    return { mode: 'refusal', text: refusalCeiling(await ceilingResetPhrase()), sources: [] };
+  }
   if (out === null) return { mode: 'refusal', text: REFUSAL_BUSY, sources: [] };
 
   const valved = applyAdviceValve(out, facts);
@@ -610,6 +657,11 @@ function __copyStrings() {
   return [
     UNAVAILABLE_TEXT, TOO_LONG, NOT_TEXT, TOO_SHORT,
     OUTSIDE, REFUSAL_INJECTION, REFUSAL_UNROUTABLE, REFUSAL_ROUTED_OUT, REFUSAL_VALVE, REFUSAL_BUSY,
+    // Built rather than fixed, so the walk gets it rendered. Both the measured
+    // phrase and the fallback go in: the reset clause is the only part that
+    // varies and the walk should see every shape that can reach an owner.
+    refusalCeiling(advisorPhrasing.internals.RESET_UNKNOWN),
+    refusalCeiling('in about 6 hours'),
     ...Object.values(REFUSAL_BY_REASON),
     ...OUT_OF_SCOPE_PATTERNS.map((p) => p.why),
   ];
@@ -640,6 +692,7 @@ module.exports = {
   refusalForReason,
   REFUSAL_VALVE,
   REFUSAL_BUSY,
+  refusalCeiling,
   INJECTION_PATTERNS,
   OUT_OF_SCOPE_PATTERNS,
   __copyStrings,

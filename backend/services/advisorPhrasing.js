@@ -265,6 +265,27 @@ const CHARS_PER_TOKEN = 4; // birdieUsage's estimator convention
 // is a busy owner thinking out loud; it is not a loop.
 const PER_VENUE_DAILY_QUESTIONS = 20;
 
+// ── What a refused charge MEANS, which is two different things ──────────────
+//
+// These were booleans until 2026-08-20, and the false they returned covered
+// both "this venue has spent its allowance for today" and "the meter could not
+// count, so we are refusing". The free-text surface then served one sentence
+// for both, and it was the sentence for the second: an owner who had simply
+// used up the day's twenty questions was told we could not get to it just now
+// and that it would take another go shortly. Jayden hit exactly that on his own
+// preview and spent several minutes reading a working ceiling as a broken
+// product, which is the whole cost of the conflation.
+//
+// A ceiling is a fact about the owner's own day and it has a time attached. An
+// unavailable meter is a fault on our side with no time attached. They are not
+// the same event, so the charge now says which one it was and the copy can
+// stop guessing. A malformed charge is UNAVAILABLE rather than CEILING: a
+// request larger than the whole daily cap is a bug on our side, not an
+// allowance anybody spent.
+const CHARGE_OK = 'ok';
+const CHARGE_CEILING = 'ceiling';
+const CHARGE_UNAVAILABLE = 'unavailable';
+
 // Copied in intent from birdieUsage.accountKey: '5' and 5 share one bucket,
 // anything unidentifiable is refused rather than handed a free lane.
 function accountKey(userId) {
@@ -292,9 +313,9 @@ function accountKey(userId) {
 // already over the cap.
 async function allowVenuePhrasing(userId, tokens) {
   const id = accountKey(userId);
-  if (id === null) return false;
-  if (!Number.isInteger(tokens) || tokens < 1) return false;
-  if (tokens > PER_VENUE_DAILY_TOKENS) return false;
+  if (id === null) return CHARGE_UNAVAILABLE;
+  if (!Number.isInteger(tokens) || tokens < 1) return CHARGE_UNAVAILABLE;
+  if (tokens > PER_VENUE_DAILY_TOKENS) return CHARGE_UNAVAILABLE;
   try {
     const r = await pool.query(
       `INSERT INTO advisor_venue_spend (day, venue_user_id, answers, tokens)
@@ -307,11 +328,11 @@ async function allowVenuePhrasing(userId, tokens) {
        RETURNING tokens`,
       [id, tokens, PER_VENUE_DAILY_ANSWERS, PER_VENUE_DAILY_TOKENS]
     );
-    return r.rowCount > 0;
+    return r.rowCount > 0 ? CHARGE_OK : CHARGE_CEILING;
   } catch (err) {
     // Same posture as the global counter: a meter that cannot count refuses.
     console.error('advisorPhrasing: venue spend counter unavailable, refusing the call:', err.message);
-    return false;
+    return CHARGE_UNAVAILABLE;
   }
 }
 
@@ -322,9 +343,9 @@ async function allowVenuePhrasing(userId, tokens) {
 // pieces of work, and the ledger should read the way the invoice does.
 async function allowVenueQuestion(userId, tokens) {
   const id = accountKey(userId);
-  if (id === null) return false;
-  if (!Number.isInteger(tokens) || tokens < 1) return false;
-  if (tokens > PER_VENUE_DAILY_TOKENS) return false;
+  if (id === null) return CHARGE_UNAVAILABLE;
+  if (!Number.isInteger(tokens) || tokens < 1) return CHARGE_UNAVAILABLE;
+  if (tokens > PER_VENUE_DAILY_TOKENS) return CHARGE_UNAVAILABLE;
   try {
     const r = await pool.query(
       `INSERT INTO advisor_venue_spend (day, venue_user_id, questions, tokens)
@@ -337,10 +358,10 @@ async function allowVenueQuestion(userId, tokens) {
        RETURNING tokens`,
       [id, tokens, PER_VENUE_DAILY_QUESTIONS, PER_VENUE_DAILY_TOKENS]
     );
-    return r.rowCount > 0;
+    return r.rowCount > 0 ? CHARGE_OK : CHARGE_CEILING;
   } catch (err) {
     console.error('advisorPhrasing: venue question counter unavailable, refusing the call:', err.message);
-    return false;
+    return CHARGE_UNAVAILABLE;
   }
 }
 
@@ -402,6 +423,37 @@ function settleTokens(userId, estimated, actual) {
     'UPDATE advisor_spend SET tokens = GREATEST(0, tokens + $1) WHERE day = CURRENT_DATE',
     [delta]
   ).catch((err) => console.error('advisorPhrasing: settle failed:', err.message));
+}
+
+// ── When a spent ceiling comes back ─────────────────────────────────────────
+//
+// Every meter above is keyed on CURRENT_DATE, so a day's allowance returns the
+// moment that date rolls over. WHICH MIDNIGHT THAT IS, IS NOT OURS TO ASSERT:
+// CURRENT_DATE is evaluated in the database session's timezone, which is the
+// deployment's business and not this file's. Measured on the local preview it
+// is America/New_York; on Railway it is UTC. Copy naming a clock time would
+// therefore be a guess in a product whose entire claim is that it does not
+// guess, so the boundary is read from the same database that enforces the cap.
+//
+// Rendered as a DURATION rather than a time, which is both true in every zone
+// and the more useful form: an owner who has run out wants to know how long,
+// not what the server's calendar says. A meter we cannot read falls back to
+// naming the boundary without a number, which is still true.
+const RESET_UNKNOWN = 'when the day rolls over';
+async function ceilingResetPhrase(now = new Date()) {
+  try {
+    const r = await pool.query('SELECT (CURRENT_DATE + 1)::timestamptz AS reset_at');
+    const at = r.rows[0] && r.rows[0].reset_at;
+    const ms = (at instanceof Date ? at.getTime() : Date.parse(at)) - now.getTime();
+    if (!Number.isFinite(ms) || ms <= 0) return RESET_UNKNOWN;
+    const hours = Math.round(ms / 3_600_000);
+    if (hours < 1) return 'in under an hour';
+    if (hours === 1) return 'in about an hour';
+    return `in about ${hours} hours`;
+  } catch (err) {
+    console.error('advisorPhrasing: could not read the ceiling reset boundary:', err.message);
+    return RESET_UNKNOWN;
+  }
 }
 
 // ── The system prompt ────────────────────────────────────────────────────────
@@ -1020,7 +1072,11 @@ async function phrase(block, { venueUserId } = {}) {
     + ADVISOR_MAX_OUTPUT_TOKENS;
 
   // Charge before the call, local then global; either refusal serves the twin.
-  if (!(await allowVenuePhrasing(venueUserId, estimate))) return template;
+  // The chip path does not care WHICH refusal it was: a ceiling and an
+  // unreachable meter both mean the deterministic twin answers, carrying every
+  // number. Only the free-text surface has to tell them apart, because only
+  // there does a refusal reach the owner as a sentence instead of an answer.
+  if (await allowVenuePhrasing(venueUserId, estimate) !== CHARGE_OK) return template;
   if (!(await allowGlobalTokens(estimate))) return template;
 
   let resp;
@@ -1035,7 +1091,7 @@ async function phrase(block, { venueUserId } = {}) {
       console.warn(`advisorPhrasing: model "${activeModel}" not accepted, falling back to "${FALLBACK_ADVISOR_MODEL}"`);
       activeModel = FALLBACK_ADVISOR_MODEL;
       modelFellBack = true;
-      if (!(await allowVenuePhrasing(venueUserId, estimate))) return template;
+      if (await allowVenuePhrasing(venueUserId, estimate) !== CHARGE_OK) return template;
       if (!(await allowGlobalTokens(estimate))) return template;
       try {
         resp = await callModel(genAI, activeModel, payload);
@@ -1086,6 +1142,11 @@ const internals = {
   allowVenueQuestion,
   allowGlobalTokens,
   settleTokens,
+  ceilingResetPhrase,
+  CHARGE_OK,
+  CHARGE_CEILING,
+  CHARGE_UNAVAILABLE,
+  RESET_UNKNOWN,
   hasNumerals,
   hasBannedDash,
   formatFactValue,
