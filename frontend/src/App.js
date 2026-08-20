@@ -1593,7 +1593,7 @@ function declutterMarkers(map, markerEntries) {
   });
 }
 
-const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance }) => {
+const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance, ownerPlaceId = null, initialCenter = null, followUser = true }) => {
   const mapRef = useRef(null);
   const mapRootRef = useRef(null);   // outermost node — see the attribution note in init
   const mapInstanceRef = useRef(null);
@@ -1777,7 +1777,9 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       const maplibregl = (await import('maplibre-gl')).default;
       mapLibreRef.current = maplibregl;
       if (cancelled) return;
-      const userLoc = await getUserLocation();
+      // A caller that already knows where the map should open (the venue
+      // dashboard passes the venue itself) skips the geolocation prompt.
+      const userLoc = initialCenter ? { lat: initialCenter.lat, lng: initialCenter.lng } : await getUserLocation();
       if (cancelled) return;
       const savedMapType = localStorage.getItem('flock_map_type') || 'roadmap';
 
@@ -1918,7 +1920,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       });
 
       // Re-pan when geolocation permission flips to granted
-      if (navigator.permissions) {
+      if (followUser && navigator.permissions) {
         navigator.permissions.query({ name: 'geolocation' }).then((perm) => {
           perm.addEventListener('change', () => {
             if (perm.state === 'granted') {
@@ -2022,7 +2024,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
 
   // Live position tracking
   useEffect(() => {
-    if (!mapReady || !navigator.geolocation) return;
+    if (!mapReady || !followUser || !navigator.geolocation) return;
     if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos) => {
@@ -2037,7 +2039,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 },
     );
     return () => { if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current); };
-  }, [mapReady]);
+  }, [mapReady, followUser]);
 
   // ---------- venue markers ----------
   useEffect(() => {
@@ -2068,6 +2070,17 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
 
       const isActive = activeVenue?.id === v.id;
       const el = buildMarkerEl(v, isActive);
+      if (ownerPlaceId && v.place_id === ownerPlaceId) {
+        // The dashboard map marks the owner's own pin with a permanent chip
+        // so they can spot themselves without zooming to the label tier.
+        el.style.zIndex = '2';
+        const chip = document.createElement('div');
+        chip.className = 'mlb-owner-chip';
+        chip.textContent = 'Your venue';
+        chip.style.background = mapIsDark ? '#f1ede0' : '#1e293b';
+        chip.style.color = mapIsDark ? '#1e293b' : '#f1ede0';
+        el.appendChild(chip);
+      }
       el.addEventListener('click', (e) => {
         e.stopPropagation();
         setActiveVenue(v);
@@ -2132,7 +2145,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         duration: 600,
       });
     } catch { /* container not measured yet — the next result set re-fits */ }
-  }, [venues, mapReady, buildMarkerEl]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [venues, mapReady, buildMarkerEl, ownerPlaceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------- active venue highlight (only resize the 2 changed markers) ----------
   useEffect(() => {
@@ -2407,6 +2420,22 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           gap: 3px;
         }
 
+        /* The owner's own pin on the dashboard map: a chip that is never
+           zoom-gated, because spotting yourself should not require zooming.
+           Colours are set inline (theme-inverted, same rule as the pins). */
+        .mlb-owner-chip {
+          margin-top: 3px;
+          padding: 2px 8px;
+          border-radius: 8px;
+          font-family: 'Hanken Grotesk', system-ui, -apple-system, sans-serif;
+          font-size: 11px;
+          font-weight: 700;
+          letter-spacing: -0.1px;
+          white-space: nowrap;
+          box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+          pointer-events: none;
+        }
+
         /* Show labels only when zoomed in enough to read them. */
         [data-zoom-tier="hi"] .mlb-marker-label {
           opacity: 1;
@@ -2427,7 +2456,11 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       `}</style>
       <div ref={mapRef} style={{ width: '100%', height: '100%' }} />
 
-      {/* My Location button */}
+      {/* My Location button. Hidden when the map is not following the
+          viewer (venue dashboard): with no tracked position it could only
+          ever re-center on nothing, and a button that cannot succeed does
+          not render. */}
+      {followUser && (
       <button aria-label="My Location" className="hit44"
         onClick={() => window.__flockGoToMyLocation && window.__flockGoToMyLocation()}
         style={{
@@ -2446,6 +2479,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           <circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/>
         </svg>
       </button>
+      )}
 
       {/* Zoom controls */}
       <div style={{
@@ -10345,258 +10379,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   );
 
   // EXPLORE SCREEN
-  const ExploreScreen = () => (
-    <div key="explore-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--pill-bg)' }}>
-      {/* Discover's title is the map itself, so there was no h1 at all here and
-          a screen-reader user landed on a page with no name. */}
-      <h1 className="sr-only">Discover</h1>
-      {pickingVenueForCreate && (
-        <div style={{ padding: '10px 14px', background: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}>
-          <span style={{ color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.mapPin('white', 14)} Tap venue to select</span>
-          <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(false); if (pickingVenueForDm) { setPickingVenueForDm(false); setCurrentTab('chat'); setCurrentScreen('dmDetail'); } else if (pickingVenueForFlockId) { setSelectedFlockId(pickingVenueForFlockId); setPickingVenueForFlockId(null); setCurrentTab('chat'); setCurrentScreen('chatDetail'); } else { setCurrentScreen('create'); } }} style={{ backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '12px', padding: '4px 12px', color: 'white', fontSize: 'var(--t-meta)', cursor: 'pointer', fontWeight: '500', transition: 'opacity 0.2s ease' }}>Cancel</button>
-        </div>
-      )}
-
-      <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'var(--bg-card-solid)', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', zIndex: 20, flexShrink: 0 }}>
-        <div style={{ flex: 1, position: 'relative' }}>
-          <input aria-label="Search venues" key="search-input" id="search-input" type="text" value={venueQuery} onChange={(e) => handleVenueQueryChange(e.target.value)} placeholder="Search restaurants, bars, venues..." style={{ width: '100%', padding: '12px 14px 12px 38px', paddingRight: venueQuery ? '36px' : '14px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', transition: 'opacity 0.2s ease', fontWeight: '500' }} autoComplete="off" />
-          <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', transition: 'opacity 0.2s ease' }}>{Icons.search(venueQuery ? colors.navy : colors.textTertiary, 16)}</span>
-          {venueQuery && (
-            <button aria-label="Clear search" className="hit44" onClick={() => { setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); const lat = parseFloat(localStorage.getItem('flock_user_lat')); const lng = parseFloat(localStorage.getItem('flock_user_lng')); if (lat && lng) { setMapVenuesLoaded(false); loadVenuesAtLocation(lat, lng); } else { setMapVenuesLoaded(false); requestUserLocation(false); } }} title="Clear search" style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#64748b', 16)}</button>
-          )}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-          <div style={{ display: 'flex', gap: '4px', overflow: 'hidden', maxWidth: discoverNavOpen ? '124px' : '0px', opacity: discoverNavOpen ? 1 : 0, transition: 'max-width 0.3s ease, opacity 0.25s ease' }}>
-            <button aria-label="Recenter the map on me" className="hit44" onClick={() => { setDiscoverNavOpen(false); setMapVenuesLoaded(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); requestUserLocation(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', animation: locationLoading ? 'spin 1s linear infinite' : 'none' }}>{Icons.crosshair('var(--text-primary)', 15)}</button>
-            <button aria-label="Events" className="hit44" onClick={() => { setDiscoverNavOpen(false); setShowEventsView(true); setActiveVenue(null); if (userLocation && !featuredEventsLoading) { setFeaturedEventsLoading(true); getFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, userInterests).then(data => setFeaturedEvents(data.events || [])).catch(err => console.error('[Events] Fetch failed:', err)).finally(() => setFeaturedEventsLoading(false)); } }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.zap('var(--text-primary)', 15)}</button>
-            <button aria-label="Friends" className="hit44" onClick={() => { setDiscoverNavOpen(false); setShowConnectPanel(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.users('var(--text-primary)', 15)}</button>
-          </div>
-          <button className="hit44" onClick={() => setDiscoverNavOpen(!discoverNavOpen)} style={{ height: '42px', minWidth: discoverNavOpen ? '42px' : 'auto', width: discoverNavOpen ? '42px' : 'auto', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: discoverNavOpen ? '0' : '0 14px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-primary)', flexShrink: 0, transition: 'all 0.3s ease' }}>{discoverNavOpen ? Icons.x('var(--text-primary)', 16) : <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', whiteSpace: 'nowrap' }}>Features</span>}</button>
-        </div>
-      </div>
-
-      {/* Location loading overlay */}
-      {locationLoading && !mapVenuesLoaded && (
-        <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '16px 0', textAlign: 'center' }}>
-          <div style={{ display: 'inline-block', width: '24px', height: '24px', border: `3px solid var(--border-default)`, borderTopColor: colors.steel, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '8px 0 0', fontWeight: '500' }}>Finding venues near you...</p>
-        </div>
-      )}
-
-      {/* Search Results Overlay */}
-      {showSearchDropdown && (venueSearching || venueResults.length > 0 || (venueQuery.trim().length >= 2 && !venueSearching && venueResults.length === 0)) && (
-        <div style={{ position: 'relative', zIndex: 30, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', maxHeight: '260px', overflowY: 'auto' }}>
-          {/* A list is loading, so it gets the list skeleton — the bare spinner
-              that used to sit here told you nothing about what was coming. */}
-          {venueSearching && (
-            <div style={{ padding: '8px 12px 4px' }}>
-              <ListSkeleton count={3} thumb={44} thumbRadius={10} label="Searching venues" />
-            </div>
-          )}
-          {!venueSearching && venueResults.length > 0 && (
-            <div style={{ padding: '4px 12px 8px' }}>
-              {/* View All — first thing you see */}
-              <button
-                className="hit44 glass-btn glass-navy"
-                onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); }}
-                style={{ width: '100%', padding: '11px 14px', borderRadius: '12px', border: 'none', background: colors.navyBg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', margin: '4px 0 8px', transition: 'opacity 0.2s', boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}
-              >
-                {Icons.filter('white', 13)}
-                <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'white' }}>See All Results ({venueResults.length})</span>
-                {Icons.arrowRight('white', 14)}
-              </button>
-              {venueResults.filter(v => { const mp = budgetStatus?.isReady && budgetStatus?.ceiling ? getMaxPriceLevel(budgetStatus.ceiling) : 4; return !v.price_level || v.price_level <= mp; }).slice(0, 4).map((venue) => (
-                <button aria-label="Report"
-                  key={venue.place_id}
-                  onClick={() => {
-                    setShowSearchDropdown(false);
-                    // Pan map to this venue if it's in our markers
-                    if (window.__flockPanToVenue) window.__flockPanToVenue(venue.place_id);
-                    openVenueDetail(venue.place_id, { name: venue.name, formatted_address: venue.formatted_address, place_id: venue.place_id, rating: venue.rating, price_level: venue.price_level, photo_url: venue.photo_url });
-                  }}
-                  style={{ width: '100%', padding: '10px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', textAlign: 'left', marginBottom: '6px', transition: 'background-color 0.15s' }}
-                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'; }}
-                >
-                  {venue.photo_url ? (
-                    <img src={venue.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect fill="#1a3a5c" width="48" height="48" rx="10"/></svg>'); }} />
-                  ) : (
-                    <div style={{ width: '48px', height: '48px', borderRadius: '10px', backgroundColor: 'var(--pill-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.mapPin(colors.navyMid, 20)}</div>
-                  )}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px', flexWrap: 'wrap' }}>
-                      {venue.rating && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{venue.rating} {Icons.starFilled('currentColor', 12)}</span>}
-                      {venue.user_ratings_total > 0 && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>({venue.user_ratings_total})</span>}
-                      {venue.price_level && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{'$'.repeat(venue.price_level)}</span>}
-                      {userLocation && venue.location && (() => {
-                        const dLat = (venue.location.latitude - userLocation.lat) * Math.PI / 180;
-                        const dLng = (venue.location.longitude - userLocation.lng) * Math.PI / 180;
-                        const a = Math.sin(dLat/2)**2 + Math.cos(userLocation.lat*Math.PI/180)*Math.cos(venue.location.latitude*Math.PI/180)*Math.sin(dLng/2)**2;
-                        const dist = 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-                        return <span style={{ fontSize: 'var(--t-meta)', color: colors.steel, fontWeight: '500' }}>{dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}</span>;
-                      })()}
-                    </div>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.formatted_address}</p>
-                  </div>
-                  <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                    {Icons.chevronRight(colors.navyMid, 16)}
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-          {!venueSearching && venueQuery.trim().length >= 2 && venueResults.length === 0 && (
-            <div style={{ textAlign: 'center', padding: '16px 0' }}>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>No venues found. Try a different search.</p>
-            </div>
-          )}
-        </div>
-      )}
-
-
-      {/* Premium Map */}
-      <div onClick={() => { setShowSearchDropdown(false); }} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        {/* MapLibre GL — Snap Map-style vector tiles (smooth, free, no API key) */}
-        <MapLibreMapView
-          venues={allVenues}
-          filterCategory={category}
-          userLocation={userLocation}
-          activeVenue={activeVenue}
-          setActiveVenue={setActiveVenue}
-          getCategoryColor={getCategoryColor}
-          pickingVenueForCreate={pickingVenueForCreate}
-          setPickingVenueForCreate={setPickingVenueForCreate}
-          setSelectedVenueForCreate={setSelectedVenueForCreate}
-          setCurrentScreen={setCurrentScreen}
-          openVenueDetail={openVenueDetail}
-          flockMemberLocations={flockMemberLocations}
-          calcDistance={calcDistance}
-        />
-
-        {/* Live location sharing indicator on map */}
-        {sharingLocationForFlock && (
-          <div style={{
-            position: 'absolute', top: '8px', left: '8px', right: '8px',
-            padding: '8px 12px', borderRadius: '14px',
-            background: 'linear-gradient(135deg, #059669, #047857)',
-            display: 'flex', alignItems: 'center', gap: '8px',
-            zIndex: 35, boxShadow: '0 1px 3px rgba(5,150,105,0.15)',
-          }}>
-            <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#34d399', animation: 'pulse 2s ease-in-out infinite', boxShadow: 'none', flexShrink: 0 }} />
-            <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', margin: 0, flex: 1 }}>
-              Live location · {Object.keys(flockMemberLocations).length > 0 ? `${Object.keys(flockMemberLocations).length} member${Object.keys(flockMemberLocations).length > 1 ? 's' : ''} nearby` : 'Waiting for others...'}
-            </p>
-            <button className="hit44" onClick={stopLocationSharing} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
-          </div>
-        )}
-
-        {/* Floating "See All Results" on map. It moved from the bottom-right to
-            the top-right: the bottom-right band is the map's own control rail
-            (zoom, satellite, locate) plus the OSM attribution plus the docked
-            SOS button, and there is not 52px of clear height left in it. Under
-            the search bar is also where a result count belongs. It steps down
-            while the live-location banner is up so the two never stack.
-            No `glass-secondary` here. That class is `background: rgba(255,255,
-            255,0.07) !important` in dark, i.e. all but transparent, which is
-            fine over an app surface and invisible over the dark basemap — and
-            the !important beat any inline colour. This chip floats on tiles, so
-            it carries its own opaque face: cream with navy text in dark, the
-            same inversion the pins use. `glass-btn` (blur + press only) stays. */}
-        {allVenues.length > 0 && !activeVenue && !showConnectPanel && !pickingVenueForCreate && (
-          <button
-            className="hit44 glass-btn"
-            onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); }}
-            style={{ position: 'absolute', top: sharingLocationForFlock ? '58px' : '12px', right: '12px', padding: '5px 10px', borderRadius: '9px', border: isDark ? '1px solid rgba(15,23,42,0.35)' : '1px solid var(--border-default)', background: isDark ? '#f1ede0' : 'var(--bg-card-solid)', color: isDark ? '#1e293b' : 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', boxShadow: isDark ? '0 2px 10px rgba(0,0,0,0.45)' : 'var(--card-shadow-sm)' }}
-          >
-            All {allVenues.length} results
-          </button>
-        )}
-
-        {/* Find Your People Panel */}
-        {showConnectPanel && (
-          <div style={{ position: 'absolute', left: '8px', right: '8px', top: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.10)', zIndex: 40, maxHeight: '70%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-            <div style={{ padding: '12px', borderBottom: '1px solid var(--divider)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
-              <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users(colors.navy, 16)} Find Your People</h2>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]); setCurrentScreen('addFriends'); }} style={{ padding: '4px 10px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', border: 'none', cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.navy }}>See All</button>
-                <button className="hit44" onClick={() => { setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]); }} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 14)}</button>
-              </div>
-            </div>
-
-            {/* Search input */}
-            <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-light)', flexShrink: 0 }}>
-              <div style={{ position: 'relative' }}>
-                <input aria-label="Search people by name or email"
-                  type="text"
-                  value={connectSearch}
-                  onChange={(e) => handleConnectSearch(e.target.value)}
-                  placeholder="Search by name or email..."
-                  style={{ width: '100%', padding: '10px 12px 10px 34px', borderRadius: '10px', border: `1.5px solid ${connectSearch ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', fontWeight: '500', transition: 'opacity 0.2s ease' }}
-                  autoComplete="off"
-                />
-                <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(connectSearch ? colors.navy : colors.textTertiary, 14)}</span>
-                {connectSearch && (
-                  <button className="hit44" onClick={() => { setConnectSearch(''); setConnectResults([]); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 14)}</button>
-                )}
-              </div>
-            </div>
-
-            {/* Results */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px' }}>
-              {connectSearching && (
-                <div style={{ textAlign: 'center', padding: '20px 0' }}>
-                  <div style={{ display: 'inline-block', width: '16px', height: '16px', border: `2px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginLeft: '8px' }}>Searching...</span>
-                </div>
-              )}
-
-              {!connectSearching && connectSearch.trim().length >= 1 && connectResults.length === 0 && (
-                <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px 0', margin: 0 }}>No users found for "{connectSearch}"</p>
-              )}
-
-              {!connectSearching && connectResults.length > 0 && connectResults.map(user => {
-                const status = friendStatuses[user.id] || 'none';
-                return (
-                  <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px' }}>
-                    <button className="hit44" aria-label={`About ${user.name}`} onClick={() => openUserProfile({ id: user.id, name: user.name, image: user.profile_image_url })} style={{ width: '42px', height: '42px', borderRadius: '21px', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
-                      {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '42px', height: '42px', borderRadius: '21px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
-                    </button>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: 0 }}>{user.name}</p>
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</p>
-                    </div>
-                    <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                      {status === 'accepted' ? (
-                        <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: 'var(--accent-green-bg)', color: 'var(--accent-green-text)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Friends</span>
-                      ) : status === 'pending' ? (
-                        <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: 'var(--pill-bg)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Pending</span>
-                      ) : (
-                        <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '6px 12px', borderRadius: '20px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add Friend</button>
-                      )}
-                      <button className="hit44 glass-btn glass-secondary" onClick={() => {
-                        setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]);
-                        startNewDmWithUser(user);
-                      }} style={{ padding: '6px 12px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Message</button>
-                    </div>
-                  </div>
-                );
-              })}
-
-              {!connectSearching && connectSearch.trim().length === 0 && (
-                <div style={{ textAlign: 'center', padding: '24px 16px' }}>
-                  <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>{Icons.search(colors.navy, 22)}</div>
-                  <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Search for people</p>
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Find friends by name or email</p>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Venue Popup with AI Crowd Forecast */}
-        <AnimatePresence>
-        {activeVenue && !showConnectPanel && (
+  // ONE venue card for every map surface. This is the card a tapped pin
+  // opens on Discover, extracted so the venue dashboard's Map tab can render
+  // the exact same thing: same data, same copy, same attribution labels.
+  // With venueOwnerView the informational card is identical; only
+  // consumer ACTIONS are left out (start a flock, check in, the crowd reality
+  // check, nearby navigation), because a venue account acting on those would
+  // either dead-end into consumer-only screens or write user-shaped crowd
+  // signals a venue must never write.
+  const renderConsumerVenueCard = ({ venueOwnerView = false } = {}) => {
+    if (!activeVenue) return null;
+    return (
           <motion.div
             key={activeVenue.id || activeVenue.place_id}
             initial={{ y: 60, opacity: 0 }}
@@ -10970,7 +10763,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
                             {Icons.clock(colors.steel, 12)}
                             {cd?.forecastAccess?.locked ? (
-                              <span onClick={(e) => { e.stopPropagation(); setPaywallTrigger('forecast'); }} style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, cursor: 'pointer' }}>
+                              <span onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast'); }} style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, cursor: 'pointer' }}>
                                 Best time to visit: <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', letterSpacing: '0.5px' }}>PRO</span>
                               </span>
                             ) : (
@@ -10987,7 +10780,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                           {Icons.clock(colors.steel, 12)}
                           {cd?.forecastAccess?.locked ? (
-                            <span onClick={(e) => { e.stopPropagation(); setPaywallTrigger('forecast'); }} style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, cursor: 'pointer' }}>
+                            <span onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast'); }} style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, cursor: 'pointer' }}>
                               Least crowded: <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', letterSpacing: '0.5px' }}>PRO</span>
                             </span>
                           ) : (
@@ -11013,7 +10806,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 )}
 
                 {/* One-tap crowd reality check (open venues, after the score loads) */}
-                {!isClosed && !!cd && (
+                {!isClosed && !!cd && !venueOwnerView && (
                   <CrowdRealityCheck key={activeVenue.place_id} placeId={activeVenue.place_id} venueName={activeVenue.name} predicted={score} ownerAsserted={!!cd?.ownerReport?.applied} />
                 )}
 
@@ -11132,7 +10925,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     {closedAllDay ? (
                       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.red }}>Closed Today</span>
                     ) : cd?.forecastAccess?.locked ? (
-                      <span onClick={(e) => { e.stopPropagation(); setPaywallTrigger('forecast'); }} style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, cursor: 'pointer' }}>
+                      <span onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast'); }} style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, cursor: 'pointer' }}>
                         <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontWeight: '500', letterSpacing: '0.5px' }}>PRO</span>
                       </span>
                     ) : (
@@ -11149,7 +10942,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </motion.div>
 
                 {/* Quieter Options */}
-                {(crowdAlternatives.length > 0 || (!cd && allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category).length > 0)) && (
+                {!venueOwnerView && (crowdAlternatives.length > 0 || (!cd && allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category).length > 0)) && (
                 <motion.div initial={{ opacity: 0, y: 14 }} animate={cd ? { opacity: 1, y: 0 } : { opacity: 0, y: 14 }} transition={{ delay: 1.0, duration: 0.4, ease: 'easeOut' }}>
                   <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase' }}>Less Crowded Nearby</p>
                   <div style={{ display: 'flex', gap: '6px' }}>
@@ -11289,6 +11082,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 );
               })()}
 
+              {/* Consumer actions. Never rendered on the owner's map view:
+                  a venue account starting a flock or checking in would
+                  either dead-end into consumer-only screens or write
+                  user-shaped signals a venue must not write. */}
+              {!venueOwnerView && (
               <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 1.1, type: 'spring', damping: 20, stiffness: 280 }} style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 {pickingVenueForCreate ? (
                   <button onClick={(e) => {
@@ -11365,9 +11163,264 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <button className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); addEventToCalendar(`Visit ${activeVenue.name}`, activeVenue.name, new Date(), '8 PM', getCategoryColor(activeVenue.category)); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)' }}>{Icons.calendar('var(--text-secondary)', 14)} Add to Calendar</button>
                 </div>
               </motion.div>
+              )}
             </div>
           </motion.div>
+    );
+  };
+
+  const ExploreScreen = () => (
+    <div key="explore-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--pill-bg)' }}>
+      {/* Discover's title is the map itself, so there was no h1 at all here and
+          a screen-reader user landed on a page with no name. */}
+      <h1 className="sr-only">Discover</h1>
+      {pickingVenueForCreate && (
+        <div style={{ padding: '10px 14px', background: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0, boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}>
+          <span style={{ color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.mapPin('white', 14)} Tap venue to select</span>
+          <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(false); if (pickingVenueForDm) { setPickingVenueForDm(false); setCurrentTab('chat'); setCurrentScreen('dmDetail'); } else if (pickingVenueForFlockId) { setSelectedFlockId(pickingVenueForFlockId); setPickingVenueForFlockId(null); setCurrentTab('chat'); setCurrentScreen('chatDetail'); } else { setCurrentScreen('create'); } }} style={{ backgroundColor: 'rgba(255,255,255,0.2)', border: 'none', borderRadius: '12px', padding: '4px 12px', color: 'white', fontSize: 'var(--t-meta)', cursor: 'pointer', fontWeight: '500', transition: 'opacity 0.2s ease' }}>Cancel</button>
+        </div>
+      )}
+
+      <div style={{ padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: 'var(--bg-card-solid)', boxShadow: '0 2px 12px rgba(0,0,0,0.08)', zIndex: 20, flexShrink: 0 }}>
+        <div style={{ flex: 1, position: 'relative' }}>
+          <input aria-label="Search venues" key="search-input" id="search-input" type="text" value={venueQuery} onChange={(e) => handleVenueQueryChange(e.target.value)} placeholder="Search restaurants, bars, venues..." style={{ width: '100%', padding: '12px 14px 12px 38px', paddingRight: venueQuery ? '36px' : '14px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${venueQuery ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', transition: 'opacity 0.2s ease', fontWeight: '500' }} autoComplete="off" />
+          <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', transition: 'opacity 0.2s ease' }}>{Icons.search(venueQuery ? colors.navy : colors.textTertiary, 16)}</span>
+          {venueQuery && (
+            <button aria-label="Clear search" className="hit44" onClick={() => { setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); const lat = parseFloat(localStorage.getItem('flock_user_lat')); const lng = parseFloat(localStorage.getItem('flock_user_lng')); if (lat && lng) { setMapVenuesLoaded(false); loadVenuesAtLocation(lat, lng); } else { setMapVenuesLoaded(false); requestUserLocation(false); } }} title="Clear search" style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x('#64748b', 16)}</button>
+          )}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: '4px', overflow: 'hidden', maxWidth: discoverNavOpen ? '124px' : '0px', opacity: discoverNavOpen ? 1 : 0, transition: 'max-width 0.3s ease, opacity 0.25s ease' }}>
+            <button aria-label="Recenter the map on me" className="hit44" onClick={() => { setDiscoverNavOpen(false); setMapVenuesLoaded(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); requestUserLocation(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', animation: locationLoading ? 'spin 1s linear infinite' : 'none' }}>{Icons.crosshair('var(--text-primary)', 15)}</button>
+            <button aria-label="Events" className="hit44" onClick={() => { setDiscoverNavOpen(false); setShowEventsView(true); setActiveVenue(null); if (userLocation && !featuredEventsLoading) { setFeaturedEventsLoading(true); getFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, userInterests).then(data => setFeaturedEvents(data.events || [])).catch(err => console.error('[Events] Fetch failed:', err)).finally(() => setFeaturedEventsLoading(false)); } }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.zap('var(--text-primary)', 15)}</button>
+            <button aria-label="Friends" className="hit44" onClick={() => { setDiscoverNavOpen(false); setShowConnectPanel(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.users('var(--text-primary)', 15)}</button>
+          </div>
+          <button className="hit44" onClick={() => setDiscoverNavOpen(!discoverNavOpen)} style={{ height: '42px', minWidth: discoverNavOpen ? '42px' : 'auto', width: discoverNavOpen ? '42px' : 'auto', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: discoverNavOpen ? '0' : '0 14px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-primary)', flexShrink: 0, transition: 'all 0.3s ease' }}>{discoverNavOpen ? Icons.x('var(--text-primary)', 16) : <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', whiteSpace: 'nowrap' }}>Features</span>}</button>
+        </div>
+      </div>
+
+      {/* Location loading overlay */}
+      {locationLoading && !mapVenuesLoaded && (
+        <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '16px 0', textAlign: 'center' }}>
+          <div style={{ display: 'inline-block', width: '24px', height: '24px', border: `3px solid var(--border-default)`, borderTopColor: colors.steel, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '8px 0 0', fontWeight: '500' }}>Finding venues near you...</p>
+        </div>
+      )}
+
+      {/* Search Results Overlay */}
+      {showSearchDropdown && (venueSearching || venueResults.length > 0 || (venueQuery.trim().length >= 2 && !venueSearching && venueResults.length === 0)) && (
+        <div style={{ position: 'relative', zIndex: 30, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', maxHeight: '260px', overflowY: 'auto' }}>
+          {/* A list is loading, so it gets the list skeleton — the bare spinner
+              that used to sit here told you nothing about what was coming. */}
+          {venueSearching && (
+            <div style={{ padding: '8px 12px 4px' }}>
+              <ListSkeleton count={3} thumb={44} thumbRadius={10} label="Searching venues" />
+            </div>
+          )}
+          {!venueSearching && venueResults.length > 0 && (
+            <div style={{ padding: '4px 12px 8px' }}>
+              {/* View All — first thing you see */}
+              <button
+                className="hit44 glass-btn glass-navy"
+                onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); }}
+                style={{ width: '100%', padding: '11px 14px', borderRadius: '12px', border: 'none', background: colors.navyBg, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', margin: '4px 0 8px', transition: 'opacity 0.2s', boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}
+              >
+                {Icons.filter('white', 13)}
+                <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'white' }}>See All Results ({venueResults.length})</span>
+                {Icons.arrowRight('white', 14)}
+              </button>
+              {venueResults.filter(v => { const mp = budgetStatus?.isReady && budgetStatus?.ceiling ? getMaxPriceLevel(budgetStatus.ceiling) : 4; return !v.price_level || v.price_level <= mp; }).slice(0, 4).map((venue) => (
+                <button aria-label="Report"
+                  key={venue.place_id}
+                  onClick={() => {
+                    setShowSearchDropdown(false);
+                    // Pan map to this venue if it's in our markers
+                    if (window.__flockPanToVenue) window.__flockPanToVenue(venue.place_id);
+                    openVenueDetail(venue.place_id, { name: venue.name, formatted_address: venue.formatted_address, place_id: venue.place_id, rating: venue.rating, price_level: venue.price_level, photo_url: venue.photo_url });
+                  }}
+                  style={{ width: '100%', padding: '10px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', textAlign: 'left', marginBottom: '6px', transition: 'background-color 0.15s' }}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'; }}
+                >
+                  {venue.photo_url ? (
+                    <img src={venue.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect fill="#1a3a5c" width="48" height="48" rx="10"/></svg>'); }} />
+                  ) : (
+                    <div style={{ width: '48px', height: '48px', borderRadius: '10px', backgroundColor: 'var(--pill-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.mapPin(colors.navyMid, 20)}</div>
+                  )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px', flexWrap: 'wrap' }}>
+                      {venue.rating && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{venue.rating} {Icons.starFilled('currentColor', 12)}</span>}
+                      {venue.user_ratings_total > 0 && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>({venue.user_ratings_total})</span>}
+                      {venue.price_level && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{'$'.repeat(venue.price_level)}</span>}
+                      {userLocation && venue.location && (() => {
+                        const dLat = (venue.location.latitude - userLocation.lat) * Math.PI / 180;
+                        const dLng = (venue.location.longitude - userLocation.lng) * Math.PI / 180;
+                        const a = Math.sin(dLat/2)**2 + Math.cos(userLocation.lat*Math.PI/180)*Math.cos(venue.location.latitude*Math.PI/180)*Math.sin(dLng/2)**2;
+                        const dist = 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+                        return <span style={{ fontSize: 'var(--t-meta)', color: colors.steel, fontWeight: '500' }}>{dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}</span>;
+                      })()}
+                    </div>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.formatted_address}</p>
+                  </div>
+                  <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                    {Icons.chevronRight(colors.navyMid, 16)}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+          {!venueSearching && venueQuery.trim().length >= 2 && venueResults.length === 0 && (
+            <div style={{ textAlign: 'center', padding: '16px 0' }}>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>No venues found. Try a different search.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+
+      {/* Premium Map */}
+      <div onClick={() => { setShowSearchDropdown(false); }} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+        {/* MapLibre GL — Snap Map-style vector tiles (smooth, free, no API key) */}
+        <MapLibreMapView
+          venues={allVenues}
+          filterCategory={category}
+          userLocation={userLocation}
+          activeVenue={activeVenue}
+          setActiveVenue={setActiveVenue}
+          getCategoryColor={getCategoryColor}
+          pickingVenueForCreate={pickingVenueForCreate}
+          setPickingVenueForCreate={setPickingVenueForCreate}
+          setSelectedVenueForCreate={setSelectedVenueForCreate}
+          setCurrentScreen={setCurrentScreen}
+          openVenueDetail={openVenueDetail}
+          flockMemberLocations={flockMemberLocations}
+          calcDistance={calcDistance}
+        />
+
+        {/* Live location sharing indicator on map */}
+        {sharingLocationForFlock && (
+          <div style={{
+            position: 'absolute', top: '8px', left: '8px', right: '8px',
+            padding: '8px 12px', borderRadius: '14px',
+            background: 'linear-gradient(135deg, #059669, #047857)',
+            display: 'flex', alignItems: 'center', gap: '8px',
+            zIndex: 35, boxShadow: '0 1px 3px rgba(5,150,105,0.15)',
+          }}>
+            <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: '#34d399', animation: 'pulse 2s ease-in-out infinite', boxShadow: 'none', flexShrink: 0 }} />
+            <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', margin: 0, flex: 1 }}>
+              Live location · {Object.keys(flockMemberLocations).length > 0 ? `${Object.keys(flockMemberLocations).length} member${Object.keys(flockMemberLocations).length > 1 ? 's' : ''} nearby` : 'Waiting for others...'}
+            </p>
+            <button className="hit44" onClick={stopLocationSharing} style={{ padding: '4px 10px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.3)', background: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Stop</button>
+          </div>
         )}
+
+        {/* Floating "See All Results" on map. It moved from the bottom-right to
+            the top-right: the bottom-right band is the map's own control rail
+            (zoom, satellite, locate) plus the OSM attribution plus the docked
+            SOS button, and there is not 52px of clear height left in it. Under
+            the search bar is also where a result count belongs. It steps down
+            while the live-location banner is up so the two never stack.
+            No `glass-secondary` here. That class is `background: rgba(255,255,
+            255,0.07) !important` in dark, i.e. all but transparent, which is
+            fine over an app surface and invisible over the dark basemap — and
+            the !important beat any inline colour. This chip floats on tiles, so
+            it carries its own opaque face: cream with navy text in dark, the
+            same inversion the pins use. `glass-btn` (blur + press only) stays. */}
+        {allVenues.length > 0 && !activeVenue && !showConnectPanel && !pickingVenueForCreate && (
+          <button
+            className="hit44 glass-btn"
+            onClick={() => { setShowSearchResults(true); setShowSearchDropdown(false); }}
+            style={{ position: 'absolute', top: sharingLocationForFlock ? '58px' : '12px', right: '12px', padding: '5px 10px', borderRadius: '9px', border: isDark ? '1px solid rgba(15,23,42,0.35)' : '1px solid var(--border-default)', background: isDark ? '#f1ede0' : 'var(--bg-card-solid)', color: isDark ? '#1e293b' : 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', boxShadow: isDark ? '0 2px 10px rgba(0,0,0,0.45)' : 'var(--card-shadow-sm)' }}
+          >
+            All {allVenues.length} results
+          </button>
+        )}
+
+        {/* Find Your People Panel */}
+        {showConnectPanel && (
+          <div style={{ position: 'absolute', left: '8px', right: '8px', top: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', boxShadow: '0 2px 8px rgba(0,0,0,0.10)', zIndex: 40, maxHeight: '70%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div style={{ padding: '12px', borderBottom: '1px solid var(--divider)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+              <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users(colors.navy, 16)} Find Your People</h2>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]); setCurrentScreen('addFriends'); }} style={{ padding: '4px 10px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', border: 'none', cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.navy }}>See All</button>
+                <button className="hit44" onClick={() => { setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]); }} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 14)}</button>
+              </div>
+            </div>
+
+            {/* Search input */}
+            <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-light)', flexShrink: 0 }}>
+              <div style={{ position: 'relative' }}>
+                <input aria-label="Search people by name or email"
+                  type="text"
+                  value={connectSearch}
+                  onChange={(e) => handleConnectSearch(e.target.value)}
+                  placeholder="Search by name or email..."
+                  style={{ width: '100%', padding: '10px 12px 10px 34px', borderRadius: '10px', border: `1.5px solid ${connectSearch ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', fontWeight: '500', transition: 'opacity 0.2s ease' }}
+                  autoComplete="off"
+                />
+                <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(connectSearch ? colors.navy : colors.textTertiary, 14)}</span>
+                {connectSearch && (
+                  <button className="hit44" onClick={() => { setConnectSearch(''); setConnectResults([]); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 14)}</button>
+                )}
+              </div>
+            </div>
+
+            {/* Results */}
+            <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px' }}>
+              {connectSearching && (
+                <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                  <div style={{ display: 'inline-block', width: '16px', height: '16px', border: `2px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginLeft: '8px' }}>Searching...</span>
+                </div>
+              )}
+
+              {!connectSearching && connectSearch.trim().length >= 1 && connectResults.length === 0 && (
+                <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px 0', margin: 0 }}>No users found for "{connectSearch}"</p>
+              )}
+
+              {!connectSearching && connectResults.length > 0 && connectResults.map(user => {
+                const status = friendStatuses[user.id] || 'none';
+                return (
+                  <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '12px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px' }}>
+                    <button className="hit44" aria-label={`About ${user.name}`} onClick={() => openUserProfile({ id: user.id, name: user.name, image: user.profile_image_url })} style={{ width: '42px', height: '42px', borderRadius: '21px', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
+                      {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '42px', height: '42px', borderRadius: '21px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
+                    </button>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: 0 }}>{user.name}</p>
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</p>
+                    </div>
+                    <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                      {status === 'accepted' ? (
+                        <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: 'var(--accent-green-bg)', color: 'var(--accent-green-text)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Friends</span>
+                      ) : status === 'pending' ? (
+                        <span style={{ padding: '6px 12px', borderRadius: '20px', backgroundColor: 'var(--pill-bg)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Pending</span>
+                      ) : (
+                        <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '6px 12px', borderRadius: '20px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add Friend</button>
+                      )}
+                      <button className="hit44 glass-btn glass-secondary" onClick={() => {
+                        setShowConnectPanel(false); setConnectSearch(''); setConnectResults([]);
+                        startNewDmWithUser(user);
+                      }} style={{ padding: '6px 12px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Message</button>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {!connectSearching && connectSearch.trim().length === 0 && (
+                <div style={{ textAlign: 'center', padding: '24px 16px' }}>
+                  <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>{Icons.search(colors.navy, 22)}</div>
+                  <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Search for people</p>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Find friends by name or email</p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Venue Popup with AI Crowd Forecast */}
+        <AnimatePresence>
+        {!showConnectPanel && renderConsumerVenueCard()}
         </AnimatePresence>
       </div>
 
@@ -14985,18 +15038,94 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [venueBusySaving, setVenueBusySaving] = useState(false);
   // Deterministic weekly summary. Same three states as venueIntel.
   const [venueThisWeek, setVenueThisWeek] = useState(null);
+  // Map tab data. null = loading, { available: false, reason } = an honest
+  // empty state, { available: true, center } = pins are in allVenues and
+  // the map can mount centered on the venue.
+  const [venueMapState, setVenueMapState] = useState(null);
+  // Loads the owner's venue + surroundings THROUGH THE CONSUMER PIPELINE:
+  // the same /api/venues lookups and the same /api/crowd/batch scoring that
+  // users get. No owner-only read exists here on purpose. If it looks wrong
+  // on this tab, it is wrong for users, which is what the tab is for.
+  const loadVenueMap = React.useCallback(async () => {
+    const placeId = venueProfile?.google_place_id;
+    if (!placeId) { setVenueMapState({ available: false, reason: 'no_listing' }); return; }
+    setVenueMapState(null);
+    try {
+      const detail = await getVenueDetails(placeId);
+      const v = detail?.venue;
+      const loc = v?.location;
+      if (!loc?.latitude || !loc?.longitude) {
+        setVenueMapState({ available: false, reason: 'no_coords' });
+        return;
+      }
+      const ownerVenue = {
+        place_id: v.place_id || placeId,
+        name: v.name,
+        formatted_address: v.formatted_address,
+        rating: v.rating,
+        user_ratings_total: v.user_ratings_total,
+        price_level: v.price_level,
+        types: v.types || [],
+        location: loc,
+        photo_url: (v.photos && v.photos[0]) || null,
+        opening_hours: v.opening_hours || null,
+        utcOffsetMinutes: v.utcOffsetMinutes != null ? v.utcOffsetMinutes : null,
+      };
+      let nearby = [];
+      try {
+        const res = await searchVenues('popular restaurants cafes bars fast food', `${loc.latitude},${loc.longitude}`);
+        nearby = res?.venues || [];
+      } catch { /* the owner's own pin still renders; nearby stays empty */ }
+      const raw = [ownerVenue, ...nearby];
+      setAllVenues(venuesToMapPins(raw));
+      requestCrowdScores(raw);
+      setVenueMapState({ available: true, center: { lat: loc.latitude, lng: loc.longitude } });
+    } catch (e) {
+      setVenueMapState({ available: false, reason: 'load_failed' });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [venueProfile?.google_place_id, venuesToMapPins, requestCrowdScores]);
   useEffect(() => {
-    if (venueTab !== 'analytics' || !venueProfile) return;
+    if (venueTab !== 'map' || !venueProfile) return;
+    loadVenueMap();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [venueTab, venueProfile?.google_place_id]);
+  useEffect(() => {
+    if ((venueTab !== 'analytics' && venueTab !== 'map') || !venueProfile) return;
     let cancelled = false;
+    // The live number is free at every tier and the Map tab's slider needs
+    // it too; forecasts, the strip and this-week stay Analytics-only reads.
+    getVenueBusyNow().then((d) => { if (!cancelled) setVenueBusyNow(d); }).catch(() => { if (!cancelled) setVenueBusyNow({ available: false }); });
+    if (venueTab === 'analytics') {
     getVenueIntelligence().then((d) => { if (!cancelled) setVenueIntel(d); }).catch(() => { if (!cancelled) setVenueIntel({ available: false, reason: 'Could not load forecasts right now' }); });
     getVenueStrip().then((d) => { if (!cancelled) setVenueStrip(d); }).catch(() => { if (!cancelled) setVenueStrip({ available: false }); });
-    getVenueBusyNow().then((d) => { if (!cancelled) setVenueBusyNow(d); }).catch(() => { if (!cancelled) setVenueBusyNow({ available: false }); });
     // A refusal is not a failed read: this-week sits behind the Pro gate, so a
     // 403 renders as locked, not as "try again".
     getVenueThisWeek().then((d) => { if (!cancelled) setVenueThisWeek(d); }).catch((e) => { if (!cancelled) setVenueThisWeek({ available: false, locked: e?.status === 403 }); });
+    }
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [venueTab, venueProfile?.google_place_id]);
+
+  // After the owner's number lands or clears, refetch the venue's PUBLISHED
+  // consumer score through the same endpoint users hit. This is the Map
+  // tab's proof loop: the pin's score, the heat weight and the open card
+  // flip to (or away from) the venue's own attributed number within a
+  // second of the click,
+  // because the server applies owner reports at send time even on a cached
+  // prediction (routes/crowd.js).
+  const refreshOwnerPublishedScore = async () => {
+    const pid = venueProfile?.google_place_id;
+    if (!pid) return;
+    try {
+      const data = await getCrowdPrediction(pid);
+      if (data && typeof data.score === 'number') {
+        setCrowdPredictions(prev => ({ ...prev, [pid]: { ...(prev[pid] || {}), placeId: pid, score: data.score, label: data.label, confidenceBasis: data.confidenceBasis || null, ownerReport: data.ownerReport || null } }));
+        setAllVenues(prev => prev.map(v => v.place_id === pid ? { ...v, crowd: data.score, crowdLabel: data.label || v.crowdLabel } : v));
+      }
+      if (activeVenue?.place_id === pid) setCrowdData(data);
+    } catch { /* the next card open refetches anyway */ }
+  };
 
   const handleSetBusyNow = async () => {
     if (venueBusyDraft == null) return;
@@ -15005,6 +15134,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       const d = await updateVenueBusyNow(Math.round(venueBusyDraft));
       setVenueBusyNow(d);
       setVenueBusyDraft(null);
+      refreshOwnerPublishedScore();
       showToast('Live. Users see your number now.');
     } catch (e) {
       showToast(e?.message || "That didn't save. Try again.", 'error');
@@ -15020,6 +15150,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       const d = await getVenueBusyNow().catch(() => ({ ...venueBusyNow, live: null }));
       setVenueBusyNow(d);
       setVenueBusyDraft(null);
+      refreshOwnerPublishedScore();
       showToast('Cleared. Users see the forecast again.');
     } catch (e) {
       showToast(e?.message || "Couldn't clear it. It expires on its own.", 'error');
@@ -15511,6 +15642,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
     const venueTabs = [
       { id: 'analytics', label: 'Analytics', icon: Icons.barChart },
+      // The venue as consumers see it. Presence, not a paid feature.
+      { id: 'map', label: 'Map', icon: Icons.map },
       // Was Icons.gift. A wrapped present means "a gift", and nothing on this
       // tab is one: it is the owner posting a happy-hour deal, and the tab's
       // own first heading is "Post a Deal" under Icons.zap — so the tab and its
@@ -15521,6 +15654,98 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       { id: 'reviews', label: 'Reviews', icon: Icons.star },
       { id: 'settings', label: 'Settings', icon: Icons.settings }
     ];
+
+    // The "How full are you right now?" card. ONE definition for the two
+    // tabs that render it: Analytics (where it lives) and Map (where
+    // setting it is the proof that the pin updates). Same state, same
+    // handlers, same copy on both.
+    const renderBusyNowCard = () => {
+            const live = venueBusyNow.live;
+            const ttl = venueBusyNow.ttlMinutes || 90;
+            const expiresMin = live ? Math.max(0, Math.round((Date.parse(live.expiresAt) - Date.now()) / 60000)) : null;
+            const sliderValue = venueBusyDraft != null ? venueBusyDraft : (live ? live.percent : 50);
+            // What the number is labeled as on user surfaces, computed
+            // server-side (utils/venueLabel.js) from the venue's category and
+            // shipped on this payload. Never hardcode the words here:
+            // venueLabel.test.js greps this file for the old literal, and the
+            // fallback below is the one phrase that is true of any venue.
+            const saysLabel = venueBusyNow.attribution || 'the venue says';
+            return (
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How full are you right now?</h3>
+                {venueBusyNow.suppressed ? (
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                    Your live numbers are paused. Recent readings disagreed with what people in the room reported, so users see the forecast for now. This lifts on its own.
+                  </p>
+                ) : live ? (
+                  <div>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                      <span style={{ fontWeight: '700', color: colors.steel }}>Live</span>
+                      {' · users see '}
+                      <span style={{ fontWeight: '600', color: colors.navy }}>{live.percent}% full</span>
+                      {`, labeled as your number · ${expiresMin} min left`}
+                    </p>
+                    {/* Remaining time as a bar: state, not ornament. It only
+                        depletes when the card re-renders, same clock as the
+                        "min left" text beside it. No animation of its own. */}
+                    <div aria-hidden style={{ height: '3px', borderRadius: '2px', backgroundColor: 'var(--border-light)', marginTop: '6px', overflow: 'hidden' }}>
+                      <div style={{ height: '100%', borderRadius: '2px', backgroundColor: colors.steel, width: `${Math.max(0, Math.min(100, (expiresMin / ttl) * 100))}%` }} />
+                    </div>
+                  </div>
+                ) : (
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                    Set it and users see your number instead of the forecast, labeled as yours. It expires after {ttl} minutes so you never have to remember to turn it off.
+                  </p>
+                )}
+                <div style={{ margin: '10px 0' }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', marginBottom: '2px' }}>
+                    {/* Hanken's digits are natively monospaced (index.css header
+                        note), so this readout does not jitter while the thumb
+                        drags. Never Fraunces here: no tnum. */}
+                    <span style={{ fontSize: '34px', fontWeight: '600', lineHeight: 1.1, color: colors.navy, fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.5px' }}>{sliderValue}</span>
+                    <span style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-secondary)', marginLeft: '2px' }}>%</span>
+                    {live && venueBusyDraft != null && venueBusyDraft !== live.percent && (
+                      <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', marginLeft: 'auto' }}>live now: {live.percent}%</span>
+                    )}
+                  </div>
+                  <input
+                    type="range" min="0" max="100" step="1"
+                    className="busy-range"
+                    aria-label="How full is your venue right now, 0 to 100 percent"
+                    value={sliderValue}
+                    onChange={(e) => setVenueBusyDraft(Number(e.target.value))}
+                    disabled={venueBusySaving}
+                    style={{ '--busy-fill': `${sliderValue}%` }}
+                  />
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)' }}>Empty</span>
+                    <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)' }}>Packed</span>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <button className="hit44 glass-btn glass-navy"
+                    onClick={handleSetBusyNow}
+                    disabled={venueBusySaving || venueBusyDraft == null}
+                    style={{ flex: 1, padding: '12px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)' }}
+                  >
+                    {venueBusySaving ? 'Saving...' : live ? 'Update live number' : 'Set live number'}
+                  </button>
+                  {live && (
+                    <button className="hit44"
+                      onClick={handleClearBusyNow}
+                      disabled={venueBusySaving}
+                      style={{ padding: '12px 10px', borderRadius: '10px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-label)', cursor: venueBusySaving ? 'default' : 'pointer', opacity: venueBusySaving ? 0.5 : 1 }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '10px 0 0', paddingTop: '8px', borderTop: '1px solid var(--border-light)', lineHeight: 1.5 }}>
+                  Free on every plan. Shown to users as "{saysLabel}". Reports from people at your venue outrank it.
+                </p>
+              </div>
+            );
+    };
 
     // Promotion handlers — real API
     const openPromoModal = (promo = null) => {
@@ -15820,17 +16045,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </div>
 
         {/* Tab Navigation */}
-        <div style={{ display: 'flex', backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', flexShrink: 0 }}>
+        {/* Six tabs no longer fit 320px at full labels, so the strip
+            scrolls sideways (same idiom as the Discover filter chips)
+            instead of ellipsizing tab names or overflowing the page. */}
+        <div style={{ display: 'flex', backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', flexShrink: 0, overflowX: 'auto', scrollbarWidth: 'none', msOverflowStyle: 'none', WebkitOverflowScrolling: 'touch' }}>
           {venueTabs.map(tab => (
-            <button className="hit44" key={tab.id} onClick={() => setVenueTab(tab.id)} style={{ flex: 1, padding: '10px 4px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', borderBottom: venueTab === tab.id ? `2px solid ${colors.navy}` : '2px solid transparent', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+            <button className="hit44" key={tab.id} onClick={() => setVenueTab(tab.id)} style={{ flex: '1 0 auto', minWidth: '56px', padding: '10px 6px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', borderBottom: venueTab === tab.id ? `2px solid ${colors.navy}` : '2px solid transparent', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
               {tab.icon(venueTab === tab.id ? colors.navy : colors.textTertiary, 16)}
               <span style={{ fontSize: 'var(--t-meta)', fontWeight: venueTab === tab.id ? '500' : '500', color: venueTab === tab.id ? colors.navy : colors.textTertiary }}>{tab.label}</span>
             </button>
           ))}
         </div>
 
-        {/* Content */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+        {/* Content. The Map tab lays out as a fixed column (slider, then the
+            map filling the rest), so it opts out of the scroll the list tabs
+            use; scrolling a map page fights the map's own pan gesture. */}
+        <div style={{ flex: 1, overflowY: venueTab === 'map' ? 'hidden' : 'auto', padding: '12px' }}>
 
           {/* ANALYTICS TAB */}
           {/* HOW FULL ARE YOU RIGHT NOW — free at every tier, deliberately
@@ -15840,93 +16070,72 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               honest is disclosure, not price — users see it labelled "the bar
               says", it expires after 90 minutes on its own, and recent user
               reports outrank it. All three rules are server-enforced. */}
-          {venueTab === 'analytics' && venueBusyNow?.available && (() => {
-            const live = venueBusyNow.live;
-            const ttl = venueBusyNow.ttlMinutes || 90;
-            const expiresMin = live ? Math.max(0, Math.round((Date.parse(live.expiresAt) - Date.now()) / 60000)) : null;
-            const sliderValue = venueBusyDraft != null ? venueBusyDraft : (live ? live.percent : 50);
-            // What the number is labeled as on user surfaces, computed
-            // server-side (utils/venueLabel.js) from the venue's category and
-            // shipped on this payload. Never hardcode the words here:
-            // venueLabel.test.js greps this file for the old literal, and the
-            // fallback below is the one phrase that is true of any venue.
-            const saysLabel = venueBusyNow.attribution || 'the venue says';
-            return (
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How full are you right now?</h3>
-                {venueBusyNow.suppressed ? (
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
-                    Your live numbers are paused. Recent readings disagreed with what people in the room reported, so users see the forecast for now. This lifts on its own.
-                  </p>
-                ) : live ? (
-                  <div>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
-                      <span style={{ fontWeight: '700', color: colors.steel }}>Live</span>
-                      {' · users see '}
-                      <span style={{ fontWeight: '600', color: colors.navy }}>{live.percent}% full</span>
-                      {`, labeled as your number · ${expiresMin} min left`}
-                    </p>
-                    {/* Remaining time as a bar: state, not ornament. It only
-                        depletes when the card re-renders, same clock as the
-                        "min left" text beside it. No animation of its own. */}
-                    <div aria-hidden style={{ height: '3px', borderRadius: '2px', backgroundColor: 'var(--border-light)', marginTop: '6px', overflow: 'hidden' }}>
-                      <div style={{ height: '100%', borderRadius: '2px', backgroundColor: colors.steel, width: `${Math.max(0, Math.min(100, (expiresMin / ttl) * 100))}%` }} />
-                    </div>
-                  </div>
-                ) : (
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
-                    Set it and users see your number instead of the forecast, labeled as yours. It expires after {ttl} minutes so you never have to remember to turn it off.
-                  </p>
-                )}
-                <div style={{ margin: '10px 0' }}>
-                  <div style={{ display: 'flex', alignItems: 'baseline', marginBottom: '2px' }}>
-                    {/* Hanken's digits are natively monospaced (index.css header
-                        note), so this readout does not jitter while the thumb
-                        drags. Never Fraunces here: no tnum. */}
-                    <span style={{ fontSize: '34px', fontWeight: '600', lineHeight: 1.1, color: colors.navy, fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.5px' }}>{sliderValue}</span>
-                    <span style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-secondary)', marginLeft: '2px' }}>%</span>
-                    {live && venueBusyDraft != null && venueBusyDraft !== live.percent && (
-                      <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', marginLeft: 'auto' }}>live now: {live.percent}%</span>
-                    )}
-                  </div>
-                  <input
-                    type="range" min="0" max="100" step="1"
-                    className="busy-range"
-                    aria-label="How full is your venue right now, 0 to 100 percent"
-                    value={sliderValue}
-                    onChange={(e) => setVenueBusyDraft(Number(e.target.value))}
-                    disabled={venueBusySaving}
-                    style={{ '--busy-fill': `${sliderValue}%` }}
-                  />
-                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)' }}>Empty</span>
-                    <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)' }}>Packed</span>
-                  </div>
+          {venueTab === 'analytics' && venueBusyNow?.available && renderBusyNowCard()}
+          {/* MAP TAB. The venue exactly as consumers get it: same public
+              venue lookup, same batch crowd scores, same card a pin tap
+              opens on Discover. The slider up top is the same control as
+              Analytics, so setting a number flips the pin's score, the heat
+              weight and the open card's attribution to the venue's own words
+              right in front of the owner. Presence, not a paid feature: every
+              claimed venue gets this view, and nothing consumer-facing
+              changes by payment. */}
+          {venueTab === 'map' && (
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+              {venueBusyNow?.available && renderBusyNowCard()}
+              {venueBusyNow && !venueBusyNow.available && (
+                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{venueBusyNow.reason || 'Your live number is unavailable right now.'}</p>
                 </div>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <button className="hit44 glass-btn glass-navy"
-                    onClick={handleSetBusyNow}
-                    disabled={venueBusySaving || venueBusyDraft == null}
-                    style={{ flex: 1, padding: '12px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)' }}
-                  >
-                    {venueBusySaving ? 'Saving...' : live ? 'Update live number' : 'Set live number'}
-                  </button>
-                  {live && (
-                    <button className="hit44"
-                      onClick={handleClearBusyNow}
-                      disabled={venueBusySaving}
-                      style={{ padding: '12px 10px', borderRadius: '10px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-label)', cursor: venueBusySaving ? 'default' : 'pointer', opacity: venueBusySaving ? 0.5 : 1 }}
-                    >
-                      Clear
+              )}
+              {!venueMapState && (
+                <div className="skeleton" style={{ flex: 1, borderRadius: '12px' }} />
+              )}
+              {venueMapState && !venueMapState.available && (
+                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '16px', boxShadow: 'var(--card-shadow-sm)' }}>
+                  <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 6px' }}>
+                    {venueMapState.reason === 'no_listing' ? "Your venue isn't on the map yet"
+                      : venueMapState.reason === 'no_coords' ? 'Google has no coordinates for your listing'
+                      : "The map couldn't load"}
+                  </p>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                    {venueMapState.reason === 'no_listing' ? 'No Google listing is linked, so there is no location to put a pin on. Link your listing in Edit Profile and the map fills in.'
+                      : venueMapState.reason === 'no_coords' ? "Your listing exists but Google returned no location for it, so there is nothing to place a pin on. Users' maps have the same gap."
+                      : 'The venue lookup failed. Check your connection and try again.'}
+                  </p>
+                  {venueMapState.reason === 'load_failed' && (
+                    <button className="hit44" onClick={loadVenueMap} style={{ marginTop: '10px', padding: '8px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
+                      Try again
                     </button>
                   )}
                 </div>
-                <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '10px 0 0', paddingTop: '8px', borderTop: '1px solid var(--border-light)', lineHeight: 1.5 }}>
-                  Free on every plan. Shown to users as "{saysLabel}". Reports from people at your venue outrank it.
-                </p>
-              </div>
-            );
-          })()}
+              )}
+              {venueMapState?.available && (
+                <div style={{ flex: 1, minHeight: 0, position: 'relative', borderRadius: '12px', overflow: 'hidden', boxShadow: 'var(--card-shadow-sm)' }}>
+                  <MapLibreMapView
+                    venues={allVenues}
+                    filterCategory="All"
+                    userLocation={null}
+                    activeVenue={activeVenue}
+                    setActiveVenue={setActiveVenue}
+                    getCategoryColor={getCategoryColor}
+                    pickingVenueForCreate={false}
+                    setPickingVenueForCreate={setPickingVenueForCreate}
+                    setSelectedVenueForCreate={setSelectedVenueForCreate}
+                    setCurrentScreen={setCurrentScreen}
+                    openVenueDetail={openVenueDetail}
+                    flockMemberLocations={flockMemberLocations}
+                    calcDistance={calcDistance}
+                    ownerPlaceId={venueProfile?.google_place_id || null}
+                    initialCenter={venueMapState.center}
+                    followUser={false}
+                  />
+                  <AnimatePresence>
+                    {renderConsumerVenueCard({ venueOwnerView: true })}
+                  </AnimatePresence>
+                </div>
+              )}
+            </div>
+          )}
 
           {venueTab === 'analytics' && !can.analytics && (
             <LockedTab requiredTier="premium" featureName="Analytics Dashboard" description="Track check-ins, peak hours, and customer traffic with real-time insights." />
