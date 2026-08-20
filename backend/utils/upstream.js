@@ -86,10 +86,25 @@ const UPSTREAM_TIMEOUT_MS = Object.freeze({
   // been out for three hours") past twelve seconds and returned the owner a
   // refusal that blamed itself for being busy. The trade the header above
   // describes still applies: this parks a connection and a pool slot for
-  // longer. It is affordable here and nowhere else, because this surface is
-  // Pro-gated, has its own rate limiter at ten an hour per account, and is
-  // reached by a person who deliberately typed a question and is watching for
-  // the answer. Do not point Birdie or anything user-facing at this key.
+  // longer, and thirty seconds is long enough that the concurrency reaching
+  // this key is what decides whether the 20-slot pg pool starves. Three things
+  // are supposed to keep that number small, and NEITHER OF THE FIRST TWO IS
+  // WHAT IT LOOKS LIKE:
+  //
+  //   * "Pro-gated" (services/venueEntitlements.js) is a pass-through until
+  //     VENUE_BILLING_ENABLED=true, which is the correct pilot posture and is
+  //     also not an authorisation check. What actually holds the door on the
+  //     only route here that spends a model call is the venue-profile floor in
+  //     routes/advisor.js POST /question, which refuses a caller with no
+  //     claimed venue BEFORE the first call. The tier gate is not that check
+  //     and must not be mistaken for it.
+  //   * the per-account limiter of ten an hour (server.js) is a no-op when
+  //     NODE_ENV=development.
+  //
+  // The third is real everywhere: this is reached by a person who deliberately
+  // typed a question and is watching for the answer. Verify the first two are
+  // in force in the environment before treating this number as affordable, and
+  // do not point Birdie or anything user-facing at it.
   geminiAdvisor: 30000,
   email: 8000,         // Resend
   // Image moderation + link unfurling. utils/moderation.js still hardcodes
