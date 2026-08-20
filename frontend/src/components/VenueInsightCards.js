@@ -534,6 +534,13 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
         </div>
       )}
 
+      {/* THE VERDICT, first of the server's cards. "How did we just do" is the
+          question operators actually open a tool holding, and the forecast
+          under it is the one they ask least. When there is no reading for
+          yesterday this renders as its refusal, which is the honest screen and
+          the plainest argument for the slider sitting above it. */}
+      {byId.last_night_verdict && renderPlainCard(byId.last_night_verdict)}
+
       {/* WEEK AHEAD with the day scrubber. Days with a forecast show it; days
           the server refused show the refusal, selected like any other day,
           because the refusal is the honest content for that day. */}
@@ -604,7 +611,7 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
 
       {/* Any card this file does not know by id still renders, generically:
           the server may grow a fifth card before this file learns its name. */}
-      {cards.filter((c) => !['week_ahead', 'around_you', 'listing_read_back', 'readings_vs_estimates'].includes(c.id)).map((c) => renderPlainCard(c))}
+      {cards.filter((c) => !['last_night_verdict', 'week_ahead', 'around_you', 'listing_read_back', 'readings_vs_estimates'].includes(c.id)).map((c) => renderPlainCard(c))}
     </>
   );
 };
