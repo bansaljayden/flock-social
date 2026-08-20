@@ -68,19 +68,19 @@ function resetTables() {
   const now = Date.now();
   FLOCKS = [
     // The production defect itself: a confirmed flock four months in the past.
-    { id: 31, venue_id: 'PLACE_A', title: 'Birthday Dinner', event_time: new Date(now - 120 * DAY), status: 'confirmed', member_count: 4 },
+    { id: 31, venue_id: 'PLACE_A', name: 'Birthday Dinner', event_time: new Date(now - 120 * DAY), status: 'confirmed', member_count: 4 },
     // Past the check-in tail — those people came and went yesterday.
-    { id: 36, venue_id: 'PLACE_A', title: 'Last night', event_time: new Date(now - 20 * HOUR), status: 'confirmed', member_count: 3 },
+    { id: 36, venue_id: 'PLACE_A', name: 'Last night', event_time: new Date(now - 20 * HOUR), status: 'confirmed', member_count: 3 },
     // Started two hours ago: standing in the building right now.
-    { id: 35, venue_id: 'PLACE_A', title: 'Here now', event_time: new Date(now - 2 * HOUR), status: 'confirmed', member_count: 5 },
-    { id: 32, venue_id: 'PLACE_A', title: 'Thursday crew', event_time: new Date(now + 2 * DAY), status: 'confirmed', member_count: 6 },
-    { id: 33, venue_id: 'PLACE_A', title: 'Next weekend', event_time: new Date(now + 6 * DAY), status: 'confirmed', member_count: 2 },
+    { id: 35, venue_id: 'PLACE_A', name: 'Here now', event_time: new Date(now - 2 * HOUR), status: 'confirmed', member_count: 5 },
+    { id: 32, venue_id: 'PLACE_A', name: 'Thursday crew', event_time: new Date(now + 2 * DAY), status: 'confirmed', member_count: 6 },
+    { id: 33, venue_id: 'PLACE_A', name: 'Next weekend', event_time: new Date(now + 6 * DAY), status: 'confirmed', member_count: 2 },
     // Beyond the horizon: real, but not something to staff for this week.
-    { id: 34, venue_id: 'PLACE_A', title: 'A month out', event_time: new Date(now + 30 * DAY), status: 'confirmed', member_count: 8 },
+    { id: 34, venue_id: 'PLACE_A', name: 'A month out', event_time: new Date(now + 30 * DAY), status: 'confirmed', member_count: 8 },
     // Undated. Not schedulable, so it cannot be placed in any window honestly.
-    { id: 37, venue_id: 'PLACE_A', title: 'Someday', event_time: null, status: 'confirmed', member_count: 2 },
+    { id: 37, venue_id: 'PLACE_A', name: 'Someday', event_time: null, status: 'confirmed', member_count: 2 },
     // Another venue's, to keep the ownership predicate honest here too.
-    { id: 41, venue_id: 'PLACE_B', title: "B's crew", event_time: new Date(now + DAY), status: 'confirmed', member_count: 9 },
+    { id: 41, venue_id: 'PLACE_B', name: "B's crew", event_time: new Date(now + DAY), status: 'confirmed', member_count: 9 },
   ];
   UNATTRIBUTED_ROWS = [{ n: 2 }];
   COUNT_QUERY_THROWS = false;
@@ -133,7 +133,16 @@ function dispatch(rawSql, params = []) {
         const bt = b.event_time ? b.event_time.getTime() : (w.desc ? -Infinity : Infinity);
         return w.desc ? bt - at : at - bt;
       })
-      .map(({ id, title, event_time, status, member_count }) => ({ id, title, event_time, status, member_count }));
+      // THE FAKE HANDS BACK ONLY WHAT THE STATEMENT ASKED FOR. `flocks.name` is
+      // the group's own name for their night, typed on the create screen for
+      // their own use, and it must not cross into a venue's dashboard. A fake
+      // that returns it unconditionally would keep serving it after the route
+      // stopped selecting it, and the redaction below would pass on a lie.
+      .map(({ id, name, event_time, status, member_count }) => {
+        const row = { id, event_time, status, member_count };
+        if (/f\.name AS title/.test(sql)) row.title = name;
+        return row;
+      });
     return { rows };
   }
 
@@ -257,6 +266,62 @@ test('the published window is the window the SQL actually applies', async () => 
     'the feed publishes a different past horizon than it queries');
   assert.ok(Math.abs((w.to - Date.now()) - res.body.window.aheadHours * HOUR) < 5000,
     'the feed publishes a different forward horizon than it queries');
+});
+
+test('the group\'s own name for their night never reaches the venue', async () => {
+  // SECURITY ROUND 5, 2026-08-20. This feed used to select `f.name AS title`
+  // and App.js rendered it as the card's heading. Group names are not neutral
+  // strings: "Emma's 21st", "Sarah's leaving do", "Dan + Priya anniversary" are
+  // the normal case, and each pairs a real first name with a venue, a date and
+  // a time, delivered to a business that will be at the door when those people
+  // walk in.
+  //
+  // Three things make it worse than it first reads. NOBODY IN THE GROUP CHOSE
+  // IT — the name is typed on the create screen for the group's own use and
+  // nothing there says a business will read it. THE PRIVACY POLICY DOES NOT SAY
+  // IT HAPPENS — "Who we share with" names service providers, other flock
+  // members and trusted contacts, and venue owners are not on that list. And
+  // THE PRODUCT'S OWN VOICE ALREADY FORBIDS IT — Roost refuses this in so many
+  // words (advisorFreeText REFUSAL_BY_REASON.private_people: "We never report
+  // anything about the individual people who use Flock ... or what they
+  // planned"). The chat refused it while the card above the chat printed it.
+  const r = await get('/api/venue-dashboard/incoming-flocks');
+  assert.strictEqual(r.status, 200);
+  assert.ok(r.body.flocks.length > 0, 'there is something in the window to check');
+
+  const sql = log.find((q) => /FROM flocks f JOIN venue_votes vv/.test(q.sql)).sql;
+  assert.doesNotMatch(sql, /f\.name/, 'the column is not selected at all, so it cannot be forwarded by accident');
+
+  const typed = ['Here now', 'Thursday crew', 'Next weekend', 'Birthday Dinner', 'Someday'];
+  const body = JSON.stringify(r.body);
+  for (const t of typed) {
+    assert.ok(!body.includes(t), `"${t}" was typed by a user and must not appear anywhere in the payload`);
+  }
+});
+
+test('the heading the venue reads is the party size, derived from a count', async () => {
+  // What a door actually needs is the operational shape of the night: how many
+  // people, when, and whether it is confirmed. `title` stays as a KEY so the
+  // dashboard needs no change, but the server writes it now, from a COUNT.
+  const r = await get('/api/venue-dashboard/incoming-flocks');
+  assert.strictEqual(r.status, 200);
+  for (const f of r.body.flocks) {
+    assert.match(String(f.title), /^Party of \d+$/, 'a size, not a name');
+    assert.strictEqual(f.title, `Party of ${f.member_count}`);
+  }
+});
+
+test('a flock whose accepted count has not landed is "A group", not "Party of 0"', async () => {
+  // The count IS the thing being said here, so saying it wrong is worse than
+  // not saying it. Zero accepted members is not a party of zero.
+  FLOCKS = [{
+    id: 51, venue_id: 'PLACE_A', name: 'Whatever', status: 'confirmed',
+    event_time: new Date(Date.now() + 2 * DAY), member_count: 0,
+  }];
+  const r = await get('/api/venue-dashboard/incoming-flocks');
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.flocks[0].title, 'A group');
+  assert.ok(!JSON.stringify(r.body).includes('Whatever'));
 });
 
 test('the count is measured over the same window as the list', async () => {
