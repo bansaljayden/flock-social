@@ -734,8 +734,18 @@ test('with no model on disk, predictBusyness IS the rule engine plus an honest m
       // without saying so. On this rung every entry is the rule engine, and
       // the deepEqual above already pinned that the ML-path forecast and
       // generateHourlyForecast agree entry for entry.
-      assert.deepEqual(Object.keys(entry).sort(), ['hour', 'label', 'predictionMethod', 'score']);
+      assert.deepEqual(Object.keys(entry).sort(),
+        ['baselineScore', 'hour', 'label', 'predictionMethod', 'score']);
       assert.equal(entry.predictionMethod, 'rule_engine');
+      // baselineScore joined every hourly entry on 2026-08-20, when the
+      // best-time and peak lines moved off model deltas and onto the
+      // popular-times curve for ORDERING (see crowdEngine.orderingAxis and
+      // HOUR_ORDERING_MIN_GAP). On this rung there is no curve — the category
+      // prior is answering — and null is what makes crowdEngine fall the whole
+      // candidate set back to model scores instead of ranking a mixed strip on
+      // two different numbers. A non-null here would be the rule engine
+      // claiming a baseline it does not have.
+      assert.equal(entry.baselineScore, null);
     }
   } finally {
     fs.existsSync = realExists;

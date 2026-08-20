@@ -348,3 +348,209 @@ test('no recommendation copy uses an em dash', () => {
     }
   }
 });
+
+// ---------------------------------------------------------------------------
+// LEVEL STAYS THE MODEL, SHAPE BECOMES THE BASELINE (2026-08-20)
+//
+// scripts/ml/HOUR-RANKING-EVAL.md measured the two claims separately. On the
+// published 0-100 LEVEL the model beats Google's popular-times curve (MAE
+// 29.42 vs 31.48, within-10 20.7% vs 19.2%). On ORDERING two hours inside one
+// venue-night it does not: 62.7% against the curve's 63.1%, with a venue-block
+// bootstrap of the difference at -0.49pp, CI95 [-0.88, -0.12].
+//
+// So the number on the dial stays the model's and every "which hour is better"
+// decision moved onto `baselineScore`, the smoothed popular-times anchor
+// mlPredictor already adds its delta to. These tests pin that split: the copy
+// must keep reading the model's level while the ranking reads the curve, and
+// neither may quietly take the other's job.
+// ---------------------------------------------------------------------------
+
+const { HOUR_ORDERING_MIN_GAP, TIE_MARGIN, NO_QUIET_HOUR } = require('../services/crowdEngine');
+
+// Same shape mlPredictor.predictHourlyForecast returns: a model score AND the
+// baseline the delta was added to, per hour.
+function dualForecast(startHour, entries) {
+  return entries.map(([score, baselineScore], i) => ({
+    hour: label(startHour + i),
+    score,
+    baselineScore,
+    label: getLabel(score),
+    predictionMethod: 'ml',
+  }));
+}
+
+const OPEN_ALL_EVENING = { types: ['bar'], openHour: 16, closeHour: 2 };
+
+test('the two noise floors are different numbers and neither is the other', () => {
+  // TIE_MARGIN is derived from the model's LEVEL error; HOUR_ORDERING_MIN_GAP
+  // is derived from the measured ORDERING coin-flip band. Collapsing them back
+  // into one constant is the defect this change fixed.
+  assert.equal(HOUR_ORDERING_MIN_GAP, 10,
+    'the measured coin-flip band: under 10 true points, ordering is 53% for both predictors');
+  assert.notEqual(HOUR_ORDERING_MIN_GAP, TIE_MARGIN);
+});
+
+test('hours are ordered by the baseline curve, not by the model score', () => {
+  // 10 PM is the quietest hour on the MODEL and the busiest on the CURVE.
+  // Before this change the card sent you to 10 PM. The curve is the predictor
+  // measured to order hours better, so 11 PM is the answer.
+  const fullDay = dualForecast(20, [
+    [80, 80], // 8 PM  = now
+    [70, 75], // 9 PM
+    [40, 90], // 10 PM: model says dead, the curve says packed
+    [65, 50], // 11 PM: the curve's quietest
+  ]);
+  const rec = recommendBestTime(fullDay, OPEN_ALL_EVENING, null, null, true,
+    { currentHour: 20, currentScore: 80 });
+  assert.equal(rec.orderingBasis, 'baseline');
+  assert.equal(rec.hourLabel, '11 PM');
+});
+
+test('a claim inside the measured coin-flip band is not made at all', () => {
+  const venue = OPEN_ALL_EVENING;
+  // 9 points of separation on the curve: inside the band where ordering was
+  // measured at 53%, which is a coin flip. The card must not name an hour.
+  const tooClose = dualForecast(20, [[70, 70], [66, 63], [64, 61]]);
+  const hedged = recommendBestTime(tooClose, venue, null, null, true,
+    { currentHour: 20, currentScore: 70 });
+  assert.equal(hedged.hourLabel, null, 'nothing may be named inside the band');
+  // and what it says instead is chosen from the LEVEL, which is 70 here.
+  assert.equal(hedged.text, "Now, but it's busy");
+
+  // 11 points: outside the band, and the claim is allowed.
+  const clear = dualForecast(20, [[70, 70], [66, 63], [64, 59]]);
+  const named = recommendBestTime(clear, venue, null, null, true,
+    { currentHour: 20, currentScore: 70 });
+  assert.equal(named.hourLabel, '10 PM');
+
+  // And the boundary is where the constant says it is, not a point either side.
+  const exactly = dualForecast(20, [[70, 70], [64, 70 - HOUR_ORDERING_MIN_GAP]]);
+  assert.equal(
+    recommendBestTime(exactly, venue, null, null, true, { currentHour: 20, currentScore: 70 }).hourLabel,
+    null,
+    'the gap must be strictly larger than the floor, not equal to it');
+});
+
+test('the old 5-point margin no longer licenses a recommendation', () => {
+  // Exactly the case the previous rule shipped and the measurement calls a
+  // coin flip: a 6-point gap. It cleared TIE_MARGIN; it does not clear the
+  // ordering floor.
+  const six = dualForecast(20, [[70, 70], [64, 64]]);
+  const rec = recommendBestTime(six, OPEN_ALL_EVENING, null, null, true,
+    { currentHour: 20, currentScore: 70 });
+  assert.ok(6 > TIE_MARGIN, 'this gap really did clear the old margin');
+  assert.equal(rec.hourLabel, null);
+});
+
+test('the words about NOW still come from the model score the card prints', () => {
+  // The curve is flat, so no hour is named. What is said instead has to be
+  // chosen from the published level, which is the half the model wins: a venue
+  // at 92 cannot be described as a good time to show up.
+  const flat = dualForecast(20, [[92, 70], [90, 68], [91, 69]]);
+  const packed = recommendBestTime(flat, OPEN_ALL_EVENING, null, null, true,
+    { currentHour: 20, currentScore: 92 });
+  assert.equal(packed.hourLabel, null);
+  assert.equal(packed.text, 'Packed now, and it stays that way');
+
+  // Same curve, quiet dial: the level decides the sentence, the curve decided
+  // that there was no hour worth naming.
+  const quiet = recommendBestTime(flat, OPEN_ALL_EVENING, null, null, true,
+    { currentHour: 20, currentScore: 22 });
+  assert.equal(quiet.text, 'Now is good');
+});
+
+test('user reports move the level and never the shape', () => {
+  // Three verified reporters push the published score from 60 to 85. That is a
+  // LEVEL correction and it changes the sentence. It must not change which
+  // hour is quietest, because a report about right now says nothing about
+  // Google's curve at 11 PM.
+  const evening = dualForecast(20, [[60, 60], [58, 55], [50, 40]]);
+  const before = recommendBestTime(evening, OPEN_ALL_EVENING, null, null, true,
+    { currentHour: 20, currentScore: 60 });
+  const after = recommendBestTime(evening, OPEN_ALL_EVENING, null, null, true,
+    { currentHour: 20, currentScore: 85 });
+  assert.equal(before.hourLabel, '10 PM');
+  assert.equal(after.hourLabel, '10 PM', "the named hour is the curve's, not the report's");
+});
+
+test('one rule-engine hour puts the whole night back on model ordering', () => {
+  // A mixed strip must not be ranked half on one number and half on another:
+  // that is a third predictor nobody measured. The all-or-nothing rule sends
+  // the entire candidate set back to model scores.
+  const mixed = dualForecast(20, [[80, 80], [70, 75], [40, 90], [65, 50]]);
+  mixed[2] = { ...mixed[2], baselineScore: null, predictionMethod: 'rule_engine_no_baseline' };
+  const rec = recommendBestTime(mixed, OPEN_ALL_EVENING, null, null, true,
+    { currentHour: 20, currentScore: 80 });
+  assert.equal(rec.orderingBasis, 'model');
+  assert.equal(rec.hourLabel, '10 PM', 'on model scores 10 PM is the quietest hour');
+});
+
+test('a forecast with no baseline anywhere behaves as it always did', () => {
+  // Every existing caller and every test above hands in score-only entries.
+  // They must keep getting the model ordering, now hedged at the measured
+  // floor rather than the level margin.
+  const plain = forecast(20, [70, 68, 45, 66]);
+  const rec = recommendBestTime(plain, OPEN_ALL_EVENING, null, null, true,
+    { currentHour: 20, currentScore: 70 });
+  assert.equal(rec.orderingBasis, 'model');
+  assert.equal(rec.hourLabel, '10 PM');
+});
+
+test('a closed venue with no hour worth naming says so instead of picking one', () => {
+  // Shut now, so "now" can never be the answer and there is no current hour to
+  // measure against. The hedge lands on the spread of the shortlist instead.
+  const flatEvening = dualForecast(14, [
+    [30, 30], [32, 33], [31, 31], [33, 34], [30, 32], [31, 33],
+  ]);
+  const shut = recommendBestTime(flatEvening, OPEN_ALL_EVENING, null, null, false,
+    { currentHour: 14, currentDay: 3, currentScore: 30 });
+  assert.equal(shut.hourLabel, null);
+  assert.equal(shut.text, NO_QUIET_HOUR);
+  assert.doesNotMatch(shut.text, /[—–]/);
+
+  // Give one hour a real trough and it is named again.
+  const withTrough = dualForecast(14, [
+    [30, 30], [32, 33], [31, 31], [33, 34], [30, 32], [31, 18],
+  ]);
+  const named = recommendBestTime(withTrough, OPEN_ALL_EVENING, null, null, false,
+    { currentHour: 14, currentDay: 3, currentScore: 30 });
+  assert.equal(named.hourLabel, '7 PM');
+});
+
+test('a shortlist of one is named whatever its spread, because it is not a ranking', () => {
+  const venue = { types: ['restaurant'], openHour: 19, closeHour: 20 };
+  const one = dualForecast(14, [[30, 30], [40, 41], [41, 42], [42, 43], [40, 41], [39, 40]]);
+  const rec = recommendBestTime(one, venue, null, null, false,
+    { currentHour: 14, currentDay: 3, currentScore: 30 });
+  assert.ok(rec.hourLabel, 'the only open hour ahead is an answer, not a comparison');
+});
+
+test('the peak window is chosen on the same axis the ranking uses', () => {
+  // If the peak came off model scores while the ranking came off the curve,
+  // recommendBestTime would be excluding hours its own ordering never called
+  // busy. 10 PM is the model's peak; 8 PM is the curve's.
+  const evening = dualForecast(19, [
+    [40, 45], // 7 PM
+    [50, 92], // 8 PM: the curve's peak
+    [60, 50], // 9 PM
+    [95, 55], // 10 PM: the model's peak
+  ]);
+  const peak = findPeakTime(evening, OPEN_ALL_EVENING);
+  assert.equal(peak.text, '8 PM');
+
+  // Score-only entries keep the old behaviour.
+  const plain = forecast(19, [40, 50, 60, 95]);
+  assert.equal(findPeakTime(plain, OPEN_ALL_EVENING).text, '10 PM');
+});
+
+test('the best-time line never names an hour the peak window covers', () => {
+  // The exclusion and the ranking now read one number, so this holds on the
+  // curve the same way it held on the model.
+  const evening = dualForecast(19, [[40, 45], [50, 92], [60, 90], [95, 55]]);
+  const peak = findPeakTime(evening, OPEN_ALL_EVENING);
+  const rec = recommendBestTime(evening, OPEN_ALL_EVENING, peak.startIdx, peak.endIdx, true,
+    { currentHour: 19, currentScore: 40 });
+  for (let i = peak.startIdx; i <= peak.endIdx; i++) {
+    assert.notEqual(rec.hourLabel, evening[i].hour);
+  }
+});

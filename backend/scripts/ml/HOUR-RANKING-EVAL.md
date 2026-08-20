@@ -33,6 +33,15 @@ not what the shipped feature does. See section 5 before quoting it anywhere.
 **This is NOT the 43.1% figure.** See section 6. Different question, different
 unit.
 
+**PRODUCTION NO LONGER DOES WHAT SECTIONS 1-8 DESCRIBE.** Everything above is a
+measurement of the serve path as it stood on 2026-08-19. On 2026-08-20 the
+ordering moved onto the baseline curve and the minimum gap went from 5 to 10
+points. **Section 9 is what ships**, and it carries the re-measurement: the
+shipped path is +1.85pp more accurate on the recommendation than the one it
+replaced, and the credit belongs to the minimum gap rather than to the change
+of predictor. Read section 9 before quoting any number in sections 1-8 as a
+description of the product.
+
 Everything under **Measured** is a number this run produced. Everything under
 **Inferred** is a judgement built on those numbers and labelled as such.
 
@@ -180,9 +189,12 @@ Arm C being clean — it is used only to *deflate* Arm B.
 
 ## 4. Measured — "the quietest open hour"
 
-What `crowdEngine.recommendBestTime` (crowdEngine.js:1248) claims: it names one
-hour and the card prints it as **"Least crowded: 9 PM"** / **"Best time to
-visit: 9 PM"**. It picks the argmin over open, non-peak hours ahead of now.
+What `crowdEngine.recommendBestTime` claims: it names one hour and the card
+prints it as **"Least crowded: 9 PM"** / **"Best time to visit: 9 PM"**. It
+picks the argmin over open, non-peak hours ahead of now. (As of 2026-08-20 that
+argmin runs on the baseline curve and is only printed at all when the gap
+clears `HOUR_ORDERING_MIN_GAP`; section 9 measures the version that ships. The
+table below is the version measured here.)
 
 Measured: for each venue-night, take each predictor's argmin hour and ask where
 it lands in the true ordering. Predictor ties are resolved by expectation under
@@ -279,6 +291,11 @@ picks a quieter one more often than chance. That is a *display* claim and a
 **What cannot:** "our model tells you when to go", "we predict the best time",
 or any framing where the trained layer is the thing doing the telling.
 
+**Since this was written, the second and third points were acted on**: the
+ordering moved to the curve and the recommendation is now silent below a
+10-point predicted gap. Section 9 measures the result. The first point is
+unchanged, and so is the conclusion that the signal is Google's.
+
 **Inferred, for the pitch decision:** the third proposition does not survive in
 its strong form. It survives in a weaker one that is mostly a claim about
 presenting Google's data well. Whether that is worth a pitch slot is Jayden's
@@ -293,4 +310,188 @@ answer is "too close to call".
 
 * `scripts/ml/train/hour_ranking_eval.py` — the measurement, read-only.
 * `scripts/ml/train/hour_ranking_out/hour_ranking_results.json` — every number
-  above plus per-bucket predictor-tie rates and the unrounded-model arm.
+  above plus per-bucket predictor-tie rates, the unrounded-model arm, and (since
+  2026-08-20) the `served_configuration` block section 9 is drawn from.
+* `services/crowdEngine.js` — `orderingAxis`, `HOUR_ORDERING_MIN_GAP`,
+  `recommendBestTime`, `findPeakTime`: the serve path this document is about.
+  `__tests__/bestTime.test.js` pins the level/shape split against it.
+
+---
+
+## 9. What SHIPPED, and what it scores — measured 2026-08-20
+
+Sections 1-8 measure two PREDICTORS. This section measures two PRODUCTS, which
+is a different object: a served recommendation is a predictor **plus a rule
+about when it is allowed to speak**. Both halves were changed on 2026-08-20, and
+they did not contribute equally. Re-run with the same command; the section is
+produced by the same script.
+
+### 9.1 The change
+
+| | ordering runs on | speaks when the quieter hour is |
+|---|---|---|
+| **previous** | the model's reconstructed score | more than `TIE_MARGIN` = **5** below now |
+| **shipped** | the smoothed popular-times curve | more than `HOUR_ORDERING_MIN_GAP` = **10** below now |
+
+`services/crowdEngine.js`. `orderingAxis` picks the axis for the whole candidate
+set at once and never mixes the two: an hour with no baseline (the rule engine
+answered it) sends the entire night back to model scores. The published 0-100
+number is untouched and is still the model's — it is the half the model wins
+(MAE 29.42 vs 31.48, within-10 20.7% vs 19.2%). `findPeakTime` moved onto the
+same axis, because `recommendBestTime` excludes the peak window from its
+candidates and a peak picked on a different number would delete hours the
+ranking never called busy.
+
+Both thresholds are on **predicted** separation, strict `>`, because predicted
+separation is all production can see. The true-gap tables in section 2 are not
+a serving rule and were never usable as one.
+
+### 9.2 Pairwise, restricted to the pairs each config ranks out loud
+
+Arm A's 35,052 hour pairs. "Coverage" is the share of all pairs the config
+commits to an ordering on; "correct" is measured only over the pairs it spoke
+about and whose truth is not a tie.
+
+| config | predictor | gap | coverage | n spoken | correct | backwards | mean true gap when it speaks |
+|---|---|---:|---:|---:|---:|---:|---:|
+| **shipped** | baseline | 10 | **70.28%** | 22,291 | **66.68%** | 33.32% | 42.19 |
+| previous | model | 5 | 82.06% | 25,960 | 64.88% | 35.12% | 42.00 |
+| model at gap 10 | model | 10 | 67.64% | 21,483 | 67.03% | 32.97% | 42.53 |
+| baseline, no hedge | baseline | 0 | 98.28% | 30,963 | 63.05% | 36.95% | 41.41 |
+| model, no hedge | model | 0 | 98.04% | 30,898 | 62.69% | 37.31% | 41.45 |
+
+The two no-hedge rows reproduce section 2's headline exactly (63.05% and
+62.69%), which is the check that this section is measuring the same population
+the rest of the document does.
+
+### 9.3 The decision itself: "go at 9 instead of now"
+
+Every venue-night, every hour in it taken in turn as "now", candidate = the
+predictor's argmin over the other hours. The card speaks only when
+`pred(candidate) < pred(now) - gap`, which is the rule `recommendBestTime`
+applies. Predictor ties among the minima are resolved by expectation.
+
+| config | decisions | spoke | coverage | correct | backwards | true points saved when it speaks |
+|---|---:|---:|---:|---:|---:|---:|
+| **shipped** | 42,192 | 18,276 | **43.32%** | **66.98%** | 33.02% | **16.86** |
+| previous | 42,192 | 21,047 | 49.88% | 65.14% | 34.86% | 14.90 |
+| model at gap 10 | 42,192 | 17,677 | 41.90% | 67.13% | 32.87% | 16.87 |
+| baseline, no hedge | 42,192 | 24,705 | 58.55% | 63.48% | 36.52% | 13.24 |
+| model, no hedge | 42,192 | 24,634 | 58.39% | 63.04% | 36.96% | 12.77 |
+
+**The shipped path is better than the one it replaced.** It commits to an
+ordering in 43.3% of situations instead of 49.9%, and when it does commit it is
+right 66.98% of the time instead of 65.14%, naming an hour that is genuinely
+16.86 points quieter instead of 14.90. Fewer claims, better claims, and the
+average claim is worth two more points of crowd.
+
+### 9.4 Which half did the work. Not the half the change was about.
+
+Venue-block bootstrap of the difference in correct%, 1000 resamples, venues
+drawn once per resample and applied to both sides. Each side keeps its own
+denominator, so this is **not** a paired test — the configs deliberately speak
+about different subsets. What it bounds is the difference between two published
+rates, which is the quantity the product decision turns on.
+
+| comparison | pairwise | recommendation |
+|---|---|---|
+| shipped − previous (the whole change) | **+1.80pp** [+1.38, +2.17] | **+1.85pp** [+1.34, +2.35] |
+| predictor only, at gap 10 (baseline − model) | −0.35pp [−0.71, +0.02] | −0.15pp [−0.57, +0.32] |
+| hedge only, on the model (gap 10 − gap 5) | **+2.15pp** [+1.83, +2.50] | **+2.00pp** [+1.66, +2.33] |
+| predictor only, no hedge (baseline − model) | +0.36pp [+0.00, +0.72] | +0.43pp [−0.10, +0.96] |
+
+Read the second and third rows before quoting the first.
+
+**The hedge is the entire improvement.** Raising the minimum gap from 5 to 10 on
+the model's own scores is worth +2.15pp / +2.00pp, and both intervals clear zero
+comfortably. Swapping the predictor at a fixed gap of 10 is worth −0.35pp /
+−0.15pp: the point estimates favour the MODEL, and neither interval excludes
+zero. At gap 10 the two predictors are a wash.
+
+That is not a contradiction of section 2. Section 2 measured every pair; row
+four here reproduces it (+0.36pp to the baseline, interval touching zero). The
+baseline's small advantage lives in the pairs a 10-point hedge already refuses
+to speak about. Above the hedge the two predictors have nothing to choose
+between them.
+
+**So the honest statement of the switch is:** the shipped configuration is
+measurably better than what it replaced, and the credit belongs to the minimum
+gap, not to serving Google's curve.
+
+### 9.5 Then why ship the predictor switch at all
+
+Three reasons, and none of them is "it measured better", because it did not:
+
+1. **It costs nothing measurable.** The interval on the recommendation metric
+   is [−0.57, +0.32]: whatever the difference is, it is smaller than this
+   holdout can resolve.
+2. **It is the better bet on the unhedged pairs.** The only comparison here
+   with real n behind a signed answer is the unhedged one, and it goes the
+   baseline's way (+0.36pp, and section 2's venue-block bootstrap of the same
+   quantity is −0.49pp for the model with a CI that excludes zero). Nothing
+   measured says the delta layer knows the shape of a night.
+3. **It retires a claim the product cannot support.** Ranking on the curve
+   means the hour Flock names is Google's shape plus Flock's presentation, and
+   that is exactly what section 7 says is defensible. Ranking on model deltas
+   means the product is implicitly claiming a capability that four separate
+   measurements decline to find.
+
+If a future model beats the curve on ordering, the switch back is one function:
+`crowdEngine.orderingAxis`.
+
+### 9.6 What this does NOT cover
+
+* **The 2-to-5-hour shortlist is still the shortlist.** Section 5's limit is
+  unchanged and applies to every number above. The shipped feature ranks a
+  12-hour strip; ordering 12 hours is harder than ordering 2.5, and the true
+  accuracy of the shipped 12-hour version remains unmeasured and can only be
+  lower. Do not quote 66.98% as "the Least crowded line is right 67% of the
+  time".
+* **"Now" here is any hour, not the current one.** The corpus has no clock
+  against the user, so each hour in a venue-night is taken as "now" in turn.
+  Production only ever asks the question from the hour it is actually in.
+* **Per-venue calibration is not in this path.** The +1.66pp designed and
+  measured venue-specific layer is waiting on slider volume and is not part of
+  the serve path evaluated here. When it lands, every number in this section
+  changes and must be re-measured. This is the layer the original run did not
+  reflect either.
+* **The venue-versus-venue strip is untouched.** `STRIP_ORDERING_MIN_GAP` (25)
+  in `routes/venueDashboard.js` still comes off the 43.1% finding and is a
+  different question with a different unit. Section 6 owns that distinction.
+
+### Two hour-ordering surfaces that did NOT move, and what each needs
+
+Both were found by the same sweep and left alone because another session held
+uncommitted work in their files. Neither is on the consumer "when should I go"
+path; both make an hour-ordering claim on model scores and should be moved.
+
+1. **The owner dashboard's weekly evening peak.**
+   `routes/venueDashboard.js`, `GET /intelligence`: `evening.reduce((a, b) =>
+   (b.score > a.score ? b : a))` picks the peak HOUR off model scores. The fix
+   is `crowdEngine.orderingAxis(evening).valueOf` as the comparator, exported
+   for exactly this, leaving `peakScore` as the model's level at the hour named.
+   The same route also now returns `todayHourly` with the internal
+   `baselineScore` field on each entry; `routes/crowd.js` strips it and this one
+   should too.
+
+2. **The client-side trend arrow.** `frontend/src/App.js`, the "Expected Crowd
+   by Hour" header: it compares the current score to `hourlyData[1].score` and
+   prints Rising / Falling / Steady outside a 5-point dead zone, justified in a
+   comment as "model's MAE is ~5pts". That is a LEVEL argument used to license
+   an ORDERING claim, which is the exact defect this change fixed in
+   `crowdEngine`, and 5 points sits well inside the measured coin-flip band. The
+   dead zone should be 10 to match `HOUR_ORDERING_MIN_GAP`, and the comment
+   should cite this document rather than the MAE.
+
+### 9.7 What Flock can honestly say now
+
+That it shows a venue's hour-by-hour pattern sourced from Google popular times,
+that the busiest and quietest hours it names are read off that pattern, and that
+**when it tells you to go at a different hour, the hour it names is really the
+quieter one about two times in three, and it only says so when the difference is
+big enough to be worth the trip.** The 0-100 number beside it is Flock's own
+model, which is measured to beat the same curve on level.
+
+What it still cannot say: that the model figured out the venue's rhythm. The
+rhythm is Google's. What changed on 2026-08-20 is that the product stopped
+overwriting it, and stopped speaking inside the noise.
