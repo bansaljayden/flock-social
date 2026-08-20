@@ -340,7 +340,7 @@ test('requireVenueTier(pro) guards /ask: a free venue gets the 403 UPGRADE_REQUI
   resetAll();
   process.env.VENUE_BILLING_ENABLED = 'true';
   process.env.ADMIN_USER_IDS = '1';
-  handlers.push([/SELECT tier FROM venue_profiles/, () => ({ rows: [{ tier: 'free' }], rowCount: 1 })]);
+  handlers.push([/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [{ tier: 'free' }], rowCount: 1 })]);
   advisorRouter.__setFactsForTests(async () => PEAK_BLOCK());
   const r = await post('/api/venue/advisor/ask', { intentId: 'peak_hours' });
   assert.strictEqual(r.status, 403);

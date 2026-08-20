@@ -149,7 +149,7 @@ function curveRows({ hours = SCAN_HOURS, bases = { 4: 80, 5: 82, 6: 60 } } = {})
 
 function scriptHappyPath({ profile = profileRow(), mlVenue = ML_VENUE, tier = 'pro' } = {}) {
   handlers = [
-    [/^SELECT tier FROM venue_profiles/, () => ({ rows: [{ tier }] })],
+    [/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [{ tier }] })],
     [/SELECT user_id, google_place_id, verified/, () => ({ rows: profile ? [profile] : [] })],
     [/FROM ml_venues WHERE google_place_id/, () => ({ rows: mlVenue ? [mlVenue] : [] })],
     [/FROM ml_venue_baselines/, () => ({ rows: curveRows() })],

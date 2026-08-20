@@ -43,7 +43,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const pool = require('../config/database');
 const { boolFlag } = require('./entitlements');
-const { venueBillingEnabled } = require('./venueEntitlements');
+const { venueBillingEnabled, resolveGrantedTier } = require('./venueEntitlements');
 const { sendEmail, baseApiUrl, isMailableAddress, maskAddress } = require('./emailService');
 const { renderDigestHtml, renderDigestText, digestSubject } = require('../templates/venueDigestEmail');
 
@@ -337,10 +337,12 @@ async function runVenueDigestSweep(now = new Date()) {
     const r = await pool.query(
       `SELECT vp.id, vp.user_id, vp.business_name, vp.tier, vp.google_place_id,
               vp.notification_prefs,
+              vs.tier AS grant_tier, vs.status AS grant_status, vs.expires_at,
               u.email, u.email_verified, u.is_banned,
               mv.timezone
          FROM venue_profiles vp
          JOIN users u ON u.id = vp.user_id
+         LEFT JOIN venue_subscriptions vs ON vs.user_id = vp.user_id
          LEFT JOIN ml_venues mv ON mv.google_place_id = vp.google_place_id
         WHERE vp.google_place_id IS NOT NULL
           AND u.email IS NOT NULL`
@@ -364,7 +366,12 @@ async function runVenueDigestSweep(now = new Date()) {
       tally.skipped += 1; continue;
     }
 
-    const tier = effectiveTier(row.tier);
+    // The GRANT decides, not the cached column. This sweep is the one paid
+    // surface that does not go through requireVenueTier, so an expired comp
+    // would have kept receiving Monday digests until an admin noticed
+    // (migration 040). resolveGrantedTier is the same function the gate uses,
+    // so there is one expiry rule in the product and not two.
+    const tier = effectiveTier(resolveGrantedTier(row, now.getTime()));
     if (tier === 'free') { tally.skipped += 1; continue; }
 
     const parts = localParts(now, row.timezone);
