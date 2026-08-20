@@ -171,6 +171,44 @@ def serving_population_mask(baseline) -> np.ndarray:
     """True where production would serve the ML model rather than the rule engine."""
     return np.asarray(baseline, dtype=float) > 0
 
+
+# ---------------------------------------------------------------------------
+# Vendor provenance (2026-08-18, poisoning preconditions).
+#
+# Three fits in this file compute means that later become FEATURES for other
+# rows: the category/refined baseline maps, the per-fold cell aggregates that
+# rebuild them, and the per-venue baseline map inside add_neighbor_features.
+# Today every row in the corpus is vendor-collected (BestTime via
+# collectWeekly/collectRealtime), so filtering those fits to vendor provenance
+# changes nothing — which is exactly when to install the filter. The moment a
+# non-vendor label source lands in the corpus (the venue-owner slider,
+# feedback-rows-as-labels, sensor rows), those rows are client- or
+# owner-influenced numbers, and without this predicate a single venue's
+# self-reports would flow into the CATEGORY mean and the NEIGHBOR mean — i.e.
+# one submitter could shift the features of every venue in the cell. Reading
+# the maps is fine for any row; FITTING them is vendor-only.
+#
+# 'unknown' is in the allowlist deliberately: every 'unknown' row in the
+# frozen corpus is a pre-`label_source` vendor row (the column did not exist
+# before migration 025). Any NEW provenance value (e.g. 'user', 'owner',
+# 'sensor') is excluded by default — do NOT add one here without a poisoning
+# review of what fitting on it would let a submitter move.
+# ---------------------------------------------------------------------------
+VENDOR_PROVENANCES = frozenset({'weekly', 'live', 'forecast', 'unknown'})
+
+
+def vendor_provenance_mask(df: pd.DataFrame) -> np.ndarray:
+    """True where a row's label came from the vendor pipeline (fit-eligible).
+
+    Tolerates a frame without the column (synthetic test fixtures) — the real
+    pipeline cannot reach here without it because require_export_columns
+    refuses the CSV first.
+    """
+    if 'label_provenance' not in df.columns:
+        return np.ones(len(df), dtype=bool)
+    prov = df['label_provenance'].astype('string').fillna('unknown').str.strip().str.lower()
+    return prov.isin(VENDOR_PROVENANCES).to_numpy()
+
 # Weather condition code groupings
 WEATHER_GROUPS: Dict[str, List[range]] = {
     'thunderstorm': [range(200, 233)],
@@ -848,8 +886,16 @@ def add_neighbor_features(df: pd.DataFrame) -> pd.DataFrame:
     ml_venue_baselines (same source data).
     """
     df['_vkey'] = df['latitude'].round(5).astype(str) + '_' + df['longitude'].round(5).astype(str)
+    # The venue-baseline map is built from VENDOR rows only (2026-08-18): a
+    # non-vendor row (owner slider, user feedback, sensor) carrying a
+    # baseline_busyness would otherwise dilute its venue's mean here, and that
+    # mean becomes a FEATURE of every venue within ~1km — one venue's
+    # self-reports must never move a neighbour's neighbor_baseline_same_hour.
+    # Every row still RECEIVES the feature via the merge below; only the fit
+    # is restricted. No-op on the frozen all-vendor corpus.
     vb = (
-        df.groupby(['_vkey', 'day_of_week', 'hour'])
+        df[vendor_provenance_mask(df)]
+        .groupby(['_vkey', 'day_of_week', 'hour'])
         .agg(bl=('baseline_busyness', 'mean'), lat=('latitude', 'first'), lng=('longitude', 'first'))
         .reset_index()
     )
@@ -1109,7 +1155,17 @@ def build_category_baseline_maps(df: pd.DataFrame) -> Dict:
         own rows were then scored against. That is still true and still open;
         the note above build_category_cell_aggregates says why the correction cannot
         be applied from this file and what this file ships instead.
+
+    FIT ON VENDOR PROVENANCE ONLY (2026-08-18). These maps are means of the
+    LABEL that become features for OTHER rows, so a non-vendor row (owner
+    slider, user feedback, sensor) fitting into them would let one submitter
+    move the category feature of every venue in the cell. No-op on the frozen
+    all-vendor corpus; a hard precondition for the day it is not. The same
+    predicate filters build_category_cell_aggregates so the per-fold refit
+    rebuilds THIS map exactly (verify_reproduces_shipped depends on the two
+    fits seeing identical rows).
     """
+    df = df[vendor_provenance_mask(df)]
     df = _slice_keys(df.copy())
 
     cat = (
@@ -1256,6 +1312,12 @@ def build_category_cell_aggregates(fit_df: pd.DataFrame,
             'the group train_model.py holds one out of per fold, and without it a '
             'per-fold refit of the category baselines is not expressible.'
         )
+    # Vendor provenance only (2026-08-18) — the SAME predicate
+    # build_category_baseline_maps fits under, and for the same reason: these
+    # sums/counts rebuild that map per fold, so if a non-vendor row entered
+    # here but not there, verify_reproduces_shipped would fail — and if it
+    # entered both, a self-reported label would be shaping category features.
+    fit_df = fit_df[vendor_provenance_mask(fit_df)]
     d = _slice_keys(fit_df.copy())
     groups = d[group_col].fillna('__unknown__').astype(str)
     group_levels, group_idx = np.unique(groups.to_numpy(), return_inverse=True)
