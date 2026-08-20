@@ -19,17 +19,22 @@
 //     analysis; they are excluded at every read, not merely flagged.
 //   * What "evidence" means is deliberately narrow — see VERIFIED_PRESENCE_SQL.
 //
-// KNOWN LIMIT, stated so it is not mistaken for a solved problem:
-// `predicted_score` is what the CLIENT says we predicted, and it is the
-// baseline the calibration error is measured against (services/mlPredictor.js
-// averages `mapped(crowd_level) - predicted_score`; the training export ships
-// the same figure as a feature). Nothing here can check it, because the server
-// keeps no record of the score it handed that device. A verified account can
-// therefore bias the correction within 0-100, bounded only by the hourly cap
-// and the one-row-per-venue-per-2h rule. Closing it properly means the server
-// issuing a signed prediction token that this route validates, or dropping the
-// client value and re-deriving the prediction here — both of which reach into
-// routes/crowd.js and services/mlPredictor.js.
+// PREDICTED_SCORE IS RESOLVED SERVER-SIDE NOW (migration 032). The server
+// records every score it publishes — routes/crowd.js writes served_predictions
+// on the detail card and the vote-list batch — and this route prefers its own
+// record over the client's claim: a served row for (this user, this venue)
+// inside the last 12 hours wins outright, and `predicted_score_source` says
+// 'server' on the row. The client's asserted value is kept verbatim in
+// `client_predicted_score` either way, so the two can be compared after the
+// fact, and it is still accepted as the denominator (source 'client') ONLY
+// when no served record exists — a legacy client, or a report against a score
+// this account was never shown. The residual, stated so it is not mistaken for
+// closed: 'client'-sourced rows are exactly as forgeable as every row was
+// before this, and the calibration readers (services/mlPredictor.js,
+// routes/crowd.js, the training export) do not yet filter on the source
+// column. Tightening them to 'server'-only is the follow-up, gated on write
+// coverage being proven in production — flipping it today would zero the
+// denominator on every row written before migration 032.
 // ---------------------------------------------------------------------------
 const express = require('express');
 const { body, param, validationResult } = require('express-validator');
@@ -298,6 +303,50 @@ router.post('/',
         console.error('[Feedback] Venue timezone lookup failed, falling back:', tzErr.message);
       }
 
+      // THE DENOMINATOR IS OURS TO ASSERT, NOT THE CLIENT'S (see the header).
+      // routes/crowd.js records every score it publishes in served_predictions
+      // (one row per user+venue, newest wins); if this user was served a score
+      // for this venue in the last 12 hours, THAT is the prediction their
+      // report is measured against, whatever the request body says. 12 hours
+      // rather than the NFC check-in's 3: feedback is post-hangout by design,
+      // and the score acted on was read before the hangout — the same forward
+      // window the flock-presence clause uses, for the same reason.
+      //
+      // Read OUTSIDE the transaction, like the timezone above and unlike the
+      // integrity checks inside it: a failure here only degrades provenance
+      // (server → client), it must never abort a feedback submission. An
+      // attacker gains nothing from the degraded path — it is the pre-031
+      // behaviour, and the row is marked 'client' so the calibration layer can
+      // discount it.
+      let servedScore = null;
+      let servedPredictionId = null;
+      try {
+        // Newest serve wins: the reality-check widget sits ON the venue card,
+        // so the score on screen at submit time is the most recent one served.
+        // The log is append-only (see routes/crowd.js), so this ORDER BY is
+        // what picks "what was on screen" out of the night's serve history.
+        const served = await pool.query(
+          `SELECT id, score FROM served_predictions
+            WHERE user_id = $1 AND venue_place_id = $2
+              AND served_at > NOW() - INTERVAL '12 hours'
+            ORDER BY served_at DESC
+            LIMIT 1`,
+          [req.user.id, venue_place_id]
+        );
+        if (served.rows[0] && Number.isInteger(served.rows[0].score)) {
+          servedScore = served.rows[0].score;
+          servedPredictionId = served.rows[0].id;
+        }
+      } catch (spErr) {
+        console.error('[Feedback] Served-prediction lookup failed, falling back to client value:', spErr.message);
+      }
+
+      const clientPredictedScore = predicted_score ?? null;
+      const resolvedPredictedScore = servedScore ?? clientPredictedScore;
+      const predictedScoreSource = servedScore != null
+        ? 'server'
+        : (clientPredictedScore != null ? 'client' : null);
+
       // Anti-forgery (audit 2026-08-12): one report per user per venue per 2h
       // window. Unlimited reports let a single account own a venue's live
       // calibration AND poison future training labels. Newest report wins
@@ -422,9 +471,9 @@ router.post('/',
 
         const result = await client.query(
           `INSERT INTO venue_feedback
-            (user_id, flock_id, venue_place_id, venue_name, crowd_level, price_worth, rating, predicted_score, day_of_week, hour, verified)
+            (user_id, flock_id, venue_place_id, venue_name, crowd_level, price_worth, rating, predicted_score, predicted_score_source, client_predicted_score, served_prediction_id, day_of_week, hour, verified)
           VALUES
-            ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
           RETURNING *`,
           [
             req.user.id,
@@ -434,7 +483,10 @@ router.post('/',
             crowd_level,
             price_worth ?? null,
             rating ?? null,
-            predicted_score ?? null,
+            resolvedPredictedScore,
+            predictedScoreSource,
+            clientPredictedScore,
+            servedPredictionId,
             localClock.day,
             localClock.hour,
             verified,

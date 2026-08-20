@@ -582,6 +582,22 @@ export async function getVenueStrip() {
   return request('/api/venue-dashboard/strip');
 }
 
+// Roost, the venue advisor's chat surface (components/VenueAdvisorChat.js).
+// Chips only, by contract: /questions serves the grouped list of everything
+// the server will accept, and /ask takes exactly one of those intent ids.
+// There is no free-text parameter and the server 400s anything beyond
+// { intentId }, so do not add one here.
+export async function getAdvisorQuestions() {
+  return request('/api/venue/advisor/questions');
+}
+
+export async function askAdvisor(intentId) {
+  return request('/api/venue/advisor/ask', {
+    method: 'POST',
+    body: JSON.stringify({ intentId }),
+  });
+}
+
 // Shareable guest invite link for a flock (guests RSVP + vote, no account).
 export async function createFlockInviteLink(flockId, regenerate = false) {
   const data = await request(`/api/flocks/${flockId}/invite-link`, {
