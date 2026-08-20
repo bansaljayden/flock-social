@@ -3448,12 +3448,41 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Venue onboarding
   const [showVenueOnboarding, setShowVenueOnboarding] = useState(false);
   const [venueOnboardingStep, setVenueOnboardingStep] = useState(0);
-  const [venueOnboardingData, setVenueOnboardingData] = useState({ businessName: '', category: '', location: '', description: '', goals: [] });
+  // The whole object is POSTed as-is (createVenueProfile), so every key here is
+  // a key the server validates. '' and [] and null all mean "not answered" and
+  // the server maps them to a NULL column, which is what lets an owner clear a
+  // field they filled in by mistake.
+  const [venueOnboardingData, setVenueOnboardingData] = useState({
+    businessName: '', category: '', location: '', description: '', goals: [],
+    // The room
+    capacity: '', serviceStyle: '', hasOutdoorSeating: null,
+    // Groups, which is what this app plans
+    reservationPolicy: '', largestWalkinGroup: '', typicalDwellMinutes: '', typicalSpendPerPerson: '',
+    // The clock the front door does not show
+    kitchenLastOrder: '', lastCall: '', agePolicy: '', ageRestrictedAfter: '',
+    // The week
+    eventNights: [], eventNote: '', ownerBusyNights: [], targetNight: '',
+    // The street
+    anchorTypes: [], anchorNote: '',
+    // The thing a stranger would not guess
+    quirks: '',
+  });
   // Set when the profile save is rejected, so the last step can say so instead
   // of walking the owner into a dashboard with nothing saved behind it.
   const [venueOnboardingError, setVenueOnboardingError] = useState('');
   const [venueSearchQuery, setVenueSearchQuery] = useState('');
   const [venueSearchResults, setVenueSearchResults] = useState([]);
+  // 'idle' | 'searching' | 'none'. Without it, "we could not find that" flashes
+  // on every keystroke while the request is still in flight, which reads as a
+  // failure the owner caused. SLOP-AUDIT §Q3: success and failure are separate
+  // states, and "still working" is neither.
+  const [venueSearchState, setVenueSearchState] = useState('idle');
+  // The server's own sentence when the search fails. /api/venues/search is a
+  // paid Google call behind a 30-per-hour-per-user ceiling, so "Searching too
+  // fast. Give it a few seconds." is a real answer an owner can act on. It used
+  // to be caught and dropped, which left the picker looking broken and invited
+  // the retries that cost the most.
+  const [venueSearchError, setVenueSearchError] = useState('');
   const venueSearchTimer = React.useRef(null);
 
   // If user came from venue login, check if they already have a profile
@@ -14858,6 +14887,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [ownerSensorHistory, setOwnerSensorHistory] = useState([]);
   const [ownerVenuePlaceId, setOwnerVenuePlaceId] = useState(null);
   const [editingVenueInfo, setEditingVenueInfo] = useState(false);
+  // The fuller intake, editable AFTER onboarding.
+  //
+  // Category, description and goals were accepted by PUT /api/venue-profile
+  // from the day it shipped and were exposed in Settings by NOTHING, so they
+  // were answerable exactly once, at signup, and a venue that changed could not
+  // say so. The eighteen intake fields would have inherited the same bug, and
+  // an advisor reading a year-old kitchen close time is worse than one reading
+  // nothing. Null means "not editing"; entering edit hydrates from the profile.
+  const [venueIntakeDraft, setVenueIntakeDraft] = useState(null);
+  const [savingVenueIntake, setSavingVenueIntake] = useState(false);
   const [operatingHours, setOperatingHours] = useState([]);
   const [showHoursModal, setShowHoursModal] = useState(false);
   const [dealDescription, setDealDescription] = useState('');
@@ -16380,6 +16419,106 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </button>
               </div>
 
+              {/* ── About your venue ──────────────────────────────────────────
+                  Everything the onboarding form asks after the Google Places
+                  pick, editable for the rest of the venue's life.
+
+                  This card is the fix for a real bug and not a convenience.
+                  category, description and goals were accepted by
+                  PUT /api/venue-profile from the day it shipped and exposed in
+                  Settings by nothing at all, so they could be answered exactly
+                  once, at signup. A venue that moved its kitchen close time, or
+                  went 21+ on weekends, or started a Tuesday quiz, had no way to
+                  tell us. Advice read off a stale profile is worse than advice
+                  read off an empty one, because nobody can tell it is stale. */}
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                  <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.building(colors.navy, 14)} About Your Venue</h3>
+                  {!venueIntakeDraft ? (
+                    <button className="hit44" onClick={() => setVenueIntakeDraft(venueProfileToIntake(venueProfile))} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>Edit</button>
+                  ) : (
+                    <div style={{ display: 'flex', gap: '6px' }}>
+                      <button className="hit44" onClick={() => setVenueIntakeDraft(null)} disabled={savingVenueIntake} style={{ padding: '4px 8px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>Cancel</button>
+                      <button className="hit44" disabled={savingVenueIntake} onClick={async () => {
+                        // The editor stays open on failure with every answer
+                        // still in it, and the toast is the server's own
+                        // sentence. Same contract as the Venue Information card
+                        // above, for the same reason: a save that silently
+                        // reverts on the next load is worse than a refusal.
+                        setSavingVenueIntake(true);
+                        try {
+                          const saved = await updateVenueProfile(venueIntakeDraft);
+                          setVenueProfile(saved);
+                          setVenueIntakeDraft(null);
+                          showToast('Saved.', 'success');
+                        } catch (e) {
+                          showToast(e?.message || "That didn't save. Try again.", 'error');
+                        } finally {
+                          setSavingVenueIntake(false);
+                        }
+                      }} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', cursor: savingVenueIntake ? 'wait' : 'pointer', opacity: savingVenueIntake ? 0.6 : 1 }}>{savingVenueIntake ? 'Saving' : 'Save'}</button>
+                    </div>
+                  )}
+                </div>
+
+                {/* What data we actually hold for this place. The sentence is
+                    the server's (venue_profiles corpus columns, worded once in
+                    services/venueCorpus.js) so it cannot drift into something
+                    softer here than it is there. */}
+                {venueProfile?.corpus_summary && (
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: 1.5, paddingBottom: '10px', borderBottom: `1px solid ${colors.cream}` }}>{venueProfile.corpus_summary}</p>
+                )}
+
+                {!venueIntakeDraft ? (
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                    Your capacity, service style, kitchen and last-call times, age policy, event nights and the notes you wrote about this place. Tap Edit to change any of it.
+                  </p>
+                ) : (
+                  <div>
+                    {renderVenueField({ dark: false, label: 'Type of venue', children: renderVenueChips({ dark: false, label: 'Category', options: venueCategories.map(c => ({ value: c, label: c })), value: venueIntakeDraft.category, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, category: v })) }) })}
+                    {renderVenueField({ dark: false, label: 'Description', children: (
+                      <textarea aria-label="Venue description" maxLength={2000} rows={3} value={venueIntakeDraft.description} onChange={(e) => setVenueIntakeDraft(d => ({ ...d, description: e.target.value }))} style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, fontSize: '16px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', resize: 'none', fontFamily: 'inherit' }} />
+                    ) })}
+                    {renderVenueField({ dark: false, label: 'Goals', children: renderVenueChips({ dark: false, label: 'Goals', options: venueGoals.map(g => ({ value: g, label: g })), value: venueIntakeDraft.goals, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, goals: v })), multi: true }) })}
+
+                    {renderVenueField({ dark: false, label: 'How many people fit', hint: 'Comfortably full, not the fire-code maximum.', children: renderVenueNumber({ dark: false, value: venueIntakeDraft.capacity, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, capacity: v })), min: 1, max: 20000, placeholder: '220', ariaLabel: 'Capacity', suffix: 'people' }) })}
+                    {renderVenueField({ dark: false, label: 'How people are served', children: renderVenueChips({ dark: false, label: 'Service style', options: venueServiceStyles, value: venueIntakeDraft.serviceStyle, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, serviceStyle: v })) }) })}
+                    {renderVenueField({ dark: false, label: 'Outdoor seating', children: renderVenueChips({
+                      dark: false, label: 'Outdoor seating',
+                      options: [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }],
+                      value: venueIntakeDraft.hasOutdoorSeating === true ? 'yes' : venueIntakeDraft.hasOutdoorSeating === false ? 'no' : '',
+                      onChange: (v) => setVenueIntakeDraft(d => ({ ...d, hasOutdoorSeating: v === 'yes' ? true : v === 'no' ? false : null })),
+                    }) })}
+
+                    {renderVenueField({ dark: false, label: 'Bookings', children: renderVenueChips({ dark: false, label: 'Reservation policy', options: venueReservationPolicies, value: venueIntakeDraft.reservationPolicy, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, reservationPolicy: v })) }) })}
+                    {renderVenueField({ dark: false, label: 'Biggest group you will seat without a booking', children: renderVenueNumber({ dark: false, value: venueIntakeDraft.largestWalkinGroup, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, largestWalkinGroup: v })), min: 1, max: 200, placeholder: '6', ariaLabel: 'Largest walk-in group', suffix: 'people' }) })}
+                    {renderVenueField({ dark: false, label: 'How long a group usually stays', children: renderVenueNumber({ dark: false, value: venueIntakeDraft.typicalDwellMinutes, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, typicalDwellMinutes: v })), min: 10, max: 600, placeholder: '90', ariaLabel: 'Typical visit length in minutes', suffix: 'minutes' }) })}
+                    {renderVenueField({ dark: false, label: 'Typical spend per person', children: renderVenueNumber({ dark: false, value: venueIntakeDraft.typicalSpendPerPerson, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, typicalSpendPerPerson: v })), min: 1, max: 1000, placeholder: '35', ariaLabel: 'Typical spend per person in dollars', suffix: 'dollars' }) })}
+
+                    {renderVenueField({ dark: false, label: 'Kitchen stops taking orders at', children: renderVenueTime({ dark: false, value: venueIntakeDraft.kitchenLastOrder, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, kitchenLastOrder: v })), ariaLabel: 'Kitchen last order' }) })}
+                    {renderVenueField({ dark: false, label: 'Last call at', children: renderVenueTime({ dark: false, value: venueIntakeDraft.lastCall, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, lastCall: v })), ariaLabel: 'Last call' }) })}
+                    {renderVenueField({ dark: false, label: 'Who you let in', children: renderVenueChips({ dark: false, label: 'Age policy', options: venueAgePolicies, value: venueIntakeDraft.agePolicy, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, agePolicy: v, ageRestrictedAfter: v === 'all_ages' ? '' : d.ageRestrictedAfter })) }) })}
+                    {venueIntakeDraft.agePolicy && venueIntakeDraft.agePolicy !== 'all_ages' && renderVenueField({ dark: false, label: 'From what time', hint: 'Leave blank if the rule applies all day.', children: renderVenueTime({ dark: false, value: venueIntakeDraft.ageRestrictedAfter, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, ageRestrictedAfter: v })), ariaLabel: 'Age restriction start time' }) })}
+
+                    {renderVenueField({ dark: false, label: 'Nights you run something', children: renderVenueChips({ dark: false, label: 'Event nights', options: venueWeekdays, value: venueIntakeDraft.eventNights, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, eventNights: v })), multi: true }) })}
+                    {venueIntakeDraft.eventNights.length > 0 && renderVenueField({ dark: false, label: 'What runs on those nights', children: (
+                      <input aria-label="What runs on those nights" maxLength={120} value={venueIntakeDraft.eventNote} onChange={(e) => setVenueIntakeDraft(d => ({ ...d, eventNote: e.target.value }))} placeholder="e.g. Trivia at 8" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, fontSize: '16px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
+                    ) })}
+                    {renderVenueField({ dark: false, label: 'Nights you think are your busiest', children: renderVenueChips({ dark: false, label: 'Busy nights', options: venueWeekdays, value: venueIntakeDraft.ownerBusyNights, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, ownerBusyNights: v })), multi: true }) })}
+                    {renderVenueField({ dark: false, label: 'The one night you want fuller', children: renderVenueChips({ dark: false, label: 'Night you want fuller', options: venueWeekdays, value: venueIntakeDraft.targetNight, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, targetNight: v })) }) })}
+
+                    {renderVenueField({ dark: false, label: `Within a short walk (pick up to ${VENUE_MAX_ANCHORS})`, children: renderVenueChips({ dark: false, label: 'Nearby anchors', options: venueAnchorTypes, value: venueIntakeDraft.anchorTypes, onChange: (v) => setVenueIntakeDraft(d => ({ ...d, anchorTypes: v })), multi: true, max: VENUE_MAX_ANCHORS }) })}
+                    {venueIntakeDraft.anchorTypes.length > 0 && renderVenueField({ dark: false, label: 'Name it', children: (
+                      <input aria-label="Nearby anchor detail" maxLength={200} value={venueIntakeDraft.anchorNote} onChange={(e) => setVenueIntakeDraft(d => ({ ...d, anchorNote: e.target.value }))} placeholder="e.g. Across from the arena" autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, fontSize: '16px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
+                    ) })}
+
+                    {renderVenueField({ dark: false, label: 'Anything a stranger would not guess', children: (
+                      <textarea aria-label="What a stranger would not guess" maxLength={1000} rows={4} value={venueIntakeDraft.quirks} onChange={(e) => setVenueIntakeDraft(d => ({ ...d, quirks: e.target.value }))} placeholder="e.g. Parking fills by seven." style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, fontSize: '16px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', resize: 'none', fontFamily: 'inherit' }} />
+                    ) })}
+                  </div>
+                )}
+              </div>
+
               {/* The Notifications panel used to sit here: three switches, one
                   offering to tell the owner when a flock books their venue, one
                   for new customer reviews, one for a weekly performance summary
@@ -17288,6 +17427,179 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const venueCategories = ['Bar / Nightclub', 'Restaurant', 'Cafe / Coffee', 'Lounge', 'Rooftop', 'Brewery / Winery', 'Event Space', 'Other'];
   const venueGoals = ['Increase foot traffic', 'Fill slow nights', 'Reach Gen Z audience', 'Promote events', 'Track crowd analytics', 'Offer deals & promos'];
 
+  // ── The fuller intake, option lists ────────────────────────────────────────
+  //
+  // VALUES MIRROR backend/validators/venueIntake.js EXACTLY. A dropdown that
+  // offers a value the server refuses is a form that 400s on submit, which is
+  // the same failure the maxLength mirroring on the older steps was added to
+  // prevent. backend/__tests__/venueIntake.test.js reads this file and fails if
+  // the two lists ever disagree, so keep the shape of these literals simple
+  // enough to parse: one array per constant, `value` first.
+  const venueServiceStyles = [
+    { value: 'seated_table', label: 'We seat people at tables' },
+    { value: 'counter_order', label: 'Order at the counter, sit anywhere' },
+    { value: 'bar_standing', label: 'Mostly standing, order at the bar' },
+    { value: 'mixed', label: 'A bit of both' },
+  ];
+  const venueReservationPolicies = [
+    { value: 'walk_in_only', label: 'Walk-ins only' },
+    { value: 'reservations_accepted', label: 'We take bookings, walk-ins fine' },
+    { value: 'reservations_required', label: 'Booking required' },
+  ];
+  const venueAgePolicies = [
+    { value: 'all_ages', label: 'All ages' },
+    { value: 'eighteen_plus', label: '18 and over' },
+    { value: 'twenty_one_plus', label: '21 and over' },
+  ];
+  const venueWeekdays = [
+    { value: 'monday', label: 'Mon' },
+    { value: 'tuesday', label: 'Tue' },
+    { value: 'wednesday', label: 'Wed' },
+    { value: 'thursday', label: 'Thu' },
+    { value: 'friday', label: 'Fri' },
+    { value: 'saturday', label: 'Sat' },
+    { value: 'sunday', label: 'Sun' },
+  ];
+  const venueAnchorTypes = [
+    { value: 'stadium_arena', label: 'Stadium or arena' },
+    { value: 'college_campus', label: 'College campus' },
+    { value: 'transit_hub', label: 'Train or bus station' },
+    { value: 'office_district', label: 'Offices' },
+    { value: 'theater_music_hall', label: 'Theater or music hall' },
+    { value: 'hotel_cluster', label: 'Hotels' },
+    { value: 'beach_boardwalk', label: 'Beach or boardwalk' },
+    { value: 'nightlife_strip', label: 'A nightlife strip' },
+    { value: 'highway_stop', label: 'A highway exit' },
+    { value: 'hospital', label: 'A hospital' },
+    { value: 'shopping_center', label: 'A shopping center' },
+  ];
+  const VENUE_MAX_ANCHORS = 6;
+
+  // Row -> editable draft. snake_case columns on the way in, camelCase body
+  // keys on the way out, and a null column becomes '' or [] so a controlled
+  // input never flips to uncontrolled halfway through an edit.
+  const venueProfileToIntake = (p) => ({
+    category: p?.category || '',
+    description: p?.description || '',
+    goals: Array.isArray(p?.goals) ? p.goals : [],
+    capacity: p?.capacity == null ? '' : String(p.capacity),
+    serviceStyle: p?.service_style || '',
+    hasOutdoorSeating: typeof p?.has_outdoor_seating === 'boolean' ? p.has_outdoor_seating : null,
+    reservationPolicy: p?.reservation_policy || '',
+    largestWalkinGroup: p?.largest_walkin_group == null ? '' : String(p.largest_walkin_group),
+    typicalDwellMinutes: p?.typical_dwell_minutes == null ? '' : String(p.typical_dwell_minutes),
+    typicalSpendPerPerson: p?.typical_spend_per_person == null ? '' : String(p.typical_spend_per_person),
+    kitchenLastOrder: p?.kitchen_last_order || '',
+    lastCall: p?.last_call || '',
+    agePolicy: p?.age_policy || '',
+    ageRestrictedAfter: p?.age_restricted_after || '',
+    eventNights: Array.isArray(p?.event_nights) ? p.event_nights : [],
+    eventNote: p?.event_note || '',
+    ownerBusyNights: Array.isArray(p?.owner_busy_nights) ? p.owner_busy_nights : [],
+    targetNight: p?.target_night || '',
+    anchorTypes: Array.isArray(p?.anchor_types) ? p.anchor_types : [],
+    anchorNote: p?.anchor_note || '',
+    quirks: p?.quirks || '',
+  });
+
+  // ── Intake field renderers ─────────────────────────────────────────────────
+  //
+  // PLAIN FUNCTIONS THAT RETURN JSX, called directly, exactly like the `steps`
+  // array below and like VenueNameStep before it. NOT components: a component
+  // defined inside App() is a new type on every render, so React unmounts and
+  // remounts it, and an input that remounts loses focus after the first
+  // keystroke. That is the bug this shape avoids, and it is why these are
+  // called `render*` and invoked with parentheses.
+  //
+  // Two tones, because the onboarding wizard is a dark screen with hardcoded
+  // colours and the settings tab uses the dashboard's theme variables.
+  const venueIntakeTone = (dark) => (dark ? {
+    label: '#f0ead8', hint: 'rgba(148,163,184,0.6)',
+    field: { backgroundColor: 'rgba(255,255,255,0.06)', border: '1.5px solid rgba(148,163,184,0.15)', color: 'white' },
+    chipOn: { border: '2px solid #f0ead8', backgroundColor: 'rgba(240,234,216,0.12)', color: '#f0ead8' },
+    chipOff: { border: '1.5px solid rgba(148,163,184,0.15)', backgroundColor: 'rgba(255,255,255,0.04)', color: 'rgba(148,163,184,0.7)' },
+  } : {
+    label: 'var(--text)', hint: 'var(--text-muted)',
+    field: { backgroundColor: 'var(--surface)', border: '1.5px solid var(--border)', color: 'var(--text)' },
+    chipOn: { border: '2px solid var(--navy)', backgroundColor: 'var(--navy-soft, rgba(26,39,68,0.08))', color: 'var(--navy)' },
+    chipOff: { border: '1.5px solid var(--border)', backgroundColor: 'transparent', color: 'var(--text-muted)' },
+  });
+
+  const renderVenueChips = ({ options, value, onChange, multi = false, max = null, dark = true, label }) => {
+    const t = venueIntakeTone(dark);
+    const selected = multi ? (value || []) : value;
+    const isOn = (v) => (multi ? selected.includes(v) : selected === v);
+    return (
+      <div role="group" aria-label={label} style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+        {options.map((opt) => {
+          const on = isOn(opt.value);
+          // A cap that silently ignores the click is a dead button. Disable the
+          // unselected chips once the cap is reached so the limit is visible
+          // before it is hit.
+          const capped = multi && max != null && !on && selected.length >= max;
+          return (
+            <button
+              className="hit44" key={opt.value} type="button" aria-pressed={on} disabled={capped}
+              onClick={() => {
+                if (multi) onChange(on ? selected.filter((s) => s !== opt.value) : [...selected, opt.value]);
+                else onChange(on ? '' : opt.value);
+              }}
+              style={{
+                padding: '10px 14px', borderRadius: '20px', fontSize: 'var(--t-label)', fontWeight: '600',
+                cursor: capped ? 'not-allowed' : 'pointer', opacity: capped ? 0.4 : 1, transition: 'all 0.15s',
+                ...(on ? t.chipOn : t.chipOff),
+              }}
+            >{opt.label}</button>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const renderVenueField = ({ label, hint, dark = true, children }) => {
+    const t = venueIntakeTone(dark);
+    return (
+      <div style={{ marginBottom: '18px' }}>
+        <div style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: t.label, marginBottom: hint ? '2px' : '8px' }}>{label}</div>
+        {hint && <div style={{ fontSize: 'var(--t-meta)', color: t.hint, marginBottom: '8px', lineHeight: 1.45 }}>{hint}</div>}
+        {children}
+      </div>
+    );
+  };
+
+  // type="number" with inputMode so phones show a keypad, and min/max mirroring
+  // backend/validators/venueIntake.js BOUNDS. The server still bounds it; this
+  // only means the owner finds out before the last step rather than after it.
+  const renderVenueNumber = ({ value, onChange, min, max, placeholder, ariaLabel, suffix, dark = true }) => {
+    const t = venueIntakeTone(dark);
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <input
+          type="number" inputMode="numeric" aria-label={ariaLabel} min={min} max={max}
+          value={value} placeholder={placeholder}
+          onChange={(e) => onChange(e.target.value)}
+          autoComplete="off" data-lpignore="true" data-form-type="other"
+          style={{ width: suffix ? '140px' : '100%', padding: '12px 14px', borderRadius: '12px', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', ...t.field }}
+        />
+        {suffix && <span style={{ fontSize: 'var(--t-label)', color: t.hint }}>{suffix}</span>}
+      </div>
+    );
+  };
+
+  // A native time input. SLOP-AUDIT §G6: touch-native pickers over stacked
+  // desktop dropdowns. It emits "HH:MM", which is exactly the shape the server
+  // stores, so there is no format to translate and no format to get wrong.
+  const renderVenueTime = ({ value, onChange, ariaLabel, dark = true }) => {
+    const t = venueIntakeTone(dark);
+    return (
+      <input
+        type="time" aria-label={ariaLabel} value={value || ''}
+        onChange={(e) => onChange(e.target.value)}
+        style={{ padding: '12px 14px', borderRadius: '12px', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', ...t.field }}
+      />
+    );
+  };
+
   // eslint-disable-next-line no-unused-vars
   const VenueNameStep = () => {
     const [query, setQuery] = useState(venueOnboardingData.businessName);
@@ -17377,24 +17689,64 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <p style={{ fontSize: 'var(--t-body)', color: 'rgba(148,163,184,0.7)', lineHeight: 1.5, maxWidth: '300px' }}>Let's set up your venue profile so you can start reaching customers and tracking performance.</p>
         </div>
       ),
-      // Step 1: Business name with Google Places autocomplete
+      // Step 1: pick the venue out of Google Places. THE PLACE ID IS THE POINT.
+      //
+      // This step used to accept a typed name and move on, and googlePlaceId
+      // was set only if the owner happened to tap a suggestion. That made the
+      // join key optional, and the join key is what everything downstream is
+      // keyed on: ml_venue_baselines and ml_venues (so, whether the crowd model
+      // can say anything at all about this venue), the venue badge, NFC taps,
+      // incoming flocks, and the one-owner-per-place claim check. A profile
+      // with no place id is a profile that can never receive any of it, and
+      // nothing in the old flow told the owner that.
+      //
+      // So the pick is now required, and canAdvance() below enforces it.
       () => (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
-          <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>What's your venue called?</h2>
-          <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>Search for your venue or type the name.</p>
+          <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>Find your venue</h2>
+          <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>Pick it from the list. That is how we match you to the crowd history we already hold for your address.</p>
+          {venueOnboardingData.googlePlaceId ? (
+            <div style={{ borderRadius: '14px', border: '1.5px solid rgba(240,234,216,0.35)', backgroundColor: 'rgba(240,234,216,0.08)', padding: '16px' }}>
+              <div style={{ fontSize: 'var(--t-body)', fontWeight: '700', color: '#f0ead8' }}>{venueOnboardingData.businessName}</div>
+              <div style={{ fontSize: 'var(--t-meta)', color: 'rgba(148,163,184,0.6)', marginTop: '2px' }}>{venueOnboardingData.location}</div>
+              <button className="hit44" type="button" onClick={() => {
+                setVenueOnboardingData(d => ({ ...d, googlePlaceId: '' }));
+                setVenueSearchQuery('');
+                setVenueSearchResults([]);
+                setVenueSearchState('idle');
+                setVenueSearchError('');
+              }} style={{ background: 'none', border: 'none', padding: '8px 0 0', color: 'rgba(148,163,184,0.75)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', textDecoration: 'underline' }}>Not this one</button>
+            </div>
+          ) : (
           <div style={{ position: 'relative' }}>
             <input aria-label="Venue name" maxLength={255} value={venueSearchQuery} onChange={(e) => {
               const val = e.target.value;
               setVenueSearchQuery(val);
               setVenueOnboardingData(d => ({ ...d, businessName: val }));
               if (venueSearchTimer.current) clearTimeout(venueSearchTimer.current);
-              if (val.length < 2) { setVenueSearchResults([]); return; }
+              if (val.length < 2) { setVenueSearchResults([]); setVenueSearchState('idle'); setVenueSearchError(''); return; }
+              setVenueSearchState('searching');
+              setVenueSearchError('');
+              // 300ms debounce, and it is a SPENDING control as much as a UX
+              // one: GET /api/venues/search is a paid Google Text Search behind
+              // backend/utils/placesBudget.js at 30 per user per hour. One call
+              // per keystroke would burn an owner's whole hourly allowance
+              // inside one venue name. The backend also caches each distinct
+              // query for five minutes, so backspacing costs nothing.
               venueSearchTimer.current = setTimeout(async () => {
                 try {
                   const loc = userLocation ? `${userLocation.lat},${userLocation.lng}` : null;
                   const data = await searchVenues(val, loc);
-                  setVenueSearchResults((data.venues || []).slice(0, 5));
-                } catch (e) { /* ignore */ }
+                  const found = (data.venues || []).slice(0, 5);
+                  setVenueSearchResults(found);
+                  setVenueSearchState(found.length > 0 ? 'idle' : 'none');
+                } catch (e) {
+                  // A throttle or an outage is not "your venue does not exist",
+                  // and it is not nothing either. Say which it was.
+                  setVenueSearchResults([]);
+                  setVenueSearchState('idle');
+                  setVenueSearchError(e?.message || 'Search is not responding. Try again in a moment.');
+                }
               }, 300);
             }}
             placeholder="e.g. The Blue Heron Bar"
@@ -17439,7 +17791,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 ))}
               </div>
             )}
+            {venueSearchError && (
+              <p role="alert" style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#fca5a5', margin: '10px 0 0', lineHeight: 1.5 }}>{venueSearchError}</p>
+            )}
+            {venueSearchState === 'searching' && (
+              <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(148,163,184,0.6)', margin: '10px 0 0' }}>Looking...</p>
+            )}
+            {venueSearchState === 'none' && !venueSearchError && (
+              <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'rgba(148,163,184,0.75)', margin: '10px 0 0', lineHeight: 1.5 }}>
+                No match. Flock links a venue to its Google Maps listing, so try the name exactly as it appears there. If your business has no listing yet, create one first, then come back. Stuck? <a href="mailto:support@flockcorp.com" style={{ color: '#f0ead8' }}>support@flockcorp.com</a>
+              </p>
+            )}
           </div>
+          )}
         </div>
       ),
       // Step 2: Category
@@ -17495,15 +17859,168 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <textarea aria-label="Venue description" maxLength={2000} value={venueOnboardingData.description} onChange={(e) => setVenueOnboardingData(d => ({ ...d, description: e.target.value }))} placeholder="e.g. Craft cocktail bar with live jazz on weekends" rows={3} autoComplete="off" data-lpignore="true" data-form-type="other" style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: 'var(--t-body)', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white', resize: 'none', fontFamily: 'inherit' }} autoFocus />
         </div>
       ),
+      // ── Steps 6 to 11: the things only the owner knows ──────────────────────
+      //
+      // The crowd model is blind to venue identity on purpose (place id and
+      // coordinates are on the forbidden-features list, so two bars of the same
+      // price and rating band get the same prediction). Everything below is
+      // context that no dataset holds and that turns a category-level number
+      // into a sentence about THIS room.
+      //
+      // Every one of these steps is skippable, and the Skip button is on screen
+      // rather than implied. A skipped answer means we stay quiet on that
+      // subject; a guessed one would read as measurement.
+
+      // Step 6: the room
+      () => (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
+          <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>How big is the room?</h2>
+          <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px', lineHeight: 1.5 }}>We measure how busy you are on a 0 to 100 scale. Your numbers turn that into people.</p>
+          {renderVenueField({
+            label: 'How many people fit', hint: 'Comfortably full, not the fire-code maximum.',
+            children: renderVenueNumber({ value: venueOnboardingData.capacity, onChange: (v) => setVenueOnboardingData(d => ({ ...d, capacity: v })), min: 1, max: 20000, placeholder: '220', ariaLabel: 'Capacity', suffix: 'people' }),
+          })}
+          {renderVenueField({
+            label: 'How people are served',
+            children: renderVenueChips({ label: 'Service style', options: venueServiceStyles, value: venueOnboardingData.serviceStyle, onChange: (v) => setVenueOnboardingData(d => ({ ...d, serviceStyle: v })) }),
+          })}
+          {renderVenueField({
+            label: 'Outdoor seating', hint: 'We already read the forecast. A patio changes what a warm Thursday is worth to you.',
+            children: renderVenueChips({
+              label: 'Outdoor seating',
+              options: [{ value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }],
+              value: venueOnboardingData.hasOutdoorSeating === true ? 'yes' : venueOnboardingData.hasOutdoorSeating === false ? 'no' : '',
+              onChange: (v) => setVenueOnboardingData(d => ({ ...d, hasOutdoorSeating: v === 'yes' ? true : v === 'no' ? false : null })),
+            }),
+          })}
+        </div>
+      ),
+      // Step 7: groups, which is the only thing this app plans
+      () => (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
+          <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>What happens when a group shows up?</h2>
+          <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px', lineHeight: 1.5 }}>Flock plans groups, not solo visits. This is what we get asked before anyone leaves the house.</p>
+          {renderVenueField({
+            label: 'Bookings',
+            children: renderVenueChips({ label: 'Reservation policy', options: venueReservationPolicies, value: venueOnboardingData.reservationPolicy, onChange: (v) => setVenueOnboardingData(d => ({ ...d, reservationPolicy: v })) }),
+          })}
+          {renderVenueField({
+            label: 'Biggest group you will seat without a booking',
+            children: renderVenueNumber({ value: venueOnboardingData.largestWalkinGroup, onChange: (v) => setVenueOnboardingData(d => ({ ...d, largestWalkinGroup: v })), min: 1, max: 200, placeholder: '6', ariaLabel: 'Largest walk-in group', suffix: 'people' }),
+          })}
+          {renderVenueField({
+            label: 'How long a group usually stays', hint: 'Roughly. It is what tells someone waiting when the next table frees up.',
+            children: renderVenueNumber({ value: venueOnboardingData.typicalDwellMinutes, onChange: (v) => setVenueOnboardingData(d => ({ ...d, typicalDwellMinutes: v })), min: 10, max: 600, placeholder: '90', ariaLabel: 'Typical visit length in minutes', suffix: 'minutes' }),
+          })}
+          {renderVenueField({
+            label: 'Typical spend per person', hint: 'Groups in Flock often set a budget before they pick a place.',
+            children: renderVenueNumber({ value: venueOnboardingData.typicalSpendPerPerson, onChange: (v) => setVenueOnboardingData(d => ({ ...d, typicalSpendPerPerson: v })), min: 1, max: 1000, placeholder: '35', ariaLabel: 'Typical spend per person in dollars', suffix: 'dollars' }),
+          })}
+        </div>
+      ),
+      // Step 8: the clock the front door does not show
+      () => (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
+          <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>What closes before you do?</h2>
+          <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px', lineHeight: 1.5 }}>Google shows your opening hours. It does not show when the kitchen stops or when the door tightens up.</p>
+          {renderVenueField({
+            label: 'Kitchen stops taking orders at',
+            children: renderVenueTime({ value: venueOnboardingData.kitchenLastOrder, onChange: (v) => setVenueOnboardingData(d => ({ ...d, kitchenLastOrder: v })), ariaLabel: 'Kitchen last order' }),
+          })}
+          {renderVenueField({
+            label: 'Last call at', hint: 'Leave blank if you do not serve alcohol.',
+            children: renderVenueTime({ value: venueOnboardingData.lastCall, onChange: (v) => setVenueOnboardingData(d => ({ ...d, lastCall: v })), ariaLabel: 'Last call' }),
+          })}
+          {renderVenueField({
+            label: 'Who you let in',
+            children: renderVenueChips({ label: 'Age policy', options: venueAgePolicies, value: venueOnboardingData.agePolicy, onChange: (v) => setVenueOnboardingData(d => ({ ...d, agePolicy: v, ageRestrictedAfter: v === 'all_ages' ? '' : d.ageRestrictedAfter })) }),
+          })}
+          {venueOnboardingData.agePolicy && venueOnboardingData.agePolicy !== 'all_ages' && renderVenueField({
+            label: 'From what time', hint: 'Leave blank if the rule applies all day. Otherwise we can tell a group with a younger friend to come earlier instead of turning up and being refused.',
+            children: renderVenueTime({ value: venueOnboardingData.ageRestrictedAfter, onChange: (v) => setVenueOnboardingData(d => ({ ...d, ageRestrictedAfter: v })), ariaLabel: 'Age restriction start time' }),
+          })}
+        </div>
+      ),
+      // Step 9: the week
+      () => (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
+          <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>How does your week go?</h2>
+          <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px', lineHeight: 1.5 }}>We hold crowd history for a lot of venues. Where your answer and the history disagree is the useful part.</p>
+          {renderVenueField({
+            label: 'Nights you run something', hint: 'Trivia, live music, a league, a weekly special.',
+            children: renderVenueChips({ label: 'Event nights', options: venueWeekdays, value: venueOnboardingData.eventNights, onChange: (v) => setVenueOnboardingData(d => ({ ...d, eventNights: v })), multi: true }),
+          })}
+          {venueOnboardingData.eventNights.length > 0 && renderVenueField({
+            label: 'What runs on those nights',
+            children: (
+              <input aria-label="What runs on those nights" maxLength={120} value={venueOnboardingData.eventNote}
+                onChange={(e) => setVenueOnboardingData(d => ({ ...d, eventNote: e.target.value }))}
+                placeholder="e.g. Trivia at 8, live band after 10"
+                autoComplete="off" data-lpignore="true" data-form-type="other"
+                style={{ width: '100%', padding: '12px 14px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} />
+            ),
+          })}
+          {renderVenueField({
+            label: 'Nights you think are your busiest',
+            children: renderVenueChips({ label: 'Busy nights', options: venueWeekdays, value: venueOnboardingData.ownerBusyNights, onChange: (v) => setVenueOnboardingData(d => ({ ...d, ownerBusyNights: v })), multi: true }),
+          })}
+          {renderVenueField({
+            label: 'The one night you want fuller',
+            children: renderVenueChips({ label: 'Night you want fuller', options: venueWeekdays, value: venueOnboardingData.targetNight, onChange: (v) => setVenueOnboardingData(d => ({ ...d, targetNight: v })) }),
+          })}
+        </div>
+      ),
+      // Step 10: the street
+      () => (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
+          <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>What is near you?</h2>
+          <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px', lineHeight: 1.5 }}>Our model is not allowed to know where you are, on purpose. So a stadium across the road is invisible to it unless you say so.</p>
+          {renderVenueField({
+            label: `Within a short walk (pick up to ${VENUE_MAX_ANCHORS})`,
+            children: renderVenueChips({ label: 'Nearby anchors', options: venueAnchorTypes, value: venueOnboardingData.anchorTypes, onChange: (v) => setVenueOnboardingData(d => ({ ...d, anchorTypes: v })), multi: true, max: VENUE_MAX_ANCHORS }),
+          })}
+          {venueOnboardingData.anchorTypes.length > 0 && renderVenueField({
+            label: 'Name it', hint: 'The name is what lets us look up a schedule.',
+            children: (
+              <input aria-label="Nearby anchor detail" maxLength={200} value={venueOnboardingData.anchorNote}
+                onChange={(e) => setVenueOnboardingData(d => ({ ...d, anchorNote: e.target.value }))}
+                placeholder="e.g. Across from Lincoln Financial Field"
+                autoComplete="off" data-lpignore="true" data-form-type="other"
+                style={{ width: '100%', padding: '12px 14px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} />
+            ),
+          })}
+        </div>
+      ),
+      // Step 11: the catch-all, which is where the best answers come from
+      () => (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '24px' }}>
+          <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>Anything a stranger would not guess?</h2>
+          <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 20px', lineHeight: 1.5 }}>The back room being quiet when the front is packed. Parking that fills by seven. Cash only after midnight. Write it how you would say it.</p>
+          <textarea aria-label="What a stranger would not guess" maxLength={1000} rows={6}
+            value={venueOnboardingData.quirks}
+            onChange={(e) => setVenueOnboardingData(d => ({ ...d, quirks: e.target.value }))}
+            placeholder="e.g. The patio holds 40 more but we close it when it drops below 55."
+            autoComplete="off" data-lpignore="true" data-form-type="other"
+            style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: 'var(--t-body)', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white', resize: 'none', fontFamily: 'inherit' }} autoFocus />
+          <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(148,163,184,0.5)', margin: '8px 0 0', textAlign: 'right' }}>{venueOnboardingData.quirks.length} / 1000</p>
+        </div>
+      ),
     ];
+
+    // Steps whose answers are optional. They get a visible Skip (SLOP-AUDIT
+    // §G10) rather than relying on the owner guessing that Continue works on an
+    // empty screen. Index 5 is the description, 6 to 11 are the intake steps.
+    const skippableSteps = new Set([5, 6, 7, 8, 9, 10, 11]);
 
     const canAdvance = () => {
       if (venueOnboardingStep === 0) return true;
-      if (venueOnboardingStep === 1) return venueOnboardingData.businessName.trim().length > 0;
+      // The place id, not the typed name. See the note on step 1: a profile
+      // with no place id can never be matched to crowd history, claimed,
+      // badged, or reached by an NFC tap, and the old check let one through.
+      if (venueOnboardingStep === 1) return !!venueOnboardingData.googlePlaceId;
       if (venueOnboardingStep === 2) return venueOnboardingData.category !== '';
       if (venueOnboardingStep === 3) return venueOnboardingData.location.trim().length > 0;
       if (venueOnboardingStep === 4) return venueOnboardingData.goals.length > 0;
-      if (venueOnboardingStep === 5) return true; // description is optional
       return true;
     };
 
@@ -17541,9 +18058,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div key={i} style={{ flex: 1, height: '3px', borderRadius: '2px', backgroundColor: i <= venueOnboardingStep ? '#f0ead8' : 'rgba(148,163,184,0.15)', transition: 'background-color 0.3s' }} />
             ))}
           </div>
-          {venueOnboardingStep > 0 && (
-            <button className="hit44" onClick={() => setVenueOnboardingStep(s => s - 1)} style={{ background: 'none', border: 'none', color: 'rgba(148,163,184,0.6)', fontSize: 'var(--t-label)', cursor: 'pointer', padding: '8px 0', fontWeight: '500' }}>Back</button>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            {venueOnboardingStep > 0 ? (
+              <button className="hit44" onClick={() => setVenueOnboardingStep(s => s - 1)} style={{ background: 'none', border: 'none', color: 'rgba(148,163,184,0.6)', fontSize: 'var(--t-label)', cursor: 'pointer', padding: '8px 0', fontWeight: '500' }}>Back</button>
+            ) : <span />}
+            {/* Visible skip on every optional step. The owner can fill any of
+                these in later from Settings, and saying so here is what stops
+                the longer form reading as a wall. */}
+            {skippableSteps.has(venueOnboardingStep) && venueOnboardingStep < steps.length - 1 && (
+              <button className="hit44" onClick={() => setVenueOnboardingStep(s => s + 1)} style={{ background: 'none', border: 'none', color: 'rgba(148,163,184,0.6)', fontSize: 'var(--t-label)', cursor: 'pointer', padding: '8px 0', fontWeight: '500' }}>Skip</button>
+            )}
+          </div>
         </div>
 
         {/* Step content */}
