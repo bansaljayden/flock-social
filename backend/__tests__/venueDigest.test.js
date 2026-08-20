@@ -715,3 +715,59 @@ test('a header value carrying a CRLF cannot smuggle a second header into the mes
   assert.strictEqual(out['List-Unsubscribe'], '<https://api.example.com/x> Bcc: attacker@example.com');
   assert.strictEqual(safeHeaders(undefined), null);
 });
+
+// ============================================================================
+// THE ROUTER HAS TO BE REACHABLE, AND EVERY TEST ABOVE MOUNTS IT ON A BARE APP.
+//
+// Security round 26 found the whole file dead in the product. server.js mounts
+// two routers on the bare `/api` prefix — routes/moderation.js and
+// routes/messages.js — and both call `router.use(authenticate)`, so they answer
+// EVERY unauthenticated /api/* request 401 before any router registered after
+// them runs. `/api/venue-digest` was registered after them.
+//
+// The measured effect on the live preview stack, before the fix:
+//
+//   GET  /api/venue-digest/opt-out?token=<valid>   ->  401 {"error":"No token provided"}
+//   POST /api/venue-digest/opt-out?token=<valid>   ->  401 {"error":"No token provided"}
+//   ... and with an unrelated venue owner's session Bearer attached, the same
+//   request rendered the page perfectly. So the one authorisation this router
+//   is built around — a signed, purpose-labelled token in the query string,
+//   held by a recipient who by construction has no Flock session in the mail
+//   client fetching it — was the one thing that could not get in.
+//
+// That is the confirm page not rendering, RFC 8058 one-click unsubscribe
+// failing for Gmail and Apple Mail (the deliverability signal this file's last
+// test exists to protect), and the CAN-SPAM path off the list being "sign in to
+// the dashboard".
+//
+// Every test above mounts routes/venueDigest.js on its own express app, which
+// is why none of them could see it. This one reads server.js instead, and pins
+// the ONE property those tests cannot: the mount is registered before the first
+// bare-/api catch-all. Source text is compared by index into the whole file
+// rather than by line, so it does not care how this checkout ends its lines
+// (core.autocrlf=true; commit 19039ee is the last test that got that wrong).
+// ============================================================================
+test('server.js mounts /api/venue-digest ahead of the bare /api catch-alls, or the emailed link 401s', () => {
+  const src = fs.readFileSync(require.resolve('../server.js'), 'utf8');
+
+  const mount = src.indexOf("app.use('/api/venue-digest'");
+  assert.notStrictEqual(mount, -1, 'server.js does not mount routes/venueDigest.js at all');
+  assert.strictEqual(
+    src.indexOf("app.use('/api/venue-digest'", mount + 1), -1,
+    'two mounts for /api/venue-digest — one of them is unreachable'
+  );
+
+  // The catch-alls: `app.use('/api', ...)` with nothing after the prefix.
+  const catchAll = /app\.use\('\/api',/g;
+  const positions = [];
+  let m;
+  while ((m = catchAll.exec(src)) !== null) positions.push(m.index);
+  assert.ok(positions.length >= 1, 'expected at least one bare /api catch-all mount in server.js');
+
+  assert.ok(
+    mount < Math.min(...positions),
+    'routes/venueDigest.js authenticates with a signed query-string token and NO JWT, so it must be '
+    + 'mounted before the bare /api catch-alls. Mounted after them, moderation.js\'s router.use(authenticate) '
+    + 'answers every emailed unsubscribe link 401 "No token provided" and the router never runs.'
+  );
+});
