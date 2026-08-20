@@ -207,8 +207,16 @@ function hour12(h) {
   return `${display} ${period}`;
 }
 
+// TOTAL, because a NaN band is a published NaN. Number(undefined) is NaN and
+// NaN survives every arithmetic step below, so an unreadable hour used to come
+// out as { from: NaN, to: NaN }, which JSON.stringify writes as null in the
+// payload and hour12 renders as "NaN AM to NaN AM" in the owner's sentence.
+// Callers get null here and are expected to refuse rather than publish a band
+// nobody can read; see buildCohortSameNight.
 function bandFor(hour) {
-  const h = ((Number(hour) % 24) + 24) % 24;
+  const raw = Number(hour);
+  if (!Number.isFinite(raw)) return null;
+  const h = ((raw % 24) + 24) % 24;
   const from = Math.floor(h / BAND_HOURS) * BAND_HOURS;
   return { from, to: from + BAND_HOURS - 1 };
 }
@@ -546,8 +554,24 @@ async function buildCohortSameNight(ctx, { now = new Date() } = {}) {
     })];
   }
 
+  // THE NIGHT AND THE HOUR HAVE TO BE READABLE BEFORE ANYTHING IS SAID ABOUT
+  // THEM. Both come out of a DATE and an EXTRACT, so in practice they always
+  // are; the guard is here because the failure was silent and owner-visible
+  // rather than loud. weekdayOf returns null for an unparseable date and
+  // WEEKDAY_NAMES[null] is undefined, which printed as "posted readings for
+  // 9 PM to 11 PM that undefined"; bandFor returns null for an unreadable hour,
+  // which printed as "NaN AM to NaN AM" and put a NaN in the payload. A cohort
+  // sentence we cannot date is one we do not publish.
   const band = bandFor(own.hour);
-  const weekday = WEEKDAY_NAMES[weekdayOf(own.night)];
+  const dow = weekdayOf(own.night);
+  const weekday = dow == null ? null : WEEKDAY_NAMES[dow];
+  if (!band || !weekday) {
+    return [facts.makeRefusal({
+      id: 'refuse_unreadable_night',
+      reason: 'We could not read the day and hour of your own last reading, so there is no night to compare and nothing we would state about one.',
+      whatWouldUnlock: 'A fresh reading from the busy slider on your dashboard. If this keeps happening, tell us and we will look at the record on our side.',
+    })];
+  }
   const cityName = cityWords(key.city);
   const plural = categoryWords(key.category);
   const window = `${hour12(band.from)} to ${hour12(band.to)}`;
@@ -591,7 +615,7 @@ async function buildCohortSameNight(ctx, { now = new Date() } = {}) {
   }));
 
   const typical = await cohortBandTypical({
-    city: key.city, category: key.category, day: weekdayOf(own.night), band,
+    city: key.city, category: key.category, day: dow, band,
   });
   if (typical) {
     out.push(facts.makeFact({
