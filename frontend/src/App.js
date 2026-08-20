@@ -2833,13 +2833,13 @@ function getGroupAdmission(crowdScore, partySize, venue, clock) {
   // crowdEngine.estimateCapacity, which tests `night_club` BEFORE `isBarLike`
   // and so publishes nightclub capacity for the same venue. That is a published
   // number and a backend file, outside this function.
-  if (category === undefined && has('bar', 'pub', 'sports_bar', 'wine_bar', 'cocktail_bar',
+  else if (has('bar', 'pub', 'sports_bar', 'wine_bar', 'cocktail_bar',
     'beer_garden', 'brewery', 'winery', 'distillery', 'taproom')) {
     category = 'bar';
     perPersonImpact = 1.5;
   }
   // Entertainment — moderate impact
-  else if (category === undefined && has('arcade', 'game_center', 'trampoline_park', 'laser_tag',
+  else if (has('arcade', 'game_center', 'trampoline_park', 'laser_tag',
     'karaoke', 'billiard_hall', 'hookah_bar', 'lounge',
     'dance_club', 'night_club', 'batting_cage', 'rock_climbing_gym')) {
     category = 'entertainment';
@@ -10906,7 +10906,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </div>
                     </>
                   ) : (() => {
-                    const admission = getGroupAdmission(score, partySize, activeVenue);
+                    // The score and the hour, together, or the verdict is about
+                    // an hour nobody is looking at. `score` is the Now bar, so
+                    // the hour it belongs to is the venue's own current hour —
+                    // nowHour/nowDay, the same pair the chart labels its bars
+                    // with, which fall back to the phone only where the SERVER
+                    // fell back (venueClock.local === false). Anything that puts
+                    // a different bar on this card passes that bar's score and
+                    // that bar's hour here as one pair.
+                    const admission = getGroupAdmission(score, partySize, activeVenue, { hour: nowHour, day: nowDay });
                     if (!admission) return null;
                     return (
                       <>
