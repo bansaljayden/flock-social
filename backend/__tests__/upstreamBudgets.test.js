@@ -277,13 +277,53 @@ test('an unknown upstream fails closed instead of silently having no deadline', 
   assert.throws(() => upstreamSignal(undefined), /unknown upstream/);
 });
 
+// THE ONE DEADLINE ALLOWED PAST THE CEILING, and why it is a named exception
+// rather than a raised ceiling. "Longer than any client will wait" is true of
+// every surface a person browses. It is not true of Roost, where the owner has
+// typed a question into a box and is watching for the answer, and where the
+// model is a reasoning one: measured 2026-08-20, an ordinary advice question
+// spends about nine hundred thinking tokens before it writes a word and a hard
+// one nearly two thousand, which put real questions past twelve seconds and
+// returned a refusal that blamed itself for being busy.
+//
+// Listing it here rather than relaxing the rule keeps the cost visible: this
+// key parks an Express connection and a pg pool slot for up to half a minute,
+// it is affordable only because the surface is Pro-gated and metered at ten
+// questions an hour per account, and adding a second entry to this set should
+// be as uncomfortable as adding the first.
+const LONG_DEADLINE_EXCEPTIONS = new Set(['geminiAdvisor']);
+const LONG_DEADLINE_CEILING_MS = 30000;
+
 test('every declared timeout is a sane positive number and the table is frozen', () => {
   for (const [kind, ms] of Object.entries(UPSTREAM_TIMEOUT_MS)) {
     assert.ok(Number.isInteger(ms) && ms > 0, `${kind} must be a positive integer`);
-    assert.ok(ms <= 15000, `${kind} at ${ms}ms is longer than any client will wait`);
+    const ceiling = LONG_DEADLINE_EXCEPTIONS.has(kind) ? LONG_DEADLINE_CEILING_MS : 15000;
+    assert.ok(ms <= ceiling, `${kind} at ${ms}ms is longer than any client will wait`);
     assert.ok(ms >= 3000, `${kind} at ${ms}ms will abort healthy calls (and still be billed for them)`);
   }
   assert.ok(Object.isFrozen(UPSTREAM_TIMEOUT_MS), 'a mutable timeout table can be edited at runtime');
+});
+
+test('the long deadline is reachable ONLY from the advisor, never from a browsing surface', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const base = path.resolve(__dirname, '..');
+  const callers = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      // The suite itself names the key in this very assertion.
+      if (entry.name === 'node_modules' || entry.name === '__tests__' || entry.name.startsWith('.')) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) { walk(full); continue; }
+      if (!entry.name.endsWith('.js')) continue;
+      if (fs.readFileSync(full, 'utf8').includes("upstreamSignal('geminiAdvisor')")) {
+        callers.push(path.relative(base, full).split(path.sep).join('/'));
+      }
+    }
+  };
+  walk(base);
+  assert.deepStrictEqual(callers.sort(), ['services/advisorFreeText.js', 'services/advisorPhrasing.js'],
+    'Birdie and every browsing surface stay on the twelve second budget');
 });
 
 test('a fresh signal is produced per call and starts unaborted', () => {

@@ -29,20 +29,23 @@
 // worth keeping intact and because the typed path needs its own rate limiter,
 // its own daily ceiling, and its own flag.
 //
-// FLAGS. ADVISOR_PHRASING_ENABLED decides WORDING on the chip path: off means
-// the deterministic template twin serves, carrying every number, so chips work
-// with zero LLM calls. ADVISOR_FREETEXT_ENABLED is separate and also default
-// OFF, because free text is not a wording choice: there is no template that
-// answers a question nobody wrote a template for, so with the flag off (or the
-// model unreachable) the typed field is not offered and the endpoint declines
-// in plain words rather than half working.
+// FLAGS, BOTH DEFAULT ON since 2026-08-20. ADVISOR_PHRASING_ENABLED decides
+// WORDING on the chip path: off means the deterministic template twin serves,
+// carrying every number, so chips still work with zero LLM calls.
+// ADVISOR_FREETEXT_ENABLED is separate, because free text is not a wording
+// choice: there is no template that answers a question nobody wrote a template
+// for, so with that flag off (or the model unreachable) the endpoint declines
+// in plain words rather than half working, and /questions reports freeText
+// false so the client can say so where the field is instead of hiding it.
+// Both shipped default OFF and both stayed dark on every deploy, which is how
+// a built, tested, documented feature reached its owner as an absence.
 //
 // GATES, in order: authenticate, then requireVenueTier('pro') (grounding doc
 // section 5: Pro is the advisor's home; with VENUE_BILLING_ENABLED unset the
 // gate is a no-op and every claimed venue sees it, the correct pilot
 // posture). ADVISOR_PHRASING_ENABLED then decides only WORDING: off means the
-// deterministic template twin serves, so this surface works with zero LLM
-// calls from day one.
+// deterministic template twin serves, so this surface still works with zero
+// LLM calls if the flag is ever turned back off.
 //
 // NO WRITE PATH, by design and by test. The advisor reads; it cannot post
 // promotions, edit the profile, or touch the slider. An advisor that can act
@@ -127,18 +130,38 @@ const INTENT_PLANS = {
   // The week-ahead builder walks days in order from the venue's own today, so
   // its first entry (fact or refusal) IS tonight. Street facts for the same
   // date ride along.
+  // ONE FACT IS NOT AN OUTLOOK. This plan used to hand over today's peak plus
+  // whatever street facts carried today's exact date, and on most days that is
+  // the peak alone: the weather feed starts at tomorrow, and the events fact
+  // for a quiet street is `no_listed_events`, which carries no date at all and
+  // so was filtered out by the very filter meant to keep other days out. The
+  // owner asked how today looks and read one sentence, sitting under a screen
+  // of cards that each carry three. Undated street facts are about the street
+  // NOW and belong here; dated ones are still held to today.
   tonight_outlook: async (b) => {
     const week = await b.week();
     const tonight = week.slice(0, 1);
     const date = tonight.length ? entryDate(tonight[0]) : null;
-    const street = date ? (await b.around()).filter((e) => entryDate(e) === date) : [];
+    const around = await b.around();
+    const street = around.filter((e) => {
+      const d = entryDate(e);
+      return d === null || d === date;
+    });
     return [...tonight, ...street];
   },
   peak_hours: (b) => b.week(),
+  // A REFUSAL CARRIES NO DATE, so a date filter deletes it. An out-of-corpus
+  // cafe asking how Friday looks got the generic "nothing we track at your
+  // venue grounds it so far", while the same venue asking about its peaks got
+  // the real corpus refusal naming what is missing and how to fill it in: the
+  // corpus gate's refusal has no day attached, so this filter dropped it and
+  // the block arrived empty. Undated entries are kept when they are refusals,
+  // which is the only kind of undated entry the week builder emits.
   weekend_outlook: async (b) => {
     const week = (await b.week()).filter((e) => {
       const d = entryDate(e);
-      return d !== null && isWeekendDate(d);
+      if (d === null) return advisorFacts.isRefusal(e);
+      return isWeekendDate(d);
     });
     // Around-you weather facts are weekend-only already; keep dated street
     // entries that fall on the weekend, plus the no-events line if present.
@@ -151,12 +174,33 @@ const INTENT_PLANS = {
   // The two quietest projected evenings: an ordering of existing peak facts,
   // lowest first. Refused days cannot be ranked and are left out unless
   // nothing at all was scored.
+  // THE FACTS MUST SAY WHICH END OF THE WEEK THEY ARE. These are peak facts,
+  // shaped exactly like the ones tonight_outlook and weekend_outlook hand over,
+  // and the only thing that made them the QUIET days was the sort above. Asked
+  // "which nights are quiet for us", the phrasing model received two ordinary
+  // peak facts and wrote "the forecast estimates your busier stretches on
+  // Friday and Saturday", which is the opposite of the question and reads as a
+  // confident answer. A note is the block's own channel for exactly this (the
+  // system prompt, section 2d: a note is a fact about the fact), so the sort
+  // now travels with the facts instead of being lost the moment they leave.
+  // Copied rather than mutated: the builders are memoised per request and the
+  // same peak fact is served to other plans in the same breath.
   quiet_nights: async (b) => {
     const week = await b.week();
     const scored = week
       .filter((e) => !advisorFacts.isRefusal(e) && e.value && Number.isFinite(Number(e.value.peakScore)))
       .sort((a, z) => Number(a.value.peakScore) - Number(z.value.peakScore));
-    return scored.length ? scored.slice(0, 2) : week;
+    if (!scored.length) return week;
+    const quietest = scored.slice(0, 2);
+    return quietest.map((e, i) => ({
+      ...e,
+      note: [
+        e.note,
+        i === 0
+          ? 'This is the LOWEST projected day in the week ahead. It is the quiet end of this venue\'s week, not a busy day.'
+          : 'This is the second lowest projected day in the week ahead. It is the quiet end of this venue\'s week, not a busy day.',
+      ].filter(Boolean).join(' '),
+    }));
   },
   // "How did we just do." The most-asked question in the category, and the one
   // chip that returns a VERDICT rather than a row of numbers: the venue's own
@@ -195,7 +239,22 @@ const INTENT_PLANS = {
     const readingDates = new Set(facts.filter((e) => e.id.startsWith('owner_reading_')).map(entryDate));
     const servedDates = new Set(facts.filter((e) => e.id.startsWith('served_')).map(entryDate));
     const paired = [...readingDates].filter((d) => servedDates.has(d));
-    if (!paired.length) return entries;
+    // NO PAIRED DAY MEANS NO COMPARISON EXISTS, and returning the readings on
+    // their own let the answer read like one. A live answer to "how do my
+    // readings compare to what you showed people" came back as a list of six
+    // readings and never mentioned that the other side of the comparison was
+    // absent, which is a half answer wearing a whole answer's clothes. The
+    // honest output is a refusal that names which half is missing, and the
+    // unlock path is the readings themselves, which is what pairs the days.
+    if (!paired.length) {
+      return [advisorFacts.makeRefusal({
+        id: 'refuse_readings_vs_estimates',
+        reason: readingDates.size
+          ? 'We have your own readings, but not one of those days is a day Flock also served a score for your venue, so there is nothing to hold them against.'
+          : 'This needs both sides: your own readings for a day, and what Flock served people who looked you up that same day. We have neither yet.',
+        whatWouldUnlock: 'Post a reading on a day people are looking your venue up in Flock. The comparison fills in the first time both land on the same day.',
+      })];
+    }
     return facts.filter((e) => paired.includes(entryDate(e)));
   },
   kitchen_vs_peak: async (b) => (await b.listing()).filter((e) => /kitchen/.test(e.id)),
@@ -213,6 +272,10 @@ const INTENT_PLANS = {
     const checked = p.corpus_checked_at ? String(p.corpus_checked_at).slice(0, 10) : null;
     return [advisorFacts.makeFact({
       id: 'corpus_status',
+      // `status` is a column value ('baselines'), and it used to be substituted
+      // into prose as one: "your Google profile's pattern is recorded as
+      // baselines". advisorPhrasing's enum vocabulary now renders it, and the
+      // key is named so the date part renders as a date too.
       value: { status: p.corpus_status, baselineRows: rows, checkedAt: checked },
       source: 'google_baseline',
       asOf: checked || advisorFacts.CORPUS_AS_OF,

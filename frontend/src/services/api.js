@@ -630,8 +630,10 @@ export async function askAdvisor(intentId) {
 // The typed path. One question, answered as exactly one of three things, and
 // the response says which: a grounded answer built from this venue's facts, a
 // labeled piece of general operating advice, or a refusal naming what is
-// missing. Behind ADVISOR_FREETEXT_ENABLED on the server, which is why the
-// component asks /questions whether to render the field at all.
+// missing. ADVISOR_FREETEXT_ENABLED gates it on the server and defaults ON, so
+// /questions reports freeText true on an ordinary deploy; the component still
+// asks, because the answer decides whether the field it always draws is live or
+// drawn quiet with the reason under it.
 export async function askAdvisorQuestion(question) {
   return request('/api/venue/advisor/question', {
     method: 'POST',

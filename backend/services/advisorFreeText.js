@@ -72,6 +72,7 @@ const { upstreamSignal } = require('../utils/upstream');
 
 const {
   getGenAI, isModelNotFound, noteModelNotFound, responseText,
+  truncated, warnTruncated, ADVISOR_THINKING_LEVEL,
   allowVenueQuestion, allowVenuePhrasing, allowGlobalTokens, settleTokens,
   hasNumerals, hasBannedDash, formatFactValue,
   NUMBER_WORDS, PLACEHOLDER, CAUSAL_VERBS, CHARS_PER_TOKEN,
@@ -85,25 +86,53 @@ const {
 // owner whose question was cut in half deserves to know it.
 const FREE_TEXT_MAX_CHARS = 280;
 const FREE_TEXT_MIN_CHARS = 3;
-// The router emits one small JSON object. Capping it here means a router that
-// has been talked into writing prose runs out of room before it writes any.
-const CLASSIFIER_MAX_OUTPUT_TOKENS = 48;
-// Advice runs three to six sentences. Lower than the chip path's 512 because
-// the failure mode of advice is length, and length is where filler gets in.
-const ADVICE_MAX_OUTPUT_TOKENS = 400;
+// The router emits one small JSON object, sixteen tokens of it. THE CEILING IS
+// NOT A LENGTH LIMIT ON THE ANSWER, it is the budget the model reasons out of
+// first: at 48 tokens gemini-3.7-flash spent 45 of them thinking and returned
+// no text at all, so from the day free text was written until 2026-08-20 EVERY
+// typed question was refused with "we could not get to it just now" and the
+// only evidence was a refusal that blamed itself. Measured at this ceiling the
+// same call finishes on STOP with about 55 thinking and 15 written for an easy
+// question, but the router thinks hardest on the questions that are hardest to
+// route: "I run three venues, how are all of them doing" spent 494 and
+// truncated at half this ceiling, and the owner read a refusal that said we
+// could not get to it. A router that fails on ambiguity fails exactly where a
+// router is for. What still
+// stops a router talked into writing prose is not this number, it is
+// parseRoute: anything that is not one object from the closed set is refused.
+const CLASSIFIER_MAX_OUTPUT_TOKENS = 1024;
+// Advice runs three to six sentences, which is roughly 130 written tokens; the
+// rest of this is the same thinking headroom, and advice thinks the longest of
+// the three calls because its contract is the longest. Measured on
+// gemini-3.7-flash at thinkingLevel low, ADVICE THINKS FURTHEST OF THE THREE
+// AND ITS SPREAD IS THE WIDEST: about 890 tokens on "how do I make Tuesdays
+// better" and 1965 on "how do I stop laptop people holding tables all
+// afternoon", which truncated at half this ceiling and refused. A ceiling set
+// to the median question is a ceiling that drops the hard ones, and the hard
+// ones are the ones worth asking. What holds advice SHORT is section 6a
+// of its contract and the sentence count in the valve, never the ceiling,
+// because a ceiling that binds does not shorten an answer, it cuts one in half.
+const ADVICE_MAX_OUTPUT_TOKENS = 4096;
 
 const MODES = Object.freeze(['grounded', 'advice', 'refused']);
 
 // ── Flags ────────────────────────────────────────────────────────────────────
 //
-// Its OWN flag, separate from ADVISOR_PHRASING_ENABLED, default OFF, so free
-// text ships dark and is switched on deliberately. The two are not
-// interchangeable: phrasing off is a degraded chip answer (the deterministic
-// template twin still carries every number), but free text off is no free text
-// at all, because there is no template that answers a question nobody wrote a
-// template for.
+// Its OWN flag, separate from ADVISOR_PHRASING_ENABLED. It shipped default OFF
+// so free text could go out dark, and DEFAULT ON since 2026-08-20, because
+// dark is where it stayed: the field never rendered, the endpoint declined,
+// and the owner the feature was built for went looking for a chat box and
+// found chips. The safety work this flag was hiding behind is built and
+// tested (the deterministic screens, the nonce fence, the digit valve, the
+// closed-set router, the Postgres ceilings), so the flag is now a kill switch
+// rather than a launch switch: ADVISOR_FREETEXT_ENABLED=false turns it off.
+//
+// The two flags are still not interchangeable: phrasing off is a degraded chip
+// answer (the deterministic template twin still carries every number), but
+// free text off is no free text at all, because there is no template that
+// answers a question nobody wrote a template for.
 function freeTextEnabled() {
-  return boolFlag('ADVISOR_FREETEXT_ENABLED');
+  return boolFlag('ADVISOR_FREETEXT_ENABLED', true);
 }
 
 // Free text REQUIRES the model, and it requires the phrasing flag too, because
@@ -203,6 +232,40 @@ const OUT_OF_SCOPE_PATTERNS = [
 const OUTSIDE = 'That one is outside what Roost does.';
 const REFUSAL_INJECTION = `${OUTSIDE} Ask about your venue's numbers or about running the room, and we will take it from there.`;
 const REFUSAL_UNROUTABLE = "We can't answer that yet. We could not tell what part of your business you were asking about. Ask it about your own numbers, or about how to run or fill the room, and we will have a go.";
+// A DELIBERATE REFUSAL IS NOT A FAILURE TO UNDERSTAND, and until 2026-08-20 the
+// two shared one sentence: a question about a competitor's takings, which the
+// router recognises perfectly and declines on purpose, came back saying we
+// could not tell what part of the business it was about. That is false, and it
+// is the worst kind of false, because it teaches the owner to rephrase a
+// question that was understood the first time and will be declined every time.
+// This is the boundary, said as a boundary, and it sells nothing.
+const REFUSAL_ROUTED_OUT = `${OUTSIDE} We take questions about your own venue's numbers and about running the room. Anything else is a better question for something that is not us.`;
+
+// ONE REFUSAL SENTENCE FOR EVERY DECLINED QUESTION IS ITSELF A SMALL LIE. The
+// first version of the sentence above named competitors, law, pay and tax, and
+// it was then served to an owner who asked what the capital of France was and
+// to one who asked what was wrong with a fainting barista. Naming the wrong
+// boundary is how a refusal teaches the wrong lesson: it tells an owner their
+// question was about tax when it was about a person's health.
+//
+// So the router names the boundary it hit, from a CLOSED set, alongside the
+// route. It is one more field on a JSON object that was already parsed against
+// an allowlist, so an unknown or missing value costs nothing: it falls back to
+// the general sentence above, which is true of every refusal. No branch here
+// mentions plans, prices, or upgrading, and none ever will.
+const REFUSAL_BY_REASON = Object.freeze({
+  other_business: `${OUTSIDE} We do not report another business's numbers, and we would not have them to report. What we can look at is your own room and what is listed near it.`,
+  legal_or_tax: `${OUTSIDE} Law, pay, hiring, tax, licensing, insurance and health code are for someone who knows the rules where you operate. Getting one of those wrong costs more than an operations answer can save.`,
+  personal_health: `${OUTSIDE} Anything to do with a person's health belongs with someone medically qualified. That is not a call anyone should make from a dashboard, ours included.`,
+  private_people: `${OUTSIDE} We never report anything about the individual people who use Flock: who they are, how old they are, what they planned, or what they spent. That stays private, including from you.`,
+  money_outcome: `${OUTSIDE} We do not put a figure on what a move will earn or what it will cost you. What we can show you is the pattern your room actually runs on, and you know your own margins better than we do.`,
+  invented_number: `${OUTSIDE} We do not have that figure, and we will not invent one. Every number in here comes from your own venue or from a source we name.`,
+  outside_trade: `${OUTSIDE} We answer questions about running one food or drink venue, and that is the whole of it.`,
+});
+const REFUSAL_REASONS = Object.freeze(Object.keys(REFUSAL_BY_REASON));
+function refusalForReason(why) {
+  return REFUSAL_BY_REASON[why] || REFUSAL_ROUTED_OUT;
+}
 const REFUSAL_VALVE = "We can't answer that yet. What we put together did not pass our own checks, so we are not showing it. Asking it a different way usually works.";
 // Kept SEPARATE from the two above, because a refusal that misdescribes itself
 // is a small lie in a product whose whole claim is that it does not tell them.
@@ -238,7 +301,7 @@ function fenceQuestion(text) {
 // Charged before, settled after, never refunded, never retried except for the
 // one model-name fallback the chip path already documents, which is charged
 // again because it is a second billed attempt.
-async function chargedCall({ userId, charge, systemInstruction, payload, maxOutputTokens, temperature, json }) {
+async function chargedCall({ userId, charge, systemInstruction, payload, maxOutputTokens, temperature, json, label }) {
   const genAI = getGenAI();
   if (!genAI) return null;
   const estimate = Math.ceil((systemInstruction.length + payload.length) / CHARS_PER_TOKEN) + maxOutputTokens;
@@ -249,7 +312,8 @@ async function chargedCall({ userId, charge, systemInstruction, payload, maxOutp
     systemInstruction,
     maxOutputTokens,
     temperature,
-    abortSignal: upstreamSignal('gemini'),
+    thinkingConfig: { thinkingLevel: ADVISOR_THINKING_LEVEL },
+    abortSignal: upstreamSignal('geminiAdvisor'),
   };
   if (json) config.responseMimeType = 'application/json';
 
@@ -279,6 +343,7 @@ async function chargedCall({ userId, charge, systemInstruction, payload, maxOutp
     }
   }
   settleTokens(userId, estimate, resp?.usageMetadata?.totalTokenCount);
+  if (truncated(resp)) warnTruncated(`freeText:${label}`, resp);
   return responseText(resp);
 }
 
@@ -311,7 +376,13 @@ function parseRoute(raw) {
   // A grounded route with no intent has nothing to ground itself on.
   if (mode === 'grounded' && !intentId) return null;
   // A refusal carries no intent, whatever the router attached to it.
-  if (mode === 'refused') return { mode, intentId: null };
+  // The reason rides only on a refusal, and only from the closed set. Anything
+  // else becomes null, which serves the general sentence rather than an error:
+  // a refusal that cannot name its boundary still refuses.
+  if (mode === 'refused') {
+    const why = REFUSAL_REASONS.includes(parsed.why) ? parsed.why : null;
+    return { mode, intentId: null, why };
+  }
   return { mode, intentId };
 }
 
@@ -331,14 +402,21 @@ async function classify({ userId, question }) {
     maxOutputTokens: CLASSIFIER_MAX_OUTPUT_TOKENS,
     temperature: 0,
     json: true,
+    label: 'router',
   });
   // null means the call never happened: a ceiling refused it, or the model was
   // unreachable. That is not the same answer as "we could not understand you".
   if (raw === null) return { mode: 'refused', intentId: null, refusal: REFUSAL_BUSY };
 
   const route = parseRoute(raw);
+  // Unparseable: the router wrote something that is not one of the three
+  // routes, so nothing understood the question and the copy says exactly that.
   if (!route) return { mode: 'refused', intentId: null, refusal: REFUSAL_UNROUTABLE };
-  if (route.mode === 'refused') return { mode: 'refused', intentId: null, refusal: REFUSAL_UNROUTABLE };
+  // Routed to refused: understood, and declined on purpose. Different event,
+  // different sentence, and the sentence names which boundary it was.
+  if (route.mode === 'refused') {
+    return { mode: 'refused', intentId: null, refusal: refusalForReason(route.why) };
+  }
   return route;
 }
 
@@ -480,7 +558,7 @@ function applyAdviceValve(raw, facts) {
   if (rendered.includes('{{') || rendered.includes('}}')) return null;
 
   return {
-    text: rendered,
+    text: advisorPhrasing.internals.dedupeAdjacentWords(rendered),
     sources: [...used].map((id) => {
       const f = byId.get(id);
       return { id: f.sourceId || id, source: f.source, asOf: f.asOf };
@@ -518,6 +596,7 @@ async function advise({ userId, question, ctx, groundedFacts = [] }) {
     maxOutputTokens: ADVICE_MAX_OUTPUT_TOKENS,
     temperature: 0.4,
     json: false,
+    label: 'advice',
   });
   if (out === null) return { mode: 'refusal', text: REFUSAL_BUSY, sources: [] };
 
@@ -530,7 +609,8 @@ async function advise({ userId, question, ctx, groundedFacts = [] }) {
 function __copyStrings() {
   return [
     UNAVAILABLE_TEXT, TOO_LONG, NOT_TEXT, TOO_SHORT,
-    OUTSIDE, REFUSAL_INJECTION, REFUSAL_UNROUTABLE, REFUSAL_VALVE, REFUSAL_BUSY,
+    OUTSIDE, REFUSAL_INJECTION, REFUSAL_UNROUTABLE, REFUSAL_ROUTED_OUT, REFUSAL_VALVE, REFUSAL_BUSY,
+    ...Object.values(REFUSAL_BY_REASON),
     ...OUT_OF_SCOPE_PATTERNS.map((p) => p.why),
   ];
 }
@@ -554,6 +634,10 @@ module.exports = {
   UNAVAILABLE_TEXT,
   REFUSAL_INJECTION,
   REFUSAL_UNROUTABLE,
+  REFUSAL_ROUTED_OUT,
+  REFUSAL_BY_REASON,
+  REFUSAL_REASONS,
+  refusalForReason,
   REFUSAL_VALVE,
   REFUSAL_BUSY,
   INJECTION_PATTERNS,
