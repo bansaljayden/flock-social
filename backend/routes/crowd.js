@@ -167,9 +167,15 @@ function withBaselineAge(result) {
 // (services/mlPredictor.js averages `mapped(crowd_level) - predicted_score`).
 // The number was in this process's hand every time a card was served, and
 // nothing wrote it down. This does. routes/feedback.js reads it back at submit
-// time — newest serve for (user, venue) inside 12 hours — and prefers it over
-// the client's claim; the row's `predicted_score_source` column says which one
-// won, and `served_prediction_id` names the exact serve it came from.
+// time — newest QUALIFYING serve for (user, venue) inside 12 hours — and
+// prefers it over the client's claim; the row's `predicted_score_source`
+// column says which one won, and `served_prediction_id` names the exact serve
+// it came from.
+//
+// EVERY ROW NOW CARRIES ITS DOOR AND ITS CLOCK (migration 038), because
+// "recorded by the server" was being read as "chosen by the server" and the
+// two are not the same claim on this route's three write paths. See
+// SERVE_SOURCES below for the vocabulary and the attack it closes.
 //
 // APPEND-ONLY, not a last-serve upsert. An upsert answers "what did we tell
 // them most recently" and nothing else: it cannot answer "what was on screen
@@ -188,6 +194,62 @@ function withBaselineAge(result) {
 // current pipeline asks about (12 hours for the feedback join, 28 days for
 // calibration); a longer memory should be a rollup job, not a longer prune.
 // ---------------------------------------------------------------------------
+// WHICH DOOR THE SCORE CAME OUT OF (migration 038), and it is the difference
+// between "the server wrote this down" and "the server chose this".
+//
+// 'detail'              GET /:placeId, scored on the VENUE's own wall clock —
+//                       Google gave us a utcOffsetMinutes and crowdEngine.
+//                       venueLocalNow overrode whatever hour the caller named.
+//                       Venue facts from Google, clock from the venue. The only
+//                       value routes/feedback.js will accept as provenance.
+// 'detail_client_clock' the same route, Google returned no offset, and the card
+//                       fell back to the CALLER's localHour/localDay. The
+//                       venue facts are still Google's, but the hour is the
+//                       caller's, and the hour is the single biggest lever on
+//                       the score. Recorded, not trusted.
+// 'batch'               POST /batch. The venues arrive in the request body —
+//                       rating, userRatingCount, location and utcOffsetMinutes
+//                       all client-assembled, deliberately (see that route's
+//                       header). The model scores what it is handed, so the
+//                       recorded number is the CALLER's arithmetic wearing the
+//                       server's name. Never trusted.
+//
+// The allowlist is applied at the WRITE as well as at the read: an entry with
+// an unrecognised source records NULL rather than a value a future reader
+// might treat as trusted, which keeps "unknown" and "trusted" from ever being
+// one typo apart.
+const SERVE_SOURCES = new Set(['detail', 'detail_client_clock', 'batch']);
+
+// A clock field or nothing. The columns are CHECK-constrained SMALLINTs, and a
+// half-recorded clock is worse than none: feedback.js matches on equality, so
+// a NULL is correctly unmatchable while a wrong integer is a false pairing.
+function clockField(v, max) {
+  return Number.isInteger(v) && v >= 0 && v <= max ? v : null;
+}
+
+// The detail card's serve stamp, read OFF THE CARD rather than off the request.
+// The route's `localHour`/`localDay` locals start as the caller's query
+// parameters and are only overwritten once Google's utcOffsetMinutes has been
+// fetched — so on the CACHE-HIT path, which answers before that fetch, they are
+// still the caller's numbers even though the payload was scored on the venue's.
+// `venueClock` is the clock the card actually shipped, baked into the cached
+// object at setCache time, and `venueClock.local` is exactly the question the
+// source vocabulary asks: did the venue's own offset decide this hour, or did
+// the caller.
+function detailServeStamp(card) {
+  const vc = card && card.venueClock;
+  if (!vc || !Number.isInteger(vc.hour) || !Number.isInteger(vc.day)) {
+    // A card with no clock on it cannot be a denominator for any hour. NULL
+    // source and NULL clock, which the read side refuses on both counts.
+    return { source: null, localDay: null, localHour: null };
+  }
+  return {
+    source: vc.local ? 'detail' : 'detail_client_clock',
+    localDay: vc.day,
+    localHour: vc.hour,
+  };
+}
+
 function recordServedPredictions(userId, entries) {
   // Deduped by place id within the request, LAST one wins: the batch route
   // accepts the same place id many times in one body (documented there as the
@@ -202,15 +264,19 @@ function recordServedPredictions(userId, entries) {
   const rows = [...byPlace.values()];
   if (!Number.isInteger(userId) || rows.length === 0) return;
   pool.query(
-    `INSERT INTO served_predictions (user_id, venue_place_id, score, prediction_method, model_version, served_at)
-     SELECT $1, r.place_id, r.score, r.method, r.model_version, NOW()
-       FROM unnest($2::text[], $3::int[], $4::text[], $5::text[]) AS r(place_id, score, method, model_version)`,
+    `INSERT INTO served_predictions (user_id, venue_place_id, score, prediction_method, model_version, source, local_day, local_hour, served_at)
+     SELECT $1, r.place_id, r.score, r.method, r.model_version, r.source, r.local_day, r.local_hour, NOW()
+       FROM unnest($2::text[], $3::int[], $4::text[], $5::text[], $6::text[], $7::int[], $8::int[])
+              AS r(place_id, score, method, model_version, source, local_day, local_hour)`,
     [
       userId,
       rows.map((r) => r.placeId),
       rows.map((r) => Math.round(r.score)),
       rows.map((r) => r.method || null),
       rows.map((r) => r.modelVersion || null),
+      rows.map((r) => (SERVE_SOURCES.has(r.source) ? r.source : null)),
+      rows.map((r) => clockField(r.localDay, 6)),
+      rows.map((r) => clockField(r.localHour, 23)),
     ]
   ).catch((err) => console.error('[Crowd] served_predictions write failed:', err.message));
   if (Math.random() < 0.01) {
@@ -571,6 +637,9 @@ router.get('/:placeId',
           // otherwise.
           method: published.confidenceBasis === 'owner_report' ? 'owner_report' : cached.predictionMethod,
           modelVersion: cached.modelVersion,
+          // The clock the CACHED card was scored on, not the one in this
+          // request's query string — see detailServeStamp.
+          ...detailServeStamp(cached),
         }]);
         return res.json(gated);
       }
@@ -901,6 +970,7 @@ router.get('/:placeId',
         score: published.score,
         method: published.confidenceBasis === 'owner_report' ? 'owner_report' : result.predictionMethod,
         modelVersion: result.modelVersion,
+        ...detailServeStamp(result),
       }]);
       res.json(gated);
     } catch (err) {
@@ -1304,11 +1374,30 @@ router.post('/batch',
         p, ownerByPlace[p.placeId], { feedbackRows: feedbackByVenue[p.placeId] || [] }
       ));
 
+      // STAMPED 'batch', AND THAT STAMP IS THE POINT (migration 038). Every
+      // scoring input on this route arrives in the request body — the venue's
+      // rating, its review count, its coordinates, its utcOffsetMinutes — so
+      // the number recorded here is what the caller's own arithmetic produced,
+      // not something the server independently knows. Recording it is still
+      // right: this list is one of the two surfaces the post-hangout sheet
+      // reads a predicted_score off, and "what did Flock show" has to include
+      // it. Trusting it as provenance is not, and routes/feedback.js refuses
+      // these rows outright: post a real bar with rating 1.0 at a 4am offset,
+      // collect the ~5 the server publishes, then report it packed, and
+      // without this stamp the calibration layer swallows a forged pair with
+      // the server's name on it.
+      //
+      // The clock is recorded anyway, unused by the read side. It is the only
+      // way to ask afterwards WHICH hour a forged serve was aimed at, and a
+      // column that is written but not yet trusted costs nothing.
       recordServedPredictions(req.user.id, published.map((p) => ({
         placeId: p.placeId,
         score: p.score,
         method: p.confidenceBasis === 'owner_report' ? 'owner_report' : p.predictionMethod,
         modelVersion: null,
+        source: 'batch',
+        localDay: p.venueClock?.day,
+        localHour: p.venueClock?.hour,
       })));
 
       res.json({
@@ -1677,3 +1766,10 @@ module.exports.feedbackWindow = feedbackWindow;
 // depends on utcOffsetMinutes surviving the Google->venue shaping, and that
 // drop was invisible to every existing test because the shaping is internal.
 module.exports.__testables = { fetchVenueFromGoogle, feedbackWindow };
+// Exposed for backend/__tests__/servedPredictions.test.js. The serve-source
+// allowlist and the clock coercion are the two things standing between a
+// client-assembled score and 'server' provenance in venue_feedback (migration
+// 038), and both are internal to the write helper — a test that could only
+// reach them through a whole HTTP round trip could not pin the edges (hour 0
+// is falsy; '4' is not a clock) where they actually break.
+module.exports.__test = { SERVE_SOURCES, clockField, detailServeStamp };
