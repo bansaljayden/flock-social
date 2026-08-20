@@ -15,11 +15,20 @@
 // field on either the POST or the PUT, and neither statement names the column.
 // Re-verify both of those before adding a route that touches venue_profiles.
 //
-// NOTHING EXPIRES A TIER. There is no billing integration on this side (no
-// Stripe code exists), so a tier granted by an admin is held until an admin
-// takes it away. That is correct while comping is the only way to get one and
-// is a revenue hole the day it is sold; see the report in
-// __tests__/entitlementGates.test.js.
+// venue_profiles.tier is now a CACHE of the grant, not the authority. Both are
+// written by that one route in one statement, and where they disagree the gate
+// takes the lower of the two. Nothing in here trusts the column on its own.
+//
+// A TIER CAN NOW EXPIRE, AND THE EXPIRY IS READ HERE (migration 040). This
+// file used to say "nothing expires a tier", which was true and was a revenue
+// hole: the founding-venue offer in VENUE-PRICING.md comps Roost for six months
+// in exchange for a maintained slider habit, and comping fifteen venues against
+// a grant that never ends is fifteen permanent free accounts by accident.
+// venue_subscriptions.expires_at carries the end date (NULL means there is no
+// end date, said out loud rather than assumed) and resolveGrantedTier below
+// applies it on every read. There is still no periodic job and there should not
+// be one: a sweep is a promise to revoke soon, and "soon" is exactly the window
+// in which an expired comp is still being served.
 //
 // NO CACHE, DELIBERATELY. Every gated request re-reads the column, so a
 // downgrade bites on the next request and an upgrade lands on the next request.
@@ -59,17 +68,93 @@ function venueBillingEnabled() {
   return on;
 }
 
-async function getVenueTier(userId) {
-  const r = await pool.query('SELECT tier FROM venue_profiles WHERE user_id = $1', [userId]);
-  // venue_profiles.user_id is UNIQUE (migration 001), so there is exactly one
-  // row or none — no ORDER BY is needed to make this deterministic. A driver
-  // that answered with no `rows` at all would throw here rather than read as a
-  // missing profile, which is the fail-closed direction: requireVenueTier turns
-  // a throw into a refusal.
+// The statuses that KEEP a tier. Stripe's vocabulary, adopted whole (migration
+// 040) so the webhook has nothing to translate. past_due is deliberately in the
+// keep set: VENUE-BILLING.md's status map says "keep + warn", because a card
+// that failed on Tuesday is a card, not a cancellation. Everything else —
+// canceled, unpaid, incomplete, incomplete_expired, paused, and anything this
+// list has never heard of — revokes. A Set, and membership is tested with a
+// string, so no prototype member can answer for a status.
+const GRANT_LIVE_STATUSES = new Set(['active', 'trialing', 'past_due']);
+
+// THE EXPIRY RULE, AND IT IS EVALUATED HERE RATHER THAN BY A JOB.
+//
+// A grant that ran out at 03:00 must not be serving Roost at 04:00. There is no
+// cron in this product and there should not be one for this: a sweep is a
+// promise to revoke soon, and "soon" is the window in which a venue is being
+// served something it is no longer entitled to. Read time has no window.
+//
+// Inputs are one row of the join below: venue_profiles.tier (the CACHE, which
+// the admin route writes alongside the grant) plus the grant's own tier, status
+// and end date. Three rules, in order:
+//
+//   1. NO GRANT ROW -> the cached column is the answer. That is the pre-040
+//      world (a hand-granted tier with no end date agreed) and the local e2e
+//      harness, which drives venue_profiles.tier directly. Not a bypass: a row
+//      with no grant has no expiry to have missed.
+//   2. A GRANT ROW THAT IS DEAD — lapsed, or in a status that revokes — is the
+//      free tier, whatever the cached column still says. This is the whole
+//      point: the column is never trusted over the grant.
+//   3. A GRANT ROW THAT IS LIVE gives the LOWER of the two tiers. One statement
+//      writes both, so they agree; if they ever disagree, the disagreement is a
+//      bug and the fail-closed reading of a bug is the smaller entitlement.
+//
+// `now` is the app clock rather than NOW() in the query, so this is a pure
+// function a test can walk across a boundary. Both clocks are NTP-synced and a
+// tier expiry is a date, not a microsecond fence.
+function resolveGrantedTier(row, now) {
+  // Unknown / null / garbage tier is free, never a bypass.
+  const cached = rankOf(row?.tier) === null ? 'free' : row.tier;
+  if (!row || row.grant_tier === null || row.grant_tier === undefined) return cached;
+  if (!GRANT_LIVE_STATUSES.has(row.grant_status)) return 'free';
+  if (row.expires_at !== null && row.expires_at !== undefined) {
+    const endsAt = new Date(row.expires_at).getTime();
+    // NaN from an unparseable date fails this test and revokes, which is the
+    // direction a date nobody can read should fail in.
+    if (!(endsAt > (typeof now === 'number' ? now : Date.now()))) return 'free';
+  }
+  const granted = rankOf(row.grant_tier) === null ? 'free' : row.grant_tier;
+  return rankOf(granted) <= rankOf(cached) ? granted : cached;
+}
+
+// ONE LINE, ON PURPOSE. Several suites drive this module against a scripted pg
+// fake that matches on the raw SQL text, and a multi-line template literal
+// arrives at those matchers with newlines in it.
+const TIER_SQL = 'SELECT vp.tier, vs.tier AS grant_tier, vs.status AS grant_status, vs.source AS grant_source, vs.granted_reason, vs.granted_at, vs.expires_at FROM venue_profiles vp LEFT JOIN venue_subscriptions vs ON vs.user_id = vp.user_id WHERE vp.user_id = $1';
+
+// The full entitlement, for the surfaces that have to SAY what a venue holds
+// and until when (GET /api/venue-profile). Same resolution as the gate, so the
+// dashboard cannot show one answer while the gate enforces another.
+async function getVenueEntitlement(userId) {
+  const r = await pool.query(TIER_SQL, [userId]);
+  // venue_profiles.user_id is UNIQUE (migration 001) and venue_subscriptions is
+  // keyed on user_id, so this join returns exactly one row or none — no ORDER BY
+  // is needed to make it deterministic. A driver that answered with no `rows` at
+  // all throws here rather than reading as a missing profile, which is the
+  // fail-closed direction: requireVenueTier turns a throw into a refusal.
   const rows = r.rows;
   if (!Array.isArray(rows)) throw new Error('venue tier lookup returned no rows array');
-  // Unknown / null / garbage tier is free, never a bypass.
-  return rankOf(rows[0]?.tier) === null ? 'free' : rows[0].tier;
+  const row = rows[0];
+  const tier = resolveGrantedTier(row, Date.now());
+  return {
+    tier,
+    // Null unless a grant row exists, so a caller can tell "granted, with no end
+    // date" from "no grant on file" instead of guessing from a null.
+    hasGrant: !!(row && row.grant_tier !== null && row.grant_tier !== undefined),
+    grantedTier: row?.grant_tier ?? null,
+    source: row?.grant_source ?? null,
+    reason: row?.granted_reason ?? null,
+    grantedAt: row?.granted_at ?? null,
+    expiresAt: row?.expires_at ?? null,
+    status: row?.grant_status ?? null,
+    // True only when there IS an end date and it has passed. A permanent grant
+    // is not expired and neither is a venue with no grant at all.
+    expired: tier === 'free' && !!row?.expires_at && rankOf(row?.grant_tier) > 0,
+  };
+}
+
+async function getVenueTier(userId) {
+  return (await getVenueEntitlement(userId)).tier;
 }
 
 // Express middleware: 403 {code: 'UPGRADE_REQUIRED'} below the minimum tier
@@ -154,4 +239,4 @@ function requireVenueTier(minTier) {
   };
 }
 
-module.exports = { requireVenueTier, getVenueTier, venueBillingEnabled };
+module.exports = { requireVenueTier, getVenueTier, getVenueEntitlement, resolveGrantedTier, venueBillingEnabled };

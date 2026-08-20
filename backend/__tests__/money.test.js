@@ -586,20 +586,20 @@ test('venue onboarding never downgrades an existing privileged role', async () =
 test('the paid venue boundary is enforced server-side and fails closed', async () => {
   process.env.VENUE_BILLING_ENABLED = 'true';
 
-  handlers = [[/SELECT tier FROM venue_profiles/, () => ({ rows: [{ tier: 'free' }] })]];
+  handlers = [[/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [{ tier: 'free' }] })]];
   const free = await call('GET', '/gated');
   assert.strictEqual(free.status, 403);
   assert.strictEqual(free.body.code, 'UPGRADE_REQUIRED');
 
   // An unknown/garbage tier is treated as free, not as a bypass.
-  handlers = [[/SELECT tier FROM venue_profiles/, () => ({ rows: [{ tier: 'enterprise' }] })]];
+  handlers = [[/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [{ tier: 'enterprise' }] })]];
   assert.strictEqual((await call('GET', '/gated')).status, 403);
 
   // A lookup failure denies rather than admits.
-  handlers = [[/SELECT tier FROM venue_profiles/, () => { throw new Error('db down'); }]];
+  handlers = [[/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => { throw new Error('db down'); }]];
   assert.strictEqual((await call('GET', '/gated')).status, 403);
 
-  handlers = [[/SELECT tier FROM venue_profiles/, () => ({ rows: [{ tier: 'pro' }] })]];
+  handlers = [[/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [{ tier: 'pro' }] })]];
   assert.strictEqual((await call('GET', '/gated')).status, 200);
 
   delete process.env.VENUE_BILLING_ENABLED;

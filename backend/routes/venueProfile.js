@@ -36,6 +36,11 @@ const {
 // word past the filter) as the three owner-typed strings on a venue event —
 // routes/venueDashboard.js POST /events.
 const { rejectIfProfane } = require('../utils/moderation');
+// The dashboard has to be able to tell the owner what they hold and until when,
+// and it has to be the SAME answer the gate enforces. Reading the column would
+// not be: venue_profiles.tier is a cache of the grant, and a lapsed grant leaves
+// it saying 'premium' (migration 040, services/venueEntitlements.js).
+const { getVenueEntitlement } = require('../services/venueEntitlements');
 // Is the claimed place in the corpus the model runs on? Answered at claim time
 // and stored, because the answer decides whether this venue may EVER be shown
 // something model-backed. See services/venueCorpus.js.
@@ -518,7 +523,33 @@ router.get('/', async (req, res) => {
     // Passing an empty body means no intake column is written here — the map in
     // validators/venueIntake.js only writes keys the body actually carries.
     const saved = await applyIntakeAndCorpus(req.user.id, {}, result.rows[0], false);
-    res.json(profileView(saved));
+
+    // WHAT THE OWNER HOLDS, AND UNTIL WHEN. A comped venue is owed a plain
+    // statement of both: the founding offer is six months, and an owner who
+    // cannot see the end date has to remember it, or be surprised by it. The
+    // resolved tier overwrites the raw column deliberately, so the dashboard can
+    // never show 'premium' for a grant the gate has already stopped honouring.
+    //
+    // A failed lookup is NOT a downgrade in the UI. This is a state read, not a
+    // gate, and the fail-closed direction for a gate is the wrong one here:
+    // telling a paying venue their plan ended because one query blipped is worse
+    // than saying nothing about the end date for one page load. The gate itself
+    // still fails closed, in venueEntitlements.
+    let entitlement = null;
+    try {
+      entitlement = await getVenueEntitlement(req.user.id);
+    } catch (err) {
+      console.error('Venue entitlement read failed on profile GET:', err);
+    }
+    res.json({
+      ...profileView(saved),
+      ...(entitlement ? {
+        tier: entitlement.tier,
+        tier_expires_at: entitlement.expiresAt,
+        tier_source: entitlement.source,
+        tier_reason: entitlement.reason,
+      } : {}),
+    });
   } catch (err) {
     console.error('Get venue profile error:', err);
     res.status(500).json({ error: 'Failed to get venue profile' });

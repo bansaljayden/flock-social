@@ -107,7 +107,7 @@ function dispatch(rawSql, params = []) {
   }
 
   // Tier lookup (venueEntitlements.getVenueTier)
-  if (/SELECT tier FROM venue_profiles/.test(sql)) {
+  if (/FROM venue_profiles vp LEFT JOIN venue_subscriptions/.test(sql)) {
     const u = pidx(sql, /user_id = \$(\d+)/);
     const p = PROFILES.find((x) => u !== null && x.user_id === params[u]);
     return { rows: p ? [{ tier: p.tier }] : [] };
@@ -561,7 +561,7 @@ test('every premium surface refuses a free tier before touching venue data', asy
     assert.strictEqual(res.status, 403, `${method} ${path} was served to a free tier`);
     assert.strictEqual(res.body.code, 'UPGRADE_REQUIRED', `${method} ${path} refused with the wrong contract`);
     assert.strictEqual(res.body.requiredTier, 'premium');
-    const nonTier = log.filter((q) => !/SELECT tier FROM venue_profiles/.test(q.sql));
+    const nonTier = log.filter((q) => !/FROM venue_profiles vp LEFT JOIN venue_subscriptions/.test(q.sql));
     assert.deepStrictEqual(nonTier, [], `${method} ${path} touched data behind the refused gate`);
   }
   // And nothing changed under any of those attempts.
@@ -590,7 +590,7 @@ test('the Free-tier surfaces still answer with billing on: own lists, reviews, r
   for (const r of lists) assert.strictEqual(r.status, 200);
   const reply = await call('POST', '/api/venue-dashboard/reviews/702/reply', { reply: 'Free tier can still reply' });
   assert.strictEqual(reply.status, 200);
-  assert.strictEqual(ran(/SELECT tier FROM venue_profiles/).length, 0, 'a Free-tier surface consulted the tier gate');
+  assert.strictEqual(ran(/FROM venue_profiles vp LEFT JOIN venue_subscriptions/).length, 0, 'a Free-tier surface consulted the tier gate');
 });
 
 // ───────────────────────────────────────────────────────────────────────────

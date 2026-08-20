@@ -1240,15 +1240,91 @@ router.put('/venues/:profileId/verify', async (req, res) => {
   }
 });
 
+// The founding-venue offer, from VENUE-PRICING.md: the first 10-15 verified
+// venues in one city get Roost free for SIX MONTHS, in exchange for keeping
+// their slider current and completing intake. Six months is the offer, so six
+// months is what `grantReason: 'founding_comp'` means when nobody names an end
+// date — the one length in this file that comes from a decision rather than a
+// default. Change it here and in VENUE-PRICING.md together, or the offer and
+// the code stop being the same promise.
+const FOUNDING_COMP_MONTHS = 6;
+
+// The machine-readable WHY of a grant. The human sentence stays in `reason`,
+// which lands in moderation_actions like every other admin action's reason;
+// this is the part a query can group by when someone asks how many founding
+// comps are still running.
+const GRANT_REASONS = ['founding_comp', 'paid', 'admin', 'demo'];
+
+const MAX_GRANT_DAYS = 1095; // three years. Longer than that, say null and mean it.
+
+// Calendar months, not 30-day blocks: "free until February" is the promise the
+// venue heard, and 183 days is not that sentence. JS rolls a short month
+// forward (Aug 31 + 6 => Mar 3), which is the harmless direction.
+function monthsFromNow(months) {
+  const d = new Date();
+  d.setUTCMonth(d.getUTCMonth() + months);
+  return d;
+}
+
 // POST /api/admin/venues/:userId/tier — comp or change a venue's tier
 // (VENUE-BILLING.md Phase 0: tier is server-written only; this is the manual
 // path for demos and hand-sold venues until Stripe self-serve exists).
+//
+// ONE STATEMENT WRITES THREE THINGS, and that is load-bearing: the cache
+// (venue_profiles.tier), the grant the gate actually reads (venue_subscriptions,
+// migration 040) and the durable audit row. A tier that exists in one of those
+// and not the others is the bug this route is most likely to grow, so they must
+// not be three round trips that can half-fail.
 router.post('/venues/:userId/tier', async (req, res) => {
   try {
-    const { tier, reason } = req.body || {};
+    const { tier, reason, grantReason, expiresAt, durationDays } = req.body || {};
     if (!['free', 'premium', 'pro'].includes(tier)) {
       return res.status(400).json({ error: 'tier must be free, premium, or pro' });
     }
+    if (grantReason !== undefined && grantReason !== null && !GRANT_REASONS.includes(grantReason)) {
+      return res.status(400).json({ error: 'grantReason must be one of ' + GRANT_REASONS.join(', ') });
+    }
+    // Two ways to say the same thing, so saying both is a mistake worth
+    // refusing rather than quietly resolving in one of their favours.
+    if (expiresAt !== undefined && durationDays !== undefined) {
+      return res.status(400).json({ error: 'send expiresAt or durationDays, not both' });
+    }
+
+    // THE TRI-STATE THAT KEEPS A GRANT FROM BEING SILENTLY EXTENDED.
+    //   omitted        -> whatever end date is already on file survives
+    //   expiresAt:null -> the admin is explicitly saying "no end date"
+    //   a value        -> that is the end date
+    // Re-granting the same tier to fix a typo in the reason must not hand the
+    // venue another six months, which is exactly what a plain COALESCE in the
+    // upsert below would have done.
+    const expirySpecified = expiresAt !== undefined || durationDays !== undefined;
+    let endsAt = null;
+    if (durationDays !== undefined) {
+      if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > MAX_GRANT_DAYS) {
+        return res.status(400).json({ error: 'durationDays must be a whole number of days from 1 to ' + MAX_GRANT_DAYS });
+      }
+      endsAt = new Date(Date.now() + durationDays * 86400000);
+    } else if (expiresAt !== undefined && expiresAt !== null) {
+      if (typeof expiresAt !== 'string') {
+        return res.status(400).json({ error: 'expiresAt must be an ISO date string or null' });
+      }
+      const parsed = new Date(expiresAt);
+      if (Number.isNaN(parsed.getTime())) {
+        return res.status(400).json({ error: 'expiresAt must be an ISO date string or null' });
+      }
+      // A grant that has already expired is not a grant, it is a downgrade
+      // written the confusing way. Say tier free instead.
+      if (parsed.getTime() <= Date.now()) {
+        return res.status(400).json({ error: 'expiresAt is in the past. To remove a tier, set tier to free.' });
+      }
+      endsAt = parsed;
+    }
+
+    // The founding default, applied ONLY when nobody named a date, and only to a
+    // grant that does not already have one (the COALESCE in the upsert). A
+    // second founding_comp grant is a correction, not a renewal.
+    const foundingDefault = !expirySpecified && grantReason === 'founding_comp' && tier !== 'free';
+    if (foundingDefault) endsAt = monthsFromNow(FOUNDING_COMP_MONTHS);
     // Round 23: the reason is validated like every other audit reason on this
     // router (see PUT /reports/:id) because it is about to be stored, not
     // logged. Before this round it was interpolated into console.log, which
@@ -1278,24 +1354,64 @@ router.post('/venues/:userId/tier', async (req, res) => {
     // to-what answers none of the questions a billing dispute asks.
     const result = await pool.query(
       `WITH old AS (
-         SELECT user_id, tier FROM venue_profiles WHERE user_id = $2
+         SELECT user_id, tier, verified FROM venue_profiles WHERE user_id = $2
        ),
        upd AS (
          UPDATE venue_profiles SET tier = $1, updated_at = NOW()
          FROM old
          WHERE venue_profiles.user_id = old.user_id
+           AND ($1 = 'free' OR old.verified = true)
          RETURNING venue_profiles.id, venue_profiles.business_name, venue_profiles.tier, old.tier AS old_tier
+       ),
+       granted AS (
+         INSERT INTO venue_subscriptions
+           (user_id, tier, source, status, granted_reason, granted_at, granted_by, expires_at, updated_at)
+         SELECT $2, $1, $9, 'active', $8, NOW(), $3, $5::timestamptz, NOW() FROM upd
+         ON CONFLICT (user_id) DO UPDATE SET
+           tier = EXCLUDED.tier,
+           source = EXCLUDED.source,
+           status = 'active',
+           granted_reason = EXCLUDED.granted_reason,
+           granted_at = NOW(),
+           granted_by = EXCLUDED.granted_by,
+           expires_at = CASE
+             WHEN $1 = 'free' THEN NULL
+             WHEN $6 THEN EXCLUDED.expires_at
+             WHEN $7 THEN COALESCE(venue_subscriptions.expires_at, EXCLUDED.expires_at)
+             ELSE venue_subscriptions.expires_at
+           END,
+           updated_at = NOW()
+         RETURNING user_id, expires_at, granted_reason
        ),
        audit AS (
          INSERT INTO moderation_actions (moderator_id, target_user_id, action, content_type, content_id, reason)
          SELECT $3, $2, 'tier_changed', 'venue_profile', u.id,
                 'tier ' || COALESCE(u.old_tier, 'free') || ' -> ' || u.tier || COALESCE(': ' || $4::text, '')
-         FROM upd u
+                  || COALESCE(' (until ' || to_char(g.expires_at, 'YYYY-MM-DD') || ')', '')
+         FROM upd u LEFT JOIN granted g ON g.user_id = $2
        )
-       SELECT id, business_name, tier FROM upd`,
-      [tier, targetUserId, req.user.id, reason || null]
+       SELECT u.id, u.business_name, u.tier, g.expires_at, g.granted_reason
+         FROM old o
+         LEFT JOIN upd u ON true
+         LEFT JOIN granted g ON true`,
+      [tier, targetUserId, req.user.id, reason || null, endsAt, expirySpecified, foundingDefault,
+        grantReason || (tier === 'free' ? null : 'admin'),
+        grantReason === 'founding_comp' ? 'comp' : 'admin']
     );
+    // No `old` row at all: this user has no venue profile.
     if (result.rows.length === 0) return res.status(404).json({ error: 'Venue profile not found' });
+    // A profile that exists but did not update: the UPDATE's own guard refused
+    // it. VENUE-BILLING.md states the rule three times because it is the one
+    // that costs money if missed. A paid tier requires venue_profiles.verified,
+    // because a role is not proof of ownership, and comping Roost to an
+    // unverified claim hands a stranger a forecast about someone else's bar.
+    // Verify the claim first, then grant. Downgrades to free are always allowed.
+    if (result.rows[0].id === null || result.rows[0].id === undefined) {
+      return res.status(409).json({
+        error: 'This venue is not verified yet. Verify the claim before granting a paid tier.',
+        code: 'VENUE_NOT_VERIFIED',
+      });
+    }
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Admin venue tier error:', err);
