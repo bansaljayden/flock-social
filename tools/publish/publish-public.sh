@@ -44,6 +44,16 @@ STRIP=(
   # Private strategy docs (2026-08-19; Jayden chose to keep existing history as-is).
   # These were never committed anywhere; filtering them is a no-op on existing
   # hashes and exists purely so an accidental future commit cannot mirror.
+  #
+  # THIS LIST MUST TRACK THE PRIVATE BLOCK OF .gitignore. It is the second half
+  # of a two-lock design: .gitignore stops the commit, this stops the mirror if
+  # the commit happens anyway (a `git add -f`, a rewritten .gitignore, a merge).
+  # A doc in .gitignore and absent here has one lock, not two -- and on
+  # 2026-08-20 nine of them were in exactly that state, including all five
+  # SECURITY-AUDIT-*.md, which .gitignore's own comment describes as
+  # "step-by-step exploitation notes against production". Every path added here
+  # has zero commits touching it, so filter-repo rewrites nothing and no public
+  # hash moves; that is what makes closing the gap free.
   --path VENUE-ADVISOR.md
   --path PAYMENTS-ROUTING.md
   --path MODEL-EPOCH-FINDING.md
@@ -53,7 +63,17 @@ STRIP=(
   --path VENUE-TOS-DRAFT.md
   --path MAP-VISIBILITY-DECISION.md
   --path PRO-VS-PREMIUM.md
+  --path ROOST-OWNER-INPUT.md
+  --path PITCH.md
+  --path PITCH-CRAFT.md
+  --path VENUE-PRICING.md
+  --path CONSUMER-VALUE-CASE.md
+  --path PRESHIP-SWEEP.md
   --path-glob 'ADVISOR-*.md'
+  --path-glob 'SECURITY-AUDIT-*.md'
+  --path-glob 'VIDEO-NOTES-*.md'
+  --path-glob 'REVIEW-ROUND*.md'
+  --path-glob 'flock-walkthrough-*.mp4'
 )
 
 FILTER_REPO="$(python -c 'import git_filter_repo,os;print(git_filter_repo.__file__)' 2>/dev/null || true)"

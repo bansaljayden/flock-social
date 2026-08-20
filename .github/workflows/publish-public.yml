@@ -68,7 +68,17 @@ jobs:
             --path VENUE-TOS-DRAFT.md \
             --path MAP-VISIBILITY-DECISION.md \
             --path PRO-VS-PREMIUM.md \
-            --path-glob 'ADVISOR-*.md'
+            --path ROOST-OWNER-INPUT.md \
+            --path PITCH.md \
+            --path PITCH-CRAFT.md \
+            --path VENUE-PRICING.md \
+            --path CONSUMER-VALUE-CASE.md \
+            --path PRESHIP-SWEEP.md \
+            --path-glob 'ADVISOR-*.md' \
+            --path-glob 'SECURITY-AUDIT-*.md' \
+            --path-glob 'VIDEO-NOTES-*.md' \
+            --path-glob 'REVIEW-ROUND*.md' \
+            --path-glob 'flock-walkthrough-*.mp4'
 
       - name: Refuse to publish if anything excluded survived
         run: |
