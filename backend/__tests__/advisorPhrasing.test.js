@@ -127,11 +127,40 @@ function allowGlobalSpend() {
   handlers.push([/INSERT INTO advisor_spend/, () => ({ rows: [{ tokens: 1 }], rowCount: 1 })]);
 }
 
+// advisor_venue_spend (migration 037) stands in for the Map the per-venue
+// meters used to live in, so the caps are still exercised now that Postgres
+// holds them. This fake implements the migration's conditional upsert
+// faithfully rather than always allowing: the answer and token caps are the
+// point of the table, and a permissive stub would delete the test that proves
+// a venue stops phrasing at its ceiling.
+let venueLedger = new Map();
+function installVenueLedger() {
+  handlers.push([/INSERT INTO advisor_venue_spend/, (params) => {
+    const [id, tokens, maxAnswers, maxTokens] = params;
+    const row = venueLedger.get(id) || { answers: 0, tokens: 0 };
+    if (row.answers + 1 > maxAnswers) return { rows: [], rowCount: 0 };
+    if (row.tokens + Number(tokens) > maxTokens) return { rows: [], rowCount: 0 };
+    row.answers += 1;
+    row.tokens += Number(tokens);
+    venueLedger.set(id, row);
+    return { rows: [{ tokens: row.tokens }], rowCount: 1 };
+  }]);
+  // The settle true-up, which is deliberately uncapped: see settleTokens.
+  handlers.push([/UPDATE advisor_venue_spend/, (params) => {
+    const [delta, id] = params;
+    const row = venueLedger.get(id);
+    if (row) row.tokens += Number(delta);
+    return { rows: [], rowCount: row ? 1 : 0 };
+  }]);
+}
+
 function resetAll({ flag } = {}) {
   handlers = [];
   queryLog = [];
   modelCalls = [];
   nextModelReply = null;
+  venueLedger = new Map();
+  installVenueLedger();
   advisorPhrasing.__resetAdvisorSpend();
   advisorPhrasing.__setGenAIForTests(fakeGenAI);
   if (flag) process.env.ADVISOR_PHRASING_ENABLED = 'true';
@@ -258,7 +287,10 @@ test('the global Postgres token wall refuses BEFORE the call, and a dead databas
   assert.strictEqual(out.mode, 'template');
   assert.strictEqual(modelCalls.length, 0, 'charge-before-call: the wall refuses the call itself');
 
-  handlers = [[/INSERT INTO advisor_spend/, () => { throw new Error('connection refused'); }]];
+  // The venue ledger stays healthy so the GLOBAL one is what is on trial here.
+  handlers = [];
+  installVenueLedger();
+  handlers.push([/INSERT INTO advisor_spend/, () => { throw new Error('connection refused'); }]);
   out = await advisorPhrasing.phrase(PEAK_BLOCK(), { venueUserId: 7 });
   assert.strictEqual(out.mode, 'template', 'a spend control that cannot count refuses');
   assert.strictEqual(modelCalls.length, 0);
