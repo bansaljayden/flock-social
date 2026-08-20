@@ -368,3 +368,55 @@ describe('Roost: SLOP pins on the source itself', () => {
     expect(SRC.match(/'Roost'/g).length).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// THE VERDICT LEADS THE STACK.
+//
+// "How did we just do" is the most asked question in the operator category and
+// explicit forecasting is the least asked (Toast prompt telemetry across
+// 125,000+ locations, ROOST-OWNER-INPUT.md), so the verdict on yesterday
+// renders above the week-ahead forecast rather than falling through to the
+// generic tail this file keeps for cards it has never met.
+// ---------------------------------------------------------------------------
+describe('Roost: the verdict card leads', () => {
+  const verdictCard = {
+    id: 'last_night_verdict',
+    title: 'Yesterday, against your own numbers',
+    status: 'ok',
+    facts: [{
+      id: 'last_day_verdict_2026-08-18',
+      value: { verdict: 'below' },
+      source: 'arithmetic',
+      asOf: D(18),
+      label: 'Tuesday came in 39 points below your own Tuesdays (middle 59, across 4 days).',
+    }],
+  };
+
+  test('it renders before the week ahead, not after every other card', async () => {
+    const payload = { ...PAYLOAD, cards: [...PAYLOAD.cards, verdictCard] };
+    const { container } = mount({ fetchCards: () => Promise.resolve(payload) });
+    await screen.findByText('Yesterday, against your own numbers');
+    const text = container.textContent;
+    expect(text.indexOf('Yesterday, against your own numbers'))
+      .toBeLessThan(text.indexOf('Week ahead'));
+  });
+
+  test('with no reading yesterday the refusal is the card, with no button', async () => {
+    const refused = {
+      id: 'last_night_verdict',
+      title: 'Yesterday, against your own numbers',
+      status: 'refused',
+      facts: [{
+        id: 'refuse_no_reading_2026-08-18',
+        status: 'refused',
+        reason: 'You did not post a reading on Tuesday 2026-08-18, so there is no measurement of your room that day for us to grade.',
+        whatWouldUnlock: 'One move of the busy slider at your busiest hour.',
+      }],
+    };
+    const payload = { ...PAYLOAD, cards: [refused] };
+    const { container } = mount({ fetchCards: () => Promise.resolve(payload) });
+    await screen.findByText('Yesterday, against your own numbers');
+    expect(screen.getByText(/One move of the busy slider/)).toBeInTheDocument();
+    expect(within(container).queryByRole('button', { name: /upgrade|unlock/i })).toBeNull();
+  });
+});

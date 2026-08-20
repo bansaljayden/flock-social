@@ -30,7 +30,18 @@ const { escapeHtml } = require('../services/emailService');
 // it, rather than being dropped on the floor. Ids are the ones
 // routes/advisor.js serves and __tests__/advisorCards.test.js pins.
 const HEADS_UP_CARD_IDS = ['around_you', 'week_ahead'];
-const RECAP_CARD_IDS = ['readings_vs_estimates', 'listing_read_back'];
+const RECAP_CARD_IDS = ['last_night_verdict', 'readings_vs_estimates', 'listing_read_back'];
+
+// The block that opens the email, whatever else is in the stack.
+//
+// This email used to open on whatever the fact engine sent first, which in
+// practice was the week ahead: a forecast. Operator telemetry across 125,000+
+// locations puts explicit forecasting at one percent of prompts and the daily
+// recap at the top (ROOST-OWNER-INPUT.md), so the first thing an owner reads on
+// a Monday morning is the verdict on the day that just closed, against their
+// own numbers. Pinned here rather than left to arrival order, and excluded
+// from the anomaly slot below so nothing can relocate it.
+const LEAD_CARD_ID = 'last_night_verdict';
 
 // Premium's digest is the events heads-up alone (PRO-VS-PREMIUM.md: Premium is
 // presence, Pro is foresight; the event radar card is the one T0 card on the
@@ -70,15 +81,23 @@ function factGateFires(fact) {
 }
 
 function splitAnomaly(cards) {
-  const idx = cards.findIndex((c) => c.status === 'anomaly' || c.facts.some(factGateFires));
+  // The lead card is never the anomaly block: it is the email's opening
+  // verdict, and a verdict moved into a "worth a look" box has stopped being
+  // the first thing read.
+  const idx = cards.findIndex((c) => c.id !== LEAD_CARD_ID
+    && (c.status === 'anomaly' || c.facts.some(factGateFires)));
   if (idx === -1) return { anomaly: null, rest: cards };
   const anomaly = cards[idx];
   return { anomaly, rest: cards.filter((_, i) => i !== idx) };
 }
 
 function sortForAudit(cards) {
-  const bucket = (c) => (HEADS_UP_CARD_IDS.includes(c.id) ? 1 : 0);
-  // Stable: recap first, heads-up after, original order inside each bucket.
+  const bucket = (c) => {
+    if (c.id === LEAD_CARD_ID) return -1;
+    return HEADS_UP_CARD_IDS.includes(c.id) ? 1 : 0;
+  };
+  // Stable: the verdict, then the rest of the recap, then heads-up, original
+  // order inside each bucket.
   return cards
     .map((c, i) => [bucket(c), i, c])
     .sort((a, b) => a[0] - b[0] || a[1] - b[1])
@@ -277,4 +296,6 @@ module.exports = {
   PREMIUM_CARD_IDS,
   HEADS_UP_CARD_IDS,
   RECAP_CARD_IDS,
+  LEAD_CARD_ID,
+  sectionsFor,
 };
