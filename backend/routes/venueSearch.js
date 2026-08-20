@@ -17,6 +17,15 @@ const { isPlaceIdShaped } = require('../utils/places');
 const {
   allowPlacesSearch, allowGlobalPlacesCall, PER_USER_HOURLY, GLOBAL_DAILY,
 } = require('../utils/placesBudget');
+// ONE raw Place Details response per venue, shared with routes/crowd.js. This
+// file and that one used to each buy their own copy of the same payload for the
+// same place id in the same tick — see the header of services/placeDetailsCache.js
+// and the Places section of services/costModel.js. The cache, the in-flight
+// coalescing and the field mask for /details all live there now; what stays
+// here is the charge and the response shape.
+const {
+  willCostUpstreamCall, fetchPlaceDetails,
+} = require('../services/placeDetailsCache');
 
 const router = express.Router();
 
@@ -102,7 +111,10 @@ const MAX_PHOTO_CACHE = 500;
 // follower and the cleanup .then() cannot leak an unhandled rejection.
 // Entries are deleted the moment they settle, so a failure is never pinned —
 // the next request after a failed flight goes back upstream.
-const inflight = new Map();      // search:/detail: cacheKey -> Promise<descriptor>
+// Round 25 — this map used to carry `detail:` keys too. The details flight now
+// lives in services/placeDetailsCache.js, because the request that duplicated
+// it arrives at routes/crowd.js and a flight only deduplicates what can see it.
+const inflight = new Map();      // search: cacheKey -> Promise<descriptor>
 const photoInflight = new Map(); // photo cacheKey -> Promise<descriptor>
 
 // A Google photo resource name is exactly `places/{place}/photos/{photo}` and
@@ -270,9 +282,10 @@ router.use(authenticate);
 //
 // THE PIN: PER_USER_HOURLY * 24 (720) < VENUE_CACHE_MAX (750).
 // Every write to this map is behind allowPlacesSearch, one unit per entry
-// (runTextSearch and the details worker each charge before they call and each
-// write exactly one key), so an account's writes are its Places allowance and
-// nothing else. 30/hour spent around the clock is 720 entries in a day, which
+// (runTextSearch charges before it calls and writes exactly one key), so an
+// account's writes are its Places allowance and nothing else. It holds only
+// `search:` entries now — the `detail:` half moved to
+// services/placeDetailsCache.js — which only widens the margin. 30/hour spent around the clock is 720 entries in a day, which
 // is less than the cache holds: ONE ACCOUNT CANNOT EVICT THE SHARED WORKING SET
 // EVEN BY SPENDING EVERY UNIT IT HAS, ALL DAY. Same shape as
 // EVENT_USER_DAILY(400) < EVENT_CACHE_MAX(500) in services/mlPredictor.js and
@@ -331,11 +344,19 @@ function photoUrl(photoName, maxWidth = 400) {
 }
 
 // ---------------------------------------------------------------------------
-// FIELD MASKS. Hoisted out of the two fetch calls on purpose: they are the most
-// expensive one-line decisions in this file (a mask decides the Google SKU the
-// request is billed at) and they belong somewhere a reader looks before
-// extending them, not buried in a header object. Same shape as
+// FIELD MASK. Hoisted out of the fetch call on purpose: it is the most
+// expensive one-line decision in this file (a mask decides the Google SKU the
+// request is billed at) and it belongs somewhere a reader looks before
+// extending it, not buried in a header object. Same shape as
 // routes/publicCrowd.js PLACE_FIELDS.
+//
+// THE DETAILS MASK USED TO LIVE HERE TOO, and it now lives in
+// services/placeDetailsCache.js as PLACE_DETAILS_FIELD_MASK — unchanged, field
+// for field. It moved because routes/crowd.js was asking Google for a STRICT
+// SUBSET of it, for the same place id, in the same tick as this file's own
+// /details call, and paying for it. One owner of the payload is what let the
+// second call go away. Everything the note below says about tiers applies to
+// that mask exactly as it did when it was here.
 //
 // WHY utcOffsetMinutes IS HERE. It is the venue's own UTC offset, and it is what
 // makes POST /api/crowd/batch score each row on the VENUE's wall clock instead
@@ -349,8 +370,9 @@ function photoUrl(photoName, maxWidth = 400) {
 //
 // BILLING: NO CHANGE. Places API (New) prices per FIELD and bills a request at
 // the HIGHEST SKU any requested field belongs to. utcOffsetMinutes is a **Pro**
-// field in both Text Search and Place Details, and both masks below already ask
-// for currentOpeningHours / rating / userRatingCount / priceLevel (plus
+// field in both Text Search and Place Details, and the mask below and the
+// details mask in services/placeDetailsCache.js both already ask for
+// currentOpeningHours / rating / userRatingCount / priceLevel (plus
 // nationalPhoneNumber and websiteUri on details) — all **Enterprise**. Both
 // requests were already billed at Enterprise, so the marginal cost of this
 // field is zero.
@@ -366,12 +388,6 @@ const SEARCH_FIELD_MASK = [
   'places.id', 'places.displayName', 'places.formattedAddress', 'places.rating',
   'places.userRatingCount', 'places.priceLevel', 'places.photos', 'places.types',
   'places.currentOpeningHours', 'places.location', 'places.utcOffsetMinutes',
-].join(',');
-
-const DETAILS_FIELD_MASK = [
-  'id', 'displayName', 'formattedAddress', 'nationalPhoneNumber', 'websiteUri',
-  'rating', 'userRatingCount', 'priceLevel', 'photos', 'currentOpeningHours',
-  'types', 'location', 'googleMapsUri', 'utcOffsetMinutes',
 ].join(',');
 
 // Map price level enum to numeric
@@ -579,23 +595,28 @@ router.get('/details',
 
       const placeId = req.query.place_id;
 
-      const detailCacheKey = `detail:${placeId}`;
-      const cached = getCached(detailCacheKey);
-      if (cached) return res.json(cached);
-
-      let flight = inflight.get(detailCacheKey);
-      if (!flight) {
-        // Round 8: details is the same PAID Google surface as text search —
-        // rotating valid place ids bypassed the shared budget entirely.
-        // Only the leader charges (round 18): one Google call, one unit.
-        if (!allowPlacesSearch(req.user.id)) {
-          return res.status(429).json({ error: 'Loading venues too fast. Give it a few seconds.' });
-        }
-        flight = runPlaceDetails(placeId, detailCacheKey);
-        inflight.set(detailCacheKey, flight);
-        flight.then(() => inflight.delete(detailCacheKey));
+      // THE CACHE AND THE FLIGHT ARE NOT THIS FILE'S ANY MORE. They moved to
+      // services/placeDetailsCache.js so routes/crowd.js could share them: the
+      // client fires GET /api/venues/details and GET /api/crowd/:placeId
+      // together (App.js openVenueDetail, one Promise.allSettled), so the two
+      // used to buy the SAME Enterprise Place Details response twice, from two
+      // caches that could not see each other. Now whichever of the two arrives
+      // first leads the flight and the other rides it.
+      //
+      // Round 8: details is the same PAID Google surface as text search —
+      // rotating valid place ids bypassed the shared budget entirely. Round 18:
+      // only the leader charges, one Google call, one unit. Both still hold;
+      // what changed is that "am I the leader" is now a question about a
+      // process-wide flight rather than about this router's own map.
+      //
+      // NO `await` BETWEEN THE QUESTION AND THE FETCH. willCostUpstreamCall is
+      // only true for the rest of this tick, and fetchPlaceDetails registers
+      // its flight synchronously; putting anything asynchronous between them
+      // turns the charge into a guess.
+      if (willCostUpstreamCall(placeId) && !allowPlacesSearch(req.user.id)) {
+        return res.status(429).json({ error: 'Loading venues too fast. Give it a few seconds.' });
       }
-      const out = await flight;
+      const out = shapeDetails(await fetchPlaceDetails(placeId));
       if (out.status !== 200) return res.status(out.status).json({ error: out.error });
       res.json(out.result);
     } catch (err) {
@@ -605,30 +626,30 @@ router.get('/details',
   }
 );
 
-// The worker behind GET /details. Same contract as runTextSearch: never
-// rejects, never caches a failure.
-async function runPlaceDetails(placeId, detailCacheKey) {
-  try {
-    // ENCODED, belt and braces behind the shape check above: one path segment,
-    // always. Matches routes/crowd.js fetchVenueFromGoogle and
-    // routes/publicCrowd.js.
-    const response = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
-      headers: {
-        'X-Goog-Api-Key': API_KEY,
-        'X-Goog-FieldMask': DETAILS_FIELD_MASK,
-      },
-      signal: upstreamSignal('places'), // round 12
-    });
+// GET /details's PROJECTION of the shared raw payload. Pure: same Places
+// response in, same body out, no I/O and no cached state of its own — which is
+// what makes it safe for the raw entry to be shared with a consumer that
+// projects different fields from it (routes/crowd.js fetchVenueFromGoogle).
+//
+// The status codes are the ones runPlaceDetails used to return, unchanged and
+// deliberately not merged: a Google `error` body is 502 with Google's own
+// message, and everything else — a network failure, an upstreamSignal abort, a
+// non-JSON body from a proxy, a missing API key — is 500 "Failed to get venue
+// details". routes/crowd.js answers the same two cases with one null, which is
+// why services/placeDetailsCache.js hands back a discriminated result instead
+// of picking one of the two behaviours for both callers.
+function shapeDetails(out) {
+  if (!out.ok) {
+    if (out.kind === 'api') return { status: 502, error: `Places API: ${out.message}` };
+    console.error('Venue details error:', out.message);
+    return { status: 500, error: 'Failed to get venue details' };
+  }
+  const p = out.place;
+  const photos = (p.photos || []).slice(0, 5).map(photo => photoUrl(photo.name, 600));
 
-    const p = await response.json();
-
-    if (p.error) {
-      return { status: 502, error: `Places API: ${p.error.message}` };
-    }
-
-    const photos = (p.photos || []).slice(0, 5).map(photo => photoUrl(photo.name, 600));
-
-    const result = {
+  return {
+    status: 200,
+    result: {
       venue: {
         place_id: p.id,
         name: p.displayName?.text || '',
@@ -648,13 +669,8 @@ async function runPlaceDetails(placeId, detailCacheKey) {
         // field mask note above.
         utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
       },
-    };
-    setCache(detailCacheKey, result);
-    return { status: 200, result };
-  } catch (err) {
-    console.error('Venue details error:', err);
-    return { status: 500, error: 'Failed to get venue details' };
-  }
+    },
+  };
 }
 
 module.exports = router;

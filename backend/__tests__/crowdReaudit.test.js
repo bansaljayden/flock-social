@@ -18,6 +18,14 @@ const assert = require('node:assert');
 const { venueLocalNow, calculateCrowdScore } = require('../services/crowdEngine');
 const { toVenueShape } = require('../routes/publicCrowd').__testables;
 const { fetchVenueFromGoogle } = require('../routes/crowd').__testables;
+// fetchVenueFromGoogle stopped calling Google on 2026-08-20 — it now projects a
+// raw payload that services/placeDetailsCache.js owns and shares with
+// routes/venueSearch.js /details, which is what collapsed the venue detail
+// screen's two paid Place Details calls into one. The cache is process-wide and
+// keyed on place id alone, so two tests that stub DIFFERENT Google responses for
+// the SAME id would otherwise see the first one's payload twice. Clearing it is
+// the test-local equivalent of a cold process.
+const placeDetailsCache = require('../services/placeDetailsCache');
 
 // A Google Places (New) detail/search result. Fields are unprefixed here — the
 // detail endpoint strips "places." and area-search items arrive unprefixed too.
@@ -54,6 +62,7 @@ test('publicCrowd toVenueShape carries utcOffsetMinutes through to the venue', (
 });
 
 test('crowd.js fetchVenueFromGoogle carries utcOffsetMinutes through', async () => {
+  placeDetailsCache.__test.reset();
   const realFetch = global.fetch;
   global.fetch = async () => ({ ok: true, status: 200, json: async () => googlePlace() });
   try {
@@ -121,6 +130,7 @@ test('fetchVenueFromGoogle picks today\'s window by the venue clock too', async 
   const offset = -420;
   const venueDay = venueLocalNow(offset).day;
   const wrongClientDay = (venueDay + 1) % 7;
+  placeDetailsCache.__test.reset();
   const realFetch = global.fetch;
   global.fetch = async () => ({ ok: true, status: 200, json: async () => placeWithPerDayHours(offset) });
   try {
