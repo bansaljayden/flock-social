@@ -202,7 +202,16 @@ async function markFlockAttendance(userId, placeId) {
          )`,
       [userId, placeId]
     );
-    if (r.rowCount > 0) console.log(`[Checkin] attendance recorded for user ${userId} at ${placeId} (${r.rowCount} flock[s])`);
+    // SECURITY ROUND 5, 2026-08-20: the PLACE ID is gone from this line.
+    // user + venue + timestamp, appended once per check-in, is a location
+    // history — the exact artefact the privacy policy promises we do not build
+    // ("We do not store those coordinates in our database or build a location
+    // history from them"). A promise kept in Postgres and broken in stderr is
+    // still broken: Railway retains the log, and it is queryable by user id.
+    // The attendance table already records where somebody was, under the
+    // retention and deletion rules that apply to it. This line exists to say
+    // the write landed, so it says that.
+    if (r.rowCount > 0) console.log(`[Checkin] attendance recorded for user ${userId} (${r.rowCount} flock[s])`);
   } catch (err) {
     // Non-fatal — never block the checkin, but the failure must be loud
     console.error('Flock attendance update FAILED:', err.message);
