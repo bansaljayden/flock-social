@@ -322,6 +322,35 @@ describe('Roost chat: it accumulates into a conversation', () => {
     window.localStorage.removeItem('flockToken');
   });
 
+  test('a token that changes UNDER a live card does not re-label the thread onto the new account', async () => {
+    // The case the test above does not reach, and the one security round 26
+    // found: the token moves while this card is still mounted. `flockToken` is
+    // one shared localStorage key, so a second tab signing in as another owner
+    // overwrites it under this realm, and so does an in-app sign-in that never
+    // unmounts the dashboard. The hand-off used to read the key at WRITE time,
+    // so the very next turn stamped owner one's conversation with owner two's
+    // key, and owner two's next mount inherited it. That thread is owner one's
+    // revenue, footfall and staffing numbers.
+    window.localStorage.setItem('flockToken', 'token-for-owner-one');
+    const live = mount();
+    const input = await waitFor(field);
+    await askOnce(input, 'owner one private numbers');
+    await waitFor(() => expect(screen.getByText(GROUNDED.text)).toBeTruthy());
+
+    // Another tab signs in. Nothing unmounts.
+    window.localStorage.setItem('flockToken', 'token-for-owner-two');
+    // One more turn, which is what writes the store.
+    await askOnce(input, 'one more turn');
+    live.unmount();
+
+    // Owner two opens the dashboard. They must inherit nothing.
+    mount();
+    await waitFor(field);
+    expect(screen.queryByText('owner one private numbers')).toBeNull();
+    expect(screen.queryByText('one more turn')).toBeNull();
+    window.localStorage.removeItem('flockToken');
+  });
+
   test('the owner’s words are on their own side, the answer is not', async () => {
     mount();
     const input = await waitFor(field);
