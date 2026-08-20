@@ -250,6 +250,52 @@ test('deadline: every send carries an abort signal so an outage cannot park the 
 });
 
 // ===========================================================================
+// 3b. Extra headers: the Monday digest's RFC 8058 one-click pair
+// ===========================================================================
+// The digest's unsubscribe link is a GET that renders and a POST that writes
+// (routes/venueDigest.js), which only works as a product if the mail client
+// can do the POST itself. That is these two headers, and they are the first
+// thing in the codebase to pass a header through sendEmail, so what actually
+// reaches the provider is worth pinning rather than assuming.
+
+test('headers: a caller\'s extra headers reach the provider, and a CRLF in one does not', async () => {
+  const r = stubResend();
+  try {
+    await withEnv({ ...CLEAN_ENV, RESEND_API_KEY: 'k' }, async () => {
+      emailService.resetClient();
+      await emailService.sendEmail({
+        to: 'a@b.co',
+        subject: 'digest',
+        html: '<p>hi</p>',
+        headers: {
+          'List-Unsubscribe': '<https://api.example.com/opt-out?token=t>',
+          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+        },
+      });
+      assert.deepStrictEqual(r.sends[0].payload.headers, {
+        'List-Unsubscribe': '<https://api.example.com/opt-out?token=t>',
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      });
+
+      // Injection: a newline in a header value is a second header on the wire.
+      await emailService.sendEmail({
+        to: 'a@b.co',
+        subject: 'digest',
+        html: '<p>hi</p>',
+        headers: { 'List-Unsubscribe': '<https://api.example.com/x>\r\nBcc: attacker@example.com' },
+      });
+      const smuggled = r.sends[1].payload.headers['List-Unsubscribe'];
+      assert.ok(!/[\r\n]/.test(smuggled), smuggled);
+
+      // A caller that passes nothing sends no `headers` key at all, so the
+      // existing senders' payloads are byte-identical to what they were.
+      await emailService.sendEmail({ to: 'a@b.co', subject: 'plain', html: '<p>hi</p>' });
+      assert.ok(!('headers' in r.sends[2].payload));
+    });
+  } finally { r.restore(); emailService.resetClient(); }
+});
+
+// ===========================================================================
 // 4. Injection: user-supplied values render as text in the HTML part
 // ===========================================================================
 
