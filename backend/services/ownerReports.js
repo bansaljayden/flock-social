@@ -25,8 +25,10 @@
 // measurements). What keeps this a disclosure instead of an advertisement is
 // exactly three properties, and all of them are enforced here or in the write
 // path, none in a pricing table: the reading is labelled with its source on
-// every surface ("the bar says"), it expires on its own, and real user reports
-// outrank it. Do not gate the write path by plan, ever.
+// every surface (the category-derived attribution from utils/venueLabel.js,
+// "the cafe says" / "the club says" / "the venue says"), it expires on its
+// own, and real user reports outrank it. Do not gate the write path by plan,
+// ever.
 //
 // WHY 90 MINUTES. The reading is an observation of the room, and rooms turn
 // over: the corpus's own hour-to-hour deltas say a bar's occupancy is no longer
@@ -41,6 +43,7 @@
 // ---------------------------------------------------------------------------
 const pool = require('../config/database');
 const crowdEngine = require('./crowdEngine');
+const venueLabel = require('../utils/venueLabel');
 
 const OWNER_REPORT_TTL_MINUTES = 90;
 const OWNER_REPORT_TTL_MS = OWNER_REPORT_TTL_MINUTES * 60 * 1000;
@@ -166,9 +169,10 @@ function markDiverged(reportId) {
 //   live, >= 3 reporters       -> users win. Number and basis untouched (the
 //                                 existing capped blend IS the answer); the
 //                                 owner's figure rides along, applied: false,
-//                                 so a client can still show "the bar says N"
-//                                 as information beside the number. A reading
-//                                 that diverges from the reporters is stamped.
+//                                 so a client can still show "{the venue} says
+//                                 N" as information beside the number. A
+//                                 reading that diverges from the reporters is
+//                                 stamped.
 //   live, < 3 reporters        -> the reading replaces the published number,
 //                                 labelled: basis 'owner_report', supported
 //                                 true (an operator looking at their own room
@@ -190,6 +194,18 @@ function applyOwnerReport(result, ownerRow, options = {}) {
   const live = liveOwnerReport(ownerRow, options.now);
   if (!live) return result;
 
+  // The attribution, computed HERE and nowhere else: "the {venue-type} says"
+  // from utils/venueLabel.js — the cafe says, the club says — with "the
+  // venue says" when the category is unknown. Category comes from the caller
+  // when it has one (options.category, e.g. venue_profiles.category), else
+  // from the Google types the payload already ships for the wait/capacity
+  // recompute. Clients render these fields and never hardcode the words —
+  // __tests__/venueLabel.test.js greps the repo to keep it that way.
+  const category = venueLabel.normalizeCategory(options.category)
+    || venueLabel.categoryFromTypes(options.venueTypes || result.venueTypes);
+  const noun = venueLabel.venueNoun(category);
+  const attribution = venueLabel.ownerAttribution(category);
+
   // Alternatives rows carry no calibration block (they publish no confidence
   // either — see the note in routes/crowd.js), so the caller may hand the
   // reporter count in explicitly. Either way, below the floor it is 0 evidence.
@@ -202,7 +218,7 @@ function applyOwnerReport(result, ownerRow, options = {}) {
     }
     return {
       ...result,
-      ownerReport: { ...live, applied: false, outrankedBy: 'user_reports' },
+      ownerReport: { ...live, applied: false, outrankedBy: 'user_reports', noun, attribution },
     };
   }
 
@@ -215,7 +231,7 @@ function applyOwnerReport(result, ownerRow, options = {}) {
     confidenceBasis: OWNER_BASIS,
     confidenceMeans: 'owner_asserted',
     supported: true,
-    ownerReport: { ...live, applied: true },
+    ownerReport: { ...live, applied: true, noun, attribution },
   };
   if (result.waitEstimate !== undefined) {
     out.waitEstimate = crowdEngine.estimateWait(live.percent, result.venueTypes || [], result.priceLevel ?? null);

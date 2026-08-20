@@ -7,6 +7,7 @@ const { requireVenueTier, venueBillingEnabled } = require('../services/venueEnti
 // live in ONE service (routes/crowd.js applies them to every published
 // number). This router only owns the write path.
 const ownerReports = require('../services/ownerReports');
+const venueLabel = require('../utils/venueLabel');
 const { rejectIfProfane } = require('../utils/moderation');
 const { upstreamSignal } = require('../utils/upstream');
 // Shape before content — see validators/shape.js. Nothing this router accepts
@@ -62,7 +63,7 @@ const SERVING_TIERS = ['premium', 'pro'];
 // Helper: get venue profile for current user
 async function getVenueCtx(userId) {
   const { rows } = await pool.query(
-    'SELECT id, google_place_id, verified FROM venue_profiles WHERE user_id = $1',
+    'SELECT id, google_place_id, verified, category FROM venue_profiles WHERE user_id = $1',
     [userId]
   );
   return rows[0] || null;
@@ -1655,9 +1656,10 @@ function stripOrderingClaim(you, competitor) {
 // FTC's 2020 order against ratings that were sold rather than measured. What
 // keeps this a disclosure instead of an advertisement is enforced in
 // services/ownerReports.js, not in a pricing table: every surface labels the
-// number as the bar's own claim ("the bar says"), it expires in 90 minutes on
-// its own, three verified user reports outrank it, and repeated divergence
-// from those reports suppresses the override entirely.
+// number as the venue's own claim (the category-derived attribution from
+// utils/venueLabel.js — "the cafe says", "the club says"), it expires in 90
+// minutes on its own, three verified user reports outrank it, and repeated
+// divergence from those reports suppresses the override entirely.
 //
 // VERIFIED CLAIMS ONLY, same rule as /incoming-flocks: an unverified claim on
 // an arbitrary place id must not set the public number for a business the
@@ -1700,7 +1702,16 @@ router.get('/busy-now', async (req, res) => {
     }
     if (!ctx.verified) return res.json({ available: false, unverified: true, reason: UNVERIFIED_REASON });
     const state = await ownerBusyState(ctx.google_place_id);
-    res.json({ available: true, ttlMinutes: ownerReports.OWNER_REPORT_TTL_MINUTES, ...state });
+    res.json({
+      available: true,
+      ttlMinutes: ownerReports.OWNER_REPORT_TTL_MINUTES,
+      // The exact words users see on the reading, so the dashboard's "shown
+      // to users as ..." copy quotes the real label instead of guessing one.
+      // Derived from the profile's own category; "the venue says" when the
+      // profile has none.
+      attribution: venueLabel.ownerAttribution(ctx.category),
+      ...state,
+    });
   } catch (err) {
     console.error('Get busy-now error:', err);
     res.status(500).json({ error: 'Failed to load your live number' });
@@ -1744,7 +1755,14 @@ router.post('/busy-now', [
       [req.user.id, ctx.google_place_id, Number(req.body.percent)]
     );
     const state = await ownerBusyState(ctx.google_place_id);
-    res.status(201).json({ available: true, ttlMinutes: ownerReports.OWNER_REPORT_TTL_MINUTES, ...state });
+    // Same shape as the GET, attribution included: the dashboard replaces its
+    // whole busy-now state with this response.
+    res.status(201).json({
+      available: true,
+      ttlMinutes: ownerReports.OWNER_REPORT_TTL_MINUTES,
+      attribution: venueLabel.ownerAttribution(ctx.category),
+      ...state,
+    });
   } catch (err) {
     console.error('Set busy-now error:', err);
     res.status(500).json({ error: 'Failed to set your live number' });
