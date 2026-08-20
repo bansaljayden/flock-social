@@ -53,6 +53,11 @@ const signup = (name, email, dob, headers) =>
   const pg = new EmbeddedPostgres({
     databaseDir: path.join(os.tmpdir(), 'flock-e2e-pg-' + Date.now()),
     user: 'postgres', password: 'postgres', port: 59595, persistent: false,
+    // io_method=sync, for the reason spelled out in __tests__/helpers/embeddedPgPort.js:
+    // PostgreSQL 18's default `worker` method starts io_worker children that
+    // outlive a killed run forever, because nothing they do ever notices the
+    // parent is gone. `sync` starts none, so a Ctrl-C here cannot leave one behind.
+    postgresFlags: ['-c', 'io_method=sync'],
   });
 
   console.log('Starting embedded Postgres (first run downloads binaries)...');
