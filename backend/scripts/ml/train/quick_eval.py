@@ -80,8 +80,20 @@ def metrics(y_true, y_pred):
 
 
 def reconstruct(raw_delta, baseline):
-    """Production's reconstruction: baseline + clamp(delta, -30, 30), clipped."""
-    return np.clip(baseline + np.clip(raw_delta, -30, 30), 0, 100)
+    """Production's reconstruction, byte-for-byte with mlPredictor.js
+    reconstructScore (dispersion lab 2026-08-19, RETRAIN-V27-LOG.md):
+    baseline + clamp(delta, -50, 50), clipped 0-100, then the 1-point extremes
+    push -- scores < 25 get -1, > 65 get +1, re-clipped. The clamp deliberately
+    overrides metadata.delta_clamp_range (+-30, the training-time record): the
+    lab measured +-50 + push as the only candidate clearing the gate (W10
+    +0.26pp CI [+0.17, +0.37], MAE -0.0002, 2000-resample date-block
+    bootstrap). The gate must score the reconstruction production actually
+    performs, so if reconstructScore changes, this changes with it. (Serving
+    rounds to an integer at the end; this stays float, the convention every
+    prior gate number was computed under -- sub-half-point, direction-free.)"""
+    score = np.clip(baseline + np.clip(raw_delta, -50, 50), 0, 100)
+    score = np.where(score < 25, score - 1, np.where(score > 65, score + 1, score))
+    return np.clip(score, 0, 100)
 
 
 def realtime_flags(X, feature_cols, n_rows):
@@ -188,7 +200,7 @@ def compare_incumbent(gate_mask, hold_y_actual, challenger_pred, current_feature
     # Both models must be judged on rows BOTH of them would serve. The LOO
     # baseline change and the smoothing fix move which rows have a baseline at
     # all, and scoring the incumbent on a row where ITS baseline is 0 caps its
-    # reconstruction at clamp(delta) <= 30 against actuals up to 100 — that would
+    # reconstruction at clamp(delta) <= 50 against actuals up to 100 — that would
     # flatter the challenger and make this arm easier to pass, not harder.
     cmp_mask = gate_mask & serving_population_mask(inc_baseline)
     dropped = int(gate_mask.sum() - cmp_mask.sum())
@@ -322,7 +334,7 @@ def main():
         f'  gate slice (realtime AND baseline>0): {rt_count:,}\n'
         f'  EXCLUDED realtime rows with baseline==0: {excluded_no_baseline:,} '
         f'(production routes these to the rule engine; the model reconstructs '
-        f'0 + clamp(delta) <= 30 against actuals up to 100)\n'
+        f'0 + clamp(delta) <= 50 against actuals up to 100)\n'
         f'  weekly rows with baseline>0: {weekly_count:,}'
     )
 

@@ -2016,6 +2016,43 @@ function guessCategory(types) {
 // global-only metering, which is the right answer for background producers and
 // for the unauthenticated demo. Nothing else in the prediction depends on it,
 // and it never reaches a cache key or the feature vector.
+// ---------------------------------------------------------------------------
+// THE DELTA RECONSTRUCTION, WITH THE DISPERSION-LAB CORRECTION (2026-08-19).
+//
+// The shipped model is too narrow: prediction sd 21.6 against an actual sd of
+// 36.65 on the gate slice. The dispersion lab (scripts/ml/train/
+// RETRAIN-V27-LOG.md, "Dispersion lab") ran every post-hoc widener — clamp
+// widths, affine and quantile maps, isotonic in delta and score space, banded
+// pushes — against the ship gate on the v2.6.0 holdout, prequentially (fit on
+// the earliest 30% of gate dates, scored forward). Exactly ONE candidate
+// cleared it: widen the clamp to ±50 and push the extremes by a single point.
+// Date-block bootstrap, 2000 resamples: within-10 +0.262pp CI [+0.171,
+// +0.365], MAE -0.0002 CI [-0.053, +0.031]. A real dispersion gain, MAE-
+// neutral. Everything stronger buys its width with MAE the gate refuses.
+//
+// The ±50 DELIBERATELY OVERRIDES metadata.delta_clamp_range (±30). That key
+// remains the training-time record — train_model.resolve_clamp still reads it
+// for the training-side report — but the lab measured the SERVE clamp at ±50
+// on the shipped artifact, and quick_eval.py's reconstruct() applies this
+// same arithmetic so the ship gate scores the reconstruction production
+// actually performs. If this function changes, quick_eval changes with it.
+//
+// The push reads the ROUNDED score and fires only outside [25, 65], one point
+// toward the nearer rail, never across it. Pinned by
+// __tests__/dispersionReconstruction.test.js.
+// ---------------------------------------------------------------------------
+const DELTA_CLAMP_LO = -50;
+const DELTA_CLAMP_HI = 50;
+const EXTREMES_PUSH_LOW = 25;
+const EXTREMES_PUSH_HIGH = 65;
+function reconstructScore(rawDelta, baseline) {
+  const clampedDelta = Math.max(DELTA_CLAMP_LO, Math.min(DELTA_CLAMP_HI, rawDelta));
+  let score = Math.max(0, Math.min(100, Math.round(baseline + clampedDelta)));
+  if (score < EXTREMES_PUSH_LOW) score = Math.max(0, score - 1);
+  else if (score > EXTREMES_PUSH_HIGH) score = Math.min(100, score + 1);
+  return score;
+}
+
 async function predictBusyness(venue, weather, timestamp, options = {}) {
   await init();
   const userId = options && options.userId != null ? options.userId : undefined;
@@ -2120,15 +2157,13 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
     }
     let score;
     if (metadata.label_type === 'delta') {
-      // Delta-trained model: reconstruct absolute as baseline + clamp(delta).
-      // The model corrects systematic bias and adds nuance on top of popular_times.
-      const [lo, hi] = metadata.delta_clamp_range || [-30, 30];
-      const clampedDelta = Math.max(lo, Math.min(hi, rawOutput));
-      score = (baseline || 0) + clampedDelta;
+      // Delta-trained model: reconstruct absolute as baseline + clamp(delta)
+      // + the dispersion-lab extremes push — see reconstructScore above for
+      // why the clamp is ±50 and not metadata.delta_clamp_range's ±30.
+      score = reconstructScore(rawOutput, baseline || 0);
     } else {
-      score = rawOutput;
+      score = Math.max(0, Math.min(100, Math.round(rawOutput)));
     }
-    score = Math.max(0, Math.min(100, Math.round(score)));
 
     const label = getLabel(score);
 
@@ -2412,6 +2447,7 @@ module.exports = {
     groupWeatherCode,
     baselineFromPopularTimes,
     trueEventInstant,
+    reconstructScore,
     weatherForSlot,
     categoryGlobalMean,
     hasTempReading,
