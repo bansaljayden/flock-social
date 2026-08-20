@@ -867,6 +867,12 @@ function baselineProvenanceFor(placeId, dayOfWeek, hour) {
 // payload — which is already in hand, fetched for this very request — replaces
 // it. Rows fresher than that are left alone, so a busy venue does not pay 168
 // writes per request.
+//
+// `updated_at` is NULLABLE (the column only has a DEFAULT), and a NULL there
+// is read as infinitely old rather than skipped. A row whose age is unknown is
+// exactly the row that most needs rewriting, and the alternative — NULL makes
+// the predicate NULL, so the row is never touched — is the write-once bug
+// again, in a corner where nothing would ever have surfaced it.
 async function storeGoogleBaselines(placeId, popularTimes) {
   if (!pool || !placeId || !popularTimes || !Array.isArray(popularTimes)) return;
   try {
@@ -886,7 +892,8 @@ async function storeGoogleBaselines(placeId, popularTimes) {
            ON CONFLICT (google_place_id, day_of_week, hour) DO UPDATE
              SET baseline = EXCLUDED.baseline, updated_at = NOW()
              WHERE ml_venue_baselines.source = 'google'
-               AND ml_venue_baselines.updated_at < NOW() - make_interval(days => $5::int)`,
+               AND COALESCE(ml_venue_baselines.updated_at, 'epoch'::timestamptz)
+                     < NOW() - make_interval(days => $5::int)`,
           [placeId, dow, h, Math.max(0, Math.min(100, Math.round(val))), GOOGLE_BASELINE_REFRESH_DAYS]
         );
       }

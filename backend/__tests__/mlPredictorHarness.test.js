@@ -317,7 +317,10 @@ function baselineDb(rowsForBaselineQuery) {
   return {
     query: async (sql, params) => {
       const text = String(sql);
-      if (/SELECT day_of_week, hour, baseline FROM ml_venue_baselines/.test(text)) {
+      // Column list left loose on purpose: getBaseline also selects `source,
+      // updated_at` to publish baseline freshness, and this fake exists to
+      // answer the baseline lookup, not to pin its SELECT list.
+      if (/day_of_week, hour, baseline.* FROM ml_venue_baselines/.test(text)) {
         return { rows: rowsForBaselineQuery(params) };
       }
       if (/FROM venue_feedback/.test(text)) return { rows: [{}] };
