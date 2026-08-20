@@ -582,6 +582,25 @@ export async function getVenueStrip() {
   return request('/api/venue-dashboard/strip');
 }
 
+// The owner's live 0-100 number. Free at every tier — the number users see is
+// never for sale; it is labelled "the bar says", expires server-side after 90
+// minutes, and recent user reports outrank it.
+export async function getVenueBusyNow() {
+  return request('/api/venue-dashboard/busy-now');
+}
+export async function updateVenueBusyNow(percent) {
+  return request('/api/venue-dashboard/busy-now', { method: 'POST', body: JSON.stringify({ percent }) });
+}
+export async function clearVenueBusyNow() {
+  return request('/api/venue-dashboard/busy-now', { method: 'DELETE' });
+}
+
+// Deterministic weekly summary — SQL aggregates over the venue's own rows,
+// nothing modelled, nothing invented.
+export async function getVenueThisWeek() {
+  return request('/api/venue-dashboard/this-week');
+}
+
 // Roost, the venue advisor's chat surface (components/VenueAdvisorChat.js).
 // Chips only, by contract: /questions serves the grouped list of everything
 // the server will accept, and /ask takes exactly one of those intent ids.

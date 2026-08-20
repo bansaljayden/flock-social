@@ -1270,12 +1270,22 @@ router.post('/batch',
       // SCORING (see the whitelist note above), but a junk id must not mint
       // served_predictions rows, or twenty fabricated ids per POST becomes
       // unbounded table growth.
-      recordServedPredictions(req.user.id, predictions.map((p) => ({
-        placeId: p.placeId, score: p.score, method: p.predictionMethod, modelVersion: null,
+      // The owner override, one bulk read for the whole list, applied to each
+      // row the same way the card applies it — this list is what the card sits
+      // under, so a row quoting the model's 42 beside a card saying "the bar
+      // says 85" would be the two-surfaces-disagree bug in its newest clothes.
+      const ownerByPlace = await ownerReports.getLiveOwnerReports(predictions.map((p) => p.placeId));
+      const published = predictions.map((p) => ownerReports.applyOwnerReport(p, ownerByPlace[p.placeId]));
+
+      recordServedPredictions(req.user.id, published.map((p) => ({
+        placeId: p.placeId,
+        score: p.score,
+        method: p.confidenceBasis === 'owner_report' ? 'owner_report' : p.predictionMethod,
+        modelVersion: null,
       })));
 
       res.json({
-        predictions,
+        predictions: published,
         weather: weather ? { temp: weather.temp, conditions: weather.conditions } : null,
         timestamp: now.toISOString(),
       });
@@ -1487,8 +1497,19 @@ router.get('/:placeId/alternatives',
         console.error('[Crowd] Alternatives feedback query failed, using raw scores:', fbErr.message);
       }
 
+      // Owner readings for the target AND the neighbours, one bulk read. This
+      // list is a COMPARISON, so the override has to land on both sides of it:
+      // a bar whose owner just said "we're dead" is exactly the quieter
+      // alternative this endpoint exists to surface, and a target whose owner
+      // said "packed" should be compared as packed.
+      const ownerByPlace = await ownerReports.getLiveOwnerReports([placeId, ...altIds]);
+
       const targetCal = buildCalibrationAdjustment(feedbackByVenue[placeId] || [], targetResult.score);
-      const targetScore = targetCal.adjustedScore;
+      const targetScore = ownerReports.applyOwnerReport(
+        { score: targetCal.adjustedScore },
+        ownerByPlace[placeId],
+        { reporters: targetCal.feedbackUsed ? targetCal.reportCount : 0 }
+      ).score;
       const scoredNearby = await Promise.all(nearby.map(async (v) => {
         try {
           // Ten neighbours, ten possible Ticketmaster calls, one request —
@@ -1507,7 +1528,11 @@ router.get('/:placeId/alternatives',
             r.predictionMethod,
             cal.feedbackUsed ? cal.reportCount : 0
           );
-          return {
+          // Rows carry no calibration block (no confidence either), so the
+          // reporter count rides in as an option — same precedence as the card:
+          // three verified reporters outrank the owner, the owner outranks the
+          // model.
+          return ownerReports.applyOwnerReport({
             placeId: v.place_id,
             name: v.name,
             score,
@@ -1522,7 +1547,7 @@ router.get('/:placeId/alternatives',
             // `confidenceMeasurement: confidenceMeasurementFor(r, <it>, 0)`
             // ships in the same edit, which
             // __tests__/confidenceForwarding.test.js enforces.
-          };
+          }, ownerByPlace[v.place_id], { reporters: cal.feedbackUsed ? cal.reportCount : 0 });
         } catch { return null; }
       }));
 
@@ -1540,18 +1565,23 @@ router.get('/:placeId/alternatives',
         targetCal.feedbackUsed ? targetCal.reportCount : 0
       );
       const payload = {
-        currentVenue: {
+        currentVenue: ownerReports.applyOwnerReport({
           name: target.name,
-          score: targetScore,
+          score: targetCal.adjustedScore,
           // The card's own number, so a client that shows "you are here at X"
           // above this list qualifies it the same way the card does.
           predictionMethod: targetResult.predictionMethod || null,
           confidenceBasis: targetSupport.basis,
           supported: targetSupport.supported,
-        },
+        }, ownerByPlace[placeId], { reporters: targetCal.feedbackUsed ? targetCal.reportCount : 0 }),
         alternatives,
       };
-      setCache(cacheKey, payload);
+      // An owner reading is PERISHABLE and this cache cannot see it expire, so
+      // a payload carrying one is served fresh and never remembered — the same
+      // never-bake rule the card keeps, enforced here by skipping the write.
+      const anyOwnerAsserted = payload.currentVenue.confidenceBasis === 'owner_report'
+        || alternatives.some((a) => a.confidenceBasis === 'owner_report');
+      if (!anyOwnerAsserted) setCache(cacheKey, payload);
       res.json(payload);
     } catch (err) {
       console.error('[Crowd] Alternatives error:', err);

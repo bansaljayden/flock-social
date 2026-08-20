@@ -222,6 +222,10 @@ async function buildCard(v, weather, clock, preScored) {
     // read by people who have never used the app, so an unhedged word here is
     // the first claim the product makes and the least defensible one.
     label: publishedLabel(scored.score, describePredictionSupport(scored.predictionMethod, 0)),
+    // The label's provenance, machine-readable. The hedge above already
+    // carries it in prose; this is the same answer for a client that reads
+    // fields instead of words (snake_case, this surface's convention).
+    confidence_basis: describePredictionSupport(scored.predictionMethod, 0).basis,
     confidence: scored.confidence,
     // The confidence above is the free half of this demo and is published to
     // people who have no account, so it is the FIRST number this product shows
@@ -254,6 +258,10 @@ async function buildCard(v, weather, clock, preScored) {
         hour: h.hour,
         label: h.label,
         score: h.score,
+        // Which engine scored this bar (skew fix c, 2026-08-19). The demo
+        // rebuilds entries field by field, so without this line the public
+        // strip silently drops what mlPredictor now says about every hour.
+        predictionMethod: h.predictionMethod || null,
         // Google's openNow wins for the "Now" bar. Published hours and reality
         // disagree often enough (holidays, private events, a late open) that
         // the bar under a "Closed right now" headline must not be drawn as a
@@ -492,6 +500,7 @@ router.get('/demo/venues',
             photo_url: p.photos?.[0]?.name ? `/api/venues/photo?ref=${encodeURIComponent(p.photos[0].name)}&maxwidth=160` : null,
             score: scored.score,
             label: publishedLabel(scored.score, describePredictionSupport(scored.predictionMethod, 0)),
+            confidence_basis: describePredictionSupport(scored.predictionMethod, 0).basis,
             // NO `confidence` ON A PIN, and therefore no measurement block. A
             // pin publishes the score and the hedged word, both of which stand
             // on their own; the confidence integer is the field that cannot be
