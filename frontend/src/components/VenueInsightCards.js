@@ -293,7 +293,15 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
     try { return window.localStorage.getItem(NOTE_SEEN_KEY) === '1'; } catch { return true; }
   });
   const alive = useRef(true);
-  useEffect(() => () => { alive.current = false; }, []);
+  // Re-arm on mount, not just disarm on unmount. A ref initialised to true
+  // is only true for the first mount: React 18 StrictMode mounts, unmounts and
+  // remounts in dev, and a real remount happens any time the owner leaves the
+  // Analytics tab and comes back. Without the re-arm the flag stays false, the
+  // fetch resolves into a discarded update, and the card is a skeleton forever.
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; };
+  }, []);
 
   const load = useCallback(async () => {
     if (typeof fetchCards !== 'function') return;
