@@ -10,9 +10,11 @@
 //      text, never conversation history, never a tool. One call, no loop.
 //   2. The model may not write digits. Numbers appear only as {{fact:id}}
 //      placeholders, and the SERVER substitutes real values after generation.
-//   3. Any bare digit in the raw model output rejects the WHOLE output. So
-//      does an em dash, an unknown fact id, a causal verb, or a sentence that
-//      cites no fact. Rejection is not retried ("a ceiling that retries
+//   3. Any NUMERAL in the raw model output rejects the WHOLE output, in every
+//      script Unicode has and not merely ASCII 0-9, and a spelled-out number
+//      rejects any sentence that would have rendered. So does a dash of any
+//      length, an unknown fact id, a causal verb, or a sentence that cites no
+//      fact. Rejection is not retried ("a ceiling that retries
 //      itself is not a ceiling", routes/ai.js) — the deterministic template
 //      twin serves instead. Every phrased answer has a template twin, so the
 //      LLM being down, over budget, or wrong costs wording, never truth.
@@ -36,10 +38,14 @@
 //   * 50 phrased answers per venue per UTC day (product cap; templates are
 //     uncapped, they cost nothing).
 //   * 150,000 tokens per venue per UTC day.
-//   * 2,000,000 tokens global per UTC day, POSTGRES-BACKED (advisor_spend,
-//     migration 035) because birdieUsage's own header calls its in-memory
-//     global figure "a brake, not a cap" across deploys, and a paid surface
-//     starts with the fix it recommends.
+//   * 2,000,000 tokens global per UTC day.
+// ALL THREE ARE POSTGRES-BACKED (advisor_spend, migration 035; and
+// advisor_venue_spend, migration 037). birdieUsage's own header calls an
+// in-memory global figure "a brake, not a cap" across deploys, and a paid
+// surface starts with the fix it recommends. The per-venue pair joined it
+// because a Map is per-CONTAINER, so on more than one replica a cap of fifty
+// answers a day is fifty times the replica count, and the per-venue token cap
+// is the number that decides how few venues can drain the global one.
 // A refused charge is not an error: the template twin answers.
 // ---------------------------------------------------------------------------
 
@@ -145,17 +151,6 @@ const PER_VENUE_DAILY_TOKENS = 150_000;
 const ADVISOR_GLOBAL_DAILY_TOKENS = 2_000_000;
 const CHARS_PER_TOKEN = 4; // birdieUsage's estimator convention
 
-const MAX_TRACKED_VENUES = 5000;
-const EVICT_TARGET = 4500;
-
-// venue owner users.id -> { day, answers, tokens }. Per-venue meters only; the
-// money ceiling is the Postgres row below, which survives deploys.
-const advisorVenueSpend = new Map();
-
-function todayKey() {
-  return new Date().toISOString().slice(0, 10);
-}
-
 // Copied in intent from birdieUsage.accountKey: '5' and 5 share one bucket,
 // anything unidentifiable is refused rather than handed a free lane.
 function accountKey(userId) {
@@ -164,50 +159,46 @@ function accountKey(userId) {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
-// Least-consumed-first, before the insert, never clear() — the birdieUsage
-// eviction rules, same reasoning.
-function evictIfFull() {
-  if (advisorVenueSpend.size < MAX_TRACKED_VENUES) return;
-  const day = todayKey();
-  const entries = [...advisorVenueSpend.entries()]
-    .sort((a, b) => {
-      const sa = a[1].day === day ? a[1].tokens : 0;
-      const sb = b[1].day === day ? b[1].tokens : 0;
-      return sa - sb;
-    });
-  while (advisorVenueSpend.size > EVICT_TARGET && entries.length) {
-    advisorVenueSpend.delete(entries.shift()[0]);
-  }
-}
-
-function venueEntry(id) {
-  const day = todayKey();
-  let entry = advisorVenueSpend.get(id);
-  if (!entry) {
-    evictIfFull();
-    entry = { day, answers: 0, tokens: 0 };
-    advisorVenueSpend.set(id, entry);
-  }
-  if (entry.day !== day) {
-    entry.day = day;
-    entry.answers = 0;
-    entry.tokens = 0;
-  }
-  return entry;
-}
-
 // Charge the per-venue meters for one phrased answer, BEFORE the call.
 // All-or-nothing, fail closed, never refunded.
-function allowVenuePhrasing(userId, tokens) {
+//
+// POSTGRES, not a Map (migration 037). These were in-process until this was
+// written, on 035's reasoning that a per-venue cap is a product limit rather
+// than money and that a deploy losing one is cheap. A deploy is cheap. A
+// SECOND CONTAINER is not: every in-process meter in this repo is per-
+// container, so a Map-backed cap of fifty answers a day quietly became fifty
+// per replica, and the per-venue token cap is precisely the number that
+// decides how few venues it takes to drain the global ceiling out from under
+// everyone else. A fairness control that multiplies by the replica count is
+// not a fairness control.
+//
+// The upsert refuses by returning no row. The pre-check on `tokens` matters:
+// on the INSERT path there is no conflict, so the ON CONFLICT ... WHERE never
+// runs and a single oversized request would otherwise open the day's row
+// already over the cap.
+async function allowVenuePhrasing(userId, tokens) {
   const id = accountKey(userId);
   if (id === null) return false;
   if (!Number.isInteger(tokens) || tokens < 1) return false;
-  const entry = venueEntry(id);
-  if (entry.answers + 1 > PER_VENUE_DAILY_ANSWERS) return false;
-  if (entry.tokens + tokens > PER_VENUE_DAILY_TOKENS) return false;
-  entry.answers += 1;
-  entry.tokens += tokens;
-  return true;
+  if (tokens > PER_VENUE_DAILY_TOKENS) return false;
+  try {
+    const r = await pool.query(
+      `INSERT INTO advisor_venue_spend (day, venue_user_id, answers, tokens)
+            VALUES (CURRENT_DATE, $1, 1, $2)
+       ON CONFLICT (day, venue_user_id) DO UPDATE
+            SET answers = advisor_venue_spend.answers + 1,
+                tokens  = advisor_venue_spend.tokens + EXCLUDED.tokens
+          WHERE advisor_venue_spend.answers + 1 <= $3
+            AND advisor_venue_spend.tokens + EXCLUDED.tokens <= $4
+       RETURNING tokens`,
+      [id, tokens, PER_VENUE_DAILY_ANSWERS, PER_VENUE_DAILY_TOKENS]
+    );
+    return r.rowCount > 0;
+  } catch (err) {
+    // Same posture as the global counter: a meter that cannot count refuses.
+    console.error('advisorPhrasing: venue spend counter unavailable, refusing the call:', err.message);
+    return false;
+  }
 }
 
 // The global ceiling, denominated in money, in Postgres. One row per UTC day,
@@ -239,7 +230,17 @@ function settleTokens(userId, estimated, actual) {
   const delta = Math.ceil(actual - estimated);
   if (!(delta > 0)) return;
   const id = accountKey(userId);
-  if (id !== null) venueEntry(id).tokens += delta;
+  if (id !== null) {
+    // The venue ledger is trued up unconditionally, exactly like the global one
+    // below: a true-up may carry a day's row past its cap, and the NEXT charge
+    // is the thing that then refuses. Capping the settle instead would be a
+    // refund by another name.
+    pool.query(
+      `UPDATE advisor_venue_spend SET tokens = tokens + $1
+        WHERE day = CURRENT_DATE AND venue_user_id = $2`,
+      [delta, id]
+    ).catch((err) => console.error('advisorPhrasing: venue settle failed:', err.message));
+  }
   pool.query(
     'UPDATE advisor_spend SET tokens = tokens + $1 WHERE day = CURRENT_DATE',
     [delta]
@@ -418,12 +419,47 @@ function renderTemplate(block) {
 const CAUSAL_VERBS = /\b(because|due to|caused|causes|thanks to|explains|explained by|driven by)\b/i;
 const PLACEHOLDER = /\{\{fact:([A-Za-z_]+)\}\}/g;
 
+// The digit valve, stated precisely. "No digits" has to mean no NUMBERS, and
+// a bare /\d/ meant neither:
+//
+//   * /\d/ without the u flag is ASCII 0-9 only. Fullwidth digits, Arabic
+//     Indic digits, Devanagari digits and the rest all sailed through, and
+//     they render to the owner as numerals. \p{Nd} covers every decimal
+//     digit Unicode has; \p{No} covers the superscripts and the vulgar
+//     fractions, which are numbers wearing one code point.
+//   * A model that is told not to write digits writes the words instead.
+//     "around seventy on our index" is exactly the fabricated magnitude this
+//     valve exists to stop, and it contains no digit at all.
+//
+// Rejecting costs wording and nothing else: the deterministic template twin
+// serves, carrying the real numbers. So this errs strict on purpose. The
+// small ordinals and "one" are left out of the word list because they carry
+// ordinary prose ("no one", "one of", "first orders") far more often than
+// they carry a quantity.
+const UNICODE_NUMERIC = /[\p{Nd}\p{No}]/u;
+const NUMBER_WORDS = /\b(two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fourty|fifty|sixty|seventy|eighty|ninety|hundred|hundreds|thousand|thousands|million|millions|dozen|dozens|half|quarter|twice|thrice|triple|quadruple)\b/i;
+function hasNumerals(text) {
+  return UNICODE_NUMERIC.test(text);
+}
+
+// SLOP-AUDIT rule 1 structurally. The em dash was the only one checked, so an
+// en dash or a horizontal bar walked straight past a rule the prompt states
+// three times. With every digit already rejected there is no numeric range
+// left for an en dash to be legitimate in, so the whole family is refused.
+const BANNED_DASHES = [0x2012, 0x2013, 0x2014, 0x2015];
+function hasBannedDash(text) {
+  for (const ch of text) {
+    if (BANNED_DASHES.includes(ch.codePointAt(0))) return true;
+  }
+  return false;
+}
+
 function applyValve(raw, block) {
   if (typeof raw !== 'string') return null;
   const text = raw.trim();
   if (!text) return null;
-  if (/\d/.test(text)) return null;
-  if (text.includes('—')) return null;
+  if (hasNumerals(text)) return null;
+  if (hasBannedDash(text)) return null;
   if (CAUSAL_VERBS.test(text)) return null;
 
   const facts = Array.isArray(block?.facts) ? block.facts : [];
@@ -433,6 +469,15 @@ function applyValve(raw, block) {
     .split(/(?<=[.!?])\s+/)
     .filter((s) => /\{\{fact:/.test(s));
   if (sentences.length === 0) return null;
+
+  // Spelled-out numbers are checked HERE, against the sentences that will
+  // actually reach the owner, rather than against the whole draft. Numerals
+  // above are judged on the whole draft because a model writing digits at all
+  // is off-contract; a number WORD is only a fabricated quantity once it
+  // renders, and the sentences dropped for citing nothing are exactly where
+  // harmless prose ("these two line up") lives. Checked BEFORE substitution so
+  // a venue called Seven Bar cannot reject its own answer.
+  if (NUMBER_WORDS.test(sentences.join(' '))) return null;
 
   const used = new Set();
   let unknownId = false;
@@ -525,7 +570,7 @@ async function phrase(block, { venueUserId } = {}) {
     + ADVISOR_MAX_OUTPUT_TOKENS;
 
   // Charge before the call, local then global; either refusal serves the twin.
-  if (!allowVenuePhrasing(venueUserId, estimate)) return template;
+  if (!(await allowVenuePhrasing(venueUserId, estimate))) return template;
   if (!(await allowGlobalTokens(estimate))) return template;
 
   let resp;
@@ -540,7 +585,7 @@ async function phrase(block, { venueUserId } = {}) {
       console.warn(`advisorPhrasing: model "${activeModel}" not accepted, falling back to "${FALLBACK_ADVISOR_MODEL}"`);
       activeModel = FALLBACK_ADVISOR_MODEL;
       modelFellBack = true;
-      if (!allowVenuePhrasing(venueUserId, estimate)) return template;
+      if (!(await allowVenuePhrasing(venueUserId, estimate))) return template;
       if (!(await allowGlobalTokens(estimate))) return template;
       try {
         resp = await callModel(genAI, activeModel, payload);
@@ -581,7 +626,6 @@ function __setGenAIForTests(fake) {
   genAIOverride = fake;
 }
 function __resetAdvisorSpend() {
-  advisorVenueSpend.clear();
   activeModel = process.env.ADVISOR_MODEL || DEFAULT_ADVISOR_MODEL;
   modelFellBack = false;
 }
