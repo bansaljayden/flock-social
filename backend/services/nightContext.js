@@ -235,11 +235,30 @@ function mapEventType(classifications) {
   return 'other';
 }
 
+// A VENDOR NUMBER THAT REACHES AN int4 COLUMN HAS TO BE BOUNDED BY THE COLUMN.
+//
+// `generalInfo.capacity` is a field a promoter fills in on Ticketmaster's side.
+// It was `parseInt(...)` with no ceiling, and `ml_events.estimated_attendance`
+// is INTEGER (migration 006) — so a capacity of "99999999999" is a 22003
+// numeric-overflow from Postgres, the upsert below catches it, logs one line
+// and DROPS THE EVENT. A venue's biggest demand generator would be missing from
+// the corpus because a promoter typed too many digits, and the only trace is
+// `[NightContext] ml_events upsert failed`. The same number is also four
+// features of the crowd model (services/mlPredictor.js estimateTmAttendance
+// carries the identical estimator and the identical ceiling), where an absurd
+// value is not an error at all, just a wrong score.
+//
+// 250,000 is above every venue on earth — Narendra Modi Stadium, the largest,
+// seats about 132,000 — so nothing real is clamped, and anything past it was
+// never a capacity.
+const MAX_EVENT_ATTENDANCE = 250000;
+
 function estimateAttendance(event) {
   const venues = event._embedded?.venues || [];
   for (const v of venues) {
-    const cap = parseInt(v.generalInfo?.capacity, 10) ||
+    const raw = parseInt(v.generalInfo?.capacity, 10) ||
                 parseInt(v.boxOfficeInfo?.capacity, 10) || 0;
+    const cap = Number.isFinite(raw) ? Math.min(raw, MAX_EVENT_ATTENDANCE) : 0;
     if (cap > 0) return cap;
   }
   const type = mapEventType(event.classifications);
@@ -302,7 +321,24 @@ async function upsertEvents(events, cityKey) {
     const localDate = e.dates?.start?.localDate || null;
     if (!localDate) continue;
     const localTime = e.dates?.start?.localTime || '19:00:00';
-    const startHour = parseInt(localTime.split(':')[0], 10) || 19;
+    // THE HOUR HAS TO BE AN HOUR, and `|| 19` was not that check.
+    //
+    // Two failures in one expression. `parseInt("00")` is 0, which is FALSY, so
+    // a midnight show was stored as 7 PM — and `estimateEndHour` then put its
+    // end at 10 PM, so the whole event sat five hours from where it happened
+    // in the one table the model reads events out of. And nothing bounded the
+    // other end: `ml_events.event_start_hour` carries `CHECK (BETWEEN 0 AND
+    // 23)` (migration 006), so a vendor localTime this parses to 99 is a 23514
+    // from Postgres, caught by the try below, logged, and the event is DROPPED.
+    // A route writing a value its own constraint refuses is the exact class
+    // migrations 003, 016 and 017 each record once.
+    //
+    // An hour we cannot read falls back to the same 7 PM the missing-localTime
+    // case already uses, which is what the rest of this function assumes.
+    const parsedHour = parseInt(localTime.split(':')[0], 10);
+    const startHour = Number.isInteger(parsedHour) && parsedHour >= 0 && parsedHour <= 23
+      ? parsedHour
+      : 19;
     const type = mapEventType(e.classifications);
     try {
       await pool.query(
@@ -315,7 +351,9 @@ async function upsertEvents(events, cityKey) {
            event_start_hour = EXCLUDED.event_start_hour,
            event_end_hour = EXCLUDED.event_end_hour,
            estimated_attendance = EXCLUDED.estimated_attendance`,
-        [e.id, (e.name || '').substring(0, 500), cityKey,
+        // ticketmaster_id is VARCHAR(255) and the other two vendor strings are
+        // already clipped to their columns; the id was the one that was not.
+        [String(e.id || '').substring(0, 255), (e.name || '').substring(0, 500), cityKey,
          (e._embedded?.venues?.[0]?.name || '').substring(0, 255),
          venueLat, venueLng, localDate, startHour, estimateEndHour(startHour, type),
          type, estimateAttendance(e)]

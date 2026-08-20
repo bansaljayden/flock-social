@@ -634,6 +634,23 @@ const escapeHtml = (s) =>
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 
+// A link we did not write, before it becomes an href or a window.open.
+//
+// Four values in this file are third-party URLs that arrive over the API and go
+// straight into a navigation sink: a venue's `website`, `menu_url` and
+// `google_maps_url` (Google Places) and an event's `url` (Ticketmaster). None of
+// them was checked. React strips a `javascript:` href with a warning, but
+// `window.open('javascript:…')` is NOT React's to strip — it runs in this
+// origin — and that is the sink the Tickets button uses.
+//
+// Nothing here is a claim that Google or Ticketmaster would send one. It is
+// that "a URL from a vendor" and "a URL this app is willing to navigate to"
+// have to be two different questions, so that the answer does not change the
+// day a vendor field starts carrying something a venue owner typed. http(s)
+// only; anything else answers null and the caller renders nothing rather than
+// a link that goes somewhere else.
+const httpUrl = (u) => (typeof u === 'string' && /^https?:\/\//i.test(u.trim()) ? u.trim() : null);
+
 // Chat photos travel INSIDE the message body as a data: URL, on whichever
 // transport is up. Socket.IO was raised to 8MB for exactly that; express.json()
 // is still 1mb, so a photo over roughly 750KB sends fine on the socket and 413s
@@ -1824,14 +1841,34 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
 
     // Name + rating label (Apple-Maps-style). Hidden by default; CSS shows it
     // when the map container reaches data-zoom-tier="hi".
+    //
+    // BOTH INTERPOLATED VALUES GO THROUGH escapeHtml, and neither used to.
+    //
+    // The name was `.replace(/[<>]/g, '')`. Stripping is not escaping: it
+    // leaves `&`, `"` and `'` alone, so a venue whose name contains `&amp;` or
+    // `&copy;` is DISPLAYED decoded (the innerHTML parser resolves the
+    // reference), i.e. the label shows a character the business does not have
+    // in its name. escapeHtml, defined near the top of this file, is what the
+    // other two innerHTML sinks here use, and its comment says why: "This must
+    // be safe on its own — do NOT rely on upstream stripHtml".
+    //
+    // The rating was worse, and it is the reason this is a change rather than
+    // a tidy-up: the old ternary called `.toFixed(1)` only when the value HAD
+    // a toFixed, and interpolated it VERBATIM when it did not. A rating that
+    // arrives as a string rather than a number — which is what every non-Google
+    // path in this app hands us, `venue.stars` included — was raw HTML in an
+    // innerHTML sink with no filter of any kind in front of it. It is coerced
+    // to a number here so the non-numeric branch cannot exist, and escaped
+    // anyway.
     const label = document.createElement('div');
     label.className = 'mlb-marker-label';
     // System star via starSvgString, not a raw glyph: the label is innerHTML
     // so JSX cannot reach it, but the geometry must still be the icon set's.
-    const ratingHtml = venue.rating || venue.stars
-      ? `<span class="mlb-label-rating">${starSvgString(12)} ${(venue.rating || venue.stars).toFixed ? (venue.rating || venue.stars).toFixed(1) : (venue.rating || venue.stars)}</span>`
+    const ratingValue = Number(venue.rating || venue.stars);
+    const ratingHtml = Number.isFinite(ratingValue) && ratingValue > 0
+      ? `<span class="mlb-label-rating">${starSvgString(12)} ${escapeHtml(ratingValue.toFixed(1))}</span>`
       : '';
-    label.innerHTML = `<span class="mlb-label-name">${(venue.name || '').replace(/[<>]/g, '')}</span>${ratingHtml}`;
+    label.innerHTML = `<span class="mlb-label-name">${escapeHtml(venue.name || '')}</span>${ratingHtml}`;
     el.appendChild(label);
 
     return el;
@@ -20318,8 +20355,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
               {Icons.users('white', 16)} Start Flock
             </button>
-            {eventDetail.url && (
-              <button className="hit44" onClick={() => window.open(eventDetail.url, '_blank')} style={{ padding: '12px 20px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+            {httpUrl(eventDetail.url) && (
+              <button className="hit44" onClick={() => window.open(httpUrl(eventDetail.url), '_blank')} style={{ padding: '12px 20px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                 Tickets {Icons.arrowRight(colors.navy, 14)}
               </button>
             )}
@@ -20700,8 +20737,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{venueDetailModal.formatted_phone_number}</span>
                         </a>
                       )}
-                      {venueDetailModal.website && (
-                        <a href={venueDetailModal.website} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '10px', textDecoration: 'none' }}>
+                      {httpUrl(venueDetailModal.website) && (
+                        <a href={httpUrl(venueDetailModal.website)} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '10px', textDecoration: 'none' }}>
                           {Icons.externalLink(colors.navy, 16)}
                           <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Website</span>
                         </a>
@@ -20711,7 +20748,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                   {/* View Menu */}
                   {!venueDetailModal.loading && (
-                    <a href={venueDetailModal.menu_url || `https://www.google.com/search?q=${encodeURIComponent((venueDetailModal.name || '') + ' ' + (venueDetailModal.formatted_address || '') + ' menu')}`} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', border: '1px solid var(--border-subtle)', textDecoration: 'none', marginBottom: '14px', transition: 'background-color 0.15s' }}>
+                    <a href={httpUrl(venueDetailModal.menu_url) || `https://www.google.com/search?q=${encodeURIComponent((venueDetailModal.name || '') + ' ' + (venueDetailModal.formatted_address || '') + ' menu')}`} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', border: '1px solid var(--border-subtle)', textDecoration: 'none', marginBottom: '14px', transition: 'background-color 0.15s' }}>
                       <svg aria-hidden="true" focusable="false" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke={colors.navy} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="10" x2="20" y2="10"></line><line x1="4" y1="14" x2="16" y2="14"></line><line x1="4" y1="18" x2="12" y2="18"></line></svg>
                       <div style={{ flex: 1 }}>
                         <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>View Menu</span>
@@ -20862,8 +20899,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
             {/* Bottom action buttons */}
             <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0, display: 'flex', gap: '8px' }}>
-              {venueDetailModal.google_maps_url ? (
-                <a href={venueDetailModal.google_maps_url} target="_blank" rel="noopener noreferrer" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none' }}>
+              {httpUrl(venueDetailModal.google_maps_url) ? (
+                <a href={httpUrl(venueDetailModal.google_maps_url)} target="_blank" rel="noopener noreferrer" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none' }}>
                   {Icons.mapPin(colors.navy, 16)} Get Directions
                 </a>
               ) : venueDetailModal.place_id ? (

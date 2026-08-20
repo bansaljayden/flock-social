@@ -1487,13 +1487,35 @@ function findBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOpen, o
 // mean anything: Railway runs UTC, and a visitor in New York can be looking at
 // a bar in Los Angeles. Returns null when the offset is missing so callers can
 // fall back to whatever clock they do have.
+//
+// THE OFFSET HAS TO BE AN OFFSET (round 26). `Number.isFinite` is a check on
+// the double and not on the meaning: `1e15` is finite, and shifting `now` by
+// 1e15 minutes lands past the ECMAScript date range, so `shifted.getTime()` is
+// NaN and this used to return `{ hour: NaN, day: NaN }`. Both callers treat a
+// non-null return as a usable clock, so the NaN travelled into
+// `scoreTime.setHours(NaN)` — an Invalid Date — and every feature derived from
+// it came out NaN and was zero-filled into the vector. That is the round 15
+// bug (`localHour: "abc"`) with a different door, and it was reachable from the
+// request body through POST /api/crowd/batch's whitelist.
+//
+// Two guards, because they answer different questions. The RANGE check is the
+// meaning: real zones run UTC-12:00 to UTC+14:00, and anything else is not an
+// offset that a place has. The NaN check behind it is the arithmetic: it costs
+// one comparison and it means this function cannot report a clock it does not
+// have, whatever a future caller hands it. Callers already handle null by
+// falling back to the clock they do have.
+const MIN_UTC_OFFSET_MINUTES = -720;  // UTC-12:00
+const MAX_UTC_OFFSET_MINUTES = 840;   // UTC+14:00
+
 function venueLocalNow(utcOffsetMinutes, now) {
   if (utcOffsetMinutes == null) return null;
   const offset = Number(utcOffsetMinutes);
   if (!Number.isFinite(offset)) return null;
+  if (offset < MIN_UTC_OFFSET_MINUTES || offset > MAX_UTC_OFFSET_MINUTES) return null;
   const base = now ? new Date(now) : new Date();
   if (Number.isNaN(base.getTime())) return null;
   const shifted = new Date(base.getTime() + offset * 60000);
+  if (Number.isNaN(shifted.getTime())) return null;
   return { hour: shifted.getUTCHours(), day: shifted.getUTCDay() };
 }
 
@@ -1929,6 +1951,11 @@ module.exports = {
   // server runs UTC and the visitor may be three time zones from the venue;
   // neither clock is the one the doors run on.
   venueLocalNow,
+  // Round 26: the range that makes an offset an offset, exported so
+  // routes/crowd.js bounds the body field against ONE definition rather than a
+  // second copy of the same two numbers.
+  MIN_UTC_OFFSET_MINUTES,
+  MAX_UTC_OFFSET_MINUTES,
   // Round 11: exported so anything else that needs an open/closed check uses
   // the wrap-aware helper instead of re-deriving `h >= open && h <= close`.
   hourInWindow,
