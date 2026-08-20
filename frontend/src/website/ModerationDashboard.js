@@ -681,7 +681,25 @@ function ReportedContent({ report: r, image, onToggleImage, onImageBroken, text,
   const label = lowerLabel(r.content_type);
   const gone = !!r.content_missing;
   const empty = !gone && !r.content_excerpt && !r.content_has_image && !r.content_created_at;
-  const showable = image && image.status === 'ready' && !image.renderFailed;
+  // THE <img> GETS THE SAME ALLOWLIST THE <a> ALREADY HAD, and the asymmetry
+  // was the bug. `image.url` is either a data: URL this app minted and screened
+  // or a `content_image_url` the REPORTED USER chose (routes/admin.js only
+  // withholds data: and anything over 500 characters from the queue payload —
+  // it does not check the scheme). The "open in a new tab" link twenty lines
+  // down is gated on `^https?:` so it can never be a dead link; nothing gated
+  // the src, so any scheme at all reached it. `<img>` will not run script from
+  // a `data:text/html` or a `javascript:` src in any current browser, so this
+  // is not a live XSS — it is the allowlist being in one of the two places
+  // that consume the same string, which is how it stops being true.
+  //
+  // Two schemes, both narrow: http(s), and `data:image/*` for what Flock
+  // itself stored. `data:text/html` and `data:image/svg+xml` are BOTH refused —
+  // an SVG is a document, and the one image type that can carry script has no
+  // business being the thing a moderator's browser renders.
+  const SAFE_IMG = /^(?:https?:\/\/|data:image\/(?:png|jpeg|jpg|gif|webp);base64,)/i;
+  const ready = !!(image && image.status === 'ready');
+  const badScheme = ready && !SAFE_IMG.test(image.url || '');
+  const showable = ready && !image.renderFailed && !badScheme;
   const expanded = !!(text && text.status === 'ready');
 
   return (
@@ -765,9 +783,13 @@ function ReportedContent({ report: r, image, onToggleImage, onImageBroken, text,
                 <div style={S.imgErr}>{image.error || 'The image could not be loaded.'}</div>
               ) : null}
 
-              {image && image.status === 'ready' && image.renderFailed ? (
+              {ready && (image.renderFailed || badScheme) ? (
                 <div style={S.imgErr}>
-                  <span>The image could not be displayed.</span>
+                  <span>
+                    {badScheme
+                      ? 'This image is not in a format the console will render.'
+                      : 'The image could not be displayed.'}
+                  </span>
                   {/* Only an http(s) url can be opened in a tab. Everything
                       uploaded through Flock is a data: URL, and browsers refuse
                       to navigate to those, so the link is offered where it works

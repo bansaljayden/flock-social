@@ -1047,11 +1047,22 @@ function mapTmEventType(classifications) {
 // The user-visible half of that: `eventAlert` on the venue card fires at
 // >5,000 attendance, so a Garden or arena show — exactly the event a person
 // wants to be warned about — could never raise the banner.
+// Same ceiling, same reason, as services/nightContext.js MAX_EVENT_ATTENDANCE,
+// which carries the long version of this note: `generalInfo.capacity` is a
+// promoter-typed field, it was parsed with no bound, and the number lands in
+// two INTEGER columns (ml_events.estimated_attendance and
+// venue_owner_report_context.total_nearby_attendance / nearest_event_attendance)
+// as well as in four features of the crowd model. Past int4 it is a 22003 that
+// loses the row; short of that it is simply a wrong score. 250,000 is above
+// every venue on earth.
+const MAX_EVENT_ATTENDANCE = 250000;
+
 function estimateTmAttendance(event) {
   const venues = event._embedded?.venues || [];
   for (const v of venues) {
-    const cap = parseInt(v.generalInfo?.capacity, 10) ||
+    const raw = parseInt(v.generalInfo?.capacity, 10) ||
                 parseInt(v.boxOfficeInfo?.capacity, 10) || 0;
+    const cap = Number.isFinite(raw) ? Math.min(raw, MAX_EVENT_ATTENDANCE) : 0;
     if (cap > 0) return cap;
   }
   const venueName = (venues[0]?.name || '').toLowerCase();
