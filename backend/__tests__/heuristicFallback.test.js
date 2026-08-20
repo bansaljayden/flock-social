@@ -404,20 +404,18 @@ test('unknown and app-side activity types fall through to zero context, never th
 });
 
 test('dispatch precedence over overlapping type lists is stable', () => {
-  // These pin WHICH branch wins when Google returns several types — the
-  // orderings callers currently get. Two are asymmetric across functions and
-  // deliberately pinned as-is (see the trailing comment):
+  // These pin WHICH branch wins when Google returns several types.
   const at = [6, 23];
   // In the context bonus, the bar branch is checked BEFORE night_club, so a
   // venue Google types as both scores as a bar...
   assert.equal(ctx(['bar', 'night_club'], ...at), ctx(['bar'], ...at));
-  // ...but in capacity, night_club is checked FIRST, so the same venue gets
-  // nightclub capacity...
+  // ...capacity used to test night_club FIRST and hand that same venue a
+  // nightclub room. It no longer does: bar wins there too.
   assert.deepEqual(
     estimateCapacity({ types: ['bar', 'night_club'], user_ratings_total: 1500 }, 80),
-    estimateCapacity({ types: ['night_club'], user_ratings_total: 1500 }, 80)
+    estimateCapacity({ types: ['bar'], user_ratings_total: 1500 }, 80)
   );
-  // ...and in wait, bar is first again.
+  // ...and in wait, bar is first, as it always was.
   assert.equal(estimateWait(80, ['bar', 'night_club'], 2), estimateWait(80, ['bar'], 2));
   // A steakhouse that is also a plain restaurant is a steakhouse.
   assert.equal(ctx(['steak_house', 'restaurant'], 6, 20, 2), ctx(['steak_house'], 6, 20, 2));
@@ -425,9 +423,87 @@ test('dispatch precedence over overlapping type lists is stable', () => {
   assert.equal(ctx(['cafe', 'restaurant'], 2, 8), ctx(['cafe'], 2, 8));
   // A sushi restaurant that also carries the generic tag is sushi.
   assert.equal(ctx(['sushi_restaurant', 'restaurant'], 6, 19, 2), ctx(['sushi_restaurant'], 6, 19, 2));
-  // NOTE the bar/night_club asymmetry above is real today: such a venue gets
-  // bar SCORING but nightclub CAPACITY. Pinned so a future fix is a deliberate
-  // edit to this test, not an accident.
+});
+
+// ---------------------------------------------------------------------------
+// One card, one room.
+//
+// A venue Google types both `bar` and `night_club` is scored, sized and
+// wait-estimated by three different functions in services/crowdEngine.js, and
+// until 2026-08-20 estimateCapacity was the only one of the three that tested
+// night_club first. The card read bar, bar, NIGHTCLUB: 300 heads on a
+// 1,500-review room where the bar ladder says 200, published next to a bar
+// score and a bar wait.
+//
+// What these tests pin is the agreement, not the rungs. Whatever room the
+// score decides it is in, the capacity and the wait must be in that same room,
+// and a tuning pass can move any number here without breaking them.
+// ---------------------------------------------------------------------------
+
+test('a venue typed both bar and night_club is a BAR everywhere on the card', () => {
+  const reviews = 1500;
+  const both = { types: ['bar', 'night_club'], user_ratings_total: reviews };
+  const barOnly = { types: ['bar'], user_ratings_total: reviews };
+
+  // Three surfaces, one venue.
+  assert.deepEqual(estimateCapacity(both, 80), estimateCapacity(barOnly, 80),
+    'capacity must read the both-typed room the way the score and the wait do');
+  assert.equal(ctx(['bar', 'night_club'], 6, 23), ctx(['bar'], 6, 23),
+    'the score already reads it as a bar');
+  assert.equal(estimateWait(80, ['bar', 'night_club'], 2), estimateWait(80, ['bar'], 2),
+    'the wait already reads it as a bar');
+
+  // Not a vacuous agreement: the two ladders really do differ at this review
+  // count, so landing on the wrong one is a visible, published error.
+  assert.notDeepEqual(
+    estimateCapacity({ types: ['night_club'], user_ratings_total: reviews }, 80),
+    estimateCapacity(barOnly, 80),
+    'bar and nightclub capacity must differ here, or this test proves nothing'
+  );
+});
+
+test('a room typed night_club ALONE keeps the nightclub ladder', () => {
+  // The fix is only about the both-typed case. A club carrying no bar tag
+  // matches none of the bar-family branches and lands on its own rungs, which
+  // are the pre-fix nightclub numbers exactly.
+  for (const [reviews, max] of [[2500, 400], [1500, 300], [700, 200], [120, 100]]) {
+    assert.deepEqual(
+      estimateCapacity({ types: ['night_club'], user_ratings_total: reviews }, 100),
+      { current: max, max },
+      `a ${reviews}-review nightclub must still size to ${max}`
+    );
+  }
+  // And it is still scored and waited as a nightclub, not as a bar.
+  assert.notEqual(ctx(['night_club'], 6, 23), ctx(['bar'], 6, 23));
+  assert.notEqual(estimateWait(80, ['night_club'], 2), estimateWait(80, ['bar'], 2));
+});
+
+test('the bar-before-night_club ordering in estimateCapacity is pinned in source', () => {
+  // The behavioral tests above would also pass if someone deleted the
+  // night_club branch outright, and they say nothing about the ORDER that
+  // produced the agreement. This one reads the file: inside estimateCapacity
+  // the bar-family branches must all appear before the night_club branch, so
+  // the ordering cannot silently flip back the way it stood before.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'services', 'crowdEngine.js'), 'utf8'
+  );
+
+  const start = src.indexOf('function estimateCapacity(');
+  assert.ok(start > 0, 'estimateCapacity must still be a named function in crowdEngine.js');
+  const end = src.indexOf('\nfunction ', start + 1);
+  const body = src.slice(start, end > 0 ? end : undefined);
+
+  const nightClub = body.indexOf("hasType(types, 'night_club')");
+  assert.ok(nightClub > 0, 'estimateCapacity must still have a night_club branch');
+  for (const guard of ['isSportsBar(types)', 'isBreweryLike(types)', 'isBarLike(types)']) {
+    const idx = body.indexOf(guard);
+    assert.ok(idx > 0, `estimateCapacity must still test ${guard}`);
+    assert.ok(idx < nightClub,
+      `${guard} must be tested BEFORE night_club in estimateCapacity, or a venue `
+      + 'typed both gets a room its own score and wait disagree with');
+  }
 });
 
 test('popularity really amplifies the context bonus, in both directions', () => {

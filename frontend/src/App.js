@@ -2829,10 +2829,10 @@ function getGroupAdmission(crowdScore, partySize, venue, clock) {
   // carrying a bar tag is a bar. A room typed `night_club` alone carries no bar
   // tag and still falls through to entertainment, unchanged.
   //
-  // The related item in DEFERRED.md §3 is NOT this one and is still open: it is
-  // crowdEngine.estimateCapacity, which tests `night_club` BEFORE `isBarLike`
-  // and so publishes nightclub capacity for the same venue. That is a published
-  // number and a backend file, outside this function.
+  // The related item in DEFERRED.md §3 was NOT this one and was fixed straight
+  // after, the same way: crowdEngine.estimateCapacity tested `night_club`
+  // BEFORE `isBarLike` and published nightclub capacity for a venue its own
+  // score and wait called a bar. Bar wins there now too.
   else if (has('bar', 'pub', 'sports_bar', 'wine_bar', 'cocktail_bar',
     'beer_garden', 'brewery', 'winery', 'distillery', 'taproom')) {
     category = 'bar';
