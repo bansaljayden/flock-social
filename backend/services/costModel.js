@@ -75,7 +75,7 @@
 // __tests__/placesFieldMaskModelInputs.test.js now pins all ten masks so this
 // cannot be re-proposed as a billing change; it is a retrain.
 //
-// THE SAVING THAT IS REAL AND IS NOT A TIER CHANGE: TAKEN, in ${THIS_COMMIT}
+// THE SAVING THAT IS REAL AND IS NOT A TIER CHANGE: TAKEN, in 7348c95
 // (2026-08-20). Opening one venue's detail screen used to make TWO paid
 // Enterprise Place Details calls for the same place id. frontend/src/App.js
 // openVenueDetail fires getVenueDetails and getCrowdPrediction in one
