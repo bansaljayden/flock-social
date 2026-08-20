@@ -426,6 +426,15 @@ async function allowGlobalTokens(tokens) {
 // birdieUsage.settleGeminiCall's rule, applied to both ledgers.
 function settleTokens(userId, estimated, actual) {
   if (!Number.isFinite(actual) || !Number.isFinite(estimated)) return;
+  // A METERED FIGURE IS NOT NEGATIVE. `actual` is usageMetadata.totalTokenCount,
+  // read off the upstream response with no bound on it, and every other guard
+  // here is about the shape of the number rather than its sign. A negative one
+  // would make `delta` larger than the charge it is reconciling, i.e. a refund
+  // for more than was ever reserved. GREATEST(0, ...) floors each row so it
+  // could not mint budget from an empty one, but it could empty a full one, and
+  // the ledger is the thing that decides whether the next call is allowed.
+  // Gemini does not send this. The clause costs one comparison.
+  if (actual < 0 || estimated < 0) return;
   // BOTH DIRECTIONS, and the distinction that makes that safe: what was charged
   // before the call is an ESTIMATE, and what comes back on a successful call is
   // the metered figure. Reconciling an estimate to a measurement is what the
@@ -1133,7 +1142,14 @@ async function phrase(block, { venueUserId } = {}) {
       activeModel = FALLBACK_ADVISOR_MODEL;
       modelFellBack = true;
       if (await allowVenuePhrasing(venueUserId, estimate) !== CHARGE_OK) return template;
-      if (!(await allowGlobalTokens(estimate))) return template;
+      if (!(await allowGlobalTokens(estimate))) {
+        // The same release as the branch above, for the same reason: the
+        // swapped model was never called either, so the second reservation was
+        // never spent. Missing here, this branch left a venue holding a full
+        // second estimate for a call that never left the process.
+        releaseVenueReservation(venueUserId, { tokens: estimate, answers: 1 });
+        return template;
+      }
       try {
         resp = await callModel(genAI, activeModel, payload);
       } catch (err2) {
