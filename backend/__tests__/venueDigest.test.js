@@ -21,6 +21,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
+const fs = require('node:fs');
 const express = require('express');
 const jwt = require('jsonwebtoken');
 
@@ -437,6 +438,47 @@ test('a token without the digest purpose is refused, even when validly signed', 
   const result2 = await digest.applyOptOut(noPurpose);
   assert.strictEqual(result2.ok, false);
   assert.strictEqual(prefUpdates.length, 0);
+});
+
+// Round 25 (adversarial): the opt-out family and the session family must be
+// separable by KEY, not only by a claim. The purpose check held one direction;
+// the other direction held by accident (a digest token reaching
+// middleware/auth.js verifies its signature and is rejected only because it
+// carries no userId to look up). A derived key closes both directions for good.
+test('an opt-out token and a session token cannot cross, in either direction', async () => {
+  resetWorld();
+
+  // Direction 1: correctly-shaped claims signed with the RAW session secret
+  // must not unsubscribe anything. Before the derived key this was accepted:
+  // the signature verified and the purpose claim was right.
+  const forged = jwt.sign({ vp: 7, purpose: 'venue_digest_optout' }, process.env.JWT_SECRET);
+  const r1 = await digest.applyOptOut(forged);
+  assert.strictEqual(r1.ok, false, 'a JWT_SECRET-signed opt-out claim must not verify here');
+  assert.strictEqual(prefUpdates.length, 0);
+
+  // Direction 2: a real opt-out token must not verify against the session
+  // secret, so no session verifier can ever be reached by one.
+  const real = digest.optOutToken(7);
+  assert.throws(
+    () => jwt.verify(real, process.env.JWT_SECRET),
+    /signature/i,
+    'an opt-out token must not verify against JWT_SECRET'
+  );
+  // ...and it still works against its own key.
+  assert.strictEqual((await digest.applyOptOut(real)).ok, true);
+});
+
+test('the opt-out verifier pins its algorithm', async () => {
+  resetWorld();
+  const src = fs.readFileSync(require.resolve('../services/venueDigest.js'), 'utf8');
+  assert.ok(
+    /jwt\.verify\(\s*token,\s*key,\s*\{\s*algorithms:/.test(src),
+    'jwt.verify must pin algorithms — an undefined set is inferred from the key'
+  );
+  assert.ok(
+    !/jwt\.(sign|verify)\([^)]*process\.env\.JWT_SECRET/.test(src),
+    'neither half of the opt-out token may touch the session secret directly'
+  );
 });
 
 test('garbage and empty tokens are refused without touching the database', async () => {

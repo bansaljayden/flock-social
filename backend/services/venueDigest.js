@@ -35,6 +35,7 @@
 // login, because CAN-SPAM does not care that the dashboard also has a switch.
 // ---------------------------------------------------------------------------
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const pool = require('../config/database');
 const { boolFlag } = require('./entitlements');
 const { venueBillingEnabled } = require('./venueEntitlements');
@@ -103,12 +104,54 @@ function lastWeekLabel(parts) {
 }
 
 // ---------------------------------------------------------------------------
-// Opt-out: signed, single-purpose, no login. Verifying anything else signed
-// with JWT_SECRET here would let a session token unsubscribe a venue, so the
-// purpose claim is checked, not assumed.
+// Opt-out: signed, single-purpose, no login.
+//
+// SECURITY ROUND 25. This token used to be signed with JWT_SECRET itself, and
+// the purpose claim was the only thing keeping the two families apart. That
+// held in ONE direction and by accident in the other:
+//
+//   * digest token -> session verifier: middleware/auth.js verifies the
+//     SIGNATURE against the same secret, so it passed, and was then rejected
+//     only because `decoded.userId` is undefined and the user lookup finds
+//     nobody. Nothing checks a purpose on the session side. Any future token
+//     minted against JWT_SECRET that happens to carry BOTH a userId and its
+//     own purpose would be accepted as a full 24-hour session.
+//   * this token is also immune to token_version: a password change, a
+//     /logout-all, an OAuth squat eviction — every one of them kills every
+//     session JWT and none of them touch an outstanding opt-out link, which
+//     lives 180 days in a URL query string.
+//
+// So the key is DERIVED rather than shared. An HMAC of JWT_SECRET under a
+// purpose label is a different key: a session token cannot verify here and a
+// token minted here cannot verify anywhere else, whatever claims either
+// carries and whoever forgets a check later. The purpose claim stays as the
+// in-band statement of intent, but it is no longer the only thing standing
+// between the two families.
+//
+// `algorithms` is pinned for the reason routes/users.js:428 already writes
+// down: an undefined `algorithms` makes jsonwebtoken infer the accepted set
+// from the key instead of pinning it. This was the one jwt.verify in the
+// backend without it.
+//
+// The v1 label is part of the derivation, so rotating the opt-out family
+// (without logging every user out) is a one-character change. Nothing is
+// invalidated by this edit: DIGEST_ENABLED is off, so no link has ever been
+// mailed.
 // ---------------------------------------------------------------------------
+const OPT_OUT_ALGORITHMS = ['HS256'];
+const OPT_OUT_KEY_LABEL = `flock:${OPT_OUT_PURPOSE}:v1`;
+
+function optOutKey() {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) return null;
+  return crypto.createHmac('sha256', String(secret)).update(OPT_OUT_KEY_LABEL).digest();
+}
+
 function optOutToken(venueProfileId) {
-  return jwt.sign({ vp: venueProfileId, purpose: OPT_OUT_PURPOSE }, process.env.JWT_SECRET, { expiresIn: '180d' });
+  return jwt.sign({ vp: venueProfileId, purpose: OPT_OUT_PURPOSE }, optOutKey(), {
+    algorithm: OPT_OUT_ALGORITHMS[0],
+    expiresIn: '180d',
+  });
 }
 
 function optOutUrl(venueProfileId) {
@@ -118,8 +161,10 @@ function optOutUrl(venueProfileId) {
 // Returns { ok: true } or { ok: false, error }. Never throws.
 async function applyOptOut(token) {
   let payload;
+  const key = optOutKey();
+  if (!key) return { ok: false, error: 'invalid or expired link' };
   try {
-    payload = jwt.verify(token, process.env.JWT_SECRET);
+    payload = jwt.verify(token, key, { algorithms: OPT_OUT_ALGORITHMS });
   } catch (err) {
     return { ok: false, error: 'invalid or expired link' };
   }
