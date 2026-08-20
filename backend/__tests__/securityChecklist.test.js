@@ -419,6 +419,7 @@ const AUTH_EXEMPT = new Map([
   ['revenuecat.js', 'third-party webhook, authorised by a shared secret compared with timingSafeEqual'],
   ['sensors.js', 'Pi ingest, authorised by a hashed x-api-key; the JWT read routes mount authenticate inline'],
   ['users.js', 'DELETE /api/users/me is declared first with authenticateAllowBanned, so a banned user can still erase their account (Apple 5.1.1(v) / GDPR)'],
+  ['venueDigest.js', 'GET /api/venue-digest/opt-out is the CAN-SPAM unsubscribe link, clicked from a mail client with no session; authorised by a signed single-purpose JWT whose purpose claim is checked in services/venueDigest.js'],
   ['venueSearch.js', 'GET /api/venues/photo is a deliberately anonymous image proxy with a path-traversal-guarded ref allowlist'],
   ['waitlist.js', 'public landing-page signup; per-IP hourly and global daily caps inside the router'],
 ]);
