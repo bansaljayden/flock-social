@@ -3,6 +3,11 @@ const { param, body, validationResult } = require('express-validator');
 const { authenticate } = require('../middleware/auth');
 const { getWeather } = require('../services/weatherService');
 const crowdEngine = require('../services/crowdEngine');
+// The venue's own live 0-100 reading (migration 031). One service owns the
+// liveness, expiry, precedence and divergence rules; this file only applies
+// them, at SEND TIME, so the crowd cache stores the model's answer and an
+// expired reading falls back on its own whatever the cache's clock says.
+const ownerReports = require('../services/ownerReports');
 const { buildHoursByDay } = crowdEngine;
 const mlPredictor = require('../services/mlPredictor');
 const { upstreamSignal } = require('../utils/upstream');
@@ -152,6 +157,66 @@ function withBaselineAge(result) {
   const d = result && result.baselineData;
   if (!d || typeof d.asOf !== 'number') return result;
   return { ...result, baselineData: { ...d, ageMs: Math.max(0, Date.now() - d.asOf) } };
+}
+
+// ---------------------------------------------------------------------------
+// THE SERVER'S OWN RECORD OF WHAT IT PUBLISHED (migration 032).
+//
+// venue_feedback.predicted_score used to be whatever the client claimed we
+// predicted — and it is the denominator of every calibration feature
+// (services/mlPredictor.js averages `mapped(crowd_level) - predicted_score`).
+// The number was in this process's hand every time a card was served, and
+// nothing wrote it down. This does. routes/feedback.js reads it back at submit
+// time — newest serve for (user, venue) inside 12 hours — and prefers it over
+// the client's claim; the row's `predicted_score_source` column says which one
+// won, and `served_prediction_id` names the exact serve it came from.
+//
+// APPEND-ONLY, not a last-serve upsert. An upsert answers "what did we tell
+// them most recently" and nothing else: it cannot answer "what was on screen
+// when this feedback was filed" once the user re-opens the card, and it makes
+// "what did Flock tell users that night" permanently unanswerable. Every serve
+// is a row; the feedback route materializes the joined score AND its id onto
+// the venue_feedback row, so the linkage outlives the log's own retention.
+//
+// FIRE-AND-FORGET, deliberately. A prediction that fails to be recorded
+// degrades one future feedback row from 'server' to 'client' provenance; a
+// prediction BLOCKED on this write would put an INSERT on the latency path of
+// every card and every vote-list scroll. The .catch logs and drops.
+//
+// The 180-day prune rides along on ~1% of writes rather than living in a
+// scheduler this backend does not have. Six months covers every window the
+// current pipeline asks about (12 hours for the feedback join, 28 days for
+// calibration); a longer memory should be a rollup job, not a longer prune.
+// ---------------------------------------------------------------------------
+function recordServedPredictions(userId, entries) {
+  // Deduped by place id within the request, LAST one wins: the batch route
+  // accepts the same place id many times in one body (documented there as the
+  // clock oracle), and twenty copies of one venue in one POST are one screen
+  // moment, not twenty serves worth remembering.
+  const byPlace = new Map();
+  for (const e of entries || []) {
+    if (e && isPlaceIdShaped(e.placeId) && Number.isFinite(e.score) && e.score >= 0 && e.score <= 100) {
+      byPlace.set(e.placeId, e);
+    }
+  }
+  const rows = [...byPlace.values()];
+  if (!Number.isInteger(userId) || rows.length === 0) return;
+  pool.query(
+    `INSERT INTO served_predictions (user_id, venue_place_id, score, prediction_method, model_version, served_at)
+     SELECT $1, r.place_id, r.score, r.method, r.model_version, NOW()
+       FROM unnest($2::text[], $3::int[], $4::text[], $5::text[]) AS r(place_id, score, method, model_version)`,
+    [
+      userId,
+      rows.map((r) => r.placeId),
+      rows.map((r) => Math.round(r.score)),
+      rows.map((r) => r.method || null),
+      rows.map((r) => r.modelVersion || null),
+    ]
+  ).catch((err) => console.error('[Crowd] served_predictions write failed:', err.message));
+  if (Math.random() < 0.01) {
+    pool.query(`DELETE FROM served_predictions WHERE served_at < NOW() - INTERVAL '180 days'`)
+      .catch((err) => console.error('[Crowd] served_predictions prune failed:', err.message));
+  }
 }
 
 const API_KEY = process.env.GOOGLE_PLACES_API_KEY;
@@ -485,7 +550,30 @@ router.get('/:placeId',
       // Check cache (include local time in key so different hours aren't stale)
       const cacheKey = `full:${placeId}:${localHour}:${localDay}`;
       const cached = getCached(cacheKey);
-      if (cached) return res.json(withBaselineAge(await gateForecast(cached, req.user.id, { count: true })));
+      if (cached) {
+        // The owner override is applied to the CACHED object, never baked into
+        // it: the cache keeps the model's answer, so a reading set a minute ago
+        // shows inside one request and an expired one falls back mid-TTL.
+        const published = ownerReports.applyOwnerReport(
+          cached, (await ownerReports.getLiveOwnerReports([placeId]))[placeId]
+        );
+        // Recorded AFTER the gate resolves, so an entitlement 503 (which
+        // serves no score) records nothing — and recorded on the cache path
+        // too, because a cached card puts exactly the same number on exactly
+        // the same screen as a fresh one.
+        const gated = withBaselineAge(await gateForecast(published, req.user.id, { count: true }));
+        recordServedPredictions(req.user.id, [{
+          placeId,
+          score: published.score,
+          // What actually stood behind the published number, because this row
+          // is what feedback.js verifies client claims against. 'owner_report'
+          // when the bar's reading was the number; the model's own method
+          // otherwise.
+          method: published.confidenceBasis === 'owner_report' ? 'owner_report' : cached.predictionMethod,
+          modelVersion: cached.modelVersion,
+        }]);
+        return res.json(gated);
+      }
 
       if (!allowPlacesSearch(req.user.id)) {
         return res.status(429).json({ error: 'Loading venues too fast. Give it a few seconds.' });
@@ -772,7 +860,22 @@ router.get('/:placeId',
       };
 
       setCache(cacheKey, result);
-      res.json(withBaselineAge(await gateForecast(result, req.user.id, { count: true })));
+      // Owner override AFTER setCache, same rule as the cache-hit path above:
+      // what is cached is the model's answer; what ships is the answer with
+      // the venue's live reading applied, when one exists and outranks it.
+      const published = ownerReports.applyOwnerReport(
+        result, (await ownerReports.getLiveOwnerReports([placeId]))[placeId]
+      );
+      const gated = withBaselineAge(await gateForecast(published, req.user.id, { count: true }));
+      // The score survives gating (the free "right now" half stays on locked
+      // responses), so it is recorded for locked users too — it was shown.
+      recordServedPredictions(req.user.id, [{
+        placeId,
+        score: published.score,
+        method: published.confidenceBasis === 'owner_report' ? 'owner_report' : result.predictionMethod,
+        modelVersion: result.modelVersion,
+      }]);
+      res.json(gated);
     } catch (err) {
       // The gate could not find out who is looking (forecastAccess threw:
       // paywall on, entitlement lookup failed). Not a refusal and not this
@@ -1152,6 +1255,18 @@ router.post('/batch',
           return null;
         }
       }))).filter(Boolean);
+
+      // The vote list is one of the two surfaces the post-hangout sheet reads
+      // its predicted_score off (frontend crowdPredictions is fed by this
+      // route AND the card), so the batch scores are recorded too — one
+      // multi-row UPSERT per request, not one per venue. recordServedPredictions
+      // drops unshaped place ids: batch ids are deliberately unvalidated for
+      // SCORING (see the whitelist note above), but a junk id must not mint
+      // served_predictions rows, or twenty fabricated ids per POST becomes
+      // unbounded table growth.
+      recordServedPredictions(req.user.id, predictions.map((p) => ({
+        placeId: p.placeId, score: p.score, method: p.predictionMethod, modelVersion: null,
+      })));
 
       res.json({
         predictions,
