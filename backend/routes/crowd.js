@@ -134,6 +134,26 @@ async function gateForecast(result, userId, { count } = {}) {
   if (!access.locked) return { ...result, forecastAccess: forecastAccessField };
   return { ...result, ...LOCKED_FORECAST_FIELDS, forecastAccess: forecastAccessField };
 }
+// HOW OLD IS THE DATA UNDER THE SCORE.
+//
+// The card already carried `lastUpdated`, which is when THIS RESPONSE was
+// built — a number that is always "just now" and says nothing about the
+// evidence. The baseline behind an ML score can be months old (realtime
+// collection stopped 2026-05-18) and nothing on the serve path looked at its
+// age, so a December card and an April card were indistinguishable.
+//
+// Stamped here, per response, exactly the way routes/publicCrowd.js withAge
+// stamps `age_ms` beside `as_of`, and for the same reason: the card object is
+// shared cache, so a duration written into it would be wrong by the age of the
+// cache entry, and a client's own clock cannot be trusted to compute one.
+// `asOf` (absolute, from mlPredictor) is what gets cached; `ageMs` is derived
+// at send time and never written back.
+function withBaselineAge(result) {
+  const d = result && result.baselineData;
+  if (!d || typeof d.asOf !== 'number') return result;
+  return { ...result, baselineData: { ...d, ageMs: Math.max(0, Date.now() - d.asOf) } };
+}
+
 const API_KEY = process.env.GOOGLE_PLACES_API_KEY;
 
 // ---------------------------------------------------------------------------
@@ -465,7 +485,7 @@ router.get('/:placeId',
       // Check cache (include local time in key so different hours aren't stale)
       const cacheKey = `full:${placeId}:${localHour}:${localDay}`;
       const cached = getCached(cacheKey);
-      if (cached) return res.json(await gateForecast(cached, req.user.id, { count: true }));
+      if (cached) return res.json(withBaselineAge(await gateForecast(cached, req.user.id, { count: true })));
 
       if (!allowPlacesSearch(req.user.id)) {
         return res.status(429).json({ error: 'Loading venues too fast. Give it a few seconds.' });
@@ -644,14 +664,16 @@ router.get('/:placeId',
         confidenceMeans: support.confidenceMeans,
         // The same question asked of the NUMBER instead of the card, and the
         // two answers can differ. `confidenceMeans` comes from
-        // describePredictionSupport, which hedges the entire ML path while
-        // ML_BASELINE_AXIS_VERIFIED is false — that hedge is about the baseline
-        // AXIS, a separate open question. `confidenceMeasurement.means`
-        // describes where this integer came from. When the model reports a
-        // served-population accuracy, both are true at once: a figure genuinely
-        // measured on the served rows, anchored on a clock nobody has vouched
-        // for yet. Neither field is redundant and neither may be dropped for
-        // the other; the note above confidenceMeasurementFor owns the argument.
+        // describePredictionSupport, which answers "what stands behind this
+        // card" — the baseline axis, and whether anyone was in the building.
+        // `confidenceMeasurement.means` answers "where did this integer come
+        // from". Since v2.6.0-starling flipped ML_BASELINE_AXIS_VERIFIED true
+        // the two agree on the plain ML path, which is exactly why neither may
+        // now be dropped for the other: they come apart again the moment three
+        // verified reporters outrank the holdout (basis 'user_reports') or a
+        // pre-2026-08-18 artifact is served (basis 'model_unverified_axis'),
+        // and in both of those cases the integer's own provenance is unchanged.
+        // The note above confidenceMeasurementFor owns the argument.
         confidenceMeasurement: confidenceMeasurementFor(crowdResult, cardConfidence, feedbackConfidenceBoost),
         supported: support.supported,
         capacity,
@@ -695,6 +717,11 @@ router.get('/:placeId',
         },
         dataSourcesUsed: dataSources,
         modelVersion: crowdResult.modelVersion || null,
+        // Forwarded verbatim from mlPredictor, minus the age, which
+        // withBaselineAge adds at send time (see the note above it). Null on
+        // every rule-engine path, which is honest: those scores are not built
+        // on a stored baseline at all.
+        baselineData: crowdResult.baselineData || null,
         weather: weather ? { temp: weather.temp, conditions: weather.conditions } : null,
         // `estimatedAttendance` IS NOT PUBLISHED, and that is the whole point
         // of reshaping this instead of forwarding it.
@@ -745,7 +772,7 @@ router.get('/:placeId',
       };
 
       setCache(cacheKey, result);
-      res.json(await gateForecast(result, req.user.id, { count: true }));
+      res.json(withBaselineAge(await gateForecast(result, req.user.id, { count: true })));
     } catch (err) {
       // The gate could not find out who is looking (forecastAccess threw:
       // paywall on, entitlement lookup failed). Not a refusal and not this
@@ -1095,6 +1122,15 @@ router.post('/batch',
             // when it is the exact opposite.
             confidenceMeasurement: confidenceMeasurementFor(result, rowConfidence, boost),
             supported: support.supported,
+            // And the same rule again for the age of the baseline under the
+            // row. A list where every row is undated, sitting under a card that
+            // says its number is four months old, is the same disagreement one
+            // field over. `ageMs` is computed inline here rather than by
+            // withBaselineAge because this payload is built per request and
+            // never cached, so there is no stale duration to guard against.
+            baselineData: (result.baselineData && typeof result.baselineData.asOf === 'number')
+              ? { ...result.baselineData, ageMs: Math.max(0, Date.now() - result.baselineData.asOf) }
+              : (result.baselineData || null),
             calibration: {
               feedbackUsed: cal.feedbackUsed,
               reportCount: cal.reportCount,
