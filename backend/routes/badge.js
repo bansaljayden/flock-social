@@ -134,6 +134,10 @@ function setBadge(placeId, svg) {
 // thousands of readers off one entry, and charging them would refuse the badge
 // to the audience it exists to reach. Only a MISS — the thing that costs a
 // Postgres round trip and possibly a paid Place Details call — is metered.
+// See the note at the weather call below: this file has no authenticated caller,
+// so its upstream spend belongs in the unauthenticated share of each ledger.
+const ANON = Object.freeze({ anonymous: true });
+
 const BADGE_IP_HOURLY = 120;
 const BADGE_IP_WINDOW_MS = 3600_000;
 const BADGE_DAILY = 600;
@@ -336,13 +340,22 @@ router.get('/:placeId.svg',
       if (venue.isOpen === false) {
         svg = svgBadge('Closed right now', '#98937f');
       } else {
+        // NOBODY IS BEHIND THIS CALL. The badge is a public SVG: allowBadgeMiss
+        // caps it per IP and at BADGE_DAILY, and the Places ledger has carried an
+        // unauthenticated share since M5-1, but weather and Ticketmaster were
+        // charged against their global ceilings alone. BADGE_DAILY (600) and the
+        // demo's own 600 sum to 1200 against a WX_DAILY of 950, so the two doors
+        // with no account could take the whole weather day between them. The
+        // marker puts these in the unauthenticated bucket instead. See
+        // services/weatherService.js WX_UNAUTH_DAILY and services/mlPredictor.js
+        // EVENT_UNAUTH_DAILY.
         const weather = venue.location
-          ? await getWeather(venue.location.latitude, venue.location.longitude).catch(() => null)
+          ? await getWeather(venue.location.latitude, venue.location.longitude, ANON).catch(() => null)
           : null;
         const { scoreTime } = venueLocalTime(
           venue.location?.latitude, venue.location?.longitude
         );
-        const pred = await mlPredictor.predictBusyness(venue, weather, scoreTime);
+        const pred = await mlPredictor.predictBusyness(venue, weather, scoreTime, ANON);
         const [dot, text] = LABEL_COLORS[pred.label] || ['#2d5a87', `${pred.label} right now`];
         svg = svgBadge(text, dot);
       }

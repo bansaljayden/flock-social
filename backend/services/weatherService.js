@@ -196,8 +196,55 @@ const WX_DAILY = 950;
 const WX_PER_MINUTE = 55;
 const WX_PER_USER_HOURLY = 40; // only applied when a userId is supplied
 
+// ---------------------------------------------------------------------------
+// THE UNAUTHENTICATED SHARE. Mirrors UNAUTH_DAILY in utils/placesBudget.js,
+// for the same reason and after the same mistake (money audit round 4).
+//
+// WHAT WAS MISSING. Every ceiling above is either global or keyed to an
+// account, and the two doors with NO account call getWeather with no id:
+// routes/publicCrowd.js (the marketing demo) and routes/badge.js (the
+// embeddable SVG). Each keeps its own per-IP gate and its own daily request
+// ceiling, and both of those ceilings are 600 (publicCrowd allowDemo's
+// dayCount, and badge's BADGE_DAILY), so between them the doors with nobody
+// behind them could ask for 1200 readings against a WX_DAILY of 950. That is
+// the entire day, spent by callers nobody can identify, after which this
+// function refuses every authenticated crowd score, advisor card and Monday
+// digest until UTC midnight and each of them silently loses its weather factor
+// rather than failing.
+//
+// MEASURED, not argued: four anonymous GET /api/public/demo/venues requests
+// against the live preview moved the shared meter from 23 to 28. Being signed
+// in protected none of the other 927.
+//
+// PER-DOOR GATES ARE NOT A RESERVE. That is the correction placesBudget's M5-1
+// section makes about its own three doors: an inequality between constants in
+// two route files is a coincidence maintained by hand, and it stops holding the
+// day somebody adds a third door or raises one number. This is the control, and
+// it sits at the one function every paid weather fetch passes through.
+//
+// WHY 650. The same two constraints placesBudget pins. Upward: the largest
+// single unauthenticated door is 600 requests a day, and a sub-ceiling BELOW
+// the door it sits over silently repeals that door's own limit, so this has to
+// stay strictly above 600. Downward: WX_DAILY - WX_UNAUTH_DAILY = 300 is the
+// authenticated reserve, and 300 is more than seven times WX_PER_USER_HOURLY,
+// so no single account can spend the reserve inside an hour either. 650 is the
+// smallest round number above 600, which makes it the largest reserve
+// available without breaking the first constraint.
+//
+// WHO COUNTS AS ANONYMOUS: only a caller that says so, with
+// { anonymous: true }. Absence of a userId is deliberately NOT the signal. A
+// background producer with no user — services/nightContext.js's sweep,
+// services/crowdAlerts.js, the ML collection scripts — is our own traffic
+// rather than unattributable traffic, and putting it in this bucket would let
+// demo load starve a scheduled job. The public door declares itself instead.
+const WX_UNAUTH_DAILY = 650;
+
 let wxDayKey = new Date().toISOString().slice(0, 10);
 let wxDayCount = 0;
+// The unauthenticated slice of wxDayCount. Charged IN ADDITION to it, never
+// instead of it: an anonymous reading still counts against the day like any
+// other, this only says how much of the day it may reach.
+let wxUnauthDayCount = 0;
 let wxMinuteKey = 0;
 let wxMinuteCount = 0;
 let wxRefused = 0;
@@ -220,12 +267,21 @@ function refuse(reason) {
   return false;
 }
 
-function allowWeatherFetch(userId) {
+function allowWeatherFetch(userId, opts = {}) {
   const now = Date.now();
+  // Normalised rather than trusted to the default, for the reason getWeather
+  // states below: an explicit null is a natural thing for a caller to write and
+  // `null.anonymous` throws.
+  const anonymous = !!(opts && opts.anonymous);
 
   const today = new Date().toISOString().slice(0, 10);
-  if (today !== wxDayKey) { wxDayKey = today; wxDayCount = 0; wxRefused = 0; }
+  if (today !== wxDayKey) { wxDayKey = today; wxDayCount = 0; wxUnauthDayCount = 0; wxRefused = 0; }
   if (wxDayCount >= WX_DAILY) return refuse('daily ceiling');
+  // Checked BEFORE any counter moves, like every other ceiling here. This is
+  // the whole reserve: no number of addresses, and no public door added later,
+  // can push the signed-in product below WX_DAILY - WX_UNAUTH_DAILY readings
+  // for the rest of the day.
+  if (anonymous && wxUnauthDayCount >= WX_UNAUTH_DAILY) return refuse('unauthenticated share');
 
   const minute = Math.floor(now / 60000);
   if (minute !== wxMinuteKey) { wxMinuteKey = minute; wxMinuteCount = 0; }
@@ -271,6 +327,7 @@ function allowWeatherFetch(userId) {
 
   wxDayCount++;
   wxMinuteCount++;
+  if (anonymous) wxUnauthDayCount++;
   return true;
 }
 
@@ -351,7 +408,7 @@ async function getWeather(lat, lon, opts = {}) {
 
       // Charged BEFORE the call, because an aborted request still bills at the
       // vendor. See utils/upstream.js.
-      if (!allowWeatherFetch(o.userId)) return null; // weather is an enhancer, fail soft
+      if (!allowWeatherFetch(o.userId, o)) return null; // weather is an enhancer, fail soft
 
       const url = `https://api.openweathermap.org/data/2.5/weather?lat=${bucketCoord(lat)}&lon=${bucketCoord(lon)}&appid=${apiKey}&units=imperial`;
       // Round 12: weather is an enhancer on the critical path of crowd scoring —
@@ -448,7 +505,7 @@ async function getForecast(lat, lon, opts = {}) {
       const fresh = getEntry(cacheKey);
       if (fresh) return fresh.failed ? null : fresh.data;
 
-      if (!allowWeatherFetch(o.userId)) return null; // same budget as getWeather (round 8)
+      if (!allowWeatherFetch(o.userId, o)) return null; // same budget as getWeather (round 8)
 
       const url = `https://api.openweathermap.org/data/2.5/forecast?lat=${bucketCoord(lat)}&lon=${bucketCoord(lon)}&appid=${apiKey}&units=imperial`;
       let response;
@@ -557,7 +614,7 @@ async function getHourlyForecast(lat, lon, opts = {}) {
       const fresh = getEntry(cacheKey);
       if (fresh) return fresh.failed ? null : fresh.data;
 
-      if (!allowWeatherFetch(o.userId)) return null; // same budget as getWeather (round 8)
+      if (!allowWeatherFetch(o.userId, o)) return null; // same budget as getWeather (round 8)
 
       const url = `https://api.openweathermap.org/data/2.5/forecast?lat=${bucketCoord(lat)}&lon=${bucketCoord(lon)}&appid=${apiKey}&units=imperial`;
       let response;
@@ -628,10 +685,17 @@ function weatherBudgetStatus() {
     day: wxDayKey,
     dailyUsed: wxDayCount,
     dailyRemaining: Math.max(0, WX_DAILY - wxDayCount),
+    // What the doors with no account have left, against what the whole process
+    // has left. Two different numbers on purpose; the gap is the reserve.
+    unauthUsed: wxUnauthDayCount,
+    unauthRemaining: Math.max(0, WX_UNAUTH_DAILY - wxUnauthDayCount),
     refusedToday: wxRefused,
     cacheEntries: weatherCache.size,
     inFlight: inFlight.size,
-    limits: { daily: WX_DAILY, perMinute: WX_PER_MINUTE, perUserHourly: WX_PER_USER_HOURLY },
+    limits: {
+      daily: WX_DAILY, perMinute: WX_PER_MINUTE, perUserHourly: WX_PER_USER_HOURLY,
+      unauthDaily: WX_UNAUTH_DAILY,
+    },
     inMemory: true,
   };
 }
@@ -642,6 +706,7 @@ function __resetWeatherState() {
   wxUserHits.clear();
   wxDayKey = new Date().toISOString().slice(0, 10);
   wxDayCount = 0;
+  wxUnauthDayCount = 0;
   wxMinuteKey = 0;
   wxMinuteCount = 0;
   wxRefused = 0;
@@ -657,6 +722,7 @@ module.exports = { getWeather, getForecast, getHourlyForecast, weatherBudgetStat
 // constant stops testing the code the moment somebody edits the code.
 module.exports.__test = {
   WX_DAILY,
+  WX_UNAUTH_DAILY,
   WX_PER_MINUTE,
   WX_PER_USER_HOURLY,
   MAX_CACHE_ENTRIES,

@@ -87,6 +87,25 @@ function allowDemo(req) {
 
 const DEMO_BUSY_MSG = 'The live demo is taking a breather. The full thing is in the app.';
 
+// EVERY UPSTREAM THIS FILE REACHES IS SPENT WITH NOBODY BEHIND IT.
+//
+// allowDemo above caps requests per IP and per day, and the Places ledger has
+// carried an unauthenticated share since M5-1 (utils/placesBudget.js
+// UNAUTH_DAILY). The weather and Ticketmaster ledgers did not: this file called
+// getWeather and predictBusyness with no caller identity at all, which the two
+// gates read as "background traffic" and charged against the global ceiling
+// alone. Measured (money audit round 4): one card here is 24 Ticketmaster calls
+// (1 for the score, 23 more for the 24-hour forecast), so 63 requests emptied a
+// 1500-call day for the whole product, out of the 600 requests allowDemo will
+// serve. Weather was the same shape: four anonymous requests against the live
+// preview moved the shared meter by five.
+//
+// This marker is what puts those calls in the unauthenticated bucket, so they
+// are bounded by a SHARE of each day rather than by the whole of it. See
+// services/weatherService.js WX_UNAUTH_DAILY and services/mlPredictor.js
+// EVENT_UNAUTH_DAILY.
+const ANON = Object.freeze({ anonymous: true });
+
 // --- cache ----------------------------------------------------------------
 // Round 15: `if (cache.size > 500) cache.clear()` — the same wholesale-clear
 // shape as the old ipHits guard, on a map whose keys are caller-shaped
@@ -191,8 +210,8 @@ async function buildCard(v, weather, clock, preScored) {
   // instant, so they must be the same prediction, not two calls that could
   // straddle an event-cache refill and print 78% on the pin and 76% in the
   // ring. The caller hands its score in when it already has one.
-  const scored = preScored || await mlPredictor.predictBusyness(v, weather, clock.time);
-  const fullDay = await mlPredictor.predictHourlyForecast(v, weather, clock.localHour, 24, clock.time);
+  const scored = preScored || await mlPredictor.predictBusyness(v, weather, clock.time, ANON);
+  const fullDay = await mlPredictor.predictHourlyForecast(v, weather, clock.localHour, 24, clock.time, ANON);
   const hourly = fullDay.slice(0, 12);
   // Peak is read off the 12 hours the chart draws, so the rush it names is a
   // bar you can see. Scanning all 24 made a Wednesday card report Thursday
@@ -474,7 +493,7 @@ router.get('/demo/venues',
 
       // One weather lookup for the whole area; venues scored in parallel —
       // serial scoring made the first paint feel like dial-up.
-      const weather = await getWeather(lat, lng).catch(() => null);
+      const weather = await getWeather(lat, lng, ANON).catch(() => null);
       const localDayParam = req.query.localDay != null ? parseInt(req.query.localDay, 10) : null;
       const visitorClock = { time: scoreTime, localHour, localDay };
 
@@ -482,7 +501,7 @@ router.get('/demo/venues',
         const v = toVenueShape(p, localDayParam);
         try {
           const clock = venueClock(p, visitorClock);
-          const scored = await mlPredictor.predictBusyness(v, weather, clock.time);
+          const scored = await mlPredictor.predictBusyness(v, weather, clock.time, ANON);
           return {
             _place: p,
             _shape: v,
@@ -597,7 +616,7 @@ router.get('/demo/venue/:placeId',
       const v = toVenueShape(p, req.query.localDay != null ? parseInt(req.query.localDay, 10) : null);
       const lat = v.location?.latitude;
       const lng = v.location?.longitude;
-      const weather = (lat && lng) ? await getWeather(lat, lng).catch(() => null) : null;
+      const weather = (lat && lng) ? await getWeather(lat, lng, ANON).catch(() => null) : null;
 
       const result = await buildCard(v, weather, venueClock(p, { time: scoreTime, localHour, localDay }));
       setCache(cacheKey, result, 10 * 60_000);
