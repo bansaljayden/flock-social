@@ -41,21 +41,15 @@ STRIP=(
   --path frontend/public/birdie/flap-src.png
   --path frontend/public/birdie/birdie-idle.mp4
   --path-glob 'frontend/public/screenshots/appstore/*'
-  # Private strategy/ops docs (decision 2026-08-19: everything private for now).
-  # The first four were tracked and mirrored; the rest never were, and sit here
-  # so an accidental future commit cannot mirror. Adding these renumbered the
-  # public history once, 2026-08-19, with a deliberate one-time force replacement.
-  --path TASKS.md
-  --path MONEY-MODEL.md
-  --path VENUE-BILLING.md
-  --path SLOP-AUDIT.md
+  # Private strategy docs (2026-08-19; Jayden chose to keep existing history as-is).
+  # These were never committed anywhere; filtering them is a no-op on existing
+  # hashes and exists purely so an accidental future commit cannot mirror.
   --path VENUE-ADVISOR.md
   --path PAYMENTS-ROUTING.md
   --path MODEL-EPOCH-FINDING.md
   --path APPLE-2.1-REPLY.md
   --path OSS-SECRET-SCAN.md
   --path OSS-READINESS.md
-  --path PAYWALL.md
   --path VENUE-TOS-DRAFT.md
   --path MAP-VISIBILITY-DECISION.md
   --path PRO-VS-PREMIUM.md
@@ -90,8 +84,7 @@ SIZE="$(git count-objects -vH | awk '/size-pack/{print $2, $3}')"
 echo "==> verifying nothing excluded survived"
 FAIL=0
 for p in backend/scripts/ml/models/crowd_model.onnx backend/scripts/ml/models/model_metadata.json \
-         backend/.env frontend/.env.production mobile/android/app/debug.keystore \
-         TASKS.md MONEY-MODEL.md VENUE-BILLING.md SLOP-AUDIT.md; do
+         backend/.env frontend/.env.production mobile/android/app/debug.keystore; do
   n="$(git log --all --oneline -- "$p" | wc -l | tr -d ' ')"
   if [ "$n" != "0" ]; then echo "    LEAK: $p still in $n commits" >&2; FAIL=1; fi
 done
