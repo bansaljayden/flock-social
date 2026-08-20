@@ -603,9 +603,12 @@ const JSON_STRING_BYTES_PER_CHAR = 4;
 //   * POST /api/venue/advisor/ask — the only body on the advisor surface: one
 //     `intentId` string matched against a closed registry; any other key is a
 //     400 before a value is read. Bytes on the wire: well under 1KB.
-//   * routes/venueDigest.js — no body at all: its only route is the GET
-//     unsubscribe link, token in the query string, capped at 2048 chars by its
-//     own validator.
+//   * routes/venueDigest.js — no body it reads: the unsubscribe link is a GET
+//     that renders and a POST that writes, and BOTH take the token from the
+//     query string, capped at 2048 chars by the router's own validator. The
+//     RFC 8058 one-click POST does carry a fixed `List-Unsubscribe=One-Click`
+//     form body, which the urlencoded parser below buffers under the same
+//     64KB ceiling and the router never looks at.
 //
 // SCOPED LARGER, each for a reason it can state:
 //   * the three IMAGE_BODY_ROUTES below, unchanged and still derived from

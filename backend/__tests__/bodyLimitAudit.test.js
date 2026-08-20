@@ -451,9 +451,11 @@ test('every route file that takes a body was actually looked at', () => {
     'checkin', 'crowd', 'entitlements', 'events', 'feedback', 'flocks', 'friends',
     'guest', 'messages', 'moderation', 'notifications', 'publicCrowd', 'revenuecat',
     'safety', 'sensors', 'stories', 'users', 'venueDashboard',
-    // routes/venueDigest.js enrolled 2026-08-20: GET-only (the digest email's
-    // unsubscribe link); no body parser runs, the token rides the query string
-    // with a 2048-char validator cap.
+    // routes/venueDigest.js enrolled 2026-08-20: the digest email's unsubscribe
+    // link, a GET that renders and a POST that writes. The router reads no
+    // body on either verb — the token rides the query string with a 2048-char
+    // validator cap — and the one body that reaches it, RFC 8058's fixed
+    // `List-Unsubscribe=One-Click` form post, takes the default ceiling.
     'venueDigest', 'venueProfile',
     'venueSearch', 'venues', 'waitlist', 'weather',
   ]);
