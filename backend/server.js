@@ -1013,6 +1013,82 @@ const aiLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
   message: { error: 'Too many AI requests, please slow down' },
 });
 
+// The venue advisor (Roost), which is more expensive per request than Birdie is
+// and was sitting on the 3000/15min general limiter until this was written.
+//
+// What one GET /cards actually costs: services/advisorFacts.js walks the venue's
+// next seven days, and for each day asks mlPredictor for nearby events, then
+// asks the weather service for a forecast. That is up to eight upstream
+// lookups, on top of the baseline-curve, owner-report and served-prediction
+// aggregates it runs in Postgres. POST /ask builds the same facts and may then
+// spend a Gemini call. The general limiter would have let one account drive
+// three thousand of those in a quarter of an hour.
+//
+// The vendor meters inside weatherService and the event fetcher already stop
+// this from becoming an unbounded invoice, and the token ledgers in
+// services/advisorPhrasing.js bound the model spend. What NEITHER of those
+// bounds is the database and the latency, which is what this limiter is for:
+// cheap and early, the same division of labour aiLimiter documents above.
+//
+// Keyed on the ACCOUNT, not the address, for the reason billedImageKey states:
+// an advisor caller is always authenticated, so an address key would just be a
+// meter that IP rotation defeats. Twenty a minute is a dashboard open plus a
+// run of question chips, with room to spare and none for a loop.
+const advisorLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  keyGenerator: billedAccountKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many advisor requests, please slow down' },
+});
+
+// The venue owner's own surfaces. These landed on the general 3000/15min
+// limiter, which is an ADDRESS meter sized for a consumer app's chat and feed
+// traffic; the routes underneath it are analytics.
+//
+//   /api/venue-dashboard  /this-week runs four fourteen-day aggregate scans
+//                         per request with no cache, /busy-now runs a
+//                         DISTINCT ON plus a correlated NOT EXISTS, and
+//                         /incoming-flocks joins votes per call.
+//   /api/venue-profile    every save re-checks corpus membership, which is an
+//                         EXISTS plus a COUNT(*) over ml_venue_baselines.
+//
+// Both are authenticated, so both key on the ACCOUNT for the reason
+// billedImageKey states: an address meter on an authenticated route is a meter
+// IP rotation defeats. The numbers are sized for a person with a dashboard
+// open, not for the loop that a shared limiter left room for. A dashboard
+// opens perhaps a dozen panels at once and a profile is saved by hand.
+const venueDashboardLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  keyGenerator: billedAccountKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many dashboard requests, please slow down' },
+});
+
+const venueProfileLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  keyGenerator: billedAccountKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many profile requests, please slow down' },
+});
+
+// The digest unsubscribe link is the one venue surface with NO login, so it is
+// the one that cannot key on an account: the address is all there is. The token
+// is an HMAC and is not guessable, so this is not a brute-force gate; it is
+// there so an open unauthenticated endpoint cannot be used as free load.
+const digestOptOutLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later' },
+});
+
 // ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
@@ -1054,10 +1130,10 @@ app.use('/api/ai', aiLimiter, aiRoutes);             // Handles /api/ai/chat (Bi
 app.use('/api/entitlements', apiLimiter, entitlementsRoutes); // Handles /api/entitlements (Flock Pro paywall status)
 app.use('/api/notifications', apiLimiter, notificationRoutes); // Handles /api/notifications/register, unregister
 app.use('/api/admin', apiLimiter, adminRoutes);               // Handles /api/admin/* (admin only)
-app.use('/api/venue-profile', apiLimiter, venueProfileRoutes); // Handles /api/venue-profile (venue owners)
-app.use('/api/venue-dashboard', apiLimiter, venueDashboardRoutes); // Handles promotions, events, reviews CRUD
-app.use('/api/venue/advisor', apiLimiter, advisorRoutes);      // T0 advisor cards (deterministic facts, zero LLM)
-app.use('/api/venue-digest', apiLimiter, require('./routes/venueDigest')); // Monday digest unsubscribe link (signed token, no JWT)
+app.use('/api/venue-profile', venueProfileLimiter, venueProfileRoutes); // Handles /api/venue-profile (venue owners)
+app.use('/api/venue-dashboard', venueDashboardLimiter, venueDashboardRoutes); // Handles promotions, events, reviews CRUD
+app.use('/api/venue/advisor', advisorLimiter, advisorRoutes);  // Roost: fact cards + chip chat (own limiter, see above)
+app.use('/api/venue-digest', digestOptOutLimiter, require('./routes/venueDigest')); // Monday digest unsubscribe link (signed token, no JWT)
 app.use('/api/availability', apiLimiter, availabilityRoutes); // 3-tap status pulse: down / maybe / not
 app.use('/api/calendar', apiLimiter, calendarRoutes);          // personal calendar events (CRUD, per-user)
 

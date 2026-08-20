@@ -89,6 +89,71 @@ function assertCleanCopy(text, where) {
   }
 }
 
+// ─── The outside world's strings ─────────────────────────────────────────────
+//
+// assertCleanCopy above guards copy WE wrote. Three strings in this file come
+// from somewhere else and are interpolated into that copy: a Ticketmaster
+// event's name and type, and OpenWeatherMap's conditions phrase. They are not
+// ours, so they get sanitised rather than asserted, for two reasons that both
+// bit:
+//
+//   1. AVAILABILITY. assertCleanCopy throws, and a thrown fact takes down the
+//      whole card set with a 500. Event titles carry em dashes constantly
+//      ("Band — Live at the Hall"), so an ordinary listing near a venue was
+//      enough to blank that venue's advisor. A vendor's punctuation must
+//      never be able to fail our endpoint.
+//   2. THE PROMPT FENCE. These same strings are the only untrusted text that
+//      reaches the phrasing model (services/advisorPhrasing.js flattens fact
+//      values into the payload). ADVISOR-PROMPT section 10 tells the model
+//      they are data; this is the half a machine can enforce. Braces would
+//      collide with the {{fact:id}} placeholder grammar, control characters
+//      and newlines let a value imitate the block's own framing, and an
+//      unbounded title is unbounded prompt spend.
+//
+// Sanitising, not rejecting: an odd event title should read a little flatter,
+// not erase the fact that an event exists.
+const EXTERNAL_TEXT_MAX = 80;
+// Code points rather than regex literals, on purpose: the classes below are
+// invisible or punctuation characters, and a regex literal full of them is a
+// line no reviewer can check and every editor is free to mangle.
+const DASH_CODEPOINTS = new Set([0x2012, 0x2013, 0x2014, 0x2015, 0x2212]);
+function isControlCp(cp) {
+  return cp <= 0x1f || (cp >= 0x7f && cp <= 0x9f);
+}
+function isInvisibleCp(cp) {
+  return (cp >= 0x200b && cp <= 0x200f)   // zero width, LTR/RTL marks
+    || (cp >= 0x202a && cp <= 0x202e)     // bidi embedding and overrides
+    || (cp >= 0x2066 && cp <= 0x2069)     // bidi isolates
+    || cp === 0xfeff;                     // byte order mark
+}
+
+function externalText(value, { max = EXTERNAL_TEXT_MAX } = {}) {
+  if (value === null || value === undefined) return null;
+  let s = '';
+  for (const ch of String(value)) {
+    const cp = ch.codePointAt(0);
+    if (isInvisibleCp(cp)) continue;                      // dropped outright
+    if (DASH_CODEPOINTS.has(cp)) { s += '-'; continue; }  // SLOP rule 1, no throw
+    if (isControlCp(cp)) { s += ' '; continue; }
+    if (ch === '{' || ch === '}') continue;               // never imitate {{fact:id}}
+    s += ch;
+  }
+  s = s.replace(/\s+/g, ' ').trim();
+  if (!s) return null;
+  // The ellipsis is three characters and counts against the cap: the point of
+  // the cap is the byte count that reaches the prompt, not a tidy number.
+  if (s.length > max) s = `${s.slice(0, max - 3).trimEnd()}...`;
+  // Whatever survives has to be printable inside our own copy without throwing.
+  for (const banned of BANNED_COPY) {
+    if (DASH_CODEPOINTS.has(banned.codePointAt(0))) continue; // normalised above
+    if (s.toLowerCase().includes(banned)) {
+      const escaped = banned.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      s = s.replace(new RegExp(escaped, 'ig'), '').replace(/\s+/g, ' ').trim();
+    }
+  }
+  return s || null;
+}
+
 // ─── Fact and refusal constructors ───────────────────────────────────────────
 
 /**
@@ -543,18 +608,20 @@ async function buildAroundYou(ctx, { now = new Date(), userId } = {}) {
       const evDate = dayForDow.toISOString().slice(0, 10);
       const weekday = WEEKDAY_NAMES[dow];
       const distRounded = Math.round(dist * 10) / 10;
+      // The vendor's title, made safe to print and safe to put in a prompt.
+      const evName = externalText(ev.nearestName);
       out.push(makeFact({
         id: `event_${evDate}`,
         value: {
           date: evDate, weekday,
-          name: ev.nearestName || 'Listed event',
+          name: evName || 'Listed event',
           distanceKm: distRounded,
-          type: ev.nearestType || null,
+          type: externalText(ev.nearestType, { max: 24 }),
         },
         source: 'events',
         asOf: now.toISOString(),
         note: 'A ticketed listing near you. Whether an event night feeds your room or drains it is not something we can measure yet.',
-        label: `${weekday}: a listed event about ${distRounded} km away, ${ev.nearestName || 'unnamed listing'}.`,
+        label: `${weekday}: a listed event about ${distRounded} km away, ${evName || 'unnamed listing'}.`,
       }));
     }
     if (!sawEvent) {
@@ -583,15 +650,17 @@ async function buildAroundYou(ctx, { now = new Date(), userId } = {}) {
       if (dow !== 5 && dow !== 6 && dow !== 0) continue;
       const weekday = WEEKDAY_NAMES[dow];
       const temp = entry.temp != null && Number.isFinite(Number(entry.temp)) ? Math.round(Number(entry.temp)) : null;
+      // The weather vendor's phrase, same treatment as the event title.
+      const conditions = externalText(entry.conditions, { max: 40 });
       out.push(makeFact({
         id: `weather_${entry.date}`,
-        value: { date: entry.date, weekday, conditions: entry.conditions || null, middayTempF: temp },
+        value: { date: entry.date, weekday, conditions, middayTempF: temp },
         source: 'weather',
         asOf: now.toISOString(),
         note: 'Context only. Weather is never offered as the explanation of a number.',
         label: temp != null
-          ? `${weekday} ${entry.date}: ${entry.conditions || 'no conditions reported'}, around ${temp} F midday.`
-          : `${weekday} ${entry.date}: ${entry.conditions || 'no conditions reported'}.`,
+          ? `${weekday} ${entry.date}: ${conditions || 'no conditions reported'}, around ${temp} F midday.`
+          : `${weekday} ${entry.date}: ${conditions || 'no conditions reported'}.`,
       }));
     }
   }
@@ -846,6 +915,8 @@ module.exports = {
   EVENT_RADIUS_KM,
   tzOffsetMinutes,
   assertCleanCopy,
+  externalText,
+  EXTERNAL_TEXT_MAX,
   // curve helpers (full-operating-hours scanning; Roost serves any venue type)
   fetchBaselineCurve,
   openHoursByDay,
