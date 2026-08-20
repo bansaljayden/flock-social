@@ -602,6 +602,13 @@ export async function getVenueThisWeek() {
   return request('/api/venue-dashboard/this-week');
 }
 
+// Roost's T0 insight cards (components/VenueInsightCards.js). Deterministic
+// facts with a source on every number, refusals as data. A 403 is the Pro
+// gate answering, which the component renders as a plan line, not an error.
+export async function getVenueAdvisorCards() {
+  return request('/api/venue/advisor/cards');
+}
+
 // Roost, the venue advisor's chat surface (components/VenueAdvisorChat.js).
 // Chips only, by contract: /questions serves the grouped list of everything
 // the server will accept, and /ask takes exactly one of those intent ids.
