@@ -140,23 +140,39 @@ test('the venue-profile routes are not a writer of tier at all', () => {
   const src = require('fs').readFileSync(require.resolve('../routes/venueProfile'), 'utf8');
   // Comments may mention it; SQL must not assign it.
   assert.ok(!/tier\s*=\s*\$/.test(src), 'venueProfile.js assigns tier in SQL');
-  assert.ok(!/\btier\b/.test(src.replace(/\/\/.*$/gm, '').replace(/--.*$/gm, '')), 'venueProfile.js references tier outside comments');
+  // The word itself is no longer forbidden: since migration 040 the GET REPORTS
+  // the resolved tier and its end date, because a comped venue is owed a plain
+  // statement of what it holds and until when. Reporting is not writing, so what
+  // this pins now is the sharper thing — no SQL in this file may so much as name
+  // the column. Every query is a template literal, so that is a checkable claim.
+  const statements = src.match(/`[^`]*`/g) || [];
+  assert.ok(statements.length > 3, 'the SQL sweep stopped finding statements in venueProfile.js');
+  for (const sql of statements) {
+    if (!/\b(SELECT|INSERT|UPDATE|DELETE)\b/i.test(sql)) continue;
+    assert.ok(!/\btier\b/i.test(sql),
+      `venueProfile.js has SQL that names the tier column: ${sql.slice(0, 120)}`);
+  }
+  // And the resolved tier it reports comes from the entitlement service, which
+  // only ever reads (pinned in __tests__/entitlementGates.test.js), never from a
+  // second copy of the rule living here.
+  assert.match(src, /getVenueEntitlement/,
+    'the profile GET stopped reading the entitlement service and is deciding the tier itself');
 });
 
 test('requireVenueTier is a no-op while the kill switch is off', async () => {
   const res = await call('GET', '/gated');
   assert.strictEqual(res.status, 200);
-  assert.strictEqual(ran(/SELECT tier FROM venue_profiles/).length, 0, 'it queried a tier with billing disabled');
+  assert.strictEqual(ran(/FROM venue_profiles vp LEFT JOIN venue_subscriptions/).length, 0, 'it queried a tier with billing disabled');
 });
 
 test('requireVenueTier enforces the stored tier once billing is on', async () => {
   process.env.VENUE_BILLING_ENABLED = 'true';
-  handlers = [[/SELECT tier FROM venue_profiles/, () => ({ rows: [{ tier: 'free' }] })]];
+  handlers = [[/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [{ tier: 'free' }] })]];
   let res = await call('GET', '/gated');
   assert.strictEqual(res.status, 403);
   assert.strictEqual(res.body.code, 'UPGRADE_REQUIRED');
 
-  handlers = [[/SELECT tier FROM venue_profiles/, () => ({ rows: [{ tier: 'premium' }] })]];
+  handlers = [[/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [{ tier: 'premium' }] })]];
   res = await call('GET', '/gated');
   assert.strictEqual(res.status, 200);
 });
@@ -164,7 +180,7 @@ test('requireVenueTier enforces the stored tier once billing is on', async () =>
 test('a tier naming an Object.prototype member is treated as free, not as a rank', async () => {
   process.env.VENUE_BILLING_ENABLED = 'true';
   for (const poisoned of ['constructor', 'toString', '__proto__', 'valueOf']) {
-    handlers = [[/SELECT tier FROM venue_profiles/, () => ({ rows: [{ tier: poisoned }] })]];
+    handlers = [[/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [{ tier: poisoned }] })]];
     const res = await call('GET', '/gated');
     assert.strictEqual(res.status, 403, `${poisoned} passed the gate`);
     assert.strictEqual(await getVenueTier(1), 'free', `${poisoned} survived getVenueTier`);
@@ -173,7 +189,7 @@ test('a tier naming an Object.prototype member is treated as free, not as a rank
 
 test('a database failure on the paid boundary fails closed', async () => {
   process.env.VENUE_BILLING_ENABLED = 'true';
-  handlers = [[/SELECT tier FROM venue_profiles/, () => { throw new Error('db down'); }]];
+  handlers = [[/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => { throw new Error('db down'); }]];
   const res = await call('GET', '/gated');
   assert.strictEqual(res.status, 403);
   assert.strictEqual(res.body.code, 'UPGRADE_REQUIRED');
@@ -189,17 +205,17 @@ test('an unrecognised tier does not walk through a free-minimum gate', async () 
   // `null >= 0` is true in JavaScript, so a rank of "unknown" would have
   // satisfied any gate whose minimum is the bottom tier.
   process.env.VENUE_BILLING_ENABLED = 'true';
-  handlers = [[/SELECT tier FROM venue_profiles/, () => ({ rows: [{ tier: 'constructor' }] })]];
+  handlers = [[/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [{ tier: 'constructor' }] })]];
   const res = await call('GET', '/gated-free');
   assert.strictEqual(res.status, 200, 'getVenueTier should have normalised this to free');
   assert.strictEqual(await getVenueTier(1), 'free');
 });
 
 test('a venue with no profile row at all is free, not undefined', async () => {
-  handlers = [[/SELECT tier FROM venue_profiles/, () => ({ rows: [] })]];
+  handlers = [[/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [] })]];
   assert.strictEqual(await getVenueTier(1), 'free');
   process.env.VENUE_BILLING_ENABLED = 'true';
-  handlers = [[/SELECT tier FROM venue_profiles/, () => ({ rows: [] })]];
+  handlers = [[/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [] })]];
   const res = await call('GET', '/gated');
   assert.strictEqual(res.status, 403);
 });

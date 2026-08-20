@@ -109,7 +109,7 @@ function dispatch(rawSql, params = []) {
   if (/SELECT id, google_place_id, verified, category FROM venue_profiles/.test(sql)) {
     return { rows: [{ id: PROFILE.id, google_place_id: PROFILE.google_place_id, verified: PROFILE.verified }] };
   }
-  if (/SELECT tier FROM venue_profiles/.test(sql)) return { rows: [{ tier: PROFILE.tier }] };
+  if (/FROM venue_profiles vp LEFT JOIN venue_subscriptions/.test(sql)) return { rows: [{ tier: PROFILE.tier }] };
 
   // The unattributed count. Matched on its own shape so it can never be
   // answered by the feed branch below.

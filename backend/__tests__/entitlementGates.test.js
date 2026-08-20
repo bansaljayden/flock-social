@@ -151,8 +151,8 @@ async function call(method, p, body) {
 const ran = (re) => log.filter((q) => re.test(q.sql));
 const premiumIs = (v) => handlers.push([/SELECT is_premium FROM users/, () => ({ rows: [{ is_premium: v }] })]);
 const premiumErrors = (err) => handlers.push([/SELECT is_premium FROM users/, () => (err || new Error('connection terminated unexpectedly'))]);
-const tierIs = (tier) => handlers.push([/SELECT tier FROM venue_profiles/, () => ({ rows: [{ tier }] })]);
-const tierErrors = () => handlers.push([/SELECT tier FROM venue_profiles/, () => new Error('canceling statement due to statement timeout')]);
+const tierIs = (tier) => handlers.push([/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [{ tier }] })]);
+const tierErrors = () => handlers.push([/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => new Error('canceling statement due to statement timeout')]);
 
 let nextId = 700000;
 const freshId = () => ++nextId;
@@ -539,7 +539,7 @@ test('with billing off the gate is inert and reads no tier at all', async () => 
     const res = await call('GET', p);
     assert.strictEqual(res.status, 200, `${p} -> ${res.text}`);
     assert.strictEqual(handlerRuns, 1);
-    assert.strictEqual(ran(/SELECT tier FROM venue_profiles/).length, 0,
+    assert.strictEqual(ran(/FROM venue_profiles vp LEFT JOIN venue_subscriptions/).length, 0,
       `${p} read a tier with the kill switch off`);
   }
 });
@@ -595,7 +595,7 @@ test('an unrecognised tier is free, never a bypass', async () => {
 
 test('a missing venue profile is the free tier', async () => {
   process.env.VENUE_BILLING_ENABLED = 'true';
-  handlers.push([/SELECT tier FROM venue_profiles/, () => ({ rows: [] })]);
+  handlers.push([/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [] })]);
   assert.strictEqual(await getVenueTier(1), 'free');
 });
 
@@ -608,11 +608,11 @@ test('an answer that is not a result set is a failure, not an empty one', async 
   for (const shape of [{ rows: null }, { rows: undefined }, {}, { rowCount: 0 }]) {
     handlers = [];
     handlerRuns = 0;
-    handlers.push([/SELECT tier FROM venue_profiles/, () => shape]);
+    handlers.push([/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => shape]);
     await assert.rejects(() => getVenueTier(1), /rows array/,
       `${JSON.stringify(shape)} was read as a venue on the free tier`);
     handlers = [];
-    handlers.push([/SELECT tier FROM venue_profiles/, () => shape]);
+    handlers.push([/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => shape]);
     const res = await capture('error', () => call('GET', '/venue/free'));
     assert.strictEqual(res.result.status, 403,
       'a malformed result set opened a gate whose minimum is the bottom tier');
@@ -648,7 +648,7 @@ test('the null-rank check in front of the comparison is still there', () => {
   const src = fs.readFileSync(path.join(BACKEND, 'services', 'venueEntitlements.js'), 'utf8');
   assert.match(src, /if \(rank !== null && rank >= minRank\) return next\(\);/,
     'the explicit null check before the rank comparison is gone; `null >= 0` is true');
-  assert.match(src, /rankOf\(rows\[0\]\?\.tier\) === null \? 'free'/,
+  assert.match(src, /rankOf\(row\?\.tier\) === null \? 'free'/,
     'getVenueTier stopped normalising an unrecognised tier to free');
 });
 
@@ -707,10 +707,10 @@ test('the tier read is parameterised, by user id, and is one row', async () => {
   CURRENT_USER = { id: 4242 };
   tierIs('pro');
   await call('GET', '/venue/premium');
-  const q = ran(/SELECT tier FROM venue_profiles/);
+  const q = ran(/FROM venue_profiles vp LEFT JOIN venue_subscriptions/);
   assert.strictEqual(q.length, 1, 'the gate issued more than one tier read for one request');
   assert.deepStrictEqual(q[0].params, [4242]);
-  assert.match(q[0].sql, /WHERE user_id = \$1$/);
+  assert.match(q[0].sql, /WHERE vp\.user_id = \$1$/);
   assert.ok(!/LIMIT|ORDER BY/i.test(q[0].sql),
     'venue_profiles.user_id is UNIQUE; if that changed, this needs an explicit order, not a LIMIT');
 });
@@ -718,7 +718,7 @@ test('the tier read is parameterised, by user id, and is one row', async () => {
 test('the gate re-reads the tier on every request, so a downgrade bites immediately', async () => {
   process.env.VENUE_BILLING_ENABLED = 'true';
   let tier = 'pro';
-  handlers.push([/SELECT tier FROM venue_profiles/, () => ({ rows: [{ tier }] })]);
+  handlers.push([/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [{ tier }] })]);
   assert.strictEqual((await call('GET', '/venue/premium')).status, 200);
   tier = 'free';
   assert.strictEqual((await call('GET', '/venue/premium')).status, 403,
@@ -726,7 +726,7 @@ test('the gate re-reads the tier on every request, so a downgrade bites immediat
   tier = 'pro';
   assert.strictEqual((await call('GET', '/venue/premium')).status, 200,
     'an upgraded venue was still denied from a cache');
-  assert.strictEqual(ran(/SELECT tier/).length, 3);
+  assert.strictEqual(ran(/SELECT vp\.tier/).length, 3);
 });
 
 test('a typo in a call site is a boot failure, not a gate that denies everyone', () => {

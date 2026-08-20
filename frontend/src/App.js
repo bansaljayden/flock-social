@@ -5342,6 +5342,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // Venue Dashboard (for venue owners)
   const [venueTier, setVenueTier] = useState('free'); // 'free', 'premium', 'pro'
+  // When the plan ends, or null for no end date. The founding-venue offer is six
+  // months (VENUE-PRICING.md) and an owner who cannot see the date has to
+  // remember it. Server-supplied, from GET /api/venue-profile: the same resolved
+  // answer the gate enforces, never a countdown and never a prompt to buy.
+  const [venueTierEndsAt, setVenueTierEndsAt] = useState(null);
   const [venueTab, setVenueTab] = useState('analytics'); // Lifted to App level to persist across re-renders
   const [adminTab, setAdminTab] = useState('revenue'); // Lifted to App level to persist across re-renders
 
@@ -15494,10 +15499,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             address: p.location || prev.address,
             phone: p.phone || prev.phone,
           }));
-          // Load saved tier
+          // Load saved tier. `p.tier` is the RESOLVED tier since migration 040:
+          // the server applies the grant's end date before answering, so a comp
+          // that lapsed overnight arrives here as 'free' rather than as a badge
+          // that disagrees with every gated route.
           if (p.tier && ['free', 'premium', 'pro'].includes(p.tier)) {
             setVenueTier(p.tier);
           }
+          setVenueTierEndsAt(p.tier_expires_at || null);
           // Load saved logo. photo_url is stored as the RELATIVE proxy path
           // (/api/venues/photo?...), which is not an origin this SPA serves —
           // rendered raw it 404s against Vercel. resolveVenuePhoto prefixes
@@ -17113,6 +17122,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         canonical. VENUE-BILLING.md's old $49 / $149 figures are
                         being updated to match these, not the other way round. */}
                     {venueTier === 'free' ? 'Free' : venueTier === 'premium' ? '$35/month' : '$75/month'}</p>
+                    {/* WHEN IT ENDS, said plainly and once. A comped venue is
+                        owed this: the founding offer is six months
+                        (VENUE-PRICING.md), and before migration 040 nothing
+                        expired a granted tier at all, so nobody, owner or
+                        operator, could say when a pilot stopped.
+                        Deliberately NOT a countdown, not a colour change as the
+                        date nears, and not a prompt to buy. SLOP-AUDIT: an
+                        interface that manufactures urgency about its own
+                        billing is the dark pattern, not the information. A date
+                        is the information. */}
+                    {venueTier !== 'free' && (
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>
+                        {(() => {
+                          const endsAt = venueTierEndsAt ? new Date(venueTierEndsAt) : null;
+                          return endsAt && !Number.isNaN(endsAt.getTime())
+                            ? `Runs until ${endsAt.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}`
+                            : 'No end date';
+                        })()}
+                      </p>
+                    )}
                   </div>
                   {venueTier !== 'pro' && (
                     <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#2d5a87', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
