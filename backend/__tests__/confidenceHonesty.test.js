@@ -354,7 +354,11 @@ test('AN OLDER ARTIFACT STILL LOADS, AND ITS PER-VENUE BASELINE STILL ANSWERS', 
     const r = await fresh.predictBusyness(venue, WEATHER, TS);
     assert.equal(r.predictionMethod, 'ml', 'the model answers');
     assert.equal(r.modelVersion, META.model_version);
-    assert.equal(r.score, 85, 'baseline 80 + delta 5: the venue\'s OWN curve, not a category prior');
+    // 86, not 85: baseline 80 + delta 5 reconstructs to 85, and 85 sits above
+    // the extremes-push band [25, 65], so the dispersion-lab push (2026-08-19,
+    // see reconstructScore) adds the one point. The assertion's point is
+    // untouched — this number is reachable only from the venue's OWN curve.
+    assert.equal(r.score, 86, 'baseline 80 + delta 5, pushed: the venue\'s OWN curve, not a category prior');
     assert.notEqual(r.score, crowdEngine.calculateCrowdScore(venue, WEATHER, TS).score,
       'and that is a different answer from the category curve, which is the whole point');
   });

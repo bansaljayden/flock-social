@@ -364,11 +364,13 @@ test('a numeric-string baseline row counts (pg numeric arrives as text), and jun
     assert.equal(r.predictionMethod, 'ml',
       'a junk neighbor row must not take down a healthy current-hour baseline');
     assertContract(r, 'junk neighbor row');
-    const [lo, hi] = META.delta_clamp_range || [-30, 30];
-    // Blended baseline is 60-ish (0.6·60 + 0.2·60 + 0.2·40 = 56); the delta
+    // The SERVE clamp is ±50 — the dispersion lab's pick (2026-08-19),
+    // deliberately wider than META.delta_clamp_range's training-time ±30; see
+    // reconstructScore — and the extremes push can move the result one more
+    // point. Blended baseline is 60-ish (0.6·60 + 0.2·60 + 0.2·40 = 56); the
     // clamp bounds how far the score can sit from it.
-    assert.ok(r.score >= 56 + lo && r.score <= 56 + hi,
-      `score ${r.score} outside the clamp around the blended baseline`);
+    assert.ok(r.score >= 56 - 51 && r.score <= 56 + 51,
+      `score ${r.score} outside the serve clamp around the blended baseline`);
   });
 });
 
@@ -429,36 +431,41 @@ test('a non-finite model output never ships: NaN, empty tensor, ±Infinity, BigI
   });
 });
 
-test('a finite model output is clamped by the delta range and the 0..100 contract, then rounded', async () => {
+test('a finite model output is clamped by the serve clamp and the 0..100 contract, then rounded', async () => {
   let output;
   const { ort } = stubOrt(async () => ({ variable: { data: output } }));
   await withFreshPredictor({ ort }, async (fresh) => {
     assert.equal(await fresh.init(), true);
-    const [lo, hi] = META.delta_clamp_range;
+    // The serve clamp is ±50 (dispersion lab 2026-08-19, reconstructScore) —
+    // deliberately wider than META.delta_clamp_range's training-time ±30 —
+    // and scores landing outside [25, 65] get the one-point extremes push.
 
-    // A runaway positive delta: clamped to `hi`, then the score clamped to 100.
+    // A runaway positive delta: clamped to +50, then the score clamped to 100,
+    // and the push cannot cross the rail.
     output = [1e9];
     const high = await fresh.predictBusyness(baselineVenue(95), WEATHER, TS);
     assert.equal(high.predictionMethod, 'ml');
-    assert.equal(high.score, Math.min(100, 95 + hi), 'the runaway delta must hit both clamps');
+    assert.equal(high.score, 100, 'the runaway delta must hit both clamps (95 + 50 clips to 100)');
     assertContract(high, 'delta 1e9 / baseline 95');
 
-    // A runaway negative delta: clamped to `lo`, then the floor at 0.
+    // A runaway negative delta: clamped to -50, then the floor at 0.
     output = [-1e9];
     const low = await fresh.predictBusyness(baselineVenue(5), WEATHER, TS);
-    assert.equal(low.score, Math.max(0, 5 + lo), 'the negative runaway must hit the floor');
+    assert.equal(low.score, 0, 'the negative runaway must hit the floor (5 - 50 clips to 0)');
     assertContract(low, 'delta -1e9 / baseline 5');
 
     // Mid-baseline runaways: here the DELTA clamp binds and the 0..100 clamp
-    // does not, so these two are the assertions that catch a dropped
-    // delta_clamp_range specifically (at baseline 95/5 both clamps land on
-    // the same number and a dropped delta clamp hides behind the outer one).
+    // does not, so these two are the assertions that catch a dropped serve
+    // clamp specifically (at baseline 95/5 both clamps land on the same
+    // number and a dropped delta clamp hides behind the outer one). Both
+    // landings sit outside [25, 65], so the push moves each one more point.
     output = [1e9];
-    const midHigh = await fresh.predictBusyness(baselineVenue(50), WEATHER, TS);
-    assert.equal(midHigh.score, 50 + hi, 'the delta clamp itself must bind, not just the 0..100 clamp');
+    const midHigh = await fresh.predictBusyness(baselineVenue(40), WEATHER, TS);
+    assert.equal(midHigh.score, 91,
+      '40 + clamp(1e9)=50 -> 90, pushed to 91 — the serve clamp itself must bind, not just the 0..100 clamp');
     output = [-1e9];
-    const midLow = await fresh.predictBusyness(baselineVenue(50), WEATHER, TS);
-    assert.equal(midLow.score, 50 + lo, 'and in the negative direction too');
+    const midLow = await fresh.predictBusyness(baselineVenue(60), WEATHER, TS);
+    assert.equal(midLow.score, 9, '60 - 50 -> 10, pushed to 9 — and in the negative direction too');
 
     // An ordinary fractional delta is rounded, not truncated and not left
     // fractional — the card renders integers.
