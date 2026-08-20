@@ -373,11 +373,19 @@ function loadShutdown() {
     closeIdleConnections: () => calls.push('server.closeIdleConnections'),
   };
   const pool = { end: () => { calls.push('pool.end'); return Promise.resolve(); } };
+  // Every background timer handle server.js declares (crowd alerts, night
+  // context, the venue digest, and whatever ships next) is a free variable in
+  // the shutdown body's clearInterval/clearTimeout lines. Injecting them by
+  // scanning the declarations, rather than by a hand-kept name list, keeps
+  // this harness from failing with a ReferenceError every time a new sweep is
+  // wired in — which is exactly how it broke twice on 2026-08-19.
+  const timerHandles = [...serverSrc.matchAll(/^let (\w+(?:Interval|Kickoff)) = null;/gm)].map((m) => m[1]);
+  assert.ok(timerHandles.includes('crowdAlertsInterval'), 'the crowd-alert handle must still be declared');
   // eslint-disable-next-line no-new-func
   const out = new Function(
-    'io', 'server', 'pool', 'console', 'process', 'crowdAlertsInterval', 'crowdAlertsKickoff',
+    'io', 'server', 'pool', 'console', 'process', ...timerHandles,
     `${body}\nreturn { shutdown, SHUTDOWN_DEADLINE_MS };`
-  )(io, server, pool, con, proc, null, null);
+  )(io, server, pool, con, proc, ...timerHandles.map(() => null));
   return { calls, con, proc, server, signals, ...out };
 }
 

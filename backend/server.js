@@ -603,6 +603,9 @@ const JSON_STRING_BYTES_PER_CHAR = 4;
 //   * POST /api/venue/advisor/ask — the only body on the advisor surface: one
 //     `intentId` string matched against a closed registry; any other key is a
 //     400 before a value is read. Bytes on the wire: well under 1KB.
+//   * routes/venueDigest.js — no body at all: its only route is the GET
+//     unsubscribe link, token in the query string, capped at 2048 chars by its
+//     own validator.
 //
 // SCOPED LARGER, each for a reason it can state:
 //   * the three IMAGE_BODY_ROUTES below, unchanged and still derived from
@@ -1054,6 +1057,7 @@ app.use('/api/admin', apiLimiter, adminRoutes);               // Handles /api/ad
 app.use('/api/venue-profile', apiLimiter, venueProfileRoutes); // Handles /api/venue-profile (venue owners)
 app.use('/api/venue-dashboard', apiLimiter, venueDashboardRoutes); // Handles promotions, events, reviews CRUD
 app.use('/api/venue/advisor', apiLimiter, advisorRoutes);      // T0 advisor cards (deterministic facts, zero LLM)
+app.use('/api/venue-digest', apiLimiter, require('./routes/venueDigest')); // Monday digest unsubscribe link (signed token, no JWT)
 app.use('/api/availability', apiLimiter, availabilityRoutes); // 3-tap status pulse: down / maybe / not
 app.use('/api/calendar', apiLimiter, calendarRoutes);          // personal calendar events (CRUD, per-user)
 
@@ -1314,6 +1318,8 @@ let crowdAlertsInterval = null;
 let crowdAlertsKickoff = null;
 let nightContextInterval = null;
 let nightContextKickoff = null;
+let venueDigestInterval = null;
+let venueDigestKickoff = null;
 
 async function boot() {
   try {
@@ -1352,6 +1358,17 @@ async function boot() {
     // so the two sweeps do not contend for the pool on the same tick.
     nightContextKickoff = setTimeout(runNightContextSweep, 45 * 1000);
   }
+
+  // Monday venue digest — hourly sweep, and every send is gated inside the
+  // service: DIGEST_ENABLED (default OFF, so this is a no-op that reads
+  // nothing until it is flipped), Monday morning on the venue's own clock,
+  // notification_prefs.weekly, tier, and a durable venue_digest_sends claim
+  // (migration 033) so overlapping deploy containers cannot double-mail.
+  const { runVenueDigestSweep } = require('./services/venueDigest');
+  const digestSweep = () => runVenueDigestSweep().catch((e) => console.error('[venueDigest] sweep failed:', e.message));
+  venueDigestInterval = setInterval(digestSweep, 60 * 60 * 1000);
+  // Staggered behind the other two kickoffs for the same pool-contention reason.
+  venueDigestKickoff = setTimeout(digestSweep, 60 * 1000);
 }
 
 // ---------------------------------------------------------------------------
@@ -1394,6 +1411,8 @@ function shutdown(signal) {
   if (crowdAlertsKickoff) clearTimeout(crowdAlertsKickoff);
   if (nightContextInterval) clearInterval(nightContextInterval);
   if (nightContextKickoff) clearTimeout(nightContextKickoff);
+  if (venueDigestInterval) clearInterval(venueDigestInterval);
+  if (venueDigestKickoff) clearTimeout(venueDigestKickoff);
 
   // Disconnect socket clients FIRST: a live WebSocket is an open connection
   // and server.close() waits on open connections indefinitely. Clients

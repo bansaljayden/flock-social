@@ -450,7 +450,11 @@ test('every route file that takes a body was actually looked at', () => {
     'admin', 'advisor', 'ai', 'auth', 'availability', 'badge', 'billing', 'budget', 'calendar',
     'checkin', 'crowd', 'entitlements', 'events', 'feedback', 'flocks', 'friends',
     'guest', 'messages', 'moderation', 'notifications', 'publicCrowd', 'revenuecat',
-    'safety', 'sensors', 'stories', 'users', 'venueDashboard', 'venueProfile',
+    'safety', 'sensors', 'stories', 'users', 'venueDashboard',
+    // routes/venueDigest.js enrolled 2026-08-20: GET-only (the digest email's
+    // unsubscribe link); no body parser runs, the token rides the query string
+    // with a 2048-char validator cap.
+    'venueDigest', 'venueProfile',
     'venueSearch', 'venues', 'waitlist', 'weather',
   ]);
   const actual = ROUTE_FILES.map((f) => path.basename(f, '.js'));
