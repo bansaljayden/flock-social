@@ -36,6 +36,8 @@ let digestClaims;     // INSERT INTO venue_digest_sends rows, with params
 let claimConflict;    // when true, the claim reports rowCount 0 (lost the race)
 let markerDeletes;    // DELETE FROM venue_digest_sends (per-venue release only)
 let prefUpdates;      // UPDATE venue_profiles ... notification_prefs
+let prefReads;        // SELECT notification_prefs (the GET page's only query)
+let prefsOnRecord;    // what that SELECT finds; null means the row is gone
 let queriesRan;       // every SQL string, to prove the OFF sweep runs none
 
 pool.query = (sql, params) => {
@@ -59,6 +61,12 @@ pool.query = (sql, params) => {
     prefUpdates.push({ sql: flat, params });
     return Promise.resolve({ rows: [], rowCount: 1 });
   }
+  if (/SELECT notification_prefs FROM venue_profiles/.test(flat)) {
+    prefReads.push({ sql: flat, params });
+    return prefsOnRecord === null
+      ? Promise.resolve({ rows: [], rowCount: 0 })
+      : Promise.resolve({ rows: [{ notification_prefs: prefsOnRecord }], rowCount: 1 });
+  }
   return Promise.resolve({ rows: [], rowCount: 0 });
 };
 
@@ -79,6 +87,8 @@ function resetWorld() {
   digestClaims = [];
   markerDeletes = [];
   prefUpdates = [];
+  prefReads = [];
+  prefsOnRecord = { bookings: true, reviews: true, weekly: true };
   queriesRan = [];
   sentEmails = [];
   sendResult = { sent: true, id: 'test-send' };
@@ -490,37 +500,149 @@ test('garbage and empty tokens are refused without touching the database', async
   assert.strictEqual(prefUpdates.length, 0);
 });
 
-test('GET /api/venue-digest/opt-out works end to end and answers a person, not an API client', async () => {
-  resetWorld();
+// ============================================================================
+// The link in the email: GET RENDERS, POST WRITES.
+//
+// A GET that unsubscribed on arrival was an unsubscribe that anything could
+// fire. Microsoft Defender Safe Links, Proofpoint URL Defense and Gmail's
+// scanner all follow every href in a message unattended, so the first thing
+// to reach that link would have been a robot, and the owner's only evidence
+// would be a dashboard switch that turned itself off. These tests pin the
+// split: the GET touches no write, the POST is the whole mutation, and a
+// second POST is a success rather than an error.
+// ============================================================================
+function openRouter() {
   const app = express();
   app.use('/api/venue-digest', require('../routes/venueDigest'));
-  const server = await new Promise((resolve) => {
-    const s = app.listen(0, () => resolve(s));
+  return new Promise((resolve) => {
+    const s = app.listen(0, () => {
+      const port = s.address().port;
+      const call = (method, path) => new Promise((res, rej) => {
+        const req = http.request(
+          { host: '127.0.0.1', port, path, method },
+          (r) => {
+            let body = '';
+            r.on('data', (c) => { body += c; });
+            r.on('end', () => res({ status: r.statusCode, body }));
+          }
+        );
+        req.on('error', rej);
+        req.end();
+      });
+      resolve({
+        get: (path) => call('GET', path),
+        post: (path) => call('POST', path),
+        close: () => new Promise((done) => s.close(done)),
+      });
+    });
   });
-  const port = server.address().port;
-  const get = (path) => new Promise((resolve, reject) => {
-    http.get({ host: '127.0.0.1', port, path }, (res) => {
-      let body = '';
-      res.on('data', (c) => { body += c; });
-      res.on('end', () => resolve({ status: res.statusCode, body }));
-    }).on('error', reject);
-  });
+}
 
+const OPT_OUT = '/api/venue-digest/opt-out';
+const linkFor = (id) => `${OPT_OUT}?token=${encodeURIComponent(digest.optOutToken(id))}`;
+
+test('the emailed GET only renders: a valid token draws a confirm form and writes nothing', async () => {
+  resetWorld();
+  const srv = await openRouter();
   try {
-    const good = await get(`/api/venue-digest/opt-out?token=${encodeURIComponent(digest.optOutToken(7))}`);
-    assert.strictEqual(good.status, 200);
-    assert.ok(good.body.includes('You are unsubscribed'));
-    assert.strictEqual(prefUpdates.length, 1);
+    // Twice, because a mail scanner and then the recipient is the real
+    // sequence, and neither fetch may be the unsubscribe.
+    const first = await srv.get(linkFor(7));
+    const second = await srv.get(linkFor(7));
 
-    const bad = await get('/api/venue-digest/opt-out?token=garbage');
-    assert.strictEqual(bad.status, 400);
-    assert.ok(bad.body.includes('expired'));
-
-    const missing = await get('/api/venue-digest/opt-out');
-    assert.strictEqual(missing.status, 400);
-    assert.strictEqual(prefUpdates.length, 1, 'a refused link must not write');
+    for (const res of [first, second]) {
+      assert.strictEqual(res.status, 200);
+      assert.ok(/<form[^>]+method="post"/i.test(res.body), 'the GET must offer the write, not perform it');
+      assert.ok(res.body.includes('Turn off the Monday digest'));
+      assert.ok(!res.body.includes('You are unsubscribed'));
+    }
+    assert.deepStrictEqual(prefUpdates, [], 'a GET on the unsubscribe link must not write');
+    assert.strictEqual(prefReads.length, 2, 'the page reads the current switch, and only that');
+    assert.ok(
+      queriesRan.every((q) => !/^(UPDATE|INSERT|DELETE)/i.test(q)),
+      `a GET ran a mutating statement: ${queriesRan.join(' | ')}`
+    );
+    // The form posts back to the same link, token and all.
+    assert.ok(new RegExp(`action="${OPT_OUT}\\?token=[^"]+"`).test(first.body));
   } finally {
-    await new Promise((resolve) => server.close(resolve));
+    await srv.close();
+  }
+});
+
+test('POST is the unsubscribe, and a second POST is a success rather than an error', async () => {
+  resetWorld();
+  const srv = await openRouter();
+  try {
+    const first = await srv.post(linkFor(7));
+    assert.strictEqual(first.status, 200);
+    assert.ok(first.body.includes('You are unsubscribed'));
+    assert.strictEqual(prefUpdates.length, 1);
+    assert.ok(/"weekly": false/.test(prefUpdates[0].sql));
+    assert.deepStrictEqual(prefUpdates[0].params, [7]);
+
+    // Idempotent: the UPDATE has no predicate on the old value, so the repeat
+    // writes false over false and answers the same page.
+    const second = await srv.post(linkFor(7));
+    assert.strictEqual(second.status, 200);
+    assert.ok(second.body.includes('You are unsubscribed'));
+    assert.strictEqual(prefUpdates.length, 2);
+  } finally {
+    await srv.close();
+  }
+});
+
+test('a venue that is already unsubscribed sees the plain page, not a button', async () => {
+  resetWorld();
+  prefsOnRecord = { bookings: true, reviews: true, weekly: false };
+  const srv = await openRouter();
+  try {
+    const res = await srv.get(linkFor(7));
+    assert.strictEqual(res.status, 200);
+    assert.ok(res.body.includes('You are unsubscribed'));
+    assert.ok(!/<form/i.test(res.body), 'there is nothing left to turn off');
+    assert.deepStrictEqual(prefUpdates, []);
+  } finally {
+    await srv.close();
+  }
+});
+
+test('a bad, missing or wrong-purpose token is refused on BOTH verbs, with no write', async () => {
+  resetWorld();
+  const sessionish = jwt.sign({ userId: 9, vp: 7 }, process.env.JWT_SECRET, { expiresIn: '1h' });
+  const wrongPurpose = jwt.sign({ vp: 7, purpose: 'password_reset' }, process.env.JWT_SECRET, { expiresIn: '1h' });
+  const bad = [
+    `${OPT_OUT}?token=garbage`,
+    `${OPT_OUT}?token=${encodeURIComponent(sessionish)}`,
+    `${OPT_OUT}?token=${encodeURIComponent(wrongPurpose)}`,
+    OPT_OUT,
+  ];
+  const srv = await openRouter();
+  try {
+    for (const path of bad) {
+      const got = await srv.get(path);
+      assert.strictEqual(got.status, 400, `GET ${path}`);
+      assert.ok(!/<form/i.test(got.body), `GET ${path} must not offer the button`);
+      const posted = await srv.post(path);
+      assert.strictEqual(posted.status, 400, `POST ${path}`);
+      assert.ok(!posted.body.includes('You are unsubscribed'), `POST ${path}`);
+    }
+    assert.deepStrictEqual(prefUpdates, [], 'a refused link must not write');
+    assert.deepStrictEqual(prefReads, [], 'a token that does not verify never reaches the database');
+  } finally {
+    await srv.close();
+  }
+});
+
+test('a stale link whose venue_profiles row is gone is refused, not confirmed', async () => {
+  resetWorld();
+  prefsOnRecord = null;
+  const srv = await openRouter();
+  try {
+    const res = await srv.get(linkFor(7));
+    assert.strictEqual(res.status, 400);
+    assert.ok(res.body.includes('expired'));
+  } finally {
+    await srv.close();
   }
 });
 
@@ -549,4 +671,47 @@ test('the mailed HTML carries no em dash and no digits foreign to the facts', as
     assert.ok(allowed.includes(run),
       `mailed digest contains "${run}" from nowhere in the facts or the calendar`);
   }
+});
+
+// ============================================================================
+// RFC 8058. List-Unsubscribe alone gets the mail client's own unsubscribe
+// affordance shown; the -Post header is what makes it a one-click POST instead
+// of a browser trip, which is the pairing that makes a GET that refuses to
+// mutate safe to ship AND the deliverability signal Gmail grades on.
+// ============================================================================
+test('the mailed digest carries the one-click unsubscribe headers, pointing at the signed link', async () => {
+  resetWorld();
+  process.env.DIGEST_ENABLED = 'true';
+  venueRows = [eligibleVenueRow()];
+  await digest.runVenueDigestSweep(MONDAY_9AM_ET);
+  assert.strictEqual(sentEmails.length, 1);
+
+  const headers = sentEmails[0].headers || {};
+  assert.strictEqual(headers['List-Unsubscribe-Post'], 'List-Unsubscribe=One-Click');
+
+  const listUnsub = headers['List-Unsubscribe'];
+  assert.ok(listUnsub, 'a digest without List-Unsubscribe is a digest Gmail grades as spam');
+  const inner = /^<(.+)>$/.exec(listUnsub);
+  assert.ok(inner, 'List-Unsubscribe must be angle-bracketed per RFC 2369');
+  assert.ok(inner[1].startsWith('https://'), inner[1]);
+  assert.ok(inner[1].includes('/api/venue-digest/opt-out?token='), inner[1]);
+
+  // The URI the header points at is the same one in the body, so one-click and
+  // the visible link cannot drift apart.
+  const inBody = sentEmails[0].html.match(/href="([^"]*opt-out[^"]*)"/)[1]
+    .replace(/&amp;/g, '&');
+  assert.strictEqual(inner[1], inBody);
+});
+
+test('a header value carrying a CRLF cannot smuggle a second header into the message', () => {
+  const { safeHeaders } = require('../services/emailService');
+  const out = safeHeaders({
+    'List-Unsubscribe': '<https://api.example.com/x>\r\nBcc: attacker@example.com',
+    'Bad Name': 'dropped',
+    'X-Object': { nope: true },
+  });
+  assert.deepStrictEqual(Object.keys(out), ['List-Unsubscribe']);
+  assert.ok(!/[\r\n]/.test(out['List-Unsubscribe']));
+  assert.strictEqual(out['List-Unsubscribe'], '<https://api.example.com/x> Bcc: attacker@example.com');
+  assert.strictEqual(safeHeaders(undefined), null);
 });

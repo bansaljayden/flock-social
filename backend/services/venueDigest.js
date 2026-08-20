@@ -33,6 +33,11 @@
 // The opt-out link in every email is a signed token (JWT_SECRET, single
 // purpose claim) that flips notification_prefs.weekly back to false with no
 // login, because CAN-SPAM does not care that the dashboard also has a switch.
+// The link itself only opens a confirmation page: the write happens on POST,
+// from that page's button or from a mail client's RFC 8058 one-click, so a
+// scanner that fetches every href in a message cannot unsubscribe anyone. Both
+// halves live below (readOptOutState, applyOptOut); the two headers that make
+// one-click work are set at the send.
 // ---------------------------------------------------------------------------
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
@@ -158,19 +163,65 @@ function optOutUrl(venueProfileId) {
   return `${baseApiUrl()}/api/venue-digest/opt-out?token=${encodeURIComponent(optOutToken(venueProfileId))}`;
 }
 
-// Returns { ok: true } or { ok: false, error }. Never throws.
-async function applyOptOut(token) {
-  let payload;
+// The verifier both verbs share. Returns the payload or null; never throws.
+function verifyOptOutToken(token) {
   const key = optOutKey();
-  if (!key) return { ok: false, error: 'invalid or expired link' };
+  if (!key) return null;
+  let payload;
   try {
     payload = jwt.verify(token, key, { algorithms: OPT_OUT_ALGORITHMS });
   } catch (err) {
-    return { ok: false, error: 'invalid or expired link' };
+    return null;
   }
-  if (payload.purpose !== OPT_OUT_PURPOSE || !Number.isInteger(payload.vp)) {
-    return { ok: false, error: 'invalid or expired link' };
+  if (payload.purpose !== OPT_OUT_PURPOSE || !Number.isInteger(payload.vp)) return null;
+  return payload;
+}
+
+// ---------------------------------------------------------------------------
+// The READ half, added when the unsubscribe link stopped mutating on GET.
+//
+// A link in an email is fetched by things that are not the recipient: Microsoft
+// Defender Safe Links, Proofpoint URL Defense and Gmail's own scanner all
+// follow every href in a message before a person has seen it. A GET that
+// unsubscribed on arrival would therefore unsubscribe venues who never clicked,
+// and the owner's only evidence would be a switch that turned itself off. So
+// the emailed GET now RENDERS, and this is all it needs from the database: is
+// the weekly switch still on, so the page can either offer the button or say
+// the account is already unsubscribed. One SELECT, no write.
+//
+// Returns { ok: true, alreadyOff } or { ok: false, error }. Never throws.
+// ---------------------------------------------------------------------------
+async function readOptOutState(token) {
+  const payload = verifyOptOutToken(token);
+  if (!payload) return { ok: false, error: 'invalid or expired link' };
+  try {
+    const r = await pool.query(
+      'SELECT notification_prefs FROM venue_profiles WHERE id = $1',
+      [payload.vp]
+    );
+    if (r.rowCount === 0) return { ok: false, error: 'invalid or expired link' };
+    const prefs = r.rows[0].notification_prefs;
+    // Same reading the sweep does: a legacy non-object value is "off".
+    const weekly = prefs && typeof prefs === 'object' && !Array.isArray(prefs) && prefs.weekly === true;
+    return { ok: true, alreadyOff: !weekly };
+  } catch (err) {
+    console.error('[venueDigest] opt-out read failed:', err.message);
+    return { ok: false, error: 'server error' };
   }
+}
+
+// The WRITE half. Reached only from POST (the page's button, or a mail client
+// doing RFC 8058 one-click), never from the emailed GET.
+//
+// Idempotent by construction: the UPDATE has no predicate on the current value,
+// so unsubscribing an already-unsubscribed venue writes the same false again
+// and reports rowCount 1. Only a venue_profiles row that is GONE reports 0, and
+// that is a stale link, not a repeat click.
+//
+// Returns { ok: true } or { ok: false, error }. Never throws.
+async function applyOptOut(token) {
+  const payload = verifyOptOutToken(token);
+  if (!payload) return { ok: false, error: 'invalid or expired link' };
   try {
     // Same guarded jsonb merge routes/venueProfile.js uses: a legacy
     // non-object value is replaced, an object is merged, and only the weekly
@@ -347,6 +398,16 @@ async function runVenueDigestSweep(now = new Date()) {
         to: row.email,
         subject: digestSubject(row.business_name, renderInput.weekLabel),
         html: renderDigestHtml(renderInput),
+        // RFC 8058. List-Unsubscribe alone gets the client's own unsubscribe
+        // affordance shown next to the sender; the -Post header is what tells
+        // it the URI takes a POST, so Gmail and Apple Mail unsubscribe the
+        // owner in one tap without opening a browser. It is also the pairing
+        // that makes the GET-renders/POST-writes split safe to ship: the two
+        // paths that mutate are the page's button and this header, both POST.
+        headers: {
+          'List-Unsubscribe': `<${renderInput.optOutUrl}>`,
+          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+        },
       });
       // renderDigestText is the same content for logs/tests and any future
       // multipart send; Resend derives a text part from html today.
@@ -386,6 +447,7 @@ async function runVenueDigestSweep(now = new Date()) {
 module.exports = {
   runVenueDigestSweep,
   applyOptOut,
+  readOptOutState,
   optOutToken,
   optOutUrl,
   digestEnabled,
