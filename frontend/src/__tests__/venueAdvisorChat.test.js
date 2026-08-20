@@ -34,6 +34,7 @@ const React = require('react');
 const { render, screen, fireEvent, waitFor } = require('@testing-library/react');
 
 const VenueAdvisorChat = require('../components/VenueAdvisorChat').default;
+const { clearAdvisorThread } = require('../components/VenueAdvisorChat');
 const SRC = fs.readFileSync(path.resolve(__dirname, '..', 'components', 'VenueAdvisorChat.js'), 'utf8');
 const CARDS_SRC = fs.readFileSync(path.resolve(__dirname, '..', 'components', 'VenueInsightCards.js'), 'utf8');
 
@@ -76,6 +77,11 @@ const mount = (props = {}) => render(React.createElement(VenueAdvisorChat, {
 }));
 
 const field = () => screen.getByRole('textbox', { name: /ask roost a question/i });
+const send = () => screen.getByRole('button', { name: /send your question/i });
+
+// The thread outlives a remount on purpose (the dashboard unmounts this card
+// on every tab switch), so it also outlives a test unless it is told not to.
+beforeEach(() => clearAdvisorThread());
 
 describe('Roost chat: the field is the surface', () => {
   test('a text input renders on the ready card, and it is what the owner sees last', async () => {
@@ -89,9 +95,25 @@ describe('Roost chat: the field is the surface', () => {
     const chip = screen.getByRole('button', { name: 'How does today look?' });
     expect(chip.compareDocumentPosition(input) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
-    // And it is the last interactive thing in the card.
-    const controls = Array.from(container.querySelectorAll('input, button'));
+    // And it is the last interactive thing in the card. `textarea` is in the
+    // selector because the composer became one when it learned to grow with a
+    // long question; without it this assertion would silently stop covering
+    // the box it was written about.
+    const controls = Array.from(container.querySelectorAll('input, textarea, button'));
     expect(controls[controls.length - 1].getAttribute('type')).toBe('submit');
+    expect(controls[controls.length - 2]).toBe(input);
+  });
+
+  test('the box is a textarea that grows, not a one-line pill', async () => {
+    mount();
+    const input = await waitFor(field);
+    expect(input.tagName).toBe('TEXTAREA');
+    // A phone keyboard draws its return key as Send, so the button and the key
+    // do the same thing without either platform being told about the other.
+    expect(input.getAttribute('enterKeyHint')).toBe('send');
+    // Comfortable, not a hairline. The pill it replaced was nine pixels of
+    // padding around a single line.
+    expect(parseInt(input.style.minHeight, 10)).toBeGreaterThanOrEqual(44);
   });
 
   test('the placeholder invites BOTH kinds of question, not just the numbers', async () => {
@@ -223,6 +245,175 @@ describe('Roost chat: the three answers are told apart', () => {
     expect(screen.queryByText(/^From /)).toBeNull();
     expect(screen.queryByText(/general advice/i)).toBeNull();
     expect(screen.queryByText(/upgrade|pro plan|subscription/i)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IT HAS TO READ AS A CHAT, NOT AS A FORM.
+//
+// Jayden looked at the shipped card and said the input "should be a bit more
+// clean, like you actually should be typing it, like how you would type to
+// ChatGPT or Claude." Everything below pins the parts of that which are
+// behaviour rather than taste: the turns accumulate, they survive the tab
+// strip that unmounts the card, the chips get out of the way once a
+// conversation exists, and the keyboard does what a keyboard does.
+// ---------------------------------------------------------------------------
+describe('Roost chat: it accumulates into a conversation', () => {
+  const askOnce = async (input, text) => {
+    fireEvent.change(input, { target: { value: text } });
+    fireEvent.click(send());
+    await waitFor(() => expect(screen.getByText(text)).toBeTruthy());
+    // And wait for the turn to actually finish, so the next assertion is not
+    // racing a promise that will resolve into an unmounted tree.
+    await waitFor(() => expect(screen.queryByText(/working on it/i)).toBeNull());
+  };
+
+  test('a second question does not replace the first: both turns stay on screen', async () => {
+    let n = 0;
+    mount({ askQuestion: async () => ({ ...GROUNDED, text: `answer number ${++n}` }) });
+    const input = await waitFor(field);
+
+    await askOnce(input, 'question one');
+    await waitFor(() => expect(screen.getByText('answer number 1')).toBeTruthy());
+    await askOnce(input, 'question two');
+    await waitFor(() => expect(screen.getByText('answer number 2')).toBeTruthy());
+    await askOnce(input, 'question three');
+    await waitFor(() => expect(screen.getByText('answer number 3')).toBeTruthy());
+
+    // All three exchanges, in order, still readable.
+    for (const t of ['question one', 'answer number 1', 'question two', 'answer number 2', 'question three', 'answer number 3']) {
+      expect(screen.getByText(t)).toBeTruthy();
+    }
+    const first = screen.getByText('question one');
+    const last = screen.getByText('answer number 3');
+    expect(first.compareDocumentPosition(last) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  test('the thread survives the card being unmounted and mounted again', async () => {
+    // The venue dashboard throws this card away on every tab switch, and
+    // Roost's own cards send the owner to the Settings tab by name. A
+    // conversation that does not come back is a form that clears itself.
+    const first = mount();
+    const input = await waitFor(field);
+    await askOnce(input, 'does the thread survive');
+    await waitFor(() => expect(screen.getByText(GROUNDED.text)).toBeTruthy());
+    first.unmount();
+
+    mount();
+    await waitFor(field);
+    expect(screen.getByText('does the thread survive')).toBeTruthy();
+    expect(screen.getByText(GROUNDED.text)).toBeTruthy();
+  });
+
+  test('a different sign-in does not inherit the last one\'s conversation', async () => {
+    // Parallel agents have already put two accounts through one browser on this
+    // machine. A held thread is one venue's own numbers, so it is keyed to the
+    // token that fetched it and a new token starts empty.
+    window.localStorage.setItem('flockToken', 'token-for-owner-one');
+    const first = mount();
+    const input = await waitFor(field);
+    await askOnce(input, 'my private numbers');
+    first.unmount();
+
+    window.localStorage.setItem('flockToken', 'token-for-owner-two');
+    mount();
+    await waitFor(field);
+    expect(screen.queryByText('my private numbers')).toBeNull();
+    window.localStorage.removeItem('flockToken');
+  });
+
+  test('the owner’s words are on their own side, the answer is not', async () => {
+    mount();
+    const input = await waitFor(field);
+    await askOnce(input, 'whose words are these');
+    await waitFor(() => expect(screen.getByText(GROUNDED.text)).toBeTruthy());
+
+    const asked = screen.getByText('whose words are these');
+    // A bubble in their colour, pushed to their edge. Nothing else in the card
+    // is right aligned, so the shape says who is speaking.
+    expect(asked.parentElement.style.justifyContent).toBe('flex-end');
+    expect(asked.style.backgroundColor).toBeTruthy();
+    // The answer runs plain and full width beneath it, the way a chat that has
+    // to print citations under an answer does it.
+    const answered = screen.getByText(GROUNDED.text);
+    expect(answered.style.backgroundColor).toBeFalsy();
+  });
+
+  test('the thinking line is in the thread, never a word on the button', async () => {
+    let release;
+    mount({ askQuestion: () => new Promise((r) => { release = () => r(GROUNDED); }) });
+    const input = await waitFor(field);
+    fireEvent.change(input, { target: { value: 'where does the wait show' } });
+    fireEvent.click(send());
+
+    const asked = screen.getByText('where does the wait show');
+    const thinking = screen.getByText(/working on it/i);
+    // Below the question it belongs to, and it is where the answer will land.
+    expect(asked.compareDocumentPosition(thinking) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The send control says nothing at all; it is an arrow.
+    expect(send().textContent.trim()).toBe('');
+    release();
+    await waitFor(() => expect(screen.getByText(GROUNDED.text)).toBeTruthy());
+  });
+});
+
+describe('Roost chat: the chips start you off and then get out of the way', () => {
+  test('with nothing asked yet the chips are the offer, and so is the explainer', async () => {
+    mount();
+    await waitFor(field);
+    expect(screen.getByRole('button', { name: 'How does today look?' })).toBeTruthy();
+    expect(screen.getByText(/name their sources and dates/i)).toBeTruthy();
+  });
+
+  test('once a conversation exists the chips fold behind one line, and the explainer stops repeating', async () => {
+    mount();
+    const input = await waitFor(field);
+    fireEvent.change(input, { target: { value: 'a first question' } });
+    fireEvent.click(send());
+    await waitFor(() => expect(screen.getByText(GROUNDED.text)).toBeTruthy());
+
+    // Not deleted. They are how a venue with no corpus finds out what CAN be
+    // answered, so they stay one press away, still above the composer.
+    expect(screen.queryByRole('button', { name: 'How does today look?' })).toBeNull();
+    const opener = screen.getByRole('button', { name: /suggested questions/i });
+    expect(opener.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(opener);
+    const chip = screen.getByRole('button', { name: 'How does today look?' });
+    expect(chip.compareDocumentPosition(field()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    // The honesty paragraph was a first-run line, not a standing notice.
+    expect(screen.queryByText(/name their sources and dates/i)).toBeNull();
+  });
+});
+
+describe('Roost chat: the keyboard behaves like a keyboard', () => {
+  test('Enter sends', async () => {
+    const asked = [];
+    mount({ askQuestion: async (q) => { asked.push(q); return GROUNDED; } });
+    const input = await waitFor(field);
+    fireEvent.change(input, { target: { value: 'sent with the return key' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(asked).toEqual(['sent with the return key']);
+    expect(input.value).toBe('');
+  });
+
+  test('Shift and Enter do not send, so a long question can have a line in it', async () => {
+    const asked = [];
+    mount({ askQuestion: async (q) => { asked.push(q); return GROUNDED; } });
+    const input = await waitFor(field);
+    fireEvent.change(input, { target: { value: 'still writing' } });
+    fireEvent.keyDown(input, { key: 'Enter', shiftKey: true });
+    expect(asked).toEqual([]);
+    expect(input.value).toBe('still writing');
+  });
+
+  test('an empty box sends nothing, whichever way it is pressed', async () => {
+    const asked = [];
+    mount({ askQuestion: async (q) => { asked.push(q); return GROUNDED; } });
+    const input = await waitFor(field);
+    fireEvent.change(input, { target: { value: '   ' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(asked).toEqual([]);
   });
 });
 

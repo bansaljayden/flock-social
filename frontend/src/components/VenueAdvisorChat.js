@@ -1,17 +1,19 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 // Roost, the chat half of the venue advisor: a Q&A thread on the venue
 // dashboard, below the insight cards.
 //
 // TWO WAYS IN, AND THE ANSWER ALWAYS SAYS WHICH KIND IT IS.
 //
-// The FIELD IS THE SURFACE. A text box sits at the bottom of the card, always
-// drawn, always the last thing the eye lands on, exactly the way Birdie's box
-// sits under Birdie's thread. Suggested questions (chips) are starting points
-// above it, four of them, chosen by the server from what this venue's data can
-// actually answer; they are not the way in, they are a shortcut past the way
-// in. The owner can ask anything about their business, and the server routes
-// it to exactly one of three answers.
+// The COMPOSER IS THE SURFACE. A box you type into is anchored at the bottom of
+// the card, always drawn, always the last thing the eye lands on, exactly the
+// way Birdie's box sits under Birdie's thread. Suggested questions (chips) are
+// the empty state's starting points, four of them, chosen by the server from
+// what this venue's data can actually answer; once a conversation exists they
+// fold away behind one line, because furniture that helped you start does not
+// need to sit between you and the thing you are already doing. The owner can
+// ask anything about their business, and the server routes it to exactly one of
+// three answers.
 //
 // It did not start that way. The field rendered only when the server said
 // `freeText: true`, and the server said false on every deploy because both of
@@ -21,6 +23,18 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 // has a state where the field is gone: when the server declines, the box is
 // still there, disabled, with the server's own sentence under it. A decline
 // the owner can read is a decline. A decline they cannot see is a bug.
+//
+// Then it read as a widget rather than a conversation: a heading, a paragraph,
+// four chips, a disclosure, and a thin pill squeezed in underneath. Jayden's
+// words were "you actually should be typing it, like how you would type to
+// ChatGPT or Claude." What changed. The composer grew into a real box that
+// grows with the question. The thread became an exchange: the owner's words in
+// their own bubble on their own side, Roost's answer plain and full width
+// beneath it, which is how every chat that has to print long answers with
+// citations under them does it. The chips receded to one line once a
+// conversation exists. The explainer became a first-run line. And the thread
+// stopped being thrown away every time the owner touched the tab strip above
+// it.
 //
 //   grounded  built from typed facts about this venue, with sources and dates.
 //             Renders with its source line, exactly as a chip answer does,
@@ -74,14 +88,26 @@ const CARD_STYLE = {
 
 const CHIP_STYLE = {
   display: 'inline-block',
-  padding: '6px 10px',
+  padding: '7px 11px',
   margin: '0 6px 6px 0',
   fontSize: 'var(--t-meta)',
   lineHeight: 1.3,
   color: 'var(--text-primary)',
   backgroundColor: 'transparent',
   border: '1px solid var(--border-light)',
-  borderRadius: '8px',
+  borderRadius: '10px',
+  cursor: 'pointer',
+  textAlign: 'left',
+};
+
+const QUIET_LINK_STYLE = {
+  background: 'none',
+  border: 'none',
+  padding: 0,
+  font: 'inherit',
+  fontSize: 'var(--t-micro)',
+  color: 'var(--text-tertiary)',
+  textDecoration: 'underline',
   cursor: 'pointer',
 };
 
@@ -120,7 +146,7 @@ const sourcesLine = (sources) => {
 const AnswerText = ({ text, tone }) => (
   <>
     {String(text || '').split('\n').filter(Boolean).map((line, i) => (
-      <p key={i} style={{ fontSize: 'var(--t-meta)', color: tone, margin: i === 0 ? 0 : '6px 0 0', lineHeight: 1.5 }}>{line}</p>
+      <p key={i} style={{ fontSize: 'var(--t-label)', color: tone, margin: i === 0 ? 0 : '8px 0 0', lineHeight: 1.55 }}>{line}</p>
     ))}
   </>
 );
@@ -135,22 +161,54 @@ const AnswerText = ({ text, tone }) => (
 // lesser answer, it is a different KIND of answer.
 const ADVICE_MARKER = 'General advice, not from your data.';
 
-// What the owner reads while the server works. Which sentence is true depends
-// on which door the question came in by: a chip is already routed, so we are
-// genuinely reading their numbers. A typed question has not been routed yet,
-// and the router may well send it somewhere their numbers cannot go, so
-// promising to read them would be a small lie told several times a day.
+// What the owner reads while the server works, and WHERE they read it: in the
+// thread, in the place the answer is about to occupy, not as a word printed on
+// the button they just pressed. Which sentence is true depends on which door
+// the question came in by: a chip is already routed, so we are genuinely
+// reading their numbers. A typed question has not been routed yet, and the
+// router may well send it somewhere their numbers cannot go, so promising to
+// read them would be a small lie told several times a day.
 const PENDING_CHIP = 'Reading your numbers…';
 const PENDING_TYPED = 'Working on it…';
 
-const ThreadTurn = ({ turn, first, navy, onRetry }) => {
+const ThreadTurn = ({ turn, first, navy, navyBg, onRetry }) => {
   const advice = turn.status === 'done' && turn.answer && turn.answer.mode === 'advice';
   return (
-    <div style={{ padding: '10px 0', borderTop: first ? 'none' : '1px solid var(--border-light)' }}>
-      <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: navy, margin: 0, lineHeight: 1.4 }}>{turn.question}</p>
+    <div
+      style={{
+        padding: first ? '0 0 16px' : '16px 0',
+        borderTop: first ? 'none' : '1px solid var(--border-light)',
+        animation: 'fadeSlideIn 0.25s ease-out',
+      }}
+    >
+      {/* THE OWNER'S SIDE. Their own words, in their own bubble, pushed to
+          their own edge. Nothing else in this card is right aligned, so the
+          shape alone says who is speaking before a word is read, and the
+          answer below is then free to run the full width it needs. */}
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <p
+          style={{
+            maxWidth: '85%',
+            margin: 0,
+            padding: '9px 12px',
+            borderRadius: '14px',
+            borderBottomRightRadius: '4px',
+            backgroundColor: navyBg,
+            color: 'white',
+            fontSize: 'var(--t-meta)',
+            fontWeight: '500',
+            lineHeight: 1.45,
+            textAlign: 'left',
+            whiteSpace: 'pre-wrap',
+            overflowWrap: 'anywhere',
+          }}
+        >
+          {turn.question}
+        </p>
+      </div>
       <div
         style={{
-          margin: '6px 0 0',
+          margin: '10px 0 0',
           paddingLeft: advice ? '10px' : '0px',
           // Longhand, not the `border-left` shorthand: a shorthand carrying a
           // custom property is dropped by the CSS parser the test suite runs
@@ -161,12 +219,12 @@ const ThreadTurn = ({ turn, first, navy, onRetry }) => {
         }}
       >
         {turn.status === 'pending' && (
-          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>
+          <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: 0, lineHeight: 1.55 }}>
             {turn.typed ? PENDING_TYPED : PENDING_CHIP}
           </p>
         )}
         {turn.status === 'error' && (
-          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>
+          <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.55 }}>
             That did not go through.{' '}
             <button
               type="button"
@@ -186,12 +244,12 @@ const ThreadTurn = ({ turn, first, navy, onRetry }) => {
               tone={turn.answer.mode === 'refusal' ? 'var(--text-secondary)' : 'var(--text-primary)'}
             />
             {advice && (
-              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>
+              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>
                 {ADVICE_MARKER}
               </p>
             )}
             {sourcesLine(turn.answer.sources) && (
-              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>
+              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>
                 {sourcesLine(turn.answer.sources)}
               </p>
             )}
@@ -209,6 +267,19 @@ const QUESTION_MAX_CHARS = 280;
 // Where the character count starts showing itself.
 const COUNTER_FROM = 220;
 
+// The composer's resting height and its ceiling. It starts at one comfortable
+// line and grows with the question, instead of scrolling a long one out of
+// sight inside a single line, which is the difference between a box you write
+// in and a box you fill in. Past the ceiling it scrolls, because a card on a
+// dashboard cannot become a page.
+const COMPOSER_MIN_HEIGHT = 44;
+const COMPOSER_MAX_HEIGHT = 132;
+
+// How tall the scrollback gets before it becomes scrollback. A short thread
+// just makes the card taller; a long one keeps the composer where the thumb
+// left it, and the conversation above it is scrolled, not the dashboard.
+const THREAD_MAX_HEIGHT = 340;
+
 // The invitation. It names both halves of what the field takes, because an
 // owner who reads "ask about your venue" will only ever ask for numbers, and
 // half of what Roost is good at is the other kind of question.
@@ -216,9 +287,66 @@ const PLACEHOLDER_TEXT = 'Your numbers, or how to run the room';
 const PLACEHOLDER_OFF = 'Typed questions are off right now';
 // Said where the field is, not instead of it.
 const FREE_TEXT_OFF_NOTE = 'Typed questions are off for now. The suggested questions above still work, and every answer they give comes from your own numbers.';
+// Only ever shown to a pointer with a keyboard behind it. On a phone the send
+// button is the path and the return key is drawn as Send, so printing a
+// keyboard shortcut there would be advice about a key the owner cannot press.
+const KEY_HINT = 'Enter sends. Shift and Enter start a new line.';
+
+// What the card says before it has said anything else. This paragraph is
+// honest and it earned its place, but it earned it ONCE: it tells a first time
+// owner what kind of answers this gives. It is not a standing notice to be
+// scrolled past on top of every conversation they ever have. It comes back
+// whenever the thread is empty again.
+const LEAD_IN_FREE = 'Answers from your own numbers name their sources and dates. Anything from the trade is marked as advice. What we cannot answer, we say so.';
+const LEAD_IN_CHIPS = 'Pick a question. Every answer comes from measured data about your venue, with its sources named. What we cannot answer yet, we say so.';
+
+// A THREAD THAT SURVIVES THE TAB STRIP ABOVE IT.
+//
+// The venue dashboard unmounts this card the moment the owner switches to
+// Promotions, Reviews or Settings, and Roost's own cards send them to Settings
+// by name. A conversation thrown away by a trip to the tab it just told you to
+// take is not a conversation, it is a form that clears itself. The turns live
+// in module scope, keyed to the signed in session, so a remount picks the
+// thread back up and a different account never inherits one. It is memory, not
+// storage: a reload starts clean, and nothing about the venue is written to
+// disk.
+let threadStore = { key: null, turns: [] };
+
+const sessionKey = () => {
+  try {
+    return (window.localStorage.getItem('flockToken') || '').slice(-32) || 'anon';
+  } catch (e) {
+    return 'anon';
+  }
+};
+
+const restoreThread = () => {
+  if (threadStore.key !== sessionKey()) return [];
+  // A turn still in flight when the card unmounted will never land: its
+  // promise resolves into a discarded update. It comes back as something the
+  // owner can press again, never as a thinking line that thinks forever.
+  return threadStore.turns.map((t) => (t.status === 'pending' ? { ...t, status: 'error' } : t));
+};
+
+// Drops the held thread. Sign out is the real caller if a screen ever wants
+// one; the suite calls it between tests so one conversation cannot leak into
+// the next.
+export const clearAdvisorThread = () => { threadStore = { key: null, turns: [] }; };
+
+// True only where a real keyboard is. Wrapped because jsdom has no matchMedia.
+const hasKeyboardPointer = () => {
+  try {
+    return typeof window !== 'undefined'
+      && typeof window.matchMedia === 'function'
+      && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+  } catch (e) {
+    return false;
+  }
+};
 
 const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
   const navy = colors?.navy || 'var(--text-primary)';
+  const navyBg = colors?.navyBg || navy;
   // 'loading' | 'ready' | 'locked' | 'error'
   const [state, setState] = useState('loading');
   const [name, setName] = useState(ADVISOR_NAME);
@@ -226,12 +354,16 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
   const [groups, setGroups] = useState([]);
   const [freeText, setFreeText] = useState(false);
   const [showMore, setShowMore] = useState(false);
+  const [showChips, setShowChips] = useState(false);
   const [draft, setDraft] = useState('');
   const [focused, setFocused] = useState(false);
   const [lockedReason, setLockedReason] = useState(null);
-  const [thread, setThread] = useState([]);
+  const [thread, setThread] = useState(restoreThread);
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
+  const boxRef = useRef(null);
+  const scrollRef = useRef(null);
+  const keyboardPointer = useMemo(hasKeyboardPointer, []);
   // Re-arm on mount, not just disarm on unmount. A ref initialised to true
   // is only true for the first mount: React 18 StrictMode mounts, unmounts and
   // remounts in dev, and a real remount happens any time the owner leaves the
@@ -241,6 +373,9 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
     alive.current = true;
     return () => { alive.current = false; };
   }, []);
+
+  // Hand the thread to the next mount of this card.
+  useEffect(() => { threadStore = { key: sessionKey(), turns: thread }; }, [thread]);
 
   const load = useCallback(async () => {
     if (typeof fetchQuestions !== 'function') return;
@@ -270,6 +405,53 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
   }, [fetchQuestions, askQuestion]);
 
   useEffect(() => { load(); }, [load]);
+
+  // The box grows with what is in it. Measured against the real scroll height
+  // rather than counted in characters, because where a line wraps depends on
+  // the words and on how much room the screen gave them.
+  const fitBox = useCallback(() => {
+    const el = boxRef.current;
+    if (!el || !el.style || typeof el.scrollHeight !== 'number') return;
+    el.style.height = 'auto';
+    let content = el.scrollHeight;
+    // An empty box still has to be tall enough for its own invitation. A
+    // placeholder contributes nothing to scrollHeight, and at 320px this one
+    // wraps onto a second line, so the resting box measured one line high and
+    // cut the invitation in half. The text is borrowed for the length of one
+    // measurement and handed back before the browser paints; the value React
+    // controls is the empty string on both sides of it.
+    if (!el.value) {
+      el.value = el.placeholder || '';
+      content = el.scrollHeight;
+      el.value = '';
+    }
+    const wanted = Math.max(COMPOSER_MIN_HEIGHT, Math.min(content, COMPOSER_MAX_HEIGHT));
+    el.style.height = `${wanted}px`;
+    el.style.overflowY = content > COMPOSER_MAX_HEIGHT ? 'auto' : 'hidden';
+  }, []);
+
+  useLayoutEffect(fitBox, [fitBox, draft, state, freeText]);
+
+  // Rotation and a resized desktop window change where the words wrap, and a
+  // box sized for the old width is either clipped or padded out.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.addEventListener) return undefined;
+    window.addEventListener('resize', fitBox);
+    return () => window.removeEventListener('resize', fitBox);
+  }, [fitBox]);
+
+  // A new turn belongs at the bottom of the scrollback, which is where the
+  // owner is looking: they just pressed send. Before paint, not after, because
+  // this also runs on the remount that restores a thread and landing at the
+  // top of an old conversation and then jumping is worse than either.
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (el && typeof el.scrollHeight === 'number') el.scrollTop = el.scrollHeight;
+    // `state` is in here because a restored thread is already in hand on the
+    // first render and the card is still drawing its skeleton, so the scroller
+    // does not exist yet and the thread never changes again. Without it a
+    // remount landed the owner at the top of an old conversation.
+  }, [thread, state]);
 
   // One turn, whichever door it came in by. `run` is the call that produces the
   // answer; the thread does not care which endpoint answered, only that the
@@ -301,6 +483,19 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
     setDraft('');
     runTurn(`typed-${Date.now()}`, text, () => askQuestion(text), true);
   }, [askQuestion, busy, draft, runTurn]);
+
+  // Enter sends, Shift and Enter make a line. On a phone the return key is
+  // drawn as Send (enterKeyHint below) and does the same thing, so the two
+  // platforms agree without either being told about the other's keyboard.
+  // isComposing is checked because an IME candidate list also ends on Enter,
+  // and sending half a word someone was still spelling is a rude way to be
+  // fast.
+  const onKeyDown = useCallback((e) => {
+    if (e.key !== 'Enter' || e.shiftKey) return;
+    if (e.nativeEvent && e.nativeEvent.isComposing) return;
+    e.preventDefault();
+    submitQuestion();
+  }, [submitQuestion]);
 
   // One value for the send control's look and its behaviour.
   const canAsk = !busy && freeText && draft.trim().length > 0;
@@ -350,26 +545,15 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
     );
   }
 
-  return (
-    <div style={CARD_STYLE}>
-      <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: navy, margin: 0 }}>{BLOCK_TITLE}</p>
-      <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '3px 0 0', lineHeight: 1.5 }}>
-        {freeText
-          ? 'Answers from your own numbers name their sources and dates. Anything from the trade is marked as advice. What we cannot answer, we say so.'
-          : 'Pick a question. Every answer comes from measured data about your venue, with its sources named. What we cannot answer yet, we say so.'}
-      </p>
+  const started = thread.length > 0;
 
-      {thread.length > 0 && (
-        <div style={{ margin: '10px 0 2px' }}>
-          {thread.map((turn, i) => (
-            <ThreadTurn key={turn.key} turn={turn} first={i === 0} navy={navy} onRetry={() => retry(turn)} />
-          ))}
-        </div>
-      )}
-
-      {/* The four the server picked for this venue. Every one of them has data
-          behind it: a question that could only decline is not offered. */}
-      <div style={{ marginTop: '10px' }}>
+  // The four the server picked for this venue, and the rest behind a word.
+  // Every one of them has data behind it: a question that could only decline is
+  // not offered. This is how a venue with nothing in the corpus finds out what
+  // CAN be answered, which is why the chips are never deleted, only folded.
+  const chipBlock = (
+    <>
+      <div>
         {lead.map((q) => (
           <button
             key={q.id}
@@ -382,14 +566,13 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
           </button>
         ))}
       </div>
-
       {groups.length > 0 && (
-        <div style={{ marginTop: '8px' }}>
+        <div style={{ marginTop: '4px' }}>
           <button
             type="button"
             onClick={() => setShowMore((v) => !v)}
             aria-expanded={showMore}
-            style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', textDecoration: 'underline', cursor: 'pointer' }}
+            style={QUIET_LINK_STYLE}
           >
             {showMore ? 'Fewer questions' : 'More questions'}
           </button>
@@ -413,8 +596,52 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
           ))}
         </div>
       )}
+    </>
+  );
 
-      {/* THE FIELD. Last thing in the card, so it is the last thing the eye
+  return (
+    <div style={CARD_STYLE}>
+      <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: navy, margin: 0 }}>{BLOCK_TITLE}</p>
+
+      {/* First run only. Once there is a conversation, the conversation is the
+          thing to read. */}
+      {!started && (
+        <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '3px 0 0', lineHeight: 1.5 }}>
+          {freeText ? LEAD_IN_FREE : LEAD_IN_CHIPS}
+        </p>
+      )}
+
+      {started && (
+        <div
+          ref={scrollRef}
+          style={{ margin: '12px 0 2px', maxHeight: `${THREAD_MAX_HEIGHT}px`, overflowY: 'auto' }}
+        >
+          {thread.map((turn, i) => (
+            <ThreadTurn key={turn.key} turn={turn} first={i === 0} navy={navy} navyBg={navyBg} onRetry={() => retry(turn)} />
+          ))}
+        </div>
+      )}
+
+      {/* Empty, the chips are the offer. Started, they are one quiet line the
+          owner can reopen. Above the composer either way, because they have
+          always been a shortcut PAST the way in and never the way in. */}
+      <div style={{ marginTop: started ? '6px' : '10px' }}>
+        {started ? (
+          <>
+            <button
+              type="button"
+              onClick={() => setShowChips((v) => !v)}
+              aria-expanded={showChips}
+              style={QUIET_LINK_STYLE}
+            >
+              {showChips ? 'Hide suggested questions' : 'Suggested questions'}
+            </button>
+            {showChips && <div style={{ marginTop: '8px' }}>{chipBlock}</div>}
+          </>
+        ) : chipBlock}
+      </div>
+
+      {/* THE COMPOSER. Last thing in the card, so it is the last thing the eye
           lands on and the thing a thumb reaches first, which is where Birdie
           puts its box for the same reason. It is drawn in every state: when
           the server declines free text the box stays and goes quiet, with the
@@ -425,10 +652,10 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
         <div
           style={{
             display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            padding: '4px 4px 4px 12px',
-            borderRadius: '20px',
+            alignItems: 'flex-end',
+            gap: '8px',
+            padding: '5px 5px 5px 12px',
+            borderRadius: '16px',
             backgroundColor: 'var(--bg-hover)',
             border: '1.5px solid',
             borderColor: focused ? 'rgba(30,58,92,0.30)' : 'var(--border-subtle)',
@@ -437,35 +664,46 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
             opacity: freeText ? 1 : 0.6,
           }}
         >
-          <input
-            type="text"
+          <textarea
+            ref={boxRef}
+            /* Gives up the app-wide input focus ring, because the box around
+               it already shows focus. See index.css. */
+            className="roost-composer"
+            rows={1}
             value={draft}
             maxLength={QUESTION_MAX_CHARS}
             onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={onKeyDown}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
             disabled={busy || !freeText}
             placeholder={freeText ? PLACEHOLDER_TEXT : PLACEHOLDER_OFF}
             aria-label={`Ask ${name} a question`}
             autoComplete="off"
+            enterKeyHint="send"
             style={{
               flex: 1,
               minWidth: 0,
-              padding: '9px 0',
-              fontSize: 'var(--t-meta)',
-              lineHeight: 1.4,
+              minHeight: `${COMPOSER_MIN_HEIGHT}px`,
+              maxHeight: `${COMPOSER_MAX_HEIGHT}px`,
+              padding: '12px 0',
+              fontFamily: 'inherit',
+              fontSize: 'var(--t-label)',
+              lineHeight: 1.45,
               color: 'var(--text-primary)',
               backgroundColor: 'transparent',
               border: 'none',
               outline: 'none',
+              resize: 'none',
+              overflowY: 'hidden',
             }}
           />
           {/* One value drives the look AND the behaviour, the fix App.js's own
               Birdie button records having needed: a control drawn at half
               opacity that still accepts a press is a control that lies. */}
-          {/* hit44: drawn at thirty two so it sits inside the pill without
+          {/* hit44: drawn at thirty four so it sits inside the box without
               growing it, with a transparent forty four point target laid over
-              it (index.css). The pill does not clip its overflow, which is the
+              it (index.css). The box does not clip its overflow, which is the
               one condition that class has. */}
           <button
             className="hit44"
@@ -473,10 +711,11 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
             disabled={!canAsk}
             aria-label={`Send your question to ${name}`}
             style={{
-              width: '32px',
-              height: '32px',
-              minWidth: '32px',
-              borderRadius: '16px',
+              width: '34px',
+              height: '34px',
+              minWidth: '34px',
+              marginBottom: '3px',
+              borderRadius: '17px',
               border: 'none',
               backgroundColor: canAsk ? navy : 'transparent',
               display: 'flex',
@@ -486,7 +725,7 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
               transition: 'background-color 0.2s ease',
             }}
           >
-            <svg aria-hidden="true" focusable="false" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke={canAsk ? 'white' : 'var(--text-tertiary)'} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke={canAsk ? 'white' : 'var(--text-tertiary)'} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
               <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
             </svg>
           </button>
@@ -498,6 +737,11 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
         {freeText && draft.length > COUNTER_FROM && (
           <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '4px 0 0', textAlign: 'right' }}>
             {QUESTION_MAX_CHARS - draft.length} characters left
+          </p>
+        )}
+        {freeText && keyboardPointer && !started && draft.length <= COUNTER_FROM && (
+          <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '5px 0 0' }}>
+            {KEY_HINT}
           </p>
         )}
         {!freeText && (
