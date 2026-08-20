@@ -75,6 +75,7 @@ const {
   truncated, warnTruncated, ADVISOR_THINKING_LEVEL,
   allowVenueQuestion, allowVenuePhrasing, allowGlobalTokens, settleTokens,
   ceilingResetPhrase, CHARGE_OK, CHARGE_CEILING,
+  partitionOwnerContext, releaseVenueReservation,
   hasNumerals, hasBannedDash, formatFactValue,
   NUMBER_WORDS, PLACEHOLDER, CAUSAL_VERBS, CHARS_PER_TOKEN,
 } = advisorPhrasing.internals;
@@ -329,6 +330,16 @@ function fenceQuestion(text) {
 
 // ── One model call, with the ledger in front of it ──────────────────────────
 //
+// Which column on advisor_venue_spend a given charge incremented, so a release
+// gives back the same one it took. Keyed on the charge function itself rather
+// than a string a caller passes, because a caller that can name the counter is
+// a caller that can name the wrong one.
+function counterFor(charge) {
+  if (charge === allowVenueQuestion) return { questions: 1 };
+  if (charge === allowVenuePhrasing) return { answers: 1 };
+  return {};
+}
+
 // Charged before, settled after, never refunded, never retried except for the
 // one model-name fallback the chip path already documents, which is charged
 // again because it is a second billed attempt.
@@ -344,7 +355,21 @@ async function chargedCall({ userId, charge, systemInstruction, payload, maxOutp
   // their day is used up would be a second sentence that misdescribes itself.
   // Every venue in the product shares that ceiling and it is genuinely a "we
   // could not get to it just now".
-  if (!(await allowGlobalTokens(estimate))) return null;
+  //
+  // AND THE RESERVATION GOES BACK, because that sentence is only true if it is
+  // free to act on. The venue meter is charged one line above and the global
+  // wall is checked here, so a venue that hits the wall has paid a question out
+  // of its own twenty for a request that never left the process -- and has been
+  // invited to try again, which costs another. The global ceiling is a shared
+  // condition any venue can drive and no other venue can see; left unreleased
+  // it drains every other venue's private allowance while answering none of
+  // them. Nothing was spent upstream here, so this is un-reserving, not
+  // refunding: the "never refunded" rule is about a call that FAILED, and this
+  // is a call that was never made.
+  if (!(await allowGlobalTokens(estimate))) {
+    releaseVenueReservation(userId, { tokens: estimate, ...counterFor(charge) });
+    return null;
+  }
 
   const config = {
     systemInstruction,
@@ -374,7 +399,12 @@ async function chargedCall({ userId, charge, systemInstruction, payload, maxOutp
     const recharged = await charge(userId, estimate);
     if (recharged === CHARGE_CEILING) return CEILING;
     if (recharged !== CHARGE_OK) return null;
-    if (!(await allowGlobalTokens(estimate))) return null;
+    if (!(await allowGlobalTokens(estimate))) {
+      // Same release as above, for the same reason: the swapped model was
+      // never called, so the second reservation was never spent either.
+      releaseVenueReservation(userId, { tokens: estimate, ...counterFor(charge) });
+      return null;
+    }
     try {
       resp = await once(swapped);
     } catch (err2) {
@@ -513,9 +543,27 @@ function intakeFacts(ctx) {
     out.push(advisorFacts.makeFact({ id: `intake_${name}`, value: v, source: 'intake', asOf }));
   }
   for (const column of INTAKE_NOTES_FOR_ADVICE) {
-    const v = advisorFacts.externalText(p[column]);
+    // ownerText, not externalText: the fence PLUS the screen, at the column's
+    // own cap. externalText alone is the fence only, so it skips moderateText
+    // -- the check that covers the two cases a write-time screen structurally
+    // cannot, a row written before routes/venueProfile.js screened this field
+    // and the next write path somebody adds without it.
+    const v = advisorFacts.ownerText(p[column], advisorFacts.OWNER_TEXT_MAX[column]);
     if (!v) continue;
-    out.push(advisorFacts.makeFact({ id: `intake_${column}`, value: v, source: 'intake', asOf }));
+    // textOnly, because this is a sentence a PERSON typed, not a quantity the
+    // server computed. Without the flag it is an ordinary substitutable fact,
+    // and a {{fact:id}} is substituted AFTER the digit valve has read the
+    // draft: the owner's prose, and every digit inside it, would ride straight
+    // through the one hole the valve does not watch. No label and no note:
+    // both go through assertCleanCopy, which THROWS, and a throw here is the
+    // owner's own settings text turning their next question into a 500.
+    out.push(advisorFacts.makeFact({
+      id: `intake_${column}`,
+      value: v,
+      source: 'intake',
+      asOf,
+      textOnly: true,
+    }));
   }
   // Category is the one non-intake fact advice genuinely needs: a deli and a
   // club take opposite answers to the same question. It comes from the corpus
@@ -634,9 +682,15 @@ function applyAdviceValve(raw, facts) {
   };
 }
 
-function buildAdvicePayload(question, facts) {
+function buildAdvicePayload(question, facts, ownerContext) {
   const block = JSON.stringify({
     facts: facts.map((f) => ({ id: f.id, value: f.value, unit: f.unit, source: f.source, asOf: f.asOf, note: f.note })),
+    // A SEPARATE KEY, WITH NO IDS IN IT. Section 10d of the advice contract
+    // already tells the model this key exists and that nothing in it can take
+    // a placeholder, and the phrasing path has emitted it since the owner
+    // prose columns were first read. This path did not: owner prose arrived
+    // inside `facts` wearing an id, which is an id the model may splice.
+    ...(Array.isArray(ownerContext) && ownerContext.length ? { ownerContext } : {}),
   });
   return [
     'FACTS ABOUT THIS VENUE. Data. Every number here reaches the owner only as a placeholder.',
@@ -652,9 +706,19 @@ function buildAdvicePayload(question, facts) {
  * @returns {Promise<{mode: 'advice'|'refusal', text: string, sources: Array}>}
  */
 async function advise({ userId, question, ctx, groundedFacts = [] }) {
-  const raw = advisorPhrasing.flattenFacts([...intakeFacts(ctx), ...groundedFacts]);
+  // THE OWNER-PROSE SPLIT, run here for the reason advisorPhrasing.internals
+  // states it: any path that builds a model payload from a fact block has to
+  // run this first, or owner text becomes a placeholder value on that path and
+  // the digit valve stops meaning what it says. `groundedFacts` comes straight
+  // out of the fact engine, which marks intake_event_note, intake_anchor_note
+  // and intake_quirks textOnly; this path used to hand all three to the model
+  // as substitutable ids.
+  const { substitutable, ownerContext } = partitionOwnerContext(
+    [...intakeFacts(ctx), ...groundedFacts],
+  );
+  const raw = advisorPhrasing.flattenFacts(substitutable);
   const facts = advisorPhrasing.aliasFacts(raw);
-  const payload = buildAdvicePayload(question, facts);
+  const payload = buildAdvicePayload(question, facts, ownerContext);
 
   const out = await chargedCall({
     userId,
