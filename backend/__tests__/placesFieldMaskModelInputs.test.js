@@ -112,13 +112,16 @@ function resolveMask(src, rawValue) {
   // quoted fragment inside. That covers `= 'a,b,c';` and
   // `= ['a', 'b'].join(',');` with one rule.
   //
-  // `\r?\n`, not `\n`. This repo is cloned with core.autocrlf=true, so
-  // the working tree is CRLF and a declaration ends `;\r\n`. Anchoring on a
-  // bare `;\n` matched nothing on a CRLF checkout, which made resolveMask
-  // return null for exactly the two masks it exists to resolve (the ones behind
-  // a constant) and turned this file red about masks that were perfectly fine.
-  // A test that reads source text has to be indifferent to line endings.
-  const decl = new RegExp(`const\\s+${ident[1]}\\s*=([\\s\\S]*?);\\r?\\n`);
+  // A plain `;\n` anchor, which is only safe because collectMasks strips CRLF
+  // at the read. This repo is cloned with core.autocrlf=true and has no
+  // .gitattributes, so git keeps LF in the object database and writes CRLF into
+  // the working tree on every checkout: every tracked text file is CRLF on disk
+  // here. Anchoring on `;\n` against those raw bytes matched nothing, which made
+  // resolveMask return null for exactly the two masks it exists to resolve (the
+  // ones behind a constant) and turned this file red about masks that were
+  // perfectly fine. Normalizing once at the read fixes that for every pattern in
+  // the file instead of one regex at a time.
+  const decl = new RegExp(`const\\s+${ident[1]}\\s*=([\\s\\S]*?);\\n`);
   const body = src.match(decl);
   if (!body) return null;
   return (body[1].match(/['"`]([^'"`]*)['"`]/g) || [])
@@ -132,7 +135,9 @@ function collectMasks() {
     .filter((f) => f.endsWith('.js'))
     .map((f) => ({ file: `${path.basename(dir)}/${f}`, full: path.join(dir, f) })));
   for (const { file, full } of files) {
-    const src = fs.readFileSync(full, 'utf8');
+    // LF-normalized at the read so every pattern below can anchor on a plain
+    // `\n`. See resolveMask for what the CRLF working tree did to this file.
+    const src = fs.readFileSync(full, 'utf8').replace(/\r\n/g, '\n');
     // Capture to end of line, NOT to the first comma: a mask literal is one
     // long comma-separated string, so a comma-terminated capture stops after
     // its first field and every assertion below then passes on a one-field
