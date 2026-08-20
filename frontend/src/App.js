@@ -1409,23 +1409,31 @@ const isAppDark = () => document.documentElement.getAttribute('data-theme') === 
 // Pass `dark` explicitly when you have it from React state; omit it to read the
 // live <html data-theme> (used at map construction, before any effect runs).
 const ROADMAP_STYLE = (dark) => ((dark === undefined ? isAppDark() : dark) ? DARK_VECTOR_STYLE : LIGHT_VECTOR_STYLE);
-// Satellite: prefer MapTiler "hybrid" (imagery + roads + place labels overlaid)
-// when key is set; falls back to bare ESRI raster imagery if not.
+// Satellite: MapTiler "hybrid" (imagery + roads + place labels overlaid), and
+// ONLY that. Null when there is no key, which is what SATELLITE_AVAILABLE below
+// reads to hide the toggle rather than offer a button that cannot answer.
+//
+// WHY THERE IS NO KEYLESS FALLBACK ANY MORE. This used to fall back to raster
+// tiles from server.arcgisonline.com, requested with no API key and no Esri
+// account. Esri's basemaps are not free for commercial use, so that was a
+// licensing exposure before it was ever a billing one — and it was the only
+// outbound host in the app with that shape (which is why it needed its own CSP
+// allowlist entry). It was already dead in every build that ships: Vercel and
+// Codemagic both set REACT_APP_MAPTILER_KEY, so the MapTiler branch always won
+// and the Esri branch had not served a tile in production. What it did still do
+// was ship unlicensed-request code in a PUBLIC repo, where anyone who clones
+// Flock without a MapTiler key and taps the satellite toggle starts making them
+// against Esri's servers under their own IP. Removing the branch costs
+// production nothing and stops handing that to contributors.
+//
+// The roadmap basemap keeps its keyless CARTO fallback — CARTO's Dark Matter and
+// Positron are openly licensed for this, which is exactly the property Esri's
+// imagery lacks. There is no comparable free satellite source, so the honest
+// keyless answer is "no satellite", not "someone else's imagery".
 const SATELLITE_STYLE = MAPTILER_KEY
   ? `https://api.maptiler.com/maps/hybrid/style.json?key=${MAPTILER_KEY}`
-  : {
-      version: 8,
-      sources: {
-        'esri-imagery': {
-          type: 'raster',
-          tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
-          tileSize: 256,
-          attribution: 'Tiles © Esri',
-          maxzoom: 19,
-        },
-      },
-      layers: [{ id: 'esri-imagery', type: 'raster', source: 'esri-imagery' }],
-    };
+  : null;
+const SATELLITE_AVAILABLE = !!SATELLITE_STYLE;
 
 // AI crowd heatmap paint — matches the old Google HeatmapLayer gradient/radius/opacity.
 // MapLibre heatmap-intensity: 2 ≈ Google maxIntensity: 0.5 (1/0.5 = 2× per-point contribution).
@@ -1626,7 +1634,11 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   const venuesRef = useRef([]);     // latest venues for non-React consumers (toggleMapType, etc.)
   const fittedKeyRef = useRef(null); // result set the viewport was last framed to
   const [mapReady, setMapReady] = useState(false);
-  const [mapType, setMapType] = useState(() => localStorage.getItem('flock_map_type') || 'roadmap');
+  // Same guard as the map constructor below: a stored 'hybrid' is only honoured
+  // while there is a satellite style to honour it with.
+  const [mapType, setMapType] = useState(() => (
+    SATELLITE_AVAILABLE && localStorage.getItem('flock_map_type') === 'hybrid' ? 'hybrid' : 'roadmap'
+  ));
   /* The basemap follows the app theme. It used to be chosen ONCE, at map
      construction, so flipping to dark mode left three quarters of Discover as a
      bright blue-and-cream rectangle under navy chrome. The style is now swapped
@@ -1799,7 +1811,12 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       // dashboard passes the venue itself) skips the geolocation prompt.
       const userLoc = initialCenter ? { lat: initialCenter.lat, lng: initialCenter.lng } : await getUserLocation();
       if (cancelled) return;
-      const savedMapType = localStorage.getItem('flock_map_type') || 'roadmap';
+      // Same expression as the mapType useState above, and it has to stay the
+      // same one: a stored 'hybrid' from a build that HAD a MapTiler key must
+      // not construct the map with a null style in one that does not.
+      // localStorage outlives the env var.
+      const savedMapType = SATELLITE_AVAILABLE && localStorage.getItem('flock_map_type') === 'hybrid'
+        ? 'hybrid' : 'roadmap';
 
       // A remote basemap style (bad/missing MapTiler key, network, 403) must
       // NOT take the whole app down. A synchronous failure constructing the map
@@ -1981,6 +1998,9 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   const toggleMapType = useCallback(async () => {
     const map = mapInstanceRef.current;
     if (!map) return;
+    // No satellite style, no swap. The button is hidden in this case, so this is
+    // the belt to that braces.
+    if (!SATELLITE_AVAILABLE) return;
     const newType = mapType === 'roadmap' ? 'hybrid' : 'roadmap';
     setMapType(newType);
     localStorage.setItem('flock_map_type', newType);
@@ -2527,7 +2547,12 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         </button>
       </div>
 
-      {/* Map / Satellite toggle */}
+      {/* Map / Satellite toggle. Hidden outright when there is no MapTiler key,
+          because MapTiler hybrid is now the only satellite imagery Flock is
+          licensed to draw — a button that swaps to nothing is worse than no
+          button. Every shipping build sets the key, so this renders in all of
+          them. */}
+      {SATELLITE_AVAILABLE && (
       <button className="hit44"
         aria-label={mapType === 'roadmap' ? 'Switch to satellite view' : 'Switch to map view'}
         onClick={toggleMapType}
@@ -2553,6 +2578,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           </svg>
         )}
       </button>
+      )}
     </div>
   );
 });
