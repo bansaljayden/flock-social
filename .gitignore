@@ -125,6 +125,10 @@ frontend/public/birdie/flap-src.png
 # SUBMIT-CHECKLIST.md, VENUE-BILLING.md, backend/.env.example.
 ADVERSARIAL-REVIEW.md
 APP-STORE-SUBMISSION.md
+# The App Review screen recordings for the 2.1 reply. Never committed, never
+# mirrored: they show a demo password being typed and belong to the reply
+# packet above.
+apple-review-recording*.mp4
 APPLE-2.1-REPLY.md
 DEFERRED.md
 DOMAIN.md
@@ -187,3 +191,6 @@ backend/scripts/ml/train/*
 PAYMENTS-ROUTING.md
 VENUE-ADVISOR.md
 MODEL-EPOCH-FINDING.md
+VENUE-TOS-DRAFT.md
+MAP-VISIBILITY-DECISION.md
+PRO-VS-PREMIUM.md
