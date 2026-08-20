@@ -24,6 +24,12 @@
 //      more than OWNER_DIVERGENCE_POINTS is stamped diverged=true, and the
 //      read SQL suppresses venues with OWNER_DIVERGENCE_STRIKES stamps in the
 //      window. Misreporting costs the venue the override itself.
+//      Round 25 adds the half that was missing: the reporters who can cost a
+//      venue a strike must have been IN THE ROOM while the reading was live.
+//      The calibration blend those reports arrive in is 28 days wide, so
+//      stamping against it punished a venue for a busy one-off night and let
+//      three accounts suppress an honest owner from anywhere, for a month at
+//      a time, by filing one stale report each.
 //
 // And the FTC rule that is not a behaviour but a boundary: the write path is
 // free at every tier. A paid tier that buys influence over a consumer-shown
@@ -204,6 +210,29 @@ test('below the reporter floor the owner still wins — 2 reporters are 0 eviden
 
 // ── 4. Accountability: divergence is stamped, agreement is not ──────────────
 
+// Verified reports filed WHILE the reading was live. `minutesAgo(10)` is when
+// freshRow() says the owner posted, so anything more recent than that is
+// contemporaneous with it. crowd_level 1 maps to the bottom of the scale, so
+// three of them is "the room is quiet" against an owner claiming 90.
+function reportersInTheRoom(count, { level = 1, minutes = 5 } = {}) {
+  return Array.from({ length: count }, (_, i) => ({
+    crowd_level: level,
+    user_id: 900 + i,
+    created_at: minutesAgo(minutes),
+  }));
+}
+
+// The same three people, saying the same thing, three weeks ago. Inside the
+// 28-day calibration window and therefore inside `calibration`; nowhere near
+// the reading.
+function reportersLastMonth(count, { level = 1 } = {}) {
+  return Array.from({ length: count }, (_, i) => ({
+    crowd_level: level,
+    user_id: 900 + i,
+    created_at: minutesAgo(21 * 24 * 60),
+  }));
+}
+
 test('an owner reading far from the reporters\' consensus earns a strike', async () => {
   handlers = [[/UPDATE venue_owner_reports SET diverged = true/, () => ({ rows: [], rowCount: 1 })]];
   queryLog = [];
@@ -212,7 +241,10 @@ test('an owner reading far from the reporters\' consensus earns a strike', async
     score: 46,
     calibration: { feedbackUsed: true, reportCount: 4, predictionDrift: 3 },
   });
-  ownerReports.applyOwnerReport(blended, freshRow({ busy_percent: 90 }), { now: NOW });
+  ownerReports.applyOwnerReport(blended, freshRow({ busy_percent: 90 }), {
+    now: NOW,
+    feedbackRows: reportersInTheRoom(4),
+  });
   await new Promise((r) => setImmediate(r));
   const stamp = queryLog.find((q) => /SET diverged = true/.test(q.sql));
   assert.ok(stamp, 'divergence must be stamped');
@@ -226,9 +258,90 @@ test('an owner reading the reporters roughly agree with is not stamped', async (
     calibration: { feedbackUsed: true, reportCount: 4, predictionDrift: 3 },
   });
   // consensus ~45, owner says 55: inside OWNER_DIVERGENCE_POINTS.
-  ownerReports.applyOwnerReport(blended, freshRow({ busy_percent: 55 }), { now: NOW });
+  ownerReports.applyOwnerReport(blended, freshRow({ busy_percent: 55 }), {
+    now: NOW,
+    feedbackRows: reportersInTheRoom(4, { level: 2 }),
+  });
   await new Promise((r) => setImmediate(r));
   assert.strictEqual(queryLog.filter((q) => /SET diverged/.test(q.sql)).length, 0);
+});
+
+// ── Round 25: only people who were in the room may cost a venue a strike ────
+
+test('three-week-old reports cannot strike tonight\'s reading', async () => {
+  handlers = [[/UPDATE venue_owner_reports SET diverged = true/, () => ({ rows: [], rowCount: 1 })]];
+  queryLog = [];
+  // The griefing shape, and equally the honest-busy-night shape: the blend
+  // says the venue-hour usually runs quiet, the owner says it is packed
+  // tonight, and not one of those reports was filed while the reading was up.
+  const blended = cardResult({
+    score: 46,
+    calibration: { feedbackUsed: true, reportCount: 4, predictionDrift: 3 },
+  });
+  ownerReports.applyOwnerReport(blended, freshRow({ busy_percent: 90 }), {
+    now: NOW,
+    feedbackRows: reportersLastMonth(4),
+  });
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(
+    queryLog.filter((q) => /SET diverged/.test(q.sql)).length, 0,
+    'a 28-day-old average is not somebody contradicting a live reading'
+  );
+});
+
+test('a caller that supplies no rows stamps nothing (the cache-hit path)', async () => {
+  queryLog = [];
+  const blended = cardResult({
+    score: 46,
+    calibration: { feedbackUsed: true, reportCount: 4, predictionDrift: 3 },
+  });
+  // Same call the cached card makes: a payload, an owner row, no raw rows.
+  ownerReports.applyOwnerReport(blended, freshRow({ busy_percent: 90 }), { now: NOW });
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(queryLog.filter((q) => /SET diverged/.test(q.sql)).length, 0,
+    'no evidence in hand means no penalty, never a penalty by default');
+});
+
+test('one account cannot be three reporters, however many rows it files', async () => {
+  queryLog = [];
+  const blended = cardResult({
+    score: 46,
+    calibration: { feedbackUsed: true, reportCount: 4, predictionDrift: 3 },
+  });
+  const oneLoudAccount = Array.from({ length: 6 }, () => ({
+    crowd_level: 1, user_id: 77, created_at: minutesAgo(5),
+  }));
+  ownerReports.applyOwnerReport(blended, freshRow({ busy_percent: 90 }), {
+    now: NOW, feedbackRows: oneLoudAccount,
+  });
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(queryLog.filter((q) => /SET diverged/.test(q.sql)).length, 0);
+  assert.strictEqual(
+    ownerReports.contemporaneousReports(oneLoudAccount, freshRow(), NOW).length, 1,
+    'six rows from one account is one reporter'
+  );
+});
+
+test('a reading already stamped is not re-stamped on every serve', async () => {
+  queryLog = [];
+  const blended = cardResult({
+    score: 46,
+    calibration: { feedbackUsed: true, reportCount: 4, predictionDrift: 3 },
+  });
+  // The live-report SQL projects `diverged`, so the row the serve path holds
+  // carries it — without that column in the projection this guard read
+  // `undefined !== true` and fired one UPDATE per card view, per batch row and
+  // per alternatives neighbour for the reading's whole 90 minutes.
+  ownerReports.applyOwnerReport(blended, freshRow({ busy_percent: 90, diverged: true }), {
+    now: NOW, feedbackRows: reportersInTheRoom(4),
+  });
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(queryLog.filter((q) => /SET diverged/.test(q.sql)).length, 0);
+});
+
+test('the live-report SQL projects diverged, so the re-stamp guard can work', () => {
+  assert.ok(/r\.diverged/.test(ownerReports.LIVE_OWNER_REPORTS_SQL),
+    'applyOwnerReport guards on ownerRow.diverged; the column has to be selected');
 });
 
 test('ownerDivergesFromReports is exactly the points constant, exclusive', () => {
@@ -369,6 +482,52 @@ test('the candidate SQL excludes retracted and diverged readings at the source',
   assert.ok(/AT TIME ZONE z\.name/.test(text), 'the hour column is venue-local or the row does not exist');
 });
 
+// Round 25 (adversarial): the training-side poisoning question, end to end.
+//
+// The attack: an owner posts readings shaped to a pattern (say 100 on Fridays,
+// 50 otherwise) so the median anchor centres on 50 and every Friday row
+// teaches +50. That delta is harmless as ONE weighted row. It is not harmless
+// if it reaches a FIT — prepare_features builds the category-baseline map, the
+// per-fold cell aggregates and the neighbour-baseline map, and those become
+// FEATURES OF OTHER VENUES. One submitter moving a category mean moves every
+// venue scored against it.
+//
+// Three separate things stop it, and this test pins all three, because each
+// one alone is a boolean and the documented handoff in ownerLabelExport.js
+// asks a future retrain agent to change two of them:
+//
+//   1. the exporter names the provenance 'owner_report' rather than letting it
+//      fall through to 'unknown' — 'unknown' is BOTH the weight-1.0 pool and a
+//      member of VENDOR_PROVENANCES, so falling through would hand an owner's
+//      tap more weight than a live vendor observation AND fit-eligibility in
+//      the same step;
+//   2. VENDOR_PROVENANCES excludes it, so it can never fit a mean;
+//   3. LABEL_SOURCE_VALUES excludes it, so enforce_label_contract stops the
+//      run by name before any of it is reached.
+test('an owner reading can never fit a mean that scores other venues', () => {
+  const exporter = require('../scripts/ml/train/export_training_data.js');
+  const owned = { collection_mode: 'realtime', label_source: ownerExport.OWNER_LABEL_SOURCE };
+  assert.strictEqual(
+    exporter.labelProvenance(owned), ownerExport.OWNER_LABEL_SOURCE,
+    'an owner row must be NAMED, not laundered into the unknown/vendor pool'
+  );
+
+  const prep = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'ml', 'train', 'prepare_features.py'), 'utf8');
+
+  const vendorSet = prep.match(/VENDOR_PROVENANCES\s*=\s*frozenset\(\{([^}]*)\}\)/);
+  assert.ok(vendorSet, 'prepare_features.py must still define VENDOR_PROVENANCES');
+  assert.ok(!vendorSet[1].includes(ownerExport.OWNER_LABEL_SOURCE),
+    'owner_report must never be fit-eligible: the fits it would join are features of OTHER venues');
+
+  const sourceSet = prep.match(/LABEL_SOURCE_VALUES\s*=\s*\{([^}]*)\}/);
+  assert.ok(sourceSet, 'prepare_features.py must still define LABEL_SOURCE_VALUES');
+  assert.ok(!sourceSet[1].includes(ownerExport.OWNER_LABEL_SOURCE),
+    'until the weight ladder gains the OWNER_LABEL_WEIGHT tier, an owner_report row must '
+    + 'stop the run by name — adding it here without the tier drops these rows into the '
+    + 'weight-1.0 pool, which is 10x what the handoff argues for');
+});
+
 test('the export path never writes — no INSERT, UPDATE or DELETE in the module', () => {
   const src = fs.readFileSync(
     path.join(__dirname, '..', 'scripts', 'ml', 'train', 'ownerLabelExport.js'), 'utf8');
@@ -397,6 +556,17 @@ test('every crowd surface applies the override, and none bakes it into a cache',
   // claims against these rows, and the client saw the owner number.
   assert.ok(/confidenceBasis === 'owner_report' \? 'owner_report'/.test(src),
     'served_predictions must record owner_report when that is what shipped');
+  // Round 25: the alternatives payload IS cached, so its never-bake gate has
+  // to catch both branches applyOwnerReport can take. Gating on
+  // `confidenceBasis === 'owner_report'` only catches the APPLIED one and let
+  // the outranked case — same expiry, same kill switch, `applied: false` —
+  // sit in the ten-minute cache, so a retraction took ten minutes to land.
+  // The field is the test, not the branch.
+  assert.ok(/carriesOwnerReport[\s\S]{0,200}?ownerReport != null/.test(src)
+    && /anyOwnerAsserted[\s\S]{0,200}?carriesOwnerReport/.test(src),
+    'the alternatives cache gate must key on the ownerReport field, not on confidenceBasis');
+  assert.ok(!/anyOwnerAsserted\s*=\s*payload\.currentVenue\.confidenceBasis === 'owner_report'/.test(src),
+    'an outranked owner reading is still perishable and still must not be cached');
 });
 
 test('Birdie quotes the same number as the card, with the same attribution', () => {
@@ -405,6 +575,29 @@ test('Birdie quotes the same number as the card, with the same attribution', () 
     'the Birdie crowd tool must read the owner reading');
   assert.ok(/crowd_source/.test(src),
     'the tool result must say whose number it is, or the model narrates a claim as a measurement');
+});
+
+// Round 25: the precedence rule has no surface exemption.
+//
+// The invariant that makes an owner-set consumer number a disclosure rather
+// than an advertisement is three properties together (migration 031): it is
+// labelled, it expires, and verified user reports outrank it. Birdie held the
+// first two and not the third — it loaded no reports, so the owner's figure
+// was always the answer there, and no divergence was ever stamped from it.
+test('Birdie applies the user-report precedence, not just the label', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'ai.js'), 'utf8');
+  assert.ok(/ownerReports\.applyOwnerReport\(/.test(src),
+    'Birdie must decide precedence with the same function every other surface uses');
+  assert.ok(/buildCalibrationAdjustment\(/.test(src),
+    'deciding precedence needs the reporters, so the crowd tool has to load them');
+  assert.ok(/verified = true/.test(src),
+    'and only presence-verified reports may outrank anything');
+  // ONE definition of the three votable (day, hour) slots. A private copy here
+  // is how a surface ends up reading a different weekly bucket than the card.
+  assert.ok(/feedbackWindow/.test(src) && !/function feedbackWindow/.test(src),
+    'the window must be imported from routes/crowd.js, never re-derived');
+  assert.ok(!/describePredictionSupport\(crowdResult\.predictionMethod, 0\)/.test(src),
+    'a number three verified reporters produced must not be described as having zero support');
 });
 
 // ── The FTC boundary, pinned as source text ─────────────────────────────────

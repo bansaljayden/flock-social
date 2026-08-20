@@ -344,16 +344,61 @@ test('GET /api/weather/forecast identifies its caller too', async () => {
   assert.deepStrictEqual(weatherCalls[0].opts, { userId: 7 });
 });
 
-test('venue-derived weather lookups stay unidentified', async () => {
-  // routes/crowd.js gets its coordinates from Google, not from the caller, so
-  // it is not the enumeration surface and must not consume a per-user ceiling
-  // that a legitimate browsing session would hit.
-  // A place id of its own: the crowd route caches by place id, and a cache hit
-  // would answer without ever asking for weather.
+test('venue-derived weather lookups identify their caller too', async () => {
+  // REVERSED, round 25 (adversarial re-audit). This used to assert
+  // `call.opts === undefined`, on the argument that "routes/crowd.js gets its
+  // coordinates from Google, not from the caller, so it is not the enumeration
+  // surface". Both halves of that turned out to be wrong.
+  //
+  //   * IT IS AN ENUMERATION SURFACE, one hop further out. The caller does not
+  //     type the coordinates, but the caller types the PLACE ID, and Google
+  //     has millions of them spread over the whole map. The weather cache keys
+  //     on coordinates bucketed to 2 dp, so a walk of place ids is a walk of
+  //     cache keys just as surely as a walk of lat/lon is. The test directly
+  //     below already makes this exact argument about /batch: coordinates that
+  //     "look venue-derived" are still the enumeration shape "wearing a venue's
+  //     clothes". A place id is one more layer of clothes.
+  //   * THE LEGITIMATE SESSION WAS NEVER NEAR THE CEILING. WX_PER_USER_HOURLY
+  //     is 40; the weather cache buckets to ~1 km and the crowd route only
+  //     reaches weather on a crowd-cache MISS, so a real user browsing venues
+  //     in one city spends single digits an hour. What the unmetered lane
+  //     actually bought was 30 weather calls an hour per account (the Places
+  //     ledger's own per-user rate, one weather call per card), which is 720 a
+  //     day against a GLOBAL WX_DAILY of 950 — one account taking three
+  //     quarters of everyone's weather while its own metered ceiling sat
+  //     untouched, after which weather silently drops out of every crowd score
+  //     for every user until UTC midnight.
+  //
+  // A per-user ceiling that only applies to the door nobody attacks is not a
+  // per-user ceiling. Both doors now spend the same account's allowance.
   await get('/api/crowd/PLACE_VENUE_DERIVED');
   const call = weatherCalls.find((c) => c.fn === 'getWeather');
   assert.ok(call, 'the crowd route does look up weather');
-  assert.strictEqual(call.opts, undefined);
+  assert.deepStrictEqual(call.opts, { userId: 7 },
+    'a caller-chosen place id is a caller-chosen weather cache key');
+});
+
+test('the alternatives route identifies its caller on weather as well as Places', async () => {
+  // The most expensive endpoint in the app already charges two Places units to
+  // the caller. Its weather call went to the global ledger, so the one route
+  // that spends the most on someone's behalf was also the one whose weather
+  // nobody was accountable for.
+  await get('/api/crowd/PLACE_ALT_WX/alternatives?localHour=20&localDay=5');
+  const call = weatherCalls.find((c) => c.fn === 'getWeather');
+  assert.ok(call, 'the alternatives route does look up weather');
+  assert.deepStrictEqual(call.opts, { userId: 7 });
+});
+
+test('no crowd-route weather call is left unidentified', () => {
+  // The runtime checks above cover the paths this harness can reach. This one
+  // covers the ones it cannot, and any added later: every getWeather in the
+  // crowd router passes an id, or the per-user ceiling has a hole in it again.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'crowd.js'), 'utf8');
+  const calls = src.match(/getWeather\([^)]*\)/g) || [];
+  assert.ok(calls.length >= 2, `expected the card and the alternatives weather reads, found ${calls.length}`);
+  for (const c of calls) {
+    assert.ok(/userId/.test(c), `unmetered weather call in routes/crowd.js: ${c}`);
+  }
 });
 
 test('POST /api/crowd/batch identifies its caller too — those coordinates are body input', async () => {

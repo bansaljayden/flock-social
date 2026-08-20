@@ -588,7 +588,17 @@ router.get('/:placeId',
       // Get weather (may return null)
       const lat = venue.location?.latitude;
       const lon = venue.location?.longitude;
-      const weather = (lat && lon) ? await getWeather(lat, lon) : null;
+      // Charged to the caller. The weather ledger's per-user ceiling is OPT-IN
+      // (services/weatherService.js allowWeatherFetch: no id, no per-user
+      // protection), and this call site did not opt in — so the only thing
+      // bounding it was the Places ledger, and one account could walk place
+      // ids and spend the GLOBAL daily weather allowance, after which weather
+      // silently drops out of every crowd score for everyone until UTC
+      // midnight. The coordinates come from a caller-chosen place id, which is
+      // exactly the enumeration shape that file's header says must pass an id.
+      // predictHourlyForecast below already charges this same request; the two
+      // halves now agree.
+      const weather = (lat && lon) ? await getWeather(lat, lon, { userId: req.user.id }) : null;
 
       // WHOSE CLOCK: the venue's, not the phone's.
       //
@@ -636,6 +646,11 @@ router.get('/:placeId',
 
       // Query user feedback for calibration (non-blocking — fallback to raw score on failure)
       let calibration = { adjustedScore: crowdResult.score, feedbackUsed: false, reportCount: 0 };
+      // The same rows, kept: services/ownerReports.js needs the individual
+      // timestamps, not the blend, to decide whether any reporter was actually
+      // in the room while an owner reading was on screen (round 25). The blend
+      // alone cannot answer that — it is 28 days wide.
+      let feedbackRows = [];
       try {
         const fbResult = await pool.query(
           // Round 16: this SELECT is what decides whether the calibration guard
@@ -677,6 +692,7 @@ router.get('/:placeId',
            ORDER BY created_at DESC LIMIT 50`,
           [placeId, ...feedbackWindow(localDay, localHour).flat()]
         );
+        feedbackRows = fbResult.rows;
         calibration = buildCalibrationAdjustment(fbResult.rows, crowdResult.score);
       } catch (fbErr) {
         console.error('[Crowd] Feedback query failed, using raw score:', fbErr.message);
@@ -870,7 +886,12 @@ router.get('/:placeId',
       // what is cached is the model's answer; what ships is the answer with
       // the venue's live reading applied, when one exists and outranks it.
       const published = ownerReports.applyOwnerReport(
-        result, (await ownerReports.getLiveOwnerReports([placeId]))[placeId]
+        result, (await ownerReports.getLiveOwnerReports([placeId]))[placeId],
+        // Raw rows, so a divergence STRIKE is decided by reporters who filed
+        // while the reading was live rather than by the 28-day average of this
+        // venue-hour. Precedence still uses the blend; only the penalty needs
+        // people in the room (services/ownerReports.js, round 25).
+        { feedbackRows }
       );
       const gated = withBaselineAge(await gateForecast(published, req.user.id, { count: true }));
       // The score survives gating (the free "right now" half stays on locked
@@ -1279,7 +1300,9 @@ router.post('/batch',
       // under, so a row quoting the model's 42 beside a card saying "the bar
       // says 85" would be the two-surfaces-disagree bug in its newest clothes.
       const ownerByPlace = await ownerReports.getLiveOwnerReports(predictions.map((p) => p.placeId));
-      const published = predictions.map((p) => ownerReports.applyOwnerReport(p, ownerByPlace[p.placeId]));
+      const published = predictions.map((p) => ownerReports.applyOwnerReport(
+        p, ownerByPlace[p.placeId], { feedbackRows: feedbackByVenue[p.placeId] || [] }
+      ));
 
       recordServedPredictions(req.user.id, published.map((p) => ({
         placeId: p.placeId,
@@ -1395,7 +1418,11 @@ router.get('/:placeId/alternatives',
       }
 
       // Get weather
-      const weather = await getWeather(lat, lon);
+      // Charged to the caller, same reason as the card above: caller-chosen
+      // place id -> caller-chosen coordinates -> a fresh weather key, on a
+      // ledger whose per-user ceiling only applies to callers that identify
+      // themselves.
+      const weather = await getWeather(lat, lon, { userId: req.user.id });
       const clientTime = new Date(now);
       clientTime.setDate(clientTime.getDate() + crowdEngine.weekdayOffset(clientTime.getDay(), localDay));
       clientTime.setHours(localHour, 0, 0, 0);
@@ -1512,7 +1539,10 @@ router.get('/:placeId/alternatives',
       const targetScore = ownerReports.applyOwnerReport(
         { score: targetCal.adjustedScore },
         ownerByPlace[placeId],
-        { reporters: targetCal.feedbackUsed ? targetCal.reportCount : 0 }
+        {
+          reporters: targetCal.feedbackUsed ? targetCal.reportCount : 0,
+          feedbackRows: feedbackByVenue[placeId] || [],
+        }
       ).score;
       const scoredNearby = await Promise.all(nearby.map(async (v) => {
         try {
@@ -1554,7 +1584,10 @@ router.get('/:placeId/alternatives',
             // `confidenceMeasurement: confidenceMeasurementFor(r, <it>, 0)`
             // ships in the same edit, which
             // __tests__/confidenceForwarding.test.js enforces.
-          }, ownerByPlace[v.place_id], { reporters: cal.feedbackUsed ? cal.reportCount : 0 });
+          }, ownerByPlace[v.place_id], {
+            reporters: cal.feedbackUsed ? cal.reportCount : 0,
+            feedbackRows: feedbackByVenue[v.place_id] || [],
+          });
         } catch { return null; }
       }));
 
@@ -1581,14 +1614,30 @@ router.get('/:placeId/alternatives',
           predictionMethod: targetResult.predictionMethod || null,
           confidenceBasis: targetSupport.basis,
           supported: targetSupport.supported,
-        }, ownerByPlace[placeId], { reporters: targetCal.feedbackUsed ? targetCal.reportCount : 0 }),
+        }, ownerByPlace[placeId], {
+          reporters: targetCal.feedbackUsed ? targetCal.reportCount : 0,
+          feedbackRows: feedbackByVenue[placeId] || [],
+        }),
         alternatives,
       };
       // An owner reading is PERISHABLE and this cache cannot see it expire, so
       // a payload carrying one is served fresh and never remembered — the same
       // never-bake rule the card keeps, enforced here by skipping the write.
-      const anyOwnerAsserted = payload.currentVenue.confidenceBasis === 'owner_report'
-        || alternatives.some((a) => a.confidenceBasis === 'owner_report');
+      //
+      // Round 25 (adversarial): this used to test `confidenceBasis ===
+      // 'owner_report'`, which only catches the APPLIED case. When three
+      // verified reporters outrank the reading, applyOwnerReport leaves the
+      // basis alone and attaches the owner's figure as `ownerReport` with
+      // `applied: false` — still perishable, still retractable, and it was
+      // being baked into the ten-minute cache. So an owner who hit their own
+      // kill switch (DELETE /busy-now) kept being quoted on this surface for
+      // up to ten minutes after retracting, and an expired reading outlived
+      // its 90 minutes by the same margin. The rule is about the FIELD, not
+      // about which branch produced it: if the payload carries an owner
+      // assertion at all, it is served fresh and never remembered.
+      const carriesOwnerReport = (row) => row && row.ownerReport != null;
+      const anyOwnerAsserted = carriesOwnerReport(payload.currentVenue)
+        || alternatives.some(carriesOwnerReport);
       if (!anyOwnerAsserted) setCache(cacheKey, payload);
       res.json(payload);
     } catch (err) {
@@ -1617,6 +1666,13 @@ module.exports.forecastAccess = forecastAccess;
 // publishing 72 as a hit rate after this file stopped. (No cycle: neither of
 // those modules is ever required from here.)
 module.exports.confidenceMeasurementFor = confidenceMeasurementFor;
+// THE definition of "which venue-hours may vote on this hour's number": the
+// 168-hour week's three neighbouring slots, wrap-aware (midnight's neighbour is
+// the next weekday). A real export, not a test hook, because routes/ai.js runs
+// the same calibration read on Birdie's crowd tool and a second private copy of
+// this arithmetic is how one surface ends up reading a different weekly bucket
+// than the card — the exact bug the alternatives route already had once.
+module.exports.feedbackWindow = feedbackWindow;
 // Exposed for backend/__tests__/crowdReaudit.test.js — the venue-clock path
 // depends on utcOffsetMinutes surviving the Google->venue shaping, and that
 // drop was invisible to every existing test because the shaping is internal.
