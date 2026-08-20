@@ -590,6 +590,10 @@ test('every admin list query carries a LIMIT', async () => {
     // TODAY — by routes/flocks.js, a different file, which is precisely the
     // arrangement that has drifted four times in this repo.
     ['GET', '/api/admin/analytics', [/GROUP BY stall_point/]],
+    // The cost panel's per-venue breakdown. One row per venue per day in
+    // advisor_venue_spend, so the row count is set by venue count times days
+    // elapsed in the month and grows without a ceiling of its own.
+    ['GET', '/api/admin/costs', [/FROM advisor_venue_spend/]],
   ];
   for (const [method, p, matchers] of cases) {
     log = [];
