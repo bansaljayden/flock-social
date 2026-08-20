@@ -52,6 +52,21 @@ const { authenticate, signUserToken, revokeUserSessions } = require('../middlewa
 const {
   sendVerificationEmail, verificationLink, baseWebUrl,
   sendPasswordResetEmail, sendPasswordResetOAuthEmail, passwordResetLink,
+  // SECURITY ROUND 5, 2026-08-20. The six log lines in this file that name an
+  // address used to print it in full, and three of them printed it NEXT TO the
+  // account's integer id. That pair — id to real address — is the one mapping
+  // the database deliberately never hands out, and it was being written to
+  // Railway's log: retained, searchable, readable by anyone with dashboard
+  // access, and (the moment SENTRY_DSN is set) attached to unrelated errors as
+  // a console breadcrumb. The failed-login line is worse still, because it
+  // fires on addresses that have NO account here: one mistyped login writes a
+  // stranger's address into our logs, and they never touched this product.
+  //
+  // maskAddress exists for exactly this and services/venueDigest.js already
+  // uses it. What these lines have to answer is "which account, and roughly
+  // where did the address point". The account id answers the first and the
+  // domain answers the second; the local part answers neither.
+  maskAddress,
 } = require('../services/emailService');
 const { stripHtml, sanitizeArray } = require('../utils/sanitize');
 const { rejectIfProfane, moderateText } = require('../utils/moderation');
@@ -2273,7 +2288,7 @@ router.post('/login', loginValidation, async (req, res) => {
     if (!user || !user.password || !validPassword) {
       recordLoginFailure(throttleKey);
       const why = !user ? 'unknown email' : !user.password ? 'oauth account' : 'bad password';
-      console.warn(`Failed login attempt (${why}) for ${email} from ${req.ip} at ${new Date().toISOString()}`);
+      console.warn(`Failed login attempt (${why}) for ${maskAddress(email)} from ${req.ip} at ${new Date().toISOString()}`);
       return res.status(401).json({ error: 'Invalid email or password' });
     }
 
@@ -2594,14 +2609,14 @@ router.post('/google', [
         // A banned row is also never EVICTED: releasing its address would make
         // "sign in with Google" a way to shed a ban and start clean.
         if (existing.is_banned) {
-          console.warn(`[auth] refused Google claim of BANNED account ${existing.id} (${email})`);
+          console.warn(`[auth] refused Google claim of BANNED account ${existing.id} (${maskAddress(email)})`);
           return res.status(403).json({
             error: 'An account with this email has been suspended. Contact support if you think that is a mistake.',
           });
         }
         const decision = claimDecision(existing, email);
         if (decision === 'refuse') {
-          console.warn(`[auth] refused Google claim of account ${existing.id}: verified address does not match ${email}`);
+          console.warn(`[auth] refused Google claim of account ${existing.id}: verified address does not match ${maskAddress(email)}`);
           return res.status(409).json({
             error: 'An account with this email already exists. Log in the way you originally signed up.',
           });
@@ -2631,7 +2646,7 @@ router.post('/google', [
         // receiving the real owner's DMs, flock messages and location the
         // whole time. See revokeUserSessions in middleware/auth.js.
         revokeUserSessions(req.app.get('io'), claimTarget.id);
-        console.warn(`[auth] Google verified-email claim of password account ${claimTarget.id} (${email})`);
+        console.warn(`[auth] Google verified-email claim of password account ${claimTarget.id} (${maskAddress(email)})`);
       } else {
         // New account. Reached either because nothing held this address, or
         // because an unverified squat held it and is about to lose it.
@@ -2954,7 +2969,7 @@ router.post('/apple', [
         // row to the address's verified owner, and never lift the ban here.
         // Never evicted either: eviction would be a way to shed a ban.
         if (existingByEmail.is_banned) {
-          console.warn(`[auth] refused Apple claim of BANNED account ${existingByEmail.id} (${email})`);
+          console.warn(`[auth] refused Apple claim of BANNED account ${existingByEmail.id} (${maskAddress(email)})`);
           return res.status(403).json({
             error: 'An account with this email has been suspended. Contact support if you think that is a mistake.',
           });
@@ -2962,7 +2977,7 @@ router.post('/apple', [
         // Round 16: same three-way decision as the Google branch.
         const decision = claimDecision(existingByEmail, email);
         if (decision === 'refuse') {
-          console.warn(`[auth] refused Apple claim of account ${existingByEmail.id}: verified address does not match ${email}`);
+          console.warn(`[auth] refused Apple claim of account ${existingByEmail.id}: verified address does not match ${maskAddress(email)}`);
           return res.status(409).json({
             error: 'An account with this email already exists. Log in the way you originally signed up.',
           });
@@ -2981,7 +2996,7 @@ router.post('/apple', [
           // Round 15: kill the squatter's live Socket.io connection too — the
           // token_version bump alone never reaches an already-open socket.
           revokeUserSessions(req.app.get('io'), existingByEmail.id);
-          console.warn(`[auth] Apple verified-email claim of password account ${existingByEmail.id} (${email})`);
+          console.warn(`[auth] Apple verified-email claim of password account ${existingByEmail.id} (${maskAddress(email)})`);
         }
         // 'evict' falls through to creation below, which releases the address
         // only after every remaining gate has passed.
