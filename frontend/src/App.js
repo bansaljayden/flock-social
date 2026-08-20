@@ -7905,6 +7905,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         display: 'flex',
         alignItems: 'flex-start',
         gap: '10px',
+        // `left: 50%` makes the available width for a shrink-to-fit fixed box
+        // exactly half the viewport, so without this the toast could never be
+        // wider than 195px on a 390px phone and a six-word message wrapped to
+        // three cramped lines. max-content sizes it to the sentence, and
+        // maxWidth still holds the ceiling.
+        width: 'max-content',
         maxWidth: 'min(420px, calc(100vw - 32px))',
         boxSizing: 'border-box',
         padding: '12px 12px 12px 16px',
@@ -7913,7 +7919,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         color: 'white',
         fontSize: 'var(--t-label)',
         fontWeight: '600',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+        // The success toast is navyBg and it lands at top: 50px, which on the
+        // venue dashboard is inside a header painted the same navy. With only
+        // an 8%-black shadow the panel had no edge at all: the header title
+        // ran out one side of it and back in the other, reading as a paint
+        // bug rather than a message. The hairline gives it an edge on any
+        // background, dark included, and the shadow gives it lift.
+        border: '1px solid rgba(255,255,255,0.16)',
+        boxShadow: '0 6px 20px rgba(0,0,0,0.28)',
         willChange: 'transform, opacity',
       }}
     >
@@ -14680,7 +14693,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
         <div style={{ flex: 1, padding: '12px', overflowY: 'auto', marginTop: '-8px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginBottom: '12px' }}>
-            {[{ l: 'Flocks', v: flocks.length }, { l: 'Friends', v: friendCount }, { l: 'Streak', v: streak, hasIcon: true }, { l: 'Reliable', v: reliabilityScore != null ? `${Math.round(reliabilityScore)}%` : '--' }].map(s => (
+            {[{ l: 'Flocks', v: flocks.length }, { l: 'Friends', v: friendCount }, { l: 'Streak', v: streak, hasIcon: true }, { l: 'Reliable', v: reliabilityScore != null ? `${Math.round(reliabilityScore)}%` : '–' }].map(s => (
               <div key={s.l} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '8px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }}>
                 <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{s.v}{s.hasIcon && Icons.flame('#F59E0B', 16)}</p>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{s.l}</p>
@@ -14689,16 +14702,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
 
           {/* Add Friends Button */}
-          <button className="hit44 glass-btn glass-secondary" onClick={() => setCurrentScreen('addFriends')} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: colors.navyBg, color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', boxShadow: '0 4px 12px rgba(13,40,71,0.10)', position: 'relative', overflow: 'hidden' }}>
-            <div style={{ width: '36px', height: '36px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('white', 18)}</div>
+          <button className="hit44 glass-btn glass-secondary" onClick={() => setCurrentScreen('addFriends')} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: 'var(--bg-card-solid)', color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)', position: 'relative', overflow: 'hidden' }}>
+            {/* The inline navy background on this button has been dead since
+                .glass-secondary started forcing a light surface with
+                !important (index.css:534), so the row paints cream while the
+                icon inside it was still drawn white: an invisible glyph on a
+                white-on-cream chip. Repainted in the same language as the
+                grouped rows below it, which is the one visual system this
+                screen has. */}
+            <div style={{ width: '36px', height: '36px', borderRadius: '12px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus(colors.navy, 18)}</div>
             <div style={{ flex: 1, textAlign: 'left' }}>
               <span className="shimmer-text" style={{ fontWeight: '600', fontSize: 'var(--t-body)', display: 'block' }}>Add Friends</span>
               {/* Contact sync is not one of the ways in inside the iOS app, so
                   this row must not offer it there. */}
-              <span style={{ fontSize: 'var(--t-meta)', opacity: 0.7 }}>{contactsSupported ? 'Find people, scan a QR code, sync contacts' : 'Find people, scan a QR code'}</span>
+              <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{contactsSupported ? 'Find people, scan a QR code, sync contacts' : 'Find people, scan a QR code'}</span>
             </div>
-            {pendingRequests.length > 0 && <span style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: colors.amber, fontSize: 'var(--t-meta)', fontWeight: '500' }}>{pendingRequests.length}</span>}
-            <span style={{ opacity: 0.6 }}>›</span>
+            {pendingRequests.length > 0 && <span style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: colors.amber, color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500' }}>{pendingRequests.length}</span>}
+            <span style={{ color: 'var(--text-tertiary)' }}>›</span>
           </button>
 
           {/* SLOP-AUDIT sec S. Eight identical rows in one container was a
@@ -14719,7 +14739,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               g: 'Account',
               rows: [
                 { l: 'Edit Profile', s: 'edit', icon: Icons.edit },
-                { l: 'Interests', s: 'interests', icon: Icons.target, v: userInterests.length > 0 ? `${userInterests.length} picked` : 'None yet' },
+                { l: 'Interests', s: 'interests', icon: Icons.target, v: userInterests.length > 0 ? `${userInterests.length} interests` : 'None yet' },
                 { l: 'Payment', s: 'payment', icon: Icons.creditCard, v: [authUser?.venmo_username && 'Venmo', authUser?.cashapp_cashtag && 'Cash App', authUser?.zelle_identifier && 'Zelle'].filter(Boolean).join(', ') || 'Not set' },
               ],
             },
@@ -15249,10 +15269,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   };
 
   const handleSetBusyNow = async () => {
-    if (venueBusyDraft == null) return;
+    // The number on screen, which is the draft when the owner has touched the
+    // thumb and otherwise exactly what the card is showing: the live reading
+    // being updated, or the 50 it opens on. This mirrors `sliderValue` in
+    // renderBusyNowCard, so the button always posts the figure under the
+    // owner's finger rather than refusing because no drag happened.
+    const shown = venueBusyDraft != null ? venueBusyDraft : (venueBusyNow?.live ? venueBusyNow.live.percent : 50);
+    if (shown == null) return;
     setVenueBusySaving(true);
     try {
-      const d = await updateVenueBusyNow(Math.round(venueBusyDraft));
+      const d = await updateVenueBusyNow(Math.round(shown));
       setVenueBusyNow(d);
       setVenueBusyDraft(null);
       refreshOwnerPublishedScore();
@@ -15850,7 +15876,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   <button className="hit44 glass-btn glass-navy"
                     onClick={handleSetBusyNow}
-                    disabled={venueBusySaving || venueBusyDraft == null}
+                    // Only an UPDATE needs a draft. With no live reading the
+                    // 50 on screen is a real, postable choice, and disabling
+                    // the card's one CTA on the state every owner opens it in
+                    // meant a venue that genuinely is half full had to drag
+                    // the thumb off 50 and back to arm the button. Once a
+                    // reading is live, re-posting the same number is a no-op,
+                    // so the draft check still applies there.
+                    disabled={venueBusySaving || (!!live && venueBusyDraft == null)}
                     style={{ flex: 1, padding: '12px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)' }}
                   >
                     {venueBusySaving ? 'Saving...' : live ? 'Update live number' : 'Set live number'}
