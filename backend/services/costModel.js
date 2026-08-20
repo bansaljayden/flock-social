@@ -209,9 +209,22 @@ const RATES = {
     perCallOverFree: null, // Not applicable to the endpoints this repo calls.
   },
 
-  // Ticketmaster Discovery. Free public tier, 5,000 calls a day. The repo's two
-  // ledgers (routes/events.js at 2,000/day and services/nightContext.js at
-  // 200/day) were deliberately sized to stay under it, and 2,200 does.
+  // Ticketmaster Discovery. Free public tier, 5,000 calls a day.
+  //
+  // THERE ARE THREE LEDGERS, NOT TWO. This block said two — routes/events.js at
+  // 2,000/day and services/nightContext.js at 200/day — and concluded "2,200
+  // does". The third is services/mlPredictor.js EVENT_DAILY_BUDGET at
+  // 1,500/day, which is where every crowd prediction's event enrichment is
+  // charged: the card, the vote list, the alternatives list, the public demo,
+  // the owner dashboard and the advisor all converge on it. It was the only one
+  // of the three with no status reader, which is how a file whose whole purpose
+  // is to be a complete inventory came to be short a whole ledger.
+  //
+  // The repo-wide ceiling is therefore 3,700 a day, not 2,200. That is still
+  // inside the free tier, so the CONCLUSION survives and the arithmetic behind
+  // it did not: 2,200 of 5,000 leaves 2,800 of headroom and 3,700 leaves 1,300,
+  // which is the difference between "nowhere near" and "within one more
+  // surface of it". A fourth ledger is now a decision rather than an accident.
   ticketmaster: {
     checked: '2026-08-20',
     source: 'https://developer.ticketmaster.com/products-and-docs/apis/getting-started/',
@@ -609,6 +622,7 @@ function outputShareOf(promptTokens, maxOutputTokens) {
  * @param {number} counts.weatherCallsToday      weatherBudgetStatus().dailyUsed
  * @param {number} counts.ticketmasterCallsToday routes/events.js day ledger
  * @param {number} counts.nightContextCallsToday nightContext's own day ledger
+ * @param {number} counts.crowdEventCallsToday   mlPredictor's event day ledger
  * @param {number} counts.digestEmailsMonth      venue_digest_sends rows this month
  * @param {string} [counts.onDate]               YYYY-MM-DD, for rate selection
  */
@@ -738,7 +752,13 @@ function buildObserved(counts = {}) {
 
     const tmDay = num(c.ticketmasterCallsToday);
     const ncDay = num(c.nightContextCallsToday);
-    const tm = tmDay === null && ncDay === null ? null : (tmDay || 0) + (ncDay || 0);
+    // The third ledger. Summed with the other two rather than given its own
+    // line, because they are one vendor on one free tier and the number that
+    // matters is what the whole repo asked Ticketmaster for today.
+    const ceDay = num(c.crowdEventCallsToday);
+    const tm = tmDay === null && ncDay === null && ceDay === null
+      ? null
+      : (tmDay || 0) + (ncDay || 0) + (ceDay || 0);
     lines.push({
       id: 'ticketmaster',
       label: 'Ticketmaster Discovery',
@@ -748,7 +768,7 @@ function buildObserved(counts = {}) {
       window: 'today, this process only',
       durable: false,
       freeTier: true,
-      note: 'Free public tier, 5,000 calls a day. Both ledgers together are capped at 2,200.',
+      note: 'Free public tier, 5,000 calls a day. All three ledgers together are capped at 3,700: routes/events.js at 2,000, services/mlPredictor.js at 1,500, services/nightContext.js at 200.',
     });
 
     const emails = num(c.digestEmailsMonth);
@@ -806,7 +826,9 @@ function buildObserved(counts = {}) {
  * @param {number} limits.placesGlobalDaily
  * @param {number} limits.visionGlobalDaily
  * @param {number} limits.weatherDaily
- * @param {number} limits.ticketmasterGlobalDaily
+ * @param {number} limits.ticketmasterGlobalDaily  routes/events.js
+ * @param {number} limits.crowdEventGlobalDaily    services/mlPredictor.js
+ * @param {number} limits.nightContextGlobalDaily  services/nightContext.js
  * @param {string} [limits.onDate]
  */
 function buildWorstCase(limits = {}) {
@@ -895,11 +917,18 @@ function buildWorstCase(limits = {}) {
     lines.push({
       id: 'ticketmaster',
       label: 'Ticketmaster daily ceiling',
-      ceiling: num(l.ticketmasterGlobalDaily),
-      ceilingUnit: 'calls per day',
+      // THE SUM OF ALL THREE, because a worst case that names one of them is
+      // not a worst case. This line read 2,000 while the repo could spend
+      // 3,700, so the one figure on the panel that exists to answer "how bad
+      // could this get" was understating it by the largest of the three
+      // ledgers. A ceiling nobody passes stays null rather than becoming a
+      // smaller number that looks complete.
+      ceiling: [l.ticketmasterGlobalDaily, l.crowdEventGlobalDaily, l.nightContextGlobalDaily]
+        .map(num).reduce((a, b) => (a === null && b === null ? null : (a || 0) + (b || 0)), null),
+      ceilingUnit: 'calls per day, all three ledgers',
       perDayUsd: 0,
       perMonthUsd: 0,
-      note: 'Zero. The free public tier is 5,000 calls a day.',
+      note: 'Zero. The free public tier is 5,000 calls a day, and the three ledgers together are capped at 3,700.',
     });
   }
 

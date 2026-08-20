@@ -1523,6 +1523,13 @@ router.get('/costs', async (req, res) => {
   const nightContextCallsToday = meterOrNull(
     () => require('../services/nightContext').nightContextBudgetStatus().globalUsed
   );
+  // The THIRD Ticketmaster ledger. Every crowd prediction's event enrichment is
+  // charged here (services/mlPredictor.js EVENT_DAILY_BUDGET), and it was the
+  // one ledger this panel had no meter for, so both the observed count and the
+  // worst-case ceiling below were short by 1,500 calls a day.
+  const crowdEventCallsToday = meterOrNull(
+    () => require('../services/mlPredictor').eventBudgetStatus().globalUsed
+  );
 
   // -- Durable ledgers --------------------------------------------------------
   // Each read is independent: one unavailable table leaves that line unmeasured
@@ -1618,6 +1625,7 @@ router.get('/costs', async (req, res) => {
   const worstCase = costModel.buildWorstCase({
     onDate: today,
     birdieGlobalDailyTokens: birdieUsage.GLOBAL_DAILY_TOKENS,
+    crowdEventCallsToday,
     birdieModel,
     advisorGlobalDailyTokens: advisorPhrasing.ADVISOR_GLOBAL_DAILY_TOKENS,
     advisorPerVenueDailyTokens: advisorPhrasing.PER_VENUE_DAILY_TOKENS,
@@ -1637,6 +1645,12 @@ router.get('/costs', async (req, res) => {
 
   const venueUnitEconomics = costModel.buildVenueUnitEconomics({
     onDate: today,
+    crowdEventGlobalDaily: meterOrNull(
+      () => require('../services/mlPredictor').eventBudgetStatus().limits.globalDaily
+    ),
+    nightContextGlobalDaily: meterOrNull(
+      () => require('../services/nightContext').nightContextBudgetStatus().limits.globalDaily
+    ),
     priceUsd: VENUE_PRICE_USD,
     perVenueDailyTokens: advisorPhrasing.PER_VENUE_DAILY_TOKENS,
     advisorModel,
