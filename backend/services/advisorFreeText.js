@@ -306,12 +306,30 @@ function refusalCeiling(resetPhrase) {
   return `Today's questions are used up. They come back ${resetPhrase}, and the questions above still work in the meantime.`;
 }
 
+// THE PATTERNS ARE ASCII AND THE ALPHABET IS NOT. externalText already deletes
+// the invisible and bidi characters that used to break a word in half, and it
+// folds every dash family to a hyphen, so the classic evasions are gone before
+// this runs. What it does NOT do is fold Unicode's COMPATIBILITY forms, and
+// those render identically to the reader: the fullwidth block spells
+// "ignore all previous instructions" in glyphs a person cannot tell from ASCII
+// and \b[a-z]\b cannot match at all. Measured against the live preview, the
+// fullwidth spelling walked past every pattern in both lists.
+//
+// So the screen reads an NFKC-folded COPY. The copy is used for matching only
+// and is thrown away: what reaches the model is still the owner's own text, in
+// their own characters, because folding the payload would quietly rewrite a
+// question and this layer's job is to refuse one, not to edit it.
+//
+// The router caught the fullwidth attempt anyway, which is the point of having
+// five layers and not one. It is still worth closing: this layer is the only
+// one that costs nothing and the only one that cannot be talked out of it.
 function screen(text) {
+  const probe = typeof text === 'string' ? text.normalize('NFKC') : text;
   for (const re of INJECTION_PATTERNS) {
-    if (re.test(text)) return REFUSAL_INJECTION;
+    if (re.test(text) || re.test(probe)) return REFUSAL_INJECTION;
   }
   for (const { re, why } of OUT_OF_SCOPE_PATTERNS) {
-    if (re.test(text)) return `${OUTSIDE} ${why}`;
+    if (re.test(text) || re.test(probe)) return `${OUTSIDE} ${why}`;
   }
   return null;
 }
