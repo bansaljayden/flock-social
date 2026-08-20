@@ -22,6 +22,16 @@ name: Publish public mirror
 on:
   workflow_dispatch:
 
+# This job needs GITHUB_TOKEN for exactly one thing — cloning THIS repository —
+# and it pushes to the mirror with an SSH deploy key instead, so it never needs
+# a write scope anywhere. The repository default is already read-only (checked
+# 2026-08-20), but that is an account setting one click away from being changed
+# for an unrelated reason, and this file is also mirrored to a second repo where
+# nobody is watching the setting at all. State the scope in the workflow so it
+# holds regardless. .github/workflows/gitleaks.yml already does.
+permissions:
+  contents: read
+
 concurrency:
   # Two pushes in quick succession would otherwise race, and the loser's push
   # fails as non-fast-forward against a mirror the winner already advanced.
