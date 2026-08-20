@@ -1599,6 +1599,13 @@ router.get('/costs', async (req, res) => {
   // time somebody edits a prompt.
   const advisorPromptTokens = Math.ceil(advisorPrompt.SYSTEM_PROMPT.length / COST_CHARS_PER_TOKEN);
   const advisorMaxOutputTokens = advisorPhrasing.ADVISOR_MAX_OUTPUT_TOKENS;
+  // The free-text half of the same surface. Its advice call has a SHORTER
+  // system prompt against the same output ceiling, so its output fraction is
+  // the highest of any advisor call, and output bills at five times input.
+  // Both the global worst case and the per-venue band need it: either ceiling
+  // can be spent entirely on advice.
+  const advisorAdvicePromptTokens = Math.ceil(advisorPrompt.ADVICE_SYSTEM_PROMPT.length / COST_CHARS_PER_TOKEN);
+  const advisorAdviceMaxOutputTokens = advisorFreeText.ADVICE_MAX_OUTPUT_TOKENS;
   const advisorModel = advisorPhrasing.advisorModel();
   const birdieModel = process.env.BIRDIE_MODEL || 'gemini-3.5-flash-lite';
 
@@ -1618,6 +1625,7 @@ router.get('/costs', async (req, res) => {
     weatherCallsToday,
     ticketmasterCallsToday,
     nightContextCallsToday,
+    crowdEventCallsToday,
     digestEmailsMonth,
   });
 
@@ -1625,17 +1633,24 @@ router.get('/costs', async (req, res) => {
   const worstCase = costModel.buildWorstCase({
     onDate: today,
     birdieGlobalDailyTokens: birdieUsage.GLOBAL_DAILY_TOKENS,
-    crowdEventCallsToday,
     birdieModel,
     advisorGlobalDailyTokens: advisorPhrasing.ADVISOR_GLOBAL_DAILY_TOKENS,
     advisorPerVenueDailyTokens: advisorPhrasing.PER_VENUE_DAILY_TOKENS,
     advisorModel,
     advisorPromptTokens,
     advisorMaxOutputTokens,
+    advisorAdvicePromptTokens,
+    advisorAdviceMaxOutputTokens,
     placesGlobalDaily: placesBudgetStatus(null).limits.globalDaily,
     visionGlobalDaily: visionBudgetStatus(null).limits.globalDaily,
     weatherDaily: weatherBudgetStatus().limits.daily,
     ticketmasterGlobalDaily: meterOrNull(() => require('./events').budgetStatus().limits.globalDaily),
+    crowdEventGlobalDaily: meterOrNull(
+      () => require('../services/mlPredictor').eventBudgetStatus().limits.globalDaily
+    ),
+    nightContextGlobalDaily: meterOrNull(
+      () => require('../services/nightContext').nightContextBudgetStatus().limits.globalDaily
+    ),
   });
 
   // The busiest venue this month is the one worth pricing, because it is the
@@ -1645,23 +1660,15 @@ router.get('/costs', async (req, res) => {
 
   const venueUnitEconomics = costModel.buildVenueUnitEconomics({
     onDate: today,
-    crowdEventGlobalDaily: meterOrNull(
-      () => require('../services/mlPredictor').eventBudgetStatus().limits.globalDaily
-    ),
-    nightContextGlobalDaily: meterOrNull(
-      () => require('../services/nightContext').nightContextBudgetStatus().limits.globalDaily
-    ),
     priceUsd: VENUE_PRICE_USD,
     perVenueDailyTokens: advisorPhrasing.PER_VENUE_DAILY_TOKENS,
     advisorModel,
     advisorPromptTokens,
     advisorMaxOutputTokens,
-    // The free-text half of the same surface. Its advice call has a SHORTER
-    // system prompt against nearly as many output tokens, so its output
-    // fraction is the highest of any advisor call and it is what sets the top
-    // of the per-venue cost band.
-    advisorAdvicePromptTokens: Math.ceil(advisorPrompt.ADVICE_SYSTEM_PROMPT.length / COST_CHARS_PER_TOKEN),
-    advisorAdviceMaxOutputTokens: advisorFreeText.ADVICE_MAX_OUTPUT_TOKENS,
+    // The free-text half of the same surface: the highest output fraction of
+    // any advisor call, and what sets the top of the per-venue cost band.
+    advisorAdvicePromptTokens,
+    advisorAdviceMaxOutputTokens,
     observedTokensMonth: topVenue ? topVenue.tokens : null,
   });
 

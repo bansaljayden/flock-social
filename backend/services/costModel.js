@@ -823,6 +823,8 @@ function buildObserved(counts = {}) {
  * @param {string} limits.advisorModel
  * @param {number} limits.advisorPromptTokens
  * @param {number} limits.advisorMaxOutputTokens
+ * @param {number} [limits.advisorAdvicePromptTokens]    the advice system prompt
+ * @param {number} [limits.advisorAdviceMaxOutputTokens] the advice maxOutputTokens
  * @param {number} limits.placesGlobalDaily
  * @param {number} limits.visionGlobalDaily
  * @param {number} limits.weatherDaily
@@ -859,7 +861,19 @@ function buildWorstCase(limits = {}) {
   {
     const cap = num(l.advisorGlobalDailyTokens);
     const rate = geminiRate(l.advisorModel, onDate);
-    const share = outputShareOf(l.advisorPromptTokens, l.advisorMaxOutputTokens);
+    // THE DEAREST CALL SHAPE, not the commonest — the same max()
+    // buildVenueUnitEconomics takes, and for the same reason, because this
+    // global cap can be drained entirely by free-text advice. Advice runs a
+    // system prompt less than half the length of the phrasing one against the
+    // same 4,096-token output ceiling, so its output fraction is roughly 0.50
+    // against the chip's 0.31, and output bills at five times input. Pricing
+    // the whole ceiling at the chip's share understated this line, which is the
+    // one line in the file whose entire job is to say how bad it could get. A
+    // caller that passes no advice pair gets the chip share, unchanged.
+    const share = Math.max(
+      outputShareOf(l.advisorPromptTokens, l.advisorMaxOutputTokens),
+      outputShareOf(l.advisorAdvicePromptTokens, l.advisorAdviceMaxOutputTokens)
+    );
     const perDay = cap === null || !rate ? null : priceTokens(cap, share, rate);
     lines.push({
       id: 'gemini-roost',
@@ -1019,9 +1033,14 @@ function buildVenueUnitEconomics(args = {}) {
   // the API rather than from a guess about the mix.
   //
   // The dearest shape is the one with the highest output fraction. Today that
-  // is the advice answer (a short system prompt against 400 output tokens),
-  // not the chip answer (a long system prompt against 512). Pricing the whole
-  // cap at the chip's share would understate a venue that only ever types.
+  // is the advice answer, not the chip answer: the two now carry the SAME
+  // 4,096-token output ceiling (both were raised on 2026-08-20, because a
+  // thinking model spends the ceiling before it writes a word), and the advice
+  // system prompt is less than half the length of the phrasing one, so advice
+  // runs at roughly a 0.50 output fraction against the chip's 0.31. Pricing the
+  // whole cap at the chip's share would understate a venue that only ever
+  // types. Do not restate either number here as a constant; both move when a
+  // prompt is edited and the caller passes them in for exactly that reason.
   const shareChip = outputShareOf(a.advisorPromptTokens, a.advisorMaxOutputTokens);
   const shareAdvice = outputShareOf(a.advisorAdvicePromptTokens, a.advisorAdviceMaxOutputTokens);
   const shareHigh = Math.max(shareChip, shareAdvice);
