@@ -228,6 +228,9 @@ async function fetchOnce(placeId) {
   if (!apiKey) return { ok: false, kind: 'unconfigured', message: 'Google Places API key not configured' };
 
   let p;
+  // The HTTP status, carried out of the try so the checks below can see it.
+  // Left at 0 when the fetch itself threw, which the catch already returns on.
+  let httpStatus = 0;
   try {
     // ENCODED, one path segment always. Both former call sites did this and
     // both explained why: `placeId` reaches them percent-DECODED by Express, so
@@ -245,6 +248,7 @@ async function fetchOnce(placeId) {
       // its pg pool slot for ~5 minutes. See utils/upstream.js.
       signal: upstreamSignal('places'),
     });
+    httpStatus = response.status;
     p = await response.json();
   } catch (err) {
     // An upstreamSignal abort REJECTS the fetch, and a non-JSON body from a
@@ -254,7 +258,46 @@ async function fetchOnce(placeId) {
   }
 
   if (!p) return { ok: false, kind: 'unreachable', message: 'empty response body' };
+  // Google's own error body FIRST, before the two checks below, so a bad place
+  // id keeps answering 502 "Places API: NOT_FOUND" with Google's message rather
+  // than being reclassified by the HTTP status that carries it (Places (New)
+  // sends `{error:{...}}` under a 4xx, and both callers have always read the
+  // message rather than the code).
   if (p.error) return { ok: false, kind: 'api', message: p.error.message };
+
+  // NOTHING BELOW `write()` IS A FAILURE, SO NOTHING ABOVE IT MAY BE ONE. The
+  // two checks here exist because `p.error` is not the only shape a non-answer
+  // arrives in, and this entry is now shared: one bad payload is pinned for the
+  // whole TTL and served to routes/venueSearch.js AND routes/crowd.js, for every
+  // caller, not just the one that fetched it.
+  //
+  //   * A NON-2xx STATUS. `response.ok` was never read here or in either former
+  //     call site, so a 5xx from Google's edge or an intermediary carrying any
+  //     JSON body that is not `{error:...}` — `{"message":"backend
+  //     unavailable"}` is the observed shape — passed both guards above and was
+  //     cached as a venue.
+  //   * NO PLACE ID. `id` is the first field of PLACE_DETAILS_FIELD_MASK and a
+  //     real Place Details answer always carries it, so a body without one is
+  //     not a place. This is the guard that matters for the MODEL: the crowd
+  //     card reads rating / userRatingCount / priceLevel off this object and
+  //     services/mlPredictor.js buildFeatureMap SUBSTITUTES THE CORPUS MEDIAN
+  //     for each missing one rather than throwing, so an empty `{}` cached here
+  //     does not fail — it scores every request for that venue as a 4.0-star,
+  //     mid-priced, zero-review venue at 0,0 for ten minutes and keeps
+  //     answering 200. That is the exact silent failure this whole module's
+  //     header is written around.
+  //
+  // NOT `p.id === placeId`: Google may answer with a place's CURRENT id when the
+  // one we asked for has been merged or superseded, and refusing that would turn
+  // a working venue into a permanent 502.
+  if (httpStatus && (httpStatus < 200 || httpStatus >= 300)) {
+    console.error(`[PlaceDetails] upstream HTTP ${httpStatus} with no error body`);
+    return { ok: false, kind: 'unreachable', message: `Places HTTP ${httpStatus}` };
+  }
+  if (typeof p.id !== 'string' || p.id === '') {
+    console.error('[PlaceDetails] upstream body carried no place id');
+    return { ok: false, kind: 'unreachable', message: 'Places response carried no place id' };
+  }
 
   // Cached only here, on the success path. A failure above returns without
   // writing, so the next request retries instead of being served a poisoned
@@ -282,8 +325,17 @@ function fetchPlaceDetails(placeId) {
   if (!flight) {
     flight = fetchOnce(placeId);
     detailsInflight.set(placeId, flight);
-    // Drain on settle. fetchOnce never rejects, so this cannot leak.
-    flight.then(() => detailsInflight.delete(placeId));
+    // Drain on settle — BOTH settlements. fetchOnce is written never to reject,
+    // and today it does not, but a one-armed `.then()` makes that comment the
+    // only thing standing between a future edit and a PERMANENT wedge: a
+    // rejected flight is never deleted, willCostUpstreamCall answers false for
+    // that place id forever, every later caller is handed the same rejected
+    // promise, and no request for that venue ever reaches Google or the ledger
+    // again for the life of the process. The second arm costs nothing and also
+    // marks the rejection handled, so it cannot surface as an unhandled
+    // rejection either.
+    const drain = () => { detailsInflight.delete(placeId); };
+    flight.then(drain, drain);
   }
   return flight;
 }
