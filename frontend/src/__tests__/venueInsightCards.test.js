@@ -207,14 +207,113 @@ describe('Roost: the week scrubber', () => {
     await screen.findByText('Week ahead');
     const group = screen.getByRole('group', { name: 'Pick a day' });
     const chip21 = within(group).getAllByRole('button').find((c) => c.textContent.includes('21'));
-    // Before selection the weather line exists once, in the Around-you card.
-    expect(screen.getAllByText(/light rain, around 74 F midday/).length).toBe(1);
+    // The scrubber owns dated context now, so Friday's weather is nowhere on
+    // screen until Friday is the selected day.
+    expect(screen.queryByText(/light rain, around 74 F midday/)).toBeNull();
     fireEvent.click(chip21);
     // The refusal is the day's honest content.
     expect(screen.getByText(/scored by category rules/)).toBeInTheDocument();
-    // And that day's known context joins it: the weather line now also
-    // renders inside the scrubber panel.
-    expect(screen.getAllByText(/light rain, around 74 F midday/).length).toBe(2);
+    // And that day's known context joins it, once.
+    expect(screen.getAllByText(/light rain, around 74 F midday/).length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ONE FACT, ONE PLACE ON THE SCREEN.
+//
+// Events and weather are dated, and three things used to join them by date at
+// once: the lead card, the week scrubber, and the standalone Around-you card
+// listing all seven days underneath both. One listed event printed twice on
+// one screen, word for word, and the lead card repeated the scrubber's forecast
+// sentence on top of that. The scrubber reaches every day the week card holds,
+// so it owns the dated lines and nothing below reprints them.
+// ---------------------------------------------------------------------------
+describe('Roost: nothing prints twice on one screen', () => {
+  test("the selected day's event appears once, not once per card", async () => {
+    mount();
+    await screen.findByText('Week ahead');
+    // Today is the lead card's day AND the scrubber's default day.
+    expect(screen.getAllByText(/a listed event about 0.4 km away/).length).toBe(1);
+    // The forecast sentence for that same day is printed once too.
+    expect(screen.getAllByText(peakFact(19, 21, 64).label).length).toBe(1);
+    // The scrubber says where those lines are rather than setting them out again.
+    expect(screen.getByText('Shown in the card above.')).toBeInTheDocument();
+  });
+
+  test('the scrubber fills normally on any day the lead card does not hold', async () => {
+    mount();
+    await screen.findByText('Week ahead');
+    const group = screen.getByRole('group', { name: 'Pick a day' });
+    fireEvent.click(within(group).getAllByRole('button').find((c) => c.textContent.includes('23')));
+    expect(screen.queryByText('Shown in the card above.')).toBeNull();
+    expect(screen.getByText(peakFact(23, 20, 52).label)).toBeInTheDocument();
+  });
+
+  test('the standalone Around-you card does not render when the scrubber reaches all of it', async () => {
+    mount();
+    await screen.findByText('Week ahead');
+    expect(screen.queryByText('Around you this week')).toBeNull();
+  });
+
+  test('context the scrubber cannot reach still renders under its own title', async () => {
+    const street = {
+      id: 'intake_anchor_types',
+      value: ['stadium_arena'],
+      source: 'intake',
+      asOf: 'owner-set 2026-08-18',
+      label: 'You told us you are next to a stadium or arena.',
+    };
+    const payload = {
+      ...PAYLOAD,
+      cards: PAYLOAD.cards.map((c) => (c.id === 'around_you' ? { ...c, facts: [...c.facts, street] } : c)),
+    };
+    mount({ fetchCards: () => Promise.resolve(payload) });
+    expect(await screen.findByText('Around you this week')).toBeInTheDocument();
+    expect(screen.getByText(street.label)).toBeInTheDocument();
+    // And the dated lines the scrubber owns are still not repeated here.
+    expect(screen.queryByText(/light rain, around 74 F midday/)).toBeNull();
+  });
+
+  test('with no scrubber to reach them, the dated lines keep their own card', async () => {
+    // Fewer than two forecastable days means no day chips, so the Around-you
+    // card is the only place these facts can render and it renders them.
+    const payload = {
+      ...PAYLOAD,
+      cards: PAYLOAD.cards.map((c) => (c.id === 'week_ahead' ? { ...c, facts: [peakFact(19, 21, 64)] } : c)),
+    };
+    mount({ fetchCards: () => Promise.resolve(payload) });
+    expect(await screen.findByText('Around you this week')).toBeInTheDocument();
+    expect(screen.getByText(/light rain, around 74 F midday/)).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A REFUSAL THAT NAMES A DESTINATION OFFERS THE DOOR TO IT.
+//
+// Three refusals say the missing value goes in venue settings. The Settings
+// tab is in the strip above this screen, which the owner has to already know
+// to act on the sentence. The affordance is one plain button, and it exists
+// only when the screen mounting this component handed it somewhere to go.
+// ---------------------------------------------------------------------------
+describe('Roost: the venue-settings affordance', () => {
+  test('a card whose refusal names venue settings offers one way to get there', async () => {
+    const calls = [];
+    mount({ onOpenSettings: () => calls.push(1) });
+    fireEvent.click(await screen.findByText('Open venue settings'));
+    expect(calls.length).toBe(1);
+  });
+
+  test('it appears on the card that asked, and nowhere else', async () => {
+    mount({ onOpenSettings: () => {} });
+    await screen.findByText('Week ahead');
+    // One card carries a settings refusal in this payload, so one door.
+    expect(screen.getAllByText('Open venue settings').length).toBe(1);
+  });
+
+  test('without a destination the card reads exactly as before', async () => {
+    mount();
+    await screen.findByText('Week ahead');
+    expect(screen.queryByText('Open venue settings')).toBeNull();
   });
 });
 

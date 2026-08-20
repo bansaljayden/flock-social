@@ -325,6 +325,44 @@ test('rule-engine days are refused, never dressed as the venue forecast', async 
   }
 });
 
+// ── 2b. A null result may not wear a fact's clothes ─────────────────────────
+//
+// The strongest-days band had a floor (85% of the best day) and no ceiling, so
+// a venue whose week is level cleared it on every day and the card published
+// all seven as "your Google profile's strongest days". That sentence is
+// unfalsifiable, it is identical to the one a venue with a real Friday spike
+// gets, and the agreement line under it then congratulated the owner for
+// matching a curve that matched everything.
+
+test('a flat curve says no day stands out, and the agreement line is not computed at all', async () => {
+  // Every day and hour the same baseline: there is no strongest day here.
+  handlers = [[/FROM ml_venue_baselines/, () => ({ rows: curveRows({ bases: {} }) })]];
+  const ctx = { profile: profileRow(), mlVenue: ML_VENUE };
+  const out = await advisorFacts.buildListingReadBack(ctx, [], { now: new Date('2026-08-20T18:00:00Z') });
+
+  const curve = out.find((f) => f.id === 'google_baseline_busy_days');
+  assert.ok(curve, 'the curve fact still renders: the null result IS the answer');
+  assert.match(curve.label, /^No day stands out in your Google curve\./);
+  assert.deepStrictEqual(curve.value.days, [], 'no day is named in the value either');
+  assert.strictEqual(out.find((f) => f.id === 'busy_days_agreement'), undefined,
+    'agreeing with a curve that agrees with every day is not a finding');
+  // The owner's own answer is still read back, attributed to them.
+  const belief = out.find((f) => f.id === 'intake_owner_busy_nights');
+  assert.ok(belief && belief.source === 'intake');
+});
+
+test('a curve with real peaks still names them and still checks the owner against them', async () => {
+  handlers = [[/FROM ml_venue_baselines/, () => ({ rows: curveRows() })]];
+  const ctx = { profile: profileRow(), mlVenue: ML_VENUE };
+  const out = await advisorFacts.buildListingReadBack(ctx, [], { now: new Date('2026-08-20T18:00:00Z') });
+
+  const curve = out.find((f) => f.id === 'google_baseline_busy_days');
+  assert.match(curve.label, /strongest days in the spring 2026 corpus: friday, thursday\.$/);
+  const agreement = out.find((f) => f.id === 'busy_days_agreement');
+  assert.ok(agreement, 'two strong days out of seven is a finding, and it is stated');
+  assert.deepStrictEqual(agreement.value.sharedDays, ['thursday']);
+});
+
 // ── 3. The hard refusal classes ──────────────────────────────────────────────
 
 test('causal whys, competitor comparisons, flock budgets and belief-as-measurement all refuse', () => {

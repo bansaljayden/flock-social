@@ -83,6 +83,12 @@ const CORPUS_AS_OF = '2026-05-18 (corpus frozen, collected spring 2026)';
 // on the returned nearest distance.
 const EVENT_RADIUS_KM = 1.0;
 
+// How many days may clear the 85% band before the band has told us nothing.
+// See the flat-curve note in buildListingReadBack: at six of seven there is no
+// strongest day to name, and naming them all is a null result dressed as a
+// finding.
+const FLAT_CURVE_MIN_DAYS = 6;
+
 // The anchor enum, in words an owner would recognise. venueIntake.js stores a
 // closed list because "arena" and "the stadium" and "Lincoln Financial Field"
 // are one fact and three strings (its own comment); reading 'stadium_arena'
@@ -506,6 +512,24 @@ function toDateStr(v) {
   return String(v).slice(0, 10);
 }
 
+// '2026-08-22' is a database value. An owner reading their own card sees
+// "Aug 22" everywhere else on it, so a raw ISO string dropped into the middle
+// of a sentence is the column name leaking into copy. Rendered in UTC, for the
+// same reason advisorPhrasing.shortAsOf is: these are calendar days, not
+// instants, and formatting one in the server's zone moved it back a day for
+// every host west of Greenwich. Anything that is not a plain ISO date renders
+// verbatim, so a phrase never gets squeezed into a precision it lacks.
+function shortDate(value) {
+  const s = String(value);
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return s;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  if (Number.isNaN(d.getTime())) return s;
+  const opts = { month: 'short', day: 'numeric', timeZone: 'UTC' };
+  if (d.getUTCFullYear() !== new Date().getUTCFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString('en-US', opts);
+}
+
 /** The venue-shaped object mlPredictor.predictBusyness scores from. */
 function venueForScoring(ctx, now = new Date()) {
   const m = ctx.mlVenue;
@@ -887,8 +911,8 @@ async function buildAroundYou(ctx, { now = new Date(), userId } = {}) {
         asOf: now.toISOString(),
         note: 'Context only. Weather is never offered as the explanation of a number.',
         label: temp != null
-          ? `${weekday} ${entry.date}: ${conditions || 'no conditions reported'}, around ${temp} F midday.`
-          : `${weekday} ${entry.date}: ${conditions || 'no conditions reported'}.`,
+          ? `${weekday} ${shortDate(entry.date)}: ${conditions || 'no conditions reported'}, around ${temp} F midday.`
+          : `${weekday} ${shortDate(entry.date)}: ${conditions || 'no conditions reported'}.`,
       }));
     }
   }
@@ -980,25 +1004,44 @@ async function buildListingReadBack(ctx, weekFacts, { now = new Date() } = {}) {
           .filter((r) => best > 0 && r.mean >= 0.85 * best)
           .sort((a, b) => b.mean - a.mean)
           .map((r) => WEEKDAY_NAMES[r.day].toLowerCase());
+        // A FLAT CURVE HAS NO STRONGEST DAY, AND MUST SAY SO.
+        //
+        // The 85% band had a floor and no ceiling, so a venue whose week is
+        // level cleared it on every day and the card published all seven as
+        // "your strongest days". That is a null result wearing a fact's
+        // clothes, which is the exact failure the rest of this module exists
+        // to prevent: it reads as a measurement, it is unfalsifiable, and it
+        // is the same sentence a venue with a real Friday spike gets.
+        //
+        // Six of seven is the ceiling because a week with one quiet day is
+        // still a week without a peak. Past it the honest answer is the null
+        // one, and the agreement fact is dropped entirely rather than
+        // computed: "you and your curve agree on Friday" is worthless when the
+        // curve agreed with every day the owner could possibly have named.
+        const flatCurve = curveDays.length >= FLAT_CURVE_MIN_DAYS;
         const curveFact = makeFact({
           id: 'google_baseline_busy_days',
-          value: { days: curveDays, window: 'the venue\'s own operating hours' },
+          value: { days: flatCurve ? [] : curveDays, window: 'the venue\'s own operating hours' },
           source: 'google_baseline',
           asOf: CORPUS_AS_OF,
-          label: `Your Google profile's strongest days in the spring 2026 corpus: ${curveDays.join(', ') || 'none stood out'}.`,
+          label: flatCurve
+            ? 'No day stands out in your Google curve. Every day of the week sits close to the strongest one, so we name none of them.'
+            : `Your Google profile's strongest days in the spring 2026 corpus: ${curveDays.join(', ') || 'none stood out'}.`,
         });
         out.push(curveFact);
-        const shared = ownerBusyDays.filter((n) => curveDays.includes(n));
-        out.push(makeFact({
-          id: 'busy_days_agreement',
-          value: { youSaid: ownerBusyDays, curveSays: curveDays, sharedDays: shared },
-          source: 'arithmetic',
-          from: [beliefFact.id, curveFact.id],
-          asOf: now.toISOString(),
-          label: shared.length
-            ? `You and your Google curve agree on ${shared.join(', ')}.`
-            : 'Your busy days and your Google curve\'s strongest days do not line up. Worth a look. We state both and stop there.',
-        }));
+        if (!flatCurve) {
+          const shared = ownerBusyDays.filter((n) => curveDays.includes(n));
+          out.push(makeFact({
+            id: 'busy_days_agreement',
+            value: { youSaid: ownerBusyDays, curveSays: curveDays, sharedDays: shared },
+            source: 'arithmetic',
+            from: [beliefFact.id, curveFact.id],
+            asOf: now.toISOString(),
+            label: shared.length
+              ? `You and your Google curve agree on ${shared.join(', ')}.`
+              : 'Your busy days and your Google curve\'s strongest days do not line up. Worth a look. We state both and stop there.',
+          }));
+        }
       }
     } else {
       out.push(makeRefusal({
@@ -1175,7 +1218,7 @@ async function buildReadingsVsServed(ctx) {
       value: { date, peakReading: Number(r.peak_reading), readings: Number(r.readings) },
       source: 'owner_report',
       asOf: date,
-      label: `Your highest reading on ${date} was ${Number(r.peak_reading)}, from ${Number(r.readings)} ${Number(r.readings) === 1 ? 'reading' : 'readings'}. Your own numbers, read back.`,
+      label: `Your highest reading on ${shortDate(date)} was ${Number(r.peak_reading)}, from ${Number(r.readings)} ${Number(r.readings) === 1 ? 'reading' : 'readings'}. Your own numbers, read back.`,
     }));
   }
   if (readings.rows.length === 0) {
@@ -1204,7 +1247,7 @@ async function buildReadingsVsServed(ctx) {
       source: 'served_prediction',
       asOf: date,
       note: 'What Flock served to people who looked at your venue, not a measurement of your room.',
-      label: `On ${date} Flock served ${Number(r.serves)} crowd ${Number(r.serves) === 1 ? 'estimate' : 'estimates'} for your venue, median ${r.median_score != null ? Number(r.median_score) : 'unavailable'} on the 0 to 100 index.`,
+      label: `On ${shortDate(date)} Flock served ${Number(r.serves)} crowd ${Number(r.serves) === 1 ? 'estimate' : 'estimates'} for your venue, median ${r.median_score != null ? Number(r.median_score) : 'unavailable'} on the 0 to 100 index.`,
     }));
   }
   if (served.rows.length === 0) {

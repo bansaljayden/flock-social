@@ -226,6 +226,59 @@ test('valve unit: digit-bearing fact ids are aliased away and object values flat
   }
 });
 
+// ── 1b. The template twin does not repeat itself ────────────────────────────
+//
+// "When do we peak this week" is seven facts that agree about everything except
+// a weekday and a number, and the twin printed the hedge and the provenance
+// chip on every one of them: seven near-identical paragraphs for one sentence
+// of information. The sourcing rule is kept by moving it, not by dropping it.
+
+const WEEK_BLOCK = () => ({
+  intent: 'week_ahead',
+  facts: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map((day, i) => ({
+    id: `peak_day_${i}`,
+    value: 21,
+    unit: 'hour',
+    source: 'model_holdout',
+    asOf: '2026-08-19T22:00:00Z',
+    label: `${day} projects busiest around 9 PM. This is an estimate, not a promise of foot traffic.`,
+  })),
+  refusals: [],
+});
+
+test('one source and one date across a whole answer prints one footer, not one per line', () => {
+  const out = advisorPhrasing.renderTemplate(WEEK_BLOCK());
+  const lines = out.text.split('\n');
+  assert.strictEqual(lines.length, 8, 'seven facts and one footer');
+  // The hedge and the chip appear once each, at the foot, under the facts
+  // they cover.
+  assert.strictEqual(out.text.match(/not a promise of foot traffic/g).length, 1);
+  assert.strictEqual(out.text.match(/as of Aug 19/g).length, 1);
+  assert.match(lines[7], /^This is an estimate, not a promise of foot traffic\. \(.*as of Aug 19\.\)$/);
+  // Every fact still says its own thing, in full.
+  assert.strictEqual(lines[0], 'Sunday projects busiest around 9 PM.');
+  assert.strictEqual(lines[6], 'Saturday projects busiest around 9 PM.');
+  // And the answer still carries a source per fact for the chip.
+  assert.strictEqual(out.sources.length, 7);
+});
+
+test('facts that disagree about their source keep their own chip on every line', () => {
+  // PEAK_BLOCK mixes a model estimate with the owner's own testimony. A single
+  // footer over those two would attribute one to the other.
+  const out = advisorPhrasing.renderTemplate(PEAK_BLOCK());
+  const lines = out.text.split('\n');
+  assert.strictEqual(lines.length, 2, 'no footer line was added');
+  assert.match(lines[0], /Model estimate, as of Aug 19\.\)$/);
+  assert.match(lines[1], /You told us.*\)$/);
+});
+
+test('a single fact is unchanged: nothing to hoist, nothing to collapse', () => {
+  const one = { intent: 'peak_hours', facts: [PEAK_BLOCK().facts[0]], refusals: [] };
+  const out = advisorPhrasing.renderTemplate(one);
+  assert.strictEqual(out.text.split('\n').length, 1);
+  assert.match(out.text, /An estimate, not a promise\. \(Model estimate, as of Aug 19\.\)$/);
+});
+
 // ── 2. Flag off (the default) ───────────────────────────────────────────────
 
 test('with ADVISOR_PHRASING_ENABLED unset the template twin serves and the model is never called', async () => {

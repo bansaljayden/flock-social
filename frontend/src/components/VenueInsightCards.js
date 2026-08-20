@@ -55,6 +55,11 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 //                   the new value and the readings card reflects it
 //                   instantly, labeled as the owner's own number.
 //   operatingHours  optional. venueProfile.operating_hours rows.
+//   onOpenSettings  optional. () => void. Wired by App.js to its own venue
+//                   Settings tab. Given one, cards whose refusals say "in
+//                   venue settings" grow the one affordance that gets there.
+//                   Without it they read exactly as before, so this file makes
+//                   no assumption about the screen it is mounted in.
 //   now             optional Date, for tests. Defaults to the wall clock.
 
 // The advisor surface's name, decided 2026-08-19. Title only; body copy stays
@@ -91,6 +96,17 @@ const SOURCE_LABELS = {
 const NOTE_SEEN_KEY = 'flock_advisor_refusal_note_seen';
 
 const isRefusal = (entry) => !!entry && entry.status === 'refused';
+
+// A refusal that says "add it in venue settings" and leaves the owner to find
+// venue settings is half an answer. The tab is one tap away in the strip above
+// this screen, and the line that just asked for the value is where the owner
+// is looking. So a card carrying any such refusal gets one plain affordance at
+// its foot. Matched on the server's own words rather than on a list of ids, so
+// a new prompt written in the same sentence gets the same door for free.
+const SETTINGS_PATH = /venue settings/i;
+const pointsAtSettings = (entries) => entries.some(
+  (e) => isRefusal(e) && SETTINGS_PATH.test(String(e.whatWouldUnlock || ''))
+);
 
 // Strict ISO only. Date.parse is lenient enough to read "spring 2026" as
 // January 1st, and the corpus asOf string ("2026-05-18 (corpus frozen,
@@ -282,7 +298,7 @@ const parseWeekDays = (entries) => {
   return days;
 };
 
-const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHours, now }) => {
+const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHours, onOpenSettings, now }) => {
   const navy = colors?.navy || 'var(--text-primary)';
   // 'loading' | 'ready' | 'locked' | 'error'
   const [state, setState] = useState('loading');
@@ -437,6 +453,14 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
   const heroWeather = aroundByDate.weather[heroDate] || null;
   const hasLive = !!liveReading && Number.isFinite(Number(liveReading.percent));
   const showHero = !!(heroDay || heroEvent || heroWeather || hasLive);
+  // The lead card and the scrubber default to the same day, so on first paint
+  // they printed the same forecast, the same listing and the same weather line
+  // twice, one card apart. The lead card is the one that leads, so when the
+  // selected day IS the day it already printed, the scrubber says where those
+  // lines are instead of setting them out again. Its own content (the closed
+  // note, the hourly bars) still renders, and tapping any other day fills the
+  // panel normally.
+  const heroPrintedDayRows = !!(heroDay || heroEvent || heroWeather);
 
   const liveRowEl = (first) => (
     <div style={{ padding: '8px 0', borderTop: first ? 'none' : '1px solid var(--border-light)' }}>
@@ -447,6 +471,28 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
     </div>
   );
 
+  // ── One fact, one place on the screen ─────────────────────────────────────
+  //
+  // Events and weather arrive dated, and two things on this screen join them
+  // by date: the lead card (for the day it leads with) and the week scrubber
+  // (for the day the owner has selected). The standalone Around-you card then
+  // printed all seven days again underneath, so a single listing appeared
+  // twice on one screen, word for word, and the lead card and the scrubber
+  // repeated each other on top of that. Density and repetition, which is the
+  // thing this product's copy rules exist to stop.
+  //
+  // The scrubber reaches every day the week-ahead card holds, so it owns the
+  // dated context and the card below drops it. What the scrubber cannot reach
+  // still renders there: the owner's street context, which belongs to no
+  // single day, and every refusal, which belongs to the card that explains
+  // what is missing. With nothing left to say, the card does not render at
+  // all rather than standing empty under its own title.
+  const scrubberReaches = !!byId.week_ahead && byId.week_ahead.status !== 'locked' && weekDays.length >= 2;
+  const weekDateSet = new Set(weekDays.map((d) => d.date));
+  const aroundEntries = (Array.isArray(byId.around_you?.facts) ? byId.around_you.facts : []).filter(
+    (e) => !(scrubberReaches && !isRefusal(e) && e.value && typeof e.value.date === 'string' && weekDateSet.has(e.value.date))
+  );
+
   // ── The selected scrubber day ─────────────────────────────────────────────
   const activeDay = weekDays.find((d) => d.date === activeDate) || null;
   const activeEvent = activeDate ? aroundByDate.events[activeDate] : null;
@@ -454,6 +500,7 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
   const activeDayClosed = windows.length > 0 && activeDate
     ? !windows.some((w) => w.days.has(dowOf(activeDate)))
     : false;
+  const heroCoversActiveDay = showHero && heroPrintedDayRows && activeDate === heroDate;
 
   // Today's hourly bars, narrowed to the venue's own listed hours (with an
   // hour of shoulder either side) when those hours parse. A strip cut below
@@ -500,6 +547,15 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
         {entries.map((e, i) => (
           <EntryRow key={e.id || i} entry={e} first={i === 0 && !extraFirstRow} navy={navy} />
         ))}
+        {typeof onOpenSettings === 'function' && pointsAtSettings(entries) && (
+          <button
+            className="hit44"
+            onClick={onOpenSettings}
+            style={{ marginTop: '10px', padding: '8px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}
+          >
+            Open venue settings
+          </button>
+        )}
       </>
     ));
   };
@@ -579,7 +635,9 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
                 );
               })}
             </div>
-            {activeDay && <EntryRow entry={activeDay.entry} first navy={navy} />}
+            {heroCoversActiveDay
+              ? <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>Shown in the card above.</p>
+              : activeDay && <EntryRow entry={activeDay.entry} first navy={navy} />}
             {activeDayClosed && (
               <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>Your listed hours say you're closed this day.</p>
             )}
@@ -599,14 +657,18 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
                 </p>
               </div>
             )}
-            {activeEvent && <EntryRow entry={activeEvent} navy={navy} />}
-            {activeWeather && <EntryRow entry={activeWeather} navy={navy} />}
+            {!heroCoversActiveDay && activeEvent && <EntryRow entry={activeEvent} navy={navy} />}
+            {!heroCoversActiveDay && activeWeather && <EntryRow entry={activeWeather} navy={navy} />}
           </>
         )))}
 
-      {/* AROUND YOU: the full 7 day list, the card that stays interesting at
-          zero users. */}
-      {byId.around_you && renderPlainCard(byId.around_you)}
+      {/* AROUND YOU: whatever the scrubber above could not reach. Its dated
+          events and weather belong to the day chips now, so what is left here
+          is the undated context and the refusals. Nothing left means no card,
+          rather than a title over an empty box. */}
+      {byId.around_you && (byId.around_you.status === 'locked' || aroundEntries.length > 0)
+        ? renderPlainCard({ ...byId.around_you, facts: aroundEntries })
+        : null}
 
       {/* YOUR LISTING, READ BACK: intake facts, arithmetic joins, and prompts
           for the blanks. */}
