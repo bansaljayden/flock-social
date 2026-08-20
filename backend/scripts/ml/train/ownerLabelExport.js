@@ -130,6 +130,15 @@ function ownerCandidateQuery(city, baselineAggregateSql) {
         c.nearest_event_distance_km AS ctx_nearest_event_distance_km,
         c.nearest_event_attendance  AS ctx_nearest_event_attendance,
         c.nearest_event_type        AS ctx_nearest_event_type
+      -- WEATHER AND EVENTS ONLY, and the omission is worth stating. 036 also
+      -- records what Flock itself was publishing when the slider moved
+      -- (served_score, served_prediction_id, served_prediction_method). No
+      -- column here reads them, so no serve value has ever reached training
+      -- through this query — and if one is ever added, it inherits 038's
+      -- filter rather than needing its own: services/ownerReportContext.js
+      -- only stores a serve the SERVER chose ('detail', matching venue-local
+      -- hour), never one POST /api/crowd/batch computed from a caller's own
+      -- rating and offset. Pinned by __tests__/ownerReportContext.test.js.
       FROM (SELECT * FROM venue_owner_reports
              WHERE retracted = false AND diverged = false) r
       JOIN venue_profiles vp   ON vp.google_place_id = r.google_place_id AND vp.verified = true
