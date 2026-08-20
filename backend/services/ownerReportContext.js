@@ -14,8 +14,9 @@
 //   * The route calls captureOwnerReportContext fire-and-forget, no await.
 //   * The entire body is inside one catch; the returned promise NEVER rejects.
 //   * Every source degrades independently to NULL columns: a weather outage,
-//     a venue outside ml_venues, a missing serve record — each is a quiet log
-//     line and a NULL, never a lost report and never a lost capture of the
+//     a venue outside ml_venues, a missing serve record, or a serve record
+//     this module refuses to trust (see SERVED_LOOKUP_SQL) — each is a quiet
+//     log line and a NULL, never a lost report and never a lost capture of the
 //     OTHER sources.
 //   * Idempotent per report id, twice over: an existing row is detected before
 //     any upstream spend, and the INSERT is ON CONFLICT DO NOTHING so two
@@ -27,7 +28,10 @@
 // mlPredictor's getNearbyEvents — same Ticketmaster cache, coalescing and
 // budget as the serve path. The served prediction is a single indexed read of
 // served_predictions (032): READ, never recomputed, because recomputing would
-// record what the model WOULD say now, not what users actually saw.
+// record what the model WOULD say now, not what users actually saw — and
+// restricted to serves the SERVER chose rather than merely recorded (038),
+// because "what Flock was publishing" must not be answerable by whoever last
+// posted a vote list.
 //
 // mlPredictor exports getNearbyEvents under _internals today; resolveEvents
 // tolerates either home so a later promotion to the public surface is a
@@ -40,6 +44,64 @@ const weatherService = require('./weatherService');
 // seeing". 12 hours matches the feedback route's serve-join window (032):
 // both are answering "what was on screen around this assertion".
 const SERVE_JOIN_WINDOW_HOURS = 12;
+
+// ---------------------------------------------------------------------------
+// WHAT FLOCK WAS PUBLISHING, AND WHY IT IS NOT SIMPLY "THE NEWEST ROW"
+// (migration 038).
+//
+// This read is the one place a number the SERVER computed gets written onto a
+// training label's context, so it inherits 038's problem whole. POST
+// /api/crowd/batch scores venues out of a client-assembled body — rating,
+// review count, utcOffsetMinutes — and records the result in
+// served_predictions like any other serve. Newest-row-wins therefore let
+// anyone with an account decide what this table says Flock was publishing at
+// a venue: score the bar at rating 1.0 and a 4am offset, and the ~5 that
+// produces becomes served_score on the next owner reading filed there, for
+// any venue, without ever touching that venue's account.
+//
+// routes/feedback.js refuses those rows for provenance. The same allowlist
+// applies here, and the argument for it is stronger rather than weaker: the
+// author of the surrounding row is the venue owner, so the threat model
+// differs — but the poisoned VALUE is identical, and it lands in a training
+// corpus rather than in a sentence somebody reads once.
+//
+//   source = 'detail'   the detail card, scored on the VENUE's own clock. The
+//                       only value routes/feedback.js trusts, and the only one
+//                       trusted here. NULL (every row written before 038),
+//                       'batch' and 'detail_client_clock' all fall outside it
+//                       by construction: NULL = 'detail' is NULL, never true.
+//
+//   the clock must match — the question this column answers is "what was on
+//                       screen WHEN the owner said X%", and a serve computed
+//                       for a different venue-local hour did not answer it.
+//                       The check fits this reader's shape exactly: the venue
+//                       clock is already resolved here for day_of_week/hour,
+//                       and is now resolved BEFORE this read so both use it.
+//
+// NO QUALIFYING SERVE MEANS NULLS, never a fallback to an untrusted row. Every
+// column in this table is nullable by design (migration 036: "NULL means not
+// observed, never 0"), so refusing is a first-class answer here in a way it is
+// not on most surfaces. That includes the case where the venue's own clock is
+// unavailable — outside ml_venues, or a timezone Intl cannot parse — because
+// without it there is nothing to check the pairing against, and a served_score
+// nobody can tie to an hour is exactly the unverifiable figure 032 existed to
+// stop recording.
+//
+// ALLOWLIST, NOT BLOCKLIST, and __tests__/ownerReportContext.test.js asserts
+// the source text says so: `source <> 'batch'` would re-open this the day a
+// fourth write path is added, and would let the pre-038 NULL rows through in
+// the meantime.
+// ---------------------------------------------------------------------------
+const SERVED_LOOKUP_SQL = `
+  SELECT id, score, prediction_method, model_version, served_at
+    FROM served_predictions
+   WHERE venue_place_id = $1
+     AND served_at > NOW() - INTERVAL '${SERVE_JOIN_WINDOW_HOURS} hours'
+     AND source = 'detail'
+     AND local_day = $2
+     AND local_hour = $3
+   ORDER BY served_at DESC
+   LIMIT 1`;
 
 const DOW = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
@@ -152,25 +214,28 @@ async function captureOwnerReportContext(reportId, { placeId, userId, now, deps 
       ]);
     }
 
-    // The last number Flock actually published for this venue. Read from the
-    // serve log (032), never recomputed.
-    let served = null;
-    try {
-      const { rows } = await pool.query(
-        `SELECT id, score, prediction_method, model_version, served_at
-           FROM served_predictions
-          WHERE venue_place_id = $1
-            AND served_at > NOW() - INTERVAL '${SERVE_JOIN_WINDOW_HOURS} hours'
-          ORDER BY served_at DESC
-          LIMIT 1`,
-        [placeId]
-      );
-      served = rows[0] || null;
-    } catch (err) {
-      quiet('served prediction', err);
-    }
-
+    // The venue's own clock, resolved BEFORE the serve read rather than after
+    // it: the clock is both a stored column and the thing the serve now has to
+    // agree with.
     const clock = venue?.timezone ? localClock(at, venue.timezone) : null;
+
+    // The last number Flock actually published for this venue AT THIS HOUR.
+    // Read from the serve log (032), never recomputed, and filtered by 038's
+    // provenance allowlist so a score a caller engineered through POST
+    // /api/crowd/batch cannot become this label's context. See the long note
+    // on SERVED_LOOKUP_SQL.
+    //
+    // No clock, no lookup: there is nothing to match against, and the newest
+    // row would be exactly the unverifiable figure the filter exists to refuse.
+    let served = null;
+    if (clock) {
+      try {
+        const { rows } = await pool.query(SERVED_LOOKUP_SQL, [placeId, clock.dayOfWeek, clock.hour]);
+        served = rows[0] || null;
+      } catch (err) {
+        quiet('served prediction', err);
+      }
+    }
 
     await pool.query(INSERT_CONTEXT_SQL, [
       reportId,
@@ -213,4 +278,5 @@ module.exports = {
   localClock,
   SERVE_JOIN_WINDOW_HOURS,
   INSERT_CONTEXT_SQL,
+  SERVED_LOOKUP_SQL,
 };
