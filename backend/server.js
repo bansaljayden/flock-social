@@ -600,9 +600,14 @@ const JSON_STRING_BYTES_PER_CHAR = 4;
 //     guest RSVP/vote, moderation blocks, safety contacts/alert/share-location,
 //     sensors, users venmo/payment-methods/profile-image, venues vote,
 //     venue-dashboard promotions/events, waitlist, admin — is under 2KB.
-//   * POST /api/venue/advisor/ask — the only body on the advisor surface: one
-//     `intentId` string matched against a closed registry; any other key is a
-//     400 before a value is read. Bytes on the wire: well under 1KB.
+//   * POST /api/venue/advisor/ask — one `intentId` string matched against a
+//     closed registry; any other key is a 400 before a value is read. Bytes on
+//     the wire: well under 1KB.
+//   * POST /api/venue/advisor/question — the one advisor body carrying the
+//     owner's own words. One `question` key, rejected unless it is a string,
+//     and rejected before sanitising if it is longer than 280 characters
+//     (services/advisorFreeText.js FREE_TEXT_MAX_CHARS). The parser's ceiling
+//     is therefore never the binding limit here; the router's own is.
 //   * routes/venueDigest.js — no body it reads: the unsubscribe link is a GET
 //     that renders and a POST that writes, and BOTH take the token from the
 //     query string, capped at 2048 chars by the router's own validator. The
@@ -1046,6 +1051,30 @@ const advisorLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
   message: { error: 'Too many advisor requests, please slow down' },
 });
 
+// Typed questions (POST /api/venue/advisor/question), which are the one advisor
+// path the CALLER shapes. The limiter above is a burst brake sized for a
+// dashboard open plus a run of chips, and a minute window is the wrong shape
+// for this: twenty a minute is twelve hundred an hour, and every one of them is
+// at least two model calls over a prompt carrying the owner's own words.
+//
+// An HOUR window, and a small number in it, because a question is a thought and
+// nobody has ten of those a minute. Ten an hour leaves an owner room to work
+// through a real problem in one sitting and leaves a script nowhere to go. It
+// sits UNDER the per-venue daily cap in migration 039 rather than replacing it:
+// this one is per process and defeated by a restart, the daily one is in
+// Postgres and is not, and the pair is the same brake-and-cap division
+// services/birdieUsage.js documents.
+//
+// Keyed on the account, like every other authenticated meter here.
+const advisorQuestionLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 10,
+  keyGenerator: billedAccountKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'That is a lot of questions in one hour. Give it a little while and ask again.' },
+});
+
 // The venue owner's own surfaces. These landed on the general 3000/15min
 // limiter, which is an ADDRESS meter sized for a consumer app's chat and feed
 // traffic; the routes underneath it are analytics.
@@ -1135,6 +1164,7 @@ app.use('/api/notifications', apiLimiter, notificationRoutes); // Handles /api/n
 app.use('/api/admin', apiLimiter, adminRoutes);               // Handles /api/admin/* (admin only)
 app.use('/api/venue-profile', venueProfileLimiter, venueProfileRoutes); // Handles /api/venue-profile (venue owners)
 app.use('/api/venue-dashboard', venueDashboardLimiter, venueDashboardRoutes); // Handles promotions, events, reviews CRUD
+app.use('/api/venue/advisor/question', advisorQuestionLimiter);  // free text, tighter: 10/hour per account
 app.use('/api/venue/advisor', advisorLimiter, advisorRoutes);  // Roost: fact cards + chip chat (own limiter, see above)
 app.use('/api/venue-digest', digestOptOutLimiter, require('./routes/venueDigest')); // Monday digest unsubscribe link (signed token, no JWT)
 app.use('/api/availability', apiLimiter, availabilityRoutes); // 3-tap status pulse: down / maybe / not

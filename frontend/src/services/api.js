@@ -610,18 +610,32 @@ export async function getVenueAdvisorCards() {
 }
 
 // Roost, the venue advisor's chat surface (components/VenueAdvisorChat.js).
-// Chips only, by contract: /questions serves the grouped list of everything
-// the server will accept, and /ask takes exactly one of those intent ids.
-// There is no free-text parameter and the server 400s anything beyond
-// { intentId }, so do not add one here.
+// /questions serves the four suggested chips this venue's data can answer, the
+// rest grouped behind a disclosure, and whether the typed-question field is on.
 export async function getAdvisorQuestions() {
   return request('/api/venue/advisor/questions');
 }
 
+// The chip path. Exactly one intent id from the registry, and nothing else:
+// the server 400s any other key on this endpoint BY SHAPE, which is the
+// guarantee that a chip answer is never reachable by typing. Do not add a
+// free-text parameter here; free text has its own door below.
 export async function askAdvisor(intentId) {
   return request('/api/venue/advisor/ask', {
     method: 'POST',
     body: JSON.stringify({ intentId }),
+  });
+}
+
+// The typed path. One question, answered as exactly one of three things, and
+// the response says which: a grounded answer built from this venue's facts, a
+// labeled piece of general operating advice, or a refusal naming what is
+// missing. Behind ADVISOR_FREETEXT_ENABLED on the server, which is why the
+// component asks /questions whether to render the field at all.
+export async function askAdvisorQuestion(question) {
+  return request('/api/venue/advisor/question', {
+    method: 'POST',
+    body: JSON.stringify({ question }),
   });
 }
 

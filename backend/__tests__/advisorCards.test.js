@@ -369,7 +369,7 @@ test('strip orderings inside the minimum gap refuse; a clear gap yields a fact',
 
 // ── 4. The four cards compose, in the route's exact shape ────────────────────
 
-test('GET /cards returns the four MVP cards, in order, in the pinned shape', async () => {
+test('GET /cards leads with the verdict, then the four MVP cards, in the pinned shape', async () => {
   scriptHappyPath();
   eventAnswer = (n) => (n === 5
     ? { hasEvent: true, nearestDistance: 0.62, nearestName: 'Arena Show', nearestType: 'concert', nearestAttendance: 4000 }
@@ -378,8 +378,17 @@ test('GET /cards returns the four MVP cards, in order, in the pinned shape', asy
   const { status, body } = await getCards();
   assert.strictEqual(status, 200);
   assert.strictEqual(body.available, true);
+  // Card order is a product decision, pinned here. The verdict is FIRST:
+  // "how did we just do" is the question operators actually open a tool to ask
+  // (Toast prompt telemetry, 125,000+ locations; explicit forecasting was one
+  // percent, the least asked category measured), and everything under it is a
+  // forecast or a read-back.
+  // The cohort card sits last because it is the only one that can be empty for
+  // a reason nothing on the owner's side fixes: it needs five OTHER venues
+  // reporting before its same-night half says anything (services/
+  // advisorCohort.js). Its typicals half answers from the frozen corpus today.
   assert.deepStrictEqual(body.cards.map((c) => c.id),
-    ['week_ahead', 'around_you', 'listing_read_back', 'readings_vs_estimates']);
+    ['last_night_verdict', 'week_ahead', 'around_you', 'listing_read_back', 'readings_vs_estimates', 'cohort']);
   for (const card of body.cards) {
     assert.ok(typeof card.title === 'string' && card.title.length > 0);
     assert.ok(Array.isArray(card.facts));
@@ -394,7 +403,12 @@ test('GET /cards returns the four MVP cards, in order, in the pinned shape', asy
     }
   }
 
-  const [week, around, listing, readings] = body.cards;
+  const [verdict, week, around, listing, readings] = body.cards;
+  // No reading for the venue's yesterday in this fixture, so the verdict card
+  // is the refusal screen, and the refusal names the one tap that fixes it.
+  assert.strictEqual(verdict.status, 'refused');
+  assert.ok(verdict.facts.every((f) => f.status === 'refused'));
+  assert.match(verdict.facts[0].whatWouldUnlock, /busy slider/);
   assert.strictEqual(week.status, 'ok');
   assert.strictEqual(week.facts.filter((f) => f.predictionMethod === 'ml').length, 7);
 
@@ -447,7 +461,18 @@ test('the modal case: an absent-corpus venue gets refusal cards that name the mi
   });
   const { status, body } = await getCards();
   assert.strictEqual(status, 200);
-  assert.strictEqual(body.cards.length, 4, 'the refusal screen is the main screen, all four cards render');
+  assert.strictEqual(body.cards.length, 6, 'the refusal screen is the main screen, every card renders');
+  // The cohort card refuses twice over for this venue and both refusals carry
+  // a path: no row on the measured map means no city and category group to
+  // place it in, and the corpus gate answers the typicals half.
+  const cohort = body.cards.find((c) => c.id === 'cohort');
+  assert.strictEqual(cohort.status, 'refused');
+  assert.ok(cohort.facts.every((f) => f.status === 'refused' && f.whatWouldUnlock.length > 0));
+  // The verdict card is the one card an absent-corpus venue can still fill in:
+  // it reads no baseline curve and no model, only the venue's own readings.
+  const verdict = body.cards.find((c) => c.id === 'last_night_verdict');
+  assert.strictEqual(verdict.status, 'refused', 'no reading yesterday, so no verdict');
+  assert.ok(verdict.facts[0].reason.length > 0 && verdict.facts[0].whatWouldUnlock.length > 0);
   const week = body.cards.find((c) => c.id === 'week_ahead');
   assert.strictEqual(week.status, 'refused');
   assert.strictEqual(week.facts.length, 1);
@@ -492,7 +517,7 @@ test('billing on: premium sees around_you built and the three pro cards locked',
   const { status, body } = await getCards();
   assert.strictEqual(status, 200);
   const byId = Object.fromEntries(body.cards.map((c) => [c.id, c]));
-  for (const id of ['week_ahead', 'listing_read_back', 'readings_vs_estimates']) {
+  for (const id of ['last_night_verdict', 'week_ahead', 'listing_read_back', 'readings_vs_estimates']) {
     assert.strictEqual(byId[id].status, 'locked', id);
     assert.strictEqual(byId[id].requiredTier, 'pro', id);
     assert.deepStrictEqual(byId[id].facts, [], 'a locked card leaks no facts');
@@ -537,14 +562,16 @@ const factsSrc = fs.readFileSync(path.join(__dirname, '..', 'services', 'advisor
 const routeSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'advisor.js'), 'utf8');
 
 test('the fact engine has no write path, and the cards surface is GET', () => {
-  // POST /ask (the chip endpoint, a parallel build in this file) takes a
-  // closed intent id and writes nothing to product tables; everything else
-  // must be GET. Mutating verbs would make the advisor a surface that can
-  // act, which is a different product.
+  // Two POSTs, and both of them only read. /ask takes a closed intent id;
+  // /question takes one typed question and answers it from the same fact
+  // engine. Neither writes to a product table, and everything else must be
+  // GET. Mutating verbs would make the advisor a surface that can act, which
+  // is a different and unapproved product.
   assert.ok(!/router\.(put|patch|delete)\(/.test(routeSrc),
     'routes/advisor.js declares a mutating route');
   const posts = [...routeSrc.matchAll(/router\.post\('([^']+)'/g)].map((m) => m[1]);
-  assert.deepStrictEqual(posts, ['/ask'], 'the only POST on the advisor is the chip endpoint');
+  assert.deepStrictEqual(posts.sort(), ['/ask', '/question'],
+    'the advisor POSTs are the chip endpoint and the typed one, and nothing else');
   assert.ok(!/\b(INSERT|UPDATE|DELETE)\b/.test(factsSrc.replace(/\/\/[^\n]*/g, '')),
     'services/advisorFacts.js issues a write');
 });
