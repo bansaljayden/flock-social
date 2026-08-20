@@ -15001,6 +15001,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       const d = await updateVenueBusyNow(Math.round(venueBusyDraft));
       setVenueBusyNow(d);
       setVenueBusyDraft(null);
+      showToast('Live. Users see your number now.');
     } catch (e) {
       showToast(e?.message || "That didn't save. Try again.", 'error');
     } finally {
@@ -15015,6 +15016,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       const d = await getVenueBusyNow().catch(() => ({ ...venueBusyNow, live: null }));
       setVenueBusyNow(d);
       setVenueBusyDraft(null);
+      showToast('Cleared. Users see the forecast again.');
     } catch (e) {
       showToast(e?.message || "Couldn't clear it. It expires on its own.", 'error');
     } finally {
@@ -15836,40 +15838,72 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               reports outrank it. All three rules are server-enforced. */}
           {venueTab === 'analytics' && venueBusyNow?.available && (() => {
             const live = venueBusyNow.live;
+            const ttl = venueBusyNow.ttlMinutes || 90;
             const expiresMin = live ? Math.max(0, Math.round((Date.parse(live.expiresAt) - Date.now()) / 60000)) : null;
             const sliderValue = venueBusyDraft != null ? venueBusyDraft : (live ? live.percent : 50);
+            // What the number is labeled as on user surfaces, computed
+            // server-side (utils/venueLabel.js) from the venue's category and
+            // shipped on this payload. Never hardcode the words here:
+            // venueLabel.test.js greps this file for the old literal, and the
+            // fallback below is the one phrase that is true of any venue.
+            const saysLabel = venueBusyNow.attribution || 'the venue says';
             return (
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How full are you right now?</h3>
                 {venueBusyNow.suppressed ? (
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: 1.5 }}>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
                     Your live numbers are paused. Recent readings disagreed with what people in the room reported, so users see the forecast for now. This lifts on its own.
                   </p>
                 ) : live ? (
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>
-                    Users see <span style={{ fontWeight: '600', color: colors.navy }}>{live.percent}% full</span>, labeled as your number. Expires in {expiresMin} min.
-                  </p>
+                  <div>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                      <span style={{ fontWeight: '700', color: colors.steel }}>Live</span>
+                      {' · users see '}
+                      <span style={{ fontWeight: '600', color: colors.navy }}>{live.percent}% full</span>
+                      {`, labeled as your number · ${expiresMin} min left`}
+                    </p>
+                    {/* Remaining time as a bar: state, not ornament. It only
+                        depletes when the card re-renders, same clock as the
+                        "min left" text beside it. No animation of its own. */}
+                    <div aria-hidden style={{ height: '3px', borderRadius: '2px', backgroundColor: 'var(--border-light)', marginTop: '6px', overflow: 'hidden' }}>
+                      <div style={{ height: '100%', borderRadius: '2px', backgroundColor: colors.steel, width: `${Math.max(0, Math.min(100, (expiresMin / ttl) * 100))}%` }} />
+                    </div>
+                  </div>
                 ) : (
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>
-                    Set it and users see your number instead of the forecast, labeled as yours. It expires after {venueBusyNow.ttlMinutes} minutes so you never have to remember to turn it off.
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                    Set it and users see your number instead of the forecast, labeled as yours. It expires after {ttl} minutes so you never have to remember to turn it off.
                   </p>
                 )}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                <div style={{ margin: '10px 0' }}>
+                  <div style={{ display: 'flex', alignItems: 'baseline', marginBottom: '2px' }}>
+                    {/* Hanken's digits are natively monospaced (index.css header
+                        note), so this readout does not jitter while the thumb
+                        drags. Never Fraunces here: no tnum. */}
+                    <span style={{ fontSize: '34px', fontWeight: '600', lineHeight: 1.1, color: colors.navy, fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.5px' }}>{sliderValue}</span>
+                    <span style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-secondary)', marginLeft: '2px' }}>%</span>
+                    {live && venueBusyDraft != null && venueBusyDraft !== live.percent && (
+                      <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', marginLeft: 'auto' }}>live now: {live.percent}%</span>
+                    )}
+                  </div>
                   <input
                     type="range" min="0" max="100" step="1"
+                    className="busy-range"
                     aria-label="How full is your venue right now, 0 to 100 percent"
                     value={sliderValue}
                     onChange={(e) => setVenueBusyDraft(Number(e.target.value))}
                     disabled={venueBusySaving}
-                    style={{ flex: 1, accentColor: colors.navy }}
+                    style={{ '--busy-fill': `${sliderValue}%` }}
                   />
-                  <span style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, width: '44px', textAlign: 'right' }}>{sliderValue}%</span>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)' }}>Empty</span>
+                    <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)' }}>Packed</span>
+                  </div>
                 </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button className="hit44"
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <button className="hit44 glass-btn glass-navy"
                     onClick={handleSetBusyNow}
                     disabled={venueBusySaving || venueBusyDraft == null}
-                    style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: (venueBusySaving || venueBusyDraft == null) ? 'default' : 'pointer', opacity: (venueBusySaving || venueBusyDraft == null) ? 0.5 : 1 }}
+                    style={{ flex: 1, padding: '12px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)' }}
                   >
                     {venueBusySaving ? 'Saving...' : live ? 'Update live number' : 'Set live number'}
                   </button>
@@ -15877,14 +15911,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <button className="hit44"
                       onClick={handleClearBusyNow}
                       disabled={venueBusySaving}
-                      style={{ padding: '10px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: venueBusySaving ? 'default' : 'pointer' }}
+                      style={{ padding: '12px 10px', borderRadius: '10px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-label)', cursor: venueBusySaving ? 'default' : 'pointer', opacity: venueBusySaving ? 0.5 : 1 }}
                     >
                       Clear
                     </button>
                   )}
                 </div>
-                <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '8px 0 0', lineHeight: 1.5 }}>
-                  Free on every plan. Shown to users as "the bar says". Reports from people at your venue outrank it.
+                <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '10px 0 0', paddingTop: '8px', borderTop: '1px solid var(--border-light)', lineHeight: 1.5 }}>
+                  Free on every plan. Shown to users as "{saysLabel}". Reports from people at your venue outrank it.
                 </p>
               </div>
             );

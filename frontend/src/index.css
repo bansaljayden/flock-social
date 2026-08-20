@@ -730,3 +730,83 @@ button:active, [role="button"]:active {
 .shimmer-text {
   color: inherit;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   OWNER BUSY SLIDER (.busy-range) — the venue dashboard's "How full are
+   you right now?" control. A bare <input type="range"> paints the
+   platform's default 4px track and mini thumb, which reads as unstyled
+   next to the glass buttons under it. This redraws it in the card's own
+   language: hairline track, ink fill up to the thumb, a thumb big
+   enough to look grabbable, and a 44px-tall hit box around all of it.
+
+   The two-stop hard gradient on the WebKit track is the FILL — state,
+   not decoration (SLOP-AUDIT A1/A9 ban decorative color washes, not a
+   progress fill; the two stops sit at the same position, so nothing
+   blends). The fill percentage arrives from React as the inline custom
+   property --busy-fill because WebKit has no ::-moz-range-progress
+   equivalent. Fill color is var(--text-primary), the same ink as the
+   big % readout above the control (navy in light, cream in dark), so
+   the number and the slider read as one object.
+
+   The font-floor :not() chain further up already excludes range inputs,
+   so nothing here fights it. */
+.busy-range {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 44px;         /* Apple HIG touch target; the track paints 8px */
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.busy-range:disabled { cursor: default; opacity: 0.5; }
+.busy-range:focus-visible { outline: none; }
+
+/* WebKit — the Capacitor WebView and every browser this app ships in. */
+.busy-range::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(to right,
+    var(--text-primary) var(--busy-fill, 50%),
+    var(--border-default) var(--busy-fill, 50%));
+}
+.busy-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  box-sizing: border-box;
+  width: 26px;
+  height: 26px;
+  margin-top: -9px;     /* (26 - 8) / 2, centers the thumb on the track */
+  border-radius: 50%;
+  background: var(--bg-card-solid);
+  border: 2px solid var(--text-primary);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.25);
+  transition: transform 0.12s ease;
+}
+.busy-range:active:not(:disabled)::-webkit-slider-thumb { transform: scale(1.1); }
+.busy-range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px rgba(45, 90, 135, 0.25), 0 1px 3px rgba(15, 23, 42, 0.25);
+}
+[data-theme="dark"] .busy-range:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 4px rgba(109, 154, 195, 0.30), 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+
+/* Firefox draws the fill natively via ::-moz-range-progress. */
+.busy-range::-moz-range-track { height: 8px; border-radius: 4px; background: var(--border-default); }
+.busy-range::-moz-range-progress { height: 8px; border-radius: 4px; background: var(--text-primary); }
+.busy-range::-moz-range-thumb {
+  box-sizing: border-box;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--bg-card-solid);
+  border: 2px solid var(--text-primary);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.25);
+}
+.busy-range:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 4px rgba(45, 90, 135, 0.25), 0 1px 3px rgba(15, 23, 42, 0.25);
+}
+[data-theme="dark"] .busy-range:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 4px rgba(109, 154, 195, 0.30), 0 1px 3px rgba(0, 0, 0, 0.35);
+}
