@@ -37,8 +37,12 @@ function reset() {
     qualifyingFlock: false,  // accepted membership in a >=2-person, non-cancelled flock here
     timezone: null,          // ml_venues.timezone for the place id
     tzQueryFails: false,     // the timezone lookup errors out
-    servedScore: null,       // served_predictions row for (user, venue), if any
-    servedId: 4001,          // that row's id (the append-only log's join key)
+    // served_predictions rows for (user, venue), NEWEST FIRST. Real rows, not
+    // a score: migration 038 gave the log a `source` and a venue-local clock,
+    // and the route's WHERE clause is the thing under test, so the fake has to
+    // filter the way Postgres would rather than hand back whatever it is
+    // holding. Build them with servedRow() below.
+    servedRows: [],
     servedQueryFails: false, // the served-prediction lookup errors out
     aggregate: null,         // row returned by the GET overall query
     byDay: [],
@@ -73,7 +77,17 @@ function dispatch(sql, params) {
   }
   if (/FROM served_predictions/i.test(text)) {
     if (state.servedQueryFails) return Promise.reject(new Error('relation "served_predictions" does not exist'));
-    return Promise.resolve({ rows: state.servedScore != null ? [{ id: state.servedId, score: state.servedScore }] : [] });
+    // The four clauses the route ships, applied for real. `source = 'detail'`
+    // is an allowlist, so a NULL source (every row written before 038) drops
+    // out here exactly as `NULL = 'detail'` does in Postgres, and so does
+    // 'batch'. The clock equality is the other half: a serve is only a
+    // denominator for a report about the same venue-local hour.
+    const [, , day, hour] = params;
+    const qualifying = state.servedRows.filter((r) => (
+      r.source === 'detail' && r.local_day === day && r.local_hour === hour
+    ));
+    // servedRows is newest-first, so element 0 IS `ORDER BY served_at DESC`.
+    return Promise.resolve({ rows: qualifying.length ? [{ id: qualifying[0].id, score: qualifying[0].score }] : [] });
   }
   if (/FROM venue_checkins/i.test(text) && /flock_members fm/i.test(text)) {
     return Promise.resolve({ rows: [{ verified: state.signedNfcCheckin || state.qualifyingFlock }] });
@@ -161,6 +175,25 @@ const base_payload = () => ({
   venue_place_id: PLACE,
   venue_name: 'The Vault',
   crowd_level: 2,
+});
+
+// The venue-local clock these provenance cases are pinned to. ml_venues has no
+// timezone for PLACE in this fixture, so the route falls through to the body's
+// local_day/local_hour — which makes the clock a FIXTURE rather than whatever
+// hour the suite happens to run at, and stops a test that straddles an hour
+// boundary from failing for a reason that has nothing to do with the rule.
+const CLOCK = { day: 5, hour: 20 }; // Friday, 8pm
+const clocked_payload = () => ({ ...base_payload(), local_day: CLOCK.day, local_hour: CLOCK.hour });
+
+// One row of the serve log. Defaults to the row that SHOULD win: the detail
+// card, scored on the venue's own clock, at the hour being reported on.
+const servedRow = (o = {}) => ({
+  id: 4001,
+  score: 40,
+  source: 'detail',
+  local_day: CLOCK.day,
+  local_hour: CLOCK.hour,
+  ...o,
 });
 
 // ── The nulls the shipping client actually sends ────────────────────────────
@@ -512,17 +545,24 @@ test('a malformed place id on the aggregate is a 400 and never reaches SQL', asy
   assert.equal(queries.length, 0);
 });
 
-// ── predicted_score provenance (migration 032) ──────────────────────────────
+// ── predicted_score provenance (migrations 032 and 038) ─────────────────────
 // The denominator of every calibration feature used to be whatever the client
 // asserted. routes/crowd.js now records every score it publishes in
-// served_predictions, and this route prefers its own record: a served row for
-// (user, venue) in the last 12 hours wins outright, the client's claim is kept
-// verbatim beside it, and predicted_score_source says which one the
-// calibration layer is looking at.
+// served_predictions, and this route prefers its own record: a QUALIFYING
+// served row for (user, venue) in the last 12 hours wins outright, the
+// client's claim is kept verbatim beside it, and predicted_score_source says
+// which one the calibration layer is looking at.
+//
+// "Qualifying" is migration 038 and it is the substance of these cases. 032
+// trusted the row because the SERVER wrote it, which is not the same claim as
+// the server CHOOSING it: POST /api/crowd/batch scores venues out of a
+// client-assembled body, so a caller could pick the inputs, have the server
+// publish and record the score they engineered, and then report the opposite
+// here — a forged (prediction, reality) pair carrying 'server' provenance into
+// the live calibration blend and the training export.
 test('a served prediction overrides the client claim, and the row says so', async () => {
-  state.servedScore = 40;
-  state.servedId = 4711;
-  const r = await call('POST', '/api/feedback', { ...base_payload(), predicted_score: 95 });
+  state.servedRows = [servedRow({ score: 40, id: 4711 })];
+  const r = await call('POST', '/api/feedback', { ...clocked_payload(), predicted_score: 95 });
   assert.equal(r.status, 201, r.text);
   assert.equal(inserted[7], 40, 'predicted_score must be the score the server actually served');
   assert.equal(inserted[8], 'server');
@@ -531,22 +571,110 @@ test('a served prediction overrides the client claim, and the row says so', asyn
   assert.equal(r.body.predicted_score, 40, 'the submitter sees the server-resolved value');
 });
 
-test('the served lookup is keyed to THIS caller and THIS venue, newest serve, inside 12 hours', async () => {
-  state.servedScore = 40;
-  const r = await call('POST', '/api/feedback', { ...base_payload(), predicted_score: 95 });
+test('the served lookup is keyed to THIS caller, THIS venue and THIS hour, newest serve, inside 12 hours', async () => {
+  state.servedRows = [servedRow({ score: 40 })];
+  const r = await call('POST', '/api/feedback', { ...clocked_payload(), predicted_score: 95 });
   assert.equal(r.status, 201, r.text);
   const lookup = queries.find((q) => /FROM served_predictions/i.test(q.text));
   assert.ok(lookup, 'expected a served_predictions lookup');
-  assert.deepEqual(lookup.params, [1, PLACE], 'must be scoped to the authenticated user and the reported venue');
+  assert.deepEqual(lookup.params, [1, PLACE, CLOCK.day, CLOCK.hour],
+    'must be scoped to the authenticated user, the reported venue and the reported hour');
   assert.match(lookup.text, /INTERVAL '12 hours'/, 'a stale served score must not become the denominator');
+  // An ALLOWLIST, checked as source code and not only through the fake: a
+  // blocklist (`source <> 'batch'`) would silently re-open this hole the day a
+  // third write path is added, and would let NULL-source pre-038 rows through
+  // in the meantime.
+  assert.match(lookup.text, /source = 'detail'/,
+    "provenance must be an allowlist of trusted write paths, not a list of the untrusted ones");
+  assert.doesNotMatch(lookup.text, /source\s*(<>|!=)/, 'no blocklist');
   // The log is append-only (routes/crowd.js), so a night holds many serves for
   // one (user, venue). Without the ordering, "some serve from tonight" stands
   // in for "the score on screen at submit time".
   assert.match(lookup.text, /ORDER BY served_at DESC\s+LIMIT 1/i, 'must take the NEWEST serve, not an arbitrary one');
 });
 
+// ── THE FORGERY (038) ───────────────────────────────────────────────────────
+// The whole attack, end to end, in the shape an attacker would run it.
+test('a batch-sourced serve can never become server provenance, however fresh it is', async () => {
+  // Step 1 of the attack, already done: POST /api/crowd/batch with a real bar
+  // and { rating: 1.0, userRatingCount: 3, utcOffsetMinutes: <4am> }. The
+  // server scored the caller's own inputs, published ~5, and wrote this row.
+  const forged = servedRow({ id: 9001, score: 5, source: 'batch' });
+  state.servedRows = [forged];
+
+  // Step 2: report the room packed and collect a (5 predicted, packed) pair.
+  const r = await call('POST', '/api/feedback', { ...clocked_payload(), crowd_level: 3, predicted_score: 5 });
+  assert.equal(r.status, 201, r.text);
+
+  assert.notEqual(inserted[8], 'server',
+    'a score computed from a client-assembled body must never be laundered into server provenance');
+  assert.equal(inserted[8], 'client', 'it falls back to the claim it always was');
+  assert.equal(inserted[10], null, 'and it must not name the forged serve as its source either');
+  // The forged number can still land — it is the client's claim and always
+  // was. What it cannot do is arrive wearing the server's name, which is the
+  // flag the calibration readers are about to start filtering on.
+  assert.equal(inserted[7], 5);
+  assert.equal(inserted[9], 5);
+});
+
+test('a batch row does not shadow the honest card serve sitting underneath it', async () => {
+  // Otherwise the attack survives in a weaker form: mint one batch row and the
+  // NEWEST-row rule drops the real serve, disabling server provenance for any
+  // venue on demand. Newest QUALIFYING, not newest-then-check.
+  state.servedRows = [
+    servedRow({ id: 9002, score: 5, source: 'batch' }),   // newest
+    servedRow({ id: 4712, score: 62, source: 'detail' }), // the real card serve
+  ];
+  const r = await call('POST', '/api/feedback', { ...clocked_payload(), predicted_score: 5 });
+  assert.equal(r.status, 201, r.text);
+  assert.equal(inserted[8], 'server');
+  assert.equal(inserted[7], 62, 'the trustworthy serve underneath is the denominator');
+  assert.equal(inserted[10], 4712);
+});
+
+test("the detail card's own client-clock fallback is not trusted either", async () => {
+  // Google returned no utcOffsetMinutes, so the card was scored on the hour the
+  // CALLER named. Venue facts are Google's; the clock is not — and the clock is
+  // the single biggest lever on the score.
+  state.servedRows = [servedRow({ id: 9003, score: 5, source: 'detail_client_clock' })];
+  const r = await call('POST', '/api/feedback', { ...clocked_payload(), predicted_score: 5 });
+  assert.equal(r.status, 201, r.text);
+  assert.equal(inserted[8], 'client');
+  assert.equal(inserted[10], null);
+});
+
+test('a pre-038 row, with no source recorded at all, is untrusted rather than assumed good', async () => {
+  // NULL = 'detail' is NULL in Postgres, so these fall out of the allowlist by
+  // construction. No backfill is possible: the old rows genuinely do not record
+  // which door they came out of.
+  state.servedRows = [servedRow({ id: 9004, score: 5, source: null })];
+  const r = await call('POST', '/api/feedback', { ...clocked_payload(), predicted_score: 5 });
+  assert.equal(r.status, 201, r.text);
+  assert.equal(inserted[8], 'client');
+  assert.equal(inserted[10], null);
+});
+
+test('a serve for a DIFFERENT hour is not a denominator for this report', async () => {
+  // The card was read at 8pm; the report is filed at 2am. Pairing them teaches
+  // the calibration layer the model was wrong by the width of a night. This
+  // costs real coverage on purpose.
+  state.servedRows = [servedRow({ id: 9005, score: 40, local_hour: (CLOCK.hour + 6) % 24 })];
+  const r = await call('POST', '/api/feedback', { ...clocked_payload(), predicted_score: 90 });
+  assert.equal(r.status, 201, r.text);
+  assert.equal(inserted[7], 90);
+  assert.equal(inserted[8], 'client');
+  assert.equal(inserted[10], null);
+});
+
+test('a serve for a different DAY is not a denominator either', async () => {
+  state.servedRows = [servedRow({ id: 9006, score: 40, local_day: (CLOCK.day + 1) % 7 })];
+  const r = await call('POST', '/api/feedback', { ...clocked_payload(), predicted_score: 90 });
+  assert.equal(r.status, 201, r.text);
+  assert.equal(inserted[8], 'client');
+});
+
 test('with no served record the client value still lands, marked as the claim it is', async () => {
-  const r = await call('POST', '/api/feedback', { ...base_payload(), predicted_score: 90 });
+  const r = await call('POST', '/api/feedback', { ...clocked_payload(), predicted_score: 90 });
   assert.equal(r.status, 201, r.text);
   assert.equal(inserted[7], 90);
   assert.equal(inserted[8], 'client');
@@ -565,7 +693,7 @@ test('no served record and no client claim means null everywhere, not a fabricat
 
 test('a failing served lookup degrades provenance to client, it does not lose the report', async () => {
   state.servedQueryFails = true;
-  const r = await call('POST', '/api/feedback', { ...base_payload(), predicted_score: 55 });
+  const r = await call('POST', '/api/feedback', { ...clocked_payload(), predicted_score: 55 });
   assert.equal(r.status, 201, r.text);
   assert.equal(inserted[7], 55);
   assert.equal(inserted[8], 'client');
@@ -573,11 +701,23 @@ test('a failing served lookup degrades provenance to client, it does not lose th
 });
 
 test('the lookup runs OUTSIDE the transaction, so its failure cannot abort the insert', async () => {
-  await call('POST', '/api/feedback', { ...base_payload(), predicted_score: 55 });
+  await call('POST', '/api/feedback', { ...clocked_payload(), predicted_score: 55 });
   const beginIdx = queries.findIndex((q) => /^BEGIN/i.test(q.text));
   const servedIdx = queries.findIndex((q) => /FROM served_predictions/i.test(q.text));
   assert.ok(servedIdx >= 0 && beginIdx > servedIdx,
     'served_predictions must be read before BEGIN — inside the tx, a failed lookup aborts the feedback');
+});
+
+test('the clock the lookup matches on is the clock the row is bucketed on', async () => {
+  // Two numbers that must never drift apart: the day/hour written into
+  // venue_feedback, and the day/hour the serve had to match to be believed.
+  // If they were resolved separately, the pairing rule would be checking
+  // something other than the hour the report is filed against.
+  state.servedRows = [servedRow({ score: 40 })];
+  const r = await call('POST', '/api/feedback', { ...clocked_payload(), predicted_score: 95 });
+  assert.equal(r.status, 201, r.text);
+  const lookup = queries.find((q) => /FROM served_predictions/i.test(q.text));
+  assert.deepEqual([lookup.params[2], lookup.params[3]], [inserted[11], inserted[12]]);
 });
 
 // ── Nothing unmodelled slipped past ─────────────────────────────────────────

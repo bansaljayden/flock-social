@@ -19,22 +19,38 @@
 //     analysis; they are excluded at every read, not merely flagged.
 //   * What "evidence" means is deliberately narrow — see VERIFIED_PRESENCE_SQL.
 //
-// PREDICTED_SCORE IS RESOLVED SERVER-SIDE NOW (migration 032). The server
-// records every score it publishes — routes/crowd.js writes served_predictions
-// on the detail card and the vote-list batch — and this route prefers its own
-// record over the client's claim: a served row for (this user, this venue)
-// inside the last 12 hours wins outright, and `predicted_score_source` says
-// 'server' on the row. The client's asserted value is kept verbatim in
-// `client_predicted_score` either way, so the two can be compared after the
-// fact, and it is still accepted as the denominator (source 'client') ONLY
-// when no served record exists — a legacy client, or a report against a score
-// this account was never shown. The residual, stated so it is not mistaken for
-// closed: 'client'-sourced rows are exactly as forgeable as every row was
-// before this, and the calibration readers (services/mlPredictor.js,
-// routes/crowd.js, the training export) do not yet filter on the source
-// column. Tightening them to 'server'-only is the follow-up, gated on write
-// coverage being proven in production — flipping it today would zero the
-// denominator on every row written before migration 032.
+// PREDICTED_SCORE IS RESOLVED SERVER-SIDE NOW (migrations 032 and 038). The
+// server records every score it publishes — routes/crowd.js writes
+// served_predictions on the detail card and the vote-list batch — and this
+// route prefers its own record over the client's claim. `predicted_score_
+// source` says 'server' on the row when it did; the client's asserted value is
+// kept verbatim in `client_predicted_score` either way, so the two can be
+// compared after the fact, and it is still accepted as the denominator (source
+// 'client') when no QUALIFYING served record exists — a legacy client, or a
+// report against a score this account was never shown at this hour.
+//
+// "QUALIFYING" IS THE WHOLE FIX OF 038, and it is worth stating here because
+// the 032 version of this note recommended a follow-up that would have made
+// things worse. 032 treated "the server recorded it" as "the server chose it".
+// It is not: POST /api/crowd/batch scores venues out of a CLIENT-ASSEMBLED
+// body (rating, review count, utcOffsetMinutes), so a caller could hand the
+// server the inputs, have it publish ~5 for a busy bar, watch it record that
+// score as its own, and then report "packed" here — a forged (prediction,
+// reality) pair with 'server' provenance, one free POST each. So a served row
+// only becomes provenance when it came out of the detail card scored on the
+// venue's own clock (`source = 'detail'`, an allowlist — NULL and 'batch' are
+// both outside it) AND its venue-local day/hour match the clock this report is
+// filed on. Everything else falls back to 'client'.
+//
+// The residual, stated so it is not mistaken for closed: 'client'-sourced rows
+// are exactly as forgeable as every row was before this, and the calibration
+// readers (services/mlPredictor.js, routes/crowd.js, the training export) do
+// not yet filter on the source column. Tightening them to 'server'-only is
+// still the follow-up, and it is only safe NOW that 038 exists — done on top
+// of 032 alone it would have discarded the honest client rows and kept the
+// forged server ones. It remains gated on write coverage being proven in
+// production: flipping it today would zero the denominator on every row
+// written before migration 032.
 // ---------------------------------------------------------------------------
 const express = require('express');
 const { body, param, validationResult } = require('express-validator');
@@ -303,6 +319,26 @@ router.post('/',
         console.error('[Feedback] Venue timezone lookup failed, falling back:', tzErr.message);
       }
 
+      // Bucket keys on the venue's clock, not the server's. See the long note
+      // on venueLocalDayHour.
+      //
+      // Resolved HERE, above the served-prediction lookup, rather than inside
+      // the transaction where it used to sit: the lookup now has to compare
+      // this clock against the clock the serve was scored for (below), and
+      // both halves of that comparison have to be settled before the query
+      // runs. Nothing about it touches the database, so moving it up changes
+      // no ordering the transaction depends on — the tz read it uses already
+      // happened, and __tests__/feedbackRoute.test.js still pins the served
+      // lookup as the last statement before BEGIN.
+      const now = new Date();
+      let localClock = venueLocalDayHour(venueTimezone, now);
+      if (!localClock && local_day != null && local_hour != null) {
+        localClock = { day: Number(local_day), hour: Number(local_hour), source: 'client' };
+      }
+      if (!localClock) {
+        localClock = { day: now.getDay(), hour: now.getHours(), source: 'server' };
+      }
+
       // THE DENOMINATOR IS OURS TO ASSERT, NOT THE CLIENT'S (see the header).
       // routes/crowd.js records every score it publishes in served_predictions
       // (one row per user+venue, newest wins); if this user was served a score
@@ -311,6 +347,29 @@ router.post('/',
       // rather than the NFC check-in's 3: feedback is post-hangout by design,
       // and the score acted on was read before the hangout — the same forward
       // window the flock-presence clause uses, for the same reason.
+      //
+      // TWO CONDITIONS ON THAT ROW, BOTH ADDED BY MIGRATION 038, because
+      // "the server recorded it" was not the same claim as "the server chose
+      // it" (the migration carries the full account):
+      //
+      //   source = 'detail' — an ALLOWLIST of the one write path whose inputs
+      //     are the server's. POST /api/crowd/batch scores venues out of a
+      //     CLIENT-ASSEMBLED body — rating, review count and utcOffsetMinutes
+      //     included — so a caller could post a real bar with rating 1.0 at a
+      //     4am offset, have the server publish ~5 and record it, then report
+      //     "packed" here and watch their own inputs come back wearing
+      //     'server' provenance. Batch rows, and the detail card's own
+      //     fallback when Google gave no offset and the CALLER's clock was
+      //     used ('detail_client_clock'), are refused as provenance and fall
+      //     back to 'client'. NULL (every row written before 038) is refused
+      //     by construction: NULL = 'detail' is NULL, never true.
+      //
+      //   the clock must match — a serve is only a denominator for a report
+      //     about the SAME venue-local hour. A card read at 8pm paired with a
+      //     report filed at 2am teaches the calibration layer that the model
+      //     was wrong by the width of a night. This costs real coverage on
+      //     purpose: a user who reads the card and files hours later drops to
+      //     'client', which is the honest answer, not a downgrade.
       //
       // Read OUTSIDE the transaction, like the timezone above and unlike the
       // integrity checks inside it: a failure here only degrades provenance
@@ -321,17 +380,24 @@ router.post('/',
       let servedScore = null;
       let servedPredictionId = null;
       try {
-        // Newest serve wins: the reality-check widget sits ON the venue card,
-        // so the score on screen at submit time is the most recent one served.
-        // The log is append-only (see routes/crowd.js), so this ORDER BY is
-        // what picks "what was on screen" out of the night's serve history.
+        // Newest QUALIFYING serve wins: the reality-check widget sits ON the
+        // venue card, so the score on screen at submit time is the most recent
+        // one served. The log is append-only (see routes/crowd.js), so this
+        // ORDER BY is what picks "what was on screen" out of the night's serve
+        // history — and the two clauses above it decide what is allowed into
+        // that history in the first place. Newest-qualifying rather than
+        // newest-then-check: a batch row minted a second ago must not shadow
+        // the trustworthy card serve underneath it, or an attacker disables
+        // server provenance for any venue at will by scrolling a vote list.
         const served = await pool.query(
           `SELECT id, score FROM served_predictions
             WHERE user_id = $1 AND venue_place_id = $2
               AND served_at > NOW() - INTERVAL '12 hours'
+              AND source = 'detail'
+              AND local_day = $3 AND local_hour = $4
             ORDER BY served_at DESC
             LIMIT 1`,
-          [req.user.id, venue_place_id]
+          [req.user.id, venue_place_id, localClock.day, localClock.hour]
         );
         if (served.rows[0] && Number.isInteger(served.rows[0].score)) {
           servedScore = served.rows[0].score;
@@ -453,17 +519,6 @@ router.post('/',
         if ((recentCount.rows[0]?.n || 0) >= MAX_REPORTS_PER_HOUR) {
           refusal = { status: 429, body: { error: 'Too many reports in a short time. Try again later.' } };
           throw new Rollback();
-        }
-
-        // Bucket keys on the venue's clock, not the server's. See the long
-        // note on venueLocalDayHour.
-        const now = new Date();
-        let localClock = venueLocalDayHour(venueTimezone, now);
-        if (!localClock && local_day != null && local_hour != null) {
-          localClock = { day: Number(local_day), hour: Number(local_hour), source: 'client' };
-        }
-        if (!localClock) {
-          localClock = { day: now.getDay(), hour: now.getHours(), source: 'server' };
         }
 
         const verifiedCheck = await client.query(VERIFIED_PRESENCE_SQL, [req.user.id, venue_place_id]);
