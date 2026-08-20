@@ -889,14 +889,36 @@ function estimateCapacity(venue, score) {
   const reviews = venue.user_ratings_total || 0;
   let max;
 
-  if (hasType(types, 'night_club')) {
-    max = reviews >= 2000 ? 400 : reviews >= 1000 ? 300 : reviews >= 500 ? 200 : 100;
-  } else if (isSportsBar(types)) {
+  // THE BAR FAMILY IS TESTED BEFORE night_club, and the order is the fix.
+  //
+  // Google types a lot of rooms both `bar` and `night_club`, and until
+  // 2026-08-20 this function tested `night_club` first while the two other
+  // functions that describe the same card tested bar first: the category bonus
+  // in calculateCrowdScore (isBarLike, then night_club) and estimateWait
+  // (isBarLike, then night_club). So one venue got a bar score and a bar wait
+  // beside a NIGHTCLUB capacity -- 400 heads where the bar ladder says 200, a
+  // published number that disagreed with the two numbers printed next to it.
+  //
+  // It is resolved the way the score and the wait already resolve it, and the
+  // way frontend/src/App.js getGroupAdmission was resolved in 0cb8070: a room
+  // carrying a bar tag is a bar. Sports bar and brewery keep their own rungs
+  // because they are bar-family too and the scorer tests them in this same
+  // order. A room typed `night_club` ALONE carries no bar tag, matches none of
+  // the three branches above, and reaches the nightclub ladder unchanged.
+  //
+  // This is DEFERRED.md section 3's third bullet, now closed. It is NOT
+  // mlPredictor.guessCategory, which tests night_club first on purpose: that
+  // one feeds the model a trained category and has to match how the corpus was
+  // labelled (cf820a9). The model's label and the rule engine's room can
+  // legitimately differ; the three numbers on one card cannot.
+  if (isSportsBar(types)) {
     max = reviews >= 2000 ? 250 : reviews >= 1000 ? 180 : reviews >= 500 ? 120 : 60;
   } else if (isBreweryLike(types)) {
     max = reviews >= 2000 ? 200 : reviews >= 1000 ? 150 : reviews >= 500 ? 100 : 50;
   } else if (isBarLike(types)) {
     max = reviews >= 1000 ? 200 : reviews >= 500 ? 120 : 60;
+  } else if (hasType(types, 'night_club')) {
+    max = reviews >= 2000 ? 400 : reviews >= 1000 ? 300 : reviews >= 500 ? 200 : 100;
   } else if (isSteakhouseLike(types)) {
     max = reviews >= 2000 ? 180 : reviews >= 1000 ? 120 : reviews >= 500 ? 80 : 50;
   } else if (isDinerLike(types)) {
