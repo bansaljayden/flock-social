@@ -893,3 +893,17 @@ module.exports.__test = {
   CACHE_TTL,
   NEGATIVE_TTL,
 };
+
+// Non-consuming read of the Ticketmaster day ledger, for the admin cost panel
+// (services/costModel.js). Never gate on this and then call Ticketmaster:
+// read-then-act is not the same as the single synchronous charge the route
+// makes. Same idiom as placesBudgetStatus and visionBudgetStatus, and the same
+// caveat as both: this counter lives in one container's memory, so it reads
+// zero after every deploy and divides by the instance count.
+module.exports.budgetStatus = () => ({
+  day: tmDayKey,
+  globalUsed: tmDayCount,
+  globalRemaining: Math.max(0, TM_GLOBAL_DAILY - tmDayCount),
+  limits: { globalDaily: TM_GLOBAL_DAILY },
+  inMemory: true,
+});

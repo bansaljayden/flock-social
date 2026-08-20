@@ -1445,6 +1445,247 @@ router.get('/moderation-actions', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// GET /api/admin/costs — what Flock costs, in three clearly separated kinds
+// ---------------------------------------------------------------------------
+//
+// Admin only, like everything else on this router (requireAdmin at the top).
+//
+// THE ONE RULE THIS ROUTE EXISTS TO ENFORCE: a ceiling is not a bill. Three
+// blocks come back and they never share a number.
+//
+//   observed   what the meters counted, priced at the rate card
+//   worstCase  what the ceilings permit, priced at the same rate card
+//   fixed      the bills that arrive whether anybody uses the app or not
+//
+// services/costModel.js owns the arithmetic and the rate card. This route owns
+// only the reads: it turns meters into COUNTS and constants into LIMITS, and
+// hands each set to the builder that may see it. buildObserved() is never given
+// a limit and buildWorstCase() is never given a meter, so neither can print the
+// other's number even by mistake. __tests__/costModel.test.js pins that.
+//
+// WHAT THE NUMBERS ARE WORTH, said here as well as in the payload, because
+// somebody will read this route before they read the panel:
+//   * The Postgres ledgers (advisor_spend, advisor_venue_spend,
+//     venue_digest_sends) are durable. They survive deploys and replicas and
+//     they add up over a month.
+//   * Every other meter is in one container's memory. It reads zero after a
+//     deploy and it divides by the instance count. Those lines are labelled
+//     durable false, and the panel says "today, this process only" rather than
+//     pretending to be a month.
+//   * None of it is an invoice. costModel.RECONCILED carries the only figure a
+//     human has actually seen on a bill, and its date says how stale it is.
+//
+// Every ledger read is wrapped: a meter that throws must degrade to "not
+// measured" rather than 500 the whole panel, because the fixed-cost half is
+// still worth showing when the database is unreachable.
+const costModel = require('../services/costModel');
+const birdieUsage = require('../services/birdieUsage');
+const { placesBudgetStatus } = require('../utils/placesBudget');
+const { visionBudgetStatus } = require('../utils/visionBudget');
+const { weatherBudgetStatus } = require('../services/weatherService');
+const advisorPhrasing = require('../services/advisorPhrasing');
+const advisorPrompt = require('../services/advisorPrompt');
+const advisorFreeText = require('../services/advisorFreeText');
+
+// Roost's price, from VENUE-PRICING.md (2026-08-20). One location, monthly.
+// A constant rather than a query because nothing has ever been charged, so
+// there is no row anywhere that knows it.
+const VENUE_PRICE_USD = 99;
+
+// The per-venue spend table is one row per venue per day. Bounded like every
+// other list on this router.
+const COST_VENUE_LIMIT = 25;
+
+// The estimator convention shared by birdieUsage and advisorPhrasing.
+const COST_CHARS_PER_TOKEN = 4;
+
+// Never let one broken meter take the panel down with it.
+function meterOrNull(read) {
+  try {
+    const v = read();
+    return Number.isFinite(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+router.get('/costs', async (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+
+  // -- In-memory meters, turned into plain counts -----------------------------
+  const birdieTokensToday = meterOrNull(() => birdieUsage.geminiSpendStatus(null).globalUsed);
+  const placesCallsToday = meterOrNull(() => placesBudgetStatus(null).globalUsed);
+  const placesPhotoCallsToday = meterOrNull(() => require('./venueSearch').photoProxyStatus().used);
+  const visionCallsToday = meterOrNull(() => visionBudgetStatus(null).globalUsed);
+  const weatherCallsToday = meterOrNull(() => weatherBudgetStatus().dailyUsed);
+  const ticketmasterCallsToday = meterOrNull(() => require('./events').budgetStatus().globalUsed);
+  const nightContextCallsToday = meterOrNull(
+    () => require('../services/nightContext').nightContextBudgetStatus().globalUsed
+  );
+
+  // -- Durable ledgers --------------------------------------------------------
+  // Each read is independent: one unavailable table leaves that line unmeasured
+  // rather than emptying the panel.
+  const safe = async (fn) => {
+    try {
+      return await fn();
+    } catch (err) {
+      console.error('Admin costs: a ledger read failed:', err.message);
+      return null;
+    }
+  };
+
+  const advisorSpend = await safe(async () => {
+    const r = await pool.query(
+      `SELECT
+         COALESCE(SUM(tokens) FILTER (WHERE day = CURRENT_DATE), 0)                       AS today,
+         COALESCE(SUM(tokens) FILTER (WHERE day >= DATE_TRUNC('month', CURRENT_DATE)), 0) AS month
+       FROM advisor_spend`
+    );
+    const row = r.rows[0] || {};
+    return { today: Number(row.today) || 0, month: Number(row.month) || 0 };
+  });
+
+  const venueSpend = await safe(async () => {
+    const r = await pool.query(
+      `SELECT venue_user_id,
+              SUM(tokens)::bigint AS tokens,
+              SUM(answers)::int   AS answers,
+              SUM(questions)::int AS questions
+         FROM advisor_venue_spend
+        WHERE day >= DATE_TRUNC('month', CURRENT_DATE)
+        GROUP BY venue_user_id
+        ORDER BY tokens DESC
+        LIMIT ${COST_VENUE_LIMIT}`
+    );
+    return (r.rows || []).map((v) => ({
+      venueUserId: v.venue_user_id,
+      tokens: Number(v.tokens) || 0,
+      answers: Number(v.answers) || 0,
+      questions: Number(v.questions) || 0,
+    }));
+  });
+
+  const digestEmailsMonth = await safe(async () => {
+    const r = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM venue_digest_sends
+        WHERE sent_at >= DATE_TRUNC('month', CURRENT_DATE)`
+    );
+    return Number(r.rows[0] && r.rows[0].n) || 0;
+  });
+
+  const payingVenues = await safe(async () => {
+    const r = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM venue_subscriptions
+        WHERE granted_reason = 'paid'
+          AND status IN ('active', 'trialing', 'past_due')
+          AND (expires_at IS NULL OR expires_at > NOW())`
+    );
+    return Number(r.rows[0] && r.rows[0].n) || 0;
+  });
+
+  // -- The advisor's own shape, read from the modules that own it -------------
+  // Not restated here. The system prompt's length and the maxOutputTokens the
+  // API is actually handed are what decide the input/output split, and both
+  // live in other files. Copying either would make this panel drift the first
+  // time somebody edits a prompt.
+  const advisorPromptTokens = Math.ceil(advisorPrompt.SYSTEM_PROMPT.length / COST_CHARS_PER_TOKEN);
+  const advisorMaxOutputTokens = advisorPhrasing.ADVISOR_MAX_OUTPUT_TOKENS;
+  const advisorModel = advisorPhrasing.advisorModel();
+  const birdieModel = process.env.BIRDIE_MODEL || 'gemini-3.5-flash-lite';
+
+  // -- COUNTS go to the observed builder. No limit is in this object. ---------
+  const observed = costModel.buildObserved({
+    onDate: today,
+    birdieTokensToday,
+    birdieModel,
+    advisorTokensToday: advisorSpend ? advisorSpend.today : null,
+    advisorTokensMonth: advisorSpend ? advisorSpend.month : null,
+    advisorModel,
+    advisorPromptTokens,
+    advisorMaxOutputTokens,
+    placesCallsToday,
+    placesPhotoCallsToday,
+    visionCallsToday,
+    weatherCallsToday,
+    ticketmasterCallsToday,
+    nightContextCallsToday,
+    digestEmailsMonth,
+  });
+
+  // -- LIMITS go to the worst-case builder. No count is in this object. -------
+  const worstCase = costModel.buildWorstCase({
+    onDate: today,
+    birdieGlobalDailyTokens: birdieUsage.GLOBAL_DAILY_TOKENS,
+    birdieModel,
+    advisorGlobalDailyTokens: advisorPhrasing.ADVISOR_GLOBAL_DAILY_TOKENS,
+    advisorPerVenueDailyTokens: advisorPhrasing.PER_VENUE_DAILY_TOKENS,
+    advisorModel,
+    advisorPromptTokens,
+    advisorMaxOutputTokens,
+    placesGlobalDaily: placesBudgetStatus(null).limits.globalDaily,
+    visionGlobalDaily: visionBudgetStatus(null).limits.globalDaily,
+    weatherDaily: weatherBudgetStatus().limits.daily,
+    ticketmasterGlobalDaily: meterOrNull(() => require('./events').budgetStatus().limits.globalDaily),
+  });
+
+  // The busiest venue this month is the one worth pricing, because it is the
+  // only one whose number is not zero. With no rows at all this stays null and
+  // the panel says nothing has been measured.
+  const topVenue = venueSpend && venueSpend.length > 0 ? venueSpend[0] : null;
+
+  const venueUnitEconomics = costModel.buildVenueUnitEconomics({
+    onDate: today,
+    priceUsd: VENUE_PRICE_USD,
+    perVenueDailyTokens: advisorPhrasing.PER_VENUE_DAILY_TOKENS,
+    advisorModel,
+    advisorPromptTokens,
+    advisorMaxOutputTokens,
+    // The free-text half of the same surface. Its advice call has a SHORTER
+    // system prompt against nearly as many output tokens, so its output
+    // fraction is the highest of any advisor call and it is what sets the top
+    // of the per-venue cost band.
+    advisorAdvicePromptTokens: Math.ceil(advisorPrompt.ADVICE_SYSTEM_PROMPT.length / COST_CHARS_PER_TOKEN),
+    advisorAdviceMaxOutputTokens: advisorFreeText.ADVICE_MAX_OUTPUT_TOKENS,
+    observedTokensMonth: topVenue ? topVenue.tokens : null,
+  });
+
+  const fixed = costModel.buildFixed();
+
+  res.json({
+    generatedAt: new Date().toISOString(),
+    observed,
+    worstCase,
+    fixed,
+    venueUnitEconomics,
+    watchlist: costModel.WATCHLIST,
+    reconciled: costModel.RECONCILED,
+    rates: {
+      checked: {
+        gemini: costModel.RATES.gemini.checked,
+        places: costModel.RATES.places.checked,
+        vision: costModel.RATES.vision.checked,
+      },
+      sources: {
+        gemini: costModel.RATES.gemini.source,
+        places: costModel.RATES.places.source,
+        vision: costModel.RATES.vision.source,
+      },
+    },
+    venues: {
+      paying: payingVenues,
+      priceUsd: VENUE_PRICE_USD,
+      withRoostSpendThisMonth: venueSpend ? venueSpend.length : null,
+      perVenue: venueSpend,
+    },
+    // Said in the payload, not only in the panel, so an API reader cannot miss
+    // it either.
+    disclaimer:
+      'observed is priced from meters and is an estimate of a bill, not a bill. worstCase is what ceilings permit and nothing has ever reached one. reconciled is the only line a human has seen on an invoice.',
+  });
+});
+
 module.exports = router;
 // Exposed for __tests__/adminEvidence.test.js, which diffs CONTENT_TEXT_SQL and
 // REPORT_TEXT_SOURCES against routes/moderation.js's VALID_CONTENT_TYPES — the
@@ -1453,6 +1694,8 @@ module.exports = router;
 // router changes nothing about the mount in server.js.
 module.exports.__test = {
   CONTENT_TEXT_SQL,
+  VENUE_PRICE_USD,
+  COST_VENUE_LIMIT,
   REPORT_TEXT_SOURCES,
   REPORT_IMAGE_SOURCES,
   TAKEDOWN_TARGETS,
