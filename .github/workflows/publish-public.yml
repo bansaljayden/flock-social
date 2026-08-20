@@ -58,7 +58,22 @@ jobs:
             --path mobile/android/app/debug.keystore \
             --path frontend/public/birdie/flap-src.png \
             --path frontend/public/birdie/birdie-idle.mp4 \
-            --path-glob 'frontend/public/screenshots/appstore/*'
+            --path-glob 'frontend/public/screenshots/appstore/*' \
+            --path TASKS.md \
+            --path MONEY-MODEL.md \
+            --path VENUE-BILLING.md \
+            --path SLOP-AUDIT.md \
+            --path VENUE-ADVISOR.md \
+            --path PAYMENTS-ROUTING.md \
+            --path MODEL-EPOCH-FINDING.md \
+            --path APPLE-2.1-REPLY.md \
+            --path OSS-SECRET-SCAN.md \
+            --path OSS-READINESS.md \
+            --path PAYWALL.md \
+            --path VENUE-TOS-DRAFT.md \
+            --path MAP-VISIBILITY-DECISION.md \
+            --path PRO-VS-PREMIUM.md \
+            --path-glob 'ADVISOR-*.md'
 
       - name: Refuse to publish if anything excluded survived
         run: |
@@ -68,7 +83,8 @@ jobs:
                    backend/scripts/ml/models/model_metadata.json \
                    backend/.env \
                    frontend/.env.production \
-                   mobile/android/app/debug.keystore; do
+                   mobile/android/app/debug.keystore \
+                   TASKS.md MONEY-MODEL.md VENUE-BILLING.md SLOP-AUDIT.md; do
             n=$(git log --all --oneline -- "$p" | wc -l)
             if [ "$n" != "0" ]; then echo "LEAK: $p survives in $n commits"; fail=1; fi
           done
