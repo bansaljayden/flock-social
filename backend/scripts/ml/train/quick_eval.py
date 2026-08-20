@@ -90,10 +90,50 @@ def reconstruct(raw_delta, baseline):
     bootstrap). The gate must score the reconstruction production actually
     performs, so if reconstructScore changes, this changes with it. (Serving
     rounds to an integer at the end; this stays float, the convention every
-    prior gate number was computed under -- sub-half-point, direction-free.)"""
+    prior gate number was computed under -- sub-half-point, direction-free.)
+
+    Then, ONLY when CROWD_QMAP_ENABLED=true, the score quantile map below --
+    the same flag and the same table mlPredictor reads. Off by default, and
+    ship_gate.score_qmap_enabled records which arithmetic produced the run's
+    numbers so a verdict cannot be read against the wrong reconstruction."""
     score = np.clip(baseline + np.clip(raw_delta, -50, 50), 0, 100)
     score = np.where(score < 25, score - 1, np.where(score > 65, score + 1, score))
-    return np.clip(score, 0, 100)
+    score = np.clip(score, 0, 100)
+    if QMAP_ENABLED:
+        score = apply_score_qmap(score)
+    return score
+
+
+# ---------------------------------------------------------------------------
+# score-qmap — the SAME two arrays services/mlPredictor.js carries, applied with
+# the same np.interp semantics (constant at both ends, linear between knots), so
+# the gate scores the arithmetic production performs. UNARMED by default: the
+# gate is only allowed to see this when CROWD_QMAP_ENABLED=true, the same flag
+# the serve path reads, and a run with it on must be recorded as such.
+#
+# The one deliberate difference is the final rounding, and it is the difference
+# that already existed between reconstructScore and this function: serving
+# publishes an integer, the gate stays float because every prior gate number was
+# computed that way. If the table changes on either side, it changes on both.
+#
+# Fitted 2026-08-20 on the earliest 30% of gate dates (<= 2026-03-28, 21,148
+# rows) from the shipped 2.6.0-starling artifacts and scored forward on 46,101.
+# The table is that artifact's quantile grid; mlPredictor refuses to apply it to
+# any other model_version and so does this (QMAP_FITTED_ON below is checked by
+# __tests__/mlTrainingContracts.test.js against the JS constant).
+# ---------------------------------------------------------------------------
+QMAP_ENABLED = os.environ.get('CROWD_QMAP_ENABLED', '').lower() == 'true'
+QMAP_FITTED_ON = '2.6.0-starling'
+QMAP_X = np.array([0, 5, 8, 10, 12, 14, 16, 18, 20, 21, 23, 25, 27, 28, 29, 31,
+                   32, 34, 35, 36, 37, 39, 40, 42, 43, 45, 46, 48, 50, 51, 53,
+                   55, 58, 60, 63, 67, 70, 74, 80, 89], dtype=float)
+QMAP_Y = np.array([0, 0, 0, 0, 5, 5, 5, 5, 5, 5, 10, 10, 10, 15, 15, 20, 20, 25,
+                   25, 30, 30, 35, 40, 40, 45, 50, 55, 55, 60, 65, 70, 75, 80,
+                   85, 95, 100, 100, 100, 100, 100], dtype=float)
+
+
+def apply_score_qmap(score):
+    return np.clip(np.interp(score, QMAP_X, QMAP_Y), 0, 100)
 
 
 def realtime_flags(X, feature_cols, n_rows):
@@ -527,6 +567,12 @@ def main():
         'floor_basis': floor_basis,
         'floor_subject_within_10': floor_subject_within10,
         'floor_derivation': floor_derivation,
+        # Which reconstruction produced every number above. False is the shipped
+        # state; a run with it True scored a DIFFERENT published number than the
+        # gate's thresholds were calibrated against, and the two-metric
+        # alternative in RETRAIN.md is the only gate that may read it.
+        'score_qmap_enabled': bool(QMAP_ENABLED),
+        'score_qmap_fitted_on': QMAP_FITTED_ON if QMAP_ENABLED else None,
         'realtime_pass': rt_pass,
         'floor_pass': floor_pass,
         'incumbent_pass': incumbent_pass,
