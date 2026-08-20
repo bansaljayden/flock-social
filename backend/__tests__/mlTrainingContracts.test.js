@@ -314,6 +314,57 @@ test('the clamp used in training is the one the server will apply', () => {
     'the shipped artifact is a delta model; these pins describe a delta model');
 });
 
+test('the score quantile map is one table in two languages, and both default OFF', () => {
+  // The qmap (2026-08-20, unarmed behind CROWD_QMAP_ENABLED) is a post-hoc
+  // recalibration of the PUBLISHED number. It has the same failure mode the
+  // clamp had before it was pinned: if the gate scores one table and production
+  // serves another, the gate's verdict describes a product nobody shipped. So
+  // the two knot arrays are compared number by number, the flag name is
+  // compared as a string, and both sides are required to be off by default.
+  const nums = (src, name) => {
+    const m = src.match(new RegExp(name + String.raw`\s*=\s*(?:np\.array\()?\[([^\]]*)\]`));
+    return m ? m[1].split(',').map((v) => Number(v.trim())) : null;
+  };
+  const jsX = nums(PREDICTOR_JS, 'QMAP_X');
+  const jsY = nums(PREDICTOR_JS, 'QMAP_Y');
+  const pyX = nums(QUICK_EVAL_PY, 'QMAP_X');
+  const pyY = nums(QUICK_EVAL_PY, 'QMAP_Y');
+  assert.ok(jsX && jsY, 'mlPredictor.js must declare QMAP_X and QMAP_Y as literal arrays');
+  assert.ok(pyX && pyY, 'quick_eval.py must declare the same two arrays');
+  assert.deepEqual(jsX, pyX, 'the qmap x knots differ between the serve path and the gate');
+  assert.deepEqual(jsY, pyY, 'the qmap y knots differ between the serve path and the gate');
+  assert.equal(jsX.length, jsY.length);
+
+  // Same artifact string on both sides: the table is one model's quantile grid
+  // and applying it to another model is the silent-wrongness case both sides
+  // refuse.
+  const jsFit = PREDICTOR_JS.match(/const QMAP_FITTED_ON = '([^']+)';/);
+  const pyFit = QUICK_EVAL_PY.match(/QMAP_FITTED_ON = '([^']+)'/);
+  assert.ok(jsFit && pyFit, 'both sides must record the artifact the table was fitted on');
+  assert.equal(jsFit[1], pyFit[1], 'the two sides disagree about which model the table belongs to');
+  assert.equal(jsFit[1], METADATA.model_version,
+    'the shipped artifact is not the one this table was fitted on — refit it or do not enable it');
+
+  // One flag name, read the same way on both sides, defaulting off.
+  assert.match(PREDICTOR_JS, /process\.env\.CROWD_QMAP_ENABLED === 'true'/,
+    'the serve path must gate on CROWD_QMAP_ENABLED === true, so unset means off');
+  assert.match(QUICK_EVAL_PY, /os\.environ\.get\('CROWD_QMAP_ENABLED', ''\)\.lower\(\) == 'true'/,
+    'the gate must read the same variable the same way');
+  assert.match(QUICK_EVAL_PY, /'score_qmap_enabled': bool\(QMAP_ENABLED\)/,
+    'a gate run must record which reconstruction produced its numbers');
+
+  // The map runs AFTER reconstructScore and BEFORE getLabel. Both halves matter:
+  // the first because the table's x grid is the distribution of reconstructed
+  // scores, the second because a band that describes a different number than
+  // the card shows is the bug this ordering exists to prevent.
+  const iRecon = PREDICTOR_JS.indexOf('score = reconstructScore(rawOutput, baseline || 0);');
+  const iQmap = PREDICTOR_JS.indexOf('score = applyScoreQuantileMap(score);');
+  const iLabel = PREDICTOR_JS.indexOf('const label = getLabel(score);');
+  assert.ok(iRecon > 0 && iQmap > 0 && iLabel > 0);
+  assert.ok(iRecon < iQmap && iQmap < iLabel,
+    'the qmap must sit between the reconstruction and the label assignment');
+});
+
 // ── Honest reporting ───────────────────────────────────────────────────────
 
 test('the metric published to users is labelled with the population it was measured on', () => {

@@ -203,6 +203,82 @@ serves the rule engine instead and logs why at startup. So:
 - `ML_SHIP_GATE_OVERRIDE=true` promotes a failing artifact anyway (loudly).
   Local debugging only.
 
+## GATE-B: the two-metric alternative — DRAFTED, **UNARMED** (2026-08-20)
+
+**Nothing below is in force.** `quick_eval.py` implements the four criteria
+above and only those. GATE-B is written down so the trade it describes can be
+taken deliberately, by Jayden, in one decision, instead of being smuggled in as
+a waiver of an arm that is doing its job. Arming it is a code change in
+`quick_eval.py` plus that decision. The gate above is not modified.
+
+### Why an alternative exists at all
+
+The gate above is **MAE-protective by construction**: criteria 1 and 2 both
+require no MAE regression against the popular-times baseline. That was the right
+guard while the question was "is this model better than Google's curve".
+
+The dispersion work changed the question. Reality on the gate slice is bimodal
+(actual sd 36.65, 23.6% of served venue-hours at or below 5, 22.1% at or above
+90), and the shipped number is compressed to 0.58 of that spread. A point
+estimate cannot sit near both modes: **MAE is minimised by the conditional
+median of a bimodal target, within-10 by committing to a mode.** So the two
+metrics are not two views of one quality. They are opposite instructions, and
+the MAE arm is a standing vote for one of them that nobody has ever cast on
+purpose.
+
+Measured, not asserted: across ~40 post-hoc corrections (clamp widths, affine
+and quantile maps in delta and score space, isotonic, banded pushes, blends),
+the largest within-10 gain available *inside* the MAE budget is **+0.26pp** —
+the clamp-±50-plus-push that already shipped. Everything with real magnitude
+costs MAE. Full grid: `train/RETRAIN-V27-LOG.md`, "Dispersion lab".
+
+### GATE-B
+
+Replaces criteria **1 and 2** (the MAE arms). Criteria **3 and 4** are unchanged
+and still binding. All of B1–B5 must hold, on the gate slice, against the
+incumbent measured on the same rows, with 95% CIs from a 2000-resample
+date-block bootstrap.
+
+| arm | requirement | where the number comes from |
+|---|---|---|
+| **B1** | within-10 improves by **≥ +5.0pp**, and the bootstrap CI lower bound is **> +2.5pp** | The MAE-protective gate's entire admissible set tops out at +0.26pp. A threshold anywhere in 0.3–3pp would admit noise-scale gains that still spend MAE. +5.0pp is one more correct card in every twenty, the smallest change a user could notice across a browsing session, and it is deliberately **below** the only measured candidate (+8.40pp) so it is not that candidate's own number rounded down. |
+| **B2** | MAE regresses by **no more than +3.5**, and the bootstrap CI upper bound is **< +4.0** | The measured frontier charges **0.16–0.36 MAE per +1pp** of within-10 (lab, section 2). Rounding the far-end price up to 0.40 and applying it to the largest gain anyone has produced (+8.4pp) gives **3.4**. So +3.5 is "the worst price the frontier charges, at the biggest gain on record". It is not a budget sized to fit a candidate, though it does fit the current one with 0.35 to spare. |
+| **B3** | within-20 must **not regress** | This is the arm that distinguishes the trade from a plain loss. MAE rising while both within-10 and within-20 improve means the cost is concentrated in the tail, which is exactly what committing to a mode buys. MAE rising while within-20 *also* falls means the whole error distribution moved outward, which is not a trade, it is a worse model. |
+| **B4** | the calibrator must be **monotone non-decreasing** on the published 0..100 domain, proved by enumeration, and its effect on within-venue-day hour pairs and same-hour cross-venue pairs must be **measured**, not argued from monotonicity | Ordering is a separate claim from level (`HOUR-RANKING-EVAL.md`). A recalibration measured only on point accuracy could silently reorder the best-time line. Monotonicity makes reversals impossible but it does **not** make ties impossible, and ties are what a rail-saturating map actually produces. |
+| **B5** | the band must be assigned from the **mapped** number, and the published confidence figure must be the mapped number's **own** measurement | Otherwise the card shows one number, labels it from another, and quotes an accuracy measured on a third. |
+
+**GATE-B does not waive the awkward fact, it records it.** A run under GATE-B
+must write `ship_gate.mae_vs_baseline_broken: true` when MAE exceeds the
+popular-times baseline on the same rows, along with both figures. That is not a
+formality: it is the single strongest argument against this trade, and it must
+appear in the verdict rather than in a doc nobody re-reads.
+
+### What GATE-B says about score-qmap (measured 2026-08-20, prequential)
+
+Fitted on the earliest 30% of gate dates (≤ 2026-03-28, 21,148 rows) from the
+shipped 2.6.0-starling artifacts, scored forward on 46,101. Against the
+reconstruction production performs today (clamp ±50 + push, rounded), **not**
+the legacy ±30 arithmetic the 2026-08-19 lab used as its reference.
+
+| arm | requirement | measured | |
+|---|---|---|---|
+| B1 | ≥ +5.0pp, CI lo > +2.5 | **+8.40pp**, CI95 [+7.17, +9.69] | PASS |
+| B2 | ≤ +3.5, CI hi < +4.0 | **+3.15**, CI95 [+2.72, +3.57] | PASS |
+| B3 | within-20 not worse | **+4.54pp**, CI95 [+3.57, +5.55] | PASS |
+| B4 | monotone, ordering measured | **0 reversals** on 21,905 hour pairs and 123,051 cross-venue pairs; 6.4% / 10.3% new ties | PASS |
+| B5 | band + confidence from the mapped number | implemented (`mlPredictor.js`, `applyScoreQuantileMap` before `getLabel`; confidence switches to `QMAP_MEASURED`) | PASS |
+| — | `mae_vs_baseline_broken` | **true**: MAE 33.13 vs the popular-times baseline's 31.20 on the same rows | recorded |
+
+So score-qmap **clears GATE-B and fails the gate in force**, which is the whole
+point of writing both down. The number in the last row is the one to argue
+about: with the map on, the model's average error is worse than publishing
+Google's curve untouched, while its hit rate is ten points better than it. Both
+of those are true at once, and that is what a bimodal target does.
+
+Decision write-up, in plain terms: `train/QMAP-DECISION.md` (gitignored, local).
+Implementation: `CROWD_QMAP_ENABLED`, default off, in `backend/.env.example`,
+`services/mlPredictor.js` and `train/quick_eval.py`.
+
 ## Pre-retrain audit status (`PRE-RETRAIN-AUDIT.md`, 8 BLOCKING items)
 
 Do not start the retrain until every BLOCKING row below reads DONE or has an

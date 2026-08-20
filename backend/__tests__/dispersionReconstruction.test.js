@@ -61,3 +61,112 @@ test('reconstruction is integer 0..100 for any finite input', () => {
     assert.ok(Number.isInteger(s) && s >= 0 && s <= 100, 'R(' + d + ', ' + b + ') = ' + s);
   }
 });
+
+// ---------------------------------------------------------------------------
+// THE SCORE QUANTILE MAP (2026-08-20). UNARMED — CROWD_QMAP_ENABLED, default
+// off. It is a monotone 40-knot lookup fitted on the earliest 30% of gate dates
+// from the shipped 2.6.0-starling artifacts and measured forward on 46,101 rows:
+// within-10 20.84% -> 29.22% (+8.38pp CI [+7.17, +9.69]) at MAE 29.976 -> 33.126
+// (+3.15 CI [+2.72, +3.57]). scripts/ml/train/QMAP-DECISION.md is the write-up.
+//
+// What these pin, and why each one matters if the flag is ever flipped:
+//   * monotone and strictly increasing in x, so a published number can never
+//     cross another one. That is the whole reason the hour-ordering result
+//     survives it (0 reversals on 21,905 within-venue-day pairs, measured).
+//   * the same 0..100 integer contract reconstructScore has, so getLabel is
+//     reading the same kind of value either way.
+//   * composition order: qmap(reconstruct(x)), never the reverse. The map's x
+//     grid IS the distribution of reconstructed scores; feeding it a raw delta
+//     would be reading the table at the wrong argument.
+//   * the arithmetic quick_eval.py mirrors. np.interp is constant outside the
+//     knots and linear between them, and JS Math.round is half-up.
+// ---------------------------------------------------------------------------
+const Q = _internals.applyScoreQuantileMap;
+
+test('the qmap table is strictly increasing in x and monotone in y', () => {
+  const X = _internals.QMAP_X;
+  const Y = _internals.QMAP_Y;
+  assert.equal(X.length, Y.length, 'the two knot arrays must be the same length');
+  assert.ok(X.length >= 2, 'a lookup needs at least two knots');
+  for (let i = 1; i < X.length; i++) {
+    assert.ok(X[i] > X[i - 1], 'x knot ' + i + ' must be strictly greater than the one before it');
+    assert.ok(Y[i] >= Y[i - 1], 'y knot ' + i + ' must not go backwards');
+  }
+  for (let i = 0; i < X.length; i++) {
+    assert.ok(X[i] >= 0 && X[i] <= 100, 'x knots are published scores');
+    assert.ok(Y[i] >= 0 && Y[i] <= 100, 'y knots are busyness percentages');
+  }
+});
+
+test('the qmap is monotone and never reorders two scores', () => {
+  let prev = -1;
+  for (let s = 0; s <= 100; s++) {
+    const m = Q(s);
+    assert.ok(Number.isInteger(m) && m >= 0 && m <= 100, 'Q(' + s + ') = ' + m);
+    assert.ok(m >= prev, 'Q(' + s + ') = ' + m + ' went backwards from ' + prev);
+    prev = m;
+  }
+});
+
+test('the qmap interpolates linearly between knots and is flat outside them', () => {
+  const X = _internals.QMAP_X;
+  const Y = _internals.QMAP_Y;
+  // On a knot, the map returns that knot's y (rounded).
+  for (let i = 0; i < X.length; i++) {
+    assert.equal(Q(X[i]), Math.round(Y[i]), 'on knot x=' + X[i]);
+  }
+  // Past the last knot, constant — np.interp's right-edge behaviour.
+  assert.equal(Q(100), Math.round(Y[Y.length - 1]));
+  assert.equal(Q(X[X.length - 1] + 1), Math.round(Y[Y.length - 1]));
+  // Below the first knot, constant at its y.
+  assert.equal(Q(-5), Math.round(Y[0]));
+  // Halfway between two knots is halfway between their values, half-up.
+  const lo = X[12];
+  const hi = X[13];
+  const mid = (lo + hi) / 2;
+  assert.equal(Q(mid), Math.floor((Y[12] + (Y[13] - Y[12]) * ((mid - lo) / (hi - lo))) + 0.5));
+});
+
+test('the qmap widens the published spread — that is the point of it', () => {
+  // Fitted so the score at the q-th percentile of what we publish becomes the
+  // actual busyness at the q-th percentile. The visible consequence is that the
+  // rails get used: the shipped reconstruction almost never says 0 or 100.
+  assert.equal(Q(10), 0, 'a low-middling score reads as an empty room');
+  assert.equal(Q(67), 100, 'a modestly-busy score reads as a packed one');
+  assert.ok(Q(80) - Q(20) > 80 - 20, 'the map stretches the middle of the range outward');
+});
+
+test('the qmap is not a substitute for reconstruction and composes after it', () => {
+  // The map's x grid is the distribution of RECONSTRUCTED scores, so it is only
+  // ever applied to reconstructScore's output. Composing it is well defined and
+  // still lands in the integer 0..100 contract getLabel reads.
+  for (const [d, b] of [[-80, 50], [0, 50], [80, 50], [12, 30], [-12, 30]]) {
+    const s = Q(R(d, b));
+    assert.ok(Number.isInteger(s) && s >= 0 && s <= 100, 'Q(R(' + d + ',' + b + ')) = ' + s);
+  }
+});
+
+test('non-finite input passes through untouched, as reconstructScore already guards it', () => {
+  assert.ok(Number.isNaN(Q(NaN)));
+  assert.equal(Q(undefined), undefined);
+  assert.equal(Q(null), null);
+});
+
+test('the qmap records the artifact it was fitted on and its own measurement', () => {
+  assert.equal(typeof _internals.QMAP_FITTED_ON, 'string');
+  assert.ok(_internals.QMAP_FITTED_ON.length > 0);
+  const m = _internals.QMAP_MEASURED;
+  // The published confidence figure switches to this when the flag is on, so it
+  // has to be a real percentage with a population attached, not a placeholder.
+  assert.ok(m.within15 > 0 && m.within15 <= 100);
+  assert.ok(m.within10 > 0 && m.within10 <= 100);
+  assert.ok(m.rows > 1000, 'a measurement on a handful of rows is not a measurement');
+  assert.ok(typeof m.population === 'string' && m.population.length > 20);
+  assert.ok(m.within15 > m.within15Unmapped,
+    'the substituted figure must be the one measured on the mapped number');
+});
+
+test('the flag is OFF by default', () => {
+  assert.notEqual(process.env.CROWD_QMAP_ENABLED, 'true',
+    'CROWD_QMAP_ENABLED must not be set in a test run — the map is unarmed');
+});

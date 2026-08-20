@@ -2053,6 +2053,106 @@ function reconstructScore(rawDelta, baseline) {
   return score;
 }
 
+// ---------------------------------------------------------------------------
+// SCORE-QMAP — BUILT, MEASURED, AND UNARMED. Flag: CROWD_QMAP_ENABLED.
+//
+// WHAT IT IS. A 41-knot monotone quantile lookup that rewrites the published
+// score so its DISTRIBUTION matches the distribution of real busyness, instead
+// of the compressed one a delta model produces. Fitted by matching quantiles:
+// the score at the q-th percentile of what we publish is replaced by the actual
+// busyness at the q-th percentile of what really happened.
+//
+// WHY IT EXISTS. Reality on the gate slice is bimodal — actual sd 36.65, 23.6%
+// of served venue-hours at or below 5 and 22.1% at or above 90 — and the shipped
+// number sits in the middle of it at sd 21.4, 0.58 of the truth's spread. A
+// point estimate cannot be near both modes: MAE is minimised by the conditional
+// median of a bimodal target, within-10 by committing to a mode. So this is a
+// product choice between two metrics, not a bug fix, and it is Jayden's to make.
+// Full write-up: scripts/ml/train/QMAP-DECISION.md.
+//
+// WHAT IT IS WORTH, re-derived 2026-08-20 against the reconstruction production
+// performs TODAY (clamp ±50 + push, rounded — NOT the legacy ±30 arithmetic the
+// 2026-08-19 dispersion lab used as its reference, which is why its +8.65pp is
+// not this change's number). Prequential: fitted on the earliest 30% of gate
+// dates (<= 2026-03-28, 21,148 rows), scored on the forward 46,101:
+//
+//     within-10   20.84%  ->  29.22%   (+8.38pp, CI95 [+7.17, +9.69])
+//     within-15   30.12%  ->  36.42%   (+6.30pp)
+//     within-20   39.08%  ->  43.61%   (+4.53pp, CI95 [+3.57, +5.55])
+//     MAE         29.976  ->  33.126   (+3.15,   CI95 [+2.72, +3.57])
+//     sd / actual  0.576  ->   0.927
+//
+// 2000-resample date-block bootstrap. It fails the ship gate's MAE arm on
+// purpose; RETRAIN.md carries the drafted two-metric alternative that would let
+// it through, also unarmed.
+//
+// WHERE IT SITS. AFTER reconstructScore and BEFORE getLabel, so the band on the
+// card always describes the number on the card. Because the map is monotone it
+// cannot reorder anything: measured on 21,905 within-venue-day hour pairs and
+// 123,051 same-hour cross-venue pairs, ZERO order reversals. It does create
+// ties (6.4% of hour pairs, 10.3% of venue pairs) where the rails flatten, which
+// is why the hour-ordering axis staying on `baselineScore` matters more, not
+// less, with this on.
+//
+// THE TABLE IS ARTIFACT-SPECIFIC. It was fitted on 2.6.0-starling's output
+// distribution. Applying it to any other artifact would be calibrating one
+// model with another's quantiles, so the flag refuses politely rather than
+// doing that silently: QMAP_FITTED_ON is checked at the call site and an
+// unmatched artifact serves unmapped.
+// ---------------------------------------------------------------------------
+const QMAP_FITTED_ON = '2.6.0-starling';
+// x = published score (the quantile grid of what we publish), y = actual
+// busyness at the same quantile. 41 knots requested at q = 0.005..0.995; 40
+// survive after collapsing duplicate x, which is the table below. Strictly
+// increasing in x, non-decreasing in y — both asserted at fit time and pinned by
+// __tests__/dispersionReconstruction.test.js.
+const QMAP_X = [0, 5, 8, 10, 12, 14, 16, 18, 20, 21, 23, 25, 27, 28, 29, 31, 32,
+  34, 35, 36, 37, 39, 40, 42, 43, 45, 46, 48, 50, 51, 53, 55, 58, 60, 63, 67, 70,
+  74, 80, 89];
+const QMAP_Y = [0, 0, 0, 0, 5, 5, 5, 5, 5, 5, 10, 10, 10, 15, 15, 20, 20, 25, 25,
+  30, 30, 35, 40, 40, 45, 50, 55, 55, 60, 65, 70, 75, 80, 85, 95, 100, 100, 100,
+  100, 100];
+
+// The measurement of the MAPPED number, carried next to the map so the
+// confidence field can stop quoting a figure that describes the unmapped one.
+// Holdout-forward window, same 46,101 rows as the block above. It is NOT the
+// same population as metadata's training-CV within_15 (369,076 training rows,
+// 33.3%) — that is precisely why it is published with its own population string
+// rather than substituted quietly.
+const QMAP_MEASURED = Object.freeze({
+  within10: 29.22,
+  within15: 36.42,
+  within15Unmapped: 30.12,
+  mae: 33.13,
+  rows: 46101,
+  population: 'holdout gate slice, prequential forward window (fit <= 2026-03-28, scored 2026-03-29..05-18)',
+});
+
+function qmapEnabled() {
+  return process.env.CROWD_QMAP_ENABLED === 'true';
+}
+
+// np.interp semantics, deliberately: constant extrapolation at both ends, linear
+// between knots. scripts/ml/train/quick_eval.py applies the SAME two arrays with
+// np.interp so the gate scores the arithmetic production performs. The only
+// difference is the final rounding, and it is the difference that already exists
+// between reconstructScore and quick_eval's reconstruct(): serving publishes an
+// integer, the gate stays float because every prior gate number was computed
+// that way. If either table changes, both sides change together.
+function applyScoreQuantileMap(score) {
+  if (typeof score !== 'number' || !Number.isFinite(score)) return score;
+  const n = QMAP_X.length;
+  if (score <= QMAP_X[0]) return Math.max(0, Math.min(100, Math.round(QMAP_Y[0])));
+  if (score >= QMAP_X[n - 1]) return Math.max(0, Math.min(100, Math.round(QMAP_Y[n - 1])));
+  let hi = 1;
+  while (hi < n - 1 && QMAP_X[hi] < score) hi += 1;
+  const lo = hi - 1;
+  const span = QMAP_X[hi] - QMAP_X[lo];
+  const t = span === 0 ? 0 : (score - QMAP_X[lo]) / span;
+  const mapped = QMAP_Y[lo] + t * (QMAP_Y[hi] - QMAP_Y[lo]);
+  return Math.max(0, Math.min(100, Math.round(mapped)));
+}
+
 async function predictBusyness(venue, weather, timestamp, options = {}) {
   await init();
   const userId = options && options.userId != null ? options.userId : undefined;
@@ -2165,6 +2265,16 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       score = Math.max(0, Math.min(100, Math.round(rawOutput)));
     }
 
+    // score-qmap, OFF unless CROWD_QMAP_ENABLED=true. After the reconstruction,
+    // before getLabel, so the band never describes a different number than the
+    // one shown. The version check is not defensive padding: the table is one
+    // artifact's quantile grid and would be meaningless applied to another's.
+    let qmapApplied = false;
+    if (qmapEnabled() && (metadata.model_version || '') === QMAP_FITTED_ON) {
+      score = applyScoreQuantileMap(score);
+      qmapApplied = true;
+    }
+
     const label = getLabel(score);
 
     // THE CONFIDENCE FIGURE, AND WHAT IT IS ALLOWED TO CLAIM.
@@ -2183,7 +2293,24 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
     let confidence;
     let confidenceMeasurement;
     if (accuracy.status === 'measured') {
-      confidence = Math.round(accuracy.percent);
+      // WHEN THE QMAP IS ON, metadata's figure stops describing the published
+      // number. `accuracy` is the artifact's measured within-15 on the RAW
+      // reconstruction; the qmap publishes a different number, and quoting the
+      // old figure for it would be exactly the "publishing a measurement of
+      // something else" failure readServedAccuracy was written to end. So the
+      // map carries its own measurement and it is published with its own
+      // population string, which is a smaller, later, holdout-side one. On the
+      // rows where both were measured the direction is real and the same:
+      // within-15 30.12% unmapped -> 36.42% mapped.
+      const served = qmapApplied
+        ? {
+          percent: QMAP_MEASURED.within15,
+          metric: 'within_15_score_qmap',
+          population: QMAP_MEASURED.population,
+          rows: QMAP_MEASURED.rows,
+        }
+        : accuracy;
+      confidence = Math.round(served.percent);
       // Without a live reading the temperature in the vector is climatology,
       // not evidence, and the weather one-hot sits in 'unknown'. The rule
       // engine adds 15 confidence for having weather; take the same 15 back off
@@ -2195,10 +2322,10 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       confidenceMeasurement = {
         status: 'measured',
         means: 'measured_accuracy',
-        metric: accuracy.metric,
-        population: accuracy.population,
-        populationRows: accuracy.rows,
-        measuredPercent: accuracy.percent,
+        metric: served.metric,
+        population: served.population,
+        populationRows: served.rows,
+        measuredPercent: served.percent,
         weatherPenalty,
       };
     } else {
@@ -2285,6 +2412,11 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       baselineScore: Number.isFinite(Number(baseline)) && Number(baseline) > 0
         ? Number(baseline)
         : null,
+      // Whether the score above went through the dispersion quantile map. Null
+      // rather than false when the flag is off, so nothing downstream has to
+      // decide what a `false` on a pre-flag response would have meant. Internal
+      // to the serve path; routes strip it, same as baselineScore.
+      scoreCalibration: qmapApplied ? 'score_qmap_v26' : null,
     };
 
     // Add event alert when large event nearby
@@ -2476,6 +2608,15 @@ module.exports = {
     baselineFromPopularTimes,
     trueEventInstant,
     reconstructScore,
+    // The unarmed dispersion quantile map (CROWD_QMAP_ENABLED). Exported so
+    // __tests__/dispersionReconstruction.test.js can pin the table's shape,
+    // its monotonicity and the composition order against reconstructScore
+    // without the flag ever being on in a test run.
+    applyScoreQuantileMap,
+    QMAP_X,
+    QMAP_Y,
+    QMAP_FITTED_ON,
+    QMAP_MEASURED,
     weatherForSlot,
     categoryGlobalMean,
     hasTempReading,
