@@ -565,20 +565,44 @@ const UPSELL = /\b(upgrade|pro\s+plan|premium\s+plan|subscription|paid\s+tier|pa
 const PROMPT_LEAK = /(ROOST\s+(PHRASING|OPERATING\s+ADVICE|QUESTION)\s+(CONTRACT|ROUTER)|\bmy\s+instructions\b|\bsystem\s+prompt\b|\bthese\s+instructions\b|\bthe\s+fact\s+block\b|\bSECTION\s+(ONE|TWO|THREE|FOUR|FIVE|SIX|SEVEN|EIGHT|NINE)\b)/i;
 const MAX_ADVICE_SENTENCES = 8;
 
+// EVERY DISCARD SAYS WHY, EVERY TIME. This function had thirteen bare
+// `return null` exits and logged nothing at any of them, so a rejection was
+// invisible from the outside: the owner got the refusal copy and the server
+// said nothing at all. A 2026-08-20 investigation into why roughly one advice
+// answer in twenty-seven was being discarded had no logged discards to read
+// and had to reconstruct the reasons by re-running captured questions against
+// the live model. That is the whole cost of a silent guard.
+//
+// It logs on EVERY rejection, not once per process the way advisorPhrasing's
+// valveReject does. The difference is what a rejection costs. In mode A a
+// discarded draft is replaced by the deterministic twin carrying the same
+// numbers, so the owner loses wording and the log would only ever be noise. In
+// mode B there is no twin: a discard costs the owner the answer, so the rate
+// is a product metric and every instance of it belongs in the log.
+//
+// The reason string is for us, never for the owner. The refusal copy stays
+// exactly as vague as it is, because telling someone which check their answer
+// tripped is telling them how to write around it.
+function adviceReject(reason) {
+  console.warn(`advisorFreeText: advice answer discarded by the valve (${reason}); the owner got the refusal copy.`);
+  return null;
+}
+
 function applyAdviceValve(raw, facts) {
-  if (typeof raw !== 'string') return null;
+  if (typeof raw !== 'string') return adviceReject('model returned no text');
   const text = raw.trim();
-  if (!text) return null;
-  if (hasNumerals(text)) return null;
-  if (NUMBER_WORDS.test(text)) return null;
-  if (hasBannedDash(text)) return null;
-  if (FABRICATED_BENCHMARK.test(text)) return null;
-  if (FALSE_MEASUREMENT.test(text)) return null;
-  if (UPSELL.test(text)) return null;
-  if (PROMPT_LEAK.test(text)) return null;
+  if (!text) return adviceReject('empty');
+  if (hasNumerals(text)) return adviceReject('digit in model output');
+  if (NUMBER_WORDS.test(text)) return adviceReject('number written as a word');
+  if (hasBannedDash(text)) return adviceReject('em dash');
+  if (FABRICATED_BENCHMARK.test(text)) return adviceReject('fabricated benchmark or study');
+  if (FALSE_MEASUREMENT.test(text)) return adviceReject('claimed a measurement we did not make');
+  if (UPSELL.test(text)) return adviceReject('upsell');
+  if (PROMPT_LEAK.test(text)) return adviceReject('prompt leak');
 
   const sentences = text.split(/(?<=[.!?])\s+/).filter(Boolean);
-  if (sentences.length === 0 || sentences.length > MAX_ADVICE_SENTENCES) return null;
+  if (sentences.length === 0) return adviceReject('no sentences');
+  if (sentences.length > MAX_ADVICE_SENTENCES) return adviceReject(`too long, ${sentences.length} sentences`);
 
   // Causation is allowed ABOUT GENERAL PRACTICE ("a recurring night works
   // because people can plan around it") and forbidden about this venue's
@@ -586,7 +610,7 @@ function applyAdviceValve(raw, facts) {
   // carries a venue fact may not also carry a causal verb, which is exactly the
   // claim the model epoch finding says nothing here can support.
   for (const s of sentences) {
-    if (/\{\{fact:/.test(s) && CAUSAL_VERBS.test(s)) return null;
+    if (/\{\{fact:/.test(s) && CAUSAL_VERBS.test(s)) return adviceReject('causal verb in a sentence carrying a venue fact');
   }
 
   const byId = new Map((facts || []).map((f) => [String(f.id), f]));
@@ -598,8 +622,8 @@ function applyAdviceValve(raw, facts) {
     used.add(id);
     return formatFactValue(f);
   });
-  if (unknownId) return null;
-  if (rendered.includes('{{') || rendered.includes('}}')) return null;
+  if (unknownId) return adviceReject('placeholder id not in the block');
+  if (rendered.includes('{{') || rendered.includes('}}')) return adviceReject('malformed placeholder');
 
   return {
     text: advisorPhrasing.internals.dedupeAdjacentWords(rendered),
