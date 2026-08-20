@@ -1,0 +1,854 @@
+// ---------------------------------------------------------------------------
+// ADVISOR FACT ENGINE — Layer B of ADVISOR-GROUNDING.md, T0 build.
+//
+// Deterministic. ZERO LLM. Every answer this module produces is a typed FACT
+// carrying {id, value, source, asOf} or a typed REFUSAL carrying
+// {status:'refused', reason, whatWouldUnlock}. A fact without a source cannot
+// be constructed: makeFact throws, and nothing in this file builds a fact any
+// other way. That is the structural half of the hallucination guards — the
+// fabricated Pro Tips box deleted from the dashboard on 2026-08-14 could not
+// be rebuilt through this module because its numbers had no source to name.
+//
+// WHAT THIS MODULE NEVER DOES, pinned by __tests__/advisorCards.test.js:
+//   * No causal claims. The model may not explain anything (MODEL-EPOCH:
+//     `month` is a collection artifact that would top the SHAP explanations).
+//     HARD_REFUSALS.causalWhy is the only answer a why-intent can get.
+//   * No competitor comparisons, and no strip orderings inside the minimum
+//     gap. Ordering claims defer to the ONE definition in
+//     routes/venueDashboard.js (stripOrderingClaim, measured 43.1% backwards
+//     without the gap), so this file cannot drift from the dashboard's hedge.
+//   * No flock budgets, in any form or aggregate. This module never reads
+//     budget_submissions or bill_split tables (pinned as source text).
+//   * Owner beliefs are never restated as measurement. An intake- or
+//     owner-report-shaped fact with a measurement source is unconstructible.
+//   * No writes. SELECTs only. An advisor with a write path is a new
+//     consumer-facing surface, which is a different and unapproved product.
+//
+// CORPUS GATING. corpus_status='baselines' (with baseline rows) unlocks
+// model-backed facts; everything else refuses WITH A PATH. Absent-from-corpus
+// is the MODAL case (030's own header: the single real production profile is
+// not in ml_venues), so the refusal is the main screen, not an error state.
+//
+// COST. Model-backed facts are scored from the ml_venues row, not from a paid
+// Google Places call: the corpus gate guarantees the row exists before any
+// scoring starts, so this surface spends no Places budget at all. Events and
+// weather ride the existing cached, budgeted paths (mlPredictor's event cache,
+// weatherService's cache). No module-scope cache of our own, deliberately —
+// nothing here to add to utils/cacheKeyInventory.js.
+// ---------------------------------------------------------------------------
+
+const pool = require('../config/database');
+const mlPredictor = require('./mlPredictor');
+const crowdEngine = require('./crowdEngine');
+const weatherService = require('./weatherService');
+const venueCorpus = require('./venueCorpus');
+const { INTAKE_COLUMNS } = require('../validators/venueIntake');
+
+// ─── The source vocabulary ───────────────────────────────────────────────────
+//
+// confidenceBasis values (crowdEngine.describePredictionSupport) plus the
+// advisor extensions named in ADVISOR-GROUNDING §Layer B and the why-layer's
+// §5 vocabulary. 'arithmetic' is for numbers derived from other facts and is
+// only constructible with a `from` list naming the fact ids it was computed
+// from, so even derived numbers trace to sources.
+const FACT_SOURCES = new Set([
+  // confidenceBasis vocabulary
+  'model_holdout', 'user_reports', 'category_pattern', 'model_unverified_axis',
+  // advisor extensions
+  'intake', 'owner_report', 'votes', 'events', 'weather',
+  'served_prediction', 'google_baseline', 'arithmetic',
+]);
+
+// Sources that are the owner's own testimony. Facts built from them carry
+// attribution 'owner_asserted' automatically, and a fact whose id says it is
+// owner testimony (intake_*, owner_*) may not carry any other source: that is
+// refusal class "owner beliefs restated as measurement", enforced by the type.
+const OWNER_SOURCES = new Set(['intake', 'owner_report']);
+const OWNER_ID_PREFIXES = ['intake_', 'owner_'];
+
+// The corpus is frozen. Any fact quoted from it carries this date forever
+// (ADVISOR-PRODUCT-SHAPE §0: an August product quoting a spring curve as
+// current is an invented statistic in slow motion).
+const CORPUS_AS_OF = '2026-05-18 (corpus frozen, collected spring 2026)';
+
+// "Within ~1km" for the events card (ADVISOR-PRODUCT-SHAPE §5 card 2). The
+// upstream Ticketmaster query runs at 2km; this is the advisor's tighter cut
+// on the returned nearest distance.
+const EVENT_RADIUS_KM = 1.0;
+
+// SLOP-AUDIT, applied to every owner-visible string this module emits: no em
+// dashes, no class words. Enforced at construction so a bad string throws in
+// a test instead of shipping.
+const BANNED_COPY = ['—', 'seamless', 'effortless', 'unlock deeper', 'personalize your experience'];
+function assertCleanCopy(text, where) {
+  const lower = String(text).toLowerCase();
+  for (const banned of BANNED_COPY) {
+    if (lower.includes(banned)) {
+      throw new Error(`advisor copy violates SLOP-AUDIT (${where}): contains "${banned === '—' ? 'em dash' : banned}"`);
+    }
+  }
+}
+
+// ─── Fact and refusal constructors ───────────────────────────────────────────
+
+/**
+ * The only way a fact exists. Throws on: missing/unknown source, missing id,
+ * missing value, missing asOf, arithmetic without provenance, and an
+ * owner-testimony id dressed in a measurement source.
+ */
+function makeFact(input) {
+  if (!input || typeof input !== 'object') throw new TypeError('fact: not an object');
+  const { id, value, source, asOf } = input;
+  if (typeof id !== 'string' || !id) throw new TypeError('fact: id required');
+  if (value === undefined) throw new TypeError(`fact ${id}: value required`);
+  if (typeof source !== 'string' || !FACT_SOURCES.has(source)) {
+    throw new TypeError(`fact ${id}: a fact without a known source is unconstructible (got "${source}")`);
+  }
+  if (typeof asOf !== 'string' || !asOf) throw new TypeError(`fact ${id}: asOf required`);
+
+  const ownerShaped = OWNER_ID_PREFIXES.some((p) => id.startsWith(p));
+  if (ownerShaped && !OWNER_SOURCES.has(source)) {
+    throw new TypeError(`fact ${id}: an owner assertion may not be restated as measurement (source "${source}")`);
+  }
+
+  const fact = { id, value, source, asOf };
+  if (OWNER_SOURCES.has(source)) fact.attribution = 'owner_asserted';
+  if (source === 'arithmetic') {
+    if (!Array.isArray(input.from) || input.from.length === 0 || !input.from.every((f) => typeof f === 'string' && f)) {
+      throw new TypeError(`fact ${id}: arithmetic facts need a non-empty \`from\` list of fact ids`);
+    }
+    fact.from = [...input.from];
+  }
+  for (const k of ['label', 'note']) {
+    if (input[k] !== undefined) {
+      assertCleanCopy(input[k], `fact ${id} ${k}`);
+      fact[k] = String(input[k]);
+    }
+  }
+  for (const k of ['gate', 'predictionMethod', 'unit']) {
+    if (input[k] !== undefined) fact[k] = input[k];
+  }
+  return Object.freeze(fact);
+}
+
+/** Refusals are data, with the same construction discipline as facts. */
+function makeRefusal({ id, reason, whatWouldUnlock }) {
+  if (typeof id !== 'string' || !id) throw new TypeError('refusal: id required');
+  if (typeof reason !== 'string' || !reason) throw new TypeError(`refusal ${id}: reason required`);
+  if (typeof whatWouldUnlock !== 'string' || !whatWouldUnlock) {
+    throw new TypeError(`refusal ${id}: whatWouldUnlock required. A refusal that does not name the missing data is a dead end, not a refusal.`);
+  }
+  assertCleanCopy(reason, `refusal ${id} reason`);
+  assertCleanCopy(whatWouldUnlock, `refusal ${id} whatWouldUnlock`);
+  return Object.freeze({ id, status: 'refused', reason, whatWouldUnlock });
+}
+
+const isRefusal = (entry) => !!entry && entry.status === 'refused';
+
+// ─── Hard refusal classes (ADVISOR-GROUNDING §1) ────────────────────────────
+//
+// Each is a FUNCTION returning a refusal, so the only thing a caller can do
+// with one of these intents is refuse it. None of them mention an upgrade or
+// a plan: "upgrade to see the answer" when the answer does not exist at any
+// tier is the darkest pattern available here (ADVISOR-PRODUCT-SHAPE §4).
+const HARD_REFUSALS = {
+  // MODEL-EPOCH-FINDING item 5: nothing venue-facing explains a prediction
+  // until the epoch figures are reproduced. The model's top signal tracks when
+  // our data was collected, not what happened on the street.
+  causalWhy: () => makeRefusal({
+    id: 'refuse_causal_why',
+    reason: 'We do not explain why a number moved. Any cause we named would be a guess dressed as analysis, and our own measurements say the model cannot support one.',
+    whatWouldUnlock: 'A season of your own slider readings and user reports at your venue. Those observe your room directly, which the model does not.',
+  }),
+  // Parked by decision on the board: "not until the data can support them, if ever."
+  competitorComparison: () => makeRefusal({
+    id: 'refuse_competitor_comparison',
+    reason: 'We do not compare you to named venues or explain their nights.',
+    whatWouldUnlock: 'Live readings from enough nearby venues that a comparison would measure the street instead of guessing at it. That data does not exist yet.',
+  }),
+  // The budget-privacy invariant has no venue-side exception.
+  flockBudgets: () => makeRefusal({
+    id: 'refuse_flock_budgets',
+    reason: 'What groups submit as budgets is private to them. We never show it to a venue, alone or in an aggregate.',
+    whatWouldUnlock: 'Nothing. This stays closed by design.',
+  }),
+  // Also enforced structurally in makeFact; this is the intent-level answer.
+  ownerBeliefAsMeasurement: () => makeRefusal({
+    id: 'refuse_owner_belief_as_measurement',
+    reason: 'What you told us stays labeled as what you told us. We do not restate your own answers as measurements.',
+    whatWouldUnlock: 'Nothing. The labeling is the point.',
+  }),
+};
+
+/**
+ * Strip orderings defer to THE definition in routes/venueDashboard.js
+ * (stripOrderingClaim + STRIP_ORDERING_MIN_GAP), required lazily so loading
+ * this service does not load a router. Inside the gap, or with any rule-engine
+ * side, the only output is a refusal: the strip was measured 43.1% backwards,
+ * so inside the gap the honest answer is "too close to call".
+ */
+function stripOrderingFact(you, competitor, now = new Date()) {
+  // Fail CLOSED if the hedge is not exported by the build this runs in (the
+  // hedge ships with the dashboard's strip work): no hedge means no ordering
+  // claims at all, never a second local copy of the arithmetic.
+  const hedge = require('../routes/venueDashboard').__test || {};
+  const { stripOrderingClaim, STRIP_ORDERING_MIN_GAP } = hedge;
+  const claim = typeof stripOrderingClaim === 'function' ? stripOrderingClaim(you, competitor) : null;
+  if (!claim) {
+    return makeRefusal({
+      id: 'refuse_strip_ordering',
+      reason: 'Too close to call. We only state an order between two venues when the gap is wide enough that our measured error cannot flip it, and only when both sides were model scored.',
+      whatWouldUnlock: 'A wider gap between the two forecasts, or model scores on both sides. Inside the gap there is no honest ordering to state.',
+    });
+  }
+  return makeFact({
+    id: 'strip_ordering',
+    value: { claim, minGap: STRIP_ORDERING_MIN_GAP },
+    source: 'model_holdout',
+    asOf: now.toISOString(),
+    gate: 'corpus_status=baselines',
+  });
+}
+
+// ─── Corpus gating ───────────────────────────────────────────────────────────
+
+/**
+ * null when model-backed facts may be built; otherwise the refusal that IS the
+ * main screen for the modal case. 'unknown' and NULL refuse like 'absent':
+ * the absence of an answer is never permission (services/venueCorpus.js).
+ */
+function corpusGate(profile) {
+  if (venueCorpus.hasModelBackedData(profile)) return null;
+  const status = profile?.corpus_status;
+  return makeRefusal({
+    id: 'refuse_no_baseline',
+    reason: venueCorpus.corpusSummary(profile),
+    whatWouldUnlock: status === 'venue_only'
+      ? 'A baseline curve for this venue. It arrives with a corpus rebuild on our side, not with anything on yours.'
+      : 'This venue is not in our measured corpus, so nothing model backed can be shown. Your own slider readings build history for your venue that does not depend on the corpus.',
+  });
+}
+
+// ─── Context ─────────────────────────────────────────────────────────────────
+
+/**
+ * One profile read (intake columns + corpus columns) plus the ml_venues row
+ * when the venue is in the corpus. The ml_venues row is what model-backed
+ * facts score from: coordinates, category, rating, review count, price level
+ * and timezone, all already collected, no paid lookup.
+ */
+async function getVenueContext(userId) {
+  const { rows } = await pool.query(
+    `SELECT user_id, google_place_id, verified, business_name, updated_at,
+            corpus_status, corpus_baseline_rows, corpus_checked_at,
+            ${INTAKE_COLUMNS.join(', ')}
+       FROM venue_profiles WHERE user_id = $1`,
+    [userId]
+  );
+  const profile = rows[0];
+  if (!profile) return null;
+
+  let mlVenue = null;
+  if (profile.google_place_id) {
+    const r = await pool.query(
+      `SELECT name, latitude, longitude, venue_category, google_types,
+              price_level, rating, review_count, timezone
+         FROM ml_venues WHERE google_place_id = $1`,
+      [profile.google_place_id]
+    );
+    mlVenue = r.rows[0] || null;
+  }
+  return { profile, mlVenue };
+}
+
+// ─── Clock helpers ───────────────────────────────────────────────────────────
+
+/**
+ * UTC offset in minutes for an IANA zone at an instant, or null. ml_venues
+ * stores the zone name; crowdEngine.venueLocalNow wants minutes. Same
+ * fallback contract as everywhere else: null means "use the server clock".
+ */
+function tzOffsetMinutes(timeZone, at = new Date()) {
+  if (!timeZone) return null;
+  try {
+    const dtf = new Intl.DateTimeFormat('en-US', {
+      timeZone, hour12: false,
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+    });
+    const parts = {};
+    for (const p of dtf.formatToParts(at)) parts[p.type] = p.value;
+    const asUTC = Date.UTC(
+      Number(parts.year), Number(parts.month) - 1, Number(parts.day),
+      Number(parts.hour) % 24, Number(parts.minute)
+    );
+    return Math.round((asUTC - at.getTime()) / 60000);
+  } catch {
+    return null;
+  }
+}
+
+const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function hour12(h) {
+  const n = ((Number(h) % 24) + 24) % 24;
+  const period = n >= 12 ? 'PM' : 'AM';
+  const display = n === 0 ? 12 : n > 12 ? n - 12 : n;
+  return `${display} ${period}`;
+}
+
+function toDateStr(v) {
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  return String(v).slice(0, 10);
+}
+
+/** The venue-shaped object mlPredictor.predictBusyness scores from. */
+function venueForScoring(ctx, now = new Date()) {
+  const m = ctx.mlVenue;
+  if (!m) return null;
+  return {
+    place_id: ctx.profile.google_place_id,
+    google_place_id: ctx.profile.google_place_id,
+    name: m.name || ctx.profile.business_name || '',
+    rating: m.rating != null ? Number(m.rating) : null,
+    user_ratings_total: m.review_count != null ? Number(m.review_count) : 0,
+    price_level: m.price_level != null ? Number(m.price_level) : null,
+    types: Array.isArray(m.google_types) ? m.google_types : [],
+    location: { latitude: Number(m.latitude), longitude: Number(m.longitude) },
+    utcOffsetMinutes: tzOffsetMinutes(m.timezone, now),
+  };
+}
+
+/** The venue's "today", server-Date shaped, per the /intelligence idiom. */
+function venueBaseDate(utcOffsetMinutes, now) {
+  const clock = crowdEngine.venueLocalNow(utcOffsetMinutes, now);
+  const localDay = clock ? clock.day : now.getDay();
+  const base = new Date(now);
+  base.setDate(base.getDate() + crowdEngine.weekdayOffset(base.getDay(), localDay));
+  return base;
+}
+
+const intakeAsOf = (profile) =>
+  profile.updated_at ? `owner-set ${toDateStr(profile.updated_at)}` : 'owner-set (date not recorded)';
+
+// ─── The venue's own curve, and the hours it actually runs ───────────────────
+//
+// Roost serves ANY venue type (Jayden's directive 2026-08-19): a breakfast
+// cafe peaks at 8 AM, so nothing here may hardcode an evening window. The
+// venue's Google-derived weekly curve says which hours the building actually
+// runs, per weekday, and every scan below walks THOSE hours. No dayparts are
+// assumed, no nightlife vocabulary is used; a peak is wherever the venue's own
+// day puts it.
+
+async function fetchBaselineCurve(placeId) {
+  const { rows } = await pool.query(
+    `SELECT day_of_week, hour, baseline
+       FROM ml_venue_baselines
+      WHERE google_place_id = $1`,
+    [placeId]
+  );
+  return rows
+    .map((r) => ({ day: Number(r.day_of_week), hour: Number(r.hour), baseline: Number(r.baseline) }))
+    .filter((r) => Number.isFinite(r.day) && Number.isFinite(r.hour) && Number.isFinite(r.baseline));
+}
+
+/** Hours with any recorded activity, per weekday (0=Sunday), ascending. */
+function openHoursByDay(curve) {
+  const days = Array.from({ length: 7 }, () => []);
+  for (const r of curve) {
+    if (r.day >= 0 && r.day <= 6 && r.baseline > 0) days[r.day].push(r.hour);
+  }
+  for (const list of days) list.sort((a, b) => a - b);
+  return days;
+}
+
+/** The curve's own busiest hour per weekday, or null where nothing registers. */
+function busiestHourByDay(curve) {
+  const best = Array.from({ length: 7 }, () => null);
+  for (const r of curve) {
+    if (r.day < 0 || r.day > 6 || r.baseline <= 0) continue;
+    if (best[r.day] === null || r.baseline > best[r.day].baseline) best[r.day] = { hour: r.hour, baseline: r.baseline };
+  }
+  return best.map((b) => (b ? b.hour : null));
+}
+
+/** Mean of the positive baseline hours per weekday: the day's typical strength. */
+function dayMeans(curve) {
+  const sums = Array.from({ length: 7 }, () => ({ total: 0, n: 0 }));
+  for (const r of curve) {
+    if (r.day < 0 || r.day > 6 || r.baseline <= 0) continue;
+    sums[r.day].total += r.baseline;
+    sums[r.day].n += 1;
+  }
+  return sums.map((s, day) => (s.n > 0 ? { day, mean: s.total / s.n } : null)).filter(Boolean);
+}
+
+// ─── Card 1: Week ahead ──────────────────────────────────────────────────────
+//
+// Projected peak window per day for the next 7 days, each carrying its
+// predictionMethod, tagged estimate, and gated hard on the corpus: without a
+// baseline the whole card is ONE refusal, and no model call is spent finding
+// that out (the gate is a field read on the profile row, 030's design intent).
+// The scan covers the venue's FULL operating hours from its own curve, so a
+// breakfast peak at 8 AM surfaces exactly like a dinner peak at 8 PM.
+async function buildWeekAhead(ctx, { now = new Date(), userId } = {}) {
+  const gate = corpusGate(ctx.profile);
+  if (gate) return [gate];
+  if (!ctx.mlVenue) {
+    // 'baselines' with no ml_venues row is a drifted corpus; refuse honestly
+    // rather than scoring a venue we cannot shape.
+    return [makeRefusal({
+      id: 'refuse_no_corpus_row',
+      reason: 'This venue is flagged as modelled but its corpus row is missing, so no forecast can be built right now.',
+      whatWouldUnlock: 'A corpus recheck on our side. Nothing on yours.',
+    })];
+  }
+
+  const venue = venueForScoring(ctx, now);
+  const weather = await weatherService.getWeather(
+    venue.location.latitude, venue.location.longitude, { userId }
+  ).catch(() => null);
+  const base = venueBaseDate(venue.utcOffsetMinutes, now);
+  const curve = await fetchBaselineCurve(ctx.profile.google_place_id);
+  const openByDay = openHoursByDay(curve);
+  const out = [];
+
+  for (let d = 0; d <= 6; d++) {
+    const day = new Date(base);
+    day.setDate(day.getDate() + d);
+    const date = day.toISOString().slice(0, 10);
+    const weekday = WEEKDAY_NAMES[day.getDay()];
+
+    // The venue's own hours for this weekday. No hardcoded window: a cafe's
+    // scan starts at 6 AM, a club's at 9 PM, because the curve says so.
+    const scanHours = openByDay[day.getDay()];
+    if (!scanHours.length) {
+      out.push(makeRefusal({
+        id: `refuse_peak_${date}`,
+        reason: `Your Google profile's curve shows no activity on ${weekday}, so there is no peak to project for that day.`,
+        whatWouldUnlock: 'Google recording activity for that day, or your own slider readings building a curve of your own.',
+      }));
+      continue;
+    }
+
+    let peak = null;
+    for (const h of scanHours) {
+      const ts = new Date(day);
+      ts.setHours(h, 0, 0, 0);
+      try {
+        const r = await mlPredictor.predictBusyness(venue, weather, ts, { userId });
+        if (r && Number.isFinite(Number(r.score)) && (!peak || Number(r.score) > peak.score)) {
+          peak = {
+            score: Number(r.score), hour: h,
+            method: r.predictionMethod || 'rule_engine',
+            modelVersion: r.modelVersion || null,
+          };
+        }
+      } catch { /* one dead hour does not kill the day; a day with no hours refuses below */ }
+    }
+
+    if (!peak) {
+      out.push(makeRefusal({
+        id: `refuse_peak_${date}`,
+        reason: `No forecast for ${weekday}. The model returned nothing for that day.`,
+        whatWouldUnlock: 'A model score for that day. This is usually transient.',
+      }));
+      continue;
+    }
+    if (peak.method !== 'ml') {
+      // A rule-engine number is a category prior: the same figure for every
+      // venue like this one. Suppressed rather than dressed as a forecast,
+      // the same rule the strip's hedge enforces.
+      out.push(makeRefusal({
+        id: `refuse_peak_${date}`,
+        reason: `${weekday} was scored by category rules, not by the model, so the number would be the same for every venue like yours. We do not present that as your forecast.`,
+        whatWouldUnlock: 'A model scored day for this venue. The baseline curve exists, so this is usually transient.',
+      }));
+      continue;
+    }
+
+    const support = crowdEngine.describePredictionSupport('ml', 0);
+    out.push(makeFact({
+      id: `peak_${date}`,
+      value: { date, weekday, peakHour: peak.hour, peakScore: peak.score, modelVersion: peak.modelVersion },
+      source: support.basis,
+      asOf: now.toISOString(),
+      predictionMethod: 'ml',
+      gate: 'corpus_status=baselines',
+      unit: '0-100 index',
+      label: `${weekday} projects busiest around ${hour12(peak.hour)}, at ${peak.score} on our 0 to 100 index. This is an estimate, not a promise of foot traffic.`,
+    }));
+  }
+  return out;
+}
+
+// ─── Card 2: Around you this week ────────────────────────────────────────────
+//
+// Ticketmaster listings within ~1km over the next 7 days plus the weekend
+// weather line. Presence is a fact; attendance is a vendor-side heuristic and
+// is deliberately NOT surfaced (ADVISOR-WHY-LAYER D3: say "a listed event",
+// never a headcount). Weather is context only, never an explanation.
+async function buildAroundYou(ctx, { now = new Date(), userId } = {}) {
+  const m = ctx.mlVenue;
+  if (!m || m.latitude == null || m.longitude == null) {
+    return [makeRefusal({
+      id: 'refuse_no_location',
+      reason: 'We do not hold map coordinates for this venue, so we cannot look up events or weather around it.',
+      whatWouldUnlock: 'Coordinates arrive when this venue enters our measured corpus. Nothing on your side is missing.',
+    })];
+  }
+  const lat = Number(m.latitude);
+  const lng = Number(m.longitude);
+  const offset = tzOffsetMinutes(m.timezone, now);
+  const out = [];
+
+  // Probe each day at the venue's OWN busiest curve hour, so a brunch spot
+  // checks the street mid-morning and a club checks it at night. 19:00 local
+  // is only the fallback when no curve hour exists for that weekday.
+  let probeHourByDay = Array.from({ length: 7 }, () => null);
+  try {
+    probeHourByDay = busiestHourByDay(await fetchBaselineCurve(ctx.profile.google_place_id));
+  } catch { /* no curve is fine; the fallback hour covers it */ }
+
+  // Events, one probe per day. Rides mlPredictor's shared event cache and
+  // budget; a missing key refuses instead of reading as a quiet street.
+  if (!process.env.TICKETMASTER_API_KEY) {
+    out.push(makeRefusal({
+      id: 'refuse_events_unavailable',
+      reason: 'Event listings are not available right now.',
+      whatWouldUnlock: 'The events feed coming back on our side.',
+    }));
+  } else {
+    // The venue's local calendar, walked from its own midnight.
+    const shifted = offset != null ? new Date(now.getTime() + offset * 60000) : new Date(now);
+    const y = offset != null ? shifted.getUTCFullYear() : shifted.getFullYear();
+    const mo = offset != null ? shifted.getUTCMonth() : shifted.getMonth();
+    const da = offset != null ? shifted.getUTCDate() : shifted.getDate();
+    let sawEvent = false;
+    for (let d = 0; d <= 6; d++) {
+      const dayForDow = offset != null ? new Date(Date.UTC(y, mo, da + d)) : new Date(y, mo, da + d);
+      const dow = offset != null ? dayForDow.getUTCDay() : dayForDow.getDay();
+      const probeHour = probeHourByDay[dow] != null ? probeHourByDay[dow] : 19;
+      // The probe hour on the venue's wall clock, expressed as a true instant.
+      const instant = offset != null
+        ? new Date(Date.UTC(y, mo, da + d, probeHour, 0) - offset * 60000)
+        : new Date(y, mo, da + d, probeHour, 0);
+      let ev = null;
+      try {
+        ev = await mlPredictor._internals.getNearbyEvents(lat, lng, instant, userId);
+      } catch { ev = null; }
+      if (!ev || !ev.hasEvent) continue;
+      const dist = Number(ev.nearestDistance);
+      if (!Number.isFinite(dist) || dist > EVENT_RADIUS_KM) continue;
+      sawEvent = true;
+      const evDate = dayForDow.toISOString().slice(0, 10);
+      const weekday = WEEKDAY_NAMES[dow];
+      const distRounded = Math.round(dist * 10) / 10;
+      out.push(makeFact({
+        id: `event_${evDate}`,
+        value: {
+          date: evDate, weekday,
+          name: ev.nearestName || 'Listed event',
+          distanceKm: distRounded,
+          type: ev.nearestType || null,
+        },
+        source: 'events',
+        asOf: now.toISOString(),
+        note: 'A ticketed listing near you. Whether an event night feeds your room or drains it is not something we can measure yet.',
+        label: `${weekday}: a listed event about ${distRounded} km away, ${ev.nearestName || 'unnamed listing'}.`,
+      }));
+    }
+    if (!sawEvent) {
+      out.push(makeFact({
+        id: 'no_listed_events',
+        value: { listedEventsWithinRadius: 0, radiusKm: EVENT_RADIUS_KM, windowDays: 7 },
+        source: 'events',
+        asOf: now.toISOString(),
+        label: 'No big listed events within about a kilometer over the next 7 days. That covers ticketed listings only, not everything happening on your street.',
+      }));
+    }
+  }
+
+  // The weekend weather line: Friday, Saturday, Sunday from the daily forecast.
+  const forecast = await weatherService.getForecast(lat, lng, { userId }).catch(() => null);
+  if (!forecast || !Array.isArray(forecast)) {
+    out.push(makeRefusal({
+      id: 'refuse_weather_unavailable',
+      reason: 'The weather outlook is not available right now.',
+      whatWouldUnlock: 'The weather feed answering again. This is usually transient.',
+    }));
+  } else {
+    for (const entry of forecast) {
+      if (!entry || typeof entry.date !== 'string') continue;
+      const dow = new Date(`${entry.date}T12:00:00Z`).getUTCDay();
+      if (dow !== 5 && dow !== 6 && dow !== 0) continue;
+      const weekday = WEEKDAY_NAMES[dow];
+      const temp = entry.temp != null && Number.isFinite(Number(entry.temp)) ? Math.round(Number(entry.temp)) : null;
+      out.push(makeFact({
+        id: `weather_${entry.date}`,
+        value: { date: entry.date, weekday, conditions: entry.conditions || null, middayTempF: temp },
+        source: 'weather',
+        asOf: now.toISOString(),
+        note: 'Context only. Weather is never offered as the explanation of a number.',
+        label: temp != null
+          ? `${weekday} ${entry.date}: ${entry.conditions || 'no conditions reported'}, around ${temp} F midday.`
+          : `${weekday} ${entry.date}: ${entry.conditions || 'no conditions reported'}.`,
+      }));
+    }
+  }
+  return out;
+}
+
+// ─── Card 3: Your listing, read back ─────────────────────────────────────────
+//
+// Pure arithmetic over the 030 intake columns and the card-1 forecast. Every
+// owner-typed value is attributed ("you told us"); every derived number is an
+// arithmetic fact naming the facts it came from. Empty intake fields become a
+// prompt to complete intake, never a guess.
+async function buildListingReadBack(ctx, weekFacts, { now = new Date() } = {}) {
+  const p = ctx.profile;
+  const asOf = intakeAsOf(p);
+  const out = [];
+  const facts = Array.isArray(weekFacts) ? weekFacts : [];
+  const peakFact = facts.find((f) => !isRefusal(f) && f.id && f.id.startsWith('peak_')) || null;
+  const gateReason = corpusGate(p);
+
+  // kitchen_last_order vs projected peak — migration 030's flagship sentence.
+  if (p.kitchen_last_order) {
+    const kitchenFact = makeFact({
+      id: 'intake_kitchen_last_order',
+      value: p.kitchen_last_order,
+      source: 'intake',
+      asOf,
+      label: `You told us the kitchen takes last orders at ${p.kitchen_last_order}.`,
+    });
+    out.push(kitchenFact);
+    if (peakFact) {
+      const kitchenHour = Number(String(p.kitchen_last_order).slice(0, 2));
+      const { peakHour, weekday, date } = peakFact.value;
+      // The ordering claim is only drawn when both clocks read as the same
+      // service day. A last-order time in the small hours (an overnight
+      // kitchen) makes "before/after" ambiguous against ANY peak, and a
+      // morning peak (a cafe) against an evening kitchen is simply "before".
+      // Roost serves every venue type, so the arithmetic must survive both.
+      const comparable = Number.isFinite(kitchenHour) && kitchenHour >= 6;
+      const peakAtOrAfterLastOrder = comparable ? peakHour >= kitchenHour : null;
+      out.push(makeFact({
+        id: 'kitchen_vs_peak',
+        value: { kitchenLastOrder: p.kitchen_last_order, peakHour, peakDate: date, peakAtOrAfterLastOrder },
+        source: 'arithmetic',
+        from: [kitchenFact.id, peakFact.id],
+        asOf: now.toISOString(),
+        label: !comparable
+          ? `Your kitchen takes last orders at ${p.kitchen_last_order} and ${weekday}'s projected peak lands around ${hour12(peakHour)}. Overnight hours make the order of those two ambiguous, so we state both and stop.`
+          : peakAtOrAfterLastOrder
+            ? `${weekday}'s projected peak lands around ${hour12(peakHour)}, at or after your last orders at ${p.kitchen_last_order}. Two facts, side by side.`
+            : `${weekday}'s projected peak lands around ${hour12(peakHour)}, before your last orders at ${p.kitchen_last_order}.`,
+      }));
+    } else if (gateReason) {
+      out.push(makeRefusal({
+        id: 'refuse_kitchen_vs_peak',
+        reason: 'We hold your last order time but no forecast of ours to set beside it. ' + gateReason.reason,
+        whatWouldUnlock: gateReason.whatWouldUnlock,
+      }));
+    }
+  } else {
+    out.push(makeRefusal({
+      id: 'prompt_kitchen_last_order',
+      reason: 'You have not told us when the kitchen takes last orders.',
+      whatWouldUnlock: 'Add it in venue settings and this line reads your kitchen clock against the projected peak.',
+    }));
+  }
+
+  // owner_busy_nights (the 030 column name) vs the venue's own Google-derived
+  // curve. 030's comments call this disagreement the only thing on the list
+  // worth money on its own. Labels and derived ids are TIME-NEUTRAL ("busy
+  // days"): the comparison is between days of the week, computed over the
+  // venue's full operating hours, so a breakfast cafe's strong Sunday counts
+  // exactly like a bar's strong Friday.
+  const ownerBusyDays = Array.isArray(p.owner_busy_nights) ? p.owner_busy_nights : null;
+  if (ownerBusyDays && ownerBusyDays.length) {
+    const beliefFact = makeFact({
+      id: 'intake_owner_busy_nights',
+      value: ownerBusyDays,
+      source: 'intake',
+      asOf,
+      label: `You told us your busy days are ${ownerBusyDays.join(', ')}.`,
+    });
+    out.push(beliefFact);
+    if (!gateReason) {
+      const means = dayMeans(await fetchBaselineCurve(p.google_place_id));
+      if (means.length) {
+        const best = Math.max(...means.map((r) => r.mean));
+        const curveDays = means
+          .filter((r) => best > 0 && r.mean >= 0.85 * best)
+          .sort((a, b) => b.mean - a.mean)
+          .map((r) => WEEKDAY_NAMES[r.day].toLowerCase());
+        const curveFact = makeFact({
+          id: 'google_baseline_busy_days',
+          value: { days: curveDays, window: 'the venue\'s own operating hours' },
+          source: 'google_baseline',
+          asOf: CORPUS_AS_OF,
+          label: `Your Google profile's strongest days in the spring 2026 corpus: ${curveDays.join(', ') || 'none stood out'}.`,
+        });
+        out.push(curveFact);
+        const shared = ownerBusyDays.filter((n) => curveDays.includes(n));
+        out.push(makeFact({
+          id: 'busy_days_agreement',
+          value: { youSaid: ownerBusyDays, curveSays: curveDays, sharedDays: shared },
+          source: 'arithmetic',
+          from: [beliefFact.id, curveFact.id],
+          asOf: now.toISOString(),
+          label: shared.length
+            ? `You and your Google curve agree on ${shared.join(', ')}.`
+            : 'Your busy days and your Google curve\'s strongest days do not line up. Worth a look. We state both and stop there.',
+        }));
+      }
+    } else {
+      out.push(makeRefusal({
+        id: 'refuse_busy_days_check',
+        reason: 'We hold your busy days but no measured curve to set beside them. ' + gateReason.reason,
+        whatWouldUnlock: gateReason.whatWouldUnlock,
+      }));
+    }
+  } else {
+    out.push(makeRefusal({
+      id: 'prompt_owner_busy_days',
+      reason: 'You have not told us which days usually run busiest for you.',
+      whatWouldUnlock: 'Pick them in venue settings and this line checks your read of the week against the measured curve.',
+    }));
+  }
+
+  // capacity turns the 0-100 index into people — arithmetic on the owner's own
+  // number, labelled as such.
+  if (p.capacity != null && Number.isFinite(Number(p.capacity))) {
+    const capacity = Number(p.capacity);
+    const capacityFact = makeFact({
+      id: 'intake_capacity',
+      value: capacity,
+      source: 'intake',
+      asOf,
+      label: `You told us your capacity is ${capacity}.`,
+    });
+    out.push(capacityFact);
+    if (peakFact) {
+      const approxPeople = Math.round((capacity * Number(peakFact.value.peakScore)) / 100);
+      out.push(makeFact({
+        id: 'capacity_at_projected_peak',
+        value: { capacity, peakScore: peakFact.value.peakScore, approxPeople },
+        source: 'arithmetic',
+        from: [capacityFact.id, peakFact.id],
+        asOf: now.toISOString(),
+        label: `At your stated capacity of ${capacity}, a reading of ${peakFact.value.peakScore} is roughly ${approxPeople} people. Arithmetic on your own number, not a headcount.`,
+      }));
+    }
+  } else {
+    out.push(makeRefusal({
+      id: 'prompt_capacity',
+      reason: 'You have not told us your capacity.',
+      whatWouldUnlock: 'Add it in venue settings and the 0 to 100 index turns into people.',
+    }));
+  }
+
+  return out;
+}
+
+// ─── Card 4: What you said vs what we estimated ──────────────────────────────
+//
+// Last 7 days of venue_owner_reports beside served_predictions for the same
+// days. Owner rows are the owner's own testimony, read back with attribution.
+// Served rows are the server's own record of what it published (032 is an
+// append-only serve log); they are quoted as "what we served to people who
+// looked", never as a measurement of the room, and days with no serves simply
+// have no row rather than an invented zero.
+async function buildReadingsVsServed(ctx) {
+  const p = ctx.profile;
+  const tz = ctx.mlVenue?.timezone || 'UTC';
+  const out = [];
+
+  const readings = await pool.query(
+    `SELECT (created_at AT TIME ZONE $2)::date AS day,
+            MAX(busy_percent)::int AS peak_reading,
+            COUNT(*)::int AS readings
+       FROM venue_owner_reports
+      WHERE google_place_id = $1 AND retracted = false
+        AND created_at >= NOW() - INTERVAL '7 days'
+      GROUP BY 1 ORDER BY 1 DESC`,
+    [p.google_place_id, tz]
+  );
+  for (const r of readings.rows) {
+    const date = toDateStr(r.day);
+    out.push(makeFact({
+      id: `owner_reading_${date}`,
+      value: { date, peakReading: Number(r.peak_reading), readings: Number(r.readings) },
+      source: 'owner_report',
+      asOf: date,
+      label: `Your highest reading on ${date} was ${Number(r.peak_reading)}, from ${Number(r.readings)} ${Number(r.readings) === 1 ? 'reading' : 'readings'}. Your own numbers, read back.`,
+    }));
+  }
+  if (readings.rows.length === 0) {
+    out.push(makeRefusal({
+      id: 'refuse_no_owner_readings',
+      reason: 'No readings from you in the last 7 days.',
+      whatWouldUnlock: 'The busy slider on your dashboard. Each reading you post lands here next to what Flock estimated for the same day.',
+    }));
+  }
+
+  const served = await pool.query(
+    `SELECT (served_at AT TIME ZONE $2)::date AS day,
+            COUNT(*)::int AS serves,
+            ROUND(percentile_cont(0.5) WITHIN GROUP (ORDER BY score))::int AS median_score
+       FROM served_predictions
+      WHERE venue_place_id = $1
+        AND served_at >= NOW() - INTERVAL '7 days'
+      GROUP BY 1 ORDER BY 1 DESC`,
+    [p.google_place_id, tz]
+  );
+  for (const r of served.rows) {
+    const date = toDateStr(r.day);
+    out.push(makeFact({
+      id: `served_${date}`,
+      value: { date, serves: Number(r.serves), medianScore: r.median_score != null ? Number(r.median_score) : null },
+      source: 'served_prediction',
+      asOf: date,
+      note: 'What Flock served to people who looked at your venue, not a measurement of your room.',
+      label: `On ${date} Flock served ${Number(r.serves)} crowd ${Number(r.serves) === 1 ? 'estimate' : 'estimates'} for your venue, median ${r.median_score != null ? Number(r.median_score) : 'unavailable'} on the 0 to 100 index.`,
+    }));
+  }
+  if (served.rows.length === 0) {
+    out.push(makeRefusal({
+      id: 'refuse_no_served_predictions',
+      reason: 'Nobody was served a crowd estimate for your venue in the last 7 days.',
+      whatWouldUnlock: 'This fills in on its own when people view your venue in Flock. Nothing is missing on your side.',
+    }));
+  }
+
+  return out;
+}
+
+module.exports = {
+  // constructors and guards
+  makeFact,
+  makeRefusal,
+  isRefusal,
+  HARD_REFUSALS,
+  stripOrderingFact,
+  corpusGate,
+  // context + cards
+  getVenueContext,
+  buildWeekAhead,
+  buildAroundYou,
+  buildListingReadBack,
+  buildReadingsVsServed,
+  // constants + helpers, exported for the standing test
+  FACT_SOURCES,
+  OWNER_SOURCES,
+  CORPUS_AS_OF,
+  EVENT_RADIUS_KM,
+  tzOffsetMinutes,
+  assertCleanCopy,
+  // curve helpers (full-operating-hours scanning; Roost serves any venue type)
+  fetchBaselineCurve,
+  openHoursByDay,
+  busiestHourByDay,
+  dayMeans,
+};

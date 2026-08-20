@@ -473,6 +473,18 @@ const INVENTORY = [
     why: 'A static lookup table, not a cache: it is written once at module load and never at runtime, so there is no key for a caller to choose and no miss to pay for.',
   },
 
+  // ── services/advisorPhrasing.js ──────────────────────────────────────────
+  {
+    file: 'services/advisorPhrasing.js', name: 'advisorVenueSpend', kind: 'counter',
+    key: 'accountKey(req.user.id) + UTC day, behind authenticate AND requireVenueTier(pro)',
+    callerControls: 'not the key — the VALUE magnitude only weakly, via which intent chip they tap (the server builds the whole prompt; there is no free-text field)',
+    protects: 'paid Gemini for advisor phrasing (50 answers + 150k tokens per venue per day)',
+    denominator: 'phrased ANSWERS and TOKENS, charged before the call, never refunded',
+    bound: '5k / 4.5k, evict-least-consumed-by-tokens before insert',
+    verdict: 'SAFE',
+    why: 'Account-keyed, server-sized payloads, and the money leg is not even here: the global daily token wall is the Postgres row advisor_spend (migration 035), which survives deploys and instances, closing the "a brake, not a cap" gap birdieUsage documents in its own global figure.',
+  },
+
   // ── services/birdieUsage.js ───────────────────────────────────────────────
   {
     file: 'services/birdieUsage.js', name: 'userRateLimits', kind: 'counter',
