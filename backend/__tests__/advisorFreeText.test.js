@@ -26,8 +26,10 @@
 //      run thirty percent under" impossible.
 //   5. CEILINGS. A per-venue daily QUESTION cap set under the chip answer cap
 //      (migration 039), charged before the call, plus the same global wall.
-//   6. THE FLAG. ADVISOR_FREETEXT_ENABLED default OFF, separate from
-//      ADVISOR_PHRASING_ENABLED, and free text needs the model: with either
+//   6. THE FLAG. ADVISOR_FREETEXT_ENABLED, separate from
+//      ADVISOR_PHRASING_ENABLED. Both default ON since 2026-08-20 (they shipped
+//      OFF, which made the field invisible on every deploy); "false" is what
+//      turns either off. Free text needs the model: with either
 //      off it declines in plain words instead of half working.
 //   7. CHIPS STILL WORK. /ask keeps its shape refusal; nothing here reaches it.
 // ===========================================================================
@@ -197,10 +199,11 @@ function resetAll({ freeText = true, phrasing = true } = {}) {
   allowGlobal();
   advisorPhrasing.__resetAdvisorSpend();
   advisorPhrasing.__setGenAIForTests(fakeGenAI);
-  if (phrasing) process.env.ADVISOR_PHRASING_ENABLED = 'true';
-  else delete process.env.ADVISOR_PHRASING_ENABLED;
-  if (freeText) process.env.ADVISOR_FREETEXT_ENABLED = 'true';
-  else delete process.env.ADVISOR_FREETEXT_ENABLED;
+  // Both flags default ON since 2026-08-20, so OFF has to be spelled. Setting
+  // both explicitly either way keeps a leftover value from an earlier test file
+  // out of this one.
+  process.env.ADVISOR_PHRASING_ENABLED = phrasing ? 'true' : 'false';
+  process.env.ADVISOR_FREETEXT_ENABLED = freeText ? 'true' : 'false';
   delete process.env.VENUE_BILLING_ENABLED;
   CURRENT_USER = { id: 7, name: 'Ava', role: 'venue_owner' };
   advisorRouter.__setFactsForTests(async (userId, intentId) => ({ ...GROUNDED_BLOCK(), intent: intentId }));
@@ -219,7 +222,7 @@ test('a question about the venue routes GROUNDED, through the same pipeline a ch
   assert.strictEqual(r.status, 200);
   assert.strictEqual(r.body.mode, 'phrased', 'a grounded answer is a phrased answer, not a new mode');
   assert.strictEqual(r.body.intentId, 'peak_hours');
-  assert.match(r.body.text, /9pm/, 'the SERVER substituted the number, not the model');
+  assert.match(r.body.text, /9 PM/, 'the SERVER substituted the number, not the model');
   assert.ok(r.body.sources.length > 0, 'a grounded answer carries its sources');
   assert.strictEqual(modelCalls.length, 2, 'router, then the phrasing model');
 });
@@ -247,7 +250,7 @@ test('advice may cite the venue OWN facts, and only through the placeholder mech
   ];
   const r = await ask('how do I get more people in after nine');
   assert.strictEqual(r.body.mode, 'advice');
-  assert.match(r.body.text, /21:00/, 'the intake value was substituted server side');
+  assert.match(r.body.text, /9 PM/, 'the intake value was substituted server side, as a clock rather than as a column');
   assert.ok(r.body.sources.some((s) => s.source === 'intake'), 'the intake fact is attributed');
 });
 
@@ -267,8 +270,30 @@ test('the router parses against a CLOSED set: anything else is a refusal, never 
   const { parseRoute } = advisorFreeText;
   assert.deepStrictEqual(parseRoute('{"mode":"grounded","intentId":"peak_hours"}'), { mode: 'grounded', intentId: 'peak_hours' });
   assert.deepStrictEqual(parseRoute('{"mode":"advice","intentId":null}'), { mode: 'advice', intentId: null });
-  assert.deepStrictEqual(parseRoute('{"mode":"refused","intentId":"peak_hours"}'), { mode: 'refused', intentId: null },
+  assert.deepStrictEqual(parseRoute('{"mode":"refused","intentId":"peak_hours"}'), { mode: 'refused', intentId: null, why: null },
     'a refusal carries no intent, whatever the router attached');
+
+  // The refusal REASON is a second closed set, and it decides which boundary
+  // the owner is told about. In from the list, through; anything else becomes
+  // null and the general sentence serves, because a refusal that cannot name
+  // its boundary still refuses.
+  assert.deepStrictEqual(parseRoute('{"mode":"refused","intentId":null,"why":"money_outcome"}'),
+    { mode: 'refused', intentId: null, why: 'money_outcome' });
+  for (const bogus of ['"why":"tax"', '"why":"OTHER_BUSINESS"', '"why":42', '"why":null', '"why":["legal_or_tax"]']) {
+    assert.deepStrictEqual(parseRoute(`{"mode":"refused","intentId":null,${bogus}}`),
+      { mode: 'refused', intentId: null, why: null }, `reason outside the set is dropped: ${bogus}`);
+  }
+  // Every reason in the set has copy, no copy carries an em dash, and no
+  // refusal anywhere in this module sells anything (ADVISOR-PRODUCT-SHAPE:
+  // an upgrade prompt inside a refusal is the darkest pattern available).
+  for (const why of advisorFreeText.REFUSAL_REASONS) {
+    const text = advisorFreeText.refusalForReason(why);
+    assert.ok(text && text.length > 20, `${why} has copy`);
+    assert.ok(!text.includes('—'), `${why} has no em dash`);
+    assert.ok(!/upgrade|pro plan|subscription|price/i.test(text), `${why} sells nothing`);
+  }
+  assert.strictEqual(advisorFreeText.refusalForReason(null), advisorFreeText.REFUSAL_ROUTED_OUT);
+  assert.strictEqual(advisorFreeText.refusalForReason('made_up'), advisorFreeText.REFUSAL_ROUTED_OUT);
 
   for (const bad of [
     '{"mode":"answer","intentId":null}',              // mode outside the set
@@ -391,7 +416,7 @@ test('mode B keeps the digit valve: general prose passes, a venue number only ar
     facts
   );
   assert.ok(cited);
-  assert.match(cited.text, /9pm/);
+  assert.match(cited.text, /9 PM/);
   assert.deepStrictEqual(cited.sources, [{ id: 'peak_hour', source: 'model_holdout', asOf: '2026-08-19' }]);
 
   // Everything else about a number is refused.
@@ -509,7 +534,7 @@ test('the free-text limiter is tighter than the advisor limiter, and both are ke
 
 // ── 6. The flag ─────────────────────────────────────────────────────────────
 
-test('with ADVISOR_FREETEXT_ENABLED unset the field is off, the endpoint declines in plain words, and no model is called', async () => {
+test('with ADVISOR_FREETEXT_ENABLED=false the field is off, the endpoint declines in plain words, and no model is called', async () => {
   resetAll({ freeText: false });
   installProfile();
   const r = await ask('how do I make Tuesdays better');
@@ -550,7 +575,7 @@ test('every chip still works, and /ask still refuses prose by shape', async () =
   installProfile();
   for (const intentId of Object.keys(advisorPhrasing.ADVISOR_INTENTS)) {
     replies = [];
-    delete process.env.ADVISOR_PHRASING_ENABLED; // template twin, zero model calls
+    process.env.ADVISOR_PHRASING_ENABLED = 'false'; // template twin, zero model calls
     const res = await fetch(`${base}/api/venue/advisor/ask`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
