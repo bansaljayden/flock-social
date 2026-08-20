@@ -192,12 +192,18 @@ describe('CSP covers the hosts the code actually talks to', () => {
     const hosts = new Set();
     for (const src of [APP, DEMO]) {
       for (const m of src.match(/https:\/\/[a-z0-9.-]+\.(?:com|net|org)/g) || []) {
-        if (/maptiler|cartocdn|arcgisonline/.test(m)) hosts.add(m);
+        if (/maptiler|cartocdn/.test(m)) hosts.add(m);
       }
     }
     // If this is empty the regex above stopped matching and the rest of the
     // assertion would pass vacuously.
-    expect(hosts.size).toBeGreaterThanOrEqual(3);
+    //
+    // TWO, not three. It was three while App.js carried a keyless satellite
+    // fallback to server.arcgisonline.com; that branch is gone (see the note on
+    // SATELLITE_STYLE) and so is the CSP entry it needed, because Esri basemaps
+    // are not free for commercial use and Flock has no Esri account. MapTiler
+    // hybrid is the only satellite imagery the app is licensed to draw.
+    expect(hosts.size).toBeGreaterThanOrEqual(2);
     for (const host of hosts) {
       // Style JSON, tile JSON, vector tiles and glyph PBFs are all fetches.
       expect([host, allows(directive('connect-src'), host)]).toEqual([host, true]);

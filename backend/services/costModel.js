@@ -43,16 +43,50 @@
 //     verbatim into FIXED_MONTHLY / ANNUAL / ONE_TIME and the frontend now
 //     reads them from here instead of holding a second copy.
 //
-// ONE CORRECTION THIS FILE MAKES, AND IT IS EXPENSIVE. The Places calls in
-// routes/venueSearch.js and routes/ai.js request `rating`, `userRatingCount`,
-// `priceLevel` and `currentOpeningHours` in their field masks. Google bills a
+// ONE CORRECTION THIS FILE MAKES, AND IT IS EXPENSIVE. Every venue-shaped
+// Places call in this repo — ten of them, across routes/venueSearch.js,
+// routes/ai.js, routes/crowd.js, routes/badge.js, routes/publicCrowd.js and
+// routes/venueDashboard.js, not the two originally noted — requests `rating`,
+// `userRatingCount`, `priceLevel` and `currentOpeningHours`. Google bills a
 // Places (New) request at the tier of the most expensive field in the mask, and
 // all four of those are ENTERPRISE fields, not Pro. So Text Search bills at $35
 // per 1,000 rather than the Pro $32, Place Details at $20 rather than $17, and
-// the free monthly allowance for each is 1,000 calls rather than 5,000. Nothing
-// in the repo had noticed. Dropping those four fields is the one change that
-// moves both SKUs down a tier; it is not made here because those fields are
-// rendered on real screens.
+// the free monthly allowance for each is 1,000 calls rather than 5,000.
+//
+// WHERE THE MONEY ACTUALLY IS, because the rate delta is the small half. Pro
+// saves $3 per 1,000 on either SKU — 9% of Text Search, 15% of Place Details.
+// The free allowance is the big half and it is a step, not a slope: below 1,000
+// calls a month both tiers cost $0, and above 5,000 both tiers charge for
+// everything past their cap, so the tier only really decides the bill BETWEEN
+// those two numbers. At exactly 5,000 Text Searches a month Enterprise costs
+// $140 and Pro costs nothing. That band is ahead of Flock, not behind it.
+//
+// AND IT IS STILL NOT AVAILABLE, which is the correction to the correction.
+// Three of the four are TRAINED MODEL COLUMNS. services/mlPredictor.js
+// buildFeatureMap emits `rating`, `price_level`, `review_count` and
+// `log_review_count` from exactly these Google fields, and it fills a missing
+// one with the corpus median instead of failing — so striking them from a mask
+// does not break a screen, it silently scores every venue as a 4.0-star,
+// mid-priced, zero-review venue and keeps answering. That is train/serve skew.
+// routes/badge.js (round 10) and routes/venueDashboard.js (round 20) each shipped
+// a version of this and each was found as a product bug. `currentOpeningHours`
+// is not a model input but drives the closed-hours zeroing, `isOpen` and the
+// hours list, and dropping it alone moves neither SKU while the other three stay.
+// __tests__/placesFieldMaskModelInputs.test.js now pins all ten masks so this
+// cannot be re-proposed as a billing change; it is a retrain.
+//
+// THE SAVING THAT IS REAL AND IS NOT A TIER CHANGE: opening one venue's detail
+// screen makes TWO paid Enterprise Place Details calls for the same place id.
+// frontend/src/App.js openVenueDetail fires getVenueDetails and
+// getCrowdPrediction in one Promise.allSettled; the first is
+// routes/venueSearch.js runPlaceDetails and the second is routes/crowd.js
+// fetchVenueFromGoogle, and the second mask is a strict subset of the first.
+// They cache separately (5 min on place id; 10 min on place id + hour, so it
+// misses on every hour boundary) and charge the shared ledger twice. Collapsing
+// them onto one cached raw Places response halves the Place Details SKU — 50%
+// against the 15% the tier question was worth — and touches no field mask, so
+// it carries none of the model risk above. Not done here: it spans two route
+// files and one of them is the model's serving path.
 // ---------------------------------------------------------------------------
 
 const { VISION_UNIT_PRICE_USD } = require('../utils/visionBudget');
@@ -111,6 +145,13 @@ const RATES = {
     skus: {
       textSearchEnterprise: { label: 'Text Search (Enterprise fields)', perThousand: 35.00, freePerMonth: 1000 },
       detailsEnterprise: { label: 'Place Details (Enterprise fields)', perThousand: 20.00, freePerMonth: 1000 },
+      // Nearby Search is its OWN SKU with its own free allowance, not a Text
+      // Search. routes/venueDashboard.js calls places:searchNearby for the
+      // owner's competitor set. It is carried here so the surface is on the
+      // record; it does not widen the band the panel quotes below, because
+      // Nearby and Text Search price identically at $35 and Place Details is
+      // still the cheapest of the three.
+      nearbySearchEnterprise: { label: 'Nearby Search (Enterprise fields)', perThousand: 35.00, freePerMonth: 1000 },
       photos: { label: 'Place Details Photos', perThousand: 7.00, freePerMonth: 1000 },
       // Carried for the comparison the correction above describes: what the
       // same two calls would cost if the four Enterprise fields were dropped.
@@ -316,12 +357,12 @@ const ONE_TIME = [
 // stays null rather than becoming a plausible guess.
 const WATCHLIST = [
   {
-    id: 'esri-satellite',
-    label: 'Esri ArcGIS World_Imagery tiles',
-    where: 'frontend/src/App.js, the satellite map style, unkeyed',
+    id: 'maptiler-satellite',
+    label: 'MapTiler map sessions (basemap + satellite)',
+    where: 'frontend/src/App.js, every Discover map load',
     usd: null,
-    severity: 'licence',
-    note: 'Requested with no API key and no subscription. Esri basemaps are not free for commercial use under their terms, so this is a licensing question before it is a billing one. It is the only outbound host in the app with that shape.',
+    severity: 'watch',
+    note: 'Free plan is 5,000 map sessions and 100,000 API requests a month; the next tier up is Flex at $30/month, and Flex overages bill automatically. This became the ONLY satellite source on 2026-08-20, when the unkeyed Esri ArcGIS World_Imagery fallback was removed from the satellite style. That fallback was a licence exposure rather than a bill — Esri basemaps are not free for commercial use and Flock has no Esri account — and it was already dead in every shipping build, because Vercel and Codemagic both set REACT_APP_MAPTILER_KEY and the MapTiler branch won whenever it was present. It was removed because the repo is public: a contributor cloning Flock without a key and tapping the satellite toggle was making unlicensed Esri requests from their own address. With no key the toggle is now hidden rather than falling back.',
   },
   {
     id: 'carto-basemaps',
