@@ -444,7 +444,10 @@ test('every route file that takes a body was actually looked at', () => {
   // a NEW route file appears, because a file nobody has read is a body limit
   // nobody has costed.
   const KNOWN = new Set([
-    'admin', 'ai', 'auth', 'availability', 'badge', 'billing', 'budget', 'calendar',
+    // routes/advisor.js enrolled 2026-08-19: its only body is POST /ask's
+    // single intentId string (closed registry, unknown keys 400), <1KB —
+    // enumerated in server.js next to the other sub-2KB routes.
+    'admin', 'advisor', 'ai', 'auth', 'availability', 'badge', 'billing', 'budget', 'calendar',
     'checkin', 'crowd', 'entitlements', 'events', 'feedback', 'flocks', 'friends',
     'guest', 'messages', 'moderation', 'notifications', 'publicCrowd', 'revenuecat',
     'safety', 'sensors', 'stories', 'users', 'venueDashboard', 'venueProfile',

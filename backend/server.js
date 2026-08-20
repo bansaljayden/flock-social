@@ -125,6 +125,7 @@ const publicCrowdRoutes = require('./routes/publicCrowd');
 const adminRoutes = require('./routes/admin');
 const venueProfileRoutes = require('./routes/venueProfile');
 const venueDashboardRoutes = require('./routes/venueDashboard');
+const advisorRoutes = require('./routes/advisor');
 const availabilityRoutes = require('./routes/availability');
 const calendarRoutes = require('./routes/calendar');
 const sensorRoutes = require('./routes/sensors');
@@ -599,6 +600,9 @@ const JSON_STRING_BYTES_PER_CHAR = 4;
 //     guest RSVP/vote, moderation blocks, safety contacts/alert/share-location,
 //     sensors, users venmo/payment-methods/profile-image, venues vote,
 //     venue-dashboard promotions/events, waitlist, admin — is under 2KB.
+//   * POST /api/venue/advisor/ask — the only body on the advisor surface: one
+//     `intentId` string matched against a closed registry; any other key is a
+//     400 before a value is read. Bytes on the wire: well under 1KB.
 //
 // SCOPED LARGER, each for a reason it can state:
 //   * the three IMAGE_BODY_ROUTES below, unchanged and still derived from
@@ -1049,6 +1053,7 @@ app.use('/api/notifications', apiLimiter, notificationRoutes); // Handles /api/n
 app.use('/api/admin', apiLimiter, adminRoutes);               // Handles /api/admin/* (admin only)
 app.use('/api/venue-profile', apiLimiter, venueProfileRoutes); // Handles /api/venue-profile (venue owners)
 app.use('/api/venue-dashboard', apiLimiter, venueDashboardRoutes); // Handles promotions, events, reviews CRUD
+app.use('/api/venue/advisor', apiLimiter, advisorRoutes);      // T0 advisor cards (deterministic facts, zero LLM)
 app.use('/api/availability', apiLimiter, availabilityRoutes); // 3-tap status pulse: down / maybe / not
 app.use('/api/calendar', apiLimiter, calendarRoutes);          // personal calendar events (CRUD, per-user)
 
