@@ -268,12 +268,36 @@ function effectiveTier(rowTier) {
 // the sweep reads as "skip this venue", the same soft answer the cards route
 // gives those states.
 // ---------------------------------------------------------------------------
+//
+// THE VERDICT LEADS. The email used to open on the week ahead, which is a
+// forecast, and forecasting is the least asked thing operators ask a tool that
+// holds their data (one percent of prompts across 125,000+ locations,
+// ROOST-OWNER-INPUT.md). The most asked is "how did we just do". So the first
+// card in the stack, and the first block in the email, is the verdict on the
+// most recent complete day, built by the SAME builder the dashboard card and
+// the chip use, with the same threshold, so the email cannot say something the
+// dashboard would not. The sweep runs Monday morning on the venue's clock, so
+// "the most recent complete day" is the Sunday that closes the week being
+// recapped.
 const DIGEST_CARDS = [
+  { id: 'last_night_verdict', title: 'Yesterday, against your own numbers', tier: 'pro' },
   { id: 'week_ahead', title: 'Week ahead', tier: 'pro' },
   { id: 'around_you', title: 'Around you this week', tier: 'premium' },
   { id: 'listing_read_back', title: 'Your listing, read back', tier: 'pro' },
   { id: 'readings_vs_estimates', title: 'What you said vs what we estimated', tier: 'pro' },
 ];
+
+// Required lazily for the same reason the fact engine is: a build without it
+// loses one card, not the whole digest.
+function lastNightVerdictBuilder() {
+  try {
+    // eslint-disable-next-line global-require
+    return require('./lastNightVerdict').buildLastDayVerdict;
+  } catch (err) {
+    console.warn('[VenueDigest] last day verdict unavailable:', err.message);
+    return null;
+  }
+}
 
 async function buildDigestCards(advisorFacts, { userId, tier, now }) {
   const ctx = await advisorFacts.getVenueContext(userId);
@@ -286,11 +310,15 @@ async function buildDigestCards(advisorFacts, { userId, tier, now }) {
     status: facts.some((f) => !advisorFacts.isRefusal(f)) ? 'ok' : 'refused',
   });
 
-  const [weekDef, aroundDef, listingDef, readingsDef] = DIGEST_CARDS;
+  const [verdictDef, weekDef, aroundDef, listingDef, readingsDef] = DIGEST_CARDS;
   const cards = [];
   if (tier === 'pro') {
-    // Card 1 first because card 3's arithmetic reads its peak facts, the same
-    // ordering the route uses.
+    // The verdict leads the email. It reads no forecast and no corpus, so it
+    // is built first and cannot be delayed by anything the model does.
+    const buildVerdict = lastNightVerdictBuilder();
+    if (buildVerdict) cards.push(finished(verdictDef, await buildVerdict(ctx, opts)));
+    // Then card 1, before card 3, because card 3's arithmetic reads its peak
+    // facts, the same ordering the route uses.
     const weekFacts = await advisorFacts.buildWeekAhead(ctx, opts);
     cards.push(finished(weekDef, weekFacts));
     cards.push(finished(aroundDef, await advisorFacts.buildAroundYou(ctx, opts)));
