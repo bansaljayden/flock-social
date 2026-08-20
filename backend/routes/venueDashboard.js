@@ -515,6 +515,61 @@ router.delete('/events/:id', requirePremium, param('id').isInt({ min: 1, max: IN
 
 // ─── INCOMING FLOCKS ─────────────────────────────────────────────────────────
 
+// THE WINDOW, AND WHY IT IS THIS ONE.
+//
+// This feed had NO `event_time` predicate at all and ordered `event_time DESC`,
+// so what it returned was "the furthest-future non-cancelled flock that ever
+// voted for my place id", forever. In production that is flock 117, a confirmed
+// Birthday Dinner whose event_time was 2026-04-26 — four months in the past and
+// still sitting at the top of a card headed "Incoming Flocks". A feed that never
+// forgets is not a demand feed, it is a scoreboard of one stale row, and an
+// owner who staffed against it would be staffing for a party that already
+// happened.
+//
+// WHAT "INCOMING" MEANS HERE. The owner reads this to decide staffing, stock and
+// whether to run a promotion. That is a decision with a lead time, so the window
+// has to be a horizon, not an instant.
+//
+// LOWER BOUND: 12 hours BEHIND now, not now.
+//   A flock whose event_time was two hours ago is standing in the building. The
+//   app already has one definition of "this flock is at this venue right now" —
+//   routes/checkin.js accepts a check-in for `NOW() BETWEEN event_time -
+//   INTERVAL '3 hours' AND event_time + INTERVAL '12 hours'` — and there must
+//   not be a second. Reusing the tail of that window means the feed stops
+//   showing a group at exactly the moment the app stops letting that group
+//   check in. Cutting at NOW() instead would drop the party mid-visit, which is
+//   the one moment the owner most wants it on screen.
+//
+// UPPER BOUND: 7 days.
+//   Measured against production rather than guessed. Of the eight flocks that
+//   have ever carried an event_time, the longest gap between `created_at` and
+//   `event_time` is flock 117's 2.7 days; every other real one is under two.
+//   So 7 days covers every plan this product has ever seen with better than 2x
+//   headroom while excluding nothing. "Tonight" (24h) was the tempting choice
+//   and it is wrong: it would hide the only multi-day plan in the corpus during
+//   precisely the days an owner could still act on it, and it would leave the
+//   card empty almost always. A month would put February's plans under a
+//   heading that says they are coming.
+//
+// UNDATED FLOCKS ARE EXCLUDED, and that costs nothing today: all six
+// production flocks with a NULL event_time are status 'planning', which this
+// query already refuses. An undated flock is not schedulable, so it cannot be
+// placed inside any window honestly — it would have to be pinned to the top or
+// the bottom by fiat, and either is a claim about when those people are coming.
+//
+// ORDER IS ASCENDING NOW. `DESC` put the furthest-away plan first, which is
+// backwards for a feed whose whole job is "what is about to hit me".
+//
+// KNOWN AND DELIBERATELY NOT CHANGED HERE: `'active'` is not a value
+// `flocks.status` can hold. The CHECK constraint (database/schema.sql) allows
+// planning / confirmed / completed / cancelled, so this predicate resolves to
+// "confirmed, or NULL" and every flock still in the voting stage — which is
+// exactly when a venue is being considered — is filtered out. That is a
+// separate product decision about who may see an unconfirmed group's plans, not
+// a window bug, and it is not made in this change.
+const INCOMING_PAST_HOURS = 12;   // = the tail of the routes/checkin.js window
+const INCOMING_AHEAD_HOURS = 168; // = 7 days
+
 // GET /api/venue-dashboard/incoming-flocks — flocks that selected this venue
 router.get('/incoming-flocks', requirePremium, async (req, res) => {
   try {
@@ -526,7 +581,10 @@ router.get('/incoming-flocks', requirePremium, async (req, res) => {
     // run against the same row was a duplicate read, not a second opinion.
     if (!venue.verified) return res.json({ flocks: [], unverified: true });
 
-    // Find flocks where venue_votes reference this venue's place_id (venue_id column)
+    // Find flocks where venue_votes reference this venue's place_id (venue_id
+    // column), inside the window argued above. The intervals are SQL literals
+    // rather than bound parameters on purpose: the only bound value here is the
+    // server-derived place id, and the object-authz suite pins that fact.
     const { rows } = await pool.query(
       `SELECT DISTINCT f.id, f.name AS title, f.event_time, f.status,
               (SELECT COUNT(*) FROM flock_members fm WHERE fm.flock_id = f.id AND fm.status = 'accepted') AS member_count
@@ -534,16 +592,96 @@ router.get('/incoming-flocks', requirePremium, async (req, res) => {
        JOIN venue_votes vv ON vv.flock_id = f.id
        WHERE vv.venue_id = $1
          AND (f.status IS NULL OR f.status IN ('active', 'confirmed'))
-       ORDER BY f.event_time DESC NULLS LAST
+         AND f.event_time IS NOT NULL
+         AND f.event_time > NOW() - INTERVAL '12 hours'
+         AND f.event_time < NOW() + INTERVAL '7 days'
+       ORDER BY f.event_time ASC
        LIMIT 20`,
       [venue.google_place_id]
     );
-    res.json({ flocks: rows });
+
+    res.json({
+      flocks: rows,
+      // The window is published because the list alone cannot distinguish "no
+      // group is coming" from "the feed only looks a day ahead". A client that
+      // ignores this keeps its old behaviour.
+      window: { pastHours: INCOMING_PAST_HOURS, aheadHours: INCOMING_AHEAD_HOURS },
+      unattributed: await countUnattributedVotes(venue),
+    });
   } catch (err) {
     console.error('Get incoming flocks error:', err);
     res.status(500).json({ error: 'Failed to get incoming flocks' });
   }
 });
+
+// WHY THIS COUNTS AND DOES NOT ATTRIBUTE.
+//
+// `venue_votes.venue_id` is the Google place id and it is NULLABLE and
+// best-effort. sockets/handlers.js writes it with
+// `COALESCE(EXCLUDED.venue_id, venue_votes.venue_id)` precisely because the
+// client re-sends its current pick without an id whenever the tally moves, so
+// rows arrive carrying `venue_name` and nothing else. The feed above joins on
+// the id, so those votes are invisible to the owner they belong to.
+//
+// HOW BIG IS IT, measured read-only against production 2026-08-18: 6 rows in
+// venue_votes, 2 with a NULL venue_id — a third of the table. Both NULL rows
+// name a venue ("Social Still", "E2E Test Tavern") that appears nowhere else
+// with an id, so there is no id to recover them from either. It is a third of a
+// six-row table, which is a shape, not a rate.
+//
+// WHY THE FEED IS NOT FIXED BY MATCHING ON THE NAME. Attribution here is an
+// AUTHORIZATION decision: it picks which business gets to read which private
+// group's plans. `venue_name` is a free-text string a client sent, it is not
+// unique, and it is not scoped to a city — one row for "Starbucks" would be
+// handed to whichever Starbucks claimed a profile first, and one typo'd or
+// truncated name would hand a group's plan to a business those people never
+// chose. Every safe version of that match needs a discriminator this table does
+// not have (a location, a chain id, an owner confirmation step). Guessing would
+// trade a visible gap for an invisible leak, and the leak is the worse defect.
+//
+// SO THE GAP IS PUBLISHED INSTEAD. The owner gets a COUNT of flocks in the same
+// window that named a venue spelled like theirs with no place id attached, and
+// nothing else: no flock id, no name, no member count, no date. A count cannot
+// be acted on against the wrong group, and the pricing table in VENUE-BILLING.md
+// already sells a count ("30-day 'groups considered you' count") as a legitimate
+// product, so the shape is not novel. The name comparison is trimmed and
+// case-folded and never leaves the database, and the name it compares against
+// comes from the owner's own profile row by id, never from the request.
+//
+// Auxiliary by construction: this must never take the feed down with it, so a
+// failure here is a null count — "we do not know" — not a 500.
+async function countUnattributedVotes(venue) {
+  const unknown = { count: null, basis: 'venue_name_only', reason: 'lookup_failed' };
+  try {
+    const { rows } = await pool.query(
+      `SELECT COUNT(DISTINCT f.id)::int AS n
+       FROM venue_votes vv
+       JOIN flocks f ON f.id = vv.flock_id
+       JOIN venue_profiles vp ON vp.id = $1
+       WHERE vv.venue_id IS NULL
+         AND vp.business_name IS NOT NULL
+         AND LOWER(BTRIM(vv.venue_name)) = LOWER(BTRIM(vp.business_name))
+         AND (f.status IS NULL OR f.status IN ('active', 'confirmed'))
+         AND f.event_time IS NOT NULL
+         AND f.event_time > NOW() - INTERVAL '12 hours'
+         AND f.event_time < NOW() + INTERVAL '7 days'`,
+      [venue.id]
+    );
+    const n = rows && rows[0] ? Number(rows[0].n) : NaN;
+    if (!Number.isInteger(n)) return unknown;
+    return {
+      count: n,
+      // What the number IS, so nobody reads it as "flocks coming here". These
+      // votes were NOT confirmed to be for this venue and are not in the list
+      // above for that reason.
+      basis: 'venue_name_only',
+      reason: 'no_place_id',
+    };
+  } catch (err) {
+    console.error('Unattributed vote count failed:', err.message);
+    return unknown;
+  }
+}
 
 // ─── REVIEWS ─────────────────────────────────────────────────────────────────
 

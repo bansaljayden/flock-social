@@ -177,16 +177,22 @@ function describePredictionSupport(predictionMethod, verifiedReports) {
 // either path: on the rule path it is calculateCrowdScore's ladder, which
 // counts how richly GOOGLE describes a venue (review count, rating precision,
 // type count, price level, weather) and reaches 95 without one observation of
-// how full the room has ever been; on the model path it is
-// metadata.training_metrics.within_15, measured on the pre-fix mixed-axis
-// corpus ML_BASELINE_AXIS_VERIFIED still refuses to vouch for. Capping it
-// would leave a
-// smaller unqualified number, which is not more honest, just quieter.
+// how full the room has ever been; on the model path it is a hit rate measured
+// on a holdout, which is a real measurement but of the MODEL, not of this
+// venue's room. Capping it would leave a smaller unqualified number, which is
+// not more honest, just quieter.
 //
-// So `confidenceMeans` ships beside it and says which of the two it is, and the
-// visible degrade rides on the LABEL — the field the app actually paints. When
-// the retrain lands and the flag flips, `confidenceMeans` becomes
-// 'measured_accuracy' and the number means what its name has always implied.
+// So `confidenceMeans` ships beside it and says which of the two it is. That
+// distinction did NOT go away when ML_BASELINE_AXIS_VERIFIED flipped true with
+// v2.6.0-starling; the flip only settled which value the ML path gets. The
+// model path now reports 'measured_accuracy' and the number means what its name
+// implies — but only for the metric mlPredictor actually publishes,
+// training_metrics_by_population.realtime_served.within_15 (33.3%). The blended
+// 87.3% over all training rows is still not this number and still must not
+// become it: that population is mostly weekly rows whose label equals the
+// baseline by construction, so its hit rate measures the corpus rather than
+// the model. The rule path is unchanged and still reports
+// 'input_completeness'.
 // (TIME_ONLY_CONFIDENCE, the one rung of that ladder that is not metadata
 // richness, is exported for whoever does want to derive a real ceiling later.)
 //
