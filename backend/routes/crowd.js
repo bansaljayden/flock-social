@@ -1217,6 +1217,10 @@ router.post('/batch',
           return {
             placeId: v.place_id,
             name: v.name,
+            // Shipped for the same reason the card ships it: the owner
+            // override reads these to compute the attribution noun ("the cafe
+            // says") for its category — see services/ownerReports.js.
+            venueTypes: v.types || [],
             score: cal.adjustedScore,
             label: crowdEngine.publishedLabel(cal.adjustedScore, support),
             rawEngineScore: result.score,
@@ -1535,6 +1539,9 @@ router.get('/:placeId/alternatives',
           return ownerReports.applyOwnerReport({
             placeId: v.place_id,
             name: v.name,
+            // For the owner override's attribution noun, same as the card and
+            // the batch rows (services/ownerReports.js).
+            venueTypes: v.types || [],
             score,
             label: crowdEngine.publishedLabel(score, support),
             predictionMethod: r.predictionMethod || null,
@@ -1567,6 +1574,7 @@ router.get('/:placeId/alternatives',
       const payload = {
         currentVenue: ownerReports.applyOwnerReport({
           name: target.name,
+          venueTypes: target.types || [],
           score: targetCal.adjustedScore,
           // The card's own number, so a client that shows "you are here at X"
           // above this list qualifies it the same way the card does.

@@ -10899,15 +10899,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     </>
                   )}
                 </div>
-                {/* The bar's own number. When the published score IS the
+                {/* The venue's own number. When the published score IS the
                     owner's live reading, the user must be able to tell — "the
-                    bar says" is a different claim from "we think", and the
-                    label is the whole deal that makes an owner-set number
-                    honest. Server decides `applied`; this only prints it. */}
+                    {venue-type} says" is a different claim from "we think",
+                    and the label is the whole deal that makes an owner-set
+                    number honest. Server decides `applied` AND the words
+                    (ownerReport.noun, category-derived in utils/venueLabel.js);
+                    this only prints them. */}
                 {cd?.ownerReport?.applied && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-primary)', fontWeight: '600' }}>
-                      The bar says it's at {cd.score}% right now
+                      The {cd.ownerReport.noun || 'venue'} says it's at {cd.score}% right now
                     </span>
                     {(() => {
                       const mins = Math.round((Date.now() - Date.parse(cd.ownerReport.reportedAt)) / 60000);
@@ -10925,7 +10927,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         shown as information, never as the number. The two
                         disagreeing in public is the honest state. */}
                     {cd?.ownerReport && !cd.ownerReport.applied && (
-                      <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>The bar says {cd.ownerReport.percent}%.</span>
+                      <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>The {cd.ownerReport.noun || 'venue'} says {cd.ownerReport.percent}%.</span>
                     )}
                     {Math.abs(cd.calibration.predictionDrift) > 15 && (
                       <span style={{ fontSize: 'var(--t-meta)', padding: '1px 6px', borderRadius: '8px', backgroundColor: cd.calibration.predictionDrift > 0 ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)', color: cd.calibration.predictionDrift > 0 ? colors.red : '#16a34a', fontWeight: '500' }}>
@@ -11001,7 +11003,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     unattributed. Four sources, four sentences. */}
                 {!isClosed && !!cd && (
                   <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '0 0 8px' }}>
-                    {cd.confidenceBasis === 'owner_report' ? 'From the bar itself, not a Flock estimate.'
+                    {cd.confidenceBasis === 'owner_report' ? `From the ${cd.ownerReport?.noun || 'venue'} itself, not a Flock estimate.`
                       : cd.confidenceBasis === 'user_reports' ? 'From the crowd model, adjusted by people who are there.'
                       : cd.predictionMethod === 'ml' ? 'From the Flock crowd model.'
                       : 'An estimate from typical patterns for this kind of place.'}
@@ -19208,10 +19210,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                               <div style={{ position: 'absolute', top: '8px', right: '8px', padding: '4px 8px', borderRadius: '10px', backgroundColor: `${crowdColor}18`, backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                 <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: crowdColor }} />
                                 {/* An owner-asserted number carries its source
-                                    even at list size — "the bar says" is the
-                                    label that keeps it honest, and the detail
-                                    card one tap away says the rest. */}
-                                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdColor }}>{prediction?.confidenceBasis === 'owner_report' ? `bar says ${crowdScore}%` : `${crowdScore}%`}</span>
+                                    even at list size — "{venue-type} says" is
+                                    the label that keeps it honest (noun is
+                                    category-derived server-side), and the
+                                    detail card one tap away says the rest. */}
+                                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdColor }}>{prediction?.confidenceBasis === 'owner_report' ? `${prediction?.ownerReport?.noun || 'venue'} says ${crowdScore}%` : `${crowdScore}%`}</span>
                               </div>
                               )}
                             </>
@@ -19242,7 +19245,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                             {!venue.photo_url && crowdScore != null && (
                               <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdColor, backgroundColor: `${crowdColor}12`, padding: '2px 8px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '3px' }}>
                                 <div style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: crowdColor }} />
-                                {prediction?.confidenceBasis === 'owner_report' ? `Bar says ${crowdScore}%` : `${crowdLabel} ${crowdScore}%`}
+                                {prediction?.confidenceBasis === 'owner_report' ? `${((prediction?.ownerReport?.noun || 'venue').charAt(0).toUpperCase())}${(prediction?.ownerReport?.noun || 'venue').slice(1)} says ${crowdScore}%` : `${crowdLabel} ${crowdScore}%`}
                               </span>
                             )}
                             {/* Photo cards carry the bare percentage in their

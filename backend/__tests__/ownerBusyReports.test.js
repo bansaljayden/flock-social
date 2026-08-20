@@ -4,9 +4,10 @@
 // THE OWNER'S 0-100 SLIDER, and the four rules that keep it honest.
 //
 // A venue owner may assert "we are at X% right now" and, while that reading is
-// live, it REPLACES the published prediction — labelled as the bar's own claim
-// ("the bar says"), never as Flock's. services/ownerReports.js is the one
-// place the rules live; this file pins each of them:
+// live, it REPLACES the published prediction — labelled as the venue's own
+// claim (the category-derived attribution from utils/venueLabel.js), never as
+// Flock's. services/ownerReports.js is the one place the rules live; this
+// file pins each of them:
 //
 //   1. OVERRIDE — a live reading replaces score, label and basis, and the
 //      derived fields (wait, capacity.current) are re-derived from it so one
