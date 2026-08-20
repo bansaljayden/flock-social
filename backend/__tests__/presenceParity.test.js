@@ -543,7 +543,19 @@ const placesPathOf = (url) => new URL(url).pathname;
 // Shaped per utils/places.PLACE_ID_RE, so it gets through to Google.
 const LEGIT_PLACE_ID = 'ChIJN1t_tDeuEmsRUsoyG83frY4';
 
+// BOTH TESTS BELOW NEED A COLD PLACES CACHE, and since 2026-08-20 that cache is
+// process-wide rather than per-route: services/placeDetailsCache.js owns one raw
+// Place Details payload per place id and hands it to routes/crowd.js and
+// routes/venueSearch.js alike, which is what collapsed the venue detail screen's
+// two paid calls into one. The saving and this assertion pull in opposite
+// directions on purpose — each test here asserts that the route DID reach
+// Google, so that what it then checks about the URL is a real check — so each
+// one starts from an empty cache instead of inheriting the previous test's
+// entry for the same id.
+const placeDetailsCache = require('../services/placeDetailsCache');
+
 test('a place id cannot walk out of /v1/places/ on the crowd card', async () => {
+  placeDetailsCache.__test.reset();
   scriptFeedback([]);
   // Encoded on the wire, decoded by Express into a traversal.
   const res = await call('GET', '/api/crowd/AAAAAA%2F..%2F..%2Fv1%3Aescape?localHour=20&localDay=5');
@@ -553,6 +565,7 @@ test('a place id cannot walk out of /v1/places/ on the crowd card', async () => 
 
   // And an id that IS shaped still becomes exactly one segment.
   fetched.length = 0;
+  placeDetailsCache.__test.reset();
   scriptFeedback([]);
   const ok = await call('GET', `/api/crowd/${LEGIT_PLACE_ID}?localHour=20&localDay=5`);
   assert.ok(ok.status === 200 || ok.status === 502, ok.text);
@@ -567,6 +580,7 @@ test('a place id cannot walk out of /v1/places/ on the crowd card', async () => 
 });
 
 test('a place id cannot walk out of /v1/places/ on the alternatives list', async () => {
+  placeDetailsCache.__test.reset();
   scriptFeedback([]);
   // Two `..` segments, so an unencoded id escapes /v1/places/ entirely. One is
   // not enough — it only pops the id itself and lands back inside the
@@ -577,6 +591,7 @@ test('a place id cannot walk out of /v1/places/ on the alternatives list', async
     'a paid Google call was spent on an id that cannot be real');
 
   fetched.length = 0;
+  placeDetailsCache.__test.reset();
   scriptFeedback([]);
   const ok = await call('GET', `/api/crowd/${LEGIT_PLACE_ID}/alternatives?localHour=20&localDay=5`);
   assert.ok(ok.status === 200 || ok.status === 502, ok.text);
