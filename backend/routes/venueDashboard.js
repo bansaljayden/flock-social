@@ -73,6 +73,50 @@ async function getVenueCtx(userId) {
   return rows[0] || null;
 }
 
+// The words users actually see on this venue's own reading (the category
+// label from utils/venueLabel.js), resolved down a CHAIN rather than read off
+// one column.
+//
+// venue_profiles.category is owner-typed and optional: a venue that signed up
+// before the category chip existed, or through a path that never asked, has
+// NULL there. Reading only that column meant those venues were captioned "the
+// venue says" on both the dashboard and the consumer card while the corpus row
+// beside them said 'bar' in plain text — the generic word on a surface whose
+// entire job is being exactly right about whose claim the number is.
+//
+// So: the profile's own category first (the owner's word about their own
+// room outranks anything inferred), then ml_venues.venue_category (the token
+// the crowd model was trained on for this place id), then the Google types
+// already stored on that row. Every step folds through utils/venueLabel.js,
+// which returns null rather than guessing, and an unresolved chain ends at
+// "the venue says", which is always true.
+//
+// The extra read only happens when the profile has no usable category, so the
+// common case costs nothing, and a failed read degrades to the generic word
+// instead of failing the request: this label decorates a number the route has
+// already computed.
+async function attributionCategory(ctx) {
+  const own = venueLabel.normalizeCategory(ctx?.category);
+  if (own) return own;
+  if (!ctx?.google_place_id) return null;
+  try {
+    const { rows: [v] } = await pool.query(
+      'SELECT venue_category, google_types FROM ml_venues WHERE google_place_id = $1 LIMIT 1',
+      [ctx.google_place_id]
+    );
+    return venueLabel.normalizeCategory(v?.venue_category)
+      || venueLabel.categoryFromTypes(v?.google_types)
+      || null;
+  } catch (err) {
+    console.error('[VenueDashboard] category lookup failed, labelling generically:', err.message);
+    return null;
+  }
+}
+
+async function ownerAttributionFor(ctx) {
+  return venueLabel.ownerAttribution(await attributionCategory(ctx));
+}
+
 // ─── PROMOTIONS ──────────────────────────────────────────────────────────────
 
 // GET /api/venue-dashboard/promotions
@@ -1715,9 +1759,9 @@ router.get('/busy-now', async (req, res) => {
       ttlMinutes: ownerReports.OWNER_REPORT_TTL_MINUTES,
       // The exact words users see on the reading, so the dashboard's "shown
       // to users as ..." copy quotes the real label instead of guessing one.
-      // Derived from the profile's own category; "the venue says" when the
-      // profile has none.
-      attribution: venueLabel.ownerAttribution(ctx.category),
+      // Profile category, then the corpus row, then Google's types — see
+      // attributionCategory.
+      attribution: await ownerAttributionFor(ctx),
       ...state,
     });
   } catch (err) {
@@ -1830,7 +1874,7 @@ router.post('/busy-now', [
     res.status(201).json({
       available: true,
       ttlMinutes: ownerReports.OWNER_REPORT_TTL_MINUTES,
-      attribution: venueLabel.ownerAttribution(ctx.category),
+      attribution: await ownerAttributionFor(ctx),
       ...state,
     });
   } catch (err) {

@@ -75,7 +75,7 @@ const OWNER_BASIS = 'owner_report';
 // venue's diverged rows inside the strike window; HAVING without GROUP BY is
 // one row when the count clears the bar, zero rows otherwise.
 //
-// VERIFICATION IS RE-CHECKED HERE, AT SERVE TIME (the EXISTS on
+// VERIFICATION IS RE-CHECKED HERE, AT SERVE TIME (the JOIN to
 // venue_profiles), and that is not a duplicate of the write path's check.
 // routes/venueDashboard.js refuses an unverified owner a 403 at POST, which
 // settles the question at ONE INSTANT — but verification is REVOCABLE, and
@@ -116,8 +116,24 @@ const OWNER_BASIS = 'owner_report';
 // the guard back on.
 const LIVE_OWNER_REPORTS_SQL = `
   SELECT DISTINCT ON (r.google_place_id)
-         r.id, r.google_place_id, r.busy_percent, r.created_at, r.diverged
+         r.id, r.google_place_id, r.busy_percent, r.created_at, r.diverged,
+         -- The owner's OWN word for their room, carried on the row that is
+         -- already being read, so the consumer surfaces get the same first
+         -- link of the attribution chain the dashboard has (routes/
+         -- venueDashboard.js attributionCategory). Before this the card, the
+         -- vote list and the alternatives list could only infer the noun from
+         -- Google's types, so a venue Google types thinly fell back to the
+         -- generic word on the card while its own dashboard printed the
+         -- specific one: the two-surfaces-disagree shape, in the one field
+         -- whose entire job is being exactly right about whose claim the
+         -- number is.
+         -- Free: the join below replaces an EXISTS over the same row.
+         vp.category AS profile_category
     FROM venue_owner_reports r
+    JOIN venue_profiles vp
+      ON vp.user_id = r.venue_user_id
+     AND vp.google_place_id = r.google_place_id
+     AND vp.verified = true
    WHERE r.google_place_id = ANY($1::text[])
      AND r.retracted = false
      AND r.created_at > NOW() - INTERVAL '90 minutes'
@@ -127,12 +143,6 @@ const LIVE_OWNER_REPORTS_SQL = `
               AND s.diverged = true
               AND s.created_at > NOW() - INTERVAL '30 days'
            HAVING COUNT(*) >= ${OWNER_DIVERGENCE_STRIKES}
-         )
-     AND EXISTS (
-           SELECT 1 FROM venue_profiles vp
-            WHERE vp.user_id = r.venue_user_id
-              AND vp.google_place_id = r.google_place_id
-              AND vp.verified = true
          )
    ORDER BY r.google_place_id, r.created_at DESC`;
 
@@ -325,13 +335,20 @@ function applyOwnerReport(result, ownerRow, options = {}) {
 
   // The attribution, computed HERE and nowhere else: "the {venue-type} says"
   // from utils/venueLabel.js — the cafe says, the club says — with "the
-  // venue says" when the category is unknown. Category comes from the caller
-  // when it has one
-  // (options.category, e.g. venue_profiles.category), else from the Google
-  // types the payload already ships for the wait/capacity recompute. Clients
-  // render these fields and never hardcode the words —
-  // __tests__/venueLabel.test.js greps the repo to keep it that way.
+  // venue says" when the category is unknown. Clients render these fields and
+  // never hardcode the words — __tests__/venueLabel.test.js greps the repo to
+  // keep it that way.
+  //
+  // The chain, most specific first, matching routes/venueDashboard.js
+  // attributionCategory so the owner's dashboard and the consumer card cannot
+  // caption the same reading with two different words: the caller's category
+  // when it passed one, then venue_profiles.category carried on the row the
+  // read already joined (profile_category — the owner's own word for their
+  // room), then the Google types the payload already ships for the
+  // wait/capacity recompute. Each step returns null rather than guessing, so
+  // an unresolved chain ends at "the venue says", which is always true.
   const category = venueLabel.normalizeCategory(options.category)
+    || venueLabel.normalizeCategory(ownerRow.profile_category)
     || venueLabel.categoryFromTypes(options.venueTypes || result.venueTypes);
   const noun = venueLabel.venueNoun(category);
   const attribution = venueLabel.ownerAttribution(category);

@@ -50,7 +50,11 @@
 const pool = require('../config/database');
 const advisorFacts = require('./advisorFacts');
 
-const { makeFact, makeRefusal, externalText, tzOffsetMinutes, EVENT_RADIUS_KM } = advisorFacts;
+// shortDate: every date this file prints is a calendar day out of the
+// database, and an owner reading their own verdict sees 'Aug 17' everywhere
+// else on the screen. Borrowed from advisorFacts rather than re-implemented so
+// the two card families cannot format the same day two ways.
+const { makeFact, makeRefusal, externalText, tzOffsetMinutes, shortDate, EVENT_RADIUS_KM } = advisorFacts;
 
 // ─── The threshold, and why it is not smaller ────────────────────────────────
 //
@@ -347,7 +351,7 @@ async function recordedEvents(placeId, date, lat, lng) {
 function noReadingRefusal({ weekday, date, everPosted }) {
   return makeRefusal({
     id: `refuse_no_reading_${date}`,
-    reason: say`You did not post a reading on ${weekday} ${date}, so there is no measurement of your room that day for us to grade. We can see what Flock published and what the weather did, and neither of those is a reading of how full you were.`,
+    reason: say`You did not post a reading on ${weekday} ${shortDate(date)}, so there is no measurement of your room that day for us to grade. We can see what Flock published and what the weather did, and neither of those is a reading of how full you were.`,
     whatWouldUnlock: everPosted
       ? say`One move of the busy slider at your busiest hour. A single reading puts that day next to what Flock published for you, and next to your own recent ${weekday}s, which is the only baseline in Flock that is yours rather than your category's.`
       : say`One move of the busy slider at your busiest hour. The first reading gets compared against what Flock published for you that day. After three more ${weekday}s it also gets compared against your own ${weekday}s, and that is a baseline no vendor curve can give you.`,
@@ -408,7 +412,7 @@ async function buildLastDayVerdict(ctx, { now = new Date() } = {}) {
     value: { date, weekday, peakReading: today.peak, readings: today.readings, diverged: today.diverged },
     source: 'owner_report',
     asOf: date,
-    label: say`Your highest reading on ${weekday} ${date} was ${today.peak}, from ${today.readings} ${today.readings === 1 ? 'reading' : 'readings'}.`,
+    label: say`Your highest reading on ${weekday} ${shortDate(date)} was ${today.peak}, from ${today.readings} ${today.readings === 1 ? 'reading' : 'readings'}.`,
     note: today.diverged
       ? say`A reading that day was flagged as diverging from what people in the room reported, so it is the softer of the two numbers.`
       : undefined,
@@ -592,7 +596,7 @@ async function buildLastDayVerdict(ctx, { now = new Date() } = {}) {
   } else {
     out.push(makeRefusal({
       id: `refuse_no_weather_${date}`,
-      reason: say`We were not recording city weather on ${date}, so we cannot say what it did.`,
+      reason: say`We were not recording city weather on ${shortDate(date)}, so we cannot say what it did.`,
       whatWouldUnlock: say`Nothing on your side. We record conditions hourly from the day we start watching a city, and we cannot go back for the ones before that.`,
     }));
   }
@@ -606,7 +610,7 @@ async function buildLastDayVerdict(ctx, { now = new Date() } = {}) {
   if (!street.watched) {
     out.push(makeRefusal({
       id: `refuse_no_event_snapshot_${date}`,
-      reason: say`We were not snapshotting event listings for your city on ${date}, so we cannot tell you what was on near you.`,
+      reason: say`We were not snapshotting event listings for your city on ${shortDate(date)}, so we cannot tell you what was on near you.`,
       whatWouldUnlock: say`Nothing on your side. Ticketmaster drops past events, so days before we started watching stay blank and every day from here on is covered.`,
     }));
   } else if (street.events.length) {

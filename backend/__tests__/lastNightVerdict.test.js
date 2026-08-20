@@ -239,7 +239,7 @@ test('no reading for the day: the refusal is the WHOLE answer, and it names the 
   const r = out[0];
   assert.strictEqual(r.status, 'refused');
   assert.strictEqual(r.id, `refuse_no_reading_${LAST_DAY}`);
-  assert.match(r.reason, /You did not post a reading on Friday 2026-08-14/);
+  assert.match(r.reason, /You did not post a reading on Friday Aug 14/);
   assert.match(r.reason, /no measurement of your room that day for us to grade/);
   assert.match(r.whatWouldUnlock, /One move of the busy slider at your busiest hour/);
   assert.match(r.whatWouldUnlock, /your own recent Fridays/);
@@ -361,7 +361,7 @@ test('the owner\'s own reading is attributed and never wears a measurement sourc
   const r = byId(out, `owner_reading_${LAST_DAY}`);
   assert.strictEqual(r.source, 'owner_report');
   assert.strictEqual(r.attribution, 'owner_asserted');
-  assert.match(r.label, /Your highest reading on Friday 2026-08-14 was 20, from 3 readings\./);
+  assert.match(r.label, /Your highest reading on Friday Aug 14 was 20, from 3 readings\./);
   assert.match(r.note, /flagged as diverging/);
 });
 
@@ -438,3 +438,60 @@ test('the pooled trailing typical rides along as context, never as a rival verdi
   assert.match(pooled.label, /a second look rather than a second verdict/);
   assert.ok(!pooled.value.verdict, 'the second yardstick carries no verdict of its own');
 });
+
+// ── 7. No column values in the copy ─────────────────────────────────────────
+//
+// '2026-08-14' is a database value. An owner reading the verdict sees "Aug 14"
+// everywhere else on the card, so a raw ISO date dropped into a sentence is a
+// column name leaking into copy — and it leaked into four of them here after
+// advisorFacts.js had already been swept for it, because the helper lived in
+// one file while three files print dates. This sweeps every owner-facing
+// string this module can emit rather than pinning the four that were wrong,
+// so the next sentence built around a date is caught by the same test.
+//
+// `id` and `asOf` are deliberately NOT swept: those are machine fields, the
+// verdict's `from` list is built out of them, and the ISO form is what makes
+// them stable.
+const OWNER_COPY_FIELDS = ['label', 'reason', 'whatWouldUnlock', 'note'];
+const ISO_DATE = /\d{4}-\d{2}-\d{2}/;
+
+function copyStrings(entries) {
+  const out = [];
+  for (const e of entries) {
+    for (const f of OWNER_COPY_FIELDS) {
+      if (typeof e[f] === 'string') out.push([`${e.id}.${f}`, e[f]]);
+    }
+  }
+  return out;
+}
+
+test('no owner-facing sentence prints a raw ISO date, on any branch', async () => {
+  // Every branch that names a day: the reading read back, the refusal for a
+  // day with no reading, and the two context refusals for days before we
+  // started watching the city.
+  const branches = [
+    ['a graded day', { readings: readingRows(58) }],
+    ['a day with no reading', { readings: readingRows(null) }],
+    ['a venue that never posted', { readings: [] }],
+    ['nothing published that day', { readings: readingRows(58), served: [] }],
+  ];
+  for (const [what, args] of branches) {
+    script(args);
+    const strings = copyStrings(await build());
+    assert.ok(strings.length > 0, `${what} produced copy to check`);
+    for (const [where, text] of strings) {
+      assert.doesNotMatch(text, ISO_DATE, `${what}: ${where} prints a raw ISO date: ${text}`);
+    }
+  }
+});
+
+test('the day is still named, in the form the rest of the card uses', async () => {
+  script({ readings: readingRows(58) });
+  const out = await build();
+  // Aug 14 2026 is inside the current year for the fixture clock, so the year
+  // is dropped exactly as shortDate drops it elsewhere.
+  assert.match(byId(out, `owner_reading_${LAST_DAY}`).label, /Friday Aug 14 was 58/);
+  assert.match(byId(out, `refuse_no_weather_${LAST_DAY}`).reason, /city weather on Aug 14/);
+  assert.match(byId(out, `refuse_no_event_snapshot_${LAST_DAY}`).reason, /for your city on Aug 14/);
+});
+
