@@ -185,6 +185,11 @@ const fs = require('fs');
 const path = require('path');
 
 const { CITIES, getSeason, isHoliday, isSchoolBreak } = require('../config');
+// Round 24 — the owner slider's readings as labels. The whole path (query,
+// owner-median anchor, floors, census) lives in its own module; this file only
+// wires it into the per-city loop and lends it the two things with one owner:
+// rowToCsv (the 44-column contract) and BASELINE_AGGREGATE_SQL (the anchor).
+const ownerLabels = require('./ownerLabelExport');
 
 const HOLDOUT_CITIES = ['miami', 'tokyo', 'barcelona'];
 
@@ -369,6 +374,13 @@ function labelProvenance(row) {
   if (row.collection_mode !== 'realtime') return 'weekly';
   if (row.label_source === 'live' || row.label_source === 'forecast') return row.label_source;
   if (row.label_source === FEEDBACK_LABEL_SOURCE) return FEEDBACK_LABEL_SOURCE;
+  // Round 24: an owner-slider reading (owner-median anchored — see
+  // ownerLabelExport.js). Named for the same reason user_report is: 'unknown'
+  // is the weight-1.0 pool, and one self-interested reporter falling into it
+  // would outrank every live BestTime observation in the corpus. The handoff
+  // tier argued for it is OWNER_LABEL_WEIGHT (0.10); prepare_features.py
+  // refuses the value by name until its ladder gains that tier.
+  if (row.label_source === ownerLabels.OWNER_LABEL_SOURCE) return ownerLabels.OWNER_LABEL_SOURCE;
   return 'unknown';
 }
 
@@ -1254,6 +1266,35 @@ async function runExport({ pool, outDir = __dirname, log = console.log } = {}) {
       + 'labelProvenance(). That interlock is why this cannot silently reach training.');
   }
 
+  // Round 24 — owner-slider readings, same shape as the feedback path: env-
+  // gated, censused every run either way, and refused downstream by name until
+  // prepare_features.py gains the 'owner_report' tier (OWNER_LABEL_WEIGHT,
+  // 0.10 — the handoff in ownerLabelExport.js owns the argument).
+  const ownerEnabled = ownerLabels.ownerExportRequested();
+  const ownerCounters = ownerLabels.newOwnerCounters();
+  const ownerCensusResult = await ownerLabels.ownerCensus(pool);
+  if (!ownerCensusResult.available) {
+    log('[Export] NOTE: venue_owner_reports does not exist — migration 031 has not run on this database.');
+  } else {
+    log(`[Export] Owner readings in the database: ${ownerCensusResult.readings} `
+      + `across ${ownerCensusResult.venues} venue(s) (${ownerCensusResult.retracted} retracted, `
+      + `${ownerCensusResult.diverged} diverged). The day this stops being zero is the day the `
+      + 'corpus starts growing again — BestTime froze 2026-05-18.');
+  }
+  if (ownerEnabled) {
+    if (!ownerCensusResult.available) {
+      const err = new Error(
+        `REFUSED: ${ownerLabels.OWNER_ENABLE_ENV} is set but venue_owner_reports does not exist. `
+        + 'Apply migration 031 (it runs on server boot).'
+      );
+      err.code = 'OWNER_TABLE_MISSING';
+      throw err;
+    }
+    log(`[Export] Owner labels ENABLED. Rows are emitted with label_source=`
+      + `${ownerLabels.OWNER_LABEL_SOURCE}, owner-median anchored, and prepare_features.py `
+      + 'currently REFUSES that value by name. Serving baselines are untouched by design.');
+  }
+
   try {
     await write(trainStream, HEADER + '\n');
     await write(holdoutStream, HEADER + '\n');
@@ -1285,6 +1326,21 @@ async function runExport({ pool, outDir = __dirname, log = console.log } = {}) {
           log(`  + ${added} feedback-labelled rows`);
         }
       }
+
+      if (ownerEnabled) {
+        const before = ownerCounters.emitted;
+        await ownerLabels.exportOwnerCity(pool, city, stream, ownerCounters, {
+          rowToCsv,
+          baselineAggregateSql: BASELINE_AGGREGATE_SQL,
+          write,
+        });
+        const added = ownerCounters.emitted - before;
+        if (added > 0) {
+          cityCounts[city] += added;
+          if (isHoldout) holdoutCount += added; else trainCount += added;
+          log(`  + ${added} owner-labelled rows (owner-median anchored)`);
+        }
+      }
     }
 
     // A corrupt row is never a counted skip. Reported AFTER every city so the
@@ -1307,6 +1363,21 @@ async function runExport({ pool, outDir = __dirname, log = console.log } = {}) {
         + 'stays invisible.'
       );
       err.code = 'FEEDBACK_CORRUPT_ROWS';
+      throw err;
+    }
+
+    // Same rule, owner path: a reading outside its own CHECK domain proves the
+    // constraint is missing from the database this corpus came from.
+    if (ownerCounters.corrupt.length > 0) {
+      const first = ownerCounters.corrupt[0];
+      const err = new Error(
+        'REFUSED: venue_owner_reports rows that cannot be honestly labelled.\n'
+        + ownerCounters.corrupt.map((c) =>
+          `  ${c.reason} — ${ownerLabels.OWNER_EXCLUSION_REASONS[c.reason].why}`).join('\n')
+        + `\n  First offender: city=${first.city} venue_id=${first.venueId}`
+        + (first.detail !== undefined ? ` detail=${first.detail}` : '')
+      );
+      err.code = 'OWNER_CORRUPT_ROWS';
       throw err;
     }
 
@@ -1349,6 +1420,14 @@ async function runExport({ pool, outDir = __dirname, log = console.log } = {}) {
     }
   }
 
+  if (ownerEnabled) {
+    log(`\n[Export] Owner labels: ${ownerCounters.candidates} readings -> `
+      + `${ownerCounters.emitted} rows from ${ownerCounters.anchoredVenues} anchored venue(s).`);
+    for (const [reason, n] of Object.entries(ownerCounters.excluded).sort((a, b) => b[1] - a[1])) {
+      log(`[Export]   excluded ${n} reading(s): ${reason} — ${ownerLabels.OWNER_EXCLUSION_REASONS[reason].why}`);
+    }
+  }
+
   log('\n[Export] City breakdown:');
   for (const [city, count] of Object.entries(cityCounts).sort((a, b) => b[1] - a[1])) {
     const set = HOLDOUT_CITIES.includes(city) ? '(holdout)' : '(train)';
@@ -1359,6 +1438,7 @@ async function runExport({ pool, outDir = __dirname, log = console.log } = {}) {
     trainCount, holdoutCount, cityCounts, trainPath, holdoutPath,
     trainBytes, holdoutBytes, elapsedMs,
     feedback: { enabled: feedbackEnabled, ...feedbackCounters },
+    owner: { enabled: ownerEnabled, ...ownerCounters },
   };
 }
 

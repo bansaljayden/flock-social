@@ -3,6 +3,10 @@ const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireVenueTier, venueBillingEnabled } = require('../services/venueEntitlements');
+// The owner's live 0-100 reading: liveness, expiry and precedence rules all
+// live in ONE service (routes/crowd.js applies them to every published
+// number). This router only owns the write path.
+const ownerReports = require('../services/ownerReports');
 const { rejectIfProfane } = require('../utils/moderation');
 const { upstreamSignal } = require('../utils/upstream');
 // Shape before content — see validators/shape.js. Nothing this router accepts
@@ -43,6 +47,12 @@ const INT4_MAX = 2147483647;
 // applied to the neighbours, so it sits with Insights, not with Boost's ad
 // surfaces. Move it to 'pro' if the pricing table is ever made explicit.
 const requirePremium = requireVenueTier('premium');
+
+// The Pro line. As of the 2026-08-18 audit Pro sold nothing Premium lacks
+// (/intelligence and /strip are both 'premium'); the deterministic weekly
+// summary below is half of the intended fix. No-op until VENUE_BILLING_ENABLED,
+// like every other gate here.
+const requirePro = requireVenueTier('pro');
 
 // The tiers that may have a paid benefit SERVED to end users on their behalf.
 // Read at request time, never at claim/creation time: a venue that upgrades,
@@ -1524,7 +1534,18 @@ router.get('/strip', requirePremium, async (req, res) => {
         mlPredictor.predictHourlyForecast(v, weather, 17, 7, base),
       ]);
       const peak = evening.reduce((a, b) => (b.score > a.score ? b : a), { score: -1 });
-      return { name: v.name, score: current.score, label: current.label, peakScore: peak.score ?? null, peakHour: peak.hour ?? null };
+      return {
+        name: v.name,
+        score: current.score,
+        label: current.label,
+        peakScore: peak.score ?? null,
+        peakHour: peak.hour ?? null,
+        // What produced the number. A rule-engine row is a CATEGORY PRIOR —
+        // the same figure for every same-category venue — and dressing one as
+        // a model reading is exactly how the strip lies. The client labels
+        // these, and stripOrderingClaim below refuses to rank them at all.
+        method: current.predictionMethod || null,
+      };
     };
 
     const competitors = (nearby.places || [])
@@ -1564,10 +1585,19 @@ router.get('/strip', requirePremium, async (req, res) => {
         utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
       }));
 
+    const you = await scoreOne(me);
+    const scored = await Promise.all(competitors.map(scoreOne));
     const result = {
       available: true,
-      you: await scoreOne(me),
-      competitors: await Promise.all(competitors.map(scoreOne)),
+      you,
+      // Each row says whether an ordering may be CLAIMED against it, decided
+      // server-side by stripOrderingClaim so the client cannot re-derive a
+      // ranking the measurement refused. Rows below the gap still show their
+      // numbers — the numbers are honest — they just carry no ranking sentence.
+      competitors: scored.map((c) => ({ ...c, orderingClaim: stripOrderingClaim(you, c) })),
+      // Published so the dashboard can say WHY two venues are not ranked
+      // instead of leaving a gap the owner reads as a bug.
+      orderingMinGap: STRIP_ORDERING_MIN_GAP,
       generatedAt: new Date().toISOString(),
     };
     cacheSet(`strip:${ctx.google_place_id}`, result);
@@ -1575,6 +1605,265 @@ router.get('/strip', requirePremium, async (req, res) => {
   } catch (err) {
     console.error('Venue strip error:', err);
     res.status(500).json({ error: 'Failed to build the strip view' });
+  }
+});
+
+// ─── THE STRIP HEDGE ─────────────────────────────────────────────────────────
+//
+// The strip is implicitly a RANKING, and the ranking was measured: pairwise
+// ordering of same-night venue pairs on held-out rows came back 43.1% BACKWARDS
+// (2026-08-19 model-defect hunt). A coin flip is 50%, so a raw "they're busier
+// than you tonight" read off two model scores is slightly worse than guessing,
+// delivered to a paying business as analytics. The numbers themselves stay —
+// each is the same honestly-derived figure the consumer card shows — but a
+// SENTENCE about their order is a second claim with its own (failed) accuracy,
+// so it is only drawn when the gap is too wide for the measured noise to flip.
+//
+// WHY 25. Labels change every 20 points (crowdEngine.getLabel), so anything
+// inside one band is two venues the product itself describes with the same
+// word; TIE_MARGIN (5) is what crowdEngine already refuses to act on as noise
+// within one venue. One full band plus that margin is the first gap where the
+// ordering sentence and the labels cannot contradict each other. It is a floor
+// argued from the product's own vocabulary, not a measured decision boundary —
+// the 43.1% figure says the measurement cannot currently supply one.
+const STRIP_ORDERING_MIN_GAP = 25;
+
+// null = no claim. 'busier' / 'quieter' = the competitor relative to you.
+// Rule-engine rows never claim, whatever the gap: two category priors differ
+// about the categories, not about tonight — and a prior against a model score
+// is a comparison of two different kinds of number wearing one axis.
+function stripOrderingClaim(you, competitor) {
+  if (!you || !competitor) return null;
+  if (you.method !== 'ml' || competitor.method !== 'ml') return null;
+  // == null before Number(): Number(null) is 0, and "no peak" scored as
+  // "empty" would claim 'quieter' about a venue nothing was measured for.
+  if (you.peakScore == null || competitor.peakScore == null) return null;
+  const mine = Number(you.peakScore);
+  const theirs = Number(competitor.peakScore);
+  if (!Number.isFinite(mine) || !Number.isFinite(theirs)) return null;
+  const gap = theirs - mine;
+  if (Math.abs(gap) < STRIP_ORDERING_MIN_GAP) return null;
+  return gap > 0 ? 'busier' : 'quieter';
+}
+
+// ─── OWNER BUSY SLIDER — "we are at X% right now" ────────────────────────────
+//
+// FREE AT EVERY TIER, PERMANENTLY. None of these three routes may ever take
+// requireVenueTier (pinned as source text by __tests__/ownerBusyReports
+// .test.js). The reading replaces a number CONSUMERS act on, and a paid tier
+// that buys influence over a consumer-shown number is the LendEDU shape — the
+// FTC's 2020 order against ratings that were sold rather than measured. What
+// keeps this a disclosure instead of an advertisement is enforced in
+// services/ownerReports.js, not in a pricing table: every surface labels the
+// number as the bar's own claim ("the bar says"), it expires in 90 minutes on
+// its own, three verified user reports outrank it, and repeated divergence
+// from those reports suppresses the override entirely.
+//
+// VERIFIED CLAIMS ONLY, same rule as /incoming-flocks: an unverified claim on
+// an arbitrary place id must not set the public number for a business the
+// claimant does not own. That is the anti-spoof gate, so the POST answers 403,
+// not a soft available:false.
+//
+// RATE LIMITS live in SQL against the same table the reading lands in, so
+// there is no module-scope counter to inventory and no second clock to drift:
+// one write a minute (a human adjusting a slider, not a script sawtoothing the
+// public number) and 48 a day (one every half hour around the clock — nobody
+// legitimate reaches it, and it bounds what one account can mint as training
+// rows for the export path).
+const OWNER_REPORT_DAILY_CAP = 48;
+
+// What the owner's dashboard needs to render the control truthfully: the
+// reading users currently see (null when expired, retracted or suppressed) and
+// whether the venue is strike-suppressed — in which case a fresh reading is
+// still RECORDED (it is an observation, and observations are the training
+// corpus) but not SERVED, and the owner is told so instead of being left to
+// wonder why users see the forecast.
+async function ownerBusyState(placeId) {
+  const byPlace = await ownerReports.getLiveOwnerReports([placeId]);
+  const live = ownerReports.liveOwnerReport(byPlace[placeId]);
+  const { rows: [s] } = await pool.query(
+    `SELECT COUNT(*)::int AS strikes FROM venue_owner_reports
+      WHERE google_place_id = $1 AND diverged = true
+        AND created_at > NOW() - INTERVAL '${ownerReports.OWNER_STRIKE_WINDOW_DAYS} days'`,
+    [placeId]
+  );
+  const strikes = s?.strikes || 0;
+  return { live, suppressed: strikes >= ownerReports.OWNER_DIVERGENCE_STRIKES };
+}
+
+// GET /api/venue-dashboard/busy-now — what users currently see from you.
+router.get('/busy-now', async (req, res) => {
+  try {
+    const ctx = await getVenueCtx(req.user.id);
+    if (!ctx?.google_place_id) {
+      return res.json({ available: false, reason: 'Link your Google listing in Edit Profile to set a live number' });
+    }
+    if (!ctx.verified) return res.json({ available: false, unverified: true, reason: UNVERIFIED_REASON });
+    const state = await ownerBusyState(ctx.google_place_id);
+    res.json({ available: true, ttlMinutes: ownerReports.OWNER_REPORT_TTL_MINUTES, ...state });
+  } catch (err) {
+    console.error('Get busy-now error:', err);
+    res.status(500).json({ error: 'Failed to load your live number' });
+  }
+});
+
+// POST /api/venue-dashboard/busy-now { percent }
+router.post('/busy-now', [
+  body('percent').isInt({ min: 0, max: 100 }).withMessage('percent must be a whole number from 0 to 100'),
+], async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ error: errors.array()[0].msg });
+    }
+    const ctx = await getVenueCtx(req.user.id);
+    if (!ctx?.google_place_id) {
+      return res.status(400).json({ error: 'Link your Google listing in Edit Profile first' });
+    }
+    if (!ctx.verified) {
+      return res.status(403).json({ error: 'Verify your venue before setting a live number. We check ownership first.' });
+    }
+
+    const { rows: [recent] } = await pool.query(
+      `SELECT COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '60 seconds')::int AS last_minute,
+              COUNT(*)::int AS last_day
+         FROM venue_owner_reports
+        WHERE venue_user_id = $1 AND created_at > NOW() - INTERVAL '24 hours'`,
+      [req.user.id]
+    );
+    if ((recent?.last_minute || 0) > 0) {
+      return res.status(429).json({ error: 'One update a minute. The last one is still live.' });
+    }
+    if ((recent?.last_day || 0) >= OWNER_REPORT_DAILY_CAP) {
+      return res.status(429).json({ error: 'Daily limit reached. The number falls back to the forecast on its own.' });
+    }
+
+    await pool.query(
+      `INSERT INTO venue_owner_reports (venue_user_id, google_place_id, busy_percent)
+       VALUES ($1, $2, $3)`,
+      [req.user.id, ctx.google_place_id, Number(req.body.percent)]
+    );
+    const state = await ownerBusyState(ctx.google_place_id);
+    res.status(201).json({ available: true, ttlMinutes: ownerReports.OWNER_REPORT_TTL_MINUTES, ...state });
+  } catch (err) {
+    console.error('Set busy-now error:', err);
+    res.status(500).json({ error: 'Failed to set your live number' });
+  }
+});
+
+// DELETE /api/venue-dashboard/busy-now — the owner's own kill switch.
+// Retracts, never deletes: an expired or retracted reading is still a labelled
+// observation for the training export; it just stops being served.
+router.delete('/busy-now', async (req, res) => {
+  try {
+    const ctx = await getVenueCtx(req.user.id);
+    if (!ctx?.google_place_id) return res.status(400).json({ error: 'No linked listing' });
+    const result = await pool.query(
+      `UPDATE venue_owner_reports SET retracted = true
+        WHERE venue_user_id = $1 AND retracted = false
+          AND created_at > NOW() - INTERVAL '${ownerReports.OWNER_REPORT_TTL_MINUTES} minutes'`,
+      [req.user.id]
+    );
+    res.json({ cleared: result.rowCount > 0 });
+  } catch (err) {
+    console.error('Clear busy-now error:', err);
+    res.status(500).json({ error: 'Failed to clear your live number' });
+  }
+});
+
+// ─── "THIS WEEK" — deterministic, computed, no language model ────────────────
+//
+// The venue-advisor research (VENUE-ADVISOR.md, 2026-08-19) landed on one
+// conclusion worth building first: most of what owners actually ask collapses
+// into a handful of computed facts, and the LLM was only ever decorative for
+// the analysis. This panel is those facts — every number is a SQL aggregate
+// over this venue's own rows, each labelled with where it came from, and
+// anything that cannot be computed says so instead of being invented
+// (SLOP-AUDIT rule 5; the fabricated-stats box deleted from this exact
+// dashboard on 2026-08-14 is the cautionary tale).
+//
+// Gated 'pro' deliberately: this is half of the Pro-sells-nothing fix (the
+// board, 2026-08-19). No model output ships here, so the gate is a pricing
+// decision, not an accuracy hedge — and the slider above stays free either way.
+router.get('/this-week', requirePro, async (req, res) => {
+  try {
+    const ctx = await getVenueCtx(req.user.id);
+    if (!ctx?.google_place_id) {
+      return res.json({ available: false, reason: 'Link your Google listing in Edit Profile to unlock the weekly summary' });
+    }
+    if (!ctx.verified) return res.json({ available: false, unverified: true, reason: UNVERIFIED_REASON });
+    const placeId = ctx.google_place_id;
+
+    // Four aggregates, one venue, fourteen days. Week-over-week comes from one
+    // scan per table with FILTER rather than two round trips.
+    const [votes, feedback, reviews, readings] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(DISTINCT flock_id) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::int AS this_week,
+                COUNT(DISTINCT flock_id) FILTER (WHERE created_at < NOW() - INTERVAL '7 days')::int AS last_week
+           FROM venue_votes
+          WHERE venue_id = $1 AND created_at >= NOW() - INTERVAL '14 days'`,
+        [placeId]
+      ),
+      pool.query(
+        // verified = true — the same restriction every other reader of this
+        // table carries (routes/crowd.js, the export): unverified reports move
+        // no number anyone sees, including this one.
+        `SELECT COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::int AS this_week,
+                COUNT(*) FILTER (WHERE created_at < NOW() - INTERVAL '7 days')::int AS last_week,
+                ROUND(AVG(crowd_level) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::numeric, 1) AS avg_level
+           FROM venue_feedback
+          WHERE venue_place_id = $1 AND verified = true AND created_at >= NOW() - INTERVAL '14 days'`,
+        [placeId]
+      ),
+      pool.query(
+        `SELECT COUNT(*)::int AS this_week,
+                ROUND(AVG(rating)::numeric, 1) AS avg_rating
+           FROM venue_reviews
+          WHERE google_place_id = $1 AND COALESCE(is_hidden, false) = false
+            AND created_at >= NOW() - INTERVAL '7 days'`,
+        [placeId]
+      ),
+      pool.query(
+        `SELECT COUNT(*)::int AS this_week,
+                ROUND(percentile_cont(0.5) WITHIN GROUP (ORDER BY busy_percent))::int AS median_percent
+           FROM venue_owner_reports
+          WHERE google_place_id = $1 AND retracted = false
+            AND created_at >= NOW() - INTERVAL '7 days'`,
+        [placeId]
+      ),
+    ]);
+
+    res.json({
+      available: true,
+      windowDays: 7,
+      // A count of FLOCKS, not of votes: five friends voting in one group is
+      // one group considering you.
+      groupsConsidering: {
+        thisWeek: votes.rows[0]?.this_week ?? 0,
+        lastWeek: votes.rows[0]?.last_week ?? 0,
+        source: 'venue votes in group plans',
+      },
+      crowdReports: {
+        thisWeek: feedback.rows[0]?.this_week ?? 0,
+        lastWeek: feedback.rows[0]?.last_week ?? 0,
+        avgLevel: feedback.rows[0]?.avg_level != null ? Number(feedback.rows[0].avg_level) : null,
+        source: 'verified user reports',
+      },
+      reviews: {
+        thisWeek: reviews.rows[0]?.this_week ?? 0,
+        avgRating: reviews.rows[0]?.avg_rating != null ? Number(reviews.rows[0].avg_rating) : null,
+        source: 'reviews on Flock',
+      },
+      yourReadings: {
+        thisWeek: readings.rows[0]?.this_week ?? 0,
+        medianPercent: readings.rows[0]?.median_percent ?? null,
+        source: 'your own live numbers',
+      },
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('Venue this-week error:', err);
+    res.status(500).json({ error: 'Failed to build the weekly summary' });
   }
 });
 
@@ -1588,4 +1877,8 @@ module.exports.__test = {
   claimPromotionViews,
   VIEW_DEDUPE_MS,
   VIEW_DEDUPE_MAX,
+  // The strip hedge (__tests__/stripHedge.test.js): the claim rule and its
+  // threshold, so the test asserts the shipped arithmetic, not a copy.
+  stripOrderingClaim,
+  STRIP_ORDERING_MIN_GAP,
 };

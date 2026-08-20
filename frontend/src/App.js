@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onGuestRsvp } from './services/socket';
 import { requestNotificationPermission, onForegroundMessage, getNotificationStatus, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
@@ -126,7 +126,7 @@ const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
 // One-tap reality check under the crowd forecast: a report from someone at the
 // venue becomes a dated training row (venue_feedback) AND calibrates the live
 // score for everyone else. Self-contained state; remount per venue via key.
-const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venueName, predicted }) {
+const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venueName, predicted, ownerAsserted }) {
   const [open, setOpen] = useState(false);
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -144,7 +144,10 @@ const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venue
         onClick={() => setOpen(true)}
         style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', padding: '6px 12px', margin: '0 0 8px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}
       >
-        There now? Rate the crowd
+        {/* When the number on screen is the bar's own claim, the check is the
+            counterweight: reports from people in the room outrank the owner
+            once three agree, and this button is where those reports come from. */}
+        {ownerAsserted ? 'There now? Does this look right?' : 'There now? Rate the crowd'}
       </button>
     );
   }
@@ -3863,7 +3866,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       // back to the same two places the map-pin path writes to.
       if (crowd && typeof crowd.score === 'number') {
         setAllVenues(prev => prev.map(v => v.place_id === placeId ? { ...v, crowd: crowd.score, crowdLabel: crowd.label || v.crowdLabel } : v));
-        setCrowdPredictions(prev => ({ ...prev, [placeId]: { ...(prev[placeId] || {}), placeId, score: crowd.score, label: crowd.label } }));
+        setCrowdPredictions(prev => ({ ...prev, [placeId]: { ...(prev[placeId] || {}), placeId, score: crowd.score, label: crowd.label, confidenceBasis: crowd.confidenceBasis || null, ownerReport: crowd.ownerReport || null } }));
       }
 
       // Pan map to venue location once we have coordinates
@@ -4751,7 +4754,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         if (data && typeof data.score === 'number') {
           // Sync fresh score into the venue list so the map heatmap matches the dial
           setAllVenues(prev => prev.map(v => v.place_id === pid ? { ...v, crowd: data.score, crowdLabel: data.label || v.crowdLabel } : v));
-          setCrowdPredictions(prev => ({ ...prev, [pid]: { ...(prev[pid] || {}), placeId: pid, score: data.score, label: data.label } }));
+          setCrowdPredictions(prev => ({ ...prev, [pid]: { ...(prev[pid] || {}), placeId: pid, score: data.score, label: data.label, confidenceBasis: data.confidenceBasis || null, ownerReport: data.ownerReport || null } }));
         }
         if (data) getCrowdAlternatives(pid).then(res => { if (!cancelled) setCrowdAlternatives(res.alternatives || []); }).catch(() => {});
       })
@@ -10896,10 +10899,34 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     </>
                   )}
                 </div>
+                {/* The bar's own number. When the published score IS the
+                    owner's live reading, the user must be able to tell — "the
+                    bar says" is a different claim from "we think", and the
+                    label is the whole deal that makes an owner-set number
+                    honest. Server decides `applied`; this only prints it. */}
+                {cd?.ownerReport?.applied && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-primary)', fontWeight: '600' }}>
+                      The bar says it's at {cd.score}% right now
+                    </span>
+                    {(() => {
+                      const mins = Math.round((Date.now() - Date.parse(cd.ownerReport.reportedAt)) / 60000);
+                      return Number.isFinite(mins) && mins >= 0
+                        ? <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{mins <= 1 ? 'set just now' : `set ${mins} min ago`}</span>
+                        : null;
+                    })()}
+                  </div>
+                )}
                 {/* Calibration indicator */}
                 {cd?.calibration?.feedbackUsed && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', flexWrap: 'wrap' }}>
                     <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>Calibrated from {cd.calibration.reportCount} user report{cd.calibration.reportCount !== 1 ? 's' : ''}</span>
+                    {/* The owner's figure when real reports outranked it —
+                        shown as information, never as the number. The two
+                        disagreeing in public is the honest state. */}
+                    {cd?.ownerReport && !cd.ownerReport.applied && (
+                      <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>The bar says {cd.ownerReport.percent}%.</span>
+                    )}
                     {Math.abs(cd.calibration.predictionDrift) > 15 && (
                       <span style={{ fontSize: 'var(--t-meta)', padding: '1px 6px', borderRadius: '8px', backgroundColor: cd.calibration.predictionDrift > 0 ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)', color: cd.calibration.predictionDrift > 0 ? colors.red : '#16a34a', fontWeight: '500' }}>
                         {cd.calibration.predictionDrift > 0 ? 'Trending busier than expected' : 'Trending quieter than expected'}
@@ -10969,9 +10996,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                 </motion.div>
 
+                {/* Where the number came from. Every published figure carries
+                    confidenceBasis from the server; nothing renders
+                    unattributed. Four sources, four sentences. */}
+                {!isClosed && !!cd && (
+                  <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '0 0 8px' }}>
+                    {cd.confidenceBasis === 'owner_report' ? 'From the bar itself, not a Flock estimate.'
+                      : cd.confidenceBasis === 'user_reports' ? 'From the crowd model, adjusted by people who are there.'
+                      : cd.predictionMethod === 'ml' ? 'From the Flock crowd model.'
+                      : 'An estimate from typical patterns for this kind of place.'}
+                  </p>
+                )}
+
                 {/* One-tap crowd reality check (open venues, after the score loads) */}
                 {!isClosed && !!cd && (
-                  <CrowdRealityCheck key={activeVenue.place_id} placeId={activeVenue.place_id} venueName={activeVenue.name} predicted={score} />
+                  <CrowdRealityCheck key={activeVenue.place_id} placeId={activeVenue.place_id} venueName={activeVenue.name} predicted={score} ownerAsserted={!!cd?.ownerReport?.applied} />
                 )}
 
                 {/* Group Admission */}
@@ -14932,14 +14971,56 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // null = loading, {available:false} = no linked Google listing yet.
   const [venueIntel, setVenueIntel] = useState(null);
   const [venueStrip, setVenueStrip] = useState(null);
+  // The owner's live 0-100 number. null = loading, {available:false} = no
+  // linked or unverified listing. Free at every tier, so it loads outside the
+  // analytics capability gate.
+  const [venueBusyNow, setVenueBusyNow] = useState(null);
+  // Slider position while the owner is choosing; null = untouched, so the Set
+  // button stays disabled until they actually move it.
+  const [venueBusyDraft, setVenueBusyDraft] = useState(null);
+  const [venueBusySaving, setVenueBusySaving] = useState(false);
+  // Deterministic weekly summary. Same three states as venueIntel.
+  const [venueThisWeek, setVenueThisWeek] = useState(null);
   useEffect(() => {
     if (venueTab !== 'analytics' || !venueProfile) return;
     let cancelled = false;
     getVenueIntelligence().then((d) => { if (!cancelled) setVenueIntel(d); }).catch(() => { if (!cancelled) setVenueIntel({ available: false, reason: 'Could not load forecasts right now' }); });
     getVenueStrip().then((d) => { if (!cancelled) setVenueStrip(d); }).catch(() => { if (!cancelled) setVenueStrip({ available: false }); });
+    getVenueBusyNow().then((d) => { if (!cancelled) setVenueBusyNow(d); }).catch(() => { if (!cancelled) setVenueBusyNow({ available: false }); });
+    // A refusal is not a failed read: this-week sits behind the Pro gate, so a
+    // 403 renders as locked, not as "try again".
+    getVenueThisWeek().then((d) => { if (!cancelled) setVenueThisWeek(d); }).catch((e) => { if (!cancelled) setVenueThisWeek({ available: false, locked: e?.status === 403 }); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [venueTab, venueProfile?.google_place_id]);
+
+  const handleSetBusyNow = async () => {
+    if (venueBusyDraft == null) return;
+    setVenueBusySaving(true);
+    try {
+      const d = await updateVenueBusyNow(Math.round(venueBusyDraft));
+      setVenueBusyNow(d);
+      setVenueBusyDraft(null);
+    } catch (e) {
+      showToast(e?.message || "That didn't save. Try again.", 'error');
+    } finally {
+      setVenueBusySaving(false);
+    }
+  };
+
+  const handleClearBusyNow = async () => {
+    setVenueBusySaving(true);
+    try {
+      await clearVenueBusyNow();
+      const d = await getVenueBusyNow().catch(() => ({ ...venueBusyNow, live: null }));
+      setVenueBusyNow(d);
+      setVenueBusyDraft(null);
+    } catch (e) {
+      showToast(e?.message || "Couldn't clear it. It expires on its own.", 'error');
+    } finally {
+      setVenueBusySaving(false);
+    }
+  };
 
   // The venue logo is one of the listing's own Google photos, picked from the
   // set our photo proxy already serves for the venue's place id.
@@ -15746,6 +15827,69 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
 
           {/* ANALYTICS TAB */}
+          {/* HOW FULL ARE YOU RIGHT NOW — free at every tier, deliberately
+              rendered OUTSIDE the can.analytics gate. The number users see is
+              never for sale: a paid tier that buys influence over a
+              consumer-shown figure is the FTC's LendEDU shape. What keeps this
+              honest is disclosure, not price — users see it labelled "the bar
+              says", it expires after 90 minutes on its own, and recent user
+              reports outrank it. All three rules are server-enforced. */}
+          {venueTab === 'analytics' && venueBusyNow?.available && (() => {
+            const live = venueBusyNow.live;
+            const expiresMin = live ? Math.max(0, Math.round((Date.parse(live.expiresAt) - Date.now()) / 60000)) : null;
+            const sliderValue = venueBusyDraft != null ? venueBusyDraft : (live ? live.percent : 50);
+            return (
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How full are you right now?</h3>
+                {venueBusyNow.suppressed ? (
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: 1.5 }}>
+                    Your live numbers are paused. Recent readings disagreed with what people in the room reported, so users see the forecast for now. This lifts on its own.
+                  </p>
+                ) : live ? (
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>
+                    Users see <span style={{ fontWeight: '600', color: colors.navy }}>{live.percent}% full</span>, labeled as your number. Expires in {expiresMin} min.
+                  </p>
+                ) : (
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>
+                    Set it and users see your number instead of the forecast, labeled as yours. It expires after {venueBusyNow.ttlMinutes} minutes so you never have to remember to turn it off.
+                  </p>
+                )}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                  <input
+                    type="range" min="0" max="100" step="1"
+                    aria-label="How full is your venue right now, 0 to 100 percent"
+                    value={sliderValue}
+                    onChange={(e) => setVenueBusyDraft(Number(e.target.value))}
+                    disabled={venueBusySaving}
+                    style={{ flex: 1, accentColor: colors.navy }}
+                  />
+                  <span style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, width: '44px', textAlign: 'right' }}>{sliderValue}%</span>
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button className="hit44"
+                    onClick={handleSetBusyNow}
+                    disabled={venueBusySaving || venueBusyDraft == null}
+                    style={{ flex: 1, padding: '10px', borderRadius: '8px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: (venueBusySaving || venueBusyDraft == null) ? 'default' : 'pointer', opacity: (venueBusySaving || venueBusyDraft == null) ? 0.5 : 1 }}
+                  >
+                    {venueBusySaving ? 'Saving...' : live ? 'Update live number' : 'Set live number'}
+                  </button>
+                  {live && (
+                    <button className="hit44"
+                      onClick={handleClearBusyNow}
+                      disabled={venueBusySaving}
+                      style={{ padding: '10px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: venueBusySaving ? 'default' : 'pointer' }}
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
+                <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '8px 0 0', lineHeight: 1.5 }}>
+                  Free on every plan. Shown to users as "the bar says". Reports from people at your venue outrank it.
+                </p>
+              </div>
+            );
+          })()}
+
           {venueTab === 'analytics' && !can.analytics && (
             <LockedTab requiredTier="premium" featureName="Analytics Dashboard" description="Track check-ins, peak hours, and customer traffic with real-time insights." />
           )}
@@ -15790,6 +15934,58 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
           </div>
 
+          {/* This week — deterministic counts from the venue's own rows. No
+              model, no estimates: every line is a SQL aggregate and says where
+              it came from, because a made-up figure on this tab has already
+              been deleted once (2026-08-14). */}
+          {venueThisWeek?.available && (() => {
+            const tw = venueThisWeek;
+            const levelWord = (lvl) => (lvl == null ? null : lvl < 1.7 ? 'quiet' : lvl < 2.4 ? 'moderate' : 'busy');
+            const rows = [
+              {
+                key: 'groups',
+                main: `${tw.groupsConsidering.thisWeek} group${tw.groupsConsidering.thisWeek === 1 ? '' : 's'} had you in a venue vote`,
+                sub: `${tw.groupsConsidering.lastWeek} the week before. From ${tw.groupsConsidering.source}.`,
+              },
+              {
+                key: 'reports',
+                main: `${tw.crowdReports.thisWeek} crowd report${tw.crowdReports.thisWeek === 1 ? '' : 's'} from people at your venue`
+                  + (tw.crowdReports.avgLevel != null ? `, averaging ${levelWord(tw.crowdReports.avgLevel)}` : ''),
+                sub: `${tw.crowdReports.lastWeek} the week before. From ${tw.crowdReports.source}.`,
+              },
+              {
+                key: 'reviews',
+                main: `${tw.reviews.thisWeek} new review${tw.reviews.thisWeek === 1 ? '' : 's'}`
+                  + (tw.reviews.avgRating != null ? `, ${tw.reviews.avgRating} stars on average` : ''),
+                sub: `From ${tw.reviews.source}.`,
+              },
+              {
+                key: 'readings',
+                main: `${tw.yourReadings.thisWeek} live number${tw.yourReadings.thisWeek === 1 ? '' : 's'} set by you`
+                  + (tw.yourReadings.medianPercent != null ? `, median ${tw.yourReadings.medianPercent}%` : ''),
+                sub: `From ${tw.yourReadings.source}.`,
+              },
+            ];
+            return (
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>This Week</h3>
+                <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '0 0 8px' }}>Last {tw.windowDays} days. Counted from your venue's own activity, nothing modeled.</p>
+                {rows.map((r, i) => (
+                  <div key={r.key} style={{ padding: '8px 0', borderTop: i === 0 ? 'none' : '1px solid var(--border-light)' }}>
+                    <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.navy, margin: 0 }}>{r.main}</p>
+                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{r.sub}</p>
+                  </div>
+                ))}
+              </div>
+            );
+          })()}
+          {venueThisWeek && !venueThisWeek.available && venueThisWeek.locked && (
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>This Week</h3>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>The weekly summary is a Pro feature.</p>
+            </div>
+          )}
+
           {/* Week ahead — projected peak per evening */}
           {intelReady && venueIntel.week?.length > 0 && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
@@ -15812,15 +16008,34 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Your Strip Tonight</h3>
               {[{ ...venueStrip.you, you: true }, ...venueStrip.competitors].map((v, i) => (
-                <div key={`${v.name}-${i}`} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', borderTop: i === 0 ? 'none' : '1px solid var(--border-light)' }}>
-                  <span style={{ flex: 1, fontSize: 'var(--t-meta)', fontWeight: v.you ? '500' : '500', color: colors.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{v.you ? `${v.name} (you)` : v.name}</span>
-                  <span style={{ width: '80px', height: '6px', borderRadius: '3px', backgroundColor: 'var(--bg-hover)', overflow: 'hidden', flexShrink: 0 }}>
-                    <span style={{ display: 'block', height: '100%', width: `${Math.min(100, v.peakScore || 0)}%`, backgroundColor: v.you ? colors.steel : 'var(--text-tertiary)', borderRadius: '3px' }} />
-                  </span>
-                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, width: '26px', textAlign: 'right', flexShrink: 0 }}>{v.peakScore ?? '–'}</span>
+                <div key={`${v.name}-${i}`} style={{ padding: '6px 0', borderTop: i === 0 ? 'none' : '1px solid var(--border-light)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ flex: 1, fontSize: 'var(--t-meta)', fontWeight: v.you ? '500' : '500', color: colors.navy, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{v.you ? `${v.name} (you)` : v.name}</span>
+                    {/* A rule-engine number is a category-typical figure, the
+                        same for every venue of its kind. It shows, labeled,
+                        and the server never draws a ranking against it. */}
+                    {v.method && v.method !== 'ml' && (
+                      <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', flexShrink: 0 }}>typical for its category</span>
+                    )}
+                    <span style={{ width: '80px', height: '6px', borderRadius: '3px', backgroundColor: 'var(--bg-hover)', overflow: 'hidden', flexShrink: 0 }}>
+                      <span style={{ display: 'block', height: '100%', width: `${Math.min(100, v.peakScore || 0)}%`, backgroundColor: v.you ? colors.steel : 'var(--text-tertiary)', borderRadius: '3px' }} />
+                    </span>
+                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, width: '26px', textAlign: 'right', flexShrink: 0 }}>{v.peakScore ?? '–'}</span>
+                  </div>
+                  {/* An ordering sentence only when the server drew one — it
+                      refuses below its published gap, because pairwise order
+                      at small gaps measured worse than a coin flip. */}
+                  {v.orderingClaim && (
+                    <p style={{ fontSize: 'var(--t-micro)', color: v.orderingClaim === 'busier' ? 'var(--accent-red-text)' : 'var(--accent-green-text)', margin: '2px 0 0' }}>
+                      Projected {v.orderingClaim} than you tonight
+                    </p>
+                  )}
                 </div>
               ))}
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '8px 0 0' }}>Projected evening peaks within 1.5 km, from Flock's crowd model.</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '8px 0 0' }}>
+                Projected evening peaks within 1.5 km, from Flock's crowd model.
+                {venueStrip.orderingMinGap ? ` Venues within ${venueStrip.orderingMinGap} points are too close to rank.` : ''}
+              </p>
             </div>
           )}
 
@@ -18958,7 +19173,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                               {crowdScore != null && (
                               <div style={{ position: 'absolute', top: '8px', right: '8px', padding: '4px 8px', borderRadius: '10px', backgroundColor: `${crowdColor}18`, backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                 <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: crowdColor }} />
-                                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdColor }}>{crowdScore}%</span>
+                                {/* An owner-asserted number carries its source
+                                    even at list size — "the bar says" is the
+                                    label that keeps it honest, and the detail
+                                    card one tap away says the rest. */}
+                                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdColor }}>{prediction?.confidenceBasis === 'owner_report' ? `bar says ${crowdScore}%` : `${crowdScore}%`}</span>
                               </div>
                               )}
                             </>
@@ -18989,7 +19208,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                             {!venue.photo_url && crowdScore != null && (
                               <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdColor, backgroundColor: `${crowdColor}12`, padding: '2px 8px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '3px' }}>
                                 <div style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: crowdColor }} />
-                                {crowdLabel} {crowdScore}%
+                                {prediction?.confidenceBasis === 'owner_report' ? `Bar says ${crowdScore}%` : `${crowdLabel} ${crowdScore}%`}
                               </span>
                             )}
                             {/* Photo cards carry the bare percentage in their
