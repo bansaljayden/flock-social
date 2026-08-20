@@ -291,8 +291,12 @@ test('the cache is keyed per venue, so one owner never reads another owner\'s we
   handlers = weekHandlers(b, feedbackRow(5, 1.1));
   const rb = await call('GET', '/api/venue-dashboard/this-week');
   assert.equal(rb.status, 200, rb.text);
-  assert.equal(ra.body.crowdReports.avgLevel, 2.4);
-  assert.equal(rb.body.crowdReports.avgLevel, 1.1, 'a second venue got its own numbers, not the cached first');
+  // 2.4 and 1.1 are what the query returns; 2.5 and 1.0 are what ships. The
+  // published value is coarsened to a half point (LEVEL_GRID, and the
+  // rolling-window note beside it in routes/venueDashboard.js), so these
+  // assert the COARSENED numbers and would catch the grid being removed.
+  assert.equal(ra.body.crowdReports.avgLevel, 2.5);
+  assert.equal(rb.body.crowdReports.avgLevel, 1.0, 'a second venue got its own numbers, not the cached first');
 });
 
 test('avgLevel is withheld below the reporter floor, with a reason rather than a silent null', async () => {
@@ -327,22 +331,64 @@ test('the floor IS MIN_CALIBRATION_REPORTERS, not a second copy of the number', 
   handlers = weekHandlers(place, feedbackRow(crowdEngine.MIN_CALIBRATION_REPORTERS));
   const r = await call('GET', '/api/venue-dashboard/this-week');
   assert.equal(r.status, 200, r.text);
-  assert.equal(r.body.crowdReports.avgLevel, 2.4, 'exactly at the floor, the average is published');
+  assert.equal(r.body.crowdReports.avgLevel, 2.5, 'exactly at the floor, the average is published (on the half-point grid)');
   assert.equal(r.body.crowdReports.avgLevelWithheld, false);
   assert.equal(r.body.crowdReports.minReporters, crowdEngine.MIN_CALIBRATION_REPORTERS,
     'the floor is published so the dashboard quotes the shipped number');
 });
 
-test('the floor counts DISTINCT accounts, not rows', async () => {
+test('the floor counts DISTINCT accounts, not rows - and neither does the average', async () => {
   // One person filing three reports is one person. A floor that counts rows is
   // not a floor: the single reporter whose average this hides can clear it
   // alone, by correcting themselves twice.
+  //
+  // SECURITY ROUND 5, 2026-08-20: the same argument applies to the AVERAGE, and
+  // it did not hold there. The floor counted accounts while the mean was taken
+  // over rows, so three reporters cleared the gate and one of them filing six
+  // of the eight rows made the published number substantially their own,
+  // handed to the party who can put a name to them. The average now has the
+  // same unit the floor is counted in: one value per person, then the average
+  // of those.
   const place = freshPlace();
   handlers = weekHandlers(place, feedbackRow(5));
   await call('GET', '/api/venue-dashboard/this-week');
   const q = log.find((x) => /FROM venue_feedback/.test(x.text));
-  assert.match(q.text, /COUNT\(DISTINCT user_id\)/,
+  assert.match(q.text, /GROUP BY user_id/,
+    'the average must be per person, so one prolific reporter cannot become the number');
+  assert.match(q.text, /COUNT\(\*\) FROM per_reporter/,
     'the reporter count must be over accounts, the way crowdEngine.usableCalibrationReports dedupes');
+  assert.doesNotMatch(q.text, /AVG\(crowd_level\)[^)]*FILTER/,
+    'a straight row-average is the shape this replaced; it must not come back');
+});
+
+test('the published level is coarsened, so the rolling window cannot be differenced', async () => {
+  // THE ATTACK THIS GRID EXISTS TO KILL, in full. crowd_level is a SMALLINT in
+  // {1,2,3}. The panel publishes an exact row count beside the average, and the
+  // window is a SEVEN-DAY ROLL: it drops whatever aged out overnight and adds
+  // whatever arrived. With the average at one decimal place, count times
+  // average recovers the integer sum EXACTLY, so on any night where the count
+  // falls by one and nothing new lands, yesterday's sum minus today's IS the
+  // level one identifiable person filed, with its date attached. An owner with
+  // an incoming-flocks feed and a reviews tab does the rest.
+  //
+  // A wider floor does nothing to that: the subtraction works at any n. Losing
+  // the last decimal place kills it at every n at once, which is why the fix is
+  // a grid and not a bigger number. It is the same guard advisorCohort.js
+  // applies to the cohort median (its guard 4), read against a 1-to-3 scale.
+  const cases = [
+    [2.4, 2.5], [2.6, 2.5], [1.1, 1.0], [1.24, 1.0], [1.26, 1.5], [3, 3], [2.75, 3],
+  ];
+  for (const [raw, shown] of cases) {
+    const place = freshPlace();
+    handlers = weekHandlers(place, feedbackRow(5, raw));
+    const r = await call('GET', '/api/venue-dashboard/this-week');
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.body.crowdReports.avgLevel, shown,
+      `${raw} must publish as ${shown}: anything finer is invertible against the count`);
+    // The precision is published, so the dashboard can say "about" and mean it
+    // rather than printing a deliberately blunt number as if it were exact.
+    assert.equal(r.body.crowdReports.avgLevelPrecision, 0.5);
+  }
 });
 
 // ─── 4. VERIFICATION IS RE-CHECKED AT SERVE TIME ────────────────────────────

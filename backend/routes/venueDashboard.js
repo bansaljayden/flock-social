@@ -644,8 +644,40 @@ router.get('/incoming-flocks', requirePremium, async (req, res) => {
     // column), inside the window argued above. The intervals are SQL literals
     // rather than bound parameters on purpose: the only bound value here is the
     // server-derived place id, and the object-authz suite pins that fact.
+    // f.name IS NOT SELECTED, and that is the whole of this change.
+    //
+    // SECURITY ROUND 5, 2026-08-20. This feed used to hand the venue
+    // `f.name AS title` — the private group's own name for their night, typed
+    // by whoever created the flock, rendered by App.js as the heading of the
+    // card. Group names are not neutral strings. "Emma's 21st", "Sarah's
+    // leaving do", "Dan + Priya anniversary" are the normal case, and each one
+    // pairs a real first name with a venue, a date and a time, delivered to a
+    // business that will be standing at the door when those people walk in.
+    //
+    // Three things make it worse than it first reads:
+    //   * NOBODY IN THE GROUP CHOSE THIS. The name is typed on the create
+    //     screen for the group's own use. Nothing on that screen says a
+    //     business will read it, and the group never sees the venue dashboard.
+    //   * THE PRIVACY POLICY DOES NOT SAY IT HAPPENS. Section "Who we share
+    //     with" names service providers, other flock members, and trusted
+    //     contacts. Venue owners are not on the list, and a paid feed of
+    //     user-authored text to a party the policy never mentions is the
+    //     disclosure gap, not just the leak.
+    //   * THE PRODUCT'S OWN VOICE ALREADY FORBIDS IT. Roost refuses this
+    //     question in so many words (services/advisorFreeText.js,
+    //     REFUSAL_BY_REASON.private_people): "We never report anything about
+    //     the individual people who use Flock: who they are ... or what they
+    //     planned. That stays private, including from you." The chat refused
+    //     it while the card above the chat printed it.
+    //
+    // WHAT THE VENUE ACTUALLY NEEDS is the operational shape of the night, and
+    // that is what the feed keeps: how many people, when, and whether the plan
+    // is confirmed. `title` stays as a KEY so App.js needs no change, but the
+    // server writes it now, from the party size, and it is derived from a
+    // COUNT rather than from anything a user typed. Nothing user-authored
+    // crosses this boundary any more.
     const { rows } = await pool.query(
-      `SELECT DISTINCT f.id, f.name AS title, f.event_time, f.status,
+      `SELECT DISTINCT f.id, f.event_time, f.status,
               (SELECT COUNT(*) FROM flock_members fm WHERE fm.flock_id = f.id AND fm.status = 'accepted') AS member_count
        FROM flocks f
        JOIN venue_votes vv ON vv.flock_id = f.id
@@ -660,7 +692,14 @@ router.get('/incoming-flocks', requirePremium, async (req, res) => {
     );
 
     res.json({
-      flocks: rows,
+      // The heading the venue reads, built here rather than selected. A group
+      // whose accepted count has not landed yet is "A group", not "Party of
+      // 0": the count is the thing being said, so saying it wrong is worse
+      // than not saying it.
+      flocks: rows.map((f) => {
+        const n = Number(f.member_count);
+        return { ...f, title: Number.isFinite(n) && n > 0 ? `Party of ${n}` : 'A group' };
+      }),
       // The window is published because the list alone cannot distinguish "no
       // group is coming" from "the feed only looks a day ahead". A client that
       // ignores this keeps its old behaviour.
@@ -1934,6 +1973,61 @@ router.delete('/busy-now', async (req, res) => {
 // Gated 'pro' deliberately: this is half of the Pro-sells-nothing fix (the
 // board, 2026-08-19). No model output ships here, so the gate is a pricing
 // decision, not an accuracy hedge — and the slider above stays free either way.
+// ─── THE ROLLING WINDOW IS THE HOLE THE FLOOR DID NOT CLOSE ─────────────────
+//
+// SECURITY ROUND 5, 2026-08-20. The k-anonymity floor added below stops a thin
+// group's average being published at ONE INSTANT. It does nothing about the
+// same average published every day over a window that MOVES, and the panel is
+// a seven-day window that moves.
+//
+// THE ATTACK, arithmetically, against the code as it stood this morning:
+//   venue_feedback.crowd_level is a SMALLINT in {1,2,3} (migration 001).
+//   The panel published `thisWeek` (an exact row count, n) beside
+//   `avgLevel` (the mean, rounded to one decimal). n and the mean give the
+//   SUM, and because the true sum is an integer, one decimal place is enough
+//   to recover it exactly for any small n: a published 2.3 over 4 rows can
+//   only be a sum of 9.
+//
+//   So the owner polls this endpoint once a day and keeps a column of
+//   (n, sum). The window drops whatever turned seven days old overnight and
+//   adds whatever arrived. On any night where n falls by exactly one and
+//   nothing new came in — the common case for a venue with a handful of
+//   reports a week — sum(yesterday) - sum(today) IS the crowd level a single
+//   named-in-practice person filed, exactly, with its date. The owner has an
+//   incoming-flocks feed, a reviews tab with real names on it, and their own
+//   door; putting a person against a date is the easy half.
+//
+//   That is the precise thing the floor exists to prevent, reached by
+//   subtraction instead of by reading one number.
+//
+// WHY COARSENING AND NOT A WIDER FLOOR. A wider floor delays the attack by a
+// few reporters and does not stop it: the differencing works at any n, it just
+// needs the mean to be precise enough to invert. Removing the precision
+// removes the inversion at every n at once. This is the same guard
+// services/advisorCohort.js already applies to the cohort median for the same
+// reason (guard 4, "COARSENING"), and reusing the shape rather than inventing
+// a second one is the point.
+//
+// WHY HALF A POINT. crowd_level runs 1 to 3, so the grid has to be read
+// against a two-point range, not a hundred-point one. At 0.5 the published
+// value is one of {1, 1.5, 2, 2.5, 3} — still the five distinctions the
+// three-level scale can actually support ("quiet", "quiet-ish", "moderate",
+// "busy-ish", "packed") — while the true mean is only known to ±0.25. Over n
+// reporters the sum is known to ±0.25n, so differencing two days at n = 5 and
+// n = 4 leaves the departed value uncertain by ±2.25 on a scale whose whole
+// range is 2. The estimate is wider than knowing nothing, which is the
+// definition of the attack being dead rather than merely harder.
+//
+// The COUNTS are untouched, for the reason the floor's own note gives: volume
+// is a fact about the venue. It is the CONTENT that had to lose its last
+// decimal place.
+const LEVEL_GRID = 0.5;
+function coarsenLevel(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n / LEVEL_GRID) * LEVEL_GRID;
+}
+
 router.get('/this-week', requirePro, async (req, res) => {
   try {
     const ctx = await getVenueCtx(req.user.id);
@@ -1978,12 +2072,32 @@ router.get('/this-week', requirePro, async (req, res) => {
         // reports clear a floor whose whole purpose is that three PEOPLE were
         // there, which is the same distinction crowdEngine.
         // usableCalibrationReports already makes.
-        `SELECT COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::int AS this_week,
-                COUNT(*) FILTER (WHERE created_at < NOW() - INTERVAL '7 days')::int AS last_week,
-                COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::int AS reporters,
-                ROUND(AVG(crowd_level) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::numeric, 1) AS avg_level
-           FROM venue_feedback
-          WHERE venue_place_id = $1 AND verified = true AND created_at >= NOW() - INTERVAL '14 days'`,
+        // ONE VALUE PER PERSON, THEN THE AVERAGE — not the average of rows.
+        //
+        // The floor below counts DISTINCT accounts, and it does so because the
+        // thing being protected is what a PERSON said. Averaging rows handed
+        // that back through the other door: three reporters clear the floor,
+        // and if one of them filed six of the eight rows the published mean is
+        // substantially that one person's number, attributable to whoever the
+        // owner remembers being in. The inner GROUP BY makes the unit of the
+        // average the same unit the floor is counted in, which is the only way
+        // the two can be describing the same thing.
+        `WITH win AS (
+           SELECT user_id, crowd_level, created_at
+             FROM venue_feedback
+            WHERE venue_place_id = $1 AND verified = true
+              AND created_at >= NOW() - INTERVAL '14 days'
+         ),
+         per_reporter AS (
+           SELECT AVG(crowd_level)::numeric AS lvl
+             FROM win
+            WHERE created_at >= NOW() - INTERVAL '7 days'
+            GROUP BY user_id
+         )
+         SELECT (SELECT COUNT(*) FROM win WHERE created_at >= NOW() - INTERVAL '7 days')::int AS this_week,
+                (SELECT COUNT(*) FROM win WHERE created_at < NOW() - INTERVAL '7 days')::int AS last_week,
+                (SELECT COUNT(*) FROM per_reporter)::int AS reporters,
+                (SELECT AVG(lvl) FROM per_reporter) AS avg_level`,
         [placeId]
       ),
       pool.query(
@@ -2029,6 +2143,9 @@ router.get('/this-week', requirePro, async (req, res) => {
     // rule 5: if we can't show it, say so, don't invent a number).
     const reporters = feedback.rows[0]?.reporters ?? 0;
     const avgLevelShown = reporters >= crowdEngine.MIN_CALIBRATION_REPORTERS;
+    const avgLevelValue = (avgLevelShown && feedback.rows[0]?.avg_level != null)
+      ? coarsenLevel(feedback.rows[0].avg_level)
+      : null;
 
     const result = {
       available: true,
@@ -2043,9 +2160,12 @@ router.get('/this-week', requirePro, async (req, res) => {
       crowdReports: {
         thisWeek: feedback.rows[0]?.this_week ?? 0,
         lastWeek: feedback.rows[0]?.last_week ?? 0,
-        avgLevel: (avgLevelShown && feedback.rows[0]?.avg_level != null)
-          ? Number(feedback.rows[0].avg_level)
-          : null,
+        avgLevel: avgLevelValue,
+        // Published so the dashboard can say "about 2.5" rather than "2.5" and
+        // mean it. A number that has been coarsened on purpose and is printed
+        // as if it were exact is the same small lie as a withheld number
+        // printed as a zero.
+        avgLevelPrecision: LEVEL_GRID,
         minReporters: crowdEngine.MIN_CALIBRATION_REPORTERS,
         // Never the reporter COUNT itself — that is the number the floor is
         // hiding behind, and "2 of 3 reporters" re-identifies just as well as
