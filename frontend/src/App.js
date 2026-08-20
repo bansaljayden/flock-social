@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, getVenueAdvisorCards, getAdvisorQuestions, askAdvisor, askAdvisorQuestion } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, getVenueAdvisorCards, getAdvisorQuestions, askAdvisor, askAdvisorQuestion } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onGuestRsvp } from './services/socket';
 import { requestNotificationPermission, onForegroundMessage, getNotificationStatus, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
@@ -3810,6 +3810,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }).finally(() => setResearchLoading(false));
   }, [showToast]);
 
+  const fetchCosts = useCallback((quiet = false) => {
+    setCostsLoading(true);
+    setCostsError(false);
+    return getAdminCosts().then(d => {
+      setCostsData(d);
+    }).catch(err => {
+      console.error('[Costs] Fetch error:', err);
+      setCostsData(null);
+      setCostsError(true);
+      if (!quiet) showToast('Could not load costs', 'error');
+    }).finally(() => setCostsLoading(false));
+  }, [showToast]);
+
   // Confirm click — shows a ✓ overlay on the button, no state/re-renders (pure DOM + CSS)
   const confirmClick = useCallback((e) => {
     const btn = e.currentTarget;
@@ -4824,6 +4837,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [researchLiveData, setResearchLiveData] = useState(null);
   const [researchLoading, setResearchLoading] = useState(false);
   const [researchError, setResearchError] = useState(false);
+
+  // The cost panel. Same three-state shape as the research panel above and for
+  // the same reason: a failed read must clear the data rather than leave the
+  // last good numbers on screen under a live label. Money is the one place
+  // where a stale number is worse than no number.
+  const [costsData, setCostsData] = useState(null);
+  const [costsLoading, setCostsLoading] = useState(false);
+  const [costsError, setCostsError] = useState(false);
   const [, setVenueDetailLoading] = useState(false);
   const [venueDetailPhotoIdx, setVenueDetailPhotoIdx] = useState(0);
 
@@ -5446,6 +5467,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     researchAskedRef.current = true;
     fetchResearchLive(true);
   }, [adminTab, fetchResearchLive]);
+
+  // Same once-per-session read for the cost panel. The Projections tab reads
+  // the same payload for its burn figure, so either tab being opened is enough
+  // to ask: the fixed-cost array used to be duplicated in the JSX and now it
+  // has exactly one source, which is the server.
+  const costsAskedRef = useRef(false);
+  useEffect(() => {
+    if ((adminTab !== 'costs' && adminTab !== 'projections') || costsAskedRef.current) return;
+    costsAskedRef.current = true;
+    fetchCosts(true);
+  }, [adminTab, fetchCosts]);
 
   // Check URL for admin/venue mode on mount — gated by role
   useEffect(() => {
@@ -17574,8 +17606,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // word twice. The tab whose id is already `projections` is now labelled
     // Projections and carries trendingUp, which is what it actually shows.
     // Three tabs, three glyphs, three distinct meanings.
+    // Costs landed 2026-08-20 as the fourth. It carries creditCard, which is
+    // the only glyph in the set that says "a bill arrived" rather than "a
+    // number went up", and the label is the one word Jayden used for it.
     const adminTabs = [
       { id: 'revenue', label: 'Revenue', icon: Icons.dollar },
+      { id: 'costs', label: 'Costs', icon: Icons.creditCard },
       { id: 'projections', label: 'Projections', icon: Icons.trendingUp },
       { id: 'research', label: 'Research', icon: Icons.barChart }
     ];
@@ -17928,6 +17964,273 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               stay. Same call as the fake venue analytics tab on 2026-08-12. */}
 
           {/* PROJECTIONS TAB */}
+          {/* COSTS TAB
+              ------------------------------------------------------------
+              What Flock costs, in the three kinds of number
+              backend/services/costModel.js keeps apart, kept apart here too.
+
+              THE RULE THIS SCREEN EXISTS TO HOLD. A ceiling is not a bill.
+              The panels below are ordered by how much they are worth
+              trusting, and the two that are not measurements say so in their
+              own headings rather than in a footnote: "If every ceiling were
+              hit" is a dashed box, and it never sits next to a dollar figure
+              that came off a meter.
+
+              Nothing here is computed in the browser. Every number arrives
+              from GET /api/admin/costs already priced, because the rate card
+              and the arithmetic belong next to the meters that feed them and
+              a second copy in JSX is how the old hand-typed expense array
+              went five vendors out of date. */}
+          {adminTab === 'costs' && (() => {
+            const d = costsData;
+
+            // Money, or an honest word when there is no number. A null here
+            // means nobody measured, which is not the same as zero, and
+            // printing "$0.00" for an absent meter would claim coverage the
+            // panel does not have.
+            const money = (n, dp = 2) =>
+              (Number.isFinite(n) ? `$${n.toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: dp })}` : null);
+            const moneyOr = (n, fallback = 'Not measured', dp = 2) => money(n, dp) || fallback;
+            const count = (n) => (Number.isFinite(n) ? n.toLocaleString() : null);
+
+            const card = {
+              backgroundColor: 'var(--bg-card-solid)',
+              borderRadius: '12px',
+              padding: '12px',
+              boxShadow: 'var(--card-shadow-sm)',
+            };
+            const h3 = { fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 2px' };
+            const sub = { fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.4 };
+            const big = { fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '2px 0 0', lineHeight: 1.1 };
+            const kicker = { fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' };
+            const foot = { fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '8px 0 0', lineHeight: 1.4 };
+
+            const row = (key, left, right, note) => (
+              <div key={key} style={{ padding: '6px 0', borderTop: '1px solid var(--border-light)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
+                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{left}</span>
+                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, whiteSpace: 'nowrap' }}>{right}</span>
+                </div>
+                {note && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0', lineHeight: 1.35 }}>{note}</p>}
+              </div>
+            );
+
+            if (!d) {
+              return (
+                <div style={{ ...card, border: `1px dashed ${colors.creamDark}` }}>
+                  <h3 style={h3}>{costsLoading ? 'Reading the meters' : costsError ? 'These numbers did not load' : 'Nothing read yet'}</h3>
+                  <p style={sub}>
+                    {costsLoading
+                      ? 'Fetching the ledgers and the rate card.'
+                      : costsError
+                        ? 'The cost panel could not be read. Nothing is shown rather than showing the last numbers under a live label.'
+                        : 'The cost panel has not been asked for yet.'}
+                  </p>
+                  {!costsLoading && (
+                    <button className="hit44 glass-btn glass-primary" onClick={() => fetchCosts()} style={{ ...styles.gradientButton, padding: '12px', marginTop: '4px' }}>
+                      {costsError ? 'Try again' : 'Read the meters'}
+                    </button>
+                  )}
+                </div>
+              );
+            }
+
+            const reconciledTotal = (d.reconciled?.lines || []).reduce((s2, l) => s2 + (Number.isFinite(l.usdPerMonth) ? l.usdPerMonth : 0), 0);
+            const v = d.venueUnitEconomics || {};
+            const obs = d.observed || {};
+            const worst = d.worstCase || {};
+            const fixed = d.fixed || {};
+
+            // Two totals a person actually wants: what leaves the account every
+            // month regardless of use, and what the usage on top of it is
+            // running at. They are added only where both are real.
+            const allInMonthly = Number.isFinite(fixed.effectiveMonthlyUsd) ? fixed.effectiveMonthlyUsd + reconciledTotal : null;
+
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+
+                {/* 1. THE ONE NUMBER THAT IS A BILL */}
+                <div style={card}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
+                    <div>
+                      <h3 style={h3}>What this actually costs</h3>
+                      <p style={sub}>Fixed bills plus the metered spend a human has reconciled against a vendor invoice.</p>
+                    </div>
+                    <button className="hit44" disabled={costsLoading} onClick={() => fetchCosts()}
+                      style={{ border: 'none', background: 'transparent', cursor: costsLoading ? 'default' : 'pointer', padding: '4px', flexShrink: 0 }}>
+                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>{costsLoading ? 'Reading' : 'Refresh'}</span>
+                    </button>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                    <div>
+                      <p style={kicker}>All in, monthly</p>
+                      <p style={big}>{moneyOr(allInMonthly, 'Not measured', 0)}</p>
+                      <p style={{ ...sub, margin: '3px 0 0' }}>
+                        {moneyOr(fixed.effectiveMonthlyUsd, 'no fixed total', 0)} of fixed bills, plus {moneyOr(reconciledTotal, 'nothing', 0)} of metered vendor spend.
+                      </p>
+                    </div>
+                    <div>
+                      <p style={kicker}>Reconciled</p>
+                      <p style={big}>{moneyOr(reconciledTotal, 'None on file', 0)}</p>
+                      <p style={{ ...sub, margin: '3px 0 0' }}>
+                        Read off vendor billing pages by hand{d.reconciled?.asOf ? ` on ${d.reconciled.asOf}` : ''}. Nothing in the app can verify it, so it is only as current as that date.
+                      </p>
+                    </div>
+                  </div>
+                  {(d.reconciled?.lines || []).map((l) => row(l.id, l.label, `${moneyOr(l.usdPerMonth)}/mo`, l.note))}
+                </div>
+
+                {/* 2. FIXED */}
+                <div style={card}>
+                  <h3 style={h3}>Fixed, whether anyone uses it or not</h3>
+                  <p style={sub}>
+                    Maintained by hand in backend/services/costModel.js. Every line carries the date it was last checked. Update the file when a bill changes.
+                  </p>
+                  {(fixed.monthly || []).map((e) => row(e.id, e.label, `${moneyOr(e.usd)}/mo`, e.verified ? null : `Unverified. ${e.note || ''}`))}
+                  {(fixed.annual || []).map((e) => row(e.id, e.label, `${moneyOr(e.usd)}/yr`, e.verified ? null : `Unverified. ${e.note || ''}`))}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0 0', marginTop: '4px', borderTop: '1px solid var(--border-default)' }}>
+                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>Annual bills spread over twelve months</span>
+                    <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{moneyOr(fixed.effectiveMonthlyUsd)}<span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>/mo</span></span>
+                  </div>
+                  {(fixed.oneTime || []).map((e) => row(e.id, `${e.label}, one time`, moneyOr(e.usd, 'Not measured', 0), e.note))}
+                  {(fixed.unverifiedLines || []).length > 0 && (
+                    <p style={foot}>
+                      {fixed.unverifiedLines.length} {fixed.unverifiedLines.length === 1 ? 'line is' : 'lines are'} a published vendor price rather than an invoice you have seen. They are counted anyway, and named above.
+                    </p>
+                  )}
+                </div>
+
+                {/* 3. OBSERVED */}
+                <div style={card}>
+                  <h3 style={h3}>What the meters counted</h3>
+                  <p style={sub}>
+                    Real usage, priced at the rate card. This is an estimate of a bill and not a bill. Lines marked as this process only live in one container's memory, so they read zero after every deploy and do not add up across a month.
+                  </p>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '4px' }}>
+                    <div>
+                      <p style={kicker}>Today so far</p>
+                      <p style={big}>
+                        {moneyOr(obs.todayUsd, 'Not measured')}
+                        {Number.isFinite(obs.todayUsdHigh) && obs.todayUsdHigh > obs.todayUsd && (
+                          <span style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-tertiary)' }}> to {money(obs.todayUsdHigh)}</span>
+                        )}
+                      </p>
+                      <p style={{ ...sub, margin: '3px 0 0' }}>A band where a meter counted calls without recording which SKU they were.</p>
+                    </div>
+                    <div>
+                      <p style={kicker}>Coverage</p>
+                      <p style={big}>{(obs.lines || []).length - (obs.unmeasuredLines || []).length}<span style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-tertiary)' }}> of {(obs.lines || []).length}</span></p>
+                      <p style={{ ...sub, margin: '3px 0 0' }}>
+                        {(obs.unmeasuredLines || []).length === 0 ? 'Every meter reported.' : `Not reporting: ${obs.unmeasuredLines.join(', ')}.`}
+                      </p>
+                    </div>
+                  </div>
+                  {(obs.lines || []).map((l) => row(
+                    l.id,
+                    l.label,
+                    l.usd === null
+                      ? (l.unpriceable ? 'No rate on file' : 'Not measured')
+                      : `${money(l.usd, 4)}${Number.isFinite(l.usdHigh) && l.usdHigh > l.usd ? ` to ${money(l.usdHigh, 4)}` : ''}`,
+                    `${count(l.count) === null ? 'Nothing reported' : `${count(l.count)} ${l.unit}`}, ${l.window}.${l.freeTier ? ' Inside a free tier.' : ''}`
+                  ))}
+                  {(obs.unpriceableLines || []).length > 0 && (
+                    <p style={foot}>
+                      A model id with no published rate on file reads as unpriced rather than free. BIRDIE_MODEL and ADVISOR_MODEL are switchable from Railway with no deploy, so a swap changes what a token costs without changing any ceiling.
+                    </p>
+                  )}
+                </div>
+
+                {/* 4. ONE VENUE */}
+                <div style={card}>
+                  <h3 style={h3}>One venue at {moneyOr(v.priceUsd, 'the list price', 0)} a month</h3>
+                  <p style={sub}>
+                    Gemini is the only per-venue cost that scales with use. The ceiling below is that venue's own daily token cap, spent in full every day of the month, which is the most one venue can possibly cost.
+                  </p>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                    <div>
+                      <p style={kicker}>Costs at most</p>
+                      <p style={big}>{moneyOr(v.ceilingMonthlyUsdHigh, 'Not priced')}</p>
+                      <p style={{ ...sub, margin: '3px 0 0' }}>
+                        {Number.isFinite(v.ceilingMonthlyUsdLow) ? `From ${money(v.ceilingMonthlyUsdLow)} if every token were input.` : 'No rate on file for this model.'}
+                      </p>
+                    </div>
+                    <div>
+                      <p style={kicker}>Gross margin</p>
+                      <p style={big}>{Number.isFinite(v.ceilingMarginPct) ? `${v.ceilingMarginPct}%` : 'Not priced'}</p>
+                      <p style={{ ...sub, margin: '3px 0 0' }}>Against the dear end of the band, before any payment processing.</p>
+                    </div>
+                  </div>
+                  {Number.isFinite(v.laterCeilingMonthlyUsd) && v.laterFrom && row(
+                    'later',
+                    `Same ceiling from ${v.laterFrom}`,
+                    `${moneyOr(v.laterCeilingMonthlyUsd)}/mo`,
+                    `${v.model} is on promotional pricing that doubles on that date. Margin becomes ${v.laterCeilingMarginPct}%.`
+                  )}
+                  {row(
+                    'observed-venue',
+                    'Busiest venue this month, actual',
+                    v.observedMonthlyUsd === null ? 'Not measured' : money(v.observedMonthlyUsd, 4),
+                    v.observedTokensMonth === null
+                      ? 'No venue has spent a Roost token this month, so there is nothing to price. This stays empty until one does.'
+                      : `${count(v.observedTokensMonth)} tokens. Margin ${v.observedMarginPct}%.`
+                  )}
+                  {row(
+                    'paying',
+                    'Venues paying today',
+                    Number.isFinite(d.venues?.paying) ? String(d.venues.paying) : 'Not measured',
+                    'Nobody has ever been charged. Venue billing is unbuilt and its flag is unset.'
+                  )}
+                </div>
+
+                {/* 5. CEILINGS. Dashed, and it never touches an observed figure. */}
+                <div style={{ ...card, boxShadow: 'none', border: `1px dashed ${colors.creamDark}` }}>
+                  <h3 style={h3}>If every ceiling were hit, every day</h3>
+                  <p style={sub}>
+                    Not spend. Not a forecast. This is what the limits written into the code permit before something refuses, and nothing has ever come close to one of them. It is here so the worst case is a number rather than a worry.
+                  </p>
+                  <div>
+                    <p style={kicker}>Would cost, monthly</p>
+                    <p style={big}>
+                      {moneyOr(worst.perMonthUsd, 'Not priced', 0)}
+                      {Number.isFinite(worst.perMonthUsdHigh) && worst.perMonthUsdHigh > worst.perMonthUsd && (
+                        <span style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-tertiary)' }}> to {money(worst.perMonthUsdHigh, 0)}</span>
+                      )}
+                    </p>
+                  </div>
+                  {(worst.lines || []).map((l) => row(
+                    l.id,
+                    l.label,
+                    l.perMonthUsd === null
+                      ? 'Not priced'
+                      : `${money(l.perMonthUsd, 0)}${Number.isFinite(l.perMonthUsdHigh) && l.perMonthUsdHigh > l.perMonthUsd ? ` to ${money(l.perMonthUsdHigh, 0)}` : ''}/mo`,
+                    `${count(l.ceiling) === null ? 'No ceiling on file' : `${count(l.ceiling)} ${l.ceilingUnit}`}.${l.note ? ` ${l.note}` : ''}`
+                  ))}
+                </div>
+
+                {/* 6. WATCHLIST */}
+                <div style={card}>
+                  <h3 style={h3}>Not on a bill today</h3>
+                  <p style={sub}>Found by sweeping the repo for anything that reaches a third party. None of these is charged right now. Each one could be.</p>
+                  {(d.watchlist || []).map((w) => row(
+                    w.id,
+                    w.label,
+                    w.usd === null ? 'No figure' : moneyOr(w.usd, 'No figure', 0),
+                    `${w.where}. ${w.note}`
+                  ))}
+                </div>
+
+                {/* 7. PROVENANCE */}
+                <div style={{ ...card, boxShadow: 'none', backgroundColor: 'transparent', padding: '0 2px' }}>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0, lineHeight: 1.5 }}>
+                    Rates last checked: Gemini {d.rates?.checked?.gemini || 'unknown'}, Google Places {d.rates?.checked?.places || 'unknown'}, Cloud Vision {d.rates?.checked?.vision || 'unknown'}.
+                    {' '}Vendors change published prices without telling anyone, so a stale date means unverified, not wrong.
+                    {d.generatedAt ? ` Read at ${new Date(d.generatedAt).toLocaleString()}.` : ''}
+                  </p>
+                </div>
+              </div>
+            );
+          })()}
+
           {adminTab === 'projections' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {/* Deleted 2026-08-13, all three fabricated:
@@ -17974,30 +18277,58 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 ))}
               </div>
 
-              {/* Real expenses — Jayden's actual spend, maintained by hand.
-                  Update the EXPENSES arrays below when a bill changes. */}
+              {/* Burn and break-even.
+                  ------------------------------------------------------------
+                  These used to be computed from a MONTHLY / ANNUAL / ONE_TIME
+                  array typed into this file. That array was Jayden's real
+                  spend and it was five vendors out of date: it knew about
+                  Railway, Claude Max, Codex, the Apple fee and the BestTime
+                  corpus, and had never heard of Gemini, Google Places, Cloud
+                  Vision, MapTiler or the domain. It also sat two tabs away
+                  from a set of API ceilings nobody had ever priced.
+
+                  The arrays now live in backend/services/costModel.js, which
+                  is where the rate card and the meters are, and this panel
+                  reads the same payload the Costs tab does. One source, so a
+                  changed bill changes both. The full picture, including what
+                  the meters have actually spent and what the ceilings would
+                  permit, is on the Costs tab; this is the two-number version
+                  the projections need.
+
+                  Still true of everything below: nothing here is a
+                  measurement of anything that has happened. */}
               {(() => {
-                const MONTHLY = [
-                  { name: 'Railway (backend + Postgres)', usd: 20 },
-                  { name: 'Claude Max', usd: 125 },
-                  { name: 'Codex', usd: 20 },
-                ];
-                const ANNUAL = [
-                  { name: 'Apple Developer Program', usd: 99 },
-                ];
-                const ONE_TIME = [
-                  { name: 'BestTime training data (the model moat)', usd: 1500 },
-                ];
-                const FREE_TIER = ['Vercel (web hosting)', 'Codemagic (~500 build min/mo)', 'Resend (email)'];
+                const fixed = costsData && costsData.fixed;
                 // Flock Pro, monthly plan. Priced but dormant: the paywall is
                 // gated behind PAYWALL_ENABLED and has never been switched on,
                 // so there are no subscribers and no revenue to report.
                 const PRO_MONTHLY_USD = 3.99;
-                const monthlyTotal = MONTHLY.reduce((s, e) => s + e.usd, 0);
-                const annualTotal = ANNUAL.reduce((s, e) => s + e.usd, 0);
-                const oneTimeTotal = ONE_TIME.reduce((s, e) => s + e.usd, 0);
-                const effectiveMonthly = monthlyTotal + annualTotal / 12;
-                const subsToBreakEven = Math.ceil(effectiveMonthly / PRO_MONTHLY_USD);
+
+                if (!fixed) {
+                  return (
+                    <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', border: `1px dashed ${colors.creamDark}`, marginBottom: '12px' }}>
+                      <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Burn and break-even</h4>
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.4 }}>
+                        {costsLoading
+                          ? 'Reading the cost model.'
+                          : costsError
+                            ? 'The cost model did not load, so there is no burn figure to show. Nothing is guessed in its place.'
+                            : 'The cost model has not been read yet.'}
+                      </p>
+                      {!costsLoading && (
+                        <button className="hit44 glass-btn glass-primary" onClick={() => fetchCosts()} style={{ ...styles.gradientButton, padding: '12px', marginTop: '10px' }}>
+                          {costsError ? 'Try again' : 'Read the cost model'}
+                        </button>
+                      )}
+                    </div>
+                  );
+                }
+
+                const monthlyTotal = fixed.monthlyUsd;
+                const annualTotal = fixed.annualUsd;
+                const effectiveMonthly = fixed.effectiveMonthlyUsd;
+                const subsToBreakEven = effectiveMonthly > 0 ? Math.ceil(effectiveMonthly / PRO_MONTHLY_USD) : 0;
+                const usd0 = (n) => `$${Math.round(n).toLocaleString()}`;
                 const row = (name, amount, sub) => (
                   <div key={name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '5px 0', borderTop: '1px solid var(--border-light)' }}>
                     <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{name}</span>
@@ -18006,16 +18337,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 );
                 return (
                   <>
-                  {/* Burn and break-even. Both numbers come off the arrays
-                      above, so a changed bill changes the panel. Nothing here
-                      is a measurement of anything that has happened. */}
                   <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)', marginBottom: '12px' }}>
                     <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Burn and break-even</h3>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                       <div>
-                        <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Monthly burn</p>
-                        <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '2px 0 0', lineHeight: 1.1 }}>${effectiveMonthly.toFixed(0)}</p>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0' }}>${monthlyTotal}/mo recurring plus ${annualTotal}/yr spread over twelve months.</p>
+                        <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Fixed monthly burn</p>
+                        <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '2px 0 0', lineHeight: 1.1 }}>{usd0(effectiveMonthly)}</p>
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0' }}>{usd0(monthlyTotal)}/mo recurring plus {usd0(annualTotal)}/yr spread over twelve months. Metered API spend is on top and lives on the Costs tab.</p>
                       </div>
                       <div>
                         <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Target to cover it</p>
@@ -18029,17 +18357,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                   <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '8px' }}>
-                      <h4 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>Expenses</h4>
-                      <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>${effectiveMonthly.toFixed(0)}<span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>/mo effective</span></span>
+                      <h4 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>Fixed expenses</h4>
+                      <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{usd0(effectiveMonthly)}<span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>/mo effective</span></span>
                     </div>
-                    {MONTHLY.map((e) => row(e.name, `$${e.usd}`, '/mo'))}
-                    {ANNUAL.map((e) => row(e.name, `$${e.usd}`, '/yr'))}
-                    {ONE_TIME.map((e) => row(e.name, `$${e.usd.toLocaleString()}`, ' once'))}
+                    {(fixed.monthly || []).map((e) => row(e.label, `$${e.usd}`, '/mo'))}
+                    {(fixed.annual || []).map((e) => row(e.label, `$${e.usd}`, '/yr'))}
+                    {(fixed.oneTime || []).map((e) => row(e.label, `$${e.usd.toLocaleString()}`, ' once'))}
                     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0 0', marginTop: '3px', borderTop: '1px solid var(--border-default)' }}>
-                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>Recurring ${monthlyTotal}/mo + ${annualTotal}/yr</span>
-                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>One-time invested: ${oneTimeTotal.toLocaleString()}</span>
+                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>Recurring {usd0(monthlyTotal)}/mo plus {usd0(annualTotal)}/yr</span>
+                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>One-time invested: {usd0(fixed.oneTimeUsd)}</span>
                     </div>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '7px 0 0' }}>Free tier: {FREE_TIER.join(' · ')}</p>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '7px 0 0', lineHeight: 1.4 }}>
+                      Vendors on free tiers, and what each meter has actually spent, are on the Costs tab.
+                    </p>
                   </div>
                   </>
                 );
