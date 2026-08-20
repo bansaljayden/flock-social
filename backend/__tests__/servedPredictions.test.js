@@ -232,6 +232,166 @@ test('a failing write never fails the card — fire-and-forget means it', async 
   await new Promise((resolve) => setImmediate(resolve));
 });
 
+// ===========================================================================
+// WHICH DOOR, AND WHAT CLOCK (migration 038).
+//
+// 032 recorded the score and nothing about how it was arrived at, and
+// routes/feedback.js then read "the server wrote this row" as "the server
+// chose this number". On two of the three write paths that is false. The
+// batch route scores venues out of a CLIENT-ASSEMBLED body, so a caller can
+// post a real bar with rating 1.0 and a 4am utcOffsetMinutes, watch the server
+// publish ~5 and record it as its own, then report the room packed and hand
+// the calibration layer a forged pair wearing server provenance.
+//
+// The read half is pinned in __tests__/feedbackRoute.test.js. This is the
+// write half, and it has to hold or that one is checking a column nothing
+// fills in.
+// ===========================================================================
+const paramNames = (sql) => {
+  const cols = /INSERT INTO served_predictions \(([^)]*)\)/.exec(sql);
+  return cols ? cols[1].split(',').map((s) => s.trim()) : [];
+};
+// The INSERT is positional over unnest'd arrays; params[0] is the user id and
+// params[1..] line up with the column list after it.
+const columnValues = (w, column) => {
+  const idx = paramNames(w.sql).indexOf(column);
+  // user_id is params[0] and is a scalar, not an array; every column after it
+  // is an array at params[idx].
+  return w.params[idx];
+};
+
+test('a detail card scored on the venue clock is stamped detail, with that clock', async () => {
+  // The Google fake returns utcOffsetMinutes: null for every place, so the
+  // card falls back to the caller's clock — that case is the next test. Here
+  // the venue answers with an offset, which is the ordinary case in production.
+  const realJson = global.fetch;
+  global.fetch = (url, opts) => {
+    const u = String(url);
+    if (!u.startsWith('https://places.googleapis.com/')) return realJson(url, opts);
+    return realJson(url, opts).then(async (r) => {
+      const body = await r.json();
+      return { ok: true, status: 200, json: async () => ({ ...body, utcOffsetMinutes: 0 }) };
+    });
+  };
+  try {
+    const place = pid('Stamped1');
+    const r = await call('GET', `/api/crowd/${place}?localHour=4&localDay=2`);
+    assert.equal(r.status, 200, r.text);
+
+    const w = servedWrites[0];
+    assert.deepEqual(columnValues(w, 'source'), ['detail']);
+    // AND the recorded clock is the one the CARD shipped, which is the venue's
+    // own — NOT the localHour=4 the caller asked for. That substitution is the
+    // whole reason the stamp is trustworthy: with the offset in hand the route
+    // overwrites the caller's hour before it scores anything.
+    assert.deepEqual(columnValues(w, 'local_hour'), [r.body.venueClock.hour]);
+    assert.deepEqual(columnValues(w, 'local_day'), [r.body.venueClock.day]);
+    assert.notEqual(r.body.venueClock.hour, 4, 'the venue clock replaced the caller-supplied hour');
+  } finally {
+    global.fetch = realJson;
+  }
+});
+
+test('a detail card with no venue offset is stamped detail_client_clock, not detail', async () => {
+  // Google gave us no utcOffsetMinutes (the module-level fake), so the hour
+  // the card was scored on is the hour the CALLER named — and the hour is the
+  // single biggest lever on a crowd score. The venue facts are still Google's,
+  // which is why this is its own value rather than 'batch', but it is outside
+  // the trusted allowlist all the same.
+  const place = pid('ClientClk');
+  const r = await call('GET', `/api/crowd/${place}?localHour=4&localDay=2`);
+  assert.equal(r.status, 200, r.text);
+  assert.equal(r.body.venueClock.local, false, 'no offset from Google in this fixture');
+
+  const w = servedWrites[0];
+  assert.deepEqual(columnValues(w, 'source'), ['detail_client_clock']);
+  assert.deepEqual(columnValues(w, 'local_hour'), [4]);
+  assert.deepEqual(columnValues(w, 'local_day'), [2]);
+});
+
+test('the CACHE path stamps the clock the cached card was scored on, not the request URL', async () => {
+  // The route's `localHour`/`localDay` locals hold the caller's query values
+  // until Google's offset overwrites them — and the cache-hit path answers
+  // BEFORE that fetch. Recording those locals would write the requester's
+  // asserted hour onto a card that was scored on a different one, which is a
+  // forged clock introduced by the fix rather than by an attacker.
+  const place = pid('CacheClk');
+  const r1 = await call('GET', `/api/crowd/${place}?localHour=4&localDay=2`);
+  assert.equal(r1.status, 200, r1.text);
+
+  CURRENT_USER = { id: ++nextUser, name: 'Ben', role: 'user' };
+  const r2 = await call('GET', `/api/crowd/${place}?localHour=4&localDay=2`);
+  assert.equal(r2.status, 200, r2.text);
+  assert.equal(servedWrites.length, 2);
+
+  const cachedWrite = servedWrites[1];
+  assert.deepEqual(columnValues(cachedWrite, 'local_hour'), [r2.body.venueClock.hour]);
+  assert.deepEqual(columnValues(cachedWrite, 'local_day'), [r2.body.venueClock.day]);
+  assert.deepEqual(columnValues(cachedWrite, 'source'), columnValues(servedWrites[0], 'source'),
+    'a cached serve came out of the same door as the serve that filled the cache');
+});
+
+test('THE FORGERY: every batch row is stamped batch, whatever the body claims', async () => {
+  // The attacker's own request. A real bar, handed to the server with the
+  // rating, review count and clock that produce the lowest score they can
+  // reach — then reported packed twelve hours later.
+  const bar = pid('ForgedBar');
+  const r = await call('POST', '/api/crowd/batch', {
+    localHour: 4,
+    localDay: 2,
+    venues: [{
+      place_id: bar,
+      name: 'A Real Busy Bar',
+      types: ['bar'],
+      rating: 1.0,
+      user_ratings_total: 3,
+      utcOffsetMinutes: 0,
+    }],
+  });
+  assert.equal(r.status, 200, r.text);
+
+  const w = servedWrites[0];
+  assert.deepEqual(columnValues(w, 'source'), ['batch'],
+    'a score computed from a client-assembled body must be recorded as one');
+  // Never 'detail', by any route. The read side allowlists exactly that value,
+  // so this is the assertion the whole fix rests on.
+  assert.ok(!columnValues(w, 'source').includes('detail'));
+  // The clock is recorded even though nothing reads it yet: it is the only way
+  // to ask afterwards which hour a forged serve was aimed at.
+  const hours = columnValues(w, 'local_hour');
+  assert.ok(Number.isInteger(hours[0]) && hours[0] >= 0 && hours[0] <= 23);
+});
+
+test('a mixed batch is all batch — one honest-looking row cannot carry the others', async () => {
+  const r = await call('POST', '/api/crowd/batch', {
+    venues: [
+      { place_id: pid('MixA'), name: 'A', types: ['bar'], utcOffsetMinutes: 0 },
+      { place_id: pid('MixB'), name: 'B', types: ['bar'] },
+    ],
+  });
+  assert.equal(r.status, 200, r.text);
+  const sources = columnValues(servedWrites[0], 'source');
+  assert.equal(sources.length, 2);
+  assert.deepEqual([...new Set(sources)], ['batch']);
+});
+
+test('the source column is written from an allowlist, so an unknown value records NULL', () => {
+  // Belt and braces at the WRITE as well as the read. The columns are
+  // CHECK-constrained, so an unrecognised string is a 23514 that loses the row
+  // — but more importantly, "unknown" and "trusted" must never be one typo
+  // apart in either direction.
+  const { SERVE_SOURCES, clockField } = require('../routes/crowd').__test;
+  assert.ok(SERVE_SOURCES.has('detail'));
+  assert.ok(SERVE_SOURCES.has('batch'));
+  assert.ok(!SERVE_SOURCES.has('server'), "'server' is the FEEDBACK row's vocabulary, never a serve's");
+  assert.equal(clockField(0, 23), 0, 'hour 0 is a real hour, not a falsy miss');
+  assert.equal(clockField(23, 23), 23);
+  assert.equal(clockField(24, 23), null);
+  assert.equal(clockField(-1, 6), null);
+  assert.equal(clockField(undefined, 23), null);
+  assert.equal(clockField('4', 23), null, 'a string clock is not a clock');
+});
+
 test('the fake understood every statement these cases produced', () => {
   assert.deepEqual(unknownSql, [],
     `unmodelled SQL reached the fake:\n${unknownSql.join('\n')}`);

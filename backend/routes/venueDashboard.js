@@ -1724,7 +1724,17 @@ router.get('/busy-now', async (req, res) => {
 
 // POST /api/venue-dashboard/busy-now { percent }
 router.post('/busy-now', [
-  body('percent').isInt({ min: 0, max: 100 }).withMessage('percent must be a whole number from 0 to 100'),
+  // scalarOnly FIRST, like every other body field in this router — the header
+  // at the top of the file says so and this one field was missing it. It is not
+  // cosmetic here: express-validator coerces before it tests, so
+  // `{ "percent": [80] }` satisfies isInt({ min: 0, max: 100 }) on the joined
+  // string and then STAYS an array in req.body, because sanitizers leave
+  // non-strings alone. `Number(req.body.percent)` below reads Number(['80'])
+  // as 80 and the reading lands — but a two-element array is Number(['8','0'])
+  // = NaN, which reaches a NOT NULL SMALLINT column with a CHECK on it and
+  // comes back a 500 instead of a 400. Same shape guard, same position, same
+  // reason as validators/shape.js documents.
+  scalarOnly(body('percent'), 'percent').isInt({ min: 0, max: 100 }).withMessage('percent must be a whole number from 0 to 100'),
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -1739,30 +1749,72 @@ router.post('/busy-now', [
       return res.status(403).json({ error: 'Verify your venue before setting a live number. We check ownership first.' });
     }
 
-    const { rows: [recent] } = await pool.query(
-      `SELECT COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '60 seconds')::int AS last_minute,
-              COUNT(*)::int AS last_day
-         FROM venue_owner_reports
-        WHERE venue_user_id = $1 AND created_at > NOW() - INTERVAL '24 hours'`,
-      [req.user.id]
-    );
-    if ((recent?.last_minute || 0) > 0) {
-      return res.status(429).json({ error: 'One update a minute. The last one is still live.' });
-    }
-    if ((recent?.last_day || 0) >= OWNER_REPORT_DAILY_CAP) {
-      return res.status(429).json({ error: 'Daily limit reached. The number falls back to the forecast on its own.' });
+    // BOTH CEILINGS AND THE INSERT RUN IN ONE TRANSACTION UNDER A PER-OWNER
+    // ADVISORY LOCK. As two autocommit statements this was a count-then-insert
+    // race — every concurrent POST read the same pre-insert counts, so all of
+    // them passed and all of them landed. That is not an off-by-one on a spam
+    // ceiling: these two limits are what stop an owner writing the number users
+    // see faster than the 90-minute reading can expire, and the daily cap is
+    // the only bound on how many owner-authored TRAINING LABELS one account can
+    // manufacture in a day (scripts/ml/train/ownerLabelExport.js reads every
+    // non-diverged row). Twenty parallel requests defeated both.
+    //
+    // Same shape routes/safety.js round 9 and routes/feedback.js round 4 use
+    // for the same bug, down to the one-argument hashtext('domain:id') lock
+    // form: a serialised read-then-write per user, with a distinct namespace
+    // string so it collides with nothing else. A CTE would NOT have fixed this
+    // — under READ COMMITTED both transactions still read a snapshot taken
+    // before either insert, and there is no counter row here to take a row
+    // lock on, because the table is an append-only log.
+    const client = await pool.connect();
+    let inserted;
+    let refusal = null;
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT pg_advisory_xact_lock(hashtext('owner_busy:' || $1::text))", [String(req.user.id)]);
+
+      const { rows: [recent] } = await client.query(
+        `SELECT COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '60 seconds')::int AS last_minute,
+                COUNT(*)::int AS last_day
+           FROM venue_owner_reports
+          WHERE venue_user_id = $1 AND created_at > NOW() - INTERVAL '24 hours'`,
+        [req.user.id]
+      );
+      if ((recent?.last_minute || 0) > 0) {
+        refusal = { status: 429, body: { error: 'One update a minute. The last one is still live.' } };
+      } else if ((recent?.last_day || 0) >= OWNER_REPORT_DAILY_CAP) {
+        refusal = { status: 429, body: { error: 'Daily limit reached. The number falls back to the forecast on its own.' } };
+      } else {
+        const result = await client.query(
+          `INSERT INTO venue_owner_reports (venue_user_id, google_place_id, busy_percent)
+           VALUES ($1, $2, $3)
+           RETURNING id`,
+          [req.user.id, ctx.google_place_id, Number(req.body.percent)]
+        );
+        inserted = result.rows[0];
+      }
+
+      // A refusal COMMITs rather than rolling back: nothing was written, and
+      // the commit is what releases the lock promptly for the owner's next
+      // legitimate update. The rollback path below is for real failures.
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw txErr;
+    } finally {
+      client.release();
     }
 
-    const { rows: [inserted] } = await pool.query(
-      `INSERT INTO venue_owner_reports (venue_user_id, google_place_id, busy_percent)
-       VALUES ($1, $2, $3)
-       RETURNING id`,
-      [req.user.id, ctx.google_place_id, Number(req.body.percent)]
-    );
+    if (refusal) return res.status(refusal.status).json(refusal.body);
+
     // Fire-and-forget, deliberately un-awaited: the reading is a training
     // label, and a label without its moment's context (weather, events, what
     // Flock itself was serving) is weak. The capture never blocks and never
     // fails this response — a missing source stores NULLs.
+    //
+    // Started AFTER the transaction commits, not inside it: the capture reads
+    // its own connection out of the pool, and a row that is not committed yet
+    // is a row it cannot see.
     if (inserted?.id != null) {
       ownerReportContext
         .captureOwnerReportContext(inserted.id, { placeId: ctx.google_place_id, userId: req.user.id })
@@ -1826,6 +1878,22 @@ router.get('/this-week', requirePro, async (req, res) => {
     if (!ctx.verified) return res.json({ available: false, unverified: true, reason: UNVERIFIED_REASON });
     const placeId = ctx.google_place_id;
 
+    // Cached on the same 60-minute clock as /intelligence and /strip, through
+    // the same two helpers, keyed the same way. This route makes no paid Google
+    // call, so the money argument those two make does not apply — but the other
+    // half of it does: four fourteen-day aggregates over four tables run on
+    // every dashboard mount, every tab switch back, and every refresh, for a
+    // panel whose smallest unit is A WEEK. Nothing here can change meaningfully
+    // inside an hour.
+    //
+    // The one number that CAN move faster is yourReadings, which counts the
+    // owner's own slider posts — so an owner who sets a reading and looks at
+    // this panel sees the previous hour's count. That is the accepted cost and
+    // it is why the live reading has its own uncached endpoint (GET
+    // /busy-now); this panel is the week, not the moment.
+    const cached = cacheGet(`week:${placeId}`);
+    if (cached) return res.json(cached);
+
     // Four aggregates, one venue, fourteen days. Week-over-week comes from one
     // scan per table with FILTER rather than two round trips.
     const [votes, feedback, reviews, readings] = await Promise.all([
@@ -1840,8 +1908,14 @@ router.get('/this-week', requirePro, async (req, res) => {
         // verified = true — the same restriction every other reader of this
         // table carries (routes/crowd.js, the export): unverified reports move
         // no number anyone sees, including this one.
+        // reporters — DISTINCT accounts, not rows, and it exists to gate
+        // avg_level below. Counting rows would let one person filing three
+        // reports clear a floor whose whole purpose is that three PEOPLE were
+        // there, which is the same distinction crowdEngine.
+        // usableCalibrationReports already makes.
         `SELECT COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::int AS this_week,
                 COUNT(*) FILTER (WHERE created_at < NOW() - INTERVAL '7 days')::int AS last_week,
+                COUNT(DISTINCT user_id) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::int AS reporters,
                 ROUND(AVG(crowd_level) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::numeric, 1) AS avg_level
            FROM venue_feedback
           WHERE venue_place_id = $1 AND verified = true AND created_at >= NOW() - INTERVAL '14 days'`,
@@ -1865,7 +1939,33 @@ router.get('/this-week', requirePro, async (req, res) => {
       ),
     ]);
 
-    res.json({
+    // THE K-ANONYMITY FLOOR ON avgLevel.
+    //
+    // This is the one field on this panel that is an average of what
+    // IDENTIFIABLE PEOPLE said, published to a party who can put names to
+    // them. An owner sees their incoming-flocks feed and their own door: with
+    // one reporter, "verified user reports say 2.0 this week" IS that person's
+    // report, attributable to whoever the owner remembers being in on Tuesday.
+    // Two is barely better — the second value is recoverable from the mean the
+    // moment one of them tells the owner what they filed.
+    //
+    // MIN_CALIBRATION_REPORTERS is the repo's existing answer for this exact
+    // table, and reusing it is the point rather than a convenience: three is
+    // already the number of DISTINCT verified accounts venue_feedback needs
+    // before it is allowed to move the score users see (services/crowdEngine.js)
+    // or to outrank the owner's own live reading (services/ownerReports.js).
+    // A venue-facing readout of the same rows should not be looser than the
+    // consumer-facing one it is derived from.
+    //
+    // The COUNTS stay. "Six reports this week, up from two" is a volume signal
+    // about the venue and reveals nothing any individual said; it is the
+    // CONTENT of a thin group's reports that has to be withheld. Withheld with
+    // its own reason, not as a silent null, so the dashboard says why (SLOP
+    // rule 5: if we can't show it, say so, don't invent a number).
+    const reporters = feedback.rows[0]?.reporters ?? 0;
+    const avgLevelShown = reporters >= crowdEngine.MIN_CALIBRATION_REPORTERS;
+
+    const result = {
       available: true,
       windowDays: 7,
       // A count of FLOCKS, not of votes: five friends voting in one group is
@@ -1878,7 +1978,17 @@ router.get('/this-week', requirePro, async (req, res) => {
       crowdReports: {
         thisWeek: feedback.rows[0]?.this_week ?? 0,
         lastWeek: feedback.rows[0]?.last_week ?? 0,
-        avgLevel: feedback.rows[0]?.avg_level != null ? Number(feedback.rows[0].avg_level) : null,
+        avgLevel: (avgLevelShown && feedback.rows[0]?.avg_level != null)
+          ? Number(feedback.rows[0].avg_level)
+          : null,
+        minReporters: crowdEngine.MIN_CALIBRATION_REPORTERS,
+        // Never the reporter COUNT itself — that is the number the floor is
+        // hiding behind, and "2 of 3 reporters" re-identifies just as well as
+        // the average does.
+        avgLevelWithheld: !avgLevelShown,
+        avgLevelReason: avgLevelShown
+          ? null
+          : `The average stays hidden until ${crowdEngine.MIN_CALIBRATION_REPORTERS} different people have reported. Below that it would name them.`,
         source: 'verified user reports',
       },
       reviews: {
@@ -1892,7 +2002,10 @@ router.get('/this-week', requirePro, async (req, res) => {
         source: 'your own live numbers',
       },
       generatedAt: new Date().toISOString(),
-    });
+    };
+
+    cacheSet(`week:${placeId}`, result);
+    res.json(result);
   } catch (err) {
     console.error('Venue this-week error:', err);
     res.status(500).json({ error: 'Failed to build the weekly summary' });
