@@ -368,6 +368,20 @@ body::after {
   border-radius: 4px;
 }
 
+/* Roost's composer (VenueAdvisorChat.js) draws its focus treatment on the BOX
+   around the field: the border lights up and takes a one pixel ring, the way
+   Birdie's does. App.js carries an app-wide `input:focus, textarea:focus` rule
+   with `!important` on its box-shadow, which then lands a second, four pixel
+   ring inside the first, and a composer big enough to write two lines in reads
+   as a box inside a box. The field itself is transparent chrome inside a
+   control that is already showing focus, so it gives up its own ring. This
+   turns off exactly one element's, and `:focus-visible` above still draws the
+   keyboard-only outline for anyone tabbing to it. */
+textarea.roost-composer:focus {
+  box-shadow: none !important;
+  border-color: transparent !important;
+}
+
 /* Respect the OS "reduce motion" setting (a11y requirement both impeccable and
    the Web Interface Guidelines mandate). Kills the infinite orb/shimmer/pulse
    loops and collapses transitions to crossfades. */
