@@ -503,22 +503,68 @@ function renderRefusal(block) {
   return { mode: 'refusal', text, sources: [] };
 }
 
+const provenancePhrase = (fact) => {
+  const when = shortAsOf(fact.asOf);
+  return when ? `${sourcePhrase(fact.source)}, as of ${when}` : sourcePhrase(fact.source);
+};
+
+const sentenceCase = (s) => `${s.charAt(0).toUpperCase()}${s.slice(1)}`;
+
+// The last complete sentence of a multi-sentence label, or null. A label that
+// is a single sentence has no tail to hoist: lifting it out would leave a
+// blank line where the fact used to be.
+function trailingSentence(text) {
+  const parts = String(text).trim().split(/(?<=[.!?])\s+/).filter(Boolean);
+  return parts.length > 1 ? parts[parts.length - 1] : null;
+}
+
+// ONE ANSWER, ONE FOOTER.
+//
+// The per-sentence sourcing rule exists so no claim reaches an owner
+// unattributed. Seven copies of one sentence honour that rule and destroy the
+// answer: "when do we peak this week" returned seven paragraphs that differed
+// by a weekday and a number and agreed on everything else, including the hedge
+// Layer B appends to every peak label and the provenance chip after it. Seven
+// screens for one sentence of information.
+//
+// So the rule stays and the repetition goes. When every fact in an answer
+// carries the SAME source as of the SAME date, that provenance prints once, at
+// the foot, under the facts it covers, and a closing sentence they all share is
+// hoisted into the same line. The moment the facts disagree about where they
+// came from, every line carries its own chip again, because then a single
+// footer would be attributing facts to a source that did not produce them.
 function renderTemplate(block) {
   const facts = Array.isArray(block?.facts) ? block.facts : [];
+  const hasLabel = (f) => typeof f.label === 'string' && f.label.trim();
+
+  // Collapsible only when there is more than one fact, every one of them
+  // carries Layer B's own sentence, and they all name one source as of one
+  // date. Anything else renders per line, exactly as before.
+  const homogeneous = facts.length > 1
+    && facts.every(hasLabel)
+    && new Set(facts.map(provenancePhrase)).size === 1;
+  const tails = homogeneous ? facts.map((f) => trailingSentence(f.label.trim())) : [];
+  const sharedTail = homogeneous && tails.every((t) => t && t === tails[0]) ? tails[0] : null;
+
   const lines = facts.map((f) => {
-    const when = shortAsOf(f.asOf);
-    const provenance = when ? `${sourcePhrase(f.source)}, as of ${when}` : sourcePhrase(f.source);
     // Layer B facts carry a `label`: a complete, already-hedged sentence with
     // its numbers inline. Print it as written and add only the provenance
     // line. A label-less fact gets the plain "name: value" row.
-    if (typeof f.label === 'string' && f.label.trim()) {
-      const sentence = f.label.trim();
+    if (hasLabel(f)) {
+      let sentence = f.label.trim();
+      if (sharedTail) sentence = sentence.slice(0, sentence.length - sharedTail.length).trim();
       const period = /[.!?]$/.test(sentence) ? '' : '.';
-      return `${sentence}${period} (${provenance.charAt(0).toUpperCase()}${provenance.slice(1)}.)`;
+      if (homogeneous) return `${sentence}${period}`;
+      return `${sentence}${period} (${sentenceCase(provenancePhrase(f))}.)`;
     }
     const name = String(f.id || 'fact').replace(/_/g, ' ');
-    return `${name.charAt(0).toUpperCase()}${name.slice(1)}: ${formatFactValue(f)} (${provenance}).`;
+    return `${sentenceCase(name)}: ${formatFactValue(f)} (${provenancePhrase(f)}).`;
   });
+
+  if (homogeneous) {
+    const footer = `(${sentenceCase(provenancePhrase(facts[0]))}.)`;
+    lines.push(sharedTail ? `${sharedTail} ${footer}` : footer);
+  }
   return { mode: 'template', text: lines.join('\n'), sources: factSources(facts) };
 }
 
