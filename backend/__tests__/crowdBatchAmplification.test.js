@@ -58,6 +58,11 @@ let VISIBLE = true;       // what canNotify's roster lookup answers
 pool.query = (sql, params) => {
   const flat = String(sql).replace(/\s+/g, ' ').trim();
   if (/FROM venue_feedback/.test(flat)) return Promise.resolve({ rows: [], rowCount: 0 });
+  // The served-prediction record (migration 032): the batch route writes the
+  // scores it publishes so routes/feedback.js can verify predicted_score.
+  // Fire-and-forget UPSERT, one per request; modelled so the fake stays strict.
+  if (/INSERT INTO served_predictions/.test(flat)) return Promise.resolve({ rows: [], rowCount: 0 });
+  if (/DELETE FROM served_predictions/.test(flat)) return Promise.resolve({ rows: [], rowCount: 0 });
   if (/SELECT 1 FROM user_blocks/.test(flat)) {
     const [a, b] = params || [];
     const hit = BLOCKED_PAIRS.some(([x, y]) => (

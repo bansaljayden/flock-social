@@ -1,7 +1,7 @@
 const express = require('express');
 const { body, validationResult } = require('express-validator');
 const pool = require('../config/database');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, requireVerified } = require('../middleware/auth');
 // Shape before content — see validators/shape.js. Every scalar field on these
 // two routes gets the guard; goals / operatingHours / notificationPrefs are
 // LEGITIMATELY structured and have their own custom() shape rules instead.
@@ -381,7 +381,14 @@ function screenIntakeText(req, res) {
 }
 
 // POST /api/venue-profile — create venue profile (onboarding)
-router.post('/', [
+//
+// requireVerified: claiming a business and taking the venue_owner role is the
+// definition of ACCUMULATING (middleware/auth.js — an unverified account "may
+// READ AND BE REACHED, BUT MUST NOT ACCUMULATE"). Flock create/join/invite are
+// all behind email verification; speaking for a business must not be cheaper
+// than joining a hangout. This is half of the self-promotion gate; the other
+// half is at the role write below.
+router.post('/', requireVerified, [
   // Round 19 (shape sweep): every one of these lands in a bounded column, and
   // an array satisfied isLength by coercion while skipping trim (a sanitizer
   // returns a non-string untouched) — so the 22001-instead-of-400 bug the
@@ -414,25 +421,6 @@ router.post('/', [
       return res.status(409).json({ error: CLAIMED_MSG });
     }
 
-    // Set user role to venue_owner.
-    //
-    // This is still self-serve (VENUE-BILLING.md finding 2 — gating it needs an
-    // approval flow that does not exist yet). It is survivable because the role
-    // grants nothing on its own: every venue capability that reaches real users
-    // is gated on venue_profiles.verified, which only an admin can set
-    // (routes/admin.js), and sockets/handlers.js:997 already treats the role as
-    // forgeable.
-    //
-    // What it must NOT do is DOWNGRADE a role (audit 2026-08-13). The old
-    // unconditional write let an admin who opened venue onboarding once demote
-    // themselves to venue_owner permanently — nothing in the codebase grants
-    // 'admin' back, so it locks the moderation dashboard, /api/admin/* and the
-    // tier-comp endpoint out of the only account that has them.
-    await pool.query(
-      "UPDATE users SET role = $1 WHERE id = $2 AND role NOT IN ('admin', 'venue_owner')",
-      ['venue_owner', req.user.id]
-    );
-
     // Upsert venue profile
     const result = await pool.query(
       `INSERT INTO venue_profiles (user_id, business_name, category, location, description, goals, google_place_id)
@@ -457,6 +445,49 @@ router.post('/', [
     // forceCorpus: a claim is the moment the place id is captured, so whatever
     // answer an earlier claim left behind is about a different venue.
     const saved = await applyIntakeAndCorpus(req.user.id, req.body, result.rows[0], true);
+
+    // THE venue_owner ROLE WRITE — gated, and gated HERE, after the claim is
+    // stored and checked (VENUE-BILLING.md finding 2, the last piece of
+    // Phase 0).
+    //
+    // This write used to run unconditionally, BEFORE the claim was even
+    // stored: any authenticated account, verified email or not, could POST a
+    // bare business name and hold venue_owner forever. Now the role requires
+    // the whole claim path to have survived, which means, in order:
+    //   * an email-verified account (requireVerified on this route) — the
+    //     same bar joining a flock already has;
+    //   * a claim that names a real Google place — `saved.google_place_id` is
+    //     only ever written through placeIdRule (isPlaceIdShaped), and the
+    //     onboarding UI cannot pass step 1 without picking one. A profile
+    //     POSTed without a place id still saves (drafts cost nothing and the
+    //     corpus check stays quiet on it), but it grants NO role: a typed
+    //     string is a claim on nothing;
+    //   * a claim no verified owner already holds (claimedByAnother answered
+    //     409 above, and the 23505 catch below covers the race);
+    //   * the corpus check ran against it (applyIntakeAndCorpus, forceCorpus)
+    //     — it records what the claim is worth ('baselines' / 'venue_only' /
+    //     'absent') rather than refusing 'absent', because corpus membership
+    //     is data coverage, not ownership, and the modal real claim is not in
+    //     the corpus (see services/venueCorpus.js).
+    //
+    // What the role still is NOT: proof of ownership. That stays exactly where
+    // it has always been — venue_profiles.verified, admin-set only — and every
+    // capability that reaches real users is gated on it, not on the role.
+    // The role unlocks the owner's own dashboard shell while the claim is
+    // pending, nothing public.
+    //
+    // What it must NOT do is DOWNGRADE a role (audit 2026-08-13). The old
+    // unconditional write let an admin who opened venue onboarding once demote
+    // themselves to venue_owner permanently — nothing in the codebase grants
+    // 'admin' back, so it locks the moderation dashboard, /api/admin/* and the
+    // tier-comp endpoint out of the only account that has them.
+    if (saved?.google_place_id) {
+      await pool.query(
+        "UPDATE users SET role = $1 WHERE id = $2 AND role NOT IN ('admin', 'venue_owner')",
+        ['venue_owner', req.user.id]
+      );
+    }
+
     res.status(201).json(profileView(saved));
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: CLAIMED_MSG });

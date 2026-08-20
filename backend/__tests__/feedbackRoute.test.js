@@ -37,6 +37,9 @@ function reset() {
     qualifyingFlock: false,  // accepted membership in a >=2-person, non-cancelled flock here
     timezone: null,          // ml_venues.timezone for the place id
     tzQueryFails: false,     // the timezone lookup errors out
+    servedScore: null,       // served_predictions row for (user, venue), if any
+    servedId: 4001,          // that row's id (the append-only log's join key)
+    servedQueryFails: false, // the served-prediction lookup errors out
     aggregate: null,         // row returned by the GET overall query
     byDay: [],
   };
@@ -68,6 +71,10 @@ function dispatch(sql, params) {
     if (state.tzQueryFails) return Promise.reject(new Error('relation "ml_venues" does not exist'));
     return Promise.resolve({ rows: state.timezone ? [{ timezone: state.timezone }] : [] });
   }
+  if (/FROM served_predictions/i.test(text)) {
+    if (state.servedQueryFails) return Promise.reject(new Error('relation "served_predictions" does not exist'));
+    return Promise.resolve({ rows: state.servedScore != null ? [{ id: state.servedId, score: state.servedScore }] : [] });
+  }
   if (/FROM venue_checkins/i.test(text) && /flock_members fm/i.test(text)) {
     return Promise.resolve({ rows: [{ verified: state.signedNfcCheckin || state.qualifyingFlock }] });
   }
@@ -84,9 +91,12 @@ function dispatch(sql, params) {
         price_worth: params[5],
         rating: params[6],
         predicted_score: params[7],
-        day_of_week: params[8],
-        hour: params[9],
-        verified: params[10],
+        predicted_score_source: params[8],
+        client_predicted_score: params[9],
+        served_prediction_id: params[10],
+        day_of_week: params[11],
+        hour: params[12],
+        verified: params[13],
       }],
     });
   }
@@ -284,7 +294,7 @@ test('an over-long venue_name is a 400, not a Postgres 22001 turned into a 500',
 test('with no evidence of presence the row is stored but NOT verified', async () => {
   const r = await call('POST', '/api/feedback', base_payload());
   assert.equal(r.status, 201, r.text);
-  assert.equal(inserted[10], false, 'verified must be false');
+  assert.equal(inserted[13], false, 'verified must be false');
   assert.equal(r.body.verified, false, 'the submitter is told it will not count');
 });
 
@@ -292,7 +302,7 @@ test('a signed NFC tap verifies; the presence query trusts ONLY source nfc', asy
   state.signedNfcCheckin = true;
   const r = await call('POST', '/api/feedback', base_payload());
   assert.equal(r.status, 201, r.text);
-  assert.equal(inserted[10], true);
+  assert.equal(inserted[13], true);
 
   const presence = queries.find((q) => /FROM venue_checkins/i.test(q.text));
   assert.ok(presence, 'expected a presence query');
@@ -306,7 +316,7 @@ test('the flock half of the presence rule requires accepted, uncancelled, and 2+
   state.qualifyingFlock = true;
   const r = await call('POST', '/api/feedback', base_payload());
   assert.equal(r.status, 201, r.text);
-  assert.equal(inserted[10], true);
+  assert.equal(inserted[13], true);
 
   const presence = queries.find((q) => /flock_members fm/i.test(q.text));
   assert.match(presence.text, /fm\.status = 'accepted'/);
@@ -338,15 +348,18 @@ test('dedupe, cap, presence and insert all run inside one locked transaction', a
   const del = idx(/^DELETE FROM venue_feedback/i);
   const count = idx(/COUNT\(\*\)::int AS n/i);
   const tz = idx(/FROM ml_venues/i);
+  const served = idx(/FROM served_predictions/i);
   const ins = idx(/^INSERT INTO venue_feedback/i);
   const commit = idx(/^COMMIT/i);
 
-  // The timezone lookup is reference data that no invariant depends on, and it
-  // sits OUTSIDE the transaction on purpose: inside, any failure of it (missing
-  // table, statement timeout) aborts the transaction in Postgres and the
-  // feedback is lost over a bucket label.
+  // The timezone and served-prediction lookups are reference data that no
+  // invariant depends on, and they sit OUTSIDE the transaction on purpose:
+  // inside, any failure of either (missing table, statement timeout) aborts
+  // the transaction in Postgres and the feedback is lost over a bucket label
+  // or a provenance tag.
   assert.ok(tz >= 0 && tz < begin, 'timezone lookup runs before BEGIN');
-  assert.ok(begin === tz + 1, 'BEGIN opens the transaction');
+  assert.ok(served >= 0 && served < begin, 'served-prediction lookup runs before BEGIN');
+  assert.ok(begin === served + 1, 'BEGIN opens the transaction');
   // Without the lock, two concurrent submissions can both read a count below
   // the cap and both insert.
   assert.ok(lock > begin && lock < del, 'advisory lock taken before any read');
@@ -396,8 +409,8 @@ test('a known venue is bucketed on its own timezone, not the server clock', asyn
   const expected = venueLocalDayHour('Asia/Kolkata', now);
   const r = await call('POST', '/api/feedback', base_payload());
   assert.equal(r.status, 201, r.text);
-  assert.equal(inserted[8], expected.day);
-  assert.equal(inserted[9], expected.hour);
+  assert.equal(inserted[11], expected.day);
+  assert.equal(inserted[12], expected.hour);
   // and the bucket is a parameter, not EXTRACT(... FROM NOW()) in the SQL
   const ins = queries.find((q) => /^INSERT INTO venue_feedback/i.test(q.text));
   assert.doesNotMatch(ins.text, /EXTRACT/i);
@@ -406,8 +419,8 @@ test('a known venue is bucketed on its own timezone, not the server clock', asyn
 test('an unknown venue falls back to the client clock hint when given', async () => {
   const r = await call('POST', '/api/feedback', { ...base_payload(), local_day: 5, local_hour: 21 });
   assert.equal(r.status, 201, r.text);
-  assert.equal(inserted[8], 5);
-  assert.equal(inserted[9], 21);
+  assert.equal(inserted[11], 5);
+  assert.equal(inserted[12], 21);
 });
 
 test('an out-of-range clock hint is a 400 and can never reach the SMALLINT columns', async () => {
@@ -421,8 +434,8 @@ test('a failing timezone lookup degrades the bucket, it does not lose the report
   state.tzQueryFails = true;
   const r = await call('POST', '/api/feedback', { ...base_payload(), local_day: 3, local_hour: 14 });
   assert.equal(r.status, 201, r.text);
-  assert.equal(inserted[8], 3);
-  assert.equal(inserted[9], 14);
+  assert.equal(inserted[11], 3);
+  assert.equal(inserted[12], 14);
   // and the transaction that followed still committed cleanly
   assert.ok(queries.some((q) => /^COMMIT/i.test(q.text)));
   assert.ok(!queries.some((q) => /^ROLLBACK/i.test(q.text)));
@@ -431,8 +444,8 @@ test('a failing timezone lookup degrades the bucket, it does not lose the report
 test('with no timezone and no hint the server clock is used, in range', async () => {
   const r = await call('POST', '/api/feedback', base_payload());
   assert.equal(r.status, 201, r.text);
-  assert.ok(Number.isInteger(inserted[8]) && inserted[8] >= 0 && inserted[8] <= 6);
-  assert.ok(Number.isInteger(inserted[9]) && inserted[9] >= 0 && inserted[9] <= 23);
+  assert.ok(Number.isInteger(inserted[11]) && inserted[11] >= 0 && inserted[11] <= 6);
+  assert.ok(Number.isInteger(inserted[12]) && inserted[12] >= 0 && inserted[12] <= 23);
 });
 
 // ── The aggregate: unverified rows must be EXCLUDED, not merely flagged ─────
@@ -497,6 +510,74 @@ test('a malformed place id on the aggregate is a 400 and never reaches SQL', asy
   const r = await call('GET', '/api/feedback/venue/not%20a%20place%20id');
   assert.equal(r.status, 400, r.text);
   assert.equal(queries.length, 0);
+});
+
+// ── predicted_score provenance (migration 032) ──────────────────────────────
+// The denominator of every calibration feature used to be whatever the client
+// asserted. routes/crowd.js now records every score it publishes in
+// served_predictions, and this route prefers its own record: a served row for
+// (user, venue) in the last 12 hours wins outright, the client's claim is kept
+// verbatim beside it, and predicted_score_source says which one the
+// calibration layer is looking at.
+test('a served prediction overrides the client claim, and the row says so', async () => {
+  state.servedScore = 40;
+  state.servedId = 4711;
+  const r = await call('POST', '/api/feedback', { ...base_payload(), predicted_score: 95 });
+  assert.equal(r.status, 201, r.text);
+  assert.equal(inserted[7], 40, 'predicted_score must be the score the server actually served');
+  assert.equal(inserted[8], 'server');
+  assert.equal(inserted[9], 95, 'the client claim is kept verbatim for comparison');
+  assert.equal(inserted[10], 4711, 'the row names the exact serve its denominator came from');
+  assert.equal(r.body.predicted_score, 40, 'the submitter sees the server-resolved value');
+});
+
+test('the served lookup is keyed to THIS caller and THIS venue, newest serve, inside 12 hours', async () => {
+  state.servedScore = 40;
+  const r = await call('POST', '/api/feedback', { ...base_payload(), predicted_score: 95 });
+  assert.equal(r.status, 201, r.text);
+  const lookup = queries.find((q) => /FROM served_predictions/i.test(q.text));
+  assert.ok(lookup, 'expected a served_predictions lookup');
+  assert.deepEqual(lookup.params, [1, PLACE], 'must be scoped to the authenticated user and the reported venue');
+  assert.match(lookup.text, /INTERVAL '12 hours'/, 'a stale served score must not become the denominator');
+  // The log is append-only (routes/crowd.js), so a night holds many serves for
+  // one (user, venue). Without the ordering, "some serve from tonight" stands
+  // in for "the score on screen at submit time".
+  assert.match(lookup.text, /ORDER BY served_at DESC\s+LIMIT 1/i, 'must take the NEWEST serve, not an arbitrary one');
+});
+
+test('with no served record the client value still lands, marked as the claim it is', async () => {
+  const r = await call('POST', '/api/feedback', { ...base_payload(), predicted_score: 90 });
+  assert.equal(r.status, 201, r.text);
+  assert.equal(inserted[7], 90);
+  assert.equal(inserted[8], 'client');
+  assert.equal(inserted[9], 90);
+  assert.equal(inserted[10], null, 'no serve, no serve id — a client claim must not invent one');
+});
+
+test('no served record and no client claim means null everywhere, not a fabricated source', async () => {
+  const r = await call('POST', '/api/feedback', base_payload());
+  assert.equal(r.status, 201, r.text);
+  assert.equal(inserted[7], null);
+  assert.equal(inserted[8], null);
+  assert.equal(inserted[9], null);
+  assert.equal(inserted[10], null);
+});
+
+test('a failing served lookup degrades provenance to client, it does not lose the report', async () => {
+  state.servedQueryFails = true;
+  const r = await call('POST', '/api/feedback', { ...base_payload(), predicted_score: 55 });
+  assert.equal(r.status, 201, r.text);
+  assert.equal(inserted[7], 55);
+  assert.equal(inserted[8], 'client');
+  assert.ok(queries.some((q) => /^COMMIT/i.test(q.text)), 'the transaction still committed');
+});
+
+test('the lookup runs OUTSIDE the transaction, so its failure cannot abort the insert', async () => {
+  await call('POST', '/api/feedback', { ...base_payload(), predicted_score: 55 });
+  const beginIdx = queries.findIndex((q) => /^BEGIN/i.test(q.text));
+  const servedIdx = queries.findIndex((q) => /FROM served_predictions/i.test(q.text));
+  assert.ok(servedIdx >= 0 && beginIdx > servedIdx,
+    'served_predictions must be read before BEGIN — inside the tx, a failed lookup aborts the feedback');
 });
 
 // ── Nothing unmodelled slipped past ─────────────────────────────────────────
