@@ -198,10 +198,39 @@ function allowUpstream(userId, cost = 1) {
   return chargeGlobal(cost);
 }
 
-// The global half of the ledger on its own, for a second call inside a request
-// whose per-user unit is already spent. Refusing here skips an optional top-up;
-// it never fails a request that has already produced an answer.
-const chargeUpstreamExtra = (cost = 1) => chargeGlobal(cost);
+// The OPTIONAL second call inside a request whose first unit is already spent.
+// Refusing here skips a top-up; it never fails a request that has already
+// produced an answer, which is what makes charging the caller's own leg safe.
+//
+// IT USED TO CHARGE THE GLOBAL LEG ONLY, and the argument for that was that
+// "the caller's own hourly allowance was already spent on this request and
+// charging it twice would refuse them a search they only made once". That
+// reads well, and it is the bug utils/placesBudget.js opens with: "a request
+// that makes N paid Google calls must charge N. Gating N calls behind one unit
+// lets a caller spend N times its budget." A caller who picks a narrow
+// interest in a quiet area takes this branch on every request, so their real
+// Ticketmaster consumption ran at up to twice the 20/hour and 200/day they are
+// metered at. The global ledger stayed accurate; the per-account one, which is
+// the whole reason no single account can deny event search to everybody else,
+// quietly did not. GET /search in this same file already charges 2 up front for
+// the identical "a second call may happen" shape, and two branches of one file
+// cannot answer the same question two ways.
+//
+// Why the old objection does not survive contact with the code: this call is
+// not the search. The interest-matched events are already in hand, and every
+// other way this top-up can fail (a refused global charge, a timeout, a non-ok
+// response, an unparseable body) is already handled as "skip it, serve what we
+// have". A spent per-account allowance is one more of those, and it costs the
+// caller nothing they were promised.
+//
+// Global first, so a top-up the global ceiling was going to refuse never eats
+// one of the caller's own units. That is allowUpstream's own rule, above.
+function chargeUpstreamExtra(userId, cost = 1) {
+  rollGlobalDay();
+  if (tmDayCount + cost > TM_GLOBAL_DAILY) return false;
+  if (!tmUserBudget.allow(userId)) return false;
+  return chargeGlobal(cost);
+}
 
 // ---------------------------------------------------------------------------
 // A COORDINATE, NOT A THREE-CHARACTER STRING (§O round: "wrong thing").
@@ -584,7 +613,10 @@ router.get('/featured',
         if (!allowUpstream(req.user.id)) {
           return res.status(429).json({ error: 'Event search is busy right now. Try again in a bit.' });
         }
-        flight = runFeatured({ lat, lng, normalizedInterests, cacheKey });
+        // The leader's id rides into the flight so the optional top-up inside it
+        // charges the same account that paid for the first call. Joiners are
+        // charged nothing, because no second upstream call happens for them.
+        flight = runFeatured({ lat, lng, normalizedInterests, cacheKey, userId: req.user.id });
         inflight.set(cacheKey, flight);
         flight.then(() => inflight.delete(cacheKey));
       }
@@ -599,7 +631,7 @@ router.get('/featured',
 
 // The worker behind GET /featured. NEVER rejects — resolves to
 // { status, body } for every coalesced waiter (see the inflight note).
-async function runFeatured({ lat, lng, normalizedInterests, cacheKey }) {
+async function runFeatured({ lat, lng, normalizedInterests, cacheKey, userId }) {
   try {
     // Map user interests to Ticketmaster classification keywords.
     // (Indented one level deeper than its surroundings on purpose:
@@ -691,7 +723,7 @@ async function runFeatured({ lat, lng, normalizedInterests, cacheKey }) {
     // an aborted paid request still bills), against the global ceiling only:
     // the caller's own hourly allowance was already spent on this request and
     // charging it twice would refuse them a search they only made once.
-    if (tmClassifications.length > 0 && rawEvents.length < 5 && chargeUpstreamExtra(1)) {
+    if (tmClassifications.length > 0 && rawEvents.length < 5 && chargeUpstreamExtra(userId, 1)) {
       params.delete('classificationName');
       // The unfiltered top-up is optional — a timeout here must not lose the
       // interest-matched events we already have (round 12).
