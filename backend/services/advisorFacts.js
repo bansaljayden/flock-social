@@ -58,6 +58,12 @@ const FACT_SOURCES = new Set([
   // advisor extensions
   'intake', 'owner_report', 'votes', 'events', 'weather',
   'served_prediction', 'google_baseline', 'arithmetic',
+  // Cohort differencing (services/advisorCohort.js). 'corpus' is the FROZEN
+  // BestTime/Google corpus quoted as a distribution rather than as a curve for
+  // one venue, and every fact carrying it also carries CORPUS_AS_OF.
+  // 'cohort_reported' is other venues' own live readings, aggregated above a
+  // k-anonymity floor and published as a median and a count only.
+  'corpus', 'cohort_reported',
 ]);
 
 // Sources that are the owner's own testimony. Facts built from them carry
@@ -1212,6 +1218,27 @@ async function buildReadingsVsServed(ctx) {
   return out;
 }
 
+// ─── Card 5: You and venues like you ─────────────────────────────────────────
+//
+// Cohort differencing, the answer to "was it just us, or was everyone slow".
+// The work lives in services/advisorCohort.js because it is long enough to
+// deserve its own header: two halves, a k-anonymity floor of five reporting
+// venues, and a worked differencing-attack analysis. Both halves build their
+// output through makeFact and makeRefusal from THIS module, so the require is
+// lazy on both sides and the cycle never closes at load time.
+//
+// Half A (typicals from the frozen corpus) answers today for any venue with a
+// baseline curve. Half B (the same night, from other venues' own readings)
+// refuses until five other venues in the city and category have posted for the
+// same hour band, and turns itself on the night they do. The floor is checked
+// against live data on every call, so nothing has to be flipped by hand.
+function buildCohortStanding(ctx, opts) {
+  return require('./advisorCohort').buildCohortStanding(ctx, opts);
+}
+function buildCohortSameNight(ctx, opts) {
+  return require('./advisorCohort').buildCohortSameNight(ctx, opts);
+}
+
 module.exports = {
   // constructors and guards
   makeFact,
@@ -1226,6 +1253,8 @@ module.exports = {
   buildAroundYou,
   buildListingReadBack,
   buildReadingsVsServed,
+  buildCohortStanding,
+  buildCohortSameNight,
   // constants + helpers, exported for the standing test
   FACT_SOURCES,
   OWNER_SOURCES,
