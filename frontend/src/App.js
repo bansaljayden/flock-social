@@ -1043,13 +1043,52 @@ const crowdLabelFor = (score) => {
 // constant so the two cannot drift.
 const HOUR_ORDERING_MIN_GAP = 10;
 
-// Red at 61+, matching the site. `c` is the theme palette when a caller has it.
-const crowdColorFor = (score, c) => {
+// Red at 61+, matching the site. One place owns the two thresholds, so a
+// surface that wants a different WEIGHT of the same reading cannot drift off
+// the boundaries every other surface is drawing against.
+const crowdBandFor = (score) => {
   if (!Number.isFinite(score)) return null;
-  if (score > 60) return (c && c.red) || '#EF4444';
-  if (score > 40) return (c && c.amber) || '#F59E0B';
+  if (score > 60) return 'red';
+  if (score > 40) return 'amber';
+  return 'green';
+};
+
+// The standard weight. `c` is the theme palette when a caller has it.
+const crowdColorFor = (score, c) => {
+  const band = crowdBandFor(score);
+  if (!band) return null;
+  if (band === 'red') return (c && c.red) || '#EF4444';
+  if (band === 'amber') return (c && c.amber) || '#F59E0B';
   return '#22C55E';
 };
+
+// The heavy weight, for a surface that fills a large area with the colour
+// rather than tinting a dot or a word with it. The crowd scale above has
+// exactly one shade per band, and a card-width block of #EF4444 reads as an
+// alarm rather than a measurement, so the deep end comes from the accent
+// tokens the app already uses to write the same three readings in text
+// (`--accent-red-text` on "Projected busier than you tonight" is the same
+// number in the same colour, two cards down). No new hex, and both themes are
+// already resolved: the dark palette lightens these on purpose, because on a
+// dark card the deep end of a hue is the unreadable one.
+const crowdColorDeepFor = (score) => {
+  const band = crowdBandFor(score);
+  if (!band) return null;
+  if (band === 'red') return 'var(--accent-red-text)';
+  if (band === 'amber') return 'var(--accent-amber-text)';
+  return 'var(--accent-green-text)';
+};
+
+// Week Ahead's bar well. A score of 100 draws 55px at the chart's scale, so
+// 60 is the smallest number that no projection can overflow. It is the height
+// the row used to declare for the whole column, which is why the labels had
+// nowhere to go; here it bounds the BAR only and the labels sit under it.
+const WEEK_BAR_WELL_PX = 60;
+
+// The faint end of the week's ramp. Every bar is drawn in the deep colour, so
+// this floor is what keeps the quietest evening dark rather than washed pink;
+// the busiest still draws at 1, so a week with spread still shows its spread.
+const WEEK_BAR_WEIGHT_MIN = 0.72;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // BIRDIE'S CONTEXT WINDOW
@@ -16544,32 +16583,56 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 // thing a week view exists to show — which evening is the big
                 // one — was the only thing it could not show.
                 //
-                // Two changes. The HUE now comes from crowdColorFor, the same
-                // green/amber/red scale as the card, the hour bars and the map
-                // pins, because 78 has to mean the same thing on every surface
-                // of this app. And the WEIGHT differentiates inside whatever
-                // range the week actually occupies: the quietest projected
-                // evening is drawn faintest, the busiest at full strength, so
-                // twelve points of spread is twelve points of visible spread.
+                // Two changes. The HUE now comes from the shared crowd bands,
+                // the same green/amber/red scale as the card, the hour bars
+                // and the map pins, because 78 has to mean the same thing on
+                // every surface of this app. And the WEIGHT differentiates
+                // inside whatever range the week actually occupies: the
+                // quietest projected evening is drawn faintest, the busiest at
+                // full strength, so twelve points of spread is twelve points
+                // of visible spread.
                 //
                 // Heights stay proportional to the score from zero, and the
                 // number under each bar is still printed, so the ramp adds a
                 // reading order without exaggerating any gap.
+                //
+                // The colour is `crowdColorDeepFor`, not the standard weight:
+                // six bars this size are most of the card, and the standard
+                // red at that area read as a warning light. The floor of the
+                // opacity ramp came up to match, so the QUIETEST bar of the
+                // week is now about as heavy as the busiest one used to be and
+                // the busiest is heavier still. Differentiation is unchanged —
+                // it is the same linear map over the same lo→hi range, just
+                // run over a narrower, darker span.
+                //
+                // Layout: the bar sits in a fixed-height well and the two
+                // labels sit BELOW that well, in flow. It used to be one
+                // bottom-aligned column inside a 60px row, so a column of
+                // bar + weekday + score (81px at 390px wide) hung 21px out of
+                // the top of its own row, and a bar is painted after the
+                // heading: six red blocks landed across the lower half of
+                // "Week Ahead (projected evening peak)" and cut the words in
+                // two. Nothing here has a fixed height it can overflow now.
+                // The row is as tall as the well plus the labels, the card
+                // grows to hold it (+40px), and the heading keeps the 10px it
+                // always asked for.
                 const scores = venueIntel.week
                   .map((d) => d.peakScore)
                   .filter((s) => Number.isFinite(s));
                 const lo = scores.length ? Math.min(...scores) : 0;
                 const hi = scores.length ? Math.max(...scores) : 0;
                 const weightFor = (s) => {
-                  if (!Number.isFinite(s)) return 0.35;
+                  if (!Number.isFinite(s)) return WEEK_BAR_WEIGHT_MIN;
                   if (hi === lo) return 1;
-                  return 0.45 + 0.55 * ((s - lo) / (hi - lo));
+                  return WEEK_BAR_WEIGHT_MIN + (1 - WEEK_BAR_WEIGHT_MIN) * ((s - lo) / (hi - lo));
                 };
                 return (
-                  <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-end', height: '60px' }}>
+                  <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-end' }}>
                     {venueIntel.week.map((d) => (
-                      <div key={d.date} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                        <div style={{ width: '100%', height: `${Math.max(3, (d.peakScore || 0) * 0.55)}px`, backgroundColor: crowdColorFor(d.peakScore, colors) || 'var(--border-mid)', opacity: weightFor(d.peakScore), borderRadius: '4px 4px 0 0' }} />
+                      <div key={d.date} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                        <div style={{ width: '100%', height: `${WEEK_BAR_WELL_PX}px`, display: 'flex', alignItems: 'flex-end' }}>
+                          <div style={{ width: '100%', height: `${Math.min(WEEK_BAR_WELL_PX, Math.max(3, (d.peakScore || 0) * 0.55))}px`, backgroundColor: crowdColorDeepFor(d.peakScore) || 'var(--border-mid)', opacity: weightFor(d.peakScore), borderRadius: '4px 4px 0 0' }} />
+                        </div>
                         <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginTop: '4px' }}>{d.weekday}</span>
                         <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{d.peakScore ?? '–'}</span>
                       </div>
