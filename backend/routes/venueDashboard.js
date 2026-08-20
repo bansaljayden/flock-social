@@ -8,6 +8,10 @@ const { requireVenueTier, venueBillingEnabled } = require('../services/venueEnti
 // number). This router only owns the write path.
 const ownerReports = require('../services/ownerReports');
 const venueLabel = require('../utils/venueLabel');
+// Training-context capture for each slider reading (weather, nearby events,
+// what Flock was serving, the venue's clock) — fire-and-forget, never on the
+// POST's critical path. See services/ownerReportContext.js.
+const ownerReportContext = require('../services/ownerReportContext');
 const { rejectIfProfane } = require('../utils/moderation');
 const { upstreamSignal } = require('../utils/upstream');
 // Shape before content — see validators/shape.js. Nothing this router accepts
@@ -1749,11 +1753,21 @@ router.post('/busy-now', [
       return res.status(429).json({ error: 'Daily limit reached. The number falls back to the forecast on its own.' });
     }
 
-    await pool.query(
+    const { rows: [inserted] } = await pool.query(
       `INSERT INTO venue_owner_reports (venue_user_id, google_place_id, busy_percent)
-       VALUES ($1, $2, $3)`,
+       VALUES ($1, $2, $3)
+       RETURNING id`,
       [req.user.id, ctx.google_place_id, Number(req.body.percent)]
     );
+    // Fire-and-forget, deliberately un-awaited: the reading is a training
+    // label, and a label without its moment's context (weather, events, what
+    // Flock itself was serving) is weak. The capture never blocks and never
+    // fails this response — a missing source stores NULLs.
+    if (inserted?.id != null) {
+      ownerReportContext
+        .captureOwnerReportContext(inserted.id, { placeId: ctx.google_place_id, userId: req.user.id })
+        .catch(() => { /* capture never rejects; belt and braces */ });
+    }
     const state = await ownerBusyState(ctx.google_place_id);
     // Same shape as the GET, attribution included: the dashboard replaces its
     // whole busy-now state with this response.

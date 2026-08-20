@@ -117,12 +117,25 @@ function ownerCandidateQuery(city, baselineAggregateSql) {
         v.google_place_id,
         v.google_types, v.latitude, v.longitude,
         a.venue_category, a.price_level, a.rating, a.review_count,
-        COALESCE(b.baseline, 0) AS baseline_busyness
+        COALESCE(b.baseline, 0) AS baseline_busyness,
+        c.temperature               AS ctx_temperature,
+        c.humidity                  AS ctx_humidity,
+        c.wind_speed                AS ctx_wind_speed,
+        c.weather_condition         AS ctx_weather_condition,
+        c.weather_condition_code    AS ctx_weather_condition_code,
+        c.is_raining                AS ctx_is_raining,
+        c.has_nearby_event          AS ctx_has_nearby_event,
+        c.total_nearby_events       AS ctx_total_nearby_events,
+        c.total_nearby_attendance   AS ctx_total_nearby_attendance,
+        c.nearest_event_distance_km AS ctx_nearest_event_distance_km,
+        c.nearest_event_attendance  AS ctx_nearest_event_attendance,
+        c.nearest_event_type        AS ctx_nearest_event_type
       FROM (SELECT * FROM venue_owner_reports
              WHERE retracted = false AND diverged = false) r
       JOIN venue_profiles vp   ON vp.google_place_id = r.google_place_id AND vp.verified = true
       JOIN ml_venues v         ON v.google_place_id = r.google_place_id
       JOIN pg_timezone_names z ON z.name = v.timezone
+      LEFT JOIN venue_owner_report_context c ON c.report_id = r.id
       CROSS JOIN LATERAL (
         SELECT EXTRACT(DOW  FROM (r.created_at AT TIME ZONE z.name))::int AS dow,
                EXTRACT(HOUR FROM (r.created_at AT TIME ZONE z.name))::int AS hr,
@@ -145,6 +158,14 @@ function ownerCandidateQuery(city, baselineAggregateSql) {
     `,
     values: [city],
   };
+}
+
+// Context columns arrive as pg NUMERIC strings; the CSV contract wants a
+// number or an empty cell, never NaN and never a fabricated 0.
+function numOrNull(v) {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
 }
 
 function median(nums) {
@@ -223,26 +244,30 @@ function ownerVenueToTrainingRows(venueGroup) {
       price_level: meta.price_level,
       rating: meta.rating,
       review_count: meta.review_count,
-      // NO WEATHER, NO EVENTS — nothing was recorded at the moment the reading
-      // describes and neither is recoverable. Empty, never 0: same doctrine and
-      // same known prepare_features fillna blocker as the feedback path.
-      temperature: null,
-      humidity: null,
-      wind_speed: null,
-      weather_condition: null,
-      weather_condition_code: null,
-      is_raining: false,
-      event_nearby: false,
-      event_distance_km: null,
+      // Weather and events come from venue_owner_report_context (036), the
+      // side table the slider POST fills at insert time — the moment the
+      // reading describes, recorded when it was cheap and true. Rows written
+      // before that migration (or whose capture degraded — weather outage,
+      // venue outside the corpus) have no context row and stay empty, never 0:
+      // same doctrine and same known prepare_features fillna blocker as the
+      // feedback path.
+      temperature: numOrNull(meta.ctx_temperature),
+      humidity: numOrNull(meta.ctx_humidity),
+      wind_speed: numOrNull(meta.ctx_wind_speed),
+      weather_condition: meta.ctx_weather_condition ?? null,
+      weather_condition_code: numOrNull(meta.ctx_weather_condition_code),
+      is_raining: meta.ctx_is_raining === true,
+      event_nearby: meta.ctx_has_nearby_event === true,
+      event_distance_km: numOrNull(meta.ctx_nearest_event_distance_km),
       event_size: null,
-      event_type: null,
+      event_type: meta.ctx_nearest_event_type ?? null,
       event_hours_until: null,
-      has_nearby_event: false,
-      nearest_event_distance_km: null,
-      nearest_event_attendance: null,
-      total_nearby_events: null,
-      total_nearby_attendance: null,
-      nearest_event_type: null,
+      has_nearby_event: meta.ctx_has_nearby_event === true,
+      nearest_event_distance_km: numOrNull(meta.ctx_nearest_event_distance_km),
+      nearest_event_attendance: numOrNull(meta.ctx_nearest_event_attendance),
+      total_nearby_events: numOrNull(meta.ctx_total_nearby_events),
+      total_nearby_attendance: numOrNull(meta.ctx_total_nearby_attendance),
+      nearest_event_type: meta.ctx_nearest_event_type ?? null,
       baseline_busyness: meta.baseline_busyness,
       // An owner's reading is an observation of ONE MOMENT. is_realtime=1 is
       // the truthful value; what separates it from a BestTime live row is
