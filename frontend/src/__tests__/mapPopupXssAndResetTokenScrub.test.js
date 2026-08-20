@@ -27,7 +27,15 @@
 const fs = require('fs');
 const path = require('path');
 
-const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+// Normalized to LF at the read, not left as it sits on disk. This repo is
+// cloned with core.autocrlf=true and carries no .gitattributes, so git stores
+// LF in the object database and writes CRLF into the working tree on every
+// checkout. Measured: HEAD:frontend/src/App.js holds 0 CRLF, the checked-out
+// copy holds 21578, and the same is true of every other tracked text file.
+// So a source-scanning test on Windows always reads CRLF, and the `\n\n`
+// paragraph breaks in the region() markers below matched nothing, which took
+// both popup assertions red while the code they guard was fine.
+const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
 
 function codeOnly(src) {
   return src
