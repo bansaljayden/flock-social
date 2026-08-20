@@ -583,8 +583,9 @@ export async function getVenueStrip() {
 }
 
 // The owner's live 0-100 number. Free at every tier — the number users see is
-// never for sale; it is labelled "the bar says", expires server-side after 90
-// minutes, and recent user reports outrank it.
+// never for sale; it is labelled as the venue's own claim (the category-
+// derived "the {venue-type} says" attribution the API computes), expires
+// server-side after 90 minutes, and recent user reports outrank it.
 export async function getVenueBusyNow() {
   return request('/api/venue-dashboard/busy-now');
 }

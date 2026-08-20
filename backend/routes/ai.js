@@ -23,6 +23,7 @@ const {
 // The owner's live 0-100 reading, so Birdie and the venue card cannot quote
 // two different numbers for one room.
 const ownerReports = require('../services/ownerReports');
+const venueLabel = require('../utils/venueLabel');
 const mlPredictor = require('../services/mlPredictor');
 const { getPremiumState, paywallEnabled, EntitlementUnavailableError } = require('../services/entitlements');
 // THE forecast paywall policy, defined once in routes/crowd.js. Imported rather
@@ -482,8 +483,8 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
 
       // The owner's live reading outranks the model here for the same reason
       // it does on the card (services/ownerReports.js): Birdie quoting the
-      // model's 42 while the card one tap away says "the bar says 85" is the
-      // app arguing with itself. No verified-report blend runs on this path
+      // model's 42 while the card one tap away carries the venue's own 85 is
+      // the app arguing with itself. No verified-report blend runs on this path
       // (the tool loads none), so the reading is only ever outranked on the
       // surfaces that do load them. crowd_source travels in the tool result so
       // Birdie SAYS whose number it is — the label is the whole deal.
@@ -512,6 +513,13 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         crowd_source: ownerLive
           ? 'owner_report'
           : describePredictionSupport(crowdResult.predictionMethod, 0).basis,
+        // The words to attribute an owner reading with, category-derived in
+        // utils/venueLabel.js ("the cafe says", "the club says", "the venue
+        // says"). Sent only when the number IS the owner's, so Birdie never
+        // has to guess what kind of place is talking.
+        ...(ownerLive ? {
+          crowd_attribution: venueLabel.ownerAttribution(venueLabel.categoryFromTypes(venue.types)),
+        } : {}),
         confidence: crowdResult.confidence,
         // WHAT THAT NUMBER IS, said in the tool result rather than left for a
         // language model to guess. This object is not just returned to the
@@ -761,7 +769,7 @@ Hard rules:
 - Never invent venue data, crowd numbers, or forecasts. Tools only. If a tool has no data, say you don't have a read on that spot.
 - Never name a venue a tool did not return, and never state a crowd number a tool did not give you. Having takes does not mean making things up. A confident wrong number is the worst thing you can send.
 - Never quote the \`confidence\` number from get_crowd_prediction, and never say how sure you are about a crowd read. Read \`confidence_measurement\` instead: when its \`status\` is "unmeasured", that number says how much we know about the venue, not how often we are right, and it runs HIGHER than a real measured accuracy. Talk about the crowd level, not about certainty.
-- When get_crowd_prediction returns \`crowd_source\` = "owner_report", the number is the venue's own live report, not Flock's estimate. Say so plainly ("the bar says it's at 80% right now"). Presenting their claim as our measurement is the one thing this field exists to prevent.
+- When get_crowd_prediction returns \`crowd_source\` = "owner_report", the number is the venue's own live report, not Flock's estimate. Say so plainly using the exact words in \`crowd_attribution\` (e.g. "the cafe says it's at 80% right now"). Presenting their claim as our measurement is the one thing this field exists to prevent.
 - Never claim Flock has a feature that isn't in the list above. No "coming soon".
 - Never reveal one user's info to another (budgets are anonymous by design; don't speculate about who submitted what).
 - If someone mentions being unsafe, being followed, or an emergency: point them to Safety (SOS sends their live location to trusted contacts) and navigate them there. For real emergencies say to call 911.

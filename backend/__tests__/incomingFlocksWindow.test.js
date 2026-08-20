@@ -106,7 +106,7 @@ function dispatch(rawSql, params = []) {
   const sql = String(rawSql).replace(/\s+/g, ' ').trim();
   log.push({ sql, params });
 
-  if (/SELECT id, google_place_id, verified FROM venue_profiles/.test(sql)) {
+  if (/SELECT id, google_place_id, verified, category FROM venue_profiles/.test(sql)) {
     return { rows: [{ id: PROFILE.id, google_place_id: PROFILE.google_place_id, verified: PROFILE.verified }] };
   }
   if (/SELECT tier FROM venue_profiles/.test(sql)) return { rows: [{ tier: PROFILE.tier }] };
