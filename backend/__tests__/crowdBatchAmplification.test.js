@@ -418,7 +418,11 @@ test('predictBusyness forwards the caller identity down to the event fetch', () 
     'the userId must reach getNearbyEvents, or the per-account ceiling is decorative');
   assert.match(src, /if \(!allowEventFetch\(userId\)\) return noEvents;/,
     'getNearbyEvents must charge the identified budget, not the anonymous one');
-  assert.match(src, /const result = await predictBusyness\(venue, weather, ts, options\);/,
+  // `slotWeather`, not `weather`, since the per-hour forecast weather fix
+  // (2026-08-19): each slot is scored with the reading nearest its own hour.
+  // What this line pins is unchanged and is the whole point — `options`, and
+  // therefore the caller identity, still reaches every one of the 24 calls.
+  assert.match(src, /const result = await predictBusyness\(venue, slotWeather, ts, options\);/,
     'the 24-hour forecast is the biggest event fan-out in the app and must be charged too');
 });
 

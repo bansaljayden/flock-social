@@ -868,6 +868,12 @@ function generateHourlyForecast(venue, weather, startHour, count, baseTimestamp)
       hour: formatHour(start + i),
       score: result.score,
       label: result.label,
+      // Skew fix (c), 2026-08-19: every hourly entry names the engine that
+      // scored it. This function IS the rule engine, so the tag is constant --
+      // it exists so a strip mixing sources is visible in the payload, and so
+      // direct callers (services/crowdAlerts.js) ship the same shape
+      // mlPredictor.predictHourlyForecast does.
+      predictionMethod: 'rule_engine',
     });
   }
 

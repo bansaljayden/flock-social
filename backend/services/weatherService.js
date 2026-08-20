@@ -517,6 +517,111 @@ async function getForecast(lat, lon, opts = {}) {
   }
 }
 
+/**
+ * Hour-resolution forecast for the 24-hour crowd strip — the raw 3-hour OWM
+ * list mapped to the SAME shape getWeather returns per reading, NOT the daily
+ * summaries getForecast collapses it into. Built for services/mlPredictor.js
+ * predictHourlyForecast, which used to score all 24 slots with ONE current
+ * reading: 3 AM was scored with 3 PM's temperature, and "raining now" rained
+ * on tonight's dinner slot (train/serve skew hunt, 2026-08-19 — worth 2-3
+ * points on tail hours). Each entry carries `at` (epoch ms of the slot OWM
+ * forecast is FOR) so the caller can pick the nearest entry per hour.
+ *
+ * Same contracts as getForecast: shares the getWeather budget, coalesces
+ * concurrent misses, remembers failures briefly, returns null (never a stale
+ * or partial answer) when the upstream cannot be asked or cannot answer.
+ * Units are IMPERIAL (°F, mph) — the ML corpus was collected through this
+ * same vendor and unit setting.
+ */
+async function getHourlyForecast(lat, lon, opts = {}) {
+  const o = opts || {}; // see getWeather: an explicit null is not the default
+  try {
+    const apiKey = process.env.WEATHER_API_KEY;
+    if (!apiKey) {
+      if (!warnedOnce) {
+        console.warn('[Weather] WEATHER_API_KEY not set — skipping weather data');
+        warnedOnce = true;
+      }
+      return null;
+    }
+
+    if (!validCoords(lat, lon)) return null;
+
+    // Its own key: getForecast stores the daily digest under forecast_*, and a
+    // digest cannot be un-summarized back into hours.
+    const cacheKey = `forecast_hourly_${getCacheKey(lat, lon)}`;
+    const entry = getEntry(cacheKey);
+    if (entry) return entry.failed ? null : entry.data;
+
+    return await coalesce(cacheKey, async () => {
+      const fresh = getEntry(cacheKey);
+      if (fresh) return fresh.failed ? null : fresh.data;
+
+      if (!allowWeatherFetch(o.userId)) return null; // same budget as getWeather (round 8)
+
+      const url = `https://api.openweathermap.org/data/2.5/forecast?lat=${bucketCoord(lat)}&lon=${bucketCoord(lon)}&appid=${apiKey}&units=imperial`;
+      let response;
+      try {
+        response = await fetch(url, { signal: upstreamSignal('weather') }); // round 12
+      } catch (netErr) {
+        console.error('[Weather] Hourly forecast upstream unreachable:', netErr.message);
+        setCache(cacheKey, null, true);
+        return null;
+      }
+      if (!response.ok) {
+        console.error(`[Weather] Hourly forecast API returned ${response.status} for ${cacheKey}`);
+        setCache(cacheKey, null, true);
+        return null;
+      }
+
+      let data;
+      try {
+        data = await response.json();
+      } catch (bodyErr) {
+        console.error('[Weather] Hourly forecast malformed body:', bodyErr.message);
+        setCache(cacheKey, null, true);
+        return null;
+      }
+
+      // A 200 without a list is an upstream failure, not an empty forecast
+      // (same reading getForecast settled on).
+      if (!data || !Array.isArray(data.list)) {
+        console.error(`[Weather] Hourly forecast payload unusable for ${cacheKey}`);
+        setCache(cacheKey, null, true);
+        return null;
+      }
+
+      const entries = [];
+      for (const e of data.list) {
+        // `dt` is the vendor's own epoch for the slot; an entry without one
+        // cannot be matched to an hour and is an entry we cannot serve.
+        const at = typeof e?.dt === 'number' && Number.isFinite(e.dt) ? e.dt * 1000 : null;
+        if (at == null) continue;
+        const weatherMain = (e.weather && e.weather[0] && e.weather[0].main) || '';
+        entries.push(Object.freeze({
+          at,
+          temp: e.main?.temp ?? null,
+          feelsLike: e.main?.feels_like ?? null,
+          humidity: e.main?.humidity ?? null,
+          windSpeed: e.wind?.speed ?? 0,
+          conditions: (e.weather && e.weather[0] && e.weather[0].description) || '',
+          // OWM condition code — the ML feature vector groups on this, exactly
+          // as getWeather passes it for the current reading.
+          conditionId: (e.weather && e.weather[0] && e.weather[0].id) || null,
+          isRaining: ['rain', 'drizzle', 'thunderstorm'].some(w => weatherMain.toLowerCase().includes(w)),
+        }));
+      }
+
+      const result = Object.freeze(entries);
+      setCache(cacheKey, result);
+      return result;
+    });
+  } catch (err) {
+    console.error('[Weather] Hourly forecast error:', err.message);
+    return null;
+  }
+}
+
 // Diagnostics and tests. Production code must never reset a spending counter.
 function weatherBudgetStatus() {
   return {
@@ -544,7 +649,7 @@ function __resetWeatherState() {
   warnedOnce = false;
 }
 
-module.exports = { getWeather, getForecast, weatherBudgetStatus, __resetWeatherState };
+module.exports = { getWeather, getForecast, getHourlyForecast, weatherBudgetStatus, __resetWeatherState };
 
 // Exported for __tests__/weatherCacheFlush.test.js, which pins the inequality
 // WX_DAILY < MAX_CACHE_ENTRIES and the single-sourced 2dp bucketing. Reading
