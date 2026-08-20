@@ -467,10 +467,18 @@ test('the watchlist carries no invented numbers', () => {
     assert.ok(w.note && w.note.length > 0, `${w.id} has no explanation`);
     assert.ok(w.usd === null || Number.isFinite(w.usd), `${w.id} has a usd that is neither null nor a number`);
   }
-  // The two that are licence and cancellation questions rather than billing
-  // ones, pinned by id so a future sweep cannot quietly drop them.
+  // Pinned by id so a future sweep cannot quietly drop them.
   const ids = cm.WATCHLIST.map((w) => w.id);
-  assert.ok(ids.includes('esri-satellite'), 'the unkeyed Esri satellite tiles are the one licence exposure');
+  // Was 'esri-satellite', the app's one licence exposure: satellite imagery
+  // pulled unkeyed from server.arcgisonline.com, which Esri does not licence
+  // for commercial use. Resolved on 2026-08-20 by deleting the fallback branch
+  // — it had never served a tile in production, because every shipping build
+  // sets REACT_APP_MAPTILER_KEY and MapTiler hybrid won whenever it was set.
+  // What replaces it on the watchlist is the dependency that removal creates:
+  // MapTiler is now the ONLY satellite source, so its free-plan session cap is
+  // the thing to watch. A licence question became a quota question.
+  assert.ok(ids.includes('maptiler-satellite'), 'MapTiler is now the only licensed satellite source, so its cap is the exposure');
+  assert.ok(!ids.includes('esri-satellite'), 'the Esri fallback is gone from App.js; it must not linger on the watchlist');
   assert.ok(ids.includes('besttime-subscription'), 'a subscription with no code path is money for nothing');
 });
 
