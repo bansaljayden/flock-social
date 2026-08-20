@@ -147,7 +147,24 @@ function installLedger() {
     ledger.set(id, row);
     return { rows: [{ tokens: row.tokens }], rowCount: 1 };
   }]);
-  handlers.push([/UPDATE advisor_venue_spend/, () => ({ rows: [], rowCount: 1 })]);
+  // Two different UPDATEs land here. settleTokens trues the estimate up or
+  // down and touches `tokens` alone; releaseVenueReservation gives back a
+  // reservation for a call that was never made and touches the counter too. A
+  // stub that answers both with rowCount 1 and no arithmetic cannot tell a
+  // released question from a spent one, which is the whole thing under test.
+  handlers.push([/UPDATE advisor_venue_spend/, (params, flat) => {
+    const row = ledger.get(params[params.length - 1]);
+    if (!row) return { rows: [], rowCount: 0 };
+    if (/questions = GREATEST/.test(flat)) {
+      const [tokens, questions, answers] = params;
+      row.tokens = Math.max(0, row.tokens - Number(tokens));
+      row.questions = Math.max(0, row.questions - Number(questions));
+      row.answers = Math.max(0, row.answers - Number(answers));
+    } else {
+      row.tokens = Math.max(0, row.tokens + Number(params[0]));
+    }
+    return { rows: [], rowCount: 1 };
+  }]);
 }
 function allowGlobal() {
   handlers.push([/INSERT INTO advisor_spend/, () => ({ rows: [{ tokens: 1 }], rowCount: 1 })]);
@@ -459,6 +476,50 @@ test('the intake facts handed to the advice model exclude spend per head, so a d
   assert.ok(!quirks.value.includes('{'), 'owner prose cannot smuggle the placeholder grammar either');
 });
 
+// A {{fact:id}} is substituted AFTER the digit valve has read the draft. That
+// is safe for exactly one reason: every substitutable value is a number the
+// server computed. A sentence the owner typed is neither computed nor a
+// number, so if one is handed over with an id, the model can splice the
+// owner's own prose -- and every digit inside it -- through the one hole the
+// valve does not watch. Both halves of that are pinned here: the fact is built
+// with the flag, and the payload that reaches the model carries it in the
+// no-ids key the advice contract already documents.
+test('owner prose reaches the advice model as context with NO id, so it cannot be spliced past the digit valve', async () => {
+  const proseCtx = {
+    profile: {
+      ...PROFILE().rows[0],
+      quirks: 'Regulars think we shut at 2am, we stop at 1am, 30 covers late',
+      event_note: 'Trivia Wednesdays, 40 in',
+    },
+    mlVenue: { venue_category: 'bar' },
+  };
+  for (const f of advisorFreeText.intakeFacts(proseCtx)) {
+    if (/^intake_(quirks|event_note|anchor_note)$/.test(f.id)) {
+      assert.strictEqual(f.textOnly, true, `${f.id} is owner prose and must carry the flag`);
+    }
+  }
+
+  resetAll();
+  installProfile();
+  handlers.unshift([/FROM venue_profiles WHERE user_id/, () => ({ rows: [proseCtx.profile], rowCount: 1 })]);
+  replies = [
+    '{"mode":"advice","intentId":null}',
+    'The usual move is a standing reason to arrive early. You told us {{fact:intake_quirks}}, so that is the constraint. It costs you prep.',
+  ];
+  const r = await ask('how do I fill the late stretch');
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.mode, 'refusal', 'an id that is not in the block voids the whole answer');
+  assert.ok(!/30 covers/.test(r.body.text), "the owner's typed digits never reach the answer");
+
+  const payload = JSON.parse(modelCalls[1].contents[0].parts[0].text.split('\n')[1]);
+  const ids = (payload.facts || []).map((f) => f.id);
+  assert.ok(!ids.some((id) => /quirks|event_note|anchor_note/.test(id)), 'no owner prose in the substitutable list');
+  assert.ok(Array.isArray(payload.ownerContext) && payload.ownerContext.length > 0, 'it rides in ownerContext instead');
+  for (const entry of payload.ownerContext) {
+    assert.strictEqual(entry.id, undefined, 'an ownerContext entry has no id for the model to write');
+  }
+});
+
 // ── 5. Cost and abuse ───────────────────────────────────────────────────────
 
 test('the per-venue daily QUESTION cap bites, and it sits under the chip answer cap', async () => {
@@ -538,6 +599,36 @@ test('the global Postgres wall refuses the router call, and a database that cann
   r = await ask('how do I make mornings better');
   assert.strictEqual(r.body.mode, 'refusal', 'a spend control that cannot count refuses');
   assert.strictEqual(modelCalls.length, 0);
+});
+
+// The venue meter is charged first and the global wall is checked second, so a
+// venue that meets the wall has paid for a request that never left the process.
+// The global ceiling is shared, any venue can drive it, and no other venue can
+// see it: unreleased, one venue reaching it drains every OTHER venue's private
+// twenty-a-day at a slot per attempt, while answering none of them, and the
+// copy invites each one to try again.
+test('the shared global wall does not spend a venue\'s own daily allowance', async () => {
+  resetAll();
+  installProfile();
+  handlers = handlers.filter(([re]) => !/INSERT INTO advisor_spend/.test(re.source));
+  handlers.push([/INSERT INTO advisor_spend/, () => ({ rows: [], rowCount: 0 })]);
+
+  for (let i = 0; i < 5; i += 1) {
+    const r = await ask('how do I make mornings better');
+    assert.strictEqual(r.body.mode, 'refusal');
+  }
+  assert.strictEqual(modelCalls.length, 0, 'nothing reached the model, so nothing was spent');
+  const row = ledger.get(7) || { questions: 0, tokens: 0 };
+  assert.strictEqual(row.questions, 0, 'five attempts against a wall someone else built cost this venue no questions');
+  assert.strictEqual(row.tokens, 0, 'and no tokens');
+
+  // And the venue's own ceiling is untouched by the change: a spent day still
+  // refuses, and still says so in the words for a spent day.
+  resetAll();
+  installProfile();
+  ledger.set(7, { answers: 0, questions: advisorPhrasing.PER_VENUE_DAILY_QUESTIONS, tokens: 0 });
+  const spent = await ask('how do I make mornings better');
+  assert.match(spent.body.text, /used up/, 'the venue ceiling still bites and still names itself');
 });
 
 test('the input is capped, and a non-text payload is rejected before anything reads it', async () => {

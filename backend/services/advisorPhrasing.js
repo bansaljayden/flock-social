@@ -365,6 +365,41 @@ async function allowVenueQuestion(userId, tokens) {
   }
 }
 
+// ── Releasing a reservation for a call that was never made ──────────────────
+//
+// THE ONE CASE THAT IS NOT A REFUND. Both charge functions above are written
+// "never refunded", and that rule is about a call that FAILED: the upstream
+// received the request and billed it, so the estimate stands whether or not we
+// read the answer. This is the other case. The venue meter is charged first
+// and the GLOBAL wall is checked second, so when the global wall is up, a venue
+// has been charged a question (or an answer) and its tokens for a request that
+// never left the process, that cost nobody anything, and that the owner was
+// told to retry.
+//
+// Left unreleased, a shared, contagious condition -- the global ceiling, which
+// any venue can drive and which none of the others can see -- silently destroys
+// EVERY other venue's private daily allowance at one slot per attempt. Twenty
+// attempts and a venue has spent its whole day on zero answers, having been
+// invited to retry each time. Releasing here is not handing back budget that
+// was spent; it is un-reserving budget that was never spent.
+//
+// GREATEST pins both columns at zero, so a release can never open a day's row
+// below empty, and the row is only ever touched when it already exists (the
+// charge that is being released created it).
+function releaseVenueReservation(userId, { tokens, questions = 0, answers = 0 }) {
+  const id = accountKey(userId);
+  if (id === null) return;
+  if (!Number.isInteger(tokens) || tokens < 0) return;
+  pool.query(
+    `UPDATE advisor_venue_spend
+        SET tokens    = GREATEST(0, tokens - $1),
+            questions = GREATEST(0, questions - $2),
+            answers   = GREATEST(0, answers - $3)
+      WHERE day = CURRENT_DATE AND venue_user_id = $4`,
+    [tokens, questions, answers, id]
+  ).catch((err) => console.error('advisorPhrasing: venue reservation release failed:', err.message));
+}
+
 // The global ceiling, denominated in money, in Postgres. One row per UTC day,
 // conditionally incremented; no row back means the wall is reached (or the
 // database is unreachable, and a spend control that cannot count refuses —
@@ -1077,7 +1112,13 @@ async function phrase(block, { venueUserId } = {}) {
   // number. Only the free-text surface has to tell them apart, because only
   // there does a refusal reach the owner as a sentence instead of an answer.
   if (await allowVenuePhrasing(venueUserId, estimate) !== CHARGE_OK) return template;
-  if (!(await allowGlobalTokens(estimate))) return template;
+  if (!(await allowGlobalTokens(estimate))) {
+    // Charged locally, refused globally, and no request left this process. The
+    // venue keeps its answer slot rather than paying for the wall someone else
+    // reached. See releaseVenueReservation.
+    releaseVenueReservation(venueUserId, { tokens: estimate, answers: 1 });
+    return template;
+  }
 
   let resp;
   try {
@@ -1155,6 +1196,7 @@ const internals = {
   // block has to run this first, or owner text becomes a placeholder value on
   // that path and the digit valve stops meaning what it says.
   partitionOwnerContext,
+  releaseVenueReservation,
   sourcePhrase,
   NUMBER_WORDS,
   PLACEHOLDER,
