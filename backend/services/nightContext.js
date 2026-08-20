@@ -429,10 +429,27 @@ async function runNightContextSweep(now) {
   }
 }
 
+// Non-consuming read of this job's own Ticketmaster day ledger, for the admin
+// cost panel (services/costModel.js). Separate from routes/events.js's
+// interactive ledger on purpose: the two are sized against each other so that
+// together they stay under the vendor's 5,000-a-day free tier, and a panel that
+// added them into one number would hide which half was moving. In-process, so
+// it reads zero after a deploy.
+function nightContextBudgetStatus() {
+  return {
+    day: ncTmDayKey,
+    globalUsed: ncTmDayCount,
+    globalRemaining: Math.max(0, NC_TM_DAILY - ncTmDayCount),
+    limits: { globalDaily: NC_TM_DAILY },
+    inMemory: true,
+  };
+}
+
 module.exports = {
   runNightContextSweep,
   nightContextEnabled,
   NIGHT_CONTEXT_INTERVAL_MS,
+  nightContextBudgetStatus,
 };
 
 // Test hooks only — process-wide in-memory state needs a clean start per case.

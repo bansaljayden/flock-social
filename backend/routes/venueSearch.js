@@ -683,3 +683,24 @@ module.exports.__test = {
     if (clearIps) photoIpHits.clear();
   },
 };
+
+// Non-consuming read of the photo proxy's own day counter, for the admin cost
+// panel (services/costModel.js). This is the ONE place in the repo that can
+// tell a Place Photos request apart from a Text Search or a Place Details
+// request: the shared ledger in utils/placesBudget.js counts calls without
+// recording which SKU each one was, and Google prices Photos at $7 per 1,000
+// against $20 and $35 for the other two. Without this split the panel could
+// only ever quote a band four times as wide as the real number.
+//
+// TWO CAVEATS THE PANEL REPEATS. It lives in this container's memory, so it
+// reads zero after every deploy and divides by the instance count. And
+// allowPhotoFetch charges this counter BEFORE allowGlobalPlacesCall gets its
+// say, so a request refused by the shared ledger still counted here: this
+// number can exceed the photo calls actually made, never undershoot them.
+module.exports.photoProxyStatus = () => ({
+  day: photoDayKey,
+  used: photoDayCount,
+  remaining: Math.max(0, PUBLIC_PHOTO_BUDGET - photoDayCount),
+  limits: { dailyPublic: PUBLIC_PHOTO_BUDGET },
+  inMemory: true,
+});
