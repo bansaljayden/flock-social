@@ -246,29 +246,70 @@ test('the clamp used in training is the one the server will apply', () => {
     'a reconstruction production would never perform.');
   assert.match(TRAIN_PY, /clamp = resolve_clamp\(metadata\)/);
 
-  // Sign, units and formula must match services/mlPredictor.js verbatim in effect:
-  //   const clampedDelta = Math.max(lo, Math.min(hi, rawOutput));
-  //   score = (baseline || 0) + clampedDelta;      then clamped to 0..100
+  // Training's own reconstruction still reads the metadata key and reconstructs
+  // the doctrinal way: clamp the delta, add the baseline, clip to 0..100.
   assert.match(TRAIN_PY, /return np\.clip\(baseline \+ np\.clip\(raw_delta, lo, hi\), 0, 100\)/,
-    'training must reconstruct exactly as the server does: clamp the delta first, ' +
-    'add it to the baseline, then clip to the 0..100 busyness range');
-  assert.match(PREDICTOR_JS, /score = \(baseline \|\| 0\) \+ clampedDelta;/,
-    'if the server changed its reconstruction, the trainer must change with it');
-  assert.match(QUICK_EVAL_PY, /np\.clip\(baseline \+ np\.clip\(raw_delta, -30, 30\), 0, 100\)/,
-    'the ship gate reconstructs the same way (it pins the doctrinal +/-30 directly)');
+    'training must clamp the delta first, add it to the baseline, then clip to the ' +
+    '0..100 busyness range');
 
-  // The three fallbacks must agree with each other and with the shipped artifact.
+  // THE SERVE CLAMP IS DELIBERATELY WIDER THAN THE TRAINING-TIME RECORD.
+  //
+  // Until 2026-08-19 there was one number in three places and this test pinned
+  // all three equal. The dispersion lab (scripts/ml/train/RETRAIN-V27-LOG.md)
+  // then measured the shipped model as too NARROW — prediction sd 21.6 against
+  // an actual 36.65 — and found exactly one widener that clears the ship gate:
+  // clamp the delta at +/-50 and push scores outside [25, 65] by one point
+  // (within-10 +0.26pp CI [+0.17, +0.37], MAE-neutral, 2000-resample date-block
+  // bootstrap). So mlPredictor.reconstructScore now overrides
+  // metadata.delta_clamp_range (+/-30) on purpose, and that key keeps its
+  // original meaning: the range the TRAINING run reported against.
+  //
+  // What must still hold, and is what this section pins now: the ship gate
+  // scores the reconstruction PRODUCTION PERFORMS. quick_eval.py's reconstruct()
+  // and mlPredictor's reconstructScore are one formula in two languages, so
+  // their four constants are compared number by number rather than described
+  // twice in prose.
+  const serveClampLo = PREDICTOR_JS.match(/const DELTA_CLAMP_LO = (-?\d+);/);
+  const serveClampHi = PREDICTOR_JS.match(/const DELTA_CLAMP_HI = (-?\d+);/);
+  const pushLow = PREDICTOR_JS.match(/const EXTREMES_PUSH_LOW = (-?\d+);/);
+  const pushHigh = PREDICTOR_JS.match(/const EXTREMES_PUSH_HIGH = (-?\d+);/);
+  assert.ok(serveClampLo && serveClampHi && pushLow && pushHigh,
+    'mlPredictor.js must declare the serve clamp and the extremes-push band as named constants');
+  assert.match(PREDICTOR_JS, /score = reconstructScore\(rawOutput, baseline \|\| 0\);/,
+    'the delta path must go through reconstructScore — the one place the serve ' +
+    'reconstruction is written down');
+
+  const gateClamp = QUICK_EVAL_PY.match(
+    /np\.clip\(baseline \+ np\.clip\(raw_delta, (-?\d+), (-?\d+)\), 0, 100\)/);
+  assert.ok(gateClamp, 'quick_eval.py must still reconstruct with an explicit clamp');
+  assert.deepEqual(
+    [Number(gateClamp[1]), Number(gateClamp[2])],
+    [Number(serveClampLo[1]), Number(serveClampHi[1])],
+    'the ship gate must clamp exactly as the server does, or the gate is deciding on a ' +
+    'reconstruction production never performs');
+
+  const gatePush = QUICK_EVAL_PY.match(
+    /np\.where\(score < (\d+), score - 1, np\.where\(score > (\d+), score \+ 1, score\)\)/);
+  assert.ok(gatePush, 'quick_eval.py must apply the same extremes push the server applies');
+  assert.deepEqual(
+    [Number(gatePush[1]), Number(gatePush[2])],
+    [Number(pushLow[1]), Number(pushHigh[1])],
+    'the push band must be identical on both sides');
+
+  // The trainer's own fallback still has to match the artifact it produced:
+  // that pair is the training-time record, and a mismatch there means a model
+  // was MEASURED against a range its own metadata does not state.
   const trainerDefault = TRAIN_PY.match(/DEFAULT_DELTA_CLAMP = \((-?[\d.]+), (-?[\d.]+)\)/);
   assert.ok(trainerDefault, 'train_model.py must declare DEFAULT_DELTA_CLAMP');
-  const serverDefault = PREDICTOR_JS.match(/metadata\.delta_clamp_range \|\| \[(-?\d+), (-?\d+)\]/);
-  assert.ok(serverDefault, 'mlPredictor.js must still declare its clamp fallback');
-  assert.deepEqual(
+  assert.deepEqual(METADATA.delta_clamp_range,
     [Number(trainerDefault[1]), Number(trainerDefault[2])],
-    [Number(serverDefault[1]), Number(serverDefault[2])],
-    'the trainer and the server must fall back to the same clamp when the metadata ' +
-    'key is absent, or a model is measured against one range and served with another');
-  assert.deepEqual(METADATA.delta_clamp_range, [Number(serverDefault[1]), Number(serverDefault[2])],
-    'the shipped artifact\'s delta_clamp_range must match that fallback');
+    'the shipped artifact\'s delta_clamp_range must match the trainer\'s fallback');
+  // And the serve clamp may only ever be WIDER than the recorded training
+  // range. Narrower would mean production truncates deltas the reported
+  // metrics counted in full — the direction that flatters the model.
+  assert.ok(Number(serveClampLo[1]) <= METADATA.delta_clamp_range[0]
+    && Number(serveClampHi[1]) >= METADATA.delta_clamp_range[1],
+    'the serve clamp must not be narrower than the range training reported against');
   assert.equal(METADATA.label_type, 'delta',
     'the shipped artifact is a delta model; these pins describe a delta model');
 });
