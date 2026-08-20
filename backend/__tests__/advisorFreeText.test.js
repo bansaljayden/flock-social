@@ -539,6 +539,29 @@ test('owner prose reaches the advice model as context with NO id, so it cannot b
 
 // ── 5. Cost and abuse ───────────────────────────────────────────────────────
 
+// requirePro cannot answer "is this a venue", and in the posture this product
+// deploys in it does not try: venueEntitlements returns next() outright while
+// VENUE_BILLING_ENABLED is unset, which it is on Railway and which is correct.
+// That leaves this route -- the one whose next line is a billed model call and
+// whose ledger's unit of identity is an ACCOUNT -- reachable by any signup.
+// Signups are free and unlimited. The chip path does not need this guard: a
+// venue-less account gets an empty fact block and phrase() renders the refusal
+// before it charges. Free text has no such shape, because the router is asked
+// to classify before anything has looked at whose venue it is about.
+test('a caller with no venue profile is refused BEFORE the router is paid for', async () => {
+  resetAll();
+  // Everything else answers normally; there is simply no venue_profiles row.
+  handlers.push([/FROM venue_profiles WHERE user_id/, () => ({ rows: [], rowCount: 0 })]);
+  handlers.push([/FROM ml_venues WHERE google_place_id/, () => ({ rows: [], rowCount: 0 })]);
+
+  const r = await ask('how do I fill a slow Tuesday');
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.mode, 'refusal');
+  assert.match(r.body.text, /claimed/, 'and it says what is missing rather than blaming the model');
+  assert.strictEqual(modelCalls.length, 0, 'not one model call was spent on an account with no venue');
+  assert.strictEqual(ledger.size, 0, 'and nothing was charged to any ledger');
+});
+
 test('the per-venue daily QUESTION cap bites, and it sits under the chip answer cap', async () => {
   assert.ok(
     advisorPhrasing.PER_VENUE_DAILY_QUESTIONS < advisorPhrasing.PER_VENUE_DAILY_ANSWERS,
