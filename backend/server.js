@@ -1139,6 +1139,21 @@ app.use('/api/checkin', apiLimiter, checkinRoutes);             // NFC tap + man
 app.use('/api/waitlist', apiLimiter, waitlistRoutes);           // PUBLIC, no auth — MUST stay before the /api catch-alls
 app.use('/api/public', apiLimiter, publicCrowdRoutes);          // PUBLIC, no auth — website live crowd demo (own per-IP + daily caps inside)
                                                                 // (was mounted after them, which 401'd every landing-page signup)
+// The Monday digest's unsubscribe link. NO JWT — the signed, purpose-labelled
+// token in the query string is the whole authorisation (services/venueDigest.js).
+// It belongs in THIS block for exactly the reason the block exists, and it was
+// mounted below the catch-alls instead: every emailed unsubscribe link, and
+// every RFC 8058 one-click POST from Gmail or Apple Mail, was answered
+// `401 {"error":"No token provided"}` by moderationRoutes' `router.use(authenticate)`
+// before routes/venueDigest.js ever ran. Nobody noticed because
+// __tests__/venueDigest.test.js mounts the router on a bare express app, so the
+// route works perfectly in isolation and is unreachable in the product.
+// The consequences were the whole point of the file it broke: the confirm page
+// could not render, one-click unsubscribe failed (a deliverability signal Gmail
+// scores senders on, and the CAN-SPAM obligation the header cites), and the only
+// remaining way off the list was signing in to the dashboard.
+// __tests__/venueDigest.test.js now pins this position against server.js itself.
+app.use('/api/venue-digest', digestOptOutLimiter, require('./routes/venueDigest')); // Monday digest unsubscribe link (signed token, no JWT)
 // /api/users must also precede the two /api catch-alls. Those routers call
 // `router.use(authenticate)`, which runs for EVERY request under /api — so a
 // banned user's DELETE /api/users/me was rejected 403 there before it could
@@ -1166,7 +1181,6 @@ app.use('/api/venue-profile', venueProfileLimiter, venueProfileRoutes); // Handl
 app.use('/api/venue-dashboard', venueDashboardLimiter, venueDashboardRoutes); // Handles promotions, events, reviews CRUD
 app.use('/api/venue/advisor/question', advisorQuestionLimiter);  // free text, tighter: 10/hour per account
 app.use('/api/venue/advisor', advisorLimiter, advisorRoutes);  // Roost: fact cards + chip chat (own limiter, see above)
-app.use('/api/venue-digest', digestOptOutLimiter, require('./routes/venueDigest')); // Monday digest unsubscribe link (signed token, no JWT)
 app.use('/api/availability', apiLimiter, availabilityRoutes); // 3-tap status pulse: down / maybe / not
 app.use('/api/calendar', apiLimiter, calendarRoutes);          // personal calendar events (CRUD, per-user)
 
@@ -1335,7 +1349,16 @@ io.use((socket, next) => {
 io.use(authenticateSocket);
 
 io.on('connection', (socket) => {
-  console.log(`Socket connected: ${socket.user.name} (${socket.user.id})`);
+  // SECURITY ROUND 5, 2026-08-20: the DISPLAY NAME is gone from this line.
+  // This is the highest-volume log statement in the app — one line per socket
+  // connection, so several per user per session — and it printed a real name
+  // beside the integer id. Run for a week and the Railway log IS a complete
+  // id-to-name directory of everyone who used the product, readable by anyone
+  // with dashboard access, and (once SENTRY_DSN is set) riding along on
+  // unrelated errors as console breadcrumbs. The id is what a connection log
+  // is for: it joins to every other line here and to the database. The name
+  // was never doing anything a lookup could not do on demand.
+  console.log(`Socket connected: user ${socket.user.id}`);
   registerHandlers(io, socket);
 });
 
