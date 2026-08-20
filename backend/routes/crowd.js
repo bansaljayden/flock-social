@@ -12,6 +12,14 @@ const { buildHoursByDay } = crowdEngine;
 const mlPredictor = require('../services/mlPredictor');
 const { upstreamSignal } = require('../utils/upstream');
 const { isPlaceIdShaped } = require('../utils/places');
+// ONE raw Place Details response per venue, shared with routes/venueSearch.js.
+// The crowd card and the detail card are opened together by App.js
+// openVenueDetail and used to buy the same Enterprise payload twice — see the
+// header of services/placeDetailsCache.js. `willCostUpstreamCall` is how the
+// charge below stays honest: true only when a NEW paid Google request will
+// actually be made, so a cache hit or a ride on somebody else's in-flight fetch
+// costs the ledger nothing.
+const { willCostUpstreamCall, fetchPlaceDetails } = require('../services/placeDetailsCache');
 
 // Use ML predictor when available, fall back to rule engine
 const {
@@ -471,47 +479,39 @@ function priceLevelToNum(priceLevel) {
   return map[priceLevel] ?? null;
 }
 
+// THIS FUNCTION NO LONGER CALLS GOOGLE. IT PROJECTS.
+//
+// It used to make its own paid Enterprise Place Details request, with a mask
+// that was a STRICT SUBSET of the one routes/venueSearch.js /details was asking
+// for — for the same place id, in the same tick, because App.js openVenueDetail
+// fires getVenueDetails and getCrowdPrediction together in one
+// Promise.allSettled. Two calls, one payload, two caches that could not see each
+// other, two charges on utils/placesBudget.js. The payload now has ONE owner,
+// services/placeDetailsCache.js, and this function shapes the crowd card's view
+// of it. The mask that reaches Google is a superset of the one this file used to
+// send, so every field read below is still fetched.
+//
+// NOTHING THE MODEL EATS CHANGED, and that is checkable rather than asserted:
+// `rating`, `user_ratings_total` and `price_level` below are the three trained
+// columns services/mlPredictor.js buildFeatureMap turns into `rating`,
+// `price_level`, `review_count` and `log_review_count`, and they are read off
+// the same Google fields, through the same priceLevelToNum, as before.
+// __tests__/placeDetailsSharedCache.test.js builds a feature map from a venue
+// shaped by this function and compares it, key by key, against one built from a
+// venue shaped by the pre-change code path over the identical Places payload. A
+// missing input here would NOT throw — buildFeatureMap substitutes the corpus
+// median — which is exactly how this class of bug shipped twice before.
+//
+// The null return is unchanged and still covers all three failure kinds: an
+// upstreamSignal abort, an unreachable/garbled upstream, and a Google `error`
+// body. Both callers turn it into a 502, which is the round-19 answer ("both
+// are Google failing rather than this server").
 async function fetchVenueFromGoogle(placeId, clientDay) {
   if (!API_KEY) return null;
 
-  // ENCODED. `placeId` is a raw path segment off the request — Express has
-  // already percent-DECODED it, so `/api/crowd/x%2F..%2Fadmin` arrives here as
-  // `x/../admin` and interpolating it raw builds a URL that the WHATWG parser
-  // then normalises into a DIFFERENT Google endpoint, called with our API key
-  // attached. A `?` or `#` in the id does the same to the query string.
-  //
-  // The encoding stays even though `placeIdParam` below now refuses anything
-  // that is not [A-Za-z0-9_-]{6,128}, so no traversal can reach this line any
-  // more: this function is not a route handler and nothing in its signature says
-  // its argument was validated, so it defends itself. One segment, always. A
-  // bogus id is then Google's 404, which fetchVenueFromGoogle already turns into
-  // a 502. (routes/publicCrowd.js has encoded its copy since it was written.)
-  // The deadline from round 12 is what makes the try/catch below load-bearing
-  // rather than paranoia: an upstreamSignal abort REJECTS this fetch, and a
-  // rejection here escaped to each route's outer catch as a 500 "Prediction
-  // error". Google timing out is Google failing, and both callers already have
-  // the right answer for that — a null return is a 502 in GET /:placeId and in
-  // /alternatives, which is the code the round-19 note picked for exactly this
-  // case ("both are Google failing rather than this server"). A non-JSON body
-  // from a proxy takes the same route out. Only a genuinely bad place id should
-  // ever have produced the same null, and it still does.
-  let p;
-  try {
-    const response = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {
-      headers: {
-        'X-Goog-Api-Key': API_KEY,
-        'X-Goog-FieldMask': 'id,displayName,formattedAddress,rating,userRatingCount,priceLevel,types,location,currentOpeningHours,utcOffsetMinutes',
-      },
-      // Round 12: no deadline meant a hung Google socket parked this request (and
-      // its pg pool slot) for ~5 minutes. See utils/upstream.js.
-      signal: upstreamSignal('places'),
-    });
-    p = await response.json();
-  } catch (err) {
-    console.error('[Crowd] Place details unreachable:', err.message);
-    return null;
-  }
-  if (!p || p.error) return null;
+  const out = await fetchPlaceDetails(placeId);
+  if (!out.ok) return null;
+  const p = out.place;
 
   // Extract opening hours. Round 14: one window for "today" could not express
   // a 24-hour venue (Google sends no `close` at all), split lunch/dinner
@@ -644,7 +644,17 @@ router.get('/:placeId',
         return res.json(gated);
       }
 
-      if (!allowPlacesSearch(req.user.id)) {
+      // CHARGED ONLY FOR A CALL THAT WILL ACTUALLY BE MADE. The Places payload is
+      // now shared with routes/venueSearch.js /details, which the client fires at
+      // the same moment as this route, so one of the two leads the Google call and
+      // the other rides it for free. Charging both would be charging for a call
+      // nobody made, which utils/placesBudget.js says masks the real burn rate.
+      //
+      // NO `await` BETWEEN THE QUESTION AND THE FETCH — willCostUpstreamCall is
+      // only true for the rest of this tick and fetchPlaceDetails registers its
+      // flight synchronously. Same rule routes/venueSearch.js has always followed
+      // between its cache read and its flight registration.
+      if (willCostUpstreamCall(placeId) && !allowPlacesSearch(req.user.id)) {
         return res.status(429).json({ error: 'Loading venues too fast. Give it a few seconds.' });
       }
 
@@ -1469,11 +1479,19 @@ router.get('/:placeId/alternatives',
       const cachedAlts = getCached(cacheKey);
       if (cachedAlts) return res.json(cachedAlts);
 
-      // Two paid Google calls per request — a Place Details for the target and
-      // a Text Search for the neighbours — so charge two. Round 15: the comment
-      // already said two and the charge was one, which let this endpoint spend
-      // twice its share of the budget; `cost` exists for exactly this.
-      if (!allowPlacesSearch(req.user.id, 2)) {
+      // Up to two paid Google calls per request — a Place Details for the target
+      // and a Text Search for the neighbours — so charge for the ones that will
+      // really happen. Round 15: the comment already said two and the charge was
+      // one, which let this endpoint spend twice its share of the budget; `cost`
+      // exists for exactly this. What is new is that the Place Details half can
+      // now be free: this endpoint is reached from a screen that has already
+      // fetched the same venue's payload (the card, and venueSearch /details),
+      // and services/placeDetailsCache.js holds it. The Text Search has no such
+      // cache and always costs one, so the floor is one and the ceiling is still
+      // two. Charging a flat two on a warm cache would be charging for a call
+      // nobody made.
+      const cost = willCostUpstreamCall(placeId) ? 2 : 1;
+      if (!allowPlacesSearch(req.user.id, cost)) {
         return res.status(429).json({ error: 'Loading venues too fast. Give it a few seconds.' });
       }
 
