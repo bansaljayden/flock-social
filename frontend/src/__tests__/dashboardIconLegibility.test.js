@@ -128,10 +128,13 @@ describe('no tab bar offers two tabs you cannot tell apart', () => {
    * needed distinguishing most ("Revenue" and "Money") were near-synonyms. A
    * tab bar whose icons repeat is a tab bar with no icons.
    */
-  it('admin tabs are three distinct glyphs', () => {
+  it('admin tabs are four distinct glyphs', () => {
+    // Four since Costs landed (2026-08-20). The count is here for the same
+    // reason the venue-tab count is: a fifth tab has to say what glyph it
+    // brings, rather than quietly reusing one and rebuilding the bug above.
     const names = tabIconNames('adminTabs');
-    expect(names).toHaveLength(3);
-    expect(new Set(names).size).toBe(3);
+    expect(names).toHaveLength(4);
+    expect(new Set(names).size).toBe(4);
   });
 
   it('venue tabs are six distinct glyphs', () => {
