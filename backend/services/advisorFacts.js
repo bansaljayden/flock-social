@@ -434,9 +434,18 @@ function corpusGate(profile) {
   return makeRefusal({
     id: 'refuse_no_baseline',
     reason: venueCorpus.corpusSummary(profile),
+    // WHAT WOULD UNLOCK IT IS NOT THE REFUSAL SAID AGAIN. The non-venue_only
+    // branch used to open "This venue is not in our measured corpus, so nothing
+    // model backed can be shown", which is word for word the claim `reason`
+    // above has already made, in the one field reserved for the way out. Every
+    // caller pastes both into one block, so the owner read the same sentence
+    // twice: the kitchen line rendered as "no forecast of ours to set beside
+    // it", then "we have no crowd history for this venue", then "this venue is
+    // not in our measured corpus", three statements of one fact before anything
+    // told them what to do. The path is the only thing this field owes them.
     whatWouldUnlock: status === 'venue_only'
       ? 'A baseline curve for this venue. It arrives with a corpus rebuild on our side, not with anything on yours.'
-      : 'This venue is not in our measured corpus, so nothing model backed can be shown. Your own slider readings build history for your venue that does not depend on the corpus.',
+      : 'Your own slider readings build history for your venue that does not depend on the corpus.',
   });
 }
 
@@ -505,6 +514,27 @@ function hour12(h) {
   const period = n >= 12 ? 'PM' : 'AM';
   const display = n === 0 ? 12 : n > 12 ? n - 12 : n;
   return `${display} ${period}`;
+}
+
+// hour12 above takes a bare hour. The intake clock COLUMNS do not hold one:
+// kitchen_last_order and its siblings come back as database time strings
+// ('21:00', '21:30'), and printing one straight into prose put "your last
+// orders at 21:00" in the same sentence as "around 8 PM". One room, two
+// vocabularies, and the raw one is the database's. This is the same defect
+// commit 1d0538b fixed for DATE columns on the last two cards, and
+// advisorPhrasing.clock12 fixed for the PHRASED answer. The fact LABELS the
+// phrasing reads from were still carrying the raw clock column, so the
+// template twin and every card printed it.
+//
+// An unparseable value returns null so the caller can fall back to the raw
+// string. A time we cannot read is still the owner's own answer, and dropping
+// it would be worse than printing it plainly.
+function clockTime(value) {
+  const m = /^(\d{1,2}):([0-5]\d)/.exec(String(value === null || value === undefined ? '' : value).trim());
+  if (!m) return null;
+  const h = Number(m[1]);
+  if (!Number.isInteger(h) || h > 23) return null;
+  return m[2] === '00' ? hour12(h) : hour12(h).replace(' ', `:${m[2]} `);
 }
 
 function toDateStr(v) {
@@ -935,12 +965,17 @@ async function buildListingReadBack(ctx, weekFacts, { now = new Date() } = {}) {
 
   // kitchen_last_order vs projected peak — migration 030's flagship sentence.
   if (p.kitchen_last_order) {
+    // The VALUE keeps the column exactly as stored: it is data, it is what the
+    // placeholder path and any consumer downstream should read, and rounding a
+    // stored time into prose form would lose the minutes. Only the LABEL, which
+    // is the sentence an owner reads, gets the clock treatment.
+    const kitchenClock = clockTime(p.kitchen_last_order) || p.kitchen_last_order;
     const kitchenFact = makeFact({
       id: 'intake_kitchen_last_order',
       value: p.kitchen_last_order,
       source: 'intake',
       asOf,
-      label: `You told us the kitchen takes last orders at ${p.kitchen_last_order}.`,
+      label: `You told us the kitchen takes last orders at ${kitchenClock}.`,
     });
     out.push(kitchenFact);
     if (peakFact) {
@@ -960,15 +995,19 @@ async function buildListingReadBack(ctx, weekFacts, { now = new Date() } = {}) {
         from: [kitchenFact.id, peakFact.id],
         asOf: now.toISOString(),
         label: !comparable
-          ? `Your kitchen takes last orders at ${p.kitchen_last_order} and ${weekday}'s projected peak lands around ${hour12(peakHour)}. Overnight hours make the order of those two ambiguous, so we state both and stop.`
+          ? `Your kitchen takes last orders at ${kitchenClock} and ${weekday}'s projected peak lands around ${hour12(peakHour)}. Overnight hours make the order of those two ambiguous, so we state both and stop.`
           : peakAtOrAfterLastOrder
-            ? `${weekday}'s projected peak lands around ${hour12(peakHour)}, at or after your last orders at ${p.kitchen_last_order}. Two facts, side by side.`
-            : `${weekday}'s projected peak lands around ${hour12(peakHour)}, before your last orders at ${p.kitchen_last_order}.`,
+            ? `${weekday}'s projected peak lands around ${hour12(peakHour)}, at or after your last orders at ${kitchenClock}. Two facts, side by side.`
+            : `${weekday}'s projected peak lands around ${hour12(peakHour)}, before your last orders at ${kitchenClock}.`,
       }));
     } else if (gateReason) {
       out.push(makeRefusal({
         id: 'refuse_kitchen_vs_peak',
-        reason: 'We hold your last order time but no forecast of ours to set beside it. ' + gateReason.reason,
+        // NAME WHAT WE HOLD, THEN LET THE GATE SAY WHY, ONCE. The prefix used
+        // to carry "but no forecast of ours to set beside it" and gateReason
+        // immediately said the same thing in its own words. Two sentences, one
+        // fact, and the reader has to check whether the second is a new claim.
+        reason: 'You have told us when the kitchen takes last orders. ' + gateReason.reason,
         whatWouldUnlock: gateReason.whatWouldUnlock,
       }));
     }
@@ -1046,7 +1085,7 @@ async function buildListingReadBack(ctx, weekFacts, { now = new Date() } = {}) {
     } else {
       out.push(makeRefusal({
         id: 'refuse_busy_days_check',
-        reason: 'We hold your busy days but no measured curve to set beside them. ' + gateReason.reason,
+        reason: 'You have told us which days run busiest for you. ' + gateReason.reason,
         whatWouldUnlock: gateReason.whatWouldUnlock,
       }));
     }
@@ -1129,7 +1168,7 @@ async function buildListingReadBack(ctx, weekFacts, { now = new Date() } = {}) {
     } else if (gateReason) {
       out.push(makeRefusal({
         id: 'refuse_event_days_vs_peak',
-        reason: 'We hold the days you programme but no forecast of ours to set beside them. ' + gateReason.reason,
+        reason: 'You have told us which days you programme. ' + gateReason.reason,
         whatWouldUnlock: gateReason.whatWouldUnlock,
       }));
     }
