@@ -768,6 +768,12 @@ router.get('/:placeId',
         bestTime,
         peak: peakResult.text,
         waitEstimate: waitEstimateTyped,
+        // Public Google facts, shipped so the owner override can re-derive the
+        // wait and capacity for its number on a CACHE HIT, where the venue
+        // object is gone: "95% full" above "No wait" is the two-surfaces-
+        // disagree bug inside one card. services/ownerReports.js reads both.
+        venueTypes: venue.types || [],
+        priceLevel: venue.price_level ?? null,
         isOpen: venue.isOpen,
         openHour: venue.openHour,
         closeHour: venue.closeHour,
