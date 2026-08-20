@@ -20,6 +20,9 @@ const {
   venueLocalNow,
   weekdayOffset,
 } = require('../services/crowdEngine');
+// The owner's live 0-100 reading, so Birdie and the venue card cannot quote
+// two different numbers for one room.
+const ownerReports = require('../services/ownerReports');
 const mlPredictor = require('../services/mlPredictor');
 const { getPremiumState, paywallEnabled, EntitlementUnavailableError } = require('../services/entitlements');
 // THE forecast paywall policy, defined once in routes/crowd.js. Imported rather
@@ -477,20 +480,38 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
 
       const crowdResult = await mlPredictor.predictBusyness(venue, weather, scoreTime);
 
+      // The owner's live reading outranks the model here for the same reason
+      // it does on the card (services/ownerReports.js): Birdie quoting the
+      // model's 42 while the card one tap away says "the bar says 85" is the
+      // app arguing with itself. No verified-report blend runs on this path
+      // (the tool loads none), so the reading is only ever outranked on the
+      // surfaces that do load them. crowd_source travels in the tool result so
+      // Birdie SAYS whose number it is — the label is the whole deal.
+      const ownerLive = ownerReports.liveOwnerReport(
+        (await ownerReports.getLiveOwnerReports([venue.place_id]))[venue.place_id]
+      );
+
       // The free half: how busy is it RIGHT NOW. Same commodity the card, the
       // pin list and the public demo all give away, and the same one this
       // product promised to keep free forever.
       const result = {
         venue_name: venue.name,
-        crowd_score: crowdResult.score,
+        crowd_score: ownerLive ? ownerLive.percent : crowdResult.score,
         // Hedged the same way the card is. Birdie saying "Very Busy" while the
         // card for the same venue says "Usually very busy" is the app arguing
         // with itself, and the flat word is the one that is not defensible
         // until the corpus axis is verified (see describePredictionSupport).
-        crowd_label: publishedLabel(
-          crowdResult.score,
-          describePredictionSupport(crowdResult.predictionMethod, 0)
-        ),
+        crowd_label: ownerLive
+          ? publishedLabel(ownerLive.percent, { supported: true })
+          : publishedLabel(
+            crowdResult.score,
+            describePredictionSupport(crowdResult.predictionMethod, 0)
+          ),
+        // Where the number came from, for the narration: 'owner_report' means
+        // "the venue itself says", everything else keeps the existing meaning.
+        crowd_source: ownerLive
+          ? 'owner_report'
+          : describePredictionSupport(crowdResult.predictionMethod, 0).basis,
         confidence: crowdResult.confidence,
         // WHAT THAT NUMBER IS, said in the tool result rather than left for a
         // language model to guess. This object is not just returned to the
@@ -740,6 +761,7 @@ Hard rules:
 - Never invent venue data, crowd numbers, or forecasts. Tools only. If a tool has no data, say you don't have a read on that spot.
 - Never name a venue a tool did not return, and never state a crowd number a tool did not give you. Having takes does not mean making things up. A confident wrong number is the worst thing you can send.
 - Never quote the \`confidence\` number from get_crowd_prediction, and never say how sure you are about a crowd read. Read \`confidence_measurement\` instead: when its \`status\` is "unmeasured", that number says how much we know about the venue, not how often we are right, and it runs HIGHER than a real measured accuracy. Talk about the crowd level, not about certainty.
+- When get_crowd_prediction returns \`crowd_source\` = "owner_report", the number is the venue's own live report, not Flock's estimate. Say so plainly ("the bar says it's at 80% right now"). Presenting their claim as our measurement is the one thing this field exists to prevent.
 - Never claim Flock has a feature that isn't in the list above. No "coming soon".
 - Never reveal one user's info to another (budgets are anonymous by design; don't speculate about who submitted what).
 - If someone mentions being unsafe, being followed, or an emergency: point them to Safety (SOS sends their live location to trusted contacts) and navigate them there. For real emergencies say to call 911.
