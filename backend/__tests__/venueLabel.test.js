@@ -167,6 +167,59 @@ test('an outranked owner reading carries the same words beside the number', () =
   assert.strictEqual(out.ownerReport.attribution, 'the club says');
 });
 
+// ---------------------------------------------------------------------------
+// 3b. The chain, so one reading is never captioned two ways
+//
+// The label used to come off exactly one source per surface: the dashboard
+// read venue_profiles.category, the consumer surfaces read Google's types.
+// Either can be missing on a real venue — the category chip is optional and
+// Google types some places thinly — and when the one a surface reads is blank
+// it printed the generic word beside the specific one on the other screen.
+// Both sides now walk the same chain, most specific first.
+// ---------------------------------------------------------------------------
+
+test("the owner's own category rides on the read row and beats Google's types", () => {
+  // A venue whose profile says brewery and whose Google types say bar: the
+  // owner's word for their own room wins.
+  const out = ownerReports.applyOwnerReport(
+    { score: 40, venueTypes: ['bar'] },
+    { ...freshOwnerRow(), profile_category: 'Brewery / Taproom' }
+  );
+  assert.strictEqual(out.ownerReport.noun, 'brewery');
+  assert.strictEqual(out.ownerReport.attribution, 'the brewery says');
+});
+
+test('a blank profile category falls through to the types rather than to the generic word', () => {
+  for (const blank of [null, undefined, '', '   ', 'Speakeasy']) {
+    const out = ownerReports.applyOwnerReport(
+      { score: 40, venueTypes: ['cafe'] },
+      { ...freshOwnerRow(), profile_category: blank },
+    );
+    assert.strictEqual(out.ownerReport.attribution, 'the cafe says',
+      `profile_category ${JSON.stringify(blank)} must not stop the chain`);
+  }
+});
+
+test('the read joins the profile so the category arrives without a second query', () => {
+  const sql = ownerReports.LIVE_OWNER_REPORTS_SQL;
+  assert.match(sql, /vp\.category AS profile_category/,
+    'the label source must ride on the row every serve path already reads');
+  assert.match(sql, /JOIN venue_profiles vp/, 'one join, not a per-venue lookup');
+  assert.match(sql, /vp\.verified = true/,
+    'and the join must still be the serve-time verification check');
+});
+
+test('the dashboard resolves the label down the same chain, ending at the generic word', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'venueDashboard.js'), 'utf8');
+  assert.match(src, /attributionCategory/, 'the chain lives in one named helper');
+  // profile category, then the corpus row, then Google's stored types.
+  assert.match(src, /normalizeCategory\(ctx\?\.category\)/);
+  assert.match(src, /SELECT venue_category, google_types FROM ml_venues/);
+  assert.match(src, /categoryFromTypes\(v\?\.google_types\)/);
+  assert.ok(!/ownerAttribution\(ctx\.category\)/.test(src),
+    'no serve path may read the profile column alone any more');
+});
+
 test('an explicit options.category outranks the types, and no category means "the venue says"', () => {
   const withCategory = ownerReports.applyOwnerReport(
     { score: 40, venueTypes: ['bar'] },

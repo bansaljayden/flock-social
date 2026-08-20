@@ -337,6 +337,13 @@ test('half B publishes a median and a count once the floor is cleared, and nothi
   assert.strictEqual(mine.source, 'owner_report');
   assert.strictEqual(mine.attribution, 'owner_asserted');
   assert.strictEqual(mine.value.peakReading, 20);
+  // The night is a database value in `value` and a date in the sentence. Roost
+  // prints "Aug 14" on every other card, so a raw ISO string here would be the
+  // column name leaking into copy — the same sweep lastNightVerdict.test.js
+  // runs over its own branches.
+  assert.doesNotMatch(mine.label, /\d{4}-\d{2}-\d{2}/,
+    'the cohort sentence must not print the column value');
+  assert.match(mine.value.night, /^\d{4}-\d{2}-\d{2}$/, 'the machine field keeps the ISO form');
 });
 
 test('half B never publishes a minimum, a maximum, a spread, a mean or a total', async () => {
