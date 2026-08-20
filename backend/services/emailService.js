@@ -215,7 +215,27 @@ function resetClient() {
 // deadline before failing. Every caller in the codebase sends exactly one
 // address, which is why refusing anything else costs nothing and closes the
 // class for whatever the next caller turns out to be.
-async function sendEmail({ to, subject, html, from = 'Flock <hello@flockcorp.com>' }) {
+// Extra RFC 5322 headers, for the one thing that needs them: the Monday
+// digest's List-Unsubscribe pair (RFC 8058). Treated exactly like the three
+// headers above rather than passed through, because a bare CR or LF in a name
+// or a value is header injection into the outgoing message, and the caller
+// builds one of these values out of a URL. Names are restricted to the token
+// characters RFC 5322 allows; a name outside that set is dropped rather than
+// repaired, so a caller that got a header name wrong sends no header instead
+// of a mangled one.
+function safeHeaders(headers) {
+  if (!headers || typeof headers !== 'object' || Array.isArray(headers)) return null;
+  const out = {};
+  for (const [name, value] of Object.entries(headers)) {
+    if (!/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/.test(name)) continue;
+    if (value == null || typeof value === 'object' || typeof value === 'function') continue;
+    const clean = String(value).replace(/[\r\n]+/g, ' ').trim();
+    if (clean) out[name] = clean;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+async function sendEmail({ to, subject, html, from = 'Flock <hello@flockcorp.com>', headers }) {
   if (!isMailableAddress(to)) {
     console.error('[email] refusing a recipient that is not one deliverable address:', maskAddress(to));
     return { sent: false, error: 'invalid recipient' };
@@ -227,6 +247,7 @@ async function sendEmail({ to, subject, html, from = 'Flock <hello@flockcorp.com
   // sites today, which is the argument for closing it now rather than after a
   // fourth caller builds one out of something it read.
   const safeFrom = String(from == null ? '' : from).replace(/[\r\n]+/g, ' ').trim();
+  const extraHeaders = safeHeaders(headers);
   const shown = maskAddress(recipient);
 
   // Round 21: resendClient() ran OUTSIDE the try below, so a throw from
@@ -247,7 +268,13 @@ async function sendEmail({ to, subject, html, from = 'Flock <hello@flockcorp.com
   }
   try {
     const { data, error } = await resend.emails.send(
-      { from: safeFrom, to: recipient, subject: safeSubject, html },
+      {
+        from: safeFrom,
+        to: recipient,
+        subject: safeSubject,
+        html,
+        ...(extraHeaders ? { headers: extraHeaders } : {}),
+      },
       { signal: upstreamSignal('email') }
     );
     if (error) {
@@ -473,6 +500,7 @@ module.exports = {
   isMailableAddress,
   MAILABLE_RE,
   safeSubjectLine,
+  safeHeaders,
   maskAddress,
   escapeHtml,
 };
