@@ -474,13 +474,52 @@ test('the per-venue daily QUESTION cap bites, and it sits under the chip answer 
   const r = await ask('how do I make mornings better');
   assert.strictEqual(r.body.mode, 'refusal', 'over the cap, the question declines');
   assert.strictEqual(modelCalls.length, 0, 'the charge is refused BEFORE the call, not after it');
-  // And it says the true thing. A question we could not RUN did not fail to be
-  // understood and did not fail a check, so it must not claim either: a
-  // refusal that misdescribes itself teaches the owner to rewrite a question
-  // that was fine.
-  assert.strictEqual(r.body.text, advisorFreeText.REFUSAL_BUSY);
+  // And it says the true thing. A refusal that misdescribes itself teaches the
+  // owner to rewrite a question that was fine, and this one used to: a spent
+  // allowance was reported with the words for an unreachable model, promising
+  // "another go shortly" for something that would refuse identically until
+  // midnight. It says what it is and when it lifts.
+  assert.match(r.body.text, /^Today's questions are used up\./);
+  assert.match(r.body.text, /They come back /, 'and it says when, which is the part that stops it reading as a fault');
+  assert.notStrictEqual(r.body.text, advisorFreeText.REFUSAL_BUSY);
   assert.notStrictEqual(r.body.text, advisorFreeText.REFUSAL_UNROUTABLE);
   assert.notStrictEqual(r.body.text, advisorFreeText.REFUSAL_VALVE);
+  // No upsell, ever: there is no plan that raises this number, so offering one
+  // inside the refusal would be selling a thing that does not exist.
+  assert.ok(!/upgrade|plan|pro|price|\$/i.test(r.body.text), 'a ceiling never sells a way around itself');
+});
+
+// The other half of the same guarantee. These two refusals were one sentence
+// until 2026-08-20 and the sentence was this one, which is why a spent ceiling
+// read as a broken product.
+test('a ceiling and an unreachable model are different sentences, and only the ceiling names a time', async () => {
+  resetAll();
+  installProfile();
+  // Nothing spent, and the ledger says yes to everything. What fails is the
+  // call itself, which is the case REFUSAL_BUSY was written for: not the
+  // owner's allowance, and no time we can promise them.
+  replies = [new Error('upstream 503')];
+  const r = await ask('how do I make mornings better');
+  assert.strictEqual(r.body.mode, 'refusal');
+  assert.strictEqual(modelCalls.length, 1, 'the call was attempted and it was the call that failed');
+  assert.strictEqual(ledger.get(7).questions, 1, 'and it was charged, because the upstream billed it either way');
+  assert.strictEqual(r.body.text, advisorFreeText.REFUSAL_BUSY, 'an upstream fault keeps the upstream-fault wording');
+  assert.doesNotMatch(r.body.text, /used up/, 'and it must never tell an owner they spent something they did not');
+});
+
+test('the ceiling sentence survives a database that cannot say when the day rolls over', () => {
+  // ceilingResetPhrase reads the boundary out of Postgres because CURRENT_DATE
+  // rolls over in the database session's timezone, which is the deployment's
+  // business and not ours to assert. When that read fails the sentence still
+  // has to be true, so the fallback names the boundary without a number.
+  const vague = advisorFreeText.refusalCeiling(advisorPhrasing.internals.RESET_UNKNOWN);
+  const timed = advisorFreeText.refusalCeiling('in about 6 hours');
+  for (const text of [vague, timed]) {
+    assert.match(text, /^Today's questions are used up\. They come back /);
+    assert.ok(!text.includes('—'), 'no em dash');
+    assert.ok(!/please|sorry|apolog/i.test(text), 'plain, and it does not apologise for a working limit');
+  }
+  assert.notStrictEqual(vague, timed, 'the measured phrase and the fallback are not the same sentence');
 });
 
 test('the global Postgres wall refuses the router call, and a database that cannot count refuses too', async () => {
