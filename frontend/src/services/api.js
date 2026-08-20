@@ -927,6 +927,18 @@ export async function getAdminAnalytics() {
   return request('/api/admin/analytics');
 }
 
+// The cost panel. Admin only, gated server side by requireAdmin on the whole
+// admin router, so this is the only reader and there is no client-side check
+// worth writing here.
+//
+// Everything it returns is labelled with what KIND of number it is: `observed`
+// is priced from the app's own meters, `worstCase` is priced from the ceilings
+// in the code, and `reconciled` is the only figure a human has read off an
+// invoice. The screen must keep them apart. See backend/services/costModel.js.
+export async function getAdminCosts() {
+  return request('/api/admin/costs');
+}
+
 // Venue votes — member votes carry voter identities, guest-link votes are
 // folded in as guest_count only.
 export async function getFlockVotes(flockId) {
