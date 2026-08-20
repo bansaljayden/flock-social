@@ -1304,6 +1304,11 @@ module.exports = {
   CORPUS_AS_OF,
   EVENT_RADIUS_KM,
   tzOffsetMinutes,
+  // 'Aug 22', not '2026-08-22'. Exported because the verdict and cohort
+  // builders write owner-facing sentences around the same calendar days this
+  // module does, and a date helper that lives in one of three files that all
+  // print dates is a raw ISO string waiting to reappear in the other two.
+  shortDate,
   assertCleanCopy,
   externalText,
   EXTERNAL_TEXT_MAX,

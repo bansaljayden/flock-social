@@ -16446,15 +16446,48 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {intelReady && venueIntel.week?.length > 0 && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Week Ahead (projected evening peak)</h3>
-              <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-end', height: '60px' }}>
-                {venueIntel.week.map((d) => (
-                  <div key={d.date} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                    <div style={{ width: '100%', height: `${Math.max(3, (d.peakScore || 0) * 0.55)}px`, backgroundColor: d.peakScore > 70 ? colors.red : d.peakScore > 45 ? colors.amber : colors.steel, borderRadius: '4px 4px 0 0' }} />
-                    <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginTop: '4px' }}>{d.weekday}</span>
-                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{d.peakScore ?? '–'}</span>
+              {(() => {
+                // A busy venue's projected evenings all land in one band, and
+                // this chart used to colour by band alone (>70 red, >45 amber,
+                // else steel) with its own thresholds. So a real week of 73,
+                // 75, 84, 85 came out as six identical saturated red blocks:
+                // it read as an error state rather than a chart, and the one
+                // thing a week view exists to show — which evening is the big
+                // one — was the only thing it could not show.
+                //
+                // Two changes. The HUE now comes from crowdColorFor, the same
+                // green/amber/red scale as the card, the hour bars and the map
+                // pins, because 78 has to mean the same thing on every surface
+                // of this app. And the WEIGHT differentiates inside whatever
+                // range the week actually occupies: the quietest projected
+                // evening is drawn faintest, the busiest at full strength, so
+                // twelve points of spread is twelve points of visible spread.
+                //
+                // Heights stay proportional to the score from zero, and the
+                // number under each bar is still printed, so the ramp adds a
+                // reading order without exaggerating any gap.
+                const scores = venueIntel.week
+                  .map((d) => d.peakScore)
+                  .filter((s) => Number.isFinite(s));
+                const lo = scores.length ? Math.min(...scores) : 0;
+                const hi = scores.length ? Math.max(...scores) : 0;
+                const weightFor = (s) => {
+                  if (!Number.isFinite(s)) return 0.35;
+                  if (hi === lo) return 1;
+                  return 0.45 + 0.55 * ((s - lo) / (hi - lo));
+                };
+                return (
+                  <div style={{ display: 'flex', gap: '4px', alignItems: 'flex-end', height: '60px' }}>
+                    {venueIntel.week.map((d) => (
+                      <div key={d.date} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                        <div style={{ width: '100%', height: `${Math.max(3, (d.peakScore || 0) * 0.55)}px`, backgroundColor: crowdColorFor(d.peakScore, colors) || 'var(--border-mid)', opacity: weightFor(d.peakScore), borderRadius: '4px 4px 0 0' }} />
+                        <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginTop: '4px' }}>{d.weekday}</span>
+                        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{d.peakScore ?? '–'}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
+                );
+              })()}
             </div>
           )}
 

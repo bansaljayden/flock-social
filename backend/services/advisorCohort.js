@@ -557,7 +557,7 @@ async function buildCohortSameNight(ctx, { now = new Date() } = {}) {
     value: { night: own.night, hour: own.hour, peakReading: own.reading },
     source: 'owner_report',
     asOf: own.night,
-    label: `Your own highest reading on ${own.night}, a ${weekday}, was ${own.reading}, posted around ${hour12(own.hour)}.`,
+    label: `Your own highest reading on ${facts.shortDate(own.night)}, a ${weekday}, was ${own.reading}, posted around ${hour12(own.hour)}.`,
   })];
 
   const cohort = await cohortNightAggregate({
