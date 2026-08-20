@@ -435,3 +435,84 @@ test('a non-admin cannot verify anything', async () => {
   assert.strictEqual(res.status, 403);
   assert.strictEqual(log.length, 0);
 });
+
+// ---------------------------------------------------------------------------
+// 6. The weekly evening peak ranks on the ordering axis, and the axis field
+//    never reaches the owner
+//
+// HOUR-RANKING-EVAL.md moved every "which hour is better" decision off the
+// model's score and onto the popular-times curve. /intelligence kept its own
+// argmax on `score`, so the owner's Week Ahead named a different peak hour
+// than every other surface for the same evening — and once mlPredictor started
+// carrying `baselineScore` on each entry, this route began publishing the
+// internal ordering field that routes/crowd.js has always stripped.
+// ---------------------------------------------------------------------------
+
+// An evening where the two axes DISAGREE: the model likes 8 PM, the baseline
+// curve likes 9 PM. Ranking on the wrong one is visible in the answer.
+const AXES_DISAGREE = [
+  { hour: '8 PM', score: 90, baselineScore: 40 },
+  { hour: '9 PM', score: 70, baselineScore: 80 },
+];
+
+async function intelWith(hourly, placeId) {
+  const realHourly = mlPredictor.predictHourlyForecast;
+  mlPredictor.predictHourlyForecast = async () => hourly.map((h) => ({ ...h }));
+  try {
+    handlers = [ctxIs({ id: 9, google_place_id: placeId, verified: true })];
+    return await call('GET', '/api/venue-dashboard/intelligence');
+  } finally {
+    mlPredictor.predictHourlyForecast = realHourly;
+  }
+}
+
+test('the week names the hour the ordering axis picks, and the level the model gives it', async () => {
+  const res = await intelWith(AXES_DISAGREE, 'PLACE_ORDERING');
+  assert.strictEqual(res.body.available, true);
+  assert.ok(res.body.week.length > 0, 'a week was built');
+  for (const day of res.body.week) {
+    assert.strictEqual(day.peakHour, '9 PM',
+      'the peak hour must come from the baseline curve, not from the model score');
+    // And the LEVEL is read at the hour just named, so the pair describes one
+    // hour rather than two.
+    assert.strictEqual(day.peakScore, 70,
+      'the published number must be the model score OF THE NAMED HOUR');
+  }
+});
+
+test('with no baseline on any hour the week falls back to model scores, as the card does', async () => {
+  const res = await intelWith(
+    [{ hour: '8 PM', score: 90 }, { hour: '9 PM', score: 70 }],
+    'PLACE_NO_BASELINE'
+  );
+  assert.strictEqual(res.body.week[0].peakHour, '8 PM');
+  assert.strictEqual(res.body.week[0].peakScore, 90);
+});
+
+test('an empty evening is a null peak, not a crash and not a -1', async () => {
+  const res = await intelWith([], 'PLACE_EMPTY_EVENING');
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.week[0].peakScore, null);
+  assert.strictEqual(res.body.week[0].peakHour, null);
+});
+
+test('the internal ordering field never reaches the owner', async () => {
+  const res = await intelWith(AXES_DISAGREE, 'PLACE_STRIP_FIELD');
+  assert.ok(res.body.todayHourly.length > 0, 'there are bars to check');
+  for (const bar of res.body.todayHourly) {
+    assert.ok(!('baselineScore' in bar),
+      'baselineScore is the serve-path ordering axis; publishing it invites a client to re-rank');
+  }
+  // The published level per hour is still there — the strip drops one field,
+  // not the bar.
+  assert.strictEqual(res.body.todayHourly[0].score, 90);
+  assert.ok(!JSON.stringify(res.body.week).includes('baselineScore'));
+});
+
+test('the route ranks through crowdEngine.orderingAxis rather than its own argmax', () => {
+  const route = SOURCE.slice(SOURCE.indexOf("cacheSet(`intel:") - 4000, SOURCE.indexOf("cacheSet(`intel:"));
+  assert.match(route, /crowdEngine\.orderingAxis\(evening\)\.valueOf/,
+    'one definition of which number ranks hours, shared with the card');
+  assert.ok(!/b\.score > a\.score/.test(route),
+    'the model-score argmax must be gone, not merely shadowed');
+});

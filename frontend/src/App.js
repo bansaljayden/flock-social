@@ -1025,6 +1025,24 @@ const crowdLabelFor = (score) => {
   if (score <= 80) return 'Busy';
   return 'Very Busy';
 };
+// THE MEASURED HOUR-ORDERING FLOOR, mirrored from
+// backend/services/crowdEngine.js HOUR_ORDERING_MIN_GAP.
+//
+// Two hours closer together than this cannot be ordered by anything Flock
+// has: on within-night hour pairs the model orders 62.7% right and the
+// popular-times curve alone orders the same pairs 63.1% right, and inside ten
+// points it is a coin flip (backend/scripts/ml/HOUR-RANKING-EVAL.md). Every
+// server-side "which hour is better" decision refuses below this number, so
+// any client that draws its own comparison has to refuse at the same one, or
+// the card publishes a direction the sentence beside it declines to publish.
+//
+// This is an ORDERING floor and it is not interchangeable with the model's
+// level error: the level MAE is a statement about how far one number sits
+// from the truth, which licenses nothing about whether one hour outranks
+// another. __tests__/hourOrderingFloor.test.js pins this to the server's
+// constant so the two cannot drift.
+const HOUR_ORDERING_MIN_GAP = 10;
+
 // Red at 61+, matching the site. `c` is the theme palette when a caller has it.
 const crowdColorFor = (score, c) => {
   if (!Number.isFinite(score)) return null;
@@ -10952,14 +10970,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     {(() => {
                       if (!cd && !isClosed) return null; // no trend claims while loading
                       // Trend arrow: compare "Now" to next-hour prediction.
-                      // Skip if next hour is closed/unknown — model's MAE is ~5pts so use that as the dead-zone threshold.
+                      // Skip if the next hour is closed or unknown.
+                      //
+                      // The dead zone is HOUR_ORDERING_MIN_GAP, the measured
+                      // hour-ordering floor. It used to be 5, justified in this
+                      // comment by the model's level MAE being about 5 points,
+                      // and that was a level argument licensing an ordering
+                      // claim: "Rising" says the next hour OUTRANKS this one,
+                      // and inside ten points that call is a coin flip
+                      // (HOUR-RANKING-EVAL.md). Every server-side hour
+                      // comparison refuses below the same number, so this arrow
+                      // stopped being the one surface willing to name a
+                      // direction the best-time sentence beside it refuses to.
                       const cur = (Number.isFinite(score) && score > 0) ? score : (Number.isFinite(hourlyData[0]?.score) ? hourlyData[0].score : null);
                       const next = Number.isFinite(hourlyData[1]?.score) ? hourlyData[1].score : null;
                       if (cur == null || next == null || next <= 0) return null;
                       const diff = next - cur;
-                      const arrow = diff >= 5 ? '↗' : diff <= -5 ? '↘' : '→';
-                      const label = diff >= 5 ? 'Rising' : diff <= -5 ? 'Falling' : 'Steady';
-                      const color = diff >= 5 ? colors.red : diff <= -5 ? colors.steel : 'var(--text-secondary)';
+                      const rising = diff >= HOUR_ORDERING_MIN_GAP;
+                      const falling = diff <= -HOUR_ORDERING_MIN_GAP;
+                      const arrow = rising ? '↗' : falling ? '↘' : '→';
+                      const label = rising ? 'Rising' : falling ? 'Falling' : 'Steady';
+                      const color = rising ? colors.red : falling ? colors.steel : 'var(--text-secondary)';
                       return (
                         <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color, letterSpacing: '0.3px' }}>{arrow} {label}</span>
                       );

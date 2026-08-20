@@ -1467,12 +1467,24 @@ router.get('/intelligence', requirePremium, async (req, res) => {
       day.setDate(day.getDate() + d);
       day.setHours(17, 0, 0, 0);
       const evening = await mlPredictor.predictHourlyForecast(venue, weather, 17, 7, day);
-      const peak = evening.reduce((a, b) => (b.score > a.score ? b : a), { score: -1 });
+      // WHICH evening hour is the peak is an ordering question, and ordering
+      // is not the model's job any more: on within-night hour pairs the
+      // trained delta layer scores 62.7% against the popular-times curve's
+      // 63.1%, negative in every gap bucket (scripts/ml/HOUR-RANKING-EVAL.md).
+      // crowdEngine.orderingAxis is the one definition of which number ranks
+      // hours, and it picks the axis for the whole evening at once, falling
+      // back to model scores when any hour lacks a baseline. HOW BUSY that
+      // hour is stays the model's number, read at the hour just named, so the
+      // pair the owner reads describes one hour rather than two.
+      const rank = crowdEngine.orderingAxis(evening).valueOf;
+      const peak = evening.length
+        ? evening.reduce((a, b) => (rank(b) > rank(a) ? b : a), evening[0])
+        : null;
       week.push({
         date: day.toISOString().slice(0, 10),
         weekday: day.toLocaleDateString('en-US', { weekday: 'short' }),
-        peakScore: peak.score ?? null,
-        peakHour: peak.hour ?? null,
+        peakScore: peak ? (peak.score ?? null) : null,
+        peakHour: peak ? (peak.hour ?? null) : null,
       });
     }
 
@@ -1480,7 +1492,12 @@ router.get('/intelligence', requirePremium, async (req, res) => {
       available: true,
       venue: { name: venue.name, placeId: venue.place_id },
       now: { score: current.score, label: current.label, method: current.predictionMethod || (current.dataSourcesUsed?.includes('ml_model') ? 'ml' : 'rule_engine') },
-      todayHourly,
+      // `baselineScore` is a SERVE-PATH field, dropped here exactly as
+      // routes/crowd.js drops it from the consumer card: it is the number
+      // orderingAxis ranks on, and publishing it invites a client to re-derive
+      // an ordering of its own beside the one the server already decided. The
+      // published level per hour is the model's, which is what these bars are.
+      todayHourly: todayHourly.map(({ baselineScore, ...bar }) => bar),
       week,
       model: current.modelVersion || null,
       generatedAt: new Date().toISOString(),
