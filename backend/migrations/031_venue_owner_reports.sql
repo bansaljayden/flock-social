@@ -16,7 +16,8 @@
 -- account, that the building is at busy_percent right now. It is:
 --
 --   * ATTRIBUTABLE — venue_user_id is the authenticated owner, and every
---     surface that publishes the number labels it ("the bar says", never
+--     surface that publishes the number labels it as the venue's own claim
+--     (the category-derived attribution from utils/venueLabel.js, never
 --     Flock's own voice). A user seeing 72% can tell who said it.
 --   * PERISHABLE — the serve path reads only rows younger than 90 minutes
 --     (services/ownerReports.js OWNER_REPORT_TTL_MINUTES; the SQL interval and
