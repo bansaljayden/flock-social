@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Nightly context snapshots — the why-layer's memory of the evening.
+// Nightly context snapshots — the why-layer's memory of the day.
 //
 // WHAT THIS DOES. Every sweep, for each city that contains a verified claimed
 // venue, it persists the two context signals that currently evaporate:
@@ -11,16 +11,17 @@
 //     event answer, ever. The 8-day forward window means each night gets ~8
 //     chances to be captured before it happens, so one missed run costs
 //     nothing.
-//   * WEATHER — during the local evening (17:00-23:00), one reading per city
-//     per hour into night_context (migration 034), through the SAME budgeted,
-//     coalesced weatherService.getWeather path every other caller uses. No new
-//     vendor, no new spend shape; seven readings a night per city is under 2%
-//     of the 950/day weather allowance.
+//   * WEATHER — across the local service day (07:00-23:59), one reading per
+//     city per hour into night_context (migration 034), through the SAME
+//     budgeted, coalesced weatherService.getWeather path every other caller
+//     uses. Roost serves any venue type, breakfast cafes included, so the
+//     window covers the whole trading day, not just bar hours. The budget
+//     arithmetic lives at SNAPSHOT_START_HOUR below.
 //
 // SCHEDULING. server.js registers runNightContextSweep on an interval beside
 // crowdAlertsInterval, gated on nightContextEnabled() (NIGHT_CONTEXT_ENABLED,
 // default ON — the job is cheap and pure-write). The 30-minute cadence hits
-// every evening hour at least once; the second tick inside an hour lands on
+// every snapshot hour at least once; the second tick inside an hour lands on
 // weatherService's 30-minute cache, so it refreshes the row without a second
 // vendor call.
 //
@@ -60,8 +61,22 @@ const { getWeather } = require('./weatherService');
 const { CITIES } = require('../scripts/ml/config');
 
 const NIGHT_CONTEXT_INTERVAL_MS = 30 * 60 * 1000;
-const EVENING_START_HOUR = 17;
-const EVENING_END_HOUR = 23; // inclusive; 17:00-23:59 local
+// The snapshot window is the full service day — Roost serves any venue type,
+// and a breakfast cafe's dead Tuesday morning is as real a why-question as a
+// bar's dead Friday night.
+//
+// BUDGET ARITHMETIC, kept next to the constants it justifies: 17 hourly
+// slots (7..23) x at most 2 sweep ticks per slot = 34 getWeather calls per
+// city per day worst case, and the second tick of a slot rides
+// weatherService's 30-minute cache in all but clock-edge cases, so ~17
+// typical. Against the shared WX_DAILY of 950: one city 17-34/day (2-4%),
+// two cities 34-68 (4-7%), five cities 85-170 (9-18%). Today's resolved city
+// count is one or two, so hourly across the whole day fits comfortably. If
+// the watched-city count ever nears ten (170-340/day, up to a third of a
+// budget shared with live crowd scoring), thin the hours OUTSIDE 17:00-23:00
+// to every 2h before raising any ceiling.
+const SNAPSHOT_START_HOUR = 7;
+const SNAPSHOT_END_HOUR = 23; // inclusive; 07:00-23:59 local
 const EVENTS_WINDOW_DAYS = 8;
 const MAX_EVENT_PAGES = 5; // same cap as collectEvents.fetchCityWindow
 
@@ -172,7 +187,7 @@ async function resolveCities() {
 // a refusal or an outage; the hour simply stays unwritten.
 // ---------------------------------------------------------------------------
 async function snapshotWeather(cityKey, clock) {
-  if (clock.hour < EVENING_START_HOUR || clock.hour > EVENING_END_HOUR) return false;
+  if (clock.hour < SNAPSHOT_START_HOUR || clock.hour > SNAPSHOT_END_HOUR) return false;
   const { lat, lon } = CITIES[cityKey];
   const reading = await getWeather(lat, lon);
   if (!reading) return false;
@@ -433,7 +448,7 @@ module.exports.__test = {
   tmSpent: () => ncTmDayCount,
   cityWallClock,
   offsetMinutesForZone,
-  EVENING_START_HOUR,
-  EVENING_END_HOUR,
+  SNAPSHOT_START_HOUR,
+  SNAPSHOT_END_HOUR,
   NC_TM_DAILY,
 };
