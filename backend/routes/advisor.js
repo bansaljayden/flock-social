@@ -773,6 +773,53 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
     }
 
     const userId = req.user.id;
+
+    // ── IS THE CALLER A VENUE AT ALL ────────────────────────────────────────
+    //
+    // requirePro DOES NOT ANSWER THAT, and cannot, in the posture this product
+    // actually deploys in. services/venueEntitlements.js returns next() outright
+    // while VENUE_BILLING_ENABLED is unset, which it is on Railway and which is
+    // the correct pilot posture -- every CLAIMED venue sees the advisor without
+    // anyone selling them a tier first. What that leaves is a gate that reads
+    // as an authorisation check at every call site and is a pass-through at
+    // runtime, and this is the one route where the difference is money: the
+    // very next line is a Gemini call, and the advice branch below is a second
+    // one, both charged to a ledger whose unit of identity is an account.
+    //
+    // Signup is free and unlimited. Measured on the preview stack: an ordinary
+    // consumer account with no venue_profiles row and no subscription got a
+    // real two-call advice answer, and moved the GLOBAL advisor_spend row. At
+    // roughly six and a half thousand tokens a question and twenty questions an
+    // account, sixteen throwaway accounts drain the two million token global
+    // wall and put every real venue on template answers for the rest of the
+    // day, on our invoice.
+    //
+    // So the spend gets the check the tier gate is not making. Not a TIER check
+    // -- that stays exactly as dormant as it is meant to be -- just the floor
+    // underneath it: this endpoint is for a venue, and a caller with no venue
+    // profile is not one. The chip path does not need this; a venue-less
+    // account gets a fact block with nothing in it and advisorPhrasing renders
+    // the refusal before it charges anything (advisorPhrasing.js, phrase()).
+    // Free text has no such shape: the router is asked to classify the question
+    // before anything has looked at whose venue it is about.
+    //
+    // Hoisted rather than duplicated: the advice branch below needs this same
+    // context and used to fetch it again after both calls were already spent.
+    // getVenueContext answers null for BOTH "no such venue" and "this build has
+    // no fact engine", so the two are told apart here rather than conflated:
+    // only a build that can look is allowed to conclude anything from not
+    // finding one.
+    const canReadVenue = !!advisorFacts && typeof advisorFacts.getVenueContext === 'function';
+    const ctx = canReadVenue ? await advisorFacts.getVenueContext(userId) : null;
+    if (canReadVenue && !(ctx && ctx.profile)) {
+      return res.json({
+        mode: 'refusal',
+        text: `${FEATURE_NAME} answers questions about a venue you have claimed. Claim your venue first and every answer here comes from its own numbers.`,
+        sources: [],
+        question: clean.text,
+      });
+    }
+
     const route = await advisorFreeText.classify({ userId, question: clean.text });
 
     if (route.mode === 'refused') {
@@ -797,10 +844,9 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
     // around anything about this venue. The router may attach an intent when
     // the venue's own numbers would inform the answer; those facts ride along
     // as placeholders, and a refusal in the block is simply dropped, because
-    // advice does not need the venue's data to be answerable.
-    const ctx = advisorFacts && typeof advisorFacts.getVenueContext === 'function'
-      ? await advisorFacts.getVenueContext(userId)
-      : null;
+    // advice does not need the venue's data to be answerable. `ctx` is the one
+    // fetched above, before the router was paid for, rather than a second
+    // lookup after both calls have already been spent.
     let groundedFacts = [];
     if (route.intentId) {
       const block = await buildFactBlock(userId, route.intentId);
