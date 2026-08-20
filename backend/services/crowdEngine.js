@@ -874,6 +874,12 @@ function generateHourlyForecast(venue, weather, startHour, count, baseTimestamp)
       // direct callers (services/crowdAlerts.js) ship the same shape
       // mlPredictor.predictHourlyForecast does.
       predictionMethod: 'rule_engine',
+      // The ordering axis, and always null here: this function is the category
+      // prior, and a category prior has no popular-times curve behind it. The
+      // field is present rather than absent so orderingAxis sees an explicit
+      // "no baseline" and falls the whole candidate set back to model scores,
+      // instead of a missing key that could read as an unset one.
+      baselineScore: null,
     });
   }
 
@@ -1209,29 +1215,85 @@ function isOpenHour(h, types, openHour, closeHour, closeMinute) {
 // "Now" is always the VENUE's hour, supplied by the caller. Reading the process
 // clock here would score a Philadelphia bar on Railway's UTC afternoon.
 
-// "Quieter" has to clear this margin before we send anyone to a different hour.
+// THE LEVEL noise floor. Not the ordering one — see HOUR_ORDERING_MIN_GAP.
 //
-// Round 18 — THE NUMBER THIS WAS JUSTIFIED WITH WAS STALE. It read "inside 5
-// points is a coin flip at this model's accuracy (metadata reports ~58% of
-// predictions within 15)". 58% is from a model that no longer ships.
-// scripts/ml/models/model_metadata.json, v2.5.0-starling, holdout
-// (barcelona/miami/tokyo, 419k rows): mae 5.81, rmse 12.85, within_5 76.1%,
-// within_10 81.1%, within_15 85.1%. The leave-one-city-out CV run on the same
-// model reports median_ae 0.92.
+// This is the smallest difference in a PUBLISHED score this file treats as a
+// real difference rather than model noise. It is derived from the shipped
+// model's holdout error (scripts/ml/models/model_metadata.json: mae 5.81,
+// rmse 12.85, within_5 76.1%, within_10 81.1%), sitting just under the mean
+// absolute error so a gap smaller than it is inside the band that already
+// contains three quarters of the model's predictions.
 //
-// 5 still holds on the real figures, for a better reason than the old one: it
-// is just under the mean absolute error, so a gap smaller than this is inside
-// the band that already contains three quarters of the model's predictions.
-// Recommending a different hour on a difference that size is recommending
-// noise. It is NOT a coin flip — most predictions are close (the median error
-// is under a point) and the mean is dragged out by a thin tail of bad ones,
-// which is exactly why the threshold is set from the spread and not the median.
+// Two things still stand on it, and neither is a claim about hour order:
+// MAX_SINGLE_REPORT_LEVERAGE below (deliberately equal, so one stranger's tap
+// cannot move a public number by more than the difference this file refuses to
+// read as signal), and routes/venueDashboard.js's STRIP_ORDERING_MIN_GAP,
+// which is one label band (20) plus this margin.
 //
-// Re-derive this if the model is retrained; the figures above are the ones to
-// re-read, and __tests__/socketTakedownParity.test.js keeps the margin inside
-// the band the metadata actually reports.
+// It USED to be what recommendBestTime acted on, and that was the defect fixed
+// on 2026-08-20. A level error band cannot license an ordering claim: how far
+// off the printed number is says nothing about whether 9 PM outranks 8 PM.
+// Re-derive it from the metadata if the model is retrained;
+// __tests__/socketTakedownParity.test.js keeps it inside the reported band.
 const TIE_MARGIN = 5;
+
+// THE ORDERING noise floor, and the only one the best-time line may use.
+//
+// Measured, not argued: scripts/ml/HOUR-RANKING-EVAL.md, 35,052 hour pairs
+// inside a venue-night on the v2.6.0-STARLING holdout gate slice. Ordering two
+// hours whose TRUE separation is under 10 points is 53.2% right for the model
+// and 53.8% for the popular-times baseline. That is a coin flip, and 21% of
+// all pairs sit there. Above 20 points both predictors reach ~67%.
+//
+// So 10 is where a difference stops being a coin flip on the measurement that
+// asked this exact question, and below it the honest answer is that the hours
+// are the same. TIE_MARGIN (5) was never entitled to license this decision —
+// it comes from the size of the LEVEL error, which is a different quantity.
+//
+// Re-derive by re-running scripts/ml/train/hour_ranking_eval.py and reading
+// the gap-bucket table; do not re-derive it from model_metadata.json.
+const HOUR_ORDERING_MIN_GAP = 10;
+
 const NO_WINDOW_LEFT = 'No good window left today';
+// Said when there ARE open hours ahead but nothing separates them by more than
+// HOUR_ORDERING_MIN_GAP. Naming one of them would be naming noise.
+const NO_QUIET_HOUR = 'No quiet hour stands out';
+
+// ---------------------------------------------------------------------------
+// WHICH NUMBER ORDERS THE HOURS — the 2026-08-20 serve change.
+//
+// The card publishes the MODEL's level: on the gate slice it beats the
+// popular-times baseline on MAE (29.42 vs 31.48) and within-10 (20.7% vs
+// 19.2%), so the 0-100 integer stays the model's and nothing here touches it.
+//
+// The SHAPE is a different question with a different answer. On within-night
+// hour pairs the trained delta layer orders hours 62.7% right and the baseline
+// curve alone orders the same pairs 63.1% right; a venue-block bootstrap of
+// model minus baseline is -0.49pp, CI95 [-0.88, -0.12], negative in every gap
+// bucket (HOUR-RANKING-EVAL.md sections 2 and 4). The delta layer is not
+// merely useless for ordering hours, it is significantly slightly negative. So
+// every "which hour is better" decision in this file ranks on the baseline
+// curve, and the model keeps the number on the dial.
+//
+// Entries carry `baselineScore` when mlPredictor produced them (the SMOOTHED
+// anchor the delta is added to — services/mlPredictor.js getBaseline, the same
+// quantity the evaluation's baseline arm used, not the raw popular_times cell).
+// The axis is chosen for the WHOLE candidate set at once and never mixed: half
+// a ranking on one number and half on another is a third predictor nobody
+// measured. Rule-engine hours have no baseline, so a set containing one falls
+// back to model scores entirely, which is the old behaviour and is still what
+// the hedge above protects.
+function orderingAxis(entries) {
+  const usable = Array.isArray(entries) && entries.length
+    && entries.every(e => Number.isFinite(Number(e && e.baselineScore))
+                          && Number(e.baselineScore) > 0);
+  return {
+    basis: usable ? 'baseline' : 'model',
+    valueOf: usable
+      ? (e) => Number(e.baselineScore)
+      : (e) => Number(e && e.score),
+  };
+}
 
 function dayOffsetForIndex(startHour, i) {
   return Math.floor((startHour + i) / 24);
@@ -1267,8 +1329,17 @@ function nowCopy(currentScore, rushAhead) {
 
 // Structured answer: the copy plus which forecast entry it points at, so a
 // chart can highlight the same hour the sentence names.
+//
+// LEVEL vs SHAPE, in one function. Every WORD about now ("Packed now", "Now is
+// good") is chosen from `currentScore`, the model's published level, because
+// that is the number measured to beat the baseline. Every DECISION about which
+// hour outranks which is taken on the ordering axis above, because that is the
+// question the baseline curve was measured to win. The two never swap jobs.
 function recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOpen, options = {}) {
-  const nothing = { text: NO_WINDOW_LEFT, hourLabel: null, index: -1, dayOffset: 0 };
+  const nothing = {
+    text: NO_WINDOW_LEFT, hourLabel: null, index: -1, dayOffset: 0,
+    orderingBasis: null, orderingMinGap: HOUR_ORDERING_MIN_GAP,
+  };
   if (!hourlyForecast || !hourlyForecast.length) return nothing;
 
   const startHour = parseHourLabel(hourlyForecast[0].hour);
@@ -1301,6 +1372,8 @@ function recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOp
   const nowDay = dayOffsetForIndex(startHour, Math.max(0, nowIdx));
   const openNow = isOpen != null ? isOpen : openAt(nowHour, 0);
 
+  const nowEntry = hourlyForecast[Math.max(0, nowIdx)];
+
   const ahead = [];
   for (let i = nowIdx + 1; i < hourlyForecast.length; i++) {
     const h = parseHourLabel(hourlyForecast[i].hour);
@@ -1309,13 +1382,28 @@ function recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOp
     ahead.push({
       index: i,
       score: hourlyForecast[i].score,
+      baselineScore: hourlyForecast[i].baselineScore,
       label: hourlyForecast[i].hour,
       dayOffset: sameNightOffset(nowHour, h, calendarOffset),
       inPeak: peakStartIdx != null && i >= peakStartIdx && i <= peakEndIdx,
     });
   }
 
-  const quietest = (list) => list.reduce((a, b) => (b.score < a.score ? b : a), list[0]);
+  // One axis for the whole decision, chosen over the hours it will actually
+  // compare. When the venue is shut, "now" is neither a candidate nor a
+  // comparison point, and including it would drag the whole decision back onto
+  // model scores: a closed hour has no collected baseline, so it fails the
+  // all-or-nothing test on its own and takes every open hour down with it.
+  const axis = orderingAxis(openNow === false ? ahead : [nowEntry, ...ahead]);
+  const rank = axis.valueOf;
+  // What "now" is worth on the ordering axis. On the model fallback that is
+  // the calibrated score the card prints, which is what this function has
+  // always compared against; on the baseline axis it is this hour's point on
+  // the curve, because a user report moves the LEVEL and cannot move Google's
+  // shape.
+  const nowRank = axis.basis === 'baseline' ? rank(nowEntry) : currentScore;
+
+  const quietest = (list) => list.reduce((a, b) => (rank(b) < rank(a) ? b : a), list[0]);
   const openToday = ahead.filter(e => e.dayOffset === 0);
   const todayPicks = openToday.filter(e => !e.inPeak);
   const laterPicks = ahead.filter(e => e.dayOffset > 0 && !e.inPeak);
@@ -1324,23 +1412,55 @@ function recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOp
     hourLabel: e.label,
     index: e.index,
     dayOffset: e.dayOffset,
+    orderingBasis: axis.basis,
+    orderingMinGap: HOUR_ORDERING_MIN_GAP,
   });
   const stayPut = (rushAhead) => ({
     text: nowCopy(currentScore, rushAhead),
     hourLabel: null,
     index: Math.max(0, nowIdx),
     dayOffset: 0,
+    orderingBasis: axis.basis,
+    orderingMinGap: HOUR_ORDERING_MIN_GAP,
   });
+  // Open hours exist but nothing separates them by more than the measured
+  // coin-flip floor. Naming one would be naming noise, so the card says the
+  // hours look alike instead of inventing a winner.
+  const noStandout = () => ({
+    text: NO_QUIET_HOUR,
+    hourLabel: null,
+    index: Math.max(0, nowIdx),
+    dayOffset: 0,
+    orderingBasis: axis.basis,
+    orderingMinGap: HOUR_ORDERING_MIN_GAP,
+  });
+
+  // Naming the quietest of a shortlist when there is no "now" to measure
+  // against. The hedge lands on the SPREAD instead: if the quietest and the
+  // busiest candidate sit inside the floor, the shortlist has no winner and
+  // the card says so. A shortlist of ONE is not an ordering claim at all, so
+  // it is named whatever its spread.
+  const nameQuietest = (pool) => {
+    if (!pool.length) return nothing;
+    const best = quietest(pool);
+    if (pool.length === 1) return pick(best);
+    const worst = pool.reduce((a, b) => (rank(b) > rank(a) ? b : a), pool[0]);
+    if (rank(worst) - rank(best) < HOUR_ORDERING_MIN_GAP) return noStandout();
+    return pick(best);
+  };
 
   // Shut right now: "now" can never be the answer.
   if (openNow === false) {
-    const pool = todayPicks.length ? todayPicks : laterPicks;
-    return pool.length ? pick(quietest(pool)) : nothing;
+    return nameQuietest(todayPicks.length ? todayPicks : laterPicks);
   }
 
   if (todayPicks.length) {
     const best = quietest(todayPicks);
-    if (best.score < currentScore - TIE_MARGIN) return pick(best);
+    // The whole "go at 9 instead of now" claim, and the only place it is made.
+    // It fires only when the ordering axis separates the two hours by more
+    // than the measured floor; inside the floor the honest answer is that they
+    // are the same hour, which is what nowCopy already says in level terms.
+    if (rank(best) < nowRank - HOUR_ORDERING_MIN_GAP) return pick(best);
     return stayPut(false);
   }
 
@@ -1350,9 +1470,12 @@ function recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOp
 
   // Open now and nothing open after this hour: it is this hour or another day.
   if (currentScore <= 60) {
-    return { text: 'Now, they close soon', hourLabel: null, index: Math.max(0, nowIdx), dayOffset: 0 };
+    return {
+      text: 'Now, they close soon', hourLabel: null, index: Math.max(0, nowIdx), dayOffset: 0,
+      orderingBasis: axis.basis, orderingMinGap: HOUR_ORDERING_MIN_GAP,
+    };
   }
-  return laterPicks.length ? pick(quietest(laterPicks)) : nothing;
+  return nameQuietest(laterPicks);
 }
 
 function findBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOpen, options) {
@@ -1401,8 +1524,21 @@ function parseHourLabel(label) {
 }
 
 // ---------------------------------------------------------------------------
-// Peak time (highest score, range if consecutive tie)
+// Peak time (busiest hour, range if consecutive tie)
 // Returns { text, startIdx, endIdx } so bestTime can avoid peak
+//
+// "Which hour is busiest" is the same ordering question as "which hour is
+// quietest", asked with the sign flipped, so it is answered on the same axis
+// (orderingAxis: the baseline curve when every open hour has one). It has to
+// be, for a reason beyond consistency: recommendBestTime EXCLUDES this window
+// from its candidates, and a peak picked on one number while the ranking runs
+// on another would delete hours the ranking never considered busy.
+//
+// No minimum-gap hedge here, deliberately. The best-time line asserts an
+// ACTION ("go at 9 instead of now") and a flat curve makes that assertion
+// worthless; the peak line answers "when is this place busiest", which has an
+// answer even on a flat curve, and the number beside it already says how busy
+// that is. If the peak line ever grows into advice, it needs the hedge too.
 // ---------------------------------------------------------------------------
 
 function findPeakTime(hourlyForecast, venue, options = {}) {
@@ -1418,6 +1554,19 @@ function findPeakTime(hourlyForecast, venue, options = {}) {
     h,
     startDay != null ? startDay + dayOffsetForIndex(startHour, i) : null
   );
+
+  // The candidate set first, THEN the axis over it. Closed hours carry no
+  // baseline (nothing was ever collected for a shut venue), so choosing the
+  // axis over all 24 entries would fall back to model scores on every venue
+  // that closes at all, which is every venue.
+  const considered = [];
+  for (let i = 0; i < hourlyForecast.length; i++) {
+    const h = parseHourLabel(hourlyForecast[i].hour);
+    if (types.length && !openAt(h, i)) continue;
+    considered.push(hourlyForecast[i]);
+  }
+  const rank = orderingAxis(considered.length ? considered : hourlyForecast).valueOf;
+
   let maxScore = -1;
   let maxIndex = 0;
 
@@ -1425,8 +1574,8 @@ function findPeakTime(hourlyForecast, venue, options = {}) {
     const h = parseHourLabel(hourlyForecast[i].hour);
     if (types.length && !openAt(h, i)) continue;
 
-    if (hourlyForecast[i].score > maxScore) {
-      maxScore = hourlyForecast[i].score;
+    if (rank(hourlyForecast[i]) > maxScore) {
+      maxScore = rank(hourlyForecast[i]);
       maxIndex = i;
     }
   }
@@ -1435,7 +1584,7 @@ function findPeakTime(hourlyForecast, venue, options = {}) {
   for (let i = maxIndex + 1; i < hourlyForecast.length; i++) {
     const h = parseHourLabel(hourlyForecast[i].hour);
     if (types.length && !openAt(h, i)) break;
-    if (Math.abs(hourlyForecast[i].score - maxScore) <= 3) {
+    if (Math.abs(rank(hourlyForecast[i]) - maxScore) <= 3) {
       endIndex = i;
     } else {
       break;
@@ -1526,8 +1675,11 @@ const MIN_CALIBRATION_REPORTERS = 3;
 // noise. Enforced by construction — the blended weight is capped so
 // that weight * (FEEDBACK_SCORE_SPAN / n) can never exceed it — so the bound
 // survives someone retuning the ladder without re-deriving the arithmetic.
-// (Kept as its own constant rather than referencing TIE_MARGIN, so tuning the
-// best-time margin cannot silently retune what strangers can do to a score.)
+// (Kept as its own constant rather than referencing TIE_MARGIN, so tuning one
+// level margin cannot silently retune what strangers can do to a score. Note
+// that as of 2026-08-20 TIE_MARGIN no longer gates the best-time line at all —
+// that decision moved to HOUR_ORDERING_MIN_GAP, which is a measured ORDERING
+// floor and has nothing to do with this bound.)
 //
 // READ THE QUALIFIER. The bound is on the MARGINAL effect of a report among n
 // reports, and it does not describe the step at the floor. Going from
@@ -1732,6 +1884,25 @@ module.exports = {
   findPeakTime,
   findQuieterAlternatives,
   buildCalibrationAdjustment,
+  // The two noise floors, exported so nothing restates either from memory:
+  // TIE_MARGIN is the LEVEL floor (what a stranger's report may move, and what
+  // routes/venueDashboard.js builds STRIP_ORDERING_MIN_GAP from);
+  // HOUR_ORDERING_MIN_GAP is the measured ORDERING floor the best-time line
+  // hedges on, and the two are not interchangeable.
+  TIE_MARGIN,
+  HOUR_ORDERING_MIN_GAP,
+  // The single definition of "which number ranks hours inside one venue-night".
+  // Exported so anything that has to rank hours OUTSIDE this file uses the same
+  // all-or-nothing axis choice instead of a second copy of the rule that could
+  // drift from it. One such caller is still outstanding: the owner dashboard's
+  // weekly evening peak (routes/venueDashboard.js, the `evening.reduce` in
+  // GET /intelligence) still picks its peak hour off model scores. See section
+  // 9.6 of scripts/ml/HOUR-RANKING-EVAL.md.
+  orderingAxis,
+  // The two sentences the best-time line prints when it refuses to name an
+  // hour, exported so a test pins the strings this file actually ships.
+  NO_WINDOW_LEFT,
+  NO_QUIET_HOUR,
   // The calibration guard rails, exported so a route, a client string or a test
   // states the same numbers this file enforces instead of a second copy of them.
   MIN_CALIBRATION_REPORTERS,
