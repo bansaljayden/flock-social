@@ -13,7 +13,7 @@
 //      values AFTER generation. Any bare digit in raw model output rejects
 //      the whole response to the deterministic template twin. So do em
 //      dashes, causal verbs, unknown fact ids, and sentences citing nothing.
-//   2. ADVISOR_PHRASING_ENABLED default OFF: the template twin serves and the
+//   2. ADVISOR_PHRASING_ENABLED=false: the template twin serves and the
 //      model is never constructed, so the surface works with zero LLM calls.
 //   3. Chips only: /ask accepts an intentId from the closed registry and
 //      nothing else. Free text is a 400 by SHAPE, before validation.
@@ -163,8 +163,8 @@ function resetAll({ flag } = {}) {
   installVenueLedger();
   advisorPhrasing.__resetAdvisorSpend();
   advisorPhrasing.__setGenAIForTests(fakeGenAI);
-  if (flag) process.env.ADVISOR_PHRASING_ENABLED = 'true';
-  else delete process.env.ADVISOR_PHRASING_ENABLED;
+  // Default ON since 2026-08-20, so OFF has to be spelled out.
+  process.env.ADVISOR_PHRASING_ENABLED = flag ? 'true' : 'false';
   delete process.env.VENUE_BILLING_ENABLED;
   advisorRouter.__setFactsForTests(null);
 }
@@ -187,8 +187,12 @@ test('clean placeholder output is substituted server-side and returned as phrase
   nextModelReply = 'The forecast estimates your peak at {{fact:peak_hour}}. You told us the kitchen takes its last order at {{fact:kitchen_last_order}}. Worth a look: these two line up.';
   const out = await advisorPhrasing.phrase(PEAK_BLOCK(), { venueUserId: 7 });
   assert.strictEqual(out.mode, 'phrased');
-  assert.ok(out.text.includes('9pm'), `hour fact substituted, got: ${out.text}`);
-  assert.ok(out.text.includes('21:00'), 'intake fact substituted verbatim');
+  assert.ok(out.text.includes('9 PM'), `hour fact substituted, got: ${out.text}`);
+  // '21:00' is a database value. The substitution renders a clock string the
+  // way every other surface renders an hour, so the phrased sentence and the
+  // card above it describe one kitchen in one vocabulary.
+  assert.ok(out.text.includes('9 PM'), 'intake clock value substituted as a clock, not as a column');
+  assert.ok(!out.text.includes('21:00'), 'and the raw 24-hour string never reaches the owner');
   assert.ok(!out.text.includes('{{'), 'no placeholder survives substitution');
   // The connective sentence cites no fact and must not render.
   assert.ok(!out.text.includes('Worth a look'), 'a sentence that cites nothing does not render');
@@ -279,10 +283,119 @@ test('a single fact is unchanged: nothing to hoist, nothing to collapse', () => 
   assert.match(out.text, /An estimate, not a promise\. \(Model estimate, as of Aug 19\.\)$/);
 });
 
-// ── 2. Flag off (the default) ───────────────────────────────────────────────
+// ── 1b. The thinking model ──────────────────────────────────────────────────
+//
+// THE WHOLE PHRASING LAYER SERVED NOTHING BUT TEMPLATES FOR ITS ENTIRE LIFE,
+// and no test caught it because the fake model in this file always returns a
+// complete string. gemini-3.7-flash reasons before it writes and the reasoning
+// is billed out of maxOutputTokens: at the old ceiling of 512 it spent 490
+// tokens thinking and 18 writing, so every answer came back cut off mid
+// placeholder, failed the valve, and the twin served. These pin the guard that
+// turns that from a silent degradation into a loud one.
 
-test('with ADVISOR_PHRASING_ENABLED unset the template twin serves and the model is never called', async () => {
-  resetAll(); // flag not set
+test('an answer that ran out of room is not an answer: MAX_TOKENS is discarded, not served half written', async () => {
+  resetAll({ flag: true });
+  allowGlobalSpend();
+  const { responseText, truncated } = advisorPhrasing.internals;
+
+  // The exact shape the API returns when the budget ended mid sentence.
+  const cut = {
+    text: 'The forecast estimates your busiest stretch on {{fact:',
+    candidates: [{ finishReason: 'MAX_TOKENS' }],
+    usageMetadata: { thoughtsTokenCount: 490, candidatesTokenCount: 18 },
+  };
+  assert.strictEqual(truncated(cut), true);
+  assert.strictEqual(responseText(cut), null, 'a truncated reply is no reply');
+
+  // And the same shape with text the valve would have HAPPILY passed. This is
+  // the case the valve cannot catch on its own: "your quietest stretch is early
+  // in the" is a grammatical fragment carrying a real placeholder.
+  const plausible = {
+    text: 'Your own readings put that day at {{fact:reading}} which is early in the',
+    candidates: [{ finishReason: 'MAX_TOKENS' }],
+    usageMetadata: {},
+  };
+  assert.strictEqual(responseText(plausible), null, 'the seam is checked, not the sentence');
+
+  // A complete reply is untouched.
+  assert.strictEqual(responseText({ text: 'done.', candidates: [{ finishReason: 'STOP' }] }), 'done.');
+});
+
+test('every advisor call asks the model to think as little as it is allowed to', async () => {
+  resetAll({ flag: true });
+  allowGlobalSpend();
+  nextModelReply = 'The forecast estimates your peak at {{fact:peak_hour}}.';
+  await advisorPhrasing.phrase(PEAK_BLOCK(), { venueUserId: 7 });
+  assert.strictEqual(modelCalls.length, 1);
+  const cfg = modelCalls[0].config;
+  // Thinking tokens are billed and count against every ceiling in this file,
+  // and none of the three Roost calls derives anything: they reword, route, or
+  // follow a contract.
+  assert.deepStrictEqual(cfg.thinkingConfig, { thinkingLevel: advisorPhrasing.internals.ADVISOR_THINKING_LEVEL });
+  assert.strictEqual(cfg.maxOutputTokens, advisorPhrasing.ADVISOR_MAX_OUTPUT_TOKENS);
+  // The ceiling is headroom for the reasoning, not a length limit on the
+  // answer: what holds an answer to two to four sentences is the prompt.
+  assert.ok(cfg.maxOutputTokens >= 2048, 'sized for a model that thinks first');
+});
+
+// ── 1c. Values reach the owner in the owner's vocabulary ────────────────────
+
+test('a composite fact is split into parts that carry their OWN units, not their parent\'s', () => {
+  const { formatFactValue } = advisorPhrasing.internals;
+  const [weekday, hour, score] = advisorPhrasing.flattenFacts([{
+    id: 'peak_2026-08-21',
+    unit: '0-100 index',
+    value: { weekday: 'Friday', peakHour: 21, peakScore: 89 },
+    source: 'model_holdout',
+  }]);
+  // The parent unit described the score and nothing else. Inheriting it put a
+  // raw 24-hour integer into a sentence: "your peak stretches around 21".
+  assert.strictEqual(hour.unit, 'hour');
+  assert.strictEqual(formatFactValue(hour), '9 PM');
+  assert.strictEqual(score.unit, undefined, 'an unrecognised key gets no unit rather than a wrong one');
+  assert.strictEqual(formatFactValue(score), '89');
+  assert.strictEqual(formatFactValue(weekday), 'Friday');
+});
+
+test('database vocabulary never reaches prose: dates, clocks, enums and lists', () => {
+  const { formatFactValue } = advisorPhrasing.internals;
+  assert.strictEqual(formatFactValue({ value: '2026-08-25' }), 'Aug 25', 'a calendar day, not a column');
+  assert.strictEqual(formatFactValue({ value: '21:00' }), '9 PM');
+  assert.strictEqual(formatFactValue({ value: '14:30' }), '2:30 PM');
+  assert.strictEqual(formatFactValue({ value: 'theater_music_hall' }), 'a theater or music hall');
+  assert.strictEqual(formatFactValue({ value: 'twenty_one_plus' }), 'twenty one and over');
+  assert.strictEqual(formatFactValue({ value: 'tuesday' }), 'Tuesday', 'a weekday is a proper noun');
+  // An option nobody has translated yet still reads as English on the day it
+  // ships, rather than on the day someone remembers the table.
+  assert.strictEqual(formatFactValue({ value: 'some_new_option' }), 'some new option');
+  // A list reads the way a person says one.
+  assert.strictEqual(
+    formatFactValue({ value: ['theater_music_hall', 'shopping_center'] }),
+    'a theater or music hall and a shopping center'
+  );
+  // Owner prose is not an enum and is never touched.
+  assert.strictEqual(formatFactValue({ value: 'the back room' }), 'the back room');
+});
+
+test('substitution never stutters: the noun the model wrote and the noun the value carries collapse to one', () => {
+  const { dedupeAdjacentWords } = advisorPhrasing.internals;
+  assert.strictEqual(
+    dedupeAdjacentWords('you run seated table service service tonight'),
+    'you run seated table service tonight'
+  );
+  assert.strictEqual(dedupeAdjacentWords('drawn from 6 days days'), 'drawn from 6 days');
+  assert.strictEqual(dedupeAdjacentWords('nothing to change here'), 'nothing to change here');
+});
+
+// ── 2. Flag off ─────────────────────────────────────────────────────────────
+//
+// No longer the default. The flag defaults ON as of 2026-08-20; what this
+// section pins is that turning it back off still leaves a working, truthful
+// surface rather than a broken one, which is what makes it a usable kill
+// switch.
+
+test('with ADVISOR_PHRASING_ENABLED=false the template twin serves and the model is never called', async () => {
+  resetAll(); // flag explicitly off
   nextModelReply = new Error('the model must never be reached with the flag off');
   const out = await advisorPhrasing.phrase(PEAK_BLOCK(), { venueUserId: 7 });
   assert.strictEqual(out.mode, 'template');

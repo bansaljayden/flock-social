@@ -77,6 +77,20 @@ const UPSTREAM_TIMEOUT_MS = Object.freeze({
   ticketmaster: 6000,  // Ticketmaster Discovery
   oauth: 6000,         // Google / Apple token + userinfo endpoints
   gemini: 12000,       // Gemini generation is genuinely slower
+  // ROOST'S OWN DEADLINE, and the reason it is not the one above. Birdie runs
+  // on a non-thinking model and answers well inside twelve seconds. Roost runs
+  // on gemini-3.7-flash, which reasons before it writes, and the reasoning is
+  // where the time goes: measured 2026-08-20, an ordinary advice question
+  // spends about nine hundred thinking tokens and a hard one nearly two
+  // thousand, which put a real question ("is it safe to serve milk that has
+  // been out for three hours") past twelve seconds and returned the owner a
+  // refusal that blamed itself for being busy. The trade the header above
+  // describes still applies: this parks a connection and a pool slot for
+  // longer. It is affordable here and nowhere else, because this surface is
+  // Pro-gated, has its own rate limiter at ten an hour per account, and is
+  // reached by a person who deliberately typed a question and is watching for
+  // the answer. Do not point Birdie or anything user-facing at this key.
+  geminiAdvisor: 30000,
   email: 8000,         // Resend
   // Image moderation + link unfurling. utils/moderation.js still hardcodes
   // AbortSignal.timeout(15000) rather than reading this; the value is recorded

@@ -86,16 +86,22 @@ function warnOnce(key, message) {
   return true;
 }
 
-function boolFlag(name) {
+// Most flags here default OFF, which is the safe direction for a gate that
+// meters money. A few default ON, because the thing they gate is invisible
+// when it is off and an invisible feature is not a safe default, it is a
+// feature nobody can find: Roost's typed question field is the case that
+// forced this parameter (ADVISOR_FREETEXT_ENABLED, ADVISOR_PHRASING_ENABLED).
+// Either way the env var still decides: "false" turns a default-on flag off.
+function boolFlag(name, defaultValue = false) {
   const raw = process.env[name];
-  if (raw === undefined || raw === null || raw === '') return false;
+  if (raw === undefined || raw === null || raw === '') return defaultValue;
   if (raw === 'true') return true;
   if (raw === 'false') return false;
   warnOnce(
     `flag:${name}`,
-    `[entitlements] ${name}=${JSON.stringify(String(raw).slice(0, 32))} is not "true" or "false". Treating it as OFF. This flag turns on for the exact string "true" and nothing else.`
+    `[entitlements] ${name}=${JSON.stringify(String(raw).slice(0, 32))} is not "true" or "false". Treating it as its default (${defaultValue ? 'ON' : 'OFF'}). This flag reads the exact strings "true" and "false" and nothing else.`
   );
-  return false;
+  return defaultValue;
 }
 
 /**
