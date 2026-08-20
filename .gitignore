@@ -202,3 +202,12 @@ PITCH.md
 VENUE-PRICING.md
 CONSUMER-VALUE-CASE.md
 PITCH-CRAFT.md
+flock-walkthrough-*.mp4
+
+# Local preview harness. frontend/src/setupProxy.js proxies same-origin /api and
+# /socket.io at a hardcoded 127.0.0.1 port so a screenshot run passes the CSP's
+# 'self'. It carries a "DO NOT COMMIT" banner in its own first line and was not
+# ignored, so any `git add -A` from any of the parallel agents would have taken
+# it. react-scripts loads it automatically on `start`, so a committed copy would
+# silently reroute every developer's dev server at a port that is not running.
+frontend/src/setupProxy.js

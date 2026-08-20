@@ -1574,6 +1574,38 @@ function shutdown(signal) {
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
-boot();
+// A REJECTED boot() USED TO BE INDISTINGUISHABLE FROM A HEALTHY ONE.
+//
+// `boot()` was called bare, so its rejection went to the unhandledRejection
+// handler at the top of this file — and that handler's contract, deliberately,
+// is to log and KEEP SERVING. That is right for a floating promise inside a
+// request. It is exactly wrong here, and the two halves of boot() fail in two
+// different directions:
+//
+//   * Before listen(): migrate() has its own try/catch that exits 1, but
+//     postBootTasks() does not. It caught its two inner awaits when it was
+//     written; a third one added later without a .catch() would reject the
+//     whole boot, the port would never open, and the process would sit alive
+//     and idle forever. Railway's health check fails a deploy on that, but the
+//     container keeps running with nothing in the log except one
+//     [unhandledRejection] line.
+//
+//   * After listen(): the three timer registrations `require()` their services
+//     at call time, and a require() that throws (a bad env read at module
+//     scope, a syntax error, a missing file) is not caught by anything. The
+//     port is already open, the health check passes, and the server serves
+//     normally — with crowd alerts, night-context snapshots and the Monday
+//     digest all silently never registered. That is the failure that would
+//     have gone unnoticed longest, because everything a user touches works.
+//
+// Boot is the one place where "keep serving" is the wrong answer, so it gets
+// its own terminal handler: say what failed, and exit 1 so the platform
+// restarts on a clean process instead of leaving a half-started one up.
+boot().catch((e) => {
+  console.error('FATAL: boot failed after migrations — the process is not fully started, exiting.');
+  console.error('CAUSE:', e && e.message ? e.message : e);
+  if (e && e.stack) console.error(String(e.stack).split('\n').slice(0, 5).join('\n'));
+  process.exit(1);
+});
 
 module.exports = { app, server, io };
