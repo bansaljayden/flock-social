@@ -2268,6 +2268,23 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       // popular_times), which cannot co-occur with a served ML score under a
       // delta model but is possible under an absolute-head one.
       baselineData: baselineData || null,
+      // THE NUMBER THAT ORDERS THE HOURS (2026-08-20). `score` above is the
+      // model's level and stays the published one; this is the smoothed
+      // popular-times anchor the delta was added to, and it is what
+      // crowdEngine's best-time and peak lines RANK on, because ranking is the
+      // one thing the trained layer was measured to be worse at
+      // (scripts/ml/HOUR-RANKING-EVAL.md: baseline 63.1% vs model 62.7% on
+      // within-night hour pairs, bootstrap of the difference -0.49pp with a
+      // CI95 that excludes zero).
+      //
+      // It is deliberately the SMOOTHED value getBaseline returns, not the raw
+      // ml_venue_baselines cell and not popular_times[hour]: the evaluation's
+      // baseline arm was the smoothed anchor, so serving anything else would
+      // ship a predictor nobody measured. Internal to the serve path — routes
+      // strip it before it reaches a client.
+      baselineScore: Number.isFinite(Number(baseline)) && Number(baseline) > 0
+        ? Number(baseline)
+        : null,
     };
 
     // Add event alert when large event nearby
@@ -2397,6 +2414,13 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
         score: result.score,
         label: result.label,
         predictionMethod: result.predictionMethod || null,
+        // The ordering axis for this hour, carried per entry because
+        // crowdEngine picks it for the whole candidate set at once and has to
+        // be able to see that EVERY hour it is about to compare has one. Null
+        // on any hour the rule engine answered, which is what makes a mixed
+        // strip fall back to model ordering instead of ranking half the night
+        // on one number and half on another.
+        baselineScore: result.baselineScore ?? null,
       });
     } catch (err) {
       // Fallback for this hour
@@ -2406,6 +2430,10 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
         score: fallback.score,
         label: fallback.label,
         predictionMethod: 'rule_engine_fallback',
+        // No baseline behind a rule-engine hour, and saying so explicitly is
+        // what keeps `baselineScore` a field every entry has rather than one a
+        // consumer has to test for existence.
+        baselineScore: null,
       });
     }
   }

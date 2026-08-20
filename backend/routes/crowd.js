@@ -870,8 +870,14 @@ router.get('/:placeId',
         hoursToday: venue.hoursToday || [],
         hourly: hourly.map((h, i) => {
           const abs = localHour + i;
+          // `baselineScore` is a SERVE-PATH field: crowdEngine ranks the hours
+          // on it (see HOUR_ORDERING_MIN_GAP) and no client has any business
+          // re-deriving an ordering from it, which is exactly what publishing
+          // it would invite. The bars keep the model's level, which is the
+          // number the card's headline is.
+          const { baselineScore, ...bar } = h;
           return {
-            ...h,
+            ...bar,
             // Google's openNow wins for the "Now" bar: posted hours and reality
             // disagree often enough that the bar under a "Closed" header must
             // not be drawn as a live crowd.

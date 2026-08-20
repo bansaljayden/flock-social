@@ -452,6 +452,213 @@ def quietest_hour(df, keys, pred_col, seed=RNG_SEED):
     return out
 
 
+# ---------------------------------------------------------------------------
+# THE SHIPPED SERVE CONFIGURATION (added 2026-08-20)
+#
+# Everything above measures two PREDICTORS. This measures two PRODUCTS, which
+# is a different thing: a served recommendation is a predictor plus a rule
+# about when it is allowed to speak.
+#
+#   previous  = rank hours on the model's reconstructed score, speak whenever
+#               the quieter hour is more than TIE_MARGIN (5) below now.
+#   shipped   = rank hours on the smoothed popular-times curve, speak only when
+#               the quieter hour is more than HOUR_ORDERING_MIN_GAP (10) below
+#               now (services/crowdEngine.js, 2026-08-20).
+#
+# The thresholds are PREDICTED separation, not true separation, because that is
+# all production can see. Comparisons use strict `>`, matching
+# `rank(best) < nowRank - HOUR_ORDERING_MIN_GAP` in crowdEngine.
+#
+# Two numbers matter for each config and neither is meaningful alone:
+#   COVERAGE  — how often it says anything at all. A rule that never speaks is
+#               100% right and worthless.
+#   ACCURACY  — of the times it did speak, how often reality agreed.
+# ---------------------------------------------------------------------------
+SERVE_CONFIGS = [
+    ('shipped_2026_08_20', 'baseline', 10),
+    ('previous', 'model', 5),
+    ('model_at_gap_10', 'model', 10),
+    ('baseline_no_hedge', 'baseline', 0),
+    ('model_no_hedge', 'model', 0),
+]
+
+
+def hedged_pair_accuracy(pairs, pred_name, min_gap):
+    """Pairwise ordering, but only over the pairs a served config would speak
+    about. `min_gap` is applied to the PREDICTED gap (strict >), the only gap
+    production can see."""
+    p_a, p_b = pairs['preds'][pred_name]
+    y_a, y_b = pairs['y_a'], pairs['y_b']
+    n_all = len(y_a)
+    speaks = np.abs(p_a - p_b) > min_gap
+    scored = np.abs(y_a - y_b) > 0          # true ties are never scored
+    live = speaks & scored
+    out = order_outcomes(y_a, y_b, p_a, p_b)[live]
+    c = int((out == 1).sum())
+    w = int((out == -1).sum())
+    return {
+        'predictor': pred_name,
+        'min_gap': min_gap,
+        'pairs_total': n_all,
+        'pairs_spoken': int(speaks.sum()),
+        'coverage_pct': round(float(speaks.mean() * 100), 2),
+        'pairs_spoken_and_scorable': int(live.sum()),
+        'correct_pct': round(c / (c + w) * 100, 2) if (c + w) else None,
+        'backwards_pct': round(w / (c + w) * 100, 2) if (c + w) else None,
+        'mean_true_gap_when_spoken': round(float(np.abs(y_a - y_b)[live].mean()), 2)
+                                     if live.any() else None,
+    }
+
+
+def serve_pair_blocks(pairs, pred_name, min_gap):
+    """Per-venue (correct, backwards) counts for one served config, so two
+    configs can be compared by a venue-block bootstrap even though they speak
+    about different subsets of pairs."""
+    p_a, p_b = pairs['preds'][pred_name]
+    y_a, y_b = pairs['y_a'], pairs['y_b']
+    live = (np.abs(p_a - p_b) > min_gap) & (np.abs(y_a - y_b) > 0)
+    out = order_outcomes(y_a, y_b, p_a, p_b)
+    return pairs['venue'], (out == 1) & live, (out == -1) & live
+
+
+def block_bootstrap_rate_diff(venues, a_ok, a_bad, b_ok, b_bad,
+                              resamples=BOOTSTRAP_RESAMPLES, seed=RNG_SEED):
+    """Venue-block bootstrap of (A correct% - B correct%) from per-PAIR masks."""
+    uv, vidx = np.unique(venues, return_inverse=True)
+    sums = []
+    for arr in (a_ok, a_bad, b_ok, b_bad):
+        s = np.zeros(len(uv))
+        np.add.at(s, vidx, arr.astype(np.float64))
+        sums.append(s)
+    return bootstrap_rate_diff_from_sums(*sums, resamples=resamples, seed=seed)
+
+
+def align_blocks(a, b):
+    """Two configs' per-venue sums onto one venue axis (their union), so a
+    resample draws the same venues for both sides."""
+    uv = np.union1d(a['venues'], b['venues'])
+    def lay(blocks, field):
+        out = np.zeros(len(uv))
+        pos = np.searchsorted(uv, blocks['venues'])
+        out[pos] = blocks[field]
+        return out
+    return (lay(a, 'correct'), lay(a, 'backwards'),
+            lay(b, 'correct'), lay(b, 'backwards'))
+
+
+def bootstrap_rate_diff_from_sums(a_ok_s, a_bad_s, b_ok_s, b_bad_s,
+                                  resamples=BOOTSTRAP_RESAMPLES, seed=RNG_SEED):
+    """Venue-block bootstrap of (A correct% - B correct%) where each side's
+    denominator is its OWN spoken count. Blocks are venues, drawn once per
+    resample and applied to both sides.
+
+    This is NOT a paired test on a common set of pairs and must not be read as
+    one: the two configs deliberately speak about different subsets. What it
+    bounds is the difference between two PUBLISHED rates, which is the quantity
+    a product decision turns on.
+    """
+    nv = len(a_ok_s)
+    if nv < 30:
+        return None
+
+    def rate(ok, bad):
+        d = ok + bad
+        return ok / d * 100 if d > 0 else np.nan
+
+    rng = np.random.default_rng(seed)
+    diffs = np.empty(resamples)
+    for i in range(resamples):
+        pick = rng.integers(0, nv, nv)
+        diffs[i] = (rate(a_ok_s[pick].sum(), a_bad_s[pick].sum())
+                    - rate(b_ok_s[pick].sum(), b_bad_s[pick].sum()))
+    obs = rate(a_ok_s.sum(), a_bad_s.sum()) - rate(b_ok_s.sum(), b_bad_s.sum())
+    lo, hi = np.nanpercentile(diffs, [2.5, 97.5])
+    return {
+        'observed_diff_pp': round(float(obs), 3),
+        'ci95': [round(float(lo), 3), round(float(hi), 3)],
+        'excludes_zero': bool(lo > 0 or hi < 0),
+        'resamples': resamples, 'venue_blocks': int(nv),
+    }
+
+
+def served_recommendation(df, keys, pred_col, min_gap):
+    """Simulate the shipped best-time decision.
+
+    For every venue-night and every hour in it taken as "now", the candidate is
+    the predictor's argmin over the OTHER hours in that night. The card speaks
+    only when pred(candidate) < pred(now) - min_gap, which is the rule
+    crowdEngine.recommendBestTime applies. When it speaks, it is CORRECT if the
+    hour it named really was quieter, BACKWARDS if it was busier, and a WASH if
+    the two were truly equal.
+
+    Predictor ties among the minima are resolved by expectation over the tied
+    candidates, the same convention quietest_hour uses.
+
+    THE PROXY, stated so it cannot be quoted as more than it is: the candidate
+    pool is the 2-5 hours this venue-night has in the gate slice, not the 12
+    open hours the app ranks, and "now" here is any hour rather than the
+    current one. Section 5 of HOUR-RANKING-EVAL.md owns that limit; it applies
+    to every number this function returns.
+    """
+    y = df['y'].to_numpy()
+    p = df[pred_col].to_numpy()
+    groups = df.groupby(keys, sort=False).indices
+
+    decisions = 0.0      # how many (venue-night, now) situations were faced
+    spoke = 0.0
+    correct = 0.0
+    backwards = 0.0
+    wash = 0.0
+    improvement = 0.0    # true points saved, summed over spoken decisions
+    by_venue = {}        # venue -> [correct, backwards], for the block bootstrap
+
+    for key, idx in groups.items():
+        n = len(idx)
+        if n < 2:
+            continue
+        venue = key[0] if isinstance(key, tuple) else key
+        yy = y[idx]
+        pp = p[idx]
+        slot = by_venue.setdefault(venue, [0.0, 0.0])
+        for i in range(n):
+            decisions += 1
+            others = np.delete(np.arange(n), i)
+            mn = pp[others].min()
+            if not (mn < pp[i] - min_gap):
+                continue                      # stays put; no claim is made
+            cand = others[pp[others] == mn]   # tied minima
+            spoke += 1
+            dy = yy[i] - yy[cand]             # >0 = the named hour really is quieter
+            c = float(np.mean(dy > 0))
+            b = float(np.mean(dy < 0))
+            correct += c
+            backwards += b
+            wash += float(np.mean(dy == 0))
+            improvement += float(np.mean(dy))
+            slot[0] += c
+            slot[1] += b
+
+    spoken_scorable = correct + backwards
+    blocks = {
+        'venues': np.array(list(by_venue.keys())),
+        'correct': np.array([v[0] for v in by_venue.values()]),
+        'backwards': np.array([v[1] for v in by_venue.values()]),
+    }
+    return blocks, {
+        'predictor': pred_col,
+        'min_gap': min_gap,
+        'decisions': int(decisions),
+        'spoke': int(spoke),
+        'coverage_pct': round(spoke / decisions * 100, 2) if decisions else None,
+        'correct_pct_excl_true_ties': round(correct / spoken_scorable * 100, 2)
+                                      if spoken_scorable else None,
+        'backwards_pct_excl_true_ties': round(backwards / spoken_scorable * 100, 2)
+                                        if spoken_scorable else None,
+        'true_tie_pct_of_spoken': round(wash / spoke * 100, 2) if spoke else None,
+        'mean_true_points_saved_when_spoken': round(improvement / spoke, 2) if spoke else None,
+    }
+
+
 def print_bucket_table(title, rows_model, rows_base):
     log(f'\n--- {title} ---')
     log(f'{"bucket":<18}{"n pairs":>10}{"model ok%":>11}{"model back%":>13}'
@@ -553,6 +760,77 @@ def main():
         'candidate_set': 'hours present in the venue-day gate slice (openness proxy; see docstring)',
         'tie_rule': 'expectation under uniform random tie-breaking among predicted minima',
         'model': q_model, 'baseline': q_base,
+    }
+
+    # ---- The shipped serve configuration vs the one it replaced
+    log('\n========== SERVED CONFIGURATION: predictor + when it is allowed to speak ==========')
+    log('  Thresholds are on PREDICTED separation (strict >), which is all production sees.')
+    log('\n--- pairwise, restricted to the pairs each config would rank out loud ---')
+    log(f'{"config":<22}{"predictor":>11}{"gap":>5}{"coverage%":>11}{"n spoken":>11}'
+        f'{"correct%":>10}{"backwards%":>12}{"mean true gap":>15}')
+    serve_pairs = {}
+    for name, pred, gap in SERVE_CONFIGS:
+        r = hedged_pair_accuracy(pairs_a, pred, gap)
+        serve_pairs[name] = r
+        log(f'{name:<22}{pred:>11}{gap:>5}{r["coverage_pct"]:>11.2f}'
+            f'{r["pairs_spoken_and_scorable"]:>11,}{r["correct_pct"]:>10.2f}'
+            f'{r["backwards_pct"]:>12.2f}{r["mean_true_gap_when_spoken"]:>15.2f}')
+
+    log('\n--- the actual decision: "go at 9 instead of now", simulated per venue-night hour ---')
+    log(f'{"config":<22}{"decisions":>11}{"spoke":>9}{"coverage%":>11}'
+        f'{"correct%":>10}{"backwards%":>12}{"pts saved":>11}')
+    serve_recs = {}
+    serve_blocks = {}
+    for name, pred, gap in SERVE_CONFIGS:
+        col = 'pred_base' if pred == 'baseline' else 'pred_model'
+        blocks, r = served_recommendation(df, ['venue_id', 'observed_date'], col, gap)
+        serve_recs[name] = r
+        serve_blocks[name] = blocks
+        log(f'{name:<22}{r["decisions"]:>11,}{r["spoke"]:>9,}{r["coverage_pct"]:>11.2f}'
+            f'{r["correct_pct_excl_true_ties"]:>10.2f}'
+            f'{r["backwards_pct_excl_true_ties"]:>12.2f}'
+            f'{r["mean_true_points_saved_when_spoken"]:>11.2f}')
+
+    # Which half of the change did the work: the PREDICTOR or the HEDGE?
+    # 'shipped vs previous' is the whole change. 'shipped vs model_at_gap_10'
+    # isolates the predictor at a fixed hedge; 'model_at_gap_10 vs previous'
+    # isolates the hedge at a fixed predictor. Without these three a +1.8pp
+    # headline gets attributed to whichever half the writer already believed in.
+    COMPARISONS = [
+        ('shipped_vs_previous', 'shipped_2026_08_20', 'previous'),
+        ('predictor_effect_at_gap_10', 'shipped_2026_08_20', 'model_at_gap_10'),
+        ('hedge_effect_on_model', 'model_at_gap_10', 'previous'),
+        ('predictor_effect_no_hedge', 'baseline_no_hedge', 'model_no_hedge'),
+    ]
+    log('\n--- venue-block bootstrap of the difference in correct%, 1000 resamples ---')
+    log('    (each side keeps its own denominator; this is not a paired test)')
+    boot_pairs, boot_recs = {}, {}
+    for label, a_name, b_name in COMPARISONS:
+        a_cfg = next(c for c in SERVE_CONFIGS if c[0] == a_name)
+        b_cfg = next(c for c in SERVE_CONFIGS if c[0] == b_name)
+        v, a_ok, a_bad = serve_pair_blocks(pairs_a, a_cfg[1], a_cfg[2])
+        _, b_ok, b_bad = serve_pair_blocks(pairs_a, b_cfg[1], b_cfg[2])
+        bp = block_bootstrap_rate_diff(v, a_ok, a_bad, b_ok, b_bad)
+        br = bootstrap_rate_diff_from_sums(
+            *align_blocks(serve_blocks[a_name], serve_blocks[b_name]))
+        boot_pairs[label] = bp
+        boot_recs[label] = br
+        log(f'  {label:<28} pairwise {bp["observed_diff_pp"]:+.2f}pp '
+            f'CI95 [{bp["ci95"][0]:+.2f}, {bp["ci95"][1]:+.2f}]'
+            f'   recommendation {br["observed_diff_pp"]:+.2f}pp '
+            f'CI95 [{br["ci95"][0]:+.2f}, {br["ci95"][1]:+.2f}]')
+
+    results['served_configuration'] = {
+        'bootstrap_pairwise': boot_pairs,
+        'bootstrap_recommendation': boot_recs,
+        'what_this_is': ('a predictor PLUS the rule that decides when it may speak; '
+                         'shipped_2026_08_20 is services/crowdEngine.js orderingAxis + '
+                         'HOUR_ORDERING_MIN_GAP, previous is the model score + TIE_MARGIN'),
+        'threshold_is_on': 'predicted separation, strict greater-than',
+        'candidate_pool_caveat': ('2-5 gate-slice hours per venue-night, not the 12 open '
+                                  'hours the app ranks; see section 5'),
+        'pairwise': serve_pairs,
+        'recommendation': serve_recs,
     }
 
     out = OUT_DIR / 'hour_ranking_results.json'
