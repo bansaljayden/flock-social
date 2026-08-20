@@ -298,16 +298,26 @@ function buildDemoPin(venue, onClick) {
     // locked-down network. `background-image` fails silently, which left a
     // matte navy disc with nothing in it. Load it first, keep the venue's
     // initial if it never arrives.
+    // ENCODED ONCE, USED TWICE. `venue.photo_url` is a server string, and it
+    // used to be interpolated raw into a CSS `url("...")` value. A `"` in it
+    // closes the CSS string, and everything after it is parsed as more of the
+    // declaration. `background-image` is a single property assignment so a `;`
+    // cannot open a second declaration and this was never script execution —
+    // but it is server data reaching a CSS parser unescaped, which is not a
+    // property to keep. encodeURI percent-encodes `"` and `\` (and every
+    // control character), so the value cannot leave the quotes, and it leaves
+    // the characters a URL legitimately contains alone.
+    const photoHref = encodeURI(`${BASE_URL}${venue.photo_url}`);
     const img = new Image();
     img.onload = () => {
       // The initial has to come back off. Setting only the background left the
       // letter sitting on top of the photo it was standing in for.
       photo.classList.remove('lpd-pin-noimg');
       photo.textContent = '';
-      photo.style.backgroundImage = `url("${BASE_URL}${venue.photo_url}")`;
+      photo.style.backgroundImage = `url("${photoHref}")`;
     };
     img.onerror = initial;
-    img.src = `${BASE_URL}${venue.photo_url}`;
+    img.src = photoHref;
     initial(); // shown until (and unless) the photo lands
   } else {
     initial();

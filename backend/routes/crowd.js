@@ -1093,13 +1093,44 @@ router.post('/batch',
       // supplies popular_times today, so that write is currently unreachable
       // from every request path. If one ever does, this whitelist needs the
       // shape check in the same edit.
+      //
+      // ROUND 26: THE WHITELIST CHECKED TYPES AND NOT RANGES, and one field
+      // made that the difference between a score and a wrong score.
+      //
+      // `utcOffsetMinutes` was `Number.isFinite(v.utcOffsetMinutes)` and
+      // nothing else. It is the only caller-supplied number on this route that
+      // decides a CLOCK: crowdEngine.venueLocalNow shifts `now` by it, and
+      // `new Date(t + 1e15 * 60000)` is past the ECMAScript date range, so
+      // getUTCHours() came back NaN. `scoreTime.setHours(NaN)` then makes an
+      // Invalid Date and every feature derived from it — weekday, hour, month,
+      // holiday, the Ticketmaster window — is NaN. Measured, not theorised:
+      // `utcOffsetMinutes: 1e15` moved one venue from `predictionMethod: "ml"`
+      // and score 62 to `rule_engine_no_baseline` and score 27, published with
+      // 42% confidence and no error anywhere. Round 15 fixed exactly this bug
+      // for `localHour`/`localDay` (see the parse above); this field was added
+      // afterwards and inherited none of it.
+      //
+      // So every number here is bounded by what the field MEANS, not merely by
+      // what a double can hold. The real ranges are small and public:
+      //   * offsets run UTC-12:00 to UTC+14:00, i.e. -720..840 minutes, and
+      //     Google Places only ever returns one of those;
+      //   * a Places rating is 1-5 (0 for unrated) and a review count is a
+      //     count;
+      //   * price_level is 0-4;
+      //   * an hour is 0-23.
+      // Out of range is treated as NOT SUPPLIED — the same answer round 15
+      // chose — so a malformed item scores as a low-signal venue instead of
+      // poisoning the vector. Nothing legitimate is refused: no honest client
+      // has ever sent a value outside these.
+      const inRange = (n, min, max) => (Number.isFinite(n) && n >= min && n <= max ? n : null);
+      const intInRange = (n, min, max) => (Number.isInteger(n) && n >= min && n <= max ? n : null);
 
       const venues = rawVenues.slice(0, 20).map((v) => ({
         place_id: typeof v?.place_id === 'string' ? v.place_id.slice(0, 256) : null,
         name: typeof v?.name === 'string' ? v.name.slice(0, 256) : '',
-        rating: Number.isFinite(v?.rating) ? v.rating : null,
-        user_ratings_total: Number.isFinite(v?.user_ratings_total) ? v.user_ratings_total : 0,
-        price_level: Number.isInteger(v?.price_level) ? v.price_level : null,
+        rating: inRange(v?.rating, 0, 5),
+        user_ratings_total: intInRange(v?.user_ratings_total, 0, 100000000) ?? 0,
+        price_level: intInRange(v?.price_level, 0, 4),
         types: Array.isArray(v?.types) ? v.types.filter((t) => typeof t === 'string').slice(0, 10) : [],
         // BUCKETED TO ~1 km BEFORE ANYTHING DOWNSTREAM SEES THEM.
         //
@@ -1140,12 +1171,19 @@ router.post('/batch',
           }
           : null,
         isOpen: typeof v?.isOpen === 'boolean' ? v.isOpen : null,
-        openHour: Number.isInteger(v?.openHour) ? v.openHour : null,
-        closeHour: Number.isInteger(v?.closeHour) ? v.closeHour : null,
+        openHour: intInRange(v?.openHour, 0, 23),
+        closeHour: intInRange(v?.closeHour, 0, 23),
         // Whitelisted so a client that has the venue's Google offset lets the
         // event window (trueEventInstant) land on the venue's real instant
         // rather than the viewer's. Absent -> null -> old fallback behavior.
-        utcOffsetMinutes: Number.isFinite(v?.utcOffsetMinutes) ? v.utcOffsetMinutes : null,
+        // BOUNDED to the offsets that exist (UTC-12:00 .. UTC+14:00) — see the
+        // round 26 note above the map, and crowdEngine.venueLocalNow, which
+        // now also refuses a shift that lands outside the date range.
+        utcOffsetMinutes: intInRange(
+          v?.utcOffsetMinutes,
+          crowdEngine.MIN_UTC_OFFSET_MINUTES,
+          crowdEngine.MAX_UTC_OFFSET_MINUTES
+        ),
       }));
       const now = new Date();
 

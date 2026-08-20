@@ -73,25 +73,127 @@ pool.on('error', (err) => {
 // ---------------------------------------------------------------------------
 // DATABASE SAFETY: Intercept dangerous queries
 // ---------------------------------------------------------------------------
+//
+// THE GUARD READ COMMENTS AND PROSE, AND IT COST US A WHOLE ROUTE.
+//
+// This was `/TRUNCATE/i.test(queryText)` — an unanchored substring match over
+// the ENTIRE statement text, comments included. `routes/venueProfile.js`'s
+// UPDATE carries a long `--` comment explaining the jsonb merge, and one of its
+// sentences ends "...reaches Postgres truncated at that point." The substring
+// `truncat` is in `truncated`, so from 2026-08-14 (commit 7c696ed, which added
+// that comment) every single `PUT /api/venue-profile` was rejected here and
+// answered 500 "Failed to update venue profile". That is the venue settings
+// save AND the eighteen-field intake form behind it — the owner's whole write
+// path — dead, with the only evidence a `🛡️ BLOCKED dangerous query` line in
+// the Railway log that reads like an attack being stopped.
+//
+// A guard on a SQL VERB has to look at SQL verbs:
+//
+//   * comments are stripped first, so prose in a `--` or `/* */` block can
+//     never be mistaken for a statement (this is the bug above, and it would
+//     have bitten migration 025 too, whose header says "a typo'd or truncated
+//     label"); and
+//   * the match is word-bounded, so `truncated`, `untruncated`, `date_trunc`
+//     and a column named `truncate_after` are words rather than verbs.
+//
+// String literals and dollar-quoted bodies are preserved rather than stripped —
+// a `--` inside a quoted string does not start a comment in Postgres and must
+// not start one here, or a statement could be hidden from the guard by putting
+// a `--` in a literal ahead of it.
+//
+// WHAT THIS GUARD IS AND IS NOT. It protects against OUR OWN code — a script,
+// a migration draft, a copy-pasted psql line — running a destructive statement
+// against production. It is not an injection defence: no route in this codebase
+// builds SQL from request data, and if one ever did, a verb blocklist would not
+// be the thing that saved it. It also only wraps `pool.query`; a client checked
+// out with `pool.connect()` (the transaction routes, and db/migrate.js) calls
+// `client.query` and is NOT covered. That is deliberate — the migration runner
+// has to be able to run whatever a migration says — and it is the reason this
+// is a seatbelt rather than a wall.
+const SQL_DANGER = [
+  [/\bDROP\s+TABLE\b/i, 'DROP TABLE is BLOCKED for safety. Set ALLOW_DROP_TABLES=true in .env to allow, or use migrations instead.'],
+  [/\bTRUNCATE\b/i, 'TRUNCATE is BLOCKED for safety. Set ALLOW_DROP_TABLES=true in .env to allow.'],
+];
+
+// Replace every SQL comment with a space, leaving quoted text alone. Postgres
+// block comments nest, so `/* /* */ */` is one comment; line comments run to
+// the newline, which is kept so token boundaries survive.
+function stripSqlComments(sql) {
+  let out = '';
+  let i = 0;
+  const n = sql.length;
+  while (i < n) {
+    const c = sql[i];
+    if (c === "'") {                                  // string literal, '' escapes
+      let j = i + 1;
+      while (j < n) {
+        if (sql[j] !== "'") { j++; continue; }
+        if (sql[j + 1] === "'") { j += 2; continue; }
+        j++;
+        break;
+      }
+      out += sql.slice(i, j); i = j; continue;
+    }
+    if (c === '"') {                                  // quoted identifier
+      const close = sql.indexOf('"', i + 1);
+      const end = close === -1 ? n : close + 1;
+      out += sql.slice(i, end); i = end; continue;
+    }
+    if (c === '$') {                                  // $$ ... $$ / $tag$ ... $tag$
+      const m = /^\$(?:[A-Za-z_]\w*)?\$/.exec(sql.slice(i));
+      if (m) {
+        const tag = m[0];
+        const close = sql.indexOf(tag, i + tag.length);
+        const end = close === -1 ? n : close + tag.length;
+        out += sql.slice(i, end); i = end; continue;
+      }
+    }
+    if (c === '-' && sql[i + 1] === '-') {            // line comment
+      const nl = sql.indexOf('\n', i);
+      i = nl === -1 ? n : nl;
+      out += ' '; continue;
+    }
+    if (c === '/' && sql[i + 1] === '*') {            // block comment, nestable
+      let depth = 1;
+      let j = i + 2;
+      while (j < n && depth > 0) {
+        if (sql[j] === '/' && sql[j + 1] === '*') { depth++; j += 2; continue; }
+        if (sql[j] === '*' && sql[j + 1] === '/') { depth--; j += 2; continue; }
+        j++;
+      }
+      i = j; out += ' '; continue;
+    }
+    out += c; i++;
+  }
+  return out;
+}
+
+/** The refusal message for a statement, or null when it is allowed. */
+function dangerousStatement(queryText) {
+  if (!queryText || typeof queryText !== 'string') return null;
+  if (process.env.ALLOW_DROP_TABLES === 'true') return null;
+  const code = stripSqlComments(queryText);
+  for (const [re, message] of SQL_DANGER) {
+    if (re.test(code)) return message;
+  }
+  return null;
+}
+
 const originalQuery = pool.query.bind(pool);
 pool.query = function safeQuery(...args) {
   const queryText = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].text);
-  if (queryText && /DROP\s+TABLE/i.test(queryText) && process.env.ALLOW_DROP_TABLES !== 'true') {
-    const err = new Error(
-      'DROP TABLE is BLOCKED for safety. Set ALLOW_DROP_TABLES=true in .env to allow, or use migrations instead.'
-    );
+  const refusal = dangerousStatement(queryText);
+  if (refusal) {
     console.error('🛡️ BLOCKED dangerous query:', queryText);
-    return Promise.reject(err);
-  }
-  if (queryText && /TRUNCATE/i.test(queryText) && process.env.ALLOW_DROP_TABLES !== 'true') {
-    const err = new Error(
-      'TRUNCATE is BLOCKED for safety. Set ALLOW_DROP_TABLES=true in .env to allow.'
-    );
-    console.error('🛡️ BLOCKED dangerous query:', queryText);
-    return Promise.reject(err);
+    return Promise.reject(new Error(refusal));
   }
   return originalQuery(...args);
 };
+
+// Exposed so __tests__/poolQueryGuard.test.js can test the predicate without
+// opening a connection.
+pool.__dangerousStatement = dangerousStatement;
+pool.__stripSqlComments = stripSqlComments;
 
 // ---------------------------------------------------------------------------
 // STARTUP CONNECTIVITY CHECK — only in the process that is actually a server.

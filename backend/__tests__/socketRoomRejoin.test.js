@@ -660,11 +660,25 @@ test('the batch crowd payload forwards each venue\'s own utcOffsetMinutes', () =
     'without the venue offset every row in the list is scored on the viewer\'s clock');
   assert.ok(!/utcOffsetMinutes: undefined/.test(payload),
     'the field must be forwarded or null, never undefined');
-  // The server whitelists it with Number.isFinite, so null is the safe absent
-  // value and the fallback behaviour is unchanged.
+  // The server whitelists it, so null is the safe absent value and the
+  // fallback behaviour is unchanged.
+  //
+  // ROUND 26: the check used to be `Number.isFinite`, and this assertion
+  // pinned that spelling. Finiteness is a property of the double, not of an
+  // offset: `1e15` is finite, and shifting `now` by 1e15 minutes lands past
+  // the ECMAScript date range, so crowdEngine.venueLocalNow returned
+  // `{ hour: NaN }` and the whole feature vector went NaN behind it (measured:
+  // one venue moved from `predictionMethod: "ml"` score 62 to
+  // `rule_engine_no_baseline` score 27, published at 42% confidence). The
+  // whitelist now bounds the field to the offsets that exist, against
+  // crowdEngine's own constants rather than two numbers retyped here.
   const route = fs.readFileSync(path.join(__dirname, '..', 'routes', 'crowd.js'), 'utf8');
-  assert.ok(/utcOffsetMinutes: Number\.isFinite\(v\?\.utcOffsetMinutes\)/.test(route),
-    '/api/crowd/batch must keep validating the client-supplied offset');
+  assert.match(route,
+    /utcOffsetMinutes: intInRange\(\s*v\?\.utcOffsetMinutes,\s*crowdEngine\.MIN_UTC_OFFSET_MINUTES,\s*crowdEngine\.MAX_UTC_OFFSET_MINUTES\s*\)/,
+    '/api/crowd/batch must keep validating the client-supplied offset, bounded to a real one');
+  const engine = fs.readFileSync(path.join(__dirname, '..', 'services', 'crowdEngine.js'), 'utf8');
+  assert.match(engine, /if \(Number\.isNaN\(shifted\.getTime\(\)\)\) return null;/,
+    'venueLocalNow must refuse a shift that lands outside the date range rather than reporting NaN as an hour');
 });
 
 // ===========================================================================

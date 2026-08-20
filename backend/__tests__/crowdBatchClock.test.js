@@ -125,10 +125,24 @@ const VIEWER_HOUR = 20;
 const VIEWER_DAY = 5;
 
 // A utcOffsetMinutes that puts a venue at `hour` local, whenever this runs.
-// Only finiteness matters to crowdEngine.venueLocalNow, so the value does not
-// have to be one a real country uses.
+//
+// ROUND 26: this used to return a value in [0, 1440) and say "only finiteness
+// matters to crowdEngine.venueLocalNow, so the value does not have to be one a
+// real country uses". That is no longer true, and the reason is the finding
+// that changed it: `utcOffsetMinutes` arrives in the REQUEST BODY on this
+// route, `Number.isFinite` was the only check on it, and `1e15` shifted the
+// date past the ECMAScript range so `getUTCHours()` came back NaN and the
+// whole feature vector went NaN with it. venueLocalNow now refuses an offset
+// outside UTC-12:00..UTC+14:00, and routes/crowd.js bounds the body field to
+// the same range, so a test helper has to name an offset that exists.
+//
+// Folded into [-720, 840] rather than clamped: the local hour this helper
+// exists to produce is a function of the offset MOD 1440, so subtracting a day
+// from an out-of-range value keeps the venue at exactly the hour asked for and
+// makes it an offset a country actually uses.
 function offsetForLocalHour(hour, at = new Date()) {
-  return (((hour - at.getUTCHours()) * 60) + 1440) % 1440;
+  const wrapped = (((hour - at.getUTCHours()) * 60) + 1440) % 1440;
+  return wrapped > crowdEngine.MAX_UTC_OFFSET_MINUTES ? wrapped - 1440 : wrapped;
 }
 
 // The hour(s) a venue at `offset` could legitimately have been scored at, given
