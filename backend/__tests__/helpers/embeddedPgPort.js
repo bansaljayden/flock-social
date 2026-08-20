@@ -129,6 +129,38 @@ function isPortFree(port) {
  * Build the EmbeddedPostgres all nine suites want, with its server log captured
  * so that a start failure can quote it.
  */
+// WHY EVERY EMBEDDED POSTGRES HERE RUNS WITH io_method=sync.
+//
+// This is the fix for the orphan leak, and it is not the leak everyone assumed.
+// 58 stray `postgres.exe` processes accumulated overnight holding 619 MB, and a
+// suite run timed out at 897 s because of them. The assumed cause was "a whole
+// embedded cluster survives each run". The process table says otherwise: every
+// single orphan was a `--forkchild="io_worker"` whose PARENT pid no longer
+// existed. No orphaned postmaster, no orphaned checkpointer, bgwriter, or
+// wal_writer -- only io_workers.
+//
+// That shape names the mechanism exactly. embedded-postgres pins PostgreSQL 18,
+// whose default `io_method=worker` starts a pool of io_worker child processes
+// that the postmaster never speaks to again. When a test process dies without
+// running its `after` hook -- the runner's own timeout kill, a Ctrl-C, a crash --
+// `pg.stop()` never runs, so nothing ever calls taskkill on the tree. The
+// postmaster and the chatty auxiliaries all write to a stderr pipe whose read
+// end just closed with the node process, so they die on their own. The
+// io_workers write nothing, notice nothing, and stay bound forever. They are
+// the residue of every killed run, which is why they arrive in multiples of
+// three and never with a parent.
+//
+// `io_method=sync` does the I/O on the backend that asked for it and starts no
+// io_worker processes at all, so the class of orphan cannot be created. Measured
+// on this machine before the change went in: with the flag, the postmaster's
+// children are the ordinary auxiliaries and `io_worker count: 0`.
+//
+// This is a startup-only GUC (`postmaster` context), so it has to be a flag on
+// the server command line rather than a `SET`. It costs these suites nothing:
+// they run a few thousand rows through a backfill on one connection, which is
+// the workload asynchronous I/O has the least to offer.
+const NO_IO_WORKERS = ['-c', 'io_method=sync'];
+
 function createEmbeddedPostgres(EmbeddedPostgres, { suite, port, databaseDir }) {
   const log = [];
   const pg = new EmbeddedPostgres({
@@ -137,6 +169,7 @@ function createEmbeddedPostgres(EmbeddedPostgres, { suite, port, databaseDir }) 
     password: 'postgres',
     port,
     persistent: false,
+    postgresFlags: NO_IO_WORKERS,
     onLog: (message) => {
       log.push(String(message).trimEnd());
       if (log.length > 40) log.shift();
