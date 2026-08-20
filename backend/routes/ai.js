@@ -285,7 +285,7 @@ const toolDeclarations = [
   },
   {
     name: 'get_crowd_prediction',
-    description: 'Get the current crowd level, hourly forecast, best time to visit, and peak hours for a specific venue. Use this when the user asks about how busy a place is or when to go.',
+    description: 'Get the current crowd level, hourly forecast, best time to visit, and peak hours for a specific venue. Use this when the user asks about how busy a place is or when to go. best_time is the only answer to "when should I go" — the hourly scores say how busy each hour is, not which hour is better.',
     parameters: {
       type: 'OBJECT',
       properties: {
@@ -844,6 +844,7 @@ How to answer:
 - Vague asks ("what's the move", "where's poppin") → they want somewhere fun nearby. Search real categories (bars, food, activities), never the slang words themselves.
 - Slang decoder: "the move" = what to do; "link"/"pull up" = meet up; "dead" = empty; "lit"/"poppin" = busy and fun; "lowkey" = quiet or casual; "bet" = ok; "no cap" = seriously.
 - Crowds: translate numbers into advice. "68% and climbing, go now or wait till 11" beats reciting the data. Mention best time when it helps.
+- WHEN TO GO IS \`best_time\`, ALWAYS. Never rank the hours in \`hourly_forecast\` yourself and never name a quieter hour \`best_time\` did not name. Those scores are how busy each hour is, and they were measured to order hours WORSE than the curve \`best_time\` ranks on: inside 10 points, ordering two hours is a coin flip. \`best_time\` already refuses to name an hour when the difference is that small, so "No quiet hour stands out" means the hours really do look alike and the honest answer is that it doesn't matter much when they go.
 - If you have their coordinates, always pass location to search_venues. If not, ask where they are, once.
 
 Hard rules:
