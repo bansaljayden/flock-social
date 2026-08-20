@@ -6,6 +6,10 @@
 const path = require('path');
 const fs = require('fs');
 const crowdEngine = require('./crowdEngine');
+// Namespace require, not destructured: predictHourlyForecast reads
+// weatherService.getHourlyForecast at call time, which is also the seam
+// __tests__/serveTrainSkew.test.js stubs.
+const weatherService = require('./weatherService');
 // Same holiday/school-break calendar the training rows were stamped with —
 // inference must use the identical definition or the feature is garbage.
 const { isHoliday, isSchoolBreak } = require('../scripts/ml/config');
@@ -1008,6 +1012,14 @@ function distanceKm(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// MUST MATCH scripts/ml/collectEvents.js estimateEndHour: the corpus's event
+// window for every training row was [startHour, startHour + duration],
+// INCLUSIVE of both end hours (enrichWithEvents.isHourInRange). Serving
+// re-derives the same window from the same duration table, so an event is
+// "nearby" at prediction time exactly when training would have counted it.
+const EVENT_DURATION_HOURS = { music: 3, sports: 3, arts: 2, family: 3, other: 3 };
+const EVENT_MAX_DURATION_H = 3; // max of the table — bounds the query window
+
 function mapTmEventType(classifications) {
   if (!classifications || !classifications.length) return 'other';
   const seg = (classifications[0].segment?.name || '').toLowerCase();
@@ -1147,9 +1159,22 @@ async function fetchNearbyEvents(cacheKey, lat, lng, timestamp, userId, noEvents
 
   try {
     const ts = timestamp ? new Date(timestamp) : new Date();
-    const startDt = ts.toISOString().replace(/\.\d{3}Z$/, 'Z');
-    const endTs = new Date(ts.getTime() + 3 * 60 * 60 * 1000);
-    const endDt = endTs.toISOString().replace(/\.\d{3}Z$/, 'Z');
+    // TRAINING'S WINDOW, NOT "COMING SOON" (train/serve skew hunt 2026-08-19).
+    // This used to ask Ticketmaster for events STARTING in [t, t+3h] — but
+    // training (scripts/ml/enrichWithEvents.js) counted events ONGOING at the
+    // row hour: startHour through startHour + duration, inclusive. Two
+    // divergences at once: a 20:00 arena show was invisible at 21:00, mid-show
+    // (which also suppressed the eventAlert banner during the show itself),
+    // while a show starting at 23:00 was counted at 20:00, three hours before
+    // training would have counted it. The window now opens EVENT_MAX_DURATION_H
+    // back from the prediction HOUR (hour floor, matching training's integer-
+    // hour comparison) and closes at the end of that hour, so every candidate
+    // whose active window can contain this hour is fetched; the per-event
+    // duration filter in the loop below does the exact per-type arithmetic.
+    const HOUR_MS = 60 * 60 * 1000;
+    const tsHour = Math.floor(ts.getTime() / HOUR_MS);
+    const startDt = new Date((tsHour - EVENT_MAX_DURATION_H) * HOUR_MS).toISOString().replace(/\.\d{3}Z$/, 'Z');
+    const endDt = new Date((tsHour + 1) * HOUR_MS - 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
 
     const params = new URLSearchParams({
       apikey: apiKey,
@@ -1207,13 +1232,30 @@ async function fetchNearbyEvents(cacheKey, lat, lng, timestamp, userId, noEvents
       const dist = distanceKm(lat, lng, eLat, eLng);
       if (dist > NEARBY_KM) continue;
 
+      // ONGOING, THE WAY TRAINING COUNTED IT: hour(t) inside [startHour,
+      // startHour + duration], both ends inclusive, at hour granularity
+      // (enrichWithEvents.isHourInRange over collectEvents.estimateEndHour's
+      // per-type durations). Hour floors of real instants: offsets cancel for
+      // whole-hour timezones, and a half-hour zone is off by at most the same
+      // hour of slack training's integer-hour comparison already had. An event
+      // whose start Ticketmaster does not timestamp stays counted — it matched
+      // the query window, so it started within the last EVENT_MAX_DURATION_H
+      // hours, and "probably mid-show" beats inventing a start time.
+      const type = mapTmEventType(e.classifications);
+      const startMs = Date.parse(e.dates?.start?.dateTime || '');
+      if (Number.isFinite(startMs)) {
+        const hoursSinceStart = tsHour - Math.floor(startMs / HOUR_MS);
+        const durH = EVENT_DURATION_HOURS[type] ?? EVENT_MAX_DURATION_H;
+        if (hoursSinceStart < 0 || hoursSinceStart > durH) continue;
+      }
+
       const attendance = estimateTmAttendance(e);
       totalNearby++;
       totalAttendance += attendance;
 
       if (dist < nearestDist) {
         nearestDist = dist;
-        nearestEvent = { name: e.name, type: mapTmEventType(e.classifications), attendance };
+        nearestEvent = { name: e.name, type, attendance };
       }
     }
 
@@ -1586,6 +1628,29 @@ function globalTempNorm() {
   return value;
 }
 
+// Training's fill for a category the baseline table has never seen:
+// prepare_features.add_baseline_features does fillna(cat_maps['global_mean'])
+// — the corpus mean of busyness_pct — never 0. An artifact that carries the
+// exact number publishes it as `category_global_mean` (none does yet); until
+// then the mean of the category_baselines table is the closest train-consistent
+// stand-in, the same construction globalTempNorm uses for temp_norms. The old
+// `|| 0` here was worth 11 points if ever reached (measured 2026-08-18 on the
+// shipped artifact: 59 vs 70). Latent — no live caller produces an
+// out-of-vocab category today — which is exactly why it must not wait to be
+// found live. Memoised per table identity, like globalTempNorm.
+let catBaselineMean = { src: null, value: null };
+function categoryGlobalMean(meta) {
+  const m = meta || metadata || {};
+  const explicit = Number(m.category_global_mean);
+  if (Number.isFinite(explicit)) return explicit;
+  const table = m.category_baselines || {};
+  if (catBaselineMean.src === table) return catBaselineMean.value;
+  const vals = Object.values(table).map(Number).filter(Number.isFinite);
+  const value = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+  catBaselineMean = { src: table, value };
+  return value;
+}
+
 // The training run's climatology for this venue: same 5-degree latitude banding
 // as prepare_features.add_climate_anomaly, same global-mean fallback. Units are
 // whatever the training rows were in, which is °F.
@@ -1741,12 +1806,27 @@ function buildFeatureMap(venue, weather, timestamp, eventData, feedback, baselin
     cold_outdoor: (Number.isFinite(temp) && temp < 41 && weatherGroup === 'clear') ? 1 : 0,
     // Baseline + freshness — venue-specific if available, category fallback otherwise
     baseline_busyness: baseline || 0,
-    category_baseline: (metadata.category_baselines || {})[`${venueCategory}_${dayOfWeek}_${hour}`] || 0,
+    // Fill chain mirrors prepare_features.add_baseline_features exactly:
+    // category misses fill with the corpus global mean (categoryGlobalMean,
+    // skew fix d — this was `|| 0`, an 11-point divergence if ever reached);
+    // refined misses fall back to the category value, THEN the global mean.
+    // Number.isFinite instead of `||` so a legitimate 0.0 table entry is a
+    // value, not a miss — training's fillna only fills NaN.
+    category_baseline: (() => {
+      const v = Number((metadata.category_baselines || {})[`${venueCategory}_${dayOfWeek}_${hour}`]);
+      if (Number.isFinite(v)) return v;
+      const fill = categoryGlobalMean(metadata);
+      return Number.isFinite(fill) ? fill : 0;
+    })(),
     refined_category_baseline: (() => {
       const pt = priceLevel >= 2 ? 1 : 0;
       const pop = rating >= 4.3 ? 1 : 0;
-      return (metadata.refined_baselines || {})[`${venueCategory}_${pt}_${pop}_${dayOfWeek}_${hour}`]
-        || (metadata.category_baselines || {})[`${venueCategory}_${dayOfWeek}_${hour}`] || 0;
+      const refined = Number((metadata.refined_baselines || {})[`${venueCategory}_${pt}_${pop}_${dayOfWeek}_${hour}`]);
+      if (Number.isFinite(refined)) return refined;
+      const cat = Number((metadata.category_baselines || {})[`${venueCategory}_${dayOfWeek}_${hour}`]);
+      if (Number.isFinite(cat)) return cat;
+      const fill = categoryGlobalMean(metadata);
+      return Number.isFinite(fill) ? fill : 0;
     })(),
     has_venue_baseline: baseline > 0 ? 1 : 0,
     is_realtime: 1, // live predictions are always "realtime" quality
@@ -2175,6 +2255,42 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// PER-SLOT WEATHER for the 24h strip (train/serve skew hunt 2026-08-19).
+//
+// Every training row carried the weather OF ITS OWN HOUR; the 24h forecast
+// used to hand all 24 slots ONE current reading, so 3 AM was scored with
+// 3 PM's temperature and "raining now" rained on tonight's dinner slot —
+// worth 2-3 points on tail hours. weatherService.getHourlyForecast (the OWM
+// 3-hour list) supplies dated entries; this picks the one nearest the slot's
+// REAL instant.
+//
+// The live reading still wins near now: it is an observation where the
+// forecast is a model, and OWM's first list entry can itself be hours out.
+// 90 minutes is half the vendor's 3-hour step — past it the nearest forecast
+// entry is closer in time to the slot than "now" is, and inside it the
+// observation is. The same 90 minutes bounds a match at the far end: a slot
+// past the 5-day horizon falls back to the live reading (the pre-fix
+// behavior, kept as the honest degradation), never to a five-day-old entry.
+// ---------------------------------------------------------------------------
+const FORECAST_SLOT_MAX_GAP_MS = 90 * 60 * 1000;
+function weatherForSlot(hourlyWx, slotInstantMs, currentWeather, nowMs) {
+  if (!Array.isArray(hourlyWx) || hourlyWx.length === 0) return currentWeather;
+  if (!Number.isFinite(slotInstantMs)) return currentWeather;
+  if (Math.abs(slotInstantMs - nowMs) < FORECAST_SLOT_MAX_GAP_MS) return currentWeather;
+  let best = null;
+  let bestGap = Infinity;
+  for (const entry of hourlyWx) {
+    const gap = Math.abs(Number(entry?.at) - slotInstantMs);
+    if (Number.isFinite(gap) && gap < bestGap) {
+      bestGap = gap;
+      best = entry;
+    }
+  }
+  if (!best || bestGap > FORECAST_SLOT_MAX_GAP_MS) return currentWeather;
+  return best;
+}
+
 // `options.userId` is forwarded to every hour's predictBusyness. This path is
 // the largest single-request event fan-out in the app — 24 hours, each its own
 // UTC hour slot in the event cache key, so a cold venue can be 24 upstream calls
@@ -2183,10 +2299,10 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
 async function predictHourlyForecast(venue, weather, startHour, count, baseTimestamp, options = {}) {
   await init();
 
-  if (!useML) {
-    return crowdEngine.generateHourlyForecast(venue, weather, startHour, count, baseTimestamp);
-  }
-
+  // No useML early return here any more: predictBusyness makes the same
+  // ML-or-rule-engine decision PER HOUR and tags its answer, which is the
+  // whole point of skew fix (c) — the old shortcut skipped per-slot weather
+  // and produced entries that did not say which engine scored them.
   const hours = count || 12;
   const start = startHour != null ? startHour : new Date().getHours();
   const forecast = [];
@@ -2219,15 +2335,43 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
     return `${displayHour} ${period}`;
   };
 
+  // ONE forecast fetch per card (cached and coalesced inside weatherService,
+  // budget-refused misses return null and every slot keeps the live reading).
+  // The slot instant handed to weatherForSlot is the REAL instant — `ts` below
+  // is the venue wall clock encoded in server time (see trueEventInstant), and
+  // matching a fake instant against the vendor's real-UTC entries would fetch
+  // the wrong hour's weather by exactly the venue's offset.
+  const wxLat = venue.location?.latitude || venue.latitude || venue.lat || 0;
+  const wxLng = venue.location?.longitude || venue.longitude || venue.lng || 0;
+  const utcOff = venue.utcOffsetMinutes ?? venue.utc_offset_minutes ?? venue.utc_offset ?? null;
+  const hourlyWx = (wxLat || wxLng)
+    ? await weatherService.getHourlyForecast(wxLat, wxLng, { userId: options && options.userId })
+    : null;
+  const nowMs = Date.now();
+
   for (let i = 0; i < hours; i++) {
     const ts = new Date(base.getTime() + i * 60 * 60 * 1000);
+    const slotWeather = weatherForSlot(hourlyWx, trueEventInstant(ts, utcOff).getTime(), weather, nowMs);
     try {
-      const result = await predictBusyness(venue, weather, ts, options);
-      forecast.push({ hour: labelFor(ts), score: result.score, label: result.label });
+      const result = await predictBusyness(venue, slotWeather, ts, options);
+      // predictionMethod per entry (skew fix c): without it a strip silently
+      // mixed ML hours and rule-engine hours — a baseline exists at 19:00 but
+      // not at 03:00 — and no client could tell which bars were which.
+      forecast.push({
+        hour: labelFor(ts),
+        score: result.score,
+        label: result.label,
+        predictionMethod: result.predictionMethod || null,
+      });
     } catch (err) {
       // Fallback for this hour
-      const fallback = crowdEngine.calculateCrowdScore(venue, weather, ts);
-      forecast.push({ hour: labelFor(ts), score: fallback.score, label: fallback.label });
+      const fallback = crowdEngine.calculateCrowdScore(venue, slotWeather, ts);
+      forecast.push({
+        hour: labelFor(ts),
+        score: fallback.score,
+        label: fallback.label,
+        predictionMethod: 'rule_engine_fallback',
+      });
     }
   }
 
@@ -2268,6 +2412,8 @@ module.exports = {
     groupWeatherCode,
     baselineFromPopularTimes,
     trueEventInstant,
+    weatherForSlot,
+    categoryGlobalMean,
     hasTempReading,
     climateNorm,
     tempForFeature,
