@@ -1268,6 +1268,32 @@ async function buildReadingsVsServed(ctx) {
     }));
   }
 
+  // PROVENANCE, THE SAME ALLOWLIST 038 WROTE FOR EVERY OTHER READER OF THIS
+  // TABLE, and it was missing here (money audit round 4).
+  //
+  // served_predictions is written by three call sites in routes/crowd.js, and
+  // one of them is POST /api/crowd/batch, whose scoring inputs arrive IN THE
+  // REQUEST BODY: rating, review count, price level, types, opening hours and
+  // utcOffsetMinutes are range-checked and then scored. The place id is
+  // deliberately not owned by the caller either. So ANY authenticated Flock
+  // account can name somebody else's venue, choose the inputs that produce the
+  // number it wants, and POST twenty of them at a time.
+  //
+  // Every other reader already refuses those rows. routes/feedback.js takes
+  // source = 'detail' only, services/ownerReportContext.js takes it before
+  // writing a training label, and services/lastNightVerdict.js takes it for the
+  // daily verdict. This query took everything, so the sentence card 4 reads
+  // back to an owner ("Flock served N crowd estimates for your venue, median
+  // X") was computed over rows a stranger could mint. The owner cannot tell,
+  // because the card's whole claim is that it is reporting what WE served.
+  //
+  // ALLOWLIST, NOT BLOCKLIST, for 038's stated reason: `source <> 'batch'`
+  // re-opens this the day a fourth write path lands, and lets the pre-038 NULL
+  // rows through in the meantime (NULL <> 'batch' is NULL, never true).
+  //
+  // No clock predicate here, unlike ownerReportContext: this fact is a daily
+  // rollup of what was on screen across the whole day, not a serve paired with
+  // one owner reading at one hour.
   const served = await pool.query(
     `SELECT (served_at AT TIME ZONE $2)::date AS day,
             COUNT(*)::int AS serves,
@@ -1275,6 +1301,7 @@ async function buildReadingsVsServed(ctx) {
        FROM served_predictions
       WHERE venue_place_id = $1
         AND served_at >= NOW() - INTERVAL '7 days'
+        AND source = 'detail'
       GROUP BY 1 ORDER BY 1 DESC`,
     [p.google_place_id, tz]
   );

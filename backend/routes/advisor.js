@@ -598,11 +598,20 @@ async function hasRecentHistory(placeId) {
   if (!placeId) return false;
   try {
     const { rows } = await pool.query(
+      // `source = 'detail'` for migration 038's reason, which this half of the
+      // check was missing (money audit round 4). POST /api/crowd/batch writes
+      // served_predictions rows for a caller-named place id from caller-supplied
+      // scoring inputs, so without the allowlist any authenticated account could
+      // keep another venue's history chips lit up, and keep them lit after the
+      // venue itself had gone quiet. Every other reader of this table already
+      // takes 'detail' only. Allowlist rather than `<> 'batch'`: the pre-038
+      // rows carry NULL, and NULL <> 'batch' is NULL, never true.
       `SELECT EXISTS (SELECT 1 FROM venue_owner_reports
                        WHERE google_place_id = $1 AND retracted = false
                          AND created_at >= NOW() - INTERVAL '7 days') AS readings,
               EXISTS (SELECT 1 FROM served_predictions
                        WHERE venue_place_id = $1
+                         AND source = 'detail'
                          AND served_at >= NOW() - INTERVAL '7 days') AS served`,
       [placeId]
     );
