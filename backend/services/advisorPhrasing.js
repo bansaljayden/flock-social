@@ -55,11 +55,16 @@ const { boolFlag } = require('./entitlements');
 const { upstreamSignal } = require('../utils/upstream');
 
 // ── The intent registry (Layer A) ───────────────────────────────────────────
-// Chips only. There is no free-text field in this build, so this closed list
-// IS the entire question surface: an intent outside it cannot be asked, and
-// routes/advisor.js answers 400 for anything else. Layer B may refuse any of
-// these (refusing is a first-class fact-engine output); the registry only says
-// what may be ASKED, not what can be answered tonight.
+// This closed list is the entire GROUNDED question surface, and it stayed that
+// way when free text arrived on 2026-08-20: a typed question about the venue's
+// own numbers is routed to one of these ids and answered by the same pipeline
+// the chip would have used (services/advisorFreeText.js). So the registry is
+// still the whole answer surface for anything that states a number about this
+// venue, and a typed question cannot reach a fact a chip could not.
+//
+// Layer B may refuse any of these (refusing is a first-class fact-engine
+// output); the registry only says what may be ASKED, not what can be answered
+// tonight, and GET /questions offers a venue only the ones its data supports.
 // Ids must never contain digits: the valve rejects any digit in raw model
 // output, placeholders included.
 // The product's name, in exactly one backend place (its frontend twin is the
@@ -92,6 +97,35 @@ const ADVISOR_INTENTS = Object.assign(Object.create(null), {
   peak_hours: { chip: 'When do we peak this week?', group: 'looking_ahead' },
   weekend_outlook: { chip: 'What does the weekend look like?', group: 'looking_ahead' },
   quiet_nights: { chip: 'Which days look quiet?', group: 'looking_ahead' },
+  // "How did we just do" is the most-asked question in the category by a wide
+  // margin (operator telemetry across a hundred thousand plus locations puts
+  // explicit forecasting at about one percent of prompts and this shape at the
+  // top), and it was missing from the registry until 2026-08-20.
+  //
+  // It landed that morning as `last_day_compare`, which set the last day we
+  // hold numbers for beside the same weekday before it and left the reader to
+  // do the subtraction. It is now `last_night_verdict`, which does the
+  // subtraction and says the answer: above, below, or ordinary, against the
+  // venue's own same-weekday history, with a threshold that refuses to call a
+  // wobble a bad day (services/lastNightVerdict.js carries the arithmetic and
+  // the justification). Two chips for one question would have been a menu, so
+  // the older one is gone rather than kept beside it.
+  //
+  // The copy says "yesterday", not "last night", for the reason the note above
+  // this block gives: Roost serves breakfast cafes as well as bars.
+  last_night_verdict: { chip: 'How did we do yesterday?', group: 'looking_back' },
+  // The cohort pair. Question class 2 in ROOST-OWNER-INPUT, the highest
+  // engagement class in the whole operator corpus and the one a single-tenant
+  // POS structurally cannot answer, because no operator holds anybody else's
+  // numbers. Two chips rather than one, because the two halves have different
+  // subjects and different honesty: cohort_same_night is about ONE finished
+  // day and needs five other venues to have reported before it says anything,
+  // cohort_typical is about typicals and answers today from the frozen corpus.
+  // Merging them would let a sentence about spring 2026 curves stand in for a
+  // sentence about last night, which is the exact substitution the whole
+  // why-layer exists to prevent.
+  cohort_same_night: { chip: 'Was it just us, or was everyone slow?', group: 'looking_back' },
+  cohort_typical: { chip: 'Where do we sit among venues like us?', group: 'your_street' },
   week_recap: { chip: 'What do the last seven days look like in numbers?', group: 'looking_back' },
   slow_night: { chip: 'Why was our slow day slow?', group: 'looking_back' },
   readings_vs_estimates: { chip: 'Did our readings match what Flock showed?', group: 'looking_back' },
@@ -101,6 +135,47 @@ const ADVISOR_INTENTS = Object.assign(Object.create(null), {
   around_you: { chip: 'What is happening around us this week?', group: 'your_street' },
   data_status: { chip: 'What data do you have on us?', group: 'your_data' },
 });
+
+// The order chips are OFFERED in, which is a different question from what the
+// registry contains. Roost's chips are whole sentences, so four is the honest
+// visible budget on a phone and the rest belong behind a disclosure; this list
+// decides which four a venue sees first.
+//
+// Three deliberate placements. THE VERDICT LEADS, and it took the top slot off
+// the forecast on 2026-08-20: across 125,000+ locations, the daily recap was
+// the prompt operators came back to and explicit forecasting was one percent,
+// the least asked category measured, in a product that had a forecasting
+// surface built in. "How does today look" is second, because it is the other
+// thing an owner opens the dashboard already holding. Events and weather go
+// LAST despite being the prettiest card: the same telemetry measured event and
+// weather questions at about a twentieth of prompts, with nothing behind them
+// in the trade forums either. Interesting to build is not the same as asked
+// for.
+const CHIP_PRIORITY = [
+  'last_night_verdict',
+  'tonight_outlook',
+  // Third, inside the visible four. Forum engagement puts "are we down or is
+  // everyone down" at the top of what operators actually lose sleep over, and
+  // it is the one question here that no other tool in the category can take.
+  // It is offered only to venues that have posted a reading of their own, so
+  // the answer always has a your-side, and below the density floor the answer
+  // is a refusal that names the floor. That refusal is the point, not a
+  // shortfall: it is the only place the product asks for the thing that makes
+  // it work.
+  'cohort_same_night',
+  'peak_hours',
+  'quiet_nights',
+  'week_recap',
+  'readings_vs_estimates',
+  'slow_night',
+  'cohort_typical',
+  'busy_nights_check',
+  'kitchen_vs_peak',
+  'capacity_math',
+  'weekend_outlook',
+  'data_status',
+  'around_you',
+];
 
 function isKnownIntent(intentId) {
   return typeof intentId === 'string'
@@ -150,6 +225,12 @@ const PER_VENUE_DAILY_ANSWERS = 50;
 const PER_VENUE_DAILY_TOKENS = 150_000;
 const ADVISOR_GLOBAL_DAILY_TOKENS = 2_000_000;
 const CHARS_PER_TOKEN = 4; // birdieUsage's estimator convention
+// Free text (services/advisorFreeText.js) gets its own, LOWER meter on the
+// same row. A typed question is at least two model calls to a chip's one, and
+// it is the only advisor payload the caller influences, so it is metered
+// separately and more tightly than the chip path (migration 039). Twenty a day
+// is a busy owner thinking out loud; it is not a loop.
+const PER_VENUE_DAILY_QUESTIONS = 20;
 
 // Copied in intent from birdieUsage.accountKey: '5' and 5 share one bucket,
 // anything unidentifiable is refused rather than handed a free lane.
@@ -197,6 +278,35 @@ async function allowVenuePhrasing(userId, tokens) {
   } catch (err) {
     // Same posture as the global counter: a meter that cannot count refuses.
     console.error('advisorPhrasing: venue spend counter unavailable, refusing the call:', err.message);
+    return false;
+  }
+}
+
+// The free-text twin of the charge above: one QUESTION and its tokens, on the
+// same row and the same all-or-nothing terms, against the question cap rather
+// than the answer cap (migration 039). A typed question that then produces a
+// phrased answer is charged on BOTH meters, which is correct: it did both
+// pieces of work, and the ledger should read the way the invoice does.
+async function allowVenueQuestion(userId, tokens) {
+  const id = accountKey(userId);
+  if (id === null) return false;
+  if (!Number.isInteger(tokens) || tokens < 1) return false;
+  if (tokens > PER_VENUE_DAILY_TOKENS) return false;
+  try {
+    const r = await pool.query(
+      `INSERT INTO advisor_venue_spend (day, venue_user_id, questions, tokens)
+            VALUES (CURRENT_DATE, $1, 1, $2)
+       ON CONFLICT (day, venue_user_id) DO UPDATE
+            SET questions = advisor_venue_spend.questions + 1,
+                tokens    = advisor_venue_spend.tokens + EXCLUDED.tokens
+          WHERE advisor_venue_spend.questions + 1 <= $3
+            AND advisor_venue_spend.tokens + EXCLUDED.tokens <= $4
+       RETURNING tokens`,
+      [id, tokens, PER_VENUE_DAILY_QUESTIONS, PER_VENUE_DAILY_TOKENS]
+    );
+    return r.rowCount > 0;
+  } catch (err) {
+    console.error('advisorPhrasing: venue question counter unavailable, refusing the call:', err.message);
     return false;
   }
 }
@@ -275,6 +385,9 @@ const SOURCE_PHRASES = Object.assign(Object.create(null), {
   google_baseline: "your Google profile's own pattern",
   corpus: 'spring 2026 corpus',
   corpus_covariation: 'spring 2026 corpus',
+  // Other venues' own readings, never one venue's and never a named one: a
+  // median over at least five reporting venues (services/advisorCohort.js).
+  cohort_reported: 'readings from venues like yours',
 });
 
 function sourcePhrase(source) {
@@ -291,7 +404,12 @@ function shortAsOf(asOf) {
   const t = Date.parse(s);
   if (Number.isNaN(t)) return s;
   const d = new Date(t);
-  const opts = { month: 'short', day: 'numeric' };
+  // Rendered in UTC, matching the getUTCFullYear check below it. A bare
+  // 'YYYY-MM-DD' parses as UTC midnight, so formatting it on the SERVER's zone
+  // moved every date-only asOf back a day west of Greenwich: a fact whose own
+  // sentence said "Friday 2026-08-14" was printing "(as of Aug 13)" beside
+  // itself on the same line. The date is a calendar day, not an instant.
+  const opts = { month: 'short', day: 'numeric', timeZone: 'UTC' };
   if (d.getUTCFullYear() !== new Date().getUTCFullYear()) opts.year = 'numeric';
   return d.toLocaleDateString('en-US', opts);
 }
@@ -503,8 +621,44 @@ function applyValve(raw, block) {
   };
 }
 
+// ── Owner prose is context, never a placeholder value ───────────────────────
+//
+// Layer B marks the owner's own typed intake text with textOnly (services/
+// advisorFacts.js: event_note, anchor_note, quirks). Those are the first
+// strings in this product that a PERSON wrote, and they are the one kind of
+// fact the placeholder grammar must not be able to carry.
+//
+// The reason is the order of operations in the valve. A {{fact:id}} is
+// substituted AFTER the digit check has read the draft, and that is safe
+// precisely because every other fact value is a number the server computed and
+// stands behind. A sentence the owner typed is neither, so
+// "{{fact:intake_quirks}}" would push text, and any digits inside it, through
+// the one hole the valve does not watch.
+//
+// So they are partitioned out of the substitutable list and ride as
+// ownerContext: a separate payload key with no ids in it, which is also the
+// shape ADVISOR-GROUNDING's LLM contract specifies (system prompt, then the
+// venue's intake context, then ONE fact block). The model may read them and
+// attribute them; a model that tries to splice one writes an id that is not in
+// the block, applyValve rejects the whole answer, and the template twin serves.
+// The twin prints their labels either way, so the owner reads their own words
+// verbatim on the path that always works and the path the flag leaves on.
+function partitionOwnerContext(facts) {
+  const substitutable = [];
+  const ownerContext = [];
+  for (const f of facts) {
+    if (!f) continue;
+    if (f.textOnly === true) {
+      ownerContext.push({ field: f.id, text: String(f.value), source: f.source, asOf: f.asOf });
+    } else {
+      substitutable.push(f);
+    }
+  }
+  return { substitutable, ownerContext };
+}
+
 // ── The one Gemini call ──────────────────────────────────────────────────────
-function buildUserPayload(intent, facts) {
+function buildUserPayload(intent, facts, ownerContext) {
   // Typed fields only. Layer B builds facts from typed columns, never raw
   // concatenated text, which is what keeps venue names and event titles from
   // becoming prompt instructions; the system prompt's data fence is the
@@ -519,6 +673,11 @@ function buildUserPayload(intent, facts) {
       asOf: f.asOf,
       note: f.note,
     })),
+    // The owner's own typed text, when they have any. A SEPARATE key from
+    // `facts` on purpose: nothing in here carries a placeholder id, because
+    // nothing in here is a number the server computed. Section 10 of the
+    // system prompt tells the model what this key is and that it is data.
+    ...(Array.isArray(ownerContext) && ownerContext.length ? { ownerContext } : {}),
   });
 }
 
@@ -563,9 +722,17 @@ async function phrase(block, { venueUserId } = {}) {
   const genAI = getGenAI();
   if (!genAI) return template;
 
+  // The owner's own prose leaves the fact list here and rides as context.
+  const { substitutable, ownerContext } = partitionOwnerContext(block.facts);
+  // Owner prose ALONE is not a phrasing job: there is no computed number to
+  // build a sentence around and no placeholder for the model to hang one on,
+  // so the call would be spent to produce something the valve rejects. The
+  // twin prints the owner's words verbatim, which is the right answer anyway.
+  if (substitutable.length === 0) return template;
+
   // Digit-free ids, scalar values: the shape the placeholder contract needs.
-  const llmFacts = aliasFacts(flattenFacts(block.facts));
-  const payload = buildUserPayload(block.intent, llmFacts);
+  const llmFacts = aliasFacts(flattenFacts(substitutable));
+  const payload = buildUserPayload(block.intent, llmFacts, ownerContext);
   const estimate = Math.ceil((SYSTEM_PROMPT.length + payload.length) / CHARS_PER_TOKEN)
     + ADVISOR_MAX_OUTPUT_TOKENS;
 
@@ -605,6 +772,46 @@ async function phrase(block, { venueUserId } = {}) {
   if (!valved) return template;
   return { mode: 'phrased', text: valved.text, sources: valved.sources, model: activeModel };
 }
+
+// ── Shared plumbing for the free-text path ──────────────────────────────────
+// services/advisorFreeText.js is Layer A grown a mouth: it runs its own model
+// calls (a router pass and an advice pass) and needs the SAME client, the same
+// ledgers, the same model-fallback behaviour, and the same numeric checks this
+// module already owns. It gets them from here rather than growing a second
+// copy, because a second copy of a spend ceiling is a spend ceiling with a
+// hole in it, and a second copy of the digit check is a second place the valve
+// can drift.
+function noteModelNotFound() {
+  if (activeModel === FALLBACK_ADVISOR_MODEL) return null;
+  console.warn(`advisorPhrasing: model "${activeModel}" not accepted, falling back to "${FALLBACK_ADVISOR_MODEL}"`);
+  activeModel = FALLBACK_ADVISOR_MODEL;
+  modelFellBack = true;
+  return activeModel;
+}
+
+const internals = {
+  getGenAI,
+  isModelNotFound,
+  noteModelNotFound,
+  responseText,
+  allowVenuePhrasing,
+  allowVenueQuestion,
+  allowGlobalTokens,
+  settleTokens,
+  hasNumerals,
+  hasBannedDash,
+  formatFactValue,
+  factSources,
+  // The owner-prose split. Any path that builds a model payload from a fact
+  // block has to run this first, or owner text becomes a placeholder value on
+  // that path and the digit valve stops meaning what it says.
+  partitionOwnerContext,
+  sourcePhrase,
+  NUMBER_WORDS,
+  PLACEHOLDER,
+  CAUSAL_VERBS,
+  CHARS_PER_TOKEN,
+};
 
 // Every user-visible string this module can emit on its own (templates,
 // refusal frames, source phrases, chips). The standing test walks this list
@@ -647,9 +854,12 @@ module.exports = {
   ADVISOR_MAX_OUTPUT_TOKENS,
   PER_VENUE_DAILY_ANSWERS,
   PER_VENUE_DAILY_TOKENS,
+  PER_VENUE_DAILY_QUESTIONS,
   ADVISOR_GLOBAL_DAILY_TOKENS,
   DEFAULT_ADVISOR_MODEL,
   FALLBACK_ADVISOR_MODEL,
+  CHIP_PRIORITY,
+  internals,
   __copyStrings,
   __setGenAIForTests,
   __resetAdvisorSpend,

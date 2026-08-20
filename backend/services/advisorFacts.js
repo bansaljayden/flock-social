@@ -42,6 +42,7 @@ const mlPredictor = require('./mlPredictor');
 const crowdEngine = require('./crowdEngine');
 const weatherService = require('./weatherService');
 const venueCorpus = require('./venueCorpus');
+const { moderateText } = require('../utils/moderation');
 const { INTAKE_COLUMNS } = require('../validators/venueIntake');
 
 // ─── The source vocabulary ───────────────────────────────────────────────────
@@ -75,6 +76,37 @@ const CORPUS_AS_OF = '2026-05-18 (corpus frozen, collected spring 2026)';
 // upstream Ticketmaster query runs at 2km; this is the advisor's tighter cut
 // on the returned nearest distance.
 const EVENT_RADIUS_KM = 1.0;
+
+// The anchor enum, in words an owner would recognise. venueIntake.js stores a
+// closed list because "arena" and "the stadium" and "Lincoln Financial Field"
+// are one fact and three strings (its own comment); reading 'stadium_arena'
+// back at a person is that decision leaking out of the database. A standing
+// test pins this map against ANCHOR_TYPES, so adding an anchor without its
+// copy fails the suite instead of printing a column value at an owner.
+const ANCHOR_WORDS = Object.freeze({
+  stadium_arena: 'a stadium or arena',
+  college_campus: 'a college campus',
+  transit_hub: 'a transit hub',
+  office_district: 'an office district',
+  theater_music_hall: 'a theater or music hall',
+  hotel_cluster: 'hotels',
+  beach_boardwalk: 'a beach or boardwalk',
+  nightlife_strip: 'a nightlife strip',
+  highway_stop: 'a highway stop',
+  hospital: 'a hospital',
+  shopping_center: 'a shopping center',
+});
+
+// Which anchors a ticketed-events feed can even see. Ticketmaster lists ticketed
+// events, so a stadium and a music hall show up there and a campus, a hospital
+// or an office district never will. This is what makes the anchor columns worth
+// reading on the street card: they say which of the owner's own demand
+// generators our listings are structurally blind to.
+const TICKETED_ANCHORS = new Set(['stadium_arena', 'theater_music_hall']);
+
+function anchorWords(types) {
+  return types.map((t) => ANCHOR_WORDS[t] || t).join(', ');
+}
 
 // SLOP-AUDIT, applied to every owner-visible string this module emits: no em
 // dashes, no class words. Enforced at construction so a bad string throws in
@@ -154,6 +186,92 @@ function externalText(value, { max = EXTERNAL_TEXT_MAX } = {}) {
   return s || null;
 }
 
+// ─── The owner's own prose ───────────────────────────────────────────────────
+//
+// Three intake columns are free text a PERSON typed: event_note, anchor_note
+// and quirks (validators/venueIntake.js INTAKE_TEXT_FIELDS). Migration 030
+// collected all three and, until now, nothing anywhere read any of them: the
+// only venue-specific truth in a system whose crowd model is deliberately
+// venue-blind was sitting in three columns as dead weight.
+//
+// They are owner testimony, so they inherit every rule owner testimony already
+// has here: source 'intake', attribution 'owner_asserted' stamped by makeFact,
+// phrased "you told us", never restated as measurement. Two rules are theirs
+// alone, because they are the first strings in this file that a person wrote
+// rather than a vendor:
+//
+//   1. SCREENED AGAIN, HERE. routes/venueProfile.js screens all three at the
+//      write, on both the POST and the PUT (screenIntakeText -> rejectIfProfane,
+//      pinned by __tests__/venueIntake.test.js). That screen reads the RAW
+//      request body, and validators/shape.js freeText strips markup but not
+//      zero-width characters -- so "f<ZWNJ>uck" is a string content-checker
+//      does not recognise, express-validator does not touch, and Postgres
+//      stores verbatim. externalText above strips exactly that class of
+//      character, so screening the FENCED string catches what screening the
+//      raw body structurally cannot. It also covers the two cases a write-time
+//      screen can never cover: a row written before the screen existed, and
+//      the next write path somebody adds without it. Text that fails is not
+//      surfaced at all.
+//
+//   2. NOT A NUMBER, EVER. Every other fact value in this file is something
+//      the server computed, which is the whole reason the phrasing layer is
+//      allowed to substitute one into a {{fact:id}} placeholder AFTER the
+//      digit valve has read the draft. A sentence the owner typed is not a
+//      computed quantity, and "{{fact:intake_quirks}}" would carry text, and
+//      any digits inside it, through the one hole the valve does not watch.
+//      So prose facts are built with textOnly:true, which keeps them out of
+//      the substitutable fact list entirely (services/advisorPhrasing.js
+//      partitions on the flag): the model may read them as owner context, and
+//      an attempt to splice one is an unknown id that voids the whole answer
+//      and serves the template twin. The template twin prints the owner's
+//      words verbatim from the fact's label, which is the path that always
+//      works and the path the phrasing flag leaves serving by default.
+//
+// Nothing here is a second fence. externalText IS the fence -- the same one
+// the event titles and the weather phrases go through, for the same two
+// reasons (availability, and never imitating the placeholder grammar). This
+// adds the screen a vendor string does not need and a person's does.
+
+// Caps for the PROMPT, not for the column. The columns are 120 / 200 / 1000
+// (migration 030) and the owner reads their own full text back on the settings
+// screen either way. What is bounded here is the payload that reaches a model,
+// which ADVISOR-GROUNDING's cost model budgets at roughly 300 tokens of intake
+// context in total.
+const OWNER_TEXT_MAX = Object.freeze({ event_note: 120, anchor_note: 200, quirks: 400 });
+
+/** Fenced and screened owner prose, or null when there is nothing safe to print. */
+function ownerText(value, max) {
+  const fenced = externalText(value, { max });
+  if (!fenced) return null;
+  if (!moderateText(fenced).allowed) return null;
+  return fenced;
+}
+
+/**
+ * One owner-typed column, resolved into either prose or the refusal that
+ * explains its absence. Empty and unprintable are DIFFERENT answers: "you have
+ * not told us" is simply false for an owner who typed something, and a field
+ * that silently vanishes is the kind of thing an owner re-types three times.
+ */
+function ownerProse(raw, max, { promptId, promptReason, promptUnlock }) {
+  const text = ownerText(raw, max);
+  if (text) return { text, refusal: null };
+  if (typeof raw !== 'string' || raw.trim() === '') {
+    return {
+      text: null,
+      refusal: makeRefusal({ id: promptId, reason: promptReason, whatWouldUnlock: promptUnlock }),
+    };
+  }
+  return {
+    text: null,
+    refusal: makeRefusal({
+      id: `withheld_${promptId.replace(/^prompt_/, '')}`,
+      reason: 'There is something written in this field that we are not able to print back to you.',
+      whatWouldUnlock: 'Rewording it in venue settings. We read this field back word for word, so it passes the same check as every other piece of written text in Flock.',
+    }),
+  };
+}
+
 // ─── Fact and refusal constructors ───────────────────────────────────────────
 
 /**
@@ -183,6 +301,22 @@ function makeFact(input) {
       throw new TypeError(`fact ${id}: arithmetic facts need a non-empty \`from\` list of fact ids`);
     }
     fact.from = [...input.from];
+  }
+  // Owner prose. See "The owner's own prose" above: this flag is what keeps a
+  // sentence a person typed out of the placeholder grammar. Only owner
+  // testimony can carry it, it has to actually be text, and it may not claim a
+  // unit, because a unit is a rendering rule for a NUMBER and this is not one.
+  if (input.textOnly === true) {
+    if (!OWNER_SOURCES.has(source)) {
+      throw new TypeError(`fact ${id}: only the owner's own testimony can be owner prose (source "${source}")`);
+    }
+    if (typeof value !== 'string' || !value.trim()) {
+      throw new TypeError(`fact ${id}: owner prose needs a non-empty string value`);
+    }
+    if (input.unit !== undefined) {
+      throw new TypeError(`fact ${id}: owner prose has no unit. A unit is a rendering rule for a number.`);
+    }
+    fact.textOnly = true;
   }
   for (const k of ['label', 'note']) {
     if (input[k] !== undefined) {
@@ -436,6 +570,18 @@ function busiestHourByDay(curve) {
   return best.map((b) => (b ? b.hour : null));
 }
 
+/** The strongest scored day in a week-ahead fact list, or null. */
+function strongestPeak(entries) {
+  let best = null;
+  for (const f of entries) {
+    if (isRefusal(f) || !f.id || !String(f.id).startsWith('peak_')) continue;
+    const score = Number(f.value && f.value.peakScore);
+    if (!Number.isFinite(score)) continue;
+    if (!best || score > Number(best.value.peakScore)) best = f;
+  }
+  return best;
+}
+
 /** Mean of the positive baseline hours per weekday: the day's typical strength. */
 function dayMeans(curve) {
   const sums = Array.from({ length: 7 }, () => ({ total: 0, n: 0 }));
@@ -546,6 +692,73 @@ async function buildWeekAhead(ctx, { now = new Date(), userId } = {}) {
   return out;
 }
 
+// ─── The street the OWNER says they are on ───────────────────────────────────
+//
+// anchor_types and anchor_note belong to the street card, because that is
+// where the listed events are and the whole value of the pair is that they sit
+// next to each other. 030's own header: "a stadium across the road is a demand
+// event the model cannot see, because the model cannot see where the venue
+// is." Our listings cannot see a campus or a hospital at all, and the owner is
+// the only party who ever told us one is there.
+//
+// Both are context, both are attributed, and neither is offered as the reason
+// for anything. The street card is what routes/advisor.js composes into
+// slow_night, which is the why-layer's differencing shape, and
+// ADVISOR-WHY-LAYER's grammar allows a condition to be stated and forbids it
+// to be blamed.
+function ownerStreetContext(ctx, now) {
+  const out = [];
+  const anchors = Array.isArray(ctx.profile.anchor_types) ? ctx.profile.anchor_types : [];
+  const asOf = intakeAsOf(ctx.profile);
+
+  if (anchors.length) {
+    out.push(makeFact({
+      id: 'intake_anchor_types',
+      value: anchors,
+      source: 'intake',
+      asOf,
+      label: `You told us what is next to you: ${anchorWords(anchors)}.`,
+    }));
+    // The honest limit of the events card, computed from what the owner told
+    // us. An owner who named a campus is reading a listings feed that will
+    // never contain one, and saying so is worth more than a quiet zero.
+    const unlisted = anchors.filter((t) => !TICKETED_ANCHORS.has(t));
+    if (unlisted.length) {
+      out.push(makeFact({
+        id: 'anchors_our_listings_miss',
+        value: { yourAnchors: anchors, notCoveredByListings: unlisted },
+        source: 'arithmetic',
+        from: ['intake_anchor_types'],
+        asOf: now.toISOString(),
+        label: `Our event listings cover ticketed events, so ${anchorWords(unlisted)} will not appear on this card whatever is happening there. You told us that is next to you, and we cannot watch it.`,
+      }));
+    }
+  }
+
+  const note = ownerProse(ctx.profile.anchor_note, OWNER_TEXT_MAX.anchor_note, {
+    promptId: 'prompt_anchor_note',
+    promptReason: 'You have not told us what sits around your venue.',
+    promptUnlock: 'Name it in venue settings and it reads back here, beside the events we can list and the ones we cannot.',
+  });
+  if (note.text) {
+    out.push(makeFact({
+      id: 'intake_anchor_note',
+      value: note.text,
+      source: 'intake',
+      asOf,
+      textOnly: true,
+      label: `On what is around you, you told us: "${note.text}"`,
+      note: 'The owner\'s own words about their own street. We do not verify it and nothing we hold measures it.',
+    }));
+  } else if (anchors.length === 0 || note.refusal.id !== 'prompt_anchor_note') {
+    // Only PROMPT when the whole subject is blank: an owner who picked anchor
+    // types and skipped the sentence has answered the question. A withheld
+    // note is always reported, because something IS in there.
+    out.push(note.refusal);
+  }
+  return out;
+}
+
 // ─── Card 2: Around you this week ────────────────────────────────────────────
 //
 // Ticketmaster listings within ~1km over the next 7 days plus the weekend
@@ -554,8 +767,15 @@ async function buildWeekAhead(ctx, { now = new Date(), userId } = {}) {
 // never a headcount). Weather is context only, never an explanation.
 async function buildAroundYou(ctx, { now = new Date(), userId } = {}) {
   const m = ctx.mlVenue;
+  // The owner's own account of their street is built FIRST and returned on
+  // both paths. A venue with no coordinates is a venue outside the corpus,
+  // which 030's header records as the MODAL case, and for that venue what the
+  // owner told us is the only thing this card can honestly hold. Putting it
+  // behind the coordinates gate would have hidden it from exactly the venues
+  // it is worth the most to.
+  const street = ownerStreetContext(ctx, now);
   if (!m || m.latitude == null || m.longitude == null) {
-    return [makeRefusal({
+    return [...street, makeRefusal({
       id: 'refuse_no_location',
       reason: 'We do not hold map coordinates for this venue, so we cannot look up events or weather around it.',
       whatWouldUnlock: 'Coordinates arrive when this venue enters our measured corpus. Nothing on your side is missing.',
@@ -634,6 +854,8 @@ async function buildAroundYou(ctx, { now = new Date(), userId } = {}) {
       }));
     }
   }
+
+  out.push(...street);
 
   // The weekend weather line: Friday, Saturday, Sunday from the daily forecast.
   const forecast = await weatherService.getForecast(lat, lng, { userId }).catch(() => null);
@@ -818,6 +1040,102 @@ async function buildListingReadBack(ctx, weekFacts, { now = new Date() } = {}) {
     }));
   }
 
+  // ── The week the owner PROGRAMMES ────────────────────────────────────────
+  //
+  // event_nights and event_note are one answer to one question ("which days,
+  // and what runs on them"), so they are read back as one. The nights are a
+  // closed set and the note is the owner's own sentence about them; neither is
+  // a claim about anybody's numbers. Set beside the week's strongest projected
+  // day, which is the same juxtaposition shape as kitchen-versus-peak: two
+  // facts, both sourced, and no arrow drawn between them.
+  const eventDays = Array.isArray(p.event_nights) ? p.event_nights : [];
+  if (eventDays.length) {
+    const eventDaysFact = makeFact({
+      id: 'intake_event_nights',
+      value: eventDays,
+      source: 'intake',
+      asOf,
+      label: `You told us you run something on ${eventDays.join(', ')}.`,
+    });
+    out.push(eventDaysFact);
+    const strongest = strongestPeak(facts);
+    if (strongest) {
+      const { weekday, date } = strongest.value;
+      const programmed = eventDays.includes(String(weekday).toLowerCase());
+      out.push(makeFact({
+        id: 'event_days_vs_peak',
+        value: {
+          youProgramme: eventDays,
+          strongestProjectedDay: weekday,
+          strongestProjectedDate: date,
+          fallsOnADayYouProgramme: programmed,
+        },
+        source: 'arithmetic',
+        from: [eventDaysFact.id, strongest.id],
+        asOf: now.toISOString(),
+        label: programmed
+          ? `The strongest day in this week's forecast is ${weekday}, one of the days you programme. Two facts, side by side.`
+          : `The strongest day in this week's forecast is ${weekday}, which is not one of the days you programme. We state both and stop there.`,
+      }));
+    } else if (gateReason) {
+      out.push(makeRefusal({
+        id: 'refuse_event_days_vs_peak',
+        reason: 'We hold the days you programme but no forecast of ours to set beside them. ' + gateReason.reason,
+        whatWouldUnlock: gateReason.whatWouldUnlock,
+      }));
+    }
+  }
+
+  const eventNote = ownerProse(p.event_note, OWNER_TEXT_MAX.event_note, {
+    promptId: 'prompt_event_note',
+    promptReason: 'You have not told us what you run during the week.',
+    promptUnlock: 'Name the days and what runs on them in venue settings, and they read back here against the forecast.',
+  });
+  if (eventNote.text) {
+    out.push(makeFact({
+      id: 'intake_event_note',
+      value: eventNote.text,
+      source: 'intake',
+      asOf,
+      textOnly: true,
+      label: eventDays.length
+        ? `On those days, you told us: "${eventNote.text}"`
+        : `On what you run, you told us: "${eventNote.text}"`,
+      note: 'The owner\'s own words about their own calendar. We do not verify it and nothing we hold measures it.',
+    }));
+  } else if (eventDays.length === 0 || eventNote.refusal.id !== 'prompt_event_note') {
+    // An owner who ticked the days and skipped the sentence has answered the
+    // question; only a blank subject earns the prompt. A withheld note is
+    // always reported, because something is in there.
+    out.push(eventNote.refusal);
+  }
+
+  // ── The thing a stranger would not guess ─────────────────────────────────
+  //
+  // quirks is the one intake column with no measured twin anywhere, and that
+  // is exactly its value: it is what the owner knows about their own room that
+  // no vendor feed, no corpus curve and no model will ever hold. So nothing is
+  // set beside it. It is read back as standing context, in the owner's own
+  // words, attributed to them, and the card stops there.
+  const quirks = ownerProse(p.quirks, OWNER_TEXT_MAX.quirks, {
+    promptId: 'prompt_quirks',
+    promptReason: 'You have not told us anything about your room that a stranger would not guess.',
+    promptUnlock: 'Add it in venue settings. It is the one thing here no dataset of ours can hold, so it stays beside these numbers as context we cannot measure.',
+  });
+  if (quirks.text) {
+    out.push(makeFact({
+      id: 'intake_quirks',
+      value: quirks.text,
+      source: 'intake',
+      asOf,
+      textOnly: true,
+      label: `On what a stranger would not guess about your room, you told us: "${quirks.text}"`,
+      note: 'The owner\'s own words, quoted back. We hold nothing that measures this, and nothing here contradicts or confirms it.',
+    }));
+  } else {
+    out.push(quirks.refusal);
+  }
+
   return out;
 }
 
@@ -917,6 +1235,14 @@ module.exports = {
   assertCleanCopy,
   externalText,
   EXTERNAL_TEXT_MAX,
+  // owner prose: the fence plus the screen, and the copy the enum reads as
+  ownerText,
+  ownerProse,
+  OWNER_TEXT_MAX,
+  ANCHOR_WORDS,
+  TICKETED_ANCHORS,
+  anchorWords,
+  strongestPeak,
   // curve helpers (full-operating-hours scanning; Roost serves any venue type)
   fetchBaselineCurve,
   openHoursByDay,
