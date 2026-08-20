@@ -3678,10 +3678,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Toast (hoisted above venue search for use in error handlers)
   const [toast, setToast] = useState(null);
   const toastTimerRef = useRef(null);
+  const closeToast = useCallback(() => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = null;
+    setToast(null);
+  }, []);
   const showToast = useCallback((message, type = 'success') => {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast({ message, type });
-    toastTimerRef.current = setTimeout(() => setToast(null), 2000);
+    // SLOP-AUDIT sec N rule 2: info dismisses on its own at 4 seconds,
+    // warnings hold for 7, and an error stays until the user closes it.
+    // Every type used to share one 2-second timer, which is below even the
+    // info floor and, on an error, is exactly the bug the rule names: real
+    // failure text was gone before it could be read.
+    if (type === 'error') { toastTimerRef.current = null; return; }
+    toastTimerRef.current = setTimeout(() => setToast(null), type === 'warning' ? 7000 : 4000);
   }, []);
 
   // ── Unverified email ────────────────────────────────────────────────────
@@ -7830,26 +7841,51 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     </div>
   );
 
-  // Toast — lightweight, GPU-accelerated
+  // SLOP-AUDIT sec N. One slot, so nothing stacks; the rest answers that
+  // section's measured failures. role: a screen reader was never told a
+  // toast happened. zIndex 400: at 60 the toast painted UNDERNEATH
+  // PaywallSheet and ModerationSheet (200) and the verify-email sheet (300),
+  // so one raised while a sheet was open was simply never seen (sec A13).
+  // Type is carried by an icon as well as the tint (rule 5), the close
+  // button is a real exit (rule 4; pointerEvents 'none' made the old one
+  // unreachable), and long error text wraps instead of running off a narrow
+  // phone (H19, the old whiteSpace 'nowrap').
   const Toast = () => toast && (
-    <div style={{
-      position: 'fixed',
-      top: '50px',
-      left: '50%',
-      transform: 'translateX(-50%)',
-      zIndex: 60,
-      padding: '12px 24px',
-      borderRadius: '12px',
-      backgroundColor: toast.type === 'error' ? colors.red : colors.navyBg,
-      color: 'white',
-      fontSize: 'var(--t-label)',
-      fontWeight: '600',
-      boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-      whiteSpace: 'nowrap',
-      pointerEvents: 'none',
-      willChange: 'transform, opacity',
-    }}>
-      {toast.message}
+    <div
+      role={toast.type === 'error' ? 'alert' : 'status'}
+      style={{
+        position: 'fixed',
+        top: '50px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 400,
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: '10px',
+        maxWidth: 'min(420px, calc(100vw - 32px))',
+        boxSizing: 'border-box',
+        padding: '12px 12px 12px 16px',
+        borderRadius: '12px',
+        backgroundColor: toast.type === 'error' ? colors.red : colors.navyBg,
+        color: 'white',
+        fontSize: 'var(--t-label)',
+        fontWeight: '600',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+        willChange: 'transform, opacity',
+      }}
+    >
+      <span aria-hidden style={{ display: 'inline-flex', flexShrink: 0, marginTop: '2px' }}>
+        {toast.type === 'error' ? Icons.alertCircle('white', 15) : Icons.check('white', 15)}
+      </span>
+      <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{toast.message}</span>
+      <button
+        className="hit44"
+        aria-label="Dismiss"
+        onClick={closeToast}
+        style={{ background: 'none', border: 'none', padding: '2px', margin: 0, display: 'inline-flex', flexShrink: 0, cursor: 'pointer' }}
+      >
+        {Icons.x('white', 14)}
+      </button>
     </div>
   );
 
@@ -14614,22 +14650,55 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <span style={{ opacity: 0.6 }}>›</span>
           </button>
 
+          {/* SLOP-AUDIT sec S. Eight identical rows in one container was a
+              list that had grown, not been designed: every row carried the
+              same weight, so finding one meant reading all eight. Grouped by
+              what the rows are about, labels OUTSIDE the containers (rule 4),
+              groups separated by page background (rule 3). Rows whose
+              destination holds a current value say it inline, grey, left of
+              the chevron (rule 2): Payment names the saved handles, Interests
+              counts the picks, Blocked accounts counts the list. The screen
+              already knows all three. Blocked shows nothing rather than a
+              zero it did not measure when the boot-time load failed. The
+              labels are --t-label ("section labels" in the scale), not
+              --t-micro eyebrows: index.css caps those at two per screen and
+              there are three groups here. */}
+          {[
+            {
+              g: 'Account',
+              rows: [
+                { l: 'Edit Profile', s: 'edit', icon: Icons.edit },
+                { l: 'Interests', s: 'interests', icon: Icons.target, v: userInterests.length > 0 ? `${userInterests.length} picked` : 'None yet' },
+                { l: 'Payment', s: 'payment', icon: Icons.creditCard, v: [authUser?.venmo_username && 'Venmo', authUser?.cashapp_cashtag && 'Cash App', authUser?.zelle_identifier && 'Zelle'].filter(Boolean).join(', ') || 'Not set' },
+              ],
+            },
+            {
+              g: 'Safety and privacy',
+              rows: [
+                { l: 'Safety', s: 'safety', icon: Icons.shield },
+                { l: 'Blocked accounts', s: 'blocked', icon: Icons.ban, v: blockedError ? null : (blockedUsers.length > 0 ? `${blockedUsers.length} ${blockedUsers.length === 1 ? 'person' : 'people'}` : 'None') },
+              ],
+            },
+          ].map(group => (
+            <div key={group.g} style={{ marginBottom: '16px' }}>
+              <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-tertiary)', margin: '0 0 6px' }}>{group.g}</h4>
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', boxShadow: 'var(--card-shadow-sm)', overflow: 'hidden' }}>
+                {group.rows.map((m, i) => (
+                  <button key={m.s} className="hit44 glass-btn glass-secondary" onClick={() => { setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'blocked') { setUnblockTarget(null); loadBlockedUsers(); } if (m.s === 'payment') { setVenmoUsername(authUser?.venmo_username || ''); setCashappCashtag(authUser?.cashapp_cashtag || ''); setZelleIdentifier(authUser?.zelle_identifier || ''); } }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: i < group.rows.length - 1 ? '1px solid var(--border-light)' : 'none', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
+                    <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{m.icon(colors.navy, 18)}</div>
+                    <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>{m.l}</span>
+                    {m.v && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', maxWidth: '45%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.v}</span>}
+                    <span style={{ color: 'var(--text-tertiary)' }}>›</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-tertiary)', margin: '0 0 6px' }}>Device</h4>
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', boxShadow: 'var(--card-shadow-sm)', overflow: 'hidden' }}>
-            {[
-              { l: 'Edit Profile', s: 'edit', icon: Icons.edit },
-              { l: 'Interests', s: 'interests', icon: Icons.target },
-              { l: 'Safety', s: 'safety', icon: Icons.shield },
-              { l: 'Blocked accounts', s: 'blocked', icon: Icons.ban },
-              { l: 'Payment', s: 'payment', icon: Icons.creditCard },
-            ].map(m => (
-              <button key={m.s} className="hit44 glass-btn glass-secondary" onClick={() => { setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'blocked') { setUnblockTarget(null); loadBlockedUsers(); } if (m.s === 'payment') { setVenmoUsername(authUser?.venmo_username || ''); setCashappCashtag(authUser?.cashapp_cashtag || ''); setZelleIdentifier(authUser?.zelle_identifier || ''); } }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
-                <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{m.icon(colors.navy, 18)}</div>
-                <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>{m.l}</span>
-                <span style={{ color: 'var(--text-tertiary)' }}>›</span>
-              </button>
-            ))}
             {/* Location Toggle */}
-            <div style={{ width: '100%', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-light)' }}>
+            <div style={{ width: '100%', padding: '12px', backgroundColor: 'var(--bg-card-solid)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin(colors.navy, 18)}</div>
                 <div style={{ flex: 1 }}>
@@ -14666,7 +14735,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               )}
             </div>
             {/* Notifications */}
-            <div style={{ ...styles.card, marginBottom: '12px', padding: '14px' }}>
+            <div style={{ width: '100%', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-light)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.bell(colors.navy, 18)}</div>
                 <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Push Notifications</span>
@@ -14695,9 +14764,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <Toggle label="Crowd alerts" on={crowdAlertsOn} onChange={() => setCrowdAlertsEnabled(!crowdAlertsOn)} />
               </div>
             </div>
+          </div>
+
             {/* Flock Pro — hidden until the backend flips PAYWALL_ENABLED (or the user is already Pro) */}
             {(entitlements?.paywallEnabled || isPro) && (
-              <button className="hit44 glass-btn glass-secondary" onClick={() => { if (!isPro) setPaywallTrigger('settings'); }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderTop: '1px solid var(--border-light)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: isPro ? 'default' : 'pointer' }}>
+              <button className="hit44 glass-btn glass-secondary" onClick={() => { if (!isPro) setPaywallTrigger('settings'); }} style={{ width: '100%', marginTop: '16px', padding: '12px', textAlign: 'left', borderRadius: '12px', boxShadow: 'var(--card-shadow-sm)', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: isPro ? 'default' : 'pointer' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.sparkles(colors.navy, 18)}</div>
                 <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Flock Pro</span>
                 {isPro ? (
@@ -14709,7 +14780,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             )}
             {/* .glass-danger paints this solid red with white text (both !important),
                 so the icon must be white too — colors.red on red was invisible. */}
-            <button className="hit44 glass-btn glass-danger" onClick={() => { if (onLogout) onLogout(); }} style={{ width: '100%', minHeight: '44px', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', border: 'none', cursor: 'pointer' }}>
+            <button className="hit44 glass-btn glass-danger" onClick={() => { if (onLogout) onLogout(); }} style={{ width: '100%', minHeight: '44px', marginTop: '16px', padding: '12px', textAlign: 'left', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '12px', border: 'none', cursor: 'pointer' }}>
               {Icons.logout('#ffffff', 18)}
               <span style={{ fontWeight: '600', fontSize: 'var(--t-body)' }}>Log Out</span>
             </button>
@@ -14718,7 +14789,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {Icons.trash('var(--text-tertiary)', 18)}
               <span style={{ fontWeight: '600', fontSize: 'var(--t-body)' }}>Delete account</span>
             </button>
-          </div>
 
           {/* Delete-account confirmation — requires typing DELETE; hard-delete is irreversible */}
           {showDeleteAccount && (
@@ -19290,7 +19360,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       onClick={() => setProfileBlockStep(true)}
                       style={{ width: '100%', padding: '15px 16px', textAlign: 'left', border: 'none', borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', fontSize: 'var(--t-body)', fontWeight: '600', color: '#EF4444', display: 'flex', alignItems: 'center', gap: '10px' }}
                     >
-                      <svg aria-hidden="true" focusable="false" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#EF4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10" /><line x1="4.9" y1="4.9" x2="19.1" y2="19.1" /></svg>
+                      {/* Icons.ban, like the three call sites before it; and
+                          currentColor, because .glass-danger paints this
+                          button solid red with white text (both !important),
+                          so the old hardcoded #EF4444 stroke drew red on red. */}
+                      <span aria-hidden style={{ display: 'inline-flex', flexShrink: 0 }}>{Icons.ban('currentColor', 16)}</span>
                       Block {userProfileTarget.name}
                     </button>
                     <button
