@@ -1,4 +1,4 @@
--- 034: night_context — the evening a venue owner will ask about, written down
+-- 034: night_context — the day a venue owner will ask about, written down
 --
 -- WHY THIS TABLE EXISTS.
 --
@@ -18,8 +18,12 @@
 -- insert shape scripts/ml/collectEvents.js uses — no new event store. What is
 -- new here is the weather half and the run ledger.
 --
--- GRANULARITY, per the why-layer design: one row per city per evening hour,
--- 17:00 through 23:00 LOCAL — seven readings a night per city. City means a
+-- GRANULARITY: one row per city per hour across the service day, 07:00
+-- through 23:00 LOCAL — seventeen readings a day per city. (The why-layer
+-- design specced evenings only; Roost serves any venue type, breakfast cafes
+-- included, so the window is the whole trading day. The hour CHECK below
+-- spans the full clock on purpose: the window is job policy in
+-- services/nightContext.js, not schema, so moving it needs no DDL.) City is a
 -- key of scripts/ml/config.js CITIES (same vocabulary as ml_venues.city and
 -- ml_events.city), so the why-query can join all three without a mapping
 -- table. Per-venue weather rows would be the same reading copied N times:

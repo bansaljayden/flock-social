@@ -1,6 +1,6 @@
 // Run: node --test  (from backend/)
 //
-// The nightly context snapshot — the why-layer's memory of the evening.
+// The nightly context snapshot — the why-layer's memory of the day.
 //
 // What is pinned here, and why each pin exists:
 //
@@ -144,11 +144,14 @@ function freshStart() {
   delete process.env.NIGHT_CONTEXT_CITIES;
 }
 
-// 2026-08-14T23:30:00Z is Friday 19:30 in America/New_York (lehigh) — inside
-// the 17:00-23:59 evening window. Injected so the test does not depend on the
-// machine's clock or zone.
+// Injected instants so the test does not depend on the machine's clock or
+// zone. All are Friday 2026-08-14 in America/New_York (lehigh):
+//   23:30Z = 19:30 local — inside the 07:00-23:59 snapshot window
+//   16:00Z = 12:00 local — inside too: lunch service is a Roost hour
+//   09:30Z = 05:30 local — outside: before the service day opens
 const FRIDAY_EVENING = new Date('2026-08-14T23:30:00Z');
-const FRIDAY_NOON = new Date('2026-08-14T16:00:00Z'); // 12:00 EDT — outside the window
+const FRIDAY_NOON = new Date('2026-08-14T16:00:00Z');
+const FRIDAY_DAWN = new Date('2026-08-14T09:30:00Z');
 
 // ---------------------------------------------------------------------------
 test('a sweep persists tonight\'s events into ml_events and the evening reading into night_context', async () => {
@@ -257,13 +260,30 @@ test('a weather outage writes no row and no fabricated reading; events are unaff
 });
 
 // ---------------------------------------------------------------------------
-test('outside the 17:00-23:59 local window no weather row is written, but the daily event snapshot still runs', async () => {
+test('the window is the whole service day: dawn writes nothing, lunch and evening both write', async () => {
   freshStart();
-  await runNightContextSweep(FRIDAY_NOON);
 
+  // 05:30 local: before the service day opens. No reading, no vendor call —
+  // but the once-a-day event snapshot still rides the first tick of the day.
+  await runNightContextSweep(FRIDAY_DAWN);
   assert.strictEqual(db.rows(/INSERT INTO night_context \(/).length, 0);
   assert.strictEqual(upstream.owmCalls, 0);
   assert.strictEqual(db.rows(/INSERT INTO ml_events/).length, 1);
+
+  // 12:00 local: a breakfast-and-lunch venue's peak is a snapshot hour now.
+  await runNightContextSweep(FRIDAY_NOON);
+  const lunch = db.rows(/INSERT INTO night_context \(/);
+  assert.strictEqual(lunch.length, 1);
+  assert.strictEqual(lunch[0].params[2], 12);
+
+  // 19:30 local: the original evening hour still lands. weatherService's
+  // 30-minute cache runs on the real clock, so the same-run reading is a
+  // cache hit — rows for both hours, one vendor call.
+  await runNightContextSweep(FRIDAY_EVENING);
+  const rows = db.rows(/INSERT INTO night_context \(/);
+  assert.strictEqual(rows.length, 2);
+  assert.deepStrictEqual(rows.map((w) => w.params[2]), [12, 19]);
+  assert.strictEqual(upstream.owmCalls, 1);
 });
 
 // ---------------------------------------------------------------------------
@@ -354,7 +374,7 @@ test('server.js registers the sweep beside crowdAlertsInterval, env-gated, and c
     'the timer handles must be declared beside the crowdAlerts handles');
 
   // The cadence constant is exported, real, and sane: at most 30 minutes, so
-  // every evening hour gets at least one reading.
+  // every snapshot hour gets at least one reading.
   assert.ok(Number.isInteger(NIGHT_CONTEXT_INTERVAL_MS));
   assert.ok(NIGHT_CONTEXT_INTERVAL_MS <= 30 * 60 * 1000);
   assert.ok(NIGHT_CONTEXT_INTERVAL_MS >= 5 * 60 * 1000);
