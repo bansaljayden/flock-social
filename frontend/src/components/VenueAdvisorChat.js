@@ -320,8 +320,38 @@ const sessionKey = () => {
   }
 };
 
+// WHOSE TURNS THESE ARE IS DECIDED AT MOUNT, NOT AT WRITE TIME (security round
+// 26). The hand-off below used to stamp `sessionKey()` onto the store on every
+// thread change, re-reading localStorage at the moment of the write. That is
+// the wrong moment, because `flockToken` is a SHARED key: a second tab signing
+// in as another owner overwrites it under this realm's feet, and so does an
+// in-app sign-in that never unmounts this card. Either way the next turn
+// re-labelled account A's conversation with account B's key, and the next mount
+// of this card, now sending B's token on every request, restored A's Roost
+// thread into it. That thread is A's revenue, footfall and staffing numbers.
+// This repo has already had one round of parallel sessions writing to prod as
+// the wrong user through exactly this shared key, so it is not hypothetical.
+//
+// So the key is captured once, when the component mounts and the turns start
+// belonging to somebody, and a store write is refused (and the store dropped)
+// the moment the live key no longer matches it. Nothing is handed to a mount
+// that would authenticate as a different account.
 const restoreThread = () => {
-  if (threadStore.key !== sessionKey()) return [];
+  // SECURITY ROUND 5, 2026-08-20. This used to `return []` and LEAVE THE TURNS
+  // IN PLACE. The read was already safe — a different key never renders
+  // somebody else's thread — but the previous account's questions and Roost's
+  // answers about their venue's numbers went on sitting in this tab's memory
+  // for as long as the tab lived, reachable from a heap snapshot and from any
+  // later code that reads threadStore without asking whose it is. This repo has
+  // already been bitten once by browser-scoped state outliving the account that
+  // made it (parallel agents sharing one localStorage wrote to production as
+  // the wrong user), so the rule here is that a key mismatch DROPS the data
+  // rather than merely declining to show it. Sign-out is not the trigger and
+  // must not have to be: the next read after the session changes is.
+  if (threadStore.key !== sessionKey()) {
+    if (threadStore.turns.length) threadStore = { key: null, turns: [] };
+    return [];
+  }
   // A turn still in flight when the card unmounted will never land: its
   // promise resolves into a discarded update. It comes back as something the
   // owner can press again, never as a thinking line that thinks forever.
@@ -359,6 +389,9 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
   const [focused, setFocused] = useState(false);
   const [lockedReason, setLockedReason] = useState(null);
   const [thread, setThread] = useState(restoreThread);
+  // Lazy initialiser: read once, at mount, alongside restoreThread above, so
+  // the two agree about which session this card belongs to for its whole life.
+  const [ownerKey] = useState(sessionKey);
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
   const boxRef = useRef(null);
@@ -374,8 +407,18 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
     return () => { alive.current = false; };
   }, []);
 
-  // Hand the thread to the next mount of this card.
-  useEffect(() => { threadStore = { key: sessionKey(), turns: thread }; }, [thread]);
+  // Hand the thread to the next mount of this card, but only while the signed
+  // in session is still the one these turns were written under. If the token
+  // moved (another tab signed in, or this app did), the turns belong to an
+  // account that is no longer the one being served: drop them rather than
+  // re-label them. See the comment above restoreThread.
+  useEffect(() => {
+    if (sessionKey() !== ownerKey) {
+      threadStore = { key: null, turns: [] };
+      return;
+    }
+    threadStore = { key: ownerKey, turns: thread };
+  }, [thread, ownerKey]);
 
   const load = useCallback(async () => {
     if (typeof fetchQuestions !== 'function') return;
