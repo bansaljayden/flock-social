@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, getVenueAdvisorCards, getAdvisorQuestions, askAdvisor } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, getVenueAdvisorCards, getAdvisorQuestions, askAdvisor, askAdvisorQuestion } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onGuestRsvp } from './services/socket';
 import { requestNotificationPermission, onForegroundMessage, getNotificationStatus, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
@@ -2749,14 +2749,36 @@ const makeStyles = (c, isDark, fullBleed = isFullBleedNow()) => ({
 // eslint-disable-next-line no-unused-vars
 const styles = makeStyles(colorsLight, false);
 
-// Group admission likelihood — venue-type, size, and time-aware
-function getGroupAdmission(crowdScore, partySize, venue) {
+// Group admission likelihood — venue-type, size, and time-aware.
+//
+// ── WHOSE CLOCK, AND WHICH HOUR ──────────────────────────────────────────────
+// This used to read `new Date().getHours()` and `new Date().getDay()`: the
+// PHONE's clock. Every other crowd surface was moved off the device years of
+// bugs ago — migration 023, crowdEngine.venueLocalNow, the whole
+// ML_BASELINE_AXIS_VERIFIED pass — because how busy a place is, is a fact about
+// that place's night. Someone in California opening a Philadelphia bar at 10 PM
+// Friday was asking about 1 AM Saturday there, and this function answered for
+// Friday evening: weekend-evening peak pressure on a room that has already
+// emptied out.
+//
+// Two things follow, and they are one rule:
+//   * `clock` is REQUIRED. There is no device-clock fallback in here, so this
+//     function cannot silently regress to the phone. The caller resolves the
+//     venue's clock the same way the chart does (cd.venueClock, falling back to
+//     the caller's clock only when the SERVER did — `venueClock.local === false`).
+//   * `clock` is the hour the CARD IS SHOWING, not "now". `crowdScore` and
+//     `clock.hour` have to describe the same instant: a forecast strip that
+//     puts a different bar on screen must pass THAT bar's score with THAT
+//     bar's hour and day, or the verdict describes an hour nobody asked about.
+// Without a clock there is no honest answer, so it returns none.
+function getGroupAdmission(crowdScore, partySize, venue, clock) {
   if (!crowdScore && crowdScore !== 0) return null;
+  if (!clock || !Number.isFinite(clock.hour) || !Number.isFinite(clock.day)) return null;
   const size = partySize || 1;
   const types = venue?.types || [];
   const reviews = venue?.user_ratings_total || venue?.review_count || 0;
-  const hour = new Date().getHours();
-  const day = new Date().getDay();
+  const hour = ((Math.trunc(clock.hour) % 24) + 24) % 24;
+  const day = ((Math.trunc(clock.day) % 7) + 7) % 7;
   const isWeekendEvening = (day === 5 || day === 6) && hour >= 17;
   const isPeakDinner = hour >= 18 && hour <= 20;
   const isPeakLunch = hour >= 11 && hour <= 13;
@@ -2794,18 +2816,34 @@ function getGroupAdmission(crowdScore, partySize, venue) {
     category = 'large_casual';
     perPersonImpact = 0.8;
   }
+  // Bars / breweries — standing room helps, but tables for groups are limited.
+  //
+  // BAR IS TESTED BEFORE ENTERTAINMENT, and the order is the fix. Google types
+  // a lot of rooms both `bar` and `night_club` (or `bar` and `karaoke`), and
+  // `night_club` lives in the entertainment branch below. With entertainment
+  // first, one such venue got a NIGHTCLUB reading here while the same card's
+  // score and wait estimate — genHourly and getWait, both `['bar',
+  // 'night_club'].includes(t)`, bar wins in each — were reading it as a bar. One
+  // card, one venue, two different rooms. Whatever the answer is, the three have
+  // to agree, so this now resolves the ambiguity the same way they do: a venue
+  // carrying a bar tag is a bar. A room typed `night_club` alone carries no bar
+  // tag and still falls through to entertainment, unchanged.
+  //
+  // The related item in DEFERRED.md §3 is NOT this one and is still open: it is
+  // crowdEngine.estimateCapacity, which tests `night_club` BEFORE `isBarLike`
+  // and so publishes nightclub capacity for the same venue. That is a published
+  // number and a backend file, outside this function.
+  if (category === undefined && has('bar', 'pub', 'sports_bar', 'wine_bar', 'cocktail_bar',
+    'beer_garden', 'brewery', 'winery', 'distillery', 'taproom')) {
+    category = 'bar';
+    perPersonImpact = 1.5;
+  }
   // Entertainment — moderate impact
-  else if (has('arcade', 'game_center', 'trampoline_park', 'laser_tag',
+  else if (category === undefined && has('arcade', 'game_center', 'trampoline_park', 'laser_tag',
     'karaoke', 'billiard_hall', 'hookah_bar', 'lounge',
     'dance_club', 'night_club', 'batting_cage', 'rock_climbing_gym')) {
     category = 'entertainment';
     perPersonImpact = 1.2;
-  }
-  // Bars / breweries — standing room helps, but tables for groups are limited
-  else if (has('bar', 'pub', 'sports_bar', 'wine_bar', 'cocktail_bar',
-    'beer_garden', 'brewery', 'winery', 'distillery', 'taproom')) {
-    category = 'bar';
-    perPersonImpact = 1.5;
   }
   // Regular restaurants — table-based, groups need bigger tables
   else if (has('restaurant', 'diner', 'buffet_restaurant', 'steakhouse',
@@ -16326,8 +16364,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             liveReading={venueBusyNow?.live || null}
             operatingHours={operatingHours}
           />
-          {/* Roost chat: the same fact engine as the cards above, asked one chip at a time. */}
-          <VenueAdvisorChat fetchQuestions={getAdvisorQuestions} ask={askAdvisor} colors={colors} />
+          {/* Roost chat: suggested questions, plus a field the owner can type into.
+              Grounded answers come from the same fact engine as the cards above;
+              advice is labeled as advice; anything else is refused. */}
+          <VenueAdvisorChat fetchQuestions={getAdvisorQuestions} ask={askAdvisor} askQuestion={askAdvisorQuestion} colors={colors} />
 
           {/* Week ahead — projected peak per evening */}
           {intelReady && venueIntel.week?.length > 0 && (

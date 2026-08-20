@@ -6,18 +6,36 @@
 //                    advisorFacts.js): the four T0 MVP cards from
 //                    ADVISOR-PRODUCT-SHAPE.md §5, zero LLM, refusals as data.
 //                    Shape: { cards: [{ id, title, facts, status }] }.
-//   POST /ask        the chat layer (this file): one suggested-question chip
-//                    in, one grounded answer out.
-//   GET  /questions  the chip registry, so the client renders exactly the
-//                    questions the server will accept.
+//   POST /ask        the chip layer: one suggested-question chip in, one
+//                    grounded answer out.
+//   POST /question   the typed layer (2026-08-20): one free-text question in,
+//                    one of three labeled answers out. See below.
+//   GET  /questions  the four chips this venue's data can answer, the rest
+//                    grouped behind a disclosure, and whether the typed field
+//                    is on for this deploy.
 //
-// THE CHAT CONTRACT (ADVISOR-PRODUCT-SHAPE.md section 1, binding):
-// suggested questions ONLY. There is no free-text field in this build, so
-// this route accepts an intentId from the closed registry and NOTHING else —
-// a body carrying prose is answered 400 before anything reads it. User text
-// therefore never exists on this surface, which is what makes the one-way
-// valve airtight: Layer B computes facts from SQL, Layer C phrases them, and
-// no layer ever sees a word the user typed.
+// THE CHAT CONTRACT, as it now stands. The original build was chips ONLY, and
+// that was the right first shape: with no user text anywhere, the one-way
+// valve was airtight by construction. Jayden reopened it on 2026-08-20, in his
+// words: the venue can ask any question about its business and how it can
+// promote, drive, or have better business. That is the T2 tier
+// ADVISOR-PRODUCT-SHAPE.md already designed, brought forward by decision, and
+// it lives at POST /question with refusal as its default route.
+//
+// /ask DID NOT CHANGE, and its shape refusal is not legacy. It still accepts
+// an intentId from the closed registry and NOTHING else, answering 400 to any
+// body carrying prose before a value is read. Free text got its own door
+// rather than a new field on this one, because the chip path's guarantee is
+// worth keeping intact and because the typed path needs its own rate limiter,
+// its own daily ceiling, and its own flag.
+//
+// FLAGS. ADVISOR_PHRASING_ENABLED decides WORDING on the chip path: off means
+// the deterministic template twin serves, carrying every number, so chips work
+// with zero LLM calls. ADVISOR_FREETEXT_ENABLED is separate and also default
+// OFF, because free text is not a wording choice: there is no template that
+// answers a question nobody wrote a template for, so with the flag off (or the
+// model unreachable) the typed field is not offered and the endpoint declines
+// in plain words rather than half working.
 //
 // GATES, in order: authenticate, then requireVenueTier('pro') (grounding doc
 // section 5: Pro is the advisor's home; with VENUE_BILLING_ENABLED unset the
@@ -33,9 +51,11 @@
 
 const express = require('express');
 const { body, validationResult } = require('express-validator');
+const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { requireVenueTier, getVenueTier, venueBillingEnabled } = require('../services/venueEntitlements');
 const advisorPhrasing = require('../services/advisorPhrasing');
+const advisorFreeText = require('../services/advisorFreeText');
 
 const router = express.Router();
 
@@ -59,6 +79,19 @@ try {
   advisorFacts = require('../services/advisorFacts');
 } catch (err) {
   advisorFacts = null;
+}
+
+// The verdict builder lives beside the fact engine rather than inside it: it is
+// the one Roost answer that reads no forecast, no corpus and no model, only the
+// venue's own readings, our own serve log and the recorded conditions of the
+// day. Same lazy require and same fail-soft posture, so a build without it
+// loses one card and one chip instead of the whole surface.
+let lastNightVerdict = null;
+try {
+  // eslint-disable-next-line global-require
+  lastNightVerdict = require('../services/lastNightVerdict');
+} catch (err) {
+  lastNightVerdict = null;
 }
 
 // ── The intent -> facts bridge for /ask ──────────────────────────────────────
@@ -125,6 +158,31 @@ const INTENT_PLANS = {
       .sort((a, z) => Number(a.value.peakScore) - Number(z.value.peakScore));
     return scored.length ? scored.slice(0, 2) : week;
   },
+  // "How did we just do." The most-asked question in the category, and the one
+  // chip that returns a VERDICT rather than a row of numbers: the venue's own
+  // highest reading yesterday, against its own recent same-weekday readings,
+  // against what Flock published, with the day's recorded conditions stated
+  // last and never blamed. It is its own builder rather than a composition,
+  // because a verdict is arithmetic and arithmetic belongs in a fact engine,
+  // not in a route plan. services/lastNightVerdict.js carries the threshold
+  // and the reason it is 15 points and not 3.
+  last_night_verdict: (b) => b.verdict(),
+  // "Was it just us, or was everyone slow." The cohort pair, and the one
+  // question class here that a single-tenant tool structurally cannot take.
+  //
+  // The refusal filter is the load-bearing line. /ask drops partial refusals
+  // whenever any fact answered, which is right everywhere else and wrong here:
+  // the same-night builder always emits the venue's OWN reading as a fact, and
+  // "your highest reading was 20" is not an answer to a question about the
+  // street. So when the density floor refuses, the refusal is the whole
+  // answer, and the sentence that names the floor reaches the owner instead of
+  // being swallowed as a partial. The card keeps both.
+  cohort_same_night: async (b) => {
+    const entries = await b.cohortNight();
+    const refusals = entries.filter((e) => advisorFacts.isRefusal(e));
+    return refusals.length ? refusals : entries;
+  },
+  cohort_typical: (b) => b.cohortTypical(),
   week_recap: (b) => b.readings(),
   // The why-layer's differencing shape: the venue's own readings and what was
   // served, next to the street's conditions. Never a cause.
@@ -187,6 +245,12 @@ async function bridgeFactBlock(userId, intentId) {
     readings: () => (memo.readings = memo.readings || advisorFacts.buildReadingsVsServed(ctx, opts)),
     listing: () => (memo.listing = memo.listing
       || Promise.resolve(b.week()).then((week) => advisorFacts.buildListingReadBack(ctx, week, opts))),
+    verdict: () => (memo.verdict = memo.verdict
+      || (lastNightVerdict
+        ? lastNightVerdict.buildLastDayVerdict(ctx, opts)
+        : Promise.resolve([]))),
+    cohortNight: () => (memo.cohortNight = memo.cohortNight || advisorFacts.buildCohortSameNight(ctx, opts)),
+    cohortTypical: () => (memo.cohortTypical = memo.cohortTypical || advisorFacts.buildCohortStanding(ctx, opts)),
   };
 
   const plan = INTENT_PLANS[intentId];
@@ -217,11 +281,29 @@ function factEngine() {
 const UNVERIFIED_REASON = 'Verify your venue to unlock this. We check ownership before turning on forecasts.';
 
 // The four MVP cards, in the order the product shape lists them.
+//
+// THE VERDICT IS CARD ZERO. It leads the stack because "how did we just do" is
+// what operators actually open a tool to ask (Toast's own prompt telemetry
+// across 125,000+ locations; explicit forecasting was one percent of prompts,
+// the least asked category they measured). Every card under it is a forecast
+// or a read-back; this one grades a day that already happened, from the
+// venue's own numbers, and it is the only card here that works for a venue our
+// corpus has never seen.
 const CARDS = [
+  { id: 'last_night_verdict', title: 'Yesterday, against your own numbers', tier: 'pro' },
   { id: 'week_ahead', title: 'Week ahead', tier: 'pro' },
   { id: 'around_you', title: 'Around you this week', tier: 'premium' },
   { id: 'listing_read_back', title: 'Your listing, read back', tier: 'pro' },
   { id: 'readings_vs_estimates', title: 'What you said vs what we estimated', tier: 'pro' },
+  // The cohort card. Every other card on this list compares the venue to
+  // itself or to a forecast; this one is the only place Flock holds something
+  // no operator can get anywhere else, which is somebody else's numbers. It
+  // carries both halves at once because that is how the question is actually
+  // asked: the street's readings for the day (or the refusal that names the
+  // floor of five reporting venues), then where the venue's own typical sits
+  // in its city and category. services/advisorCohort.js holds the floors and
+  // the differencing analysis.
+  { id: 'cohort', title: 'You and venues like you', tier: 'pro' },
 ];
 
 // premium covers premium+pro; pro covers pro only. The rank arithmetic lives
@@ -273,7 +355,7 @@ router.get('/cards', authenticate, requirePremium, async (req, res) => {
     const now = new Date();
     const opts = { now, userId };
 
-    const [weekDef, aroundDef, listingDef, readingsDef] = CARDS;
+    const [verdictDef, weekDef, aroundDef, listingDef, readingsDef, cohortDef] = CARDS;
 
     // Card 1 is built first because card 3's arithmetic reads its peak facts.
     const weekFacts = tierCovers(tier, weekDef.tier)
@@ -281,6 +363,11 @@ router.get('/cards', authenticate, requirePremium, async (req, res) => {
       : null;
 
     const cards = [];
+    if (lastNightVerdict) {
+      cards.push(tierCovers(tier, verdictDef.tier)
+        ? finishedCard(verdictDef, await lastNightVerdict.buildLastDayVerdict(ctx, opts))
+        : lockedCard(verdictDef));
+    }
     cards.push(weekFacts ? finishedCard(weekDef, weekFacts) : lockedCard(weekDef));
     cards.push(tierCovers(tier, aroundDef.tier)
       ? finishedCard(aroundDef, await advisorFacts.buildAroundYou(ctx, opts))
@@ -291,6 +378,18 @@ router.get('/cards', authenticate, requirePremium, async (req, res) => {
     cards.push(tierCovers(tier, readingsDef.tier)
       ? finishedCard(readingsDef, await advisorFacts.buildReadingsVsServed(ctx, opts))
       : lockedCard(readingsDef));
+    // Both halves on one card, same-night first. A card keeps its refusals
+    // inline, which is exactly what the density half needs: the floor refusal
+    // is the growth loop and it has to be readable next to the half that
+    // already answers.
+    if (typeof advisorFacts.buildCohortSameNight === 'function') {
+      cards.push(tierCovers(tier, cohortDef.tier)
+        ? finishedCard(cohortDef, [
+          ...await advisorFacts.buildCohortSameNight(ctx, opts),
+          ...await advisorFacts.buildCohortStanding(ctx, opts),
+        ])
+        : lockedCard(cohortDef));
+    }
 
     return res.json({ available: true, cards, generatedAt: now.toISOString() });
   } catch (err) {
@@ -299,20 +398,151 @@ router.get('/cards', authenticate, requirePremium, async (req, res) => {
   }
 });
 
-// The chips, grouped by theme so the client renders sections. Everything the
-// client may ask, which is everything this route will accept. Pro-gated like
-// the rest of the surface so the question list cannot advertise a feature the
-// caller's plan does not serve. `name` is the product name, served so a
-// rename is one backend line.
-router.get('/questions', authenticate, requirePro, (req, res) => {
-  const groups = advisorPhrasing.ADVISOR_GROUPS.map((g) => ({
-    id: g.id,
-    label: g.label,
-    questions: Object.keys(advisorPhrasing.ADVISOR_INTENTS)
-      .filter((id) => advisorPhrasing.ADVISOR_INTENTS[id].group === g.id)
-      .map((id) => ({ id, label: advisorPhrasing.ADVISOR_INTENTS[id].chip })),
-  })).filter((g) => g.questions.length > 0);
-  res.json({ name: advisorPhrasing.ADVISOR_NAME, groups });
+// ─── Which chips this venue actually gets offered ───────────────────────────
+//
+// The registry has thirteen questions. A venue should not be shown thirteen
+// buttons, and it should certainly not be shown nine that decline.
+//
+// TWO SEPARATE PROBLEMS, fixed together.
+//
+// 1. HOW MANY. Roost's chips are whole sentences at thirty to fifty characters,
+//    so a phone fits three or four before the list becomes a wall. `lead` is
+//    the four the venue sees; the rest stay grouped behind a disclosure. The
+//    order comes from advisorPhrasing.CHIP_PRIORITY, which leads with today's
+//    outlook and puts events and weather last despite them being the prettiest
+//    card, because the questions owners actually ask are about their own room.
+//
+// 2. WHICH ONES. corpusGate already knows, before anything is built, that a
+//    venue outside the measured corpus cannot be given a forecast, and the
+//    readings questions already know they have nothing to say for a venue that
+//    has not posted a reading. Offering those chips anyway is a menu of dead
+//    buttons, which SLOP-AUDIT rule 5 bans in every other surface in this repo.
+//    So availability is computed DETERMINISTICALLY from the profile plus one
+//    cheap EXISTS pair, not by building every card: a chip is offered when the
+//    data behind it exists.
+//
+// Three chips are always offered and all three earn it. `around_you` needs no
+// corpus and no history. `data_status` answers with the corpus gate's own
+// refusal, which for the modal venue IS the honest answer to what data we hold.
+// `last_night_verdict` is the third and the deliberate one: it is the only chip
+// whose refusal names an action the owner can take in one tap, and hiding it
+// from venues with no readings would hide the argument for posting one. It is
+// also uncorpused by construction, so it is the one forecast-free answer a
+// venue outside our corpus can ever get.
+const ALWAYS_AVAILABLE = new Set(['around_you', 'data_status', 'last_night_verdict']);
+// `cohort_typical` is a corpus question: it places the venue's own Google curve
+// inside the frozen distribution of its city and category, so without a curve
+// there is nothing to place.
+const NEEDS_CORPUS = new Set(['tonight_outlook', 'peak_hours', 'weekend_outlook', 'quiet_nights', 'cohort_typical']);
+// `cohort_same_night` is a history question for a reason that is about honesty
+// rather than plumbing: "was it just us" needs a your-side, and a venue that
+// has posted nothing has no side. Offered to venues that have their own
+// readings, it always has one, and when the street is too thin to publish it
+// answers with the refusal that names the floor. That refusal is not a dead
+// button; it is the only sentence in the product that asks for the thing which
+// makes the product work.
+const NEEDS_HISTORY = new Set(['week_recap', 'slow_night', 'readings_vs_estimates', 'cohort_same_night']);
+// The listing read-back questions need the corpus AND the intake field each one
+// reads. An owner who never filled in a kitchen time is not shown a chip about
+// their kitchen time.
+const NEEDS_CORPUS_AND_INTAKE = {
+  kitchen_vs_peak: 'kitchen_last_order',
+  capacity_math: 'capacity',
+  busy_nights_check: 'owner_busy_nights',
+};
+
+function intakeFilled(profile, column) {
+  const v = profile ? profile[column] : null;
+  if (v === null || v === undefined || v === '') return false;
+  return !Array.isArray(v) || v.length > 0;
+}
+
+async function hasRecentHistory(placeId) {
+  if (!placeId) return false;
+  try {
+    const { rows } = await pool.query(
+      `SELECT EXISTS (SELECT 1 FROM venue_owner_reports
+                       WHERE google_place_id = $1 AND retracted = false
+                         AND created_at >= NOW() - INTERVAL '7 days') AS readings,
+              EXISTS (SELECT 1 FROM served_predictions
+                       WHERE venue_place_id = $1
+                         AND served_at >= NOW() - INTERVAL '7 days') AS served`,
+      [placeId]
+    );
+    return !!(rows[0] && (rows[0].readings || rows[0].served));
+  } catch (err) {
+    // A chip list that cannot check offers the history questions rather than
+    // hiding them: the fact engine refuses honestly on its own, so the failure
+    // mode of a broken check should be a chip that declines, never a venue that
+    // silently loses questions it is entitled to.
+    console.error('Advisor question availability check failed:', err.message);
+    return true;
+  }
+}
+
+async function availableIntents(ctx) {
+  const profile = ctx ? ctx.profile : null;
+  const inCorpus = !!profile && advisorFacts.corpusGate(profile) === null;
+  const history = await hasRecentHistory(profile && profile.google_place_id);
+  return advisorPhrasing.CHIP_PRIORITY.filter((id) => {
+    if (!advisorPhrasing.isKnownIntent(id)) return false;
+    if (ALWAYS_AVAILABLE.has(id)) return true;
+    if (NEEDS_CORPUS.has(id)) return inCorpus;
+    if (NEEDS_HISTORY.has(id)) return history;
+    const column = NEEDS_CORPUS_AND_INTAKE[id];
+    if (column) return inCorpus && intakeFilled(profile, column);
+    // An intent nobody has classified yet is OFFERED, not hidden. Hiding by
+    // omission is the worse failure: a chip that declines wastes a tap and says
+    // what is missing, but a chip that silently disappears because a new intent
+    // landed in the registry before it landed in the table above is a feature
+    // the owner never learns exists. The cohort pair (cohort_same_night,
+    // cohort_typical) is the current unclassified set; classify it here in the
+    // change that wires its fact builders.
+    return true;
+  });
+}
+
+// The number of chips shown before the disclosure. Four, because the chips are
+// sentences and a phone that shows five shows a wall.
+const LEAD_CHIP_COUNT = 4;
+
+// The chips, plus the free-text field's own availability. Pro-gated like the
+// rest of the surface so the question list cannot advertise a feature the
+// caller's plan does not serve. `name` is the product name, served so a rename
+// is one backend line; `freeText` is served the same way, so the client renders
+// the input only when the server will actually answer it.
+router.get('/questions', authenticate, requirePro, async (req, res) => {
+  try {
+    const chip = (id) => ({ id, label: advisorPhrasing.ADVISOR_INTENTS[id].chip });
+    let offered = advisorPhrasing.CHIP_PRIORITY.filter((id) => advisorPhrasing.isKnownIntent(id));
+
+    if (advisorFacts && typeof advisorFacts.getVenueContext === 'function') {
+      const ctx = await advisorFacts.getVenueContext(req.user.id);
+      if (ctx && ctx.profile && ctx.profile.google_place_id && ctx.profile.verified) {
+        offered = await availableIntents(ctx);
+      }
+    }
+
+    const lead = offered.slice(0, LEAD_CHIP_COUNT);
+    const rest = new Set(offered.slice(LEAD_CHIP_COUNT));
+    const groups = advisorPhrasing.ADVISOR_GROUPS.map((g) => ({
+      id: g.id,
+      label: g.label,
+      questions: advisorPhrasing.CHIP_PRIORITY
+        .filter((id) => rest.has(id) && advisorPhrasing.ADVISOR_INTENTS[id].group === g.id)
+        .map(chip),
+    })).filter((g) => g.questions.length > 0);
+
+    return res.json({
+      name: advisorPhrasing.ADVISOR_NAME,
+      freeText: advisorFreeText.freeTextAvailable(),
+      lead: lead.map(chip),
+      groups,
+    });
+  } catch (err) {
+    console.error('Advisor questions error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // One chip in, one answer out.
@@ -358,6 +588,97 @@ router.post('/ask', authenticate, requirePro, [
     });
   } catch (err) {
     console.error('Advisor ask error:', err);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ─── POST /question — one typed question, one of three answers ──────────────
+//
+// SEPARATE FROM /ask ON PURPOSE. /ask keeps its shape refusal: one intentId
+// key, prose answered 400 before a value is read. That is not legacy, it is the
+// chip path's guarantee, and a chip answer should not become reachable by
+// typing into the endpoint that promises it cannot be. Free text gets its own
+// door, its own rate limiter (server.js), its own daily ceiling (migration
+// 039), and its own flag.
+//
+// The three modes leave here labeled, because the whole design is that an owner
+// always knows which one they are reading:
+//   mode 'phrased' | 'template' | 'refusal'  a grounded answer, exactly what
+//                                            the matching chip would have said
+//   mode 'advice'                            general trade knowledge, marked
+//   mode 'refusal'                           declined, with the reason
+const FREETEXT_OFF = advisorFreeText.UNAVAILABLE_TEXT;
+
+router.post('/question', authenticate, requirePro, async (req, res) => {
+  try {
+    // Same shape refusal /ask uses: one key, and a non-string is rejected
+    // before anything reads it.
+    const keys = Object.keys(req.body || {});
+    if (keys.length !== 1 || keys[0] !== 'question') {
+      return res.status(400).json({ error: 'Send one question, as text.' });
+    }
+
+    const clean = advisorFreeText.sanitizeQuestion(req.body.question);
+    if (!clean.ok) return res.status(400).json({ error: clean.error });
+
+    // The flag is checked AFTER the shape so a malformed body still gets the
+    // honest 400, and BEFORE any spend so a dark feature costs nothing. Free
+    // text needs the model: with it off there is no template that answers a
+    // question nobody wrote a template for, so this declines in plain words
+    // rather than half working.
+    if (!advisorFreeText.freeTextAvailable()) {
+      return res.json({ mode: 'refusal', text: FREETEXT_OFF, sources: [], question: clean.text });
+    }
+
+    const buildFactBlock = factEngine();
+    if (!buildFactBlock) {
+      return res.status(503).json({ error: `${FEATURE_NAME} is not connected to its data yet. Check back soon.` });
+    }
+
+    const userId = req.user.id;
+    const route = await advisorFreeText.classify({ userId, question: clean.text });
+
+    if (route.mode === 'refused') {
+      return res.json({ mode: 'refusal', text: route.refusal, sources: [], question: clean.text });
+    }
+
+    // GROUNDED: the existing pipeline, unchanged. Free text is another way in,
+    // never a second way to answer.
+    if (route.mode === 'grounded') {
+      const block = await buildFactBlock(userId, route.intentId);
+      const answer = await advisorPhrasing.phrase(block, { venueUserId: userId });
+      return res.json({
+        mode: answer.mode,
+        intentId: route.intentId,
+        text: answer.text,
+        sources: answer.sources,
+        question: clean.text,
+      });
+    }
+
+    // ADVICE: general knowledge, labeled, with the digit valve still closed
+    // around anything about this venue. The router may attach an intent when
+    // the venue's own numbers would inform the answer; those facts ride along
+    // as placeholders, and a refusal in the block is simply dropped, because
+    // advice does not need the venue's data to be answerable.
+    const ctx = advisorFacts && typeof advisorFacts.getVenueContext === 'function'
+      ? await advisorFacts.getVenueContext(userId)
+      : null;
+    let groundedFacts = [];
+    if (route.intentId) {
+      const block = await buildFactBlock(userId, route.intentId);
+      groundedFacts = Array.isArray(block.facts) ? block.facts : [];
+    }
+    const answer = await advisorFreeText.advise({ userId, question: clean.text, ctx, groundedFacts });
+    return res.json({
+      mode: answer.mode,
+      intentId: route.intentId || null,
+      text: answer.text,
+      sources: answer.sources,
+      question: clean.text,
+    });
+  } catch (err) {
+    console.error('Advisor question error:', err);
     return res.status(500).json({ error: 'Server error' });
   }
 });
