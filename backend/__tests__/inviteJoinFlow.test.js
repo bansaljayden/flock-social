@@ -291,6 +291,94 @@ test('a stranger with the link becomes an accepted member and is told where to g
   assert.ok(log.some((q) => q.sql === 'BEGIN') && log.some((q) => q.sql === 'COMMIT'));
 });
 
+test('a blocked account cannot walk into the flock through the share link', async () => {
+  // SECURITY ROUND 5, 2026-08-20. This route minted an accepted membership with
+  // no block check at all. The header above it claimed otherwise ("blocks ...
+  // the join fan-out below is block-aware"), and only the ANNOUNCEMENT was: the
+  // membership landed either way.
+  //
+  // WHAT THAT BOUGHT, and why mutual invisibility made it worse rather than
+  // better. A share link is a bearer credential that spreads by design, through
+  // group chats and screenshots. B, blocked by A, gets the link to A's plan and
+  // joins. B is now an accepted member of the flock A is going to: the venue,
+  // the time, and the chat the rest of the group holds about the night. And
+  // because every read in routes/flocks.js and every socket fan-out in
+  // sockets/handlers.js filters the pair out of each other's view, A IS NEVER
+  // SHOWN THAT B IS THERE. The block did not keep B away from A's evening; it
+  // hid B from A while B walked into it.
+  //
+  // POST /api/flocks and POST /:id/invite have both skipped blocked pairs since
+  // the block feature shipped. This is the third door and it was open.
+  scriptViewer();
+  on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
+  on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [] }));
+  on(/JOIN user_blocks/, () => ({ rows: [{ '?column?': 1 }] }));
+  on(/SELECT COUNT\(\*\)::int AS n FROM flock_members/, () => ({ rows: [{ n: 4 }] }));
+  on(/INSERT INTO flock_members/, () => ({ rows: [{ id: 501 }], rowCount: 1 }));
+  scriptAnnounce();
+
+  const res = await join(VIEWER);
+  assert.strictEqual(res.status, 403);
+  // THE REFUSAL NAMES NOBODY. Telling the joiner which member blocked them
+  // would hand over the exact fact the block exists to withhold: that this
+  // person is on this plan. One sentence, whoever is on the roster.
+  assert.strictEqual(res.body.error, 'You cannot join this plan.');
+  assert.ok(!/block/i.test(JSON.stringify(res.body)), 'the word does not appear either');
+
+  assert.strictEqual(ran(/INSERT INTO flock_members/).length, 0, 'no membership is written');
+  assert.strictEqual(ran(/pg_advisory_xact_lock/).length, 0,
+    'a refusal never takes the per-flock lock');
+  assert.strictEqual(emits.length, 0);
+  assert.strictEqual(pushes.length, 0, 'and the host is not pushed a name they blocked');
+});
+
+test('the block gate is bidirectional and reads the whole accepted roster', async () => {
+  // Bidirectional, matching utils/blocks.js: it does not matter which side
+  // pressed the button, and the query has to say so. And it is asked about
+  // every ACCEPTED member, not just the host: "who is at this plan" is what the
+  // joiner learns and what the members are exposed to, so the host is one of
+  // them rather than the only one that counts. One set-based query, not a call
+  // per member.
+  scriptViewer();
+  on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
+  on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [] }));
+  on(/JOIN user_blocks/, () => ({ rows: [] }));
+  on(/SELECT COUNT\(\*\)::int AS n FROM flock_members/, () => ({ rows: [{ n: 4 }] }));
+  on(/INSERT INTO flock_members/, () => ({ rows: [{ id: 501 }], rowCount: 1 }));
+  scriptAnnounce();
+
+  const res = await join(VIEWER);
+  assert.strictEqual(res.status, 200, 'a clean roster still joins');
+
+  const q = ran(/JOIN user_blocks/)[0];
+  assert.ok(q, 'the gate is asked at all');
+  assert.match(q.sql, /b\.blocker_id = \$2 AND b\.blocked_id = fm\.user_id/);
+  assert.match(q.sql, /b\.blocked_id = \$2 AND b\.blocker_id = fm\.user_id/);
+  assert.match(q.sql, /fm\.status = 'accepted'/, 'the roster, not every invited row');
+  assert.deepStrictEqual(q.params, [42, 7], 'parameterized on the resolved flock and the JWT caller');
+  assert.strictEqual(ran(/JOIN user_blocks/).length, 1, 'asked once, not once per member');
+});
+
+test('an existing accepted member is not evicted by a block made after they joined', async () => {
+  // Two people already in a flock who then block each other stay where they
+  // were. That is the behaviour everywhere else, the flock's own reads already
+  // keep them apart, and turning a re-tap of your own plan's link into a 403
+  // would be a new eviction rule smuggled in through a share link. The gate is
+  // about a NEW membership, so it must not even be asked here.
+  scriptViewer();
+  on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
+  on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/,
+    () => ({ rows: [{ status: 'accepted' }] }));
+  on(/JOIN user_blocks/, () => ({ rows: [{ '?column?': 1 }] }));
+  scriptAnnounce();
+
+  const res = await join(VIEWER);
+  assert.strictEqual(res.status, 200);
+  assert.deepStrictEqual(res.body, { flockId: 42, flockName: 'Dinner', joined: false });
+  assert.strictEqual(ran(/JOIN user_blocks/).length, 0,
+    'the already-in answer comes first and costs one indexed read');
+});
+
 test('the flock hears about it exactly the way it hears about an invite acceptance', async () => {
   scriptViewer();
   on(/FROM flock_invite_links/, () => ({ rows: [link()] }));

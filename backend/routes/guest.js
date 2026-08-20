@@ -883,7 +883,8 @@ router.post('/:token/vote',
 // { regenerate: true }). What is different is that a member is a real account,
 // so the moderation stack that guests are outside of applies in full: bans
 // (authenticate refuses a banned account before this handler runs), blocks (the
-// join fan-out below is block-aware), reports, and the 13+ floor.
+// ROSTER GATE below refuses the membership outright, and the join fan-out is
+// block-aware on top of it), reports, and the 13+ floor.
 //
 // GATES, in the order they refuse:
 //   401  no session                     (authenticate)
@@ -899,6 +900,8 @@ router.post('/:token/vote',
 //   404  unknown / revoked link, or a deleted flock — byte-identical to the
 //        other three routes, so this one cannot become the enumeration oracle
 //        the others were written to avoid
+//   403  somebody already on this plan's accepted roster is in a block with
+//        the caller, in either direction. Names nobody: see the gate itself.
 //   409  the plan is cancelled or completed
 //   429  this link has already pulled in too many accounts
 //
@@ -956,6 +959,64 @@ router.post('/:token/join',
         'SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2',
         [link.flock_id, req.user.id]
       );
+
+      // BLOCKS HOLD ON THE LINK DOOR TOO (security round 5, 2026-08-20).
+      //
+      // Until this check, the header above claimed "blocks (the join fan-out
+      // below is block-aware)" and only the ANNOUNCEMENT was. The membership
+      // itself was minted regardless, so a share link — a bearer credential
+      // that spreads by design, through group chats and screenshots — was a
+      // way past the one control the product offers for exactly this.
+      //
+      // WHAT THAT BOUGHT AN ATTACKER, and why mutual invisibility made it
+      // worse rather than better. B, blocked by A, gets the link to A's plan
+      // and joins. B is now an accepted member of the flock A is going to:
+      // the venue, the time, the chat the rest of the group holds about the
+      // night. And because every read in routes/flocks.js and every socket
+      // fan-out in sockets/handlers.js filters the pair out of each other's
+      // view, A is never shown that B is there. The block did not keep B away
+      // from A's evening; it hid B from A while B walked into it.
+      //
+      // The rule is the one POST /api/flocks (invited_user_ids) and POST
+      // /:id/invite already enforce in the other direction: a blocked pair
+      // does not become co-members. Applied across the WHOLE accepted roster,
+      // not just the host, because "who is at this plan" is what the joiner
+      // learns and what the members are exposed to — the host is one of them,
+      // not the only one that counts.
+      //
+      // Bidirectional, matching utils/blocks.js: it does not matter which side
+      // pressed the button. Asked in one set-based query rather than a call
+      // per member, and it runs BEFORE the advisory-lock transaction so a
+      // refusal never takes a lock.
+      //
+      // ALREADY-ACCEPTED MEMBERS ARE NOT REFUSED. Two people already in a
+      // flock who then block each other stay where they were — that is the
+      // existing behaviour everywhere else, the flock's own reads already keep
+      // them apart, and turning a re-tap of your own plan's link into a 403
+      // would be a new eviction rule smuggled in through a share link. This
+      // gate is about a NEW membership, so it sits after the already-in
+      // answer and before the write.
+      //
+      // The refusal names no one. Telling B which member blocked them would
+      // hand over exactly the fact the block exists to withhold — that A is on
+      // this plan — so the sentence is the same one whoever is on the roster.
+      if (!(existing.rows.length && existing.rows[0].status === 'accepted')) {
+        const blocked = await pool.query(
+          `SELECT 1
+             FROM flock_members fm
+             JOIN user_blocks b
+               ON (b.blocker_id = $2 AND b.blocked_id = fm.user_id)
+               OR (b.blocked_id = $2 AND b.blocker_id = fm.user_id)
+            WHERE fm.flock_id = $1
+              AND fm.status = 'accepted'
+              AND fm.user_id <> $2
+            LIMIT 1`,
+          [link.flock_id, req.user.id]
+        );
+        if (blocked.rows.length > 0) {
+          return res.status(403).json({ error: 'You cannot join this plan.' });
+        }
+      }
       if (existing.rows.length && existing.rows[0].status === 'accepted') {
         return res.json({ flockId: link.flock_id, flockName: link.name, joined: false });
       }
