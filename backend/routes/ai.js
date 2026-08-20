@@ -19,6 +19,10 @@ const {
   // Round 15: venue-clock scoring, same as routes/crowd.js.
   venueLocalNow,
   weekdayOffset,
+  // Round 25: the verified-reporter blend, so the owner-vs-users precedence is
+  // decided by ONE function on every surface that publishes a number.
+  buildCalibrationAdjustment,
+  MIN_CALIBRATION_REPORTERS,
 } = require('../services/crowdEngine');
 // The owner's live 0-100 reading, so Birdie and the venue card cannot quote
 // two different numbers for one room.
@@ -34,7 +38,10 @@ const { getPremiumState, paywallEnabled, EntitlementUnavailableError } = require
 // it is the one place that decides whether a confidence integer may be called a
 // measured accuracy, and this route publishes one straight into Gemini's
 // context. See the note above it in routes/crowd.js.
-const { forecastAccess, confidenceMeasurementFor } = require('./crowd');
+// feedbackWindow rides along for the same reason: Birdie's crowd tool runs the
+// card's calibration read, and the three (day, hour) slots it reads have ONE
+// definition (round 25).
+const { forecastAccess, confidenceMeasurementFor, feedbackWindow } = require('./crowd');
 const { allowPlacesSearch } = require('../utils/placesBudget');
 const { upstreamSignal } = require('../utils/upstream');
 const {
@@ -477,20 +484,88 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
 
       const lat = venue.location?.latitude;
       const lon = venue.location?.longitude;
-      const weather = (lat && lon) ? await getWeather(lat, lon) : null;
+      // Charged to the steering account, like every other paid call in this
+      // tool loop. `userId` has been in scope here all along and the get_weather
+      // tool below already passes it; this one did not, which left an
+      // LLM-driven, caller-steerable path onto the GLOBAL weather ledger with
+      // no per-user ceiling on it at all (services/weatherService.js:
+      // allowWeatherFetch only meters callers that identify themselves).
+      const weather = (lat && lon) ? await getWeather(lat, lon, { userId }) : null;
 
       const crowdResult = await mlPredictor.predictBusyness(venue, weather, scoreTime);
 
-      // The owner's live reading outranks the model here for the same reason
+      // The owner's live reading outranks the MODEL here for the same reason
       // it does on the card (services/ownerReports.js): Birdie quoting the
       // model's 42 while the card one tap away carries the venue's own 85 is
-      // the app arguing with itself. No verified-report blend runs on this path
-      // (the tool loads none), so the reading is only ever outranked on the
-      // surfaces that do load them. crowd_source travels in the tool result so
+      // the app arguing with itself. crowd_source travels in the tool result so
       // Birdie SAYS whose number it is — the label is the whole deal.
-      const ownerLive = ownerReports.liveOwnerReport(
-        (await ownerReports.getLiveOwnerReports([venue.place_id]))[venue.place_id]
-      );
+      //
+      // ROUND 25 (adversarial): it does NOT outrank real people, here either.
+      // This path used to load no verified reports at all, and its own comment
+      // said so: "the reading is only ever outranked on the surfaces that do
+      // load them". That made Birdie a bypass of the precedence rule the whole
+      // feature rests on. The documented invariant is three properties — the
+      // number is labelled, it expires, and verified user reports outrank it
+      // (migration 031; it is the FTC/LendEDU argument for why a
+      // consumer-facing number an owner sets is a disclosure and not an
+      // advertisement) — and exactly one surface held only two of them. The
+      // exploit is small to describe and bad to be on the end of: an owner
+      // types 20 while three verified people in the room say packed; the card
+      // shows the blend and carries the 20 beside it as a claim, and Birdie
+      // narrates the venue's own attribution plus "it's quiet" as the answer,
+      // in sentences, which
+      // is the most persuasive surface in the product. Birdie also never
+      // stamped a divergence, so an owner whose users only ever asked Birdie
+      // accrued no strikes at all.
+      //
+      // The read is the card's read, and it only runs when there IS a live
+      // reading to outrank, so the common path costs nothing new.
+      const ownerRow = (await ownerReports.getLiveOwnerReports([venue.place_id]))[venue.place_id];
+      let ownerLive = ownerReports.liveOwnerReport(ownerRow);
+      if (ownerLive) {
+        let fbRows = [];
+        try {
+          const fb = await pool.query(
+            `SELECT crowd_level, predicted_score, user_id, created_at FROM (
+               SELECT DISTINCT ON (user_id) crowd_level, predicted_score, user_id, created_at
+                 FROM venue_feedback
+                WHERE venue_place_id = $1
+                  AND (day_of_week, hour) IN (($2::int, $3::int), ($4::int, $5::int), ($6::int, $7::int))
+                  AND verified = true
+                  AND created_at > NOW() - INTERVAL '28 days'
+                ORDER BY user_id, created_at DESC
+             ) newest_per_reporter
+             ORDER BY created_at DESC LIMIT 50`,
+            [venue.place_id, ...feedbackWindow(localDay, localHour).flat()]
+          );
+          fbRows = fb.rows;
+        } catch (fbErr) {
+          // Same degradation as the card: a failed calibration read never
+          // costs the caller an answer. It does mean the owner reading is not
+          // outranked on this turn, which is the pre-existing behaviour and no
+          // worse than it.
+          console.error('[Birdie] Feedback read failed, owner reading not blended:', fbErr.message);
+        }
+        const cal = buildCalibrationAdjustment(fbRows, crowdResult.score);
+        const reporters = cal.feedbackUsed ? cal.reportCount : 0;
+        // ONE precedence rule, applied by the one function that owns it. When
+        // the reporters win, applyOwnerReport leaves the score alone and hands
+        // the owner's figure back with applied:false; Birdie then quotes the
+        // people, not the owner, and a divergence gets stamped exactly as it
+        // would on the card.
+        const published = ownerReports.applyOwnerReport(
+          { score: cal.adjustedScore, rawEngineScore: crowdResult.score, calibration: cal },
+          ownerRow,
+          { reporters, feedbackRows: fbRows }
+        );
+        if (published.ownerReport?.applied !== true) {
+          ownerLive = null;
+          // The users' blend is what ships, so the model's own number is
+          // replaced by it below.
+          crowdResult.score = cal.adjustedScore;
+          crowdResult.reporterCount = reporters;
+        }
+      }
 
       // The free half: how busy is it RIGHT NOW. Same commodity the card, the
       // pin list and the public demo all give away, and the same one this
@@ -502,17 +577,23 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         // card for the same venue says "Usually very busy" is the app arguing
         // with itself, and the flat word is the one that is not defensible
         // until the corpus axis is verified (see describePredictionSupport).
+        // Round 25: the reporter count is no longer hardcoded 0. When verified
+        // reporters outranked an owner reading above, THEY are what stands
+        // behind the number, and telling Birdie zero people backed it would
+        // hedge a measurement into a category prior — the opposite of the
+        // mistake this block was written to avoid. Zero on every other path,
+        // exactly as before, because no reporters were loaded on it.
         crowd_label: ownerLive
           ? publishedLabel(ownerLive.percent, { supported: true })
           : publishedLabel(
             crowdResult.score,
-            describePredictionSupport(crowdResult.predictionMethod, 0)
+            describePredictionSupport(crowdResult.predictionMethod, crowdResult.reporterCount || 0)
           ),
         // Where the number came from, for the narration: 'owner_report' means
         // "the venue itself says", everything else keeps the existing meaning.
         crowd_source: ownerLive
           ? 'owner_report'
-          : describePredictionSupport(crowdResult.predictionMethod, 0).basis,
+          : describePredictionSupport(crowdResult.predictionMethod, crowdResult.reporterCount || 0).basis,
         // The words to attribute an owner reading with, category-derived in
         // utils/venueLabel.js ("the cafe says", "the club says", "the venue
         // says"). Sent only when the number IS the owner's, so Birdie never

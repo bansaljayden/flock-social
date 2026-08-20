@@ -63,6 +63,13 @@ pool.query = (sql, params) => {
   // Fire-and-forget UPSERT, one per request; modelled so the fake stays strict.
   if (/INSERT INTO served_predictions/.test(flat)) return Promise.resolve({ rows: [], rowCount: 0 });
   if (/DELETE FROM served_predictions/.test(flat)) return Promise.resolve({ rows: [], rowCount: 0 });
+  // The owner-slider read (migration 031): the batch route asks for every place
+  // id in the body at once so a live "the bar says N" lands on the vote list as
+  // well as the card. Unmodelled since the slider shipped, which meant this
+  // file's own strictness guard was failing and taking the real signal with it.
+  // No live readings in these fixtures — the batch amplification cases are about
+  // fan-out, not about the override.
+  if (/FROM venue_owner_reports/.test(flat)) return Promise.resolve({ rows: [], rowCount: 0 });
   if (/SELECT 1 FROM user_blocks/.test(flat)) {
     const [a, b] = params || [];
     const hit = BLOCKED_PAIRS.some(([x, y]) => (
