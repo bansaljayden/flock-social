@@ -15238,7 +15238,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // it too; forecasts, the strip and this-week stay Analytics-only reads.
     getVenueBusyNow().then((d) => { if (!cancelled) setVenueBusyNow(d); }).catch(() => { if (!cancelled) setVenueBusyNow({ available: false }); });
     if (venueTab === 'analytics') {
-    getVenueIntelligence().then((d) => { if (!cancelled) setVenueIntel(d); }).catch(() => { if (!cancelled) setVenueIntel({ available: false, reason: 'Could not load forecasts right now' }); });
+    getVenueIntelligence().then((d) => { if (!cancelled) setVenueIntel(d); }).catch(() => { if (!cancelled) setVenueIntel({ available: false, code: 'load_failed', reason: 'The forecast request did not come back. Check your connection and try again.' }); });
     getVenueStrip().then((d) => { if (!cancelled) setVenueStrip(d); }).catch(() => { if (!cancelled) setVenueStrip({ available: false }); });
     // A refusal is not a failed read: this-week sits behind the Pro gate, so a
     // 403 renders as locked, not as "try again".
@@ -15247,6 +15247,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [venueTab, venueProfile?.google_place_id]);
+
+  // The Try again behind the forecast failure card. Clearing the state first
+  // puts the loading line back, so a tap that is doing something looks like it
+  // (SLOP-AUDIT rule 10: a button that appears to do nothing is the failure).
+  const retryVenueIntel = () => {
+    setVenueIntel(null);
+    getVenueIntelligence()
+      .then((d) => setVenueIntel(d))
+      .catch(() => setVenueIntel({ available: false, code: 'load_failed', reason: 'The forecast request did not come back. Check your connection and try again.' }));
+  };
 
   // After the owner's number lands or clears, refetch the venue's PUBLISHED
   // consumer score through the same endpoint users hit. This is the Map
@@ -16299,10 +16309,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <LockedTab requiredTier="premium" featureName="Analytics Dashboard" description="Track check-ins, peak hours, and customer traffic with real-time insights." />
           )}
           {venueTab === 'analytics' && can.analytics && (<>
-          {/* No linked listing / loading states */}
+          {/* No linked listing / loading states.
+              Same failure class as the Map tab's, so it gets the Map tab's
+              treatment: a headline that names the state, the server's own
+              sentence underneath saying why, and a retry ONLY where retrying
+              can change the answer. An unverified venue and a missing listing
+              are settled facts, and a Try again under either is a button that
+              lies. This card used to be the server's sentence set in bold and
+              nothing else, one screen away from the better version. */}
           {venueIntel && !venueIntel.available && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '16px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>{venueIntel.reason || 'Forecasts unavailable right now'}</p>
+              <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 6px' }}>
+                {venueIntel.unverified ? "Your venue isn't verified yet"
+                  : venueIntel.code === 'load_failed' || venueIntel.code === 'lookup_failed' ? "The forecast couldn't load"
+                  : 'No forecast for your venue yet'}
+              </p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{venueIntel.reason || 'Nothing we track grounds a forecast for your venue so far.'}</p>
+              {(venueIntel.code === 'load_failed' || venueIntel.code === 'lookup_failed') && (
+                <button className="hit44" onClick={retryVenueIntel} style={{ marginTop: '10px', padding: '8px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
+                  Try again
+                </button>
+              )}
             </div>
           )}
           {!venueIntel && (
@@ -16404,6 +16431,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             intel={venueIntel}
             liveReading={venueBusyNow?.live || null}
             operatingHours={operatingHours}
+            /* Roost's refusals name venue settings as the thing that fills the
+               blank. The tab is in the strip above them, which the owner has
+               to already know to act on the sentence they just read, so the
+               card gets the door and this is the far side of it. */
+            onOpenSettings={() => setVenueTab('settings')}
           />
           {/* Roost chat: suggested questions, plus a field the owner can type into.
               Grounded answers come from the same fact engine as the cards above;

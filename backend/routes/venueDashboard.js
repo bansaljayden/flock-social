@@ -1389,7 +1389,11 @@ router.get('/intelligence', requirePremium, async (req, res) => {
 
     const venue = await fetchVenueBasics(ctx.google_place_id, req.user.id);
     if (venue === BUDGET_EXCEEDED) return res.status(429).json({ error: BUDGET_MESSAGE });
-    if (!venue) return res.json({ available: false, reason: 'Could not reach your Google listing right now' });
+    // A lookup that did not answer is the one unavailable state here that a
+    // second attempt can change, so it says so and the dashboard puts a Try
+    // again under it. The two above it (no listing, unverified) are settled,
+    // and a retry button under a settled fact is a button that lies.
+    if (!venue) return res.json({ available: false, code: 'lookup_failed', reason: 'Could not reach your Google listing right now' });
 
     const lat = venue.location?.latitude;
     const lng = venue.location?.longitude;
