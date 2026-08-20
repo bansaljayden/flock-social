@@ -898,7 +898,14 @@ router.post('/alert', authenticate, async (req, res) => {
       const c = withEmail[i];
       const sent = outcome.status === 'fulfilled' && outcome.value?.sent === true;
       if (outcome.status === 'rejected') {
-        console.error('[Safety] Alert email threw for', c.contact_email, outcome.reason?.message);
+        // A TRUSTED CONTACT IS A THIRD PARTY WHO NEVER SIGNED UP — typically a
+        // parent, on a product whose floor is 13 — and their address reaches
+        // us only because a teenager typed it into a safety screen. This line
+        // put it into Railway's log in full on every send failure. The
+        // maskAddress note in services/emailService.js argues exactly this
+        // case, in those words, and services/venueDigest.js already honours
+        // it; the SOS path, the one where it matters most, did not.
+        console.error('[Safety] Alert email threw for', maskAddress(c.contact_email), outcome.reason?.message);
       }
       alerts.push({ contactName: c.contact_name, email: c.contact_email, sent });
       if (sent) emailsSent++;
