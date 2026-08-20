@@ -25,6 +25,23 @@ const { isPlaceIdShaped } = require('../utils/places');
 // helper that clamps venue-card and DM-pin photos to our own Places photo
 // proxy. See photoRule below.
 const { safeVenuePhotoUrl } = require('../utils/venuePayload');
+// The fuller intake form. Rules, bounds, enumerations and the body->column map
+// live in ONE place because this router has TWO write paths and its own
+// comments already warn that they must not drift.
+const {
+  intakeRules, buildIntakeSet, INTAKE_TEXT_FIELDS,
+} = require('../validators/venueIntake');
+// Free text from a business account is still free text. Same screen, same
+// placement (after freeText's sanitizer has fired, so markup cannot split a
+// word past the filter) as the three owner-typed strings on a venue event —
+// routes/venueDashboard.js POST /events.
+const { rejectIfProfane } = require('../utils/moderation');
+// Is the claimed place in the corpus the model runs on? Answered at claim time
+// and stored, because the answer decides whether this venue may EVER be shown
+// something model-backed. See services/venueCorpus.js.
+const {
+  checkCorpusMembership, corpusSummary, hasModelBackedData, CORPUS_TTL_MS,
+} = require('../services/venueCorpus');
 
 const router = express.Router();
 router.use(authenticate);
@@ -277,6 +294,92 @@ async function claimedByAnother(placeId, userId) {
   return rows.length > 0;
 }
 
+// ─── Intake + corpus, written once for all three handlers ────────────────────
+//
+// The base statements below are left as they were: a wide COALESCE UPDATE with
+// hand-numbered parameters is fine at ten fields and unreadable at twenty-eight,
+// and the numbering is exactly the kind of thing that goes wrong silently when
+// the next field is added. So the eighteen intake columns and the three corpus
+// columns are applied in ONE follow-up statement built from
+// validators/venueIntake.js, which owns the body->column map.
+//
+// NOT A TRANSACTION, and that is a considered choice rather than an omission.
+// Both callers are idempotent — POST is an upsert on user_id, PUT is an update
+// keyed on it — so a failure between the two statements leaves a profile the
+// owner can save again to exactly the same result. A transaction here would
+// buy atomicity for a retry that already works, at the cost of holding a pool
+// connection across a corpus lookup.
+//
+// CORPUS FAILURE NEVER FAILS A SAVE. checkCorpusMembership answers null when it
+// cannot look, and null means "keep what is stored" — a database blip must not
+// demote a real corpus venue to 'absent' and take its intelligence away.
+//
+// @param {number} userId
+// @param {object} bodyIn        req.body (already validated)
+// @param {object} row           the profile row the base statement returned
+// @param {boolean} forceCorpus  true when this request touched google_place_id,
+//                               so the stored answer is about a different place
+async function applyIntakeAndCorpus(userId, bodyIn, row, forceCorpus = false) {
+  if (!row) return row;
+
+  const params = [];
+  const sets = buildIntakeSet(bodyIn, params);
+
+  const placeId = row.google_place_id;
+  const checkedAt = row.corpus_checked_at ? new Date(row.corpus_checked_at).getTime() : 0;
+  const stale = !checkedAt || Number.isNaN(checkedAt) || Date.now() - checkedAt > CORPUS_TTL_MS;
+  // Rechecked rather than written once: a retrain can put a venue into
+  // ml_venue_baselines without anybody touching this row, and an owner stuck
+  // forever on the answer from their signup day is a worse lie than no answer.
+  if (placeId && (forceCorpus || stale)) {
+    const membership = await checkCorpusMembership(placeId);
+    if (membership) {
+      params.push(membership.status);
+      sets.push(`corpus_status = $${params.length}`);
+      params.push(membership.baselineRows);
+      sets.push(`corpus_baseline_rows = $${params.length}`);
+      sets.push('corpus_checked_at = NOW()');
+    }
+  }
+
+  if (sets.length === 0) return row;
+
+  params.push(userId);
+  const { rows } = await pool.query(
+    `UPDATE venue_profiles SET ${sets.join(', ')}, updated_at = NOW()
+      WHERE user_id = $${params.length} RETURNING *`,
+    params
+  );
+  return rows[0] || row;
+}
+
+// What every handler answers with.
+//
+// The two derived fields are computed here and not in the client, so the
+// sentence an owner reads about their own data has ONE definition. A dashboard
+// that renders its own wording from a raw status column is a second place for
+// "we have no crowd history for you" to drift into something softer.
+//
+// has_model_backed_data is the field a paid tab should gate on. It is false for
+// 'unknown' as well as 'absent': the absence of an answer is never permission.
+function profileView(row) {
+  if (!row) return row;
+  return {
+    ...row,
+    corpus_summary: corpusSummary(row),
+    has_model_backed_data: hasModelBackedData(row),
+  };
+}
+
+// The three owner-typed intake strings, screened together. Returns true when a
+// response has already been sent.
+function screenIntakeText(req, res) {
+  for (const field of INTAKE_TEXT_FIELDS) {
+    if (req.body[field] && rejectIfProfane(res, req.body[field])) return true;
+  }
+  return false;
+}
+
 // POST /api/venue-profile — create venue profile (onboarding)
 router.post('/', [
   // Round 19 (shape sweep): every one of these lands in a bounded column, and
@@ -291,6 +394,11 @@ router.post('/', [
   freeText(body('description').optional({ nullable: true }), 'description').isLength({ max: MAX_DESCRIPTION }).withMessage('Description is too long'),
   goalsRule,
   placeIdRule,
+  // The fuller form. Every field is optional: an owner who skips the whole
+  // thing still gets a profile, and a skipped field means the advice stays
+  // quiet on that subject instead of guessing (SLOP-AUDIT §C — never demand a
+  // pile of fields at onboarding).
+  ...intakeRules,
   // tier and verified are intentionally NOT accepted here either — see the PUT.
 ], async (req, res) => {
   try {
@@ -298,6 +406,7 @@ router.post('/', [
     if (!errors.isEmpty()) {
       return res.status(400).json({ error: errors.array()[0].msg });
     }
+    if (screenIntakeText(req, res)) return;
 
     const { businessName, category, location, description, goals, googlePlaceId } = req.body;
 
@@ -345,7 +454,10 @@ router.post('/', [
       [req.user.id, businessName, category || null, location || null, description || null, goals || [], googlePlaceId || null]
     );
 
-    res.status(201).json(result.rows[0]);
+    // forceCorpus: a claim is the moment the place id is captured, so whatever
+    // answer an earlier claim left behind is about a different venue.
+    const saved = await applyIntakeAndCorpus(req.user.id, req.body, result.rows[0], true);
+    res.status(201).json(profileView(saved));
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: CLAIMED_MSG });
     console.error('Create venue profile error:', err);
@@ -365,7 +477,17 @@ router.get('/', async (req, res) => {
       return res.status(404).json({ error: 'No venue profile found' });
     }
 
-    res.json(result.rows[0]);
+    // A READ that can WRITE, on purpose and only ever one column group.
+    // Corpus membership is not a property of the profile, it is a property of
+    // the ML tables, and those change under it: a retrain that finally collects
+    // this venue must not leave the owner reading "we have no crowd history"
+    // until the next time they happen to edit their hours. Bounded by
+    // CORPUS_TTL_MS, so this is at most one extra query per profile per day,
+    // and it never touches anything the owner typed.
+    // Passing an empty body means no intake column is written here — the map in
+    // validators/venueIntake.js only writes keys the body actually carries.
+    const saved = await applyIntakeAndCorpus(req.user.id, {}, result.rows[0], false);
+    res.json(profileView(saved));
   } catch (err) {
     console.error('Get venue profile error:', err);
     res.status(500).json({ error: 'Failed to get venue profile' });
@@ -384,6 +506,12 @@ router.put('/', [
   hoursRule,
   prefsRule,
   placeIdRule,
+  // THE SAME intake chain as the create route, which is the whole reason it is
+  // a shared array and not two copies. Before this, description, category and
+  // goals were accepted here and exposed NOWHERE in settings, so a venue that
+  // changed its hours or its story had no way to say so after signup — the
+  // fuller form would have inherited exactly that bug.
+  ...intakeRules,
   // tier is intentionally NOT accepted from the client — it maps to paid
   // plans and is set server-side only (audit 2026-08-12: clients could
   // PATCH themselves to 'pro'). `verified` is admin-only for the same
@@ -399,6 +527,7 @@ router.put('/', [
     if (!errors.isEmpty()) {
       return res.status(400).json({ error: errors.array()[0].msg });
     }
+    if (screenIntakeText(req, res)) return;
 
     const { businessName, category, location, description, goals, phone, operatingHours, notificationPrefs, googlePlaceId, photoUrl } = req.body;
 
@@ -454,7 +583,13 @@ router.put('/', [
       return res.status(404).json({ error: 'No venue profile found' });
     }
 
-    res.json(result.rows[0]);
+    // forceCorpus when this request named a place id: the statement above may
+    // have just repointed the profile at a different venue, and the stored
+    // corpus answer describes the old one. Same trigger as the `verified` reset
+    // directly above, and for the same reason — both are facts about the PLACE,
+    // not about the row.
+    const saved = await applyIntakeAndCorpus(req.user.id, req.body, result.rows[0], !!googlePlaceId);
+    res.json(profileView(saved));
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: CLAIMED_MSG });
     console.error('Update venue profile error:', err);
