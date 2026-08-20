@@ -59,6 +59,11 @@ const { authenticate } = require('../middleware/auth');
 const { requireVenueTier, getVenueTier, venueBillingEnabled } = require('../services/venueEntitlements');
 const advisorPhrasing = require('../services/advisorPhrasing');
 const advisorFreeText = require('../services/advisorFreeText');
+// The measured floor below which an ordering claim is not made. Commit
+// 1d1b92b established it for HOURS, on the same 0 to 100 index these day
+// scores live on. Imported rather than restated: a second copy of a measured
+// number is a number that will drift away from its measurement.
+const { HOUR_ORDERING_MIN_GAP } = require('../services/crowdEngine');
 
 const router = express.Router();
 
@@ -185,12 +190,38 @@ const INTENT_PLANS = {
   // now travels with the facts instead of being lost the moment they leave.
   // Copied rather than mutated: the builders are memoised per request and the
   // same peak fact is served to other plans in the same breath.
+  //
+  // A FLAT WEEK HAS NO QUIET NIGHT, AND MUST SAY SO. Sorting always returns a
+  // first element, so this chip named one whatever the spread was: a week
+  // projecting 85, 88, 85, 89, 89, 90, 89 came back calling Saturday the
+  // quietest at 85, which is five points off the busiest day of the same week
+  // and inside the noise. Commit 3782777 refused to name a strongest DAY when
+  // the Google curve was level, and 1d1b92b's HOUR_ORDERING_MIN_GAP is the
+  // MEASURED floor for exactly this claim: below a ten point gap on the 0 to
+  // 100 index, an ordering is not supported by the numbers underneath it.
+  // Days are scored on that same index by the same model, so the same floor
+  // applies. Naming one of seven near-identical days is naming noise, and it
+  // reads as advice: an owner told Saturday is their quiet night may staff it
+  // differently on a week where Saturday is not.
+  //
+  // The refusal is a REFUSAL rather than a quiet fallback to the whole week,
+  // because "which days look quiet" has a real answer here and the answer is
+  // none of them. It names the floor, the way every other refusal in this
+  // product names what it would take.
   quiet_nights: async (b) => {
     const week = await b.week();
     const scored = week
       .filter((e) => !advisorFacts.isRefusal(e) && e.value && Number.isFinite(Number(e.value.peakScore)))
       .sort((a, z) => Number(a.value.peakScore) - Number(z.value.peakScore));
     if (!scored.length) return week;
+    const spread = Number(scored[scored.length - 1].value.peakScore) - Number(scored[0].value.peakScore);
+    if (spread < HOUR_ORDERING_MIN_GAP) {
+      return [advisorFacts.makeRefusal({
+        id: 'refuse_quiet_nights_flat_week',
+        reason: `No day stands out as quiet in the week ahead. Every day projects within ${spread} points of every other on our 0 to 100 index, and we do not name a quietest day inside ${HOUR_ORDERING_MIN_GAP} points because the ordering under that is noise.`,
+        whatWouldUnlock: 'A week whose days actually separate. The moment one does, this names it.',
+      })];
+    }
     const quietest = scored.slice(0, 2);
     return quietest.map((e, i) => ({
       ...e,
@@ -228,9 +259,52 @@ const INTENT_PLANS = {
   },
   cohort_typical: (b) => b.cohortTypical(),
   week_recap: (b) => b.readings(),
-  // The why-layer's differencing shape: the venue's own readings and what was
-  // served, next to the street's conditions. Never a cause.
-  slow_night: async (b) => [...(await b.readings()), ...(await b.around())],
+  // The why-layer's differencing shape: the venue's own reading on the slow
+  // day and what was served against it, next to the street's conditions.
+  // Never a cause.
+  //
+  // IT USED TO HAND OVER BOTH BUILDERS WHOLE, and the template twin printed
+  // fourteen lines: seven daily readings, a served estimate, three weather
+  // days, the anchors fact, the anchors-we-cannot-watch fact and the events
+  // line. Every other template here runs two to four. Worse than the length,
+  // most of it was about the wrong day. The weather feed starts at tomorrow
+  // (see tonight_outlook), so a question about a slow day LAST week came back
+  // carrying next weekend's forecast, and six of the seven readings were the
+  // days that were not slow.
+  //
+  // So the plan SELECTS rather than dumps, and selecting is all it does: no
+  // number is computed here, because arithmetic belongs in the fact engine and
+  // not in a route plan (see last_night_verdict). The lowest reading is the
+  // slow day by definition, it travels with a note saying which end of the
+  // window it came from exactly as quiet_nights' facts do, and the street
+  // facts are held to that same day by the filter tonight_outlook already
+  // uses: undated street context is about the street itself and stays, dated
+  // context for some other day goes.
+  slow_night: async (b) => {
+    const entries = await b.readings();
+    const readings = entries.filter((e) => !advisorFacts.isRefusal(e) && e.id.startsWith('owner_reading_')
+      && e.value && Number.isFinite(Number(e.value.peakReading)));
+    if (!readings.length) return entries;
+    const slowest = readings.reduce((lo, e) => (
+      Number(e.value.peakReading) < Number(lo.value.peakReading) ? e : lo
+    ));
+    const date = entryDate(slowest);
+    // Copied rather than mutated: the builders are memoised per request and
+    // the same reading fact is served to other plans in the same breath.
+    const slowDay = {
+      ...slowest,
+      note: [
+        slowest.note,
+        `This is the LOWEST of the ${readings.length} days you posted a reading on in this window. It is the slow day the question is about.`,
+      ].filter(Boolean).join(' '),
+    };
+    const sameDay = entries.filter((e) => e !== slowest && entryDate(e) === date);
+    const street = (await b.around()).filter((e) => {
+      const d = entryDate(e);
+      return d === null || d === date;
+    });
+    return [slowDay, ...sameDay, ...street];
+  },
   // Days where a reading and a served estimate can actually be set side by
   // side; when none pair up, everything serves and the refusals speak.
   readings_vs_estimates: async (b) => {
@@ -752,3 +826,9 @@ router.__setFactsForTests = (fn) => {
 };
 
 module.exports = router;
+// The route plans, for tests. A plan is a pure function from the memoised
+// builder to the entries one chip answers with, and the two that SELECT rather
+// than pass through (quiet_nights refusing a level week, slow_night picking the
+// slow day) are the ones worth driving directly: reaching them through the
+// endpoint would mean standing up a whole database fixture to test a sort.
+module.exports.__INTENT_PLANS = INTENT_PLANS;

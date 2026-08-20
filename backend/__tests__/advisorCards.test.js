@@ -470,6 +470,19 @@ test('GET /cards leads with the verdict, then the four MVP cards, in the pinned 
   assert.ok(kitchen.from.includes('intake_kitchen_last_order'));
   assert.ok(kitchen.from.some((id) => id.startsWith('peak_')));
   assert.strictEqual(kitchen.value.peakAtOrAfterLastOrder, true, '21:00 kitchen, 21:00 peak: they touch');
+  // THE VALUE IS THE COLUMN, THE LABEL IS THE SENTENCE. A stored time printed
+  // straight into prose put "your last orders at 21:00" in the same breath as
+  // "around 9 PM", which is one room described in two vocabularies, and the
+  // vocabulary that leaked is the database's. advisorPhrasing.clock12 had
+  // already fixed this for the phrased answer; the fact labels it phrases from
+  // were still carrying the raw column, so every card and the template twin
+  // printed it.
+  assert.strictEqual(kitchen.value.kitchenLastOrder, '21:00', 'the value keeps the column exactly as stored');
+  assert.doesNotMatch(kitchen.label, /\d{1,2}:\d{2}/, 'no database clock reaches the sentence');
+  assert.match(kitchen.label, /9 PM/);
+  const kitchenIntake = listing.facts.find((f) => f.id === 'intake_kitchen_last_order');
+  assert.strictEqual(kitchenIntake.value, '21:00');
+  assert.strictEqual(kitchenIntake.label, 'You told us the kitchen takes last orders at 9 PM.');
   const capacity = listing.facts.find((f) => f.id === 'capacity_at_projected_peak');
   assert.ok(capacity);
   assert.strictEqual(capacity.value.approxPeople, Math.round((120 * 90) / 100),
@@ -627,4 +640,121 @@ test('the route shape is pinned: /cards under the premium floor, cards array pre
   assert.match(routeSrc, /router\.get\('\/cards', authenticate, requirePremium,/,
     'the route floor is requireVenueTier(premium), the dashboard idiom');
   assert.match(routeSrc, /requireVenueTier\('premium'\)/);
+});
+
+// ── Ordering claims, and the two plans that refuse to make one ──────────────
+//
+// These drive the route plans directly. A plan is a pure function from the
+// memoised builder to the entries a chip answers with, so a fake builder is a
+// complete fixture, and reaching them through the endpoint would mean standing
+// up a whole database to test a sort.
+
+const { __INTENT_PLANS: PLANS } = require('../routes/advisor');
+const { HOUR_ORDERING_MIN_GAP } = require('../services/crowdEngine');
+
+const peakFact = (date, weekday, peakScore) => ({
+  id: `peak_${date}`,
+  value: { date, weekday, peakHour: 20, peakScore },
+  source: 'model_holdout',
+  asOf: '2026-08-20T00:00:00.000Z',
+  label: `${weekday} projects busiest around 8 PM, at ${peakScore} on our 0 to 100 index.`,
+});
+const readingFact = (date, peakReading) => ({
+  id: `owner_reading_${date}`,
+  value: { date, peakReading, readings: 1 },
+  source: 'owner_report',
+  asOf: date,
+  label: `Your highest reading on ${date} was ${peakReading}.`,
+});
+const planBuilder = ({ week = [], readings = [], around = [] }) => ({
+  week: async () => week,
+  readings: async () => readings,
+  around: async () => around,
+});
+
+test('a level week has no quiet night, and quiet_nights says so instead of naming the lowest number', async () => {
+  // The live preview projected 90, 88, 85, 89, 89, 90, 89 and this chip called
+  // Saturday the quietest at 85: five points off the busiest day of the same
+  // week, which is inside the noise. Commit 3782777 refused to name a strongest
+  // day when the Google curve was level, and 1d1b92b's HOUR_ORDERING_MIN_GAP is
+  // the measured floor for the same claim on the same 0 to 100 index.
+  const flat = [
+    peakFact('2026-08-20', 'Thursday', 90), peakFact('2026-08-21', 'Friday', 88),
+    peakFact('2026-08-22', 'Saturday', 85), peakFact('2026-08-23', 'Sunday', 89),
+    peakFact('2026-08-24', 'Monday', 89), peakFact('2026-08-25', 'Tuesday', 90),
+    peakFact('2026-08-26', 'Wednesday', 89),
+  ];
+  const out = await PLANS.quiet_nights(planBuilder({ week: flat }));
+  assert.strictEqual(out.length, 1);
+  assert.strictEqual(out[0].status, 'refused', 'a five point spread names no day');
+  assert.strictEqual(out[0].id, 'refuse_quiet_nights_flat_week');
+  assert.match(out[0].reason, /No day stands out as quiet/);
+  assert.ok(!/Saturday|Friday|Thursday/.test(out[0].reason + out[0].whatWouldUnlock),
+    'and it names no weekday at all, because naming one is the defect');
+
+  // The floor is the measured constant, not a literal copied beside it.
+  assert.strictEqual(HOUR_ORDERING_MIN_GAP, 10);
+  assert.match(out[0].reason, new RegExp(`${HOUR_ORDERING_MIN_GAP} points`));
+});
+
+test('a week that actually separates is still ranked, and the facts still say which end they are', async () => {
+  const spread = [
+    peakFact('2026-08-20', 'Thursday', 90), peakFact('2026-08-21', 'Friday', 88),
+    peakFact('2026-08-22', 'Saturday', 62), peakFact('2026-08-23', 'Sunday', 71),
+    peakFact('2026-08-24', 'Monday', 89), peakFact('2026-08-25', 'Tuesday', 90),
+    peakFact('2026-08-26', 'Wednesday', 89),
+  ];
+  const out = await PLANS.quiet_nights(planBuilder({ week: spread }));
+  assert.strictEqual(out.length, 2, 'the two quietest, lowest first');
+  assert.strictEqual(out[0].value.weekday, 'Saturday');
+  assert.strictEqual(out[1].value.weekday, 'Sunday');
+  assert.match(out[0].note, /LOWEST projected day/);
+  assert.match(out[1].note, /second lowest/);
+  // Exactly at the floor is not below it: 90 minus 80 is ten, and ten stands.
+  const atFloor = await PLANS.quiet_nights(planBuilder({
+    week: [peakFact('2026-08-20', 'Thursday', 90), peakFact('2026-08-21', 'Friday', 80)],
+  }));
+  assert.ok(!atFloor.some((e) => e.status === 'refused'), 'the floor is a minimum gap, not a threshold to clear');
+});
+
+test('slow_night answers about the slow day, not about the whole week and next weekend', async () => {
+  // It used to hand over both builders whole and the template twin printed
+  // fourteen lines: seven readings, a served estimate, three weather days and
+  // the street facts. Most of it was about the wrong day, because the weather
+  // feed starts at tomorrow and a slow day is in the past.
+  const readings = [
+    readingFact('2026-08-20', 82), readingFact('2026-08-19', 58), readingFact('2026-08-18', 81),
+    readingFact('2026-08-17', 66), readingFact('2026-08-16', 49), readingFact('2026-08-15', 88),
+    readingFact('2026-08-14', 71),
+    { id: 'served_2026-08-16', value: { date: '2026-08-16', serves: 9 }, source: 'served_prediction', asOf: '2026-08-16', label: 'served nine' },
+    { id: 'served_2026-08-20', value: { date: '2026-08-20', serves: 15 }, source: 'served_prediction', asOf: '2026-08-20', label: 'served fifteen' },
+  ];
+  const around = [
+    { id: 'no_listed_events', value: {}, source: 'events', asOf: '2026-08-20', label: 'nothing listed' },
+    { id: 'weather_2026-08-21', value: { date: '2026-08-21' }, source: 'weather', asOf: '2026-08-20', label: 'tomorrow' },
+    { id: 'weather_2026-08-16', value: { date: '2026-08-16' }, source: 'weather', asOf: '2026-08-16', label: 'the slow day' },
+  ];
+  const out = await PLANS.slow_night(planBuilder({ readings, around }));
+  const ids = out.map((e) => e.id);
+
+  assert.strictEqual(out[0].id, 'owner_reading_2026-08-16', 'the lowest reading is the slow day, and it leads');
+  assert.match(out[0].note, /LOWEST of the 7 days/, 'and it travels saying which end of the window it came from');
+  assert.ok(ids.includes('served_2026-08-16'), 'what we served THAT day stays');
+  assert.ok(!ids.includes('served_2026-08-20'), 'what we served a different day goes');
+  assert.ok(ids.includes('weather_2026-08-16'), 'conditions on the slow day stay');
+  assert.ok(!ids.includes('weather_2026-08-21'), 'next weekend has nothing to do with last Saturday');
+  assert.ok(ids.includes('no_listed_events'), 'undated street context is about the street itself and stays');
+  assert.ok(!ids.some((id) => /^owner_reading_/.test(id) && id !== 'owner_reading_2026-08-16'),
+    'the six days that were not slow are not the answer to why one day was');
+  assert.ok(out.length <= 5, `tightened to the length the other templates run, got ${out.length}`);
+
+  // The memoised builders hand the same fact object to other plans in the same
+  // request, so the note is added to a copy.
+  assert.strictEqual(readings[4].note, undefined, 'the shared fact was not mutated');
+});
+
+test('slow_night with no readings at all falls back to the builder rather than inventing a slow day', async () => {
+  const refusal = { id: 'refuse_no_readings', status: 'refused', reason: 'no readings', whatWouldUnlock: 'post one' };
+  const out = await PLANS.slow_night(planBuilder({ readings: [refusal] }));
+  assert.deepStrictEqual(out, [refusal], 'the refusal speaks for itself');
 });
