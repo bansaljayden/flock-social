@@ -1307,6 +1307,8 @@ const PORT = process.env.PORT || 5000;
 // the way out of every deploy.
 let crowdAlertsInterval = null;
 let crowdAlertsKickoff = null;
+let nightContextInterval = null;
+let nightContextKickoff = null;
 
 async function boot() {
   try {
@@ -1332,6 +1334,19 @@ async function boot() {
   crowdAlertsInterval = setInterval(checkCrowdAlerts, 15 * 60 * 1000);
   // Run once after a short delay on startup
   crowdAlertsKickoff = setTimeout(checkCrowdAlerts, 30 * 1000);
+
+  // Nightly context snapshots — evening weather into night_context and
+  // tonight's Ticketmaster listings into ml_events, so the advisor's
+  // differencing report can still answer a past night after the in-memory
+  // caches (and Ticketmaster's own past-event window) have forgotten it.
+  // Env-gated, default ON: the sweep is cheap, pure-write, and never throws.
+  const { runNightContextSweep, nightContextEnabled, NIGHT_CONTEXT_INTERVAL_MS } = require('./services/nightContext');
+  if (nightContextEnabled()) {
+    nightContextInterval = setInterval(runNightContextSweep, NIGHT_CONTEXT_INTERVAL_MS);
+    // First run shortly after boot, staggered behind the crowd-alerts kickoff
+    // so the two sweeps do not contend for the pool on the same tick.
+    nightContextKickoff = setTimeout(runNightContextSweep, 45 * 1000);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1372,6 +1387,8 @@ function shutdown(signal) {
 
   if (crowdAlertsInterval) clearInterval(crowdAlertsInterval);
   if (crowdAlertsKickoff) clearTimeout(crowdAlertsKickoff);
+  if (nightContextInterval) clearInterval(nightContextInterval);
+  if (nightContextKickoff) clearTimeout(nightContextKickoff);
 
   // Disconnect socket clients FIRST: a live WebSocket is an open connection
   // and server.close() waits on open connections indefinitely. Clients
