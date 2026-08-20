@@ -17,9 +17,9 @@
 # The script is the manual escape hatch; this is the automatic path.
 name: Publish public mirror
 
+# DISABLED 2026-08-20 by Jayden's decision: the code stays private until he
+# says otherwise. Manual dispatch only, so the mirror cannot republish on a push.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
