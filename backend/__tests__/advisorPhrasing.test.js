@@ -355,7 +355,8 @@ test('every advisor endpoint sits behind authenticate + a venue tier gate (sourc
     const [, method, route, mw1, mw2] = m;
     assert.strictEqual(mw1.trim(), 'authenticate', `${method.toUpperCase()} ${route} authenticates first`);
     assert.ok(/^requirePro$|^requirePremium$/.test(mw2), `${method.toUpperCase()} ${route} is tier-gated, got ${mw2}`);
-    assert.ok(method === 'get' || route === '/ask', 'the advisor has no write path besides /ask, which only reads');
+    assert.ok(method === 'get' || route === '/ask' || route === '/question',
+      'the advisor has no write path: its two POSTs (/ask, /question) only read');
   }
 });
 
@@ -379,15 +380,61 @@ test('registry ids are digit-free so every chip intent can survive the valve', (
   }
 });
 
-test('GET /questions serves every registry chip exactly once, grouped, under the product name', async () => {
+test('GET /questions serves four lead chips plus the rest grouped, every registry id exactly once', async () => {
   resetAll();
   const r = await get('/api/venue/advisor/questions');
   assert.strictEqual(r.status, 200);
   assert.strictEqual(r.body.name, advisorPhrasing.ADVISOR_NAME);
-  const served = r.body.groups.flatMap((g) => g.questions.map((q) => q.id));
-  assert.deepStrictEqual(served.sort(), Object.keys(advisorPhrasing.ADVISOR_INTENTS).sort(),
-    'the grouped list and the registry are the same set: no chip the server refuses, no intent without a chip');
+  // Four visible, because the chips are whole sentences and a phone that shows
+  // five shows a wall. The rest live behind the client's disclosure.
+  assert.strictEqual(r.body.lead.length, 4, 'four lead chips, not the whole registry');
+  // The lead is CHIP_PRIORITY's own head, in order. This pins the mechanism,
+  // not the running order: which four an owner sees first is a product call
+  // that belongs in the priority list, and a test that hard-coded one id would
+  // turn every reordering into a test edit.
+  assert.deepStrictEqual(
+    r.body.lead.map((q) => q.id),
+    advisorPhrasing.CHIP_PRIORITY.slice(0, 4),
+    'the lead is the priority list head, in order'
+  );
+  const served = [...r.body.lead.map((q) => q.id), ...r.body.groups.flatMap((g) => g.questions.map((q) => q.id))];
+  assert.deepStrictEqual(served.slice().sort(), Object.keys(advisorPhrasing.ADVISOR_INTENTS).sort(),
+    'lead plus grouped is the registry: no chip the server refuses, no intent without a chip');
+  assert.strictEqual(new Set(served).size, served.length, 'no chip appears twice');
   for (const g of r.body.groups) {
     assert.ok(g.label && g.questions.length > 0, `group ${g.id} is labeled and non-empty`);
   }
+  // Events and weather are the prettiest card and the least asked question, so
+  // they are last in the offer order, never in the lead.
+  assert.ok(!r.body.lead.some((q) => q.id === 'around_you'), 'events and weather do not lead');
+});
+
+test('a venue outside the corpus is offered only the questions that can answer, not a menu of refusals', async () => {
+  resetAll();
+  handlers.push([/FROM venue_profiles WHERE user_id/, () => ({
+    rows: [{
+      user_id: 7, google_place_id: 'place-x', verified: true, business_name: 'Test',
+      corpus_status: 'absent', corpus_baseline_rows: null, corpus_checked_at: null,
+      capacity: null, kitchen_last_order: null, owner_busy_nights: null,
+    }],
+    rowCount: 1,
+  })]);
+  handlers.push([/FROM ml_venues WHERE google_place_id/, () => ({ rows: [], rowCount: 0 })]);
+  // No readings and nothing served in the window either.
+  handlers.push([/SELECT EXISTS/, () => ({ rows: [{ readings: false, served: false }], rowCount: 1 })]);
+
+  const r = await get('/api/venue/advisor/questions');
+  assert.strictEqual(r.status, 200);
+  const served = [...r.body.lead.map((q) => q.id), ...r.body.groups.flatMap((g) => g.questions.map((q) => q.id))];
+  // A dead button is never offered: nothing model backed survives the corpus
+  // gate, and nothing history backed survives an empty window.
+  for (const id of ['peak_hours', 'tonight_outlook', 'weekend_outlook', 'quiet_nights',
+    'kitchen_vs_peak', 'capacity_math', 'busy_nights_check',
+    'week_recap', 'slow_night', 'readings_vs_estimates', 'last_day_compare']) {
+    assert.ok(!served.includes(id), `${id} is not offered to a venue that cannot be given it`);
+  }
+  // The two that need neither the corpus nor a reading are always there.
+  assert.ok(served.includes('around_you') && served.includes('data_status'));
+  assert.ok(served.length < Object.keys(advisorPhrasing.ADVISOR_INTENTS).length,
+    'the offer is a subset, not the whole registry');
 });
