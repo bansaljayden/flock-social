@@ -653,7 +653,13 @@ test('with no model on disk, predictBusyness IS the rule engine plus an honest m
     const f = await ml.predictHourlyForecast(venue, wx, 20, 4, ts);
     assert.deepEqual(f, generateHourlyForecast(venue, wx, 20, 4, ts));
     for (const entry of f) {
-      assert.deepEqual(Object.keys(entry).sort(), ['hour', 'label', 'score']);
+      // predictionMethod joined every hourly entry in the skew fixes of
+      // 2026-08-19: a strip must never mix ML hours and rule-engine hours
+      // without saying so. On this rung every entry is the rule engine, and
+      // the deepEqual above already pinned that the ML-path forecast and
+      // generateHourlyForecast agree entry for entry.
+      assert.deepEqual(Object.keys(entry).sort(), ['hour', 'label', 'predictionMethod', 'score']);
+      assert.equal(entry.predictionMethod, 'rule_engine');
     }
   } finally {
     fs.existsSync = realExists;
