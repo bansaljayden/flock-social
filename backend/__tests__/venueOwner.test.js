@@ -277,10 +277,75 @@ test('changing the place id resets verification on the create path as well', asy
 
 test('venue onboarding never demotes an admin', async () => {
   CURRENT_USER = { id: 1, name: 'Root', role: 'admin' };
-  handlers = [noClaimConflict, roleUpdate, [/INSERT INTO venue_profiles/, () => ({ rows: [profileRow] })]];
-  await call('POST', '/api/venue-profile', { businessName: 'Bar' });
+  // A place-id-backed claim, because that is now the only shape that reaches
+  // the role write at all (the self-promotion gate below) — and the saved row
+  // must carry the place id, since the gate reads the CLAIM, not the body.
+  handlers = [noClaimConflict, roleUpdate,
+    [/INSERT INTO venue_profiles/, () => ({ rows: [{ ...profileRow, google_place_id: 'place_admin1' }] })]];
+  await call('POST', '/api/venue-profile', { businessName: 'Bar', googlePlaceId: 'place_admin1' });
   const roleQ = ran(/UPDATE users SET role/)[0];
+  assert.ok(roleQ, 'the role write never ran');
   assert.ok(/role NOT IN \('admin', 'venue_owner'\)/.test(roleQ.sql), 'the role write is unguarded');
+});
+
+// ---------------------------------------------------------------------------
+// 2b. The venue_owner self-promotion gate (VENUE-BILLING Phase 0, last piece)
+//
+// The role write used to run unconditionally, before the claim was even
+// stored: any authenticated account could POST a bare business name and hold
+// venue_owner forever. The gate has two halves — requireVerified on the route
+// (an unverified email must not accumulate a business claim) and a role write
+// that only fires for a claim that names a real place and survived the
+// claimed-by-another check. These pin both halves and the ordering.
+// ---------------------------------------------------------------------------
+
+test('an unverified email cannot claim a venue or take the role at all', async () => {
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user', email_verified: false };
+  handlers = [noClaimConflict, roleUpdate, [/INSERT INTO venue_profiles/, () => ({ rows: [profileRow] })]];
+  const res = await call('POST', '/api/venue-profile', { businessName: 'Bar', googlePlaceId: 'place_x' });
+  assert.strictEqual(res.status, 403, res.text);
+  assert.strictEqual(log.length, 0, 'the refusal must land before ANY statement runs');
+});
+
+test('a claim with no place id saves a profile but grants NO role', async () => {
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  handlers = [noClaimConflict, roleUpdate, [/INSERT INTO venue_profiles/, () => ({ rows: [{ ...profileRow, google_place_id: null }] })]];
+  const res = await call('POST', '/api/venue-profile', { businessName: 'Just A Typed String' });
+  assert.strictEqual(res.status, 201, res.text);
+  assert.strictEqual(ran(/UPDATE users SET role/).length, 0,
+    'a typed business name is a claim on nothing and must not mint venue_owner');
+});
+
+test('a place-id-backed claim grants the role, and only after the claim is stored', async () => {
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  handlers = [noClaimConflict, roleUpdate,
+    [/INSERT INTO venue_profiles/, () => ({ rows: [{ ...profileRow, google_place_id: 'place_real1' }] })]];
+  const res = await call('POST', '/api/venue-profile', { businessName: 'Bar', googlePlaceId: 'place_real1' });
+  assert.strictEqual(res.status, 201, res.text);
+  const roleIdx = log.findIndex((q) => /UPDATE users SET role/.test(q.sql));
+  const insertIdx = log.findIndex((q) => /INSERT INTO venue_profiles/.test(q.sql));
+  assert.ok(roleIdx >= 0, 'the role write ran');
+  assert.ok(insertIdx >= 0 && insertIdx < roleIdx,
+    'the role must follow the stored claim, not precede it — a failed insert must leave no role behind');
+  assert.deepStrictEqual(log[roleIdx].params, ['venue_owner', 1]);
+});
+
+test('the gate reads the SAVED claim, so a placeless re-POST by an existing claimant keeps working', async () => {
+  // The upsert COALESCEs google_place_id, so an owner who already claimed a
+  // place and re-runs onboarding without one still holds a real claim.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  handlers = [noClaimConflict, roleUpdate,
+    [/INSERT INTO venue_profiles/, () => ({ rows: [{ ...profileRow, google_place_id: 'place_prior1' }] })]];
+  const res = await call('POST', '/api/venue-profile', { businessName: 'Bar' });
+  assert.strictEqual(res.status, 201, res.text);
+  assert.strictEqual(ran(/UPDATE users SET role/).length, 1, 'the stored claim carries the role');
+});
+
+test('the route mounts requireVerified — the real middleware, not a copy', () => {
+  const src = require('fs').readFileSync(require.resolve('../routes/venueProfile'), 'utf8');
+  assert.match(src, /router\.post\('\/', requireVerified, \[/,
+    'POST /api/venue-profile must sit behind email verification');
+  assert.match(src, /require\('\.\.\/middleware\/auth'\)/, 'and it must come from middleware/auth');
 });
 
 // ---------------------------------------------------------------------------

@@ -565,11 +565,15 @@ test('a venue cannot promote itself by sending a tier', async () => {
 
 test('venue onboarding never downgrades an existing privileged role', async () => {
   handlers = [
+    [/SELECT 1 FROM venue_profiles WHERE google_place_id/, () => ({ rows: [] })],
     [/UPDATE users SET role/, () => ({ rows: [] })],
-    [/INSERT INTO venue_profiles/, () => ({ rows: [{ id: 3 }] })],
+    // The saved row must carry the place id: the self-promotion gate
+    // (venueOwner.test.js section 2b) only reaches the role write for a
+    // stored, place-id-backed claim.
+    [/INSERT INTO venue_profiles/, () => ({ rows: [{ id: 3, google_place_id: 'place_money1' }] })],
   ];
 
-  const res = await call('POST', '/api/venue-profile', { businessName: 'Bar' });
+  const res = await call('POST', '/api/venue-profile', { businessName: 'Bar', googlePlaceId: 'place_money1' });
 
   assert.strictEqual(res.status, 201);
   const roleWrite = log.find((q) => /UPDATE users SET role/.test(q.sql));
