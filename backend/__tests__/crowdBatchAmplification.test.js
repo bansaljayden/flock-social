@@ -414,10 +414,13 @@ test('predictBusyness forwards the caller identity down to the event fetch', () 
   const src = fs.readFileSync(path.join(__dirname, '..', 'services', 'mlPredictor.js'), 'utf8');
   assert.match(src, /async function predictBusyness\(venue, weather, timestamp, options = \{\}\)/,
     'predictBusyness must accept the options bag the routes pass');
-  assert.match(src, /getNearbyEvents\(lat, lng, eventInstant, userId\)/,
+  // The trailing argument is the anonymous marker (money audit round 4), which
+  // must not be allowed to displace the identity: this pins that userId is
+  // still the FOURTH argument, whatever follows it.
+  assert.match(src, /getNearbyEvents\(lat, lng, eventInstant, userId[,)]/,
     'the userId must reach getNearbyEvents, or the per-account ceiling is decorative');
-  assert.match(src, /if \(!allowEventFetch\(userId\)\) return noEvents;/,
-    'getNearbyEvents must charge the identified budget, not the anonymous one');
+  assert.match(src, /if \(!allowEventFetch\(userId, opts\)\) return noEvents;/,
+    'getNearbyEvents must charge the identified budget, and pass the anonymous marker with it');
   // `slotWeather`, not `weather`, since the per-hour forecast weather fix
   // (2026-08-19): each slot is scored with the reading nearest its own hour.
   // What this line pins is unchanged and is the whole point — `options`, and

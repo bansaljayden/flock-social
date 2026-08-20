@@ -42,6 +42,40 @@ const EVENT_CACHE_MAX = 500;
 let eventDayKey = new Date().toISOString().slice(0, 10);
 let eventDayCount = 0;
 const EVENT_DAILY_BUDGET = 1500;
+// ---------------------------------------------------------------------------
+// THE UNAUTHENTICATED SHARE OF IT. Same control as UNAUTH_DAILY in
+// utils/placesBudget.js, added for the same reason (money audit round 4).
+//
+// The block below used to end by saying the unauthenticated marketing demo
+// "keeps the old global-only behavior" because "the demo already has its own
+// per-IP gate". That is the argument placesBudget's M5-1 section had already
+// disproved on its own three doors, and the arithmetic here is worse than it
+// was there. MEASURED against the real module: one predictBusyness is 1
+// Ticketmaster call and one predictHourlyForecast(24) is 23 more, so ONE
+// public venue card (routes/publicCrowd.js buildCard) is 24 calls. Sixty-three
+// of them empties EVENT_DAILY_BUDGET, and routes/publicCrowd.js allowDemo will
+// serve 600 requests a day. So the demo could spend the whole product's event
+// allowance using a tenth of its own permitted traffic, from any number of
+// addresses, and after that allowEventFetch answers false for EVERY caller
+// until UTC midnight: the card, the vote list, the alternatives list, the
+// owner dashboard and the advisor all quietly lose their event enrichment. A
+// per-IP gate bounds one address; it does not reserve anything for anybody.
+//
+// WHY 900/600. The reserve is 600 authenticated calls, 40% of the day, the
+// same share placesBudget keeps. It is also strictly above EVENT_USER_DAILY
+// (400), which is the property worth stating: one account still cannot drain
+// the reserve on its own, so it takes two cooperating accounts to do what no
+// volume of anonymous traffic can now do at all. There is no per-door event
+// sub-ceiling for this to accidentally repeal, so the upward constraint that
+// pins placesBudget's 1800 does not apply here.
+//
+// WHO COUNTS AS ANONYMOUS: only a caller that says so, with
+// { anonymous: true }. Absence of a userId is deliberately NOT the signal —
+// services/crowdAlerts.js and the ML scripts also pass no id, and they are our
+// own traffic rather than unattributable traffic.
+const EVENT_UNAUTH_DAILY = 900;
+// The unauthenticated slice of eventDayCount, charged IN ADDITION to it.
+let eventUnauthDayCount = 0;
 
 // ---------------------------------------------------------------------------
 // THE PER-ACCOUNT LEG OF THE EVENT BUDGET (money audit round 2, finding M1).
@@ -88,12 +122,14 @@ const EVENT_DAILY_BUDGET = 1500;
 // degrades gracefully: getNearbyEvents returns "no events", the prediction
 // still ships, nothing errors.
 //
-// WHO IS CHARGED. Only callers that HAVE an account. Background producers
-// (services/crowdAlerts.js) and the unauthenticated marketing demo pass no
-// userId and keep the old global-only behavior — the demo already has its own
-// per-IP gate (routes/publicCrowd.js allowDemo) and coordinates bucketed to
-// ~1 km, which is the same treatment the authenticated batch route now gets. A
-// userId that is supplied but MALFORMED is refused rather than waved through:
+// WHO IS CHARGED. The per-account leg, only callers that HAVE an account.
+// Background producers (services/crowdAlerts.js) pass no userId and are
+// bounded by the global ceiling alone, which is right: they are our own
+// traffic and there is no account to hold responsible. The unauthenticated
+// marketing demo used to be lumped in with them, and EVENT_UNAUTH_DAILY above
+// is the correction — it declares itself anonymous and is bounded by a share
+// of the day rather than by the global ceiling alone. A userId that is
+// supplied but MALFORMED is refused rather than waved through:
 // createUserBudget.allow() fails closed on anything that is not a positive
 // integer id, matching placesBudget.keyOf().
 // ---------------------------------------------------------------------------
@@ -201,13 +237,47 @@ function allowVenueLookup(placeId, userId) {
 // refuse never eats one of the caller's units. Same all-or-nothing rule
 // utils/placesBudget.js states: a partial charge must never leave the caller
 // believing it may proceed.
-function allowEventFetch(userId) {
+function allowEventFetch(userId, opts) {
+  const anonymous = !!(opts && opts.anonymous);
   const today = new Date().toISOString().slice(0, 10);
-  if (today !== eventDayKey) { eventDayKey = today; eventDayCount = 0; }
+  if (today !== eventDayKey) { eventDayKey = today; eventDayCount = 0; eventUnauthDayCount = 0; }
   if (eventDayCount >= EVENT_DAILY_BUDGET) return false;
+  // Checked before either counter moves, so a refused call is charged nothing
+  // on either leg. This is the reserve: EVENT_DAILY_BUDGET - EVENT_UNAUTH_DAILY
+  // calls a day that no volume of anonymous traffic can reach, through this
+  // door or one added later, because every event fetch in the product comes
+  // through this function.
+  if (anonymous && eventUnauthDayCount >= EVENT_UNAUTH_DAILY) return false;
   if (userId != null && !eventUserBudget.allow(userId)) return false;
   eventDayCount++;
+  if (anonymous) eventUnauthDayCount++;
   return true;
+}
+
+// Non-consuming read, for routes/admin.js's cost panel. This ledger is the
+// THIRD Ticketmaster counter in the repo (routes/events.js has one at 2000/day
+// and services/nightContext.js one at 200/day) and it was the only one with no
+// reader, so the panel and services/costModel.js both priced a repo-wide
+// Ticketmaster ceiling that was missing 1500 calls a day. Same shape as
+// placesBudgetStatus: never gate on this and then call the upstream.
+function eventBudgetStatus() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== eventDayKey) { eventDayKey = today; eventDayCount = 0; eventUnauthDayCount = 0; }
+  return {
+    day: eventDayKey,
+    globalUsed: eventDayCount,
+    globalRemaining: Math.max(0, EVENT_DAILY_BUDGET - eventDayCount),
+    unauthUsed: eventUnauthDayCount,
+    unauthRemaining: Math.max(0, EVENT_UNAUTH_DAILY - eventUnauthDayCount),
+    cacheEntries: eventCache.size,
+    limits: {
+      globalDaily: EVENT_DAILY_BUDGET,
+      unauthDaily: EVENT_UNAUTH_DAILY,
+      perUserHourly: EVENT_USER_HOURLY,
+      perUserDaily: EVENT_USER_DAILY,
+    },
+    inMemory: true,
+  };
 }
 // Round 17: the four event-cache writes each carried their own hand-inlined
 // eviction, and two of them had it written out twice. THE DUPLICATE LINE WAS
@@ -1107,7 +1177,7 @@ function trueEventInstant(timestamp, utcOffsetMinutes) {
 // allowEventFetch. Cache HITS are answered before the gate and cost nothing,
 // which is the rule utils/placesBudget.js states: charging for a call you did
 // not make masks the real burn rate.
-async function getNearbyEvents(lat, lng, timestamp, userId) {
+async function getNearbyEvents(lat, lng, timestamp, userId, opts) {
   const apiKey = process.env.TICKETMASTER_API_KEY;
   const noEvents = {
     hasEvent: false, nearestAttendance: 0, totalEvents: 0,
@@ -1151,7 +1221,7 @@ async function getNearbyEvents(lat, lng, timestamp, userId) {
   // concurrency rather than by time and needs no eviction policy of its own.
   const inflight = eventInflight.get(cacheKey);
   if (inflight) return inflight;
-  const pending = fetchNearbyEvents(cacheKey, lat, lng, timestamp, userId, noEvents);
+  const pending = fetchNearbyEvents(cacheKey, lat, lng, timestamp, userId, noEvents, opts);
   eventInflight.set(cacheKey, pending);
   try {
     return await pending;
@@ -1163,10 +1233,10 @@ async function getNearbyEvents(lat, lng, timestamp, userId) {
 // The uncoalesced half of getNearbyEvents. Never call this directly: it neither
 // reads the cache nor dedupes concurrent callers, so a direct call is an
 // unshared paid Ticketmaster request.
-async function fetchNearbyEvents(cacheKey, lat, lng, timestamp, userId, noEvents) {
+async function fetchNearbyEvents(cacheKey, lat, lng, timestamp, userId, noEvents, opts) {
   const apiKey = process.env.TICKETMASTER_API_KEY;
   // Budget applies only to cache MISSES (real upstream calls).
-  if (!allowEventFetch(userId)) return noEvents;
+  if (!allowEventFetch(userId, opts)) return noEvents;
 
   try {
     const ts = timestamp ? new Date(timestamp) : new Date();
@@ -2167,6 +2237,13 @@ function applyScoreQuantileMap(score) {
 async function predictBusyness(venue, weather, timestamp, options = {}) {
   await init();
   const userId = options && options.userId != null ? options.userId : undefined;
+  // `anonymous` marks a caller with no account behind it that is reachable from
+  // the open internet (routes/publicCrowd.js, routes/badge.js). It charges the
+  // unauthenticated share of the event ledger on top of the global one, so
+  // public traffic cannot spend the whole day out from under signed-in callers.
+  // See EVENT_UNAUTH_DAILY. Not the same thing as "no userId": background jobs
+  // also pass no id and are deliberately outside this bucket.
+  const eventOpts = options && options.anonymous ? { anonymous: true } : undefined;
 
   if (!useML) {
     const result = crowdEngine.calculateCrowdScore(venue, weather, timestamp);
@@ -2188,7 +2265,7 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       venue.utcOffsetMinutes ?? venue.utc_offset_minutes ?? venue.utc_offset ?? null);
 
     const [eventData, feedback, storedBaseline, neighbors] = await Promise.all([
-      getNearbyEvents(lat, lng, eventInstant, userId),
+      getNearbyEvents(lat, lng, eventInstant, userId, eventOpts),
       getUserFeedback(placeId, userId),
       getBaseline(placeId, ts.getDay(), ts.getHours(), userId),
       getNeighborActivity(placeId, lat, lng, ts.getDay(), ts.getHours(), userId),
@@ -2540,7 +2617,12 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
   const wxLng = venue.location?.longitude || venue.longitude || venue.lng || 0;
   const utcOff = venue.utcOffsetMinutes ?? venue.utc_offset_minutes ?? venue.utc_offset ?? null;
   const hourlyWx = (wxLat || wxLng)
-    ? await weatherService.getHourlyForecast(wxLat, wxLng, { userId: options && options.userId })
+    ? await weatherService.getHourlyForecast(wxLat, wxLng, {
+      userId: options && options.userId,
+      // Same marker, same reason, on the weather ledger's own unauthenticated
+      // share (services/weatherService.js WX_UNAUTH_DAILY).
+      anonymous: !!(options && options.anonymous),
+    })
     : null;
   const nowMs = Date.now();
 
@@ -2591,6 +2673,10 @@ const { estimateCapacity, estimateWait, findBestTime, findPeakTime,
 module.exports = {
   predictBusyness,
   predictHourlyForecast,
+  // The third Ticketmaster ledger's reader. routes/admin.js's cost panel had
+  // meters for the other two and none for this one, so both the observed count
+  // and the worst-case ceiling it published were short by a whole ledger.
+  eventBudgetStatus,
   estimateCapacity,
   estimateWait,
   findBestTime,
