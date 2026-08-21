@@ -161,7 +161,7 @@ function checkUserRateLimit(userId, dailyLimit = PREMIUM_DAILY_LIMIT) {
   const oneMinAgo = now - 60000;
   limit.recentTimestamps = limit.recentTimestamps.filter(ts => ts > oneMinAgo);
   if (limit.recentTimestamps.length >= USER_PER_MIN_LIMIT) {
-    return { allowed: false, reason: 'minute', error: 'easy there — gimme a sec to catch up' };
+    return { allowed: false, reason: 'minute', error: 'easy there, gimme a sec to catch up' };
   }
 
   // Allow and record
