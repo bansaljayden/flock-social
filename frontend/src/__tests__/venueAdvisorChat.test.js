@@ -31,7 +31,7 @@
 const fs = require('fs');
 const path = require('path');
 const React = require('react');
-const { render, screen, fireEvent, waitFor } = require('@testing-library/react');
+const { act, render, screen, fireEvent, waitFor } = require('@testing-library/react');
 
 const VenueAdvisorChat = require('../components/VenueAdvisorChat').default;
 const { clearAdvisorThread } = require('../components/VenueAdvisorChat');
@@ -322,32 +322,109 @@ describe('Roost chat: it accumulates into a conversation', () => {
     window.localStorage.removeItem('flockToken');
   });
 
-  test('a token that changes UNDER a live card does not re-label the thread onto the new account', async () => {
-    // The case the test above does not reach, and the one security round 26
-    // found: the token moves while this card is still mounted. `flockToken` is
-    // one shared localStorage key, so a second tab signing in as another owner
-    // overwrites it under this realm, and so does an in-app sign-in that never
-    // unmounts the dashboard. The hand-off used to read the key at WRITE time,
-    // so the very next turn stamped owner one's conversation with owner two's
-    // key, and owner two's next mount inherited it. That thread is owner one's
-    // revenue, footfall and staffing numbers.
+  // A MOUNTED CARD IS NOT A SAFE PLACE TO REMEMBER WHO YOU ARE.
+  //
+  // Round 26 keyed the held thread to the token and stopped a NEW MOUNT from
+  // inheriting the last account's conversation. It left the live card alone,
+  // and the live card is where the account actually changes: `flockToken` is
+  // one shared localStorage key, so a second tab signing in overwrites it under
+  // this realm and an in-app sign-in does the same without unmounting anything.
+  // The card went on drawing owner one's revenue, footfall and staffing answers,
+  // sent owner one's next question with owner two's token (services/api.js reads
+  // the token on every request, at call time), and appended owner two's answer
+  // to owner one's live thread. The four tests below are that whole path.
+  test('a token that changes UNDER a live card empties the screen and sends nothing under the new one', async () => {
     window.localStorage.setItem('flockToken', 'token-for-owner-one');
-    const live = mount();
+    const asked = [];
+    const live = mount({ askQuestion: async (q) => { asked.push(q); return GROUNDED; } });
     const input = await waitFor(field);
     await askOnce(input, 'owner one private numbers');
     await waitFor(() => expect(screen.getByText(GROUNDED.text)).toBeTruthy());
 
-    // Another tab signs in. Nothing unmounts.
+    // The in-app case: this tab did the writing, so the browser dispatches no
+    // storage event to it. Nothing unmounts and nothing is notified.
     window.localStorage.setItem('flockToken', 'token-for-owner-two');
-    // One more turn, which is what writes the store.
-    await askOnce(input, 'one more turn');
+    fireEvent.change(input, { target: { value: 'one more turn' } });
+    fireEvent.click(send());
+
+    // The question never leaves, because it would leave under owner two's
+    // token. Owner one's conversation is off the screen, not merely out of the
+    // hand-off store, and the box owner one was typing into is empty.
+    expect(asked).toEqual(['owner one private numbers']);
+    await waitFor(() => expect(screen.queryByText('owner one private numbers')).toBeNull());
+    expect(screen.queryByText(GROUNDED.text)).toBeNull();
+    expect(screen.queryByText('one more turn')).toBeNull();
+    expect(input.value).toBe('');
     live.unmount();
 
-    // Owner two opens the dashboard. They must inherit nothing.
+    // And owner two's own mount inherits nothing either.
     mount();
     await waitFor(field);
     expect(screen.queryByText('owner one private numbers')).toBeNull();
     expect(screen.queryByText('one more turn')).toBeNull();
+    window.localStorage.removeItem('flockToken');
+  });
+
+  test('another tab signing in reaches this one, and takes the thread with it', async () => {
+    window.localStorage.setItem('flockToken', 'token-for-owner-one');
+    mount();
+    const input = await waitFor(field);
+    await askOnce(input, 'owner one private numbers');
+    await waitFor(() => expect(screen.getByText(GROUNDED.text)).toBeTruthy());
+
+    // What a browser actually delivers to THIS tab when another one writes the
+    // shared key. jsdom does not raise it for us, and neither does a real
+    // browser for a write this document made itself, which is why the component
+    // listens for it AND re-reads the key on its own.
+    window.localStorage.setItem('flockToken', 'token-for-owner-two');
+    fireEvent(window, new StorageEvent('storage', { key: 'flockToken', newValue: 'token-for-owner-two' }));
+
+    await waitFor(() => expect(screen.queryByText('owner one private numbers')).toBeNull());
+    expect(screen.queryByText(GROUNDED.text)).toBeNull();
+    // Still a working card. It just belongs to owner two now.
+    expect(field()).toBeTruthy();
+    window.localStorage.removeItem('flockToken');
+  });
+
+  test('an answer authorised by the account that has just been replaced is dropped, not appended', async () => {
+    window.localStorage.setItem('flockToken', 'token-for-owner-one');
+    let release;
+    const PRIVATE = 'Owner one took 14,200 across the last four Fridays.';
+    mount({ askQuestion: () => new Promise((r) => { release = () => r({ ...GROUNDED, text: PRIVATE }); }) });
+    const input = await waitFor(field);
+    fireEvent.change(input, { target: { value: 'what did we take last month' } });
+    fireEvent.click(send());
+    expect(screen.getByText(/working on it/i)).toBeTruthy();
+
+    // The switch lands while the request is still in the air. The reply was
+    // authorised by owner one and is about owner one's takings, so it belongs
+    // to nobody who is signed in by the time it arrives.
+    window.localStorage.setItem('flockToken', 'token-for-owner-two');
+    fireEvent(window, new StorageEvent('storage', { key: 'flockToken', newValue: 'token-for-owner-two' }));
+    // Inside act, because the drop this is testing IS a state update: the
+    // resolving promise is what discards the answer and the thread with it.
+    await act(async () => { release(); });
+
+    await waitFor(() => expect(screen.queryByText(/working on it/i)).toBeNull());
+    expect(screen.queryByText(PRIVATE)).toBeNull();
+    expect(screen.queryByText('what did we take last month')).toBeNull();
+    window.localStorage.removeItem('flockToken');
+  });
+
+  test('a storage event for any other key leaves the conversation where it is', async () => {
+    // The legitimate case has to keep working: one owner, one session, a theme
+    // written from another tab. A watcher that clears on every storage event
+    // would throw away a conversation because somebody flipped dark mode.
+    window.localStorage.setItem('flockToken', 'token-for-owner-one');
+    mount();
+    const input = await waitFor(field);
+    await askOnce(input, 'still the same owner');
+    window.localStorage.setItem('flock-theme', 'dark');
+    fireEvent(window, new StorageEvent('storage', { key: 'flock-theme', newValue: 'dark' }));
+
+    expect(screen.getByText('still the same owner')).toBeTruthy();
+    expect(screen.getByText(GROUNDED.text)).toBeTruthy();
+    window.localStorage.removeItem('flock-theme');
     window.localStorage.removeItem('flockToken');
   });
 
