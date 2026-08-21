@@ -93,10 +93,86 @@ function prunePhotoIpHits(now, keepIp) {
   }
 }
 
-// In-memory photo cache (avoids re-fetching from Google on every page load)
+// ---------------------------------------------------------------------------
+// The photo cache, and the hour that was costing most of the invoice (round 26).
+// ---------------------------------------------------------------------------
+// Places photos are the largest single line in this project's real spend. This
+// cache is the only thing standing between a venue card and a billed Google
+// call, and it held each photo for ONE HOUR: so a venue that stays on screen
+// across a day was re-bought roughly 24 times, for bytes that had not changed.
+//
+// They cannot change. A photo resource name (`places/{p}/photos/{q}`) is a
+// handle for one specific immutable photo; Google mints a new name when the
+// photo changes rather than swapping the bytes behind an old one. An hour was
+// never a freshness decision about the IMAGE, it was a default nobody costed.
+// What we cache is the BYTES, not the short-lived signed `photoUri` the metadata
+// call returns, so the entry does not go stale when that URL expires either.
+//
+// SEVEN DAYS, AND WHY NOT LONGER. The Google Maps Platform terms permit
+// temporarily caching Places content for up to 30 days (place IDs are the
+// exemption, and are cached separately). Seven days sits comfortably inside
+// that with room for the ceiling to be raised later without anyone having to
+// re-read the terms, and captures essentially the whole benefit: a venue seen
+// twice in a week is bought once.
+const PHOTO_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
+// ---------------------------------------------------------------------------
+// The cap is in BYTES now, because the entry count never bounded anything.
+// ---------------------------------------------------------------------------
+// `MAX_PHOTO_CACHE = 500` bounded the number of entries and said nothing about
+// their size, so the memory this map could hold was 500 times whatever Google
+// happened to return. Counting entries is the wrong unit for a cache of images:
+// the thing that OOMs a container is bytes.
+//
+// 32 MB at the ~40 KB a 400px Places photo actually weighs is around 800
+// photos, which is MORE than the old entry cap allowed while being bounded in
+// the dimension that can hurt. Per-entry ceiling on top: anything over 2 MB is
+// served but not stored, so one oversized response cannot take a sixteenth of
+// the cache for itself. A 400px JPEG is never close to that.
+const MAX_PHOTO_CACHE_BYTES = 32 * 1024 * 1024;
+const MAX_SINGLE_PHOTO_BYTES = 2 * 1024 * 1024;
+// Evict to a LOW-WATER MARK, not back to the ceiling, for the same reason
+// prunePhotoIpHits and venueCache do it: a cache sitting exactly on its limit
+// pays the expired-entry scan on every single insert forever. Ten percent of
+// headroom means that scan runs once per ~3 MB of new photos instead.
+const PHOTO_CACHE_LOW_WATER = Math.floor(MAX_PHOTO_CACHE_BYTES * 0.9);
+// In-memory photo cache (avoids re-fetching from Google on every page load).
+// Insertion order is LRU order: a hit re-inserts its key at the back, so
+// eviction from the front drops the LEAST RECENTLY USED entry rather than the
+// oldest one. With a 7-day TTL that difference is the whole point: FIFO would
+// evict a venue everybody looks at because it was cached first.
 const photoCache = new Map();
-const PHOTO_CACHE_TTL = 60 * 60 * 1000; // 1 hour
-const MAX_PHOTO_CACHE = 500;
+let photoCacheBytes = 0;
+
+function touchPhotoCache(cacheKey, entry) {
+  photoCache.delete(cacheKey);
+  photoCache.set(cacheKey, entry);
+}
+
+function storePhoto(cacheKey, entry) {
+  if (entry.buffer.length > MAX_SINGLE_PHOTO_BYTES) return;
+  const existing = photoCache.get(cacheKey);
+  if (existing) photoCacheBytes -= existing.buffer.length;
+  photoCache.delete(cacheKey);
+  photoCache.set(cacheKey, entry);
+  photoCacheBytes += entry.buffer.length;
+
+  // Expired entries first: they are free to drop and dropping them may be
+  // enough. Then least recently used until the budget is met.
+  if (photoCacheBytes <= MAX_PHOTO_CACHE_BYTES) return;
+  const now = Date.now();
+  for (const [k, v] of photoCache) {
+    if (k === cacheKey || now - v.ts <= PHOTO_CACHE_TTL) continue;
+    photoCache.delete(k);
+    photoCacheBytes -= v.buffer.length;
+  }
+  if (photoCacheBytes <= MAX_PHOTO_CACHE_BYTES) return;
+  while (photoCacheBytes > PHOTO_CACHE_LOW_WATER && photoCache.size > 1) {
+    const oldest = photoCache.keys().next().value;
+    if (oldest === cacheKey) break;
+    photoCacheBytes -= photoCache.get(oldest).buffer.length;
+    photoCache.delete(oldest);
+  }
+}
 
 // In-flight coalescing (round 18). The caches above only help requests that
 // arrive AFTER the first one has finished; N concurrent requests for the same
@@ -170,6 +246,9 @@ router.get('/photo',
       // Check cache first
       const cached = photoCache.get(cacheKey);
       if (cached && Date.now() - cached.ts < PHOTO_CACHE_TTL) {
+        // A hit is what makes this entry recently used; without the re-insert
+        // the map is FIFO and the eviction comment above would be a lie.
+        touchPhotoCache(cacheKey, cached);
         return sendPhoto(res, cached);
       }
 
@@ -206,8 +285,34 @@ router.get('/photo',
   }
 );
 
+// ---------------------------------------------------------------------------
+// The header this was missing, and why it is the one that matters here.
+// ---------------------------------------------------------------------------
+// This route echoed an upstream `Content-Type` verbatim onto a response served
+// from the API origin, with no `X-Content-Type-Options`. Helmet sets nosniff
+// globally in server.js, but this handler calls res.set on the same header name
+// helmet already wrote, and the one thing this response is guaranteed to be is a
+// document a browser will render: the sniffing question is live on exactly the
+// responses where an image is expected and something else arrives.
+//
+// So: nosniff explicitly, next to the type it constrains, and the type itself
+// CLAMPED rather than echoed. `contentTypeFor` is not defence against Google 
+// it is defence against believing a third party's header on our own origin. If
+// the upstream ever answers `text/html` for a photo, this route serves a
+// document, not a page.
+const ALLOWED_PHOTO_TYPES = new Set([
+  'image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/avif',
+]);
+function photoContentType(raw) {
+  // Parameters (`; charset=...`) are not part of the type and have no meaning
+  // on an image; drop them rather than trying to validate them.
+  const base = String(raw || '').split(';')[0].trim().toLowerCase();
+  return ALLOWED_PHOTO_TYPES.has(base) ? base : 'image/jpeg';
+}
+
 function sendPhoto(res, { buffer, contentType }) {
-  res.set('Content-Type', contentType);
+  res.set('Content-Type', photoContentType(contentType));
+  res.set('X-Content-Type-Options', 'nosniff');
   res.set('Cache-Control', 'public, max-age=86400');
   res.set('Cross-Origin-Resource-Policy', 'cross-origin');
   res.send(buffer);
@@ -245,19 +350,9 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey) {
     const buffer = Buffer.from(await imgRes.arrayBuffer());
     const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
 
-    // Store in cache (evict old entries if too large)
-    if (photoCache.size >= MAX_PHOTO_CACHE) {
-      const now = Date.now();
-      for (const [k, v] of photoCache) {
-        if (now - v.ts > PHOTO_CACHE_TTL) photoCache.delete(k);
-      }
-      // If still too large, delete oldest
-      if (photoCache.size >= MAX_PHOTO_CACHE) {
-        const firstKey = photoCache.keys().next().value;
-        photoCache.delete(firstKey);
-      }
-    }
-    photoCache.set(cacheKey, { buffer, contentType, ts: Date.now() });
+    // Store in cache. Eviction is byte-budgeted and least-recently-used; see
+    // MAX_PHOTO_CACHE_BYTES above.
+    storePhoto(cacheKey, { buffer, contentType, ts: Date.now() });
 
     return { status: 200, buffer, contentType };
   } catch (err) {
@@ -693,6 +788,19 @@ module.exports.__test = {
   venueCacheSize: () => venueCache.size,
   clearVenueCache: () => venueCache.clear(),
   allowPhotoFetch,
+  // Round 26: the photo cache is the only thing between a venue card and a
+  // billed Google call, so its TTL, its budget and its eviction ORDER are all
+  // pinned by __tests__/photoCacheCost.test.js rather than trusted.
+  PHOTO_CACHE_TTL,
+  MAX_PHOTO_CACHE_BYTES,
+  MAX_SINGLE_PHOTO_BYTES,
+  photoContentType,
+  storePhoto,
+  touchPhotoCache,
+  photoCacheKeys: () => [...photoCache.keys()],
+  photoCacheBytes: () => photoCacheBytes,
+  getPhotoCached: (k) => photoCache.get(k),
+  clearPhotoCache: () => { photoCache.clear(); photoCacheBytes = 0; },
   resetPhotoBudget({ clearIps = true } = {}) {
     photoDayKey = new Date().toISOString().slice(0, 10);
     photoDayCount = 0;
