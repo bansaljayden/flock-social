@@ -105,8 +105,20 @@ CREATE INDEX IF NOT EXISTS idx_venue_subscriptions_expires_at
 -- resolver falls back to venue_profiles.tier when no grant exists. This is
 -- written anyway so that "which venues hold a paid tier, and until when" has
 -- ONE table to read instead of two, from the first day the table exists.
+-- `AND vp.user_id IS NOT NULL` is not defensive noise, it is the difference
+-- between a skipped row and a failed boot. venue_profiles.user_id is declared
+-- `INTEGER UNIQUE REFERENCES users(id)` in 001_baseline.sql — UNIQUE, and
+-- therefore NULLABLE — while user_id above is this table's PRIMARY KEY and so
+-- NOT NULL. One profile row with a paid tier and no owner (a seed, a drifted
+-- database, a future write path that forgets) turns this SELECT into a
+-- not-null violation, the violation fails the migration, and db/migrate.js
+-- correctly refuses to let server.js reach listen() on a half-applied schema.
+-- The result is production down on boot, for a backfill row that was never
+-- load-bearing: the resolver already falls back to venue_profiles.tier when no
+-- grant row exists, so skipping an ownerless profile costs nothing at all.
 INSERT INTO venue_subscriptions (user_id, tier, source, status, granted_reason, granted_at, expires_at)
 SELECT vp.user_id, vp.tier, 'admin', 'active', 'legacy_grant', COALESCE(vp.updated_at, NOW()), NULL
   FROM venue_profiles vp
  WHERE vp.tier IN ('premium', 'pro')
+   AND vp.user_id IS NOT NULL
 ON CONFLICT (user_id) DO NOTHING;

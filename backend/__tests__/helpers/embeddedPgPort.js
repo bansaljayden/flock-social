@@ -58,6 +58,7 @@ const SUITE_SLOTS = {
   mlFeedbackLabels: 6,           // was 59751
   mlExportColumnGrowth: 7,       // was 59761
   moderationProfileBio: 8,       // was 54411
+  migrationBootSafety: 9,        // new in 2026-08-20; never had a hardcoded port
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the
