@@ -527,6 +527,9 @@ test('a coordinate that is not a real coordinate never reaches anyone map', asyn
     [/FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, [{ id: 1 }]],
     [/FROM flock_members WHERE flock_id = \$1 AND status/, [{ user_id: 2 }]],
     [/FROM user_blocks/, []],
+    // Round 24: dm_share_location requires a DM relationship, like every other
+    // handler that can put you into someone else's client.
+    [/SELECT 1 WHERE EXISTS/, [{ '?column?': 1 }]],
   ];
 
   // typeof NaN === 'number', so all of these used to pass the old check and

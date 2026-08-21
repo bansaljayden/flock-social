@@ -14,7 +14,12 @@ const { sanitizeVenueData, safeVenuePhotoUrl } = require('../utils/venuePayload'
 const VENUE_REJECTED_MESSAGE = "That venue card couldn't be shared.";
 const { isBlockedBetween, isBlockedBetweenCached, getInvisibleUserIds } = require('../utils/blocks');
 const { isPlaceIdShaped, isKnownVenue } = require('../utils/places');
-const { hasDmRelationship, NOT_CONNECTED_MESSAGE } = require('../utils/relationships');
+const {
+  hasDmRelationship,
+  hasDmRelationshipCached,
+  invalidateDmRelationshipCache,
+  NOT_CONNECTED_MESSAGE,
+} = require('../utils/relationships');
 const { pushIfOfflineDebounced } = require('../services/pushHelper');
 // Round 17: the session revalidator re-verifies the handshake token, so it must
 // accept the same (and only the same) algorithms the handshake did. Without the
@@ -240,6 +245,50 @@ function allowEvent(socket, event, limit, windowMs) {
     ? true
     : takeToken(userBuckets, userId, event, limit * USER_LIMIT_MULTIPLIER, windowMs);
   return perSocket && perUser;
+}
+
+// --- Global per-socket packet ceiling --------------------------------------
+//
+// allowEvent's buckets are keyed on the EVENT NAME, which leaves two ways past
+// them, and both are free:
+//
+//   * SPREAD. The per-name budgets are independent, so a client that cycles
+//     through the handler list rather than hammering one name is charged
+//     nothing extra: the ceilings above add up to roughly 500 packets per ten
+//     seconds per socket before a single one is refused, and each of those
+//     packets can be a database query.
+//   * UNKNOWN NAMES. A packet for an event nobody registered is not metered at
+//     all, because the meter lives inside the handlers. It still costs a frame
+//     read, a decode of up to maxHttpBufferSize (8MB, server.js) and an
+//     adapter dispatch, and nothing anywhere ever refuses one.
+//
+// So one ceiling over EVERY inbound packet, in front of the per-event ones.
+// Socket.io's `socket.use` runs for every event the client sends, before the
+// listener, and dropping the packet is a matter of not calling next().
+//
+// 300 per ten seconds is far above any real client. The busiest thing a phone
+// does is a typing indicator and App.js debounces those, while 300 is well
+// under the sum of the per-event budgets, which is the number that made the
+// spread bypass worth anything.
+const PACKETS_PER_WINDOW = 300;
+const PACKET_WINDOW_MS = 10_000;
+
+// A client that keeps pushing after everything is being dropped is a script,
+// not a bug, so the connection goes. It is dropped WITHOUT `session_revoked`:
+// that event means "your credentials stopped being valid" and App.js signs the
+// user out on it, which is the wrong answer for a rate limit. A plain
+// disconnect leaves the client free to reconnect, where the per-IP handshake
+// limiter in server.js is the next ceiling.
+const PACKET_FLOOD_DISCONNECT = PACKETS_PER_WINDOW * 3;
+
+function allowPacket(socket) {
+  if (allowEvent(socket, '__packet', PACKETS_PER_WINDOW, PACKET_WINDOW_MS)) return true;
+  // Charged only for packets the ceiling above already refused, so this counts
+  // how hard the client is pushing AFTER being told no.
+  if (!allowEvent(socket, '__packet_refused', PACKET_FLOOD_DISCONNECT, PACKET_WINDOW_MS)) {
+    try { socket.disconnect(true); } catch (_) { /* already gone */ }
+  }
+  return false;
 }
 
 // Concurrent connections per account. Without this a single account could hold
@@ -574,7 +623,8 @@ async function verifyMembership(flockId, userId) {
 // and upserts, so a single event from an outsider OVERWRITES whatever those two
 // people had pinned. Persisting DM handlers require a real relationship: an
 // accepted friendship, or a DM that already exists between the two accounts.
-// (Ephemeral handlers — typing, location — keep the cheaper block-only check.)
+// (Round 24: the ephemeral handlers — typing, location — no longer stop at the
+// block check either. See the long note above dm_share_location.)
 //
 // Round 16: the definition moved to utils/relationships.js so the REST twins in
 // routes/messages.js can hold the same rule.
@@ -742,6 +792,17 @@ function registerHandlers(io, socket) {
         console.error(`socket ${event} handler error:`, err.message);
       }
     });
+
+  // One meter over every inbound packet, ahead of the per-event ones (see
+  // allowPacket). Guarded because the test harness's stub sockets implement
+  // only what the handlers use; a stub without `use` simply has no global
+  // ceiling, which is what the per-event assertions already expect.
+  if (typeof socket.use === 'function') {
+    socket.use((_packet, next) => {
+      if (!allowPacket(socket)) return; // dropped: not calling next() ends it here
+      next();
+    });
+  }
 
   // Cap concurrent connections for this account (see MAX_SOCKETS_PER_USER).
   trackUserSocket(io, socket);
@@ -1867,6 +1928,12 @@ function registerHandlers(io, socket) {
           replyRow ? replyToId : null]
       );
 
+      // This row IS the relationship (hasDmRelationship counts an existing DM),
+      // so the cached "not connected" from a moment ago is now wrong. Without
+      // this, the typing dots and live location on a brand new conversation sat
+      // out the rest of the 30s TTL after the first message landed.
+      invalidateDmRelationshipCache(user.id, receiverId);
+
       const msg = result.rows[0];
       msg.sender_name = user.name;
       // Same oversized-avatar guard as the flock send path (REVIEW-ROUND5)
@@ -2067,9 +2134,16 @@ function registerHandlers(io, socket) {
         [u1, u2]
       );
 
-      const payload = { voter: { userId: user.id, name: user.name }, venue_name, votes: votes.rows };
-      socket.to(`user:${receiverId}`).emit('dm_new_vote', payload);
-      socket.emit('dm_new_vote', payload);
+      // `withUserId` names the OTHER side of the conversation this tally
+      // belongs to, and it is therefore different for each recipient. Without
+      // it the event was unattributable: App.js keeps one vote list for
+      // whichever DM is open, and `voter` is the sender in the copy that goes
+      // out and the recipient themselves in the echo, so neither client could
+      // tell whether an arriving tally was for the thread on screen. A vote in
+      // any other conversation overwrote the list the user was looking at.
+      const tally = { voter: { userId: user.id, name: user.name }, venue_name, votes: votes.rows };
+      socket.to(`user:${receiverId}`).emit('dm_new_vote', { ...tally, withUserId: user.id });
+      socket.emit('dm_new_vote', { ...tally, withUserId: receiverId });
     } catch (err) {
       console.error('dm_vote_venue error:', err);
     }
@@ -2107,9 +2181,15 @@ function registerHandlers(io, socket) {
         [u1, u2, safeName, safeAddress, safeVenueId, safeRating, safePhoto, user.id]
       );
 
-      const payload = { venue_name: safeName, venue_address: safeAddress, venue_id: safeVenueId, venue_rating: safeRating, venue_photo_url: safePhoto, pinned_by: user.id, pinned_by_name: user.name };
-      socket.to(`user:${receiverId}`).emit('dm_venue_pinned', payload);
-      socket.emit('dm_venue_pinned', payload);
+      // Same per-recipient `withUserId` as dm_new_vote above, for the same
+      // reason: `pinned_by` is the sender in both copies, so the echo the
+      // sender gets back names themselves and identifies no conversation. The
+      // pin is one slot in App.js keyed on the open thread, and this row
+      // upserts on the PAIR, so an unattributable event meant a pin set in one
+      // conversation redrew the card in whichever one happened to be open.
+      const pin = { venue_name: safeName, venue_address: safeAddress, venue_id: safeVenueId, venue_rating: safeRating, venue_photo_url: safePhoto, pinned_by: user.id, pinned_by_name: user.name };
+      socket.to(`user:${receiverId}`).emit('dm_venue_pinned', { ...pin, withUserId: user.id });
+      socket.emit('dm_venue_pinned', { ...pin, withUserId: receiverId });
     } catch (err) {
       console.error('dm_pin_venue error:', err);
     }
@@ -2120,6 +2200,30 @@ function registerHandlers(io, socket) {
   // previously trusted any receiverId, letting a blocked user ping typing/
   // location events into their blocker's client. Cached check keeps the
   // per-keystroke cost off the database.
+  //
+  // ROUND 24 — "NOT BLOCKED" WAS NEVER THE WHOLE GATE ON THESE FOUR.
+  // Round 13 recorded a deliberate split: persisting DM handlers require a
+  // relationship, "ephemeral handlers — typing, location — keep the cheaper
+  // block-only check". That split was defensible while send_dm admitted any
+  // existing user, because these four could then reach nobody a message could
+  // not already reach. Round 18 closed send_dm (and the REST twin) behind
+  // hasDmRelationship and did not come back for them, so the four handlers
+  // below became the only way left to put yourself into a stranger's client:
+  //
+  //   * dm_share_location hands an arbitrary account your NAME and your live
+  //     coordinates, and App.js writes them straight into the pin it draws for
+  //     the person the user is actually talking to;
+  //   * dm_stop_sharing_location clears that pin, so a stranger can also blank
+  //     out the location of the friend the victim is genuinely tracking;
+  //   * dm_typing puts a stranger's name behind "is typing" in an open thread.
+  //
+  // None of it is persisted, which is exactly why the write budgets never
+  // covered it. The relationship check is the same one send_dm runs, through a
+  // 30s pair cache (utils/relationships.js) so a per-keystroke event still does
+  // not mean a per-keystroke query — the same trade isBlockedBetweenCached
+  // already makes for the control right next to it. Block first, relationship
+  // second: both are cached, and the block answer is the one that must not be
+  // reachable around.
   // Round 16: all four of these took `receiverId` raw. Two consequences, and
   // the id is normalized here for both:
   //   - the value became part of isBlockedBetweenCached's cache key, so junk
@@ -2135,6 +2239,7 @@ function registerHandlers(io, socket) {
     const { lat, lng } = data || {};
     if (receiverId === null || !isLatLng(lat, lng)) return;
     if (await isBlockedBetweenCached(user.id, receiverId)) return;
+    if (!(await hasDmRelationshipCached(user.id, receiverId))) return;
     socket.to(`user:${receiverId}`).emit('dm_location_update', {
       userId: user.id, name: user.name, lat, lng, timestamp: Date.now(),
     });
@@ -2145,6 +2250,7 @@ function registerHandlers(io, socket) {
     const receiverId = asId(data?.receiverId);
     if (receiverId === null) return;
     if (await isBlockedBetweenCached(user.id, receiverId)) return;
+    if (!(await hasDmRelationshipCached(user.id, receiverId))) return;
     socket.to(`user:${receiverId}`).emit('dm_member_stopped_sharing', { userId: user.id });
   });
 
@@ -2154,6 +2260,7 @@ function registerHandlers(io, socket) {
     const receiverId = asId(data?.receiverId);
     if (receiverId === null) return;
     if (await isBlockedBetweenCached(user.id, receiverId)) return;
+    if (!(await hasDmRelationshipCached(user.id, receiverId))) return;
     socket.to(`user:${receiverId}`).emit('dm_user_typing', {
       userId: user.id,
       name: user.name,
@@ -2165,6 +2272,7 @@ function registerHandlers(io, socket) {
     const receiverId = asId(data?.receiverId);
     if (receiverId === null) return;
     if (await isBlockedBetweenCached(user.id, receiverId)) return;
+    if (!(await hasDmRelationshipCached(user.id, receiverId))) return;
     socket.to(`user:${receiverId}`).emit('dm_user_stopped_typing', {
       userId: user.id,
     });
@@ -2370,6 +2478,11 @@ module.exports = {
   // Exported for tests: the security-relevant decisions, isolated from timers
   // and from Socket.io.
   allowEvent,
+  // Round 24: the global packet ceiling that sits in front of the per-event
+  // ones, exported so a test can drive it without a real Socket.io socket.
+  allowPacket,
+  PACKETS_PER_WINDOW,
+  PACKET_FLOOD_DISCONNECT,
   // Round 18: the relay ceiling is now bounded per account as well as globally,
   // and the per-account bound is only reachable over ten real minutes of live
   // traffic — so it is asserted against this function directly rather than
