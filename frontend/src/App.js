@@ -8728,32 +8728,68 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return () => { unsubAdd(); unsubRemove(); };
   }, []);
 
+  // Three DM events, one rule: apply it only if it belongs to the thread that
+  // is open.
+  //
+  // The vote list, the shared pin and the other person's location are single
+  // slots keyed on nothing — there is one dmVenueVotes, one dmPinnedVenue, one
+  // dmMemberLocation — so every one of these listeners used to write whatever
+  // arrived into whatever the user was looking at. A vote or a pin from a
+  // second conversation redrew the card in the first, and the reaction and
+  // typing listeners next to them already scope themselves (by message id and
+  // by selectedDmId), which is what made the omission easy to miss.
+  //
+  // Location was the one that mattered beyond a redraw: until the backend
+  // required a DM relationship for the ephemeral events, any account at all
+  // could push its name and live coordinates here, and dm_member_stopped_
+  // sharing could blank the pin of the friend actually being tracked. The
+  // server-side gate is the fix; this is the half that says which conversation
+  // an event is for.
+  //
+  // Compared as strings, like the onBlockedBy handler below: selectedDmId is
+  // set from several sources and the server's ids are integers.
+  const isOpenDm = useCallback(
+    (id) => id !== undefined && id !== null && String(id) === String(selectedDmId),
+    [selectedDmId]
+  );
+
   // Listen for DM venue votes in real-time
   useEffect(() => {
     const unsub = onDmNewVote((data) => {
+      if (!isOpenDm(data.withUserId)) return;
       setDmVenueVotes(data.votes || []);
     });
     return unsub;
-  }, []);
+  }, [isOpenDm]);
 
   // DM location sharing
   useEffect(() => {
+    // The other person's live pin is the one piece of DM state with no REST
+    // backfill on open (votes and the pin are refetched; this only ever
+    // arrives over the socket), so switching threads has to start it empty.
+    // Otherwise the previous conversation's pin stays on the map under the new
+    // conversation, and now that the listeners below are scoped to the open
+    // thread, nothing would ever clear it.
+    setDmMemberLocation(null);
     const unsubLoc = onDmLocationUpdate((data) => {
+      if (!isOpenDm(data.userId)) return;
       setDmMemberLocation({ lat: data.lat, lng: data.lng, name: data.name, timestamp: data.timestamp });
     });
-    const unsubStop = onDmMemberStoppedSharing(() => {
+    const unsubStop = onDmMemberStoppedSharing((data) => {
+      if (!isOpenDm(data?.userId)) return;
       setDmMemberLocation(null);
     });
     return () => { unsubLoc(); unsubStop(); };
-  }, []);
+  }, [isOpenDm]);
 
   // DM pinned venue real-time sync
   useEffect(() => {
     const unsub = onDmVenuePinned((data) => {
+      if (!isOpenDm(data.withUserId)) return;
       setDmPinnedVenue({ name: data.venue_name, addr: data.venue_address, place_id: data.venue_id, rating: data.venue_rating, photo_url: resolveVenuePhoto(data.venue_photo_url) });
     });
     return unsub;
-  }, []);
+  }, [isOpenDm]);
 
   // Emit DM location periodically when sharing
   // If the person we're sharing DM location with blocks us, stop the interval
@@ -16272,24 +16308,47 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       }
     };
 
+    // WHAT A PLAN ACTUALLY BUYS, READ OFF THE SERVER'S OWN GATES.
+    //
+    // These lists are the only description of the plans a venue owner ever
+    // sees, and two of them were wrong in opposite directions.
+    //
+    // Premium led with "Enhanced visibility on the map". Nothing in the
+    // backend reads a venue tier when it builds the map, ranks a vote list or
+    // scores a pin — there is no promoted placement in this repo at all
+    // (VENUE-BILLING.md calls it unbuilt) — so the first line of a $35/mo plan
+    // named a thing that does not exist. Pro was wrong the other way: it sold
+    // hour-by-hour forecasts, the strip and the week ahead, and all three sit
+    // behind requirePremium in routes/venueDashboard.js, so Pro was charging
+    // $40 more for what the plan below it already includes.
+    //
+    // The real division, from the route middleware:
+    //   free     the listing, the venue card, reviews and replies (the reply
+    //            route carries no tier gate), and the live crowd number.
+    //   premium  promotions, events, incoming flocks, /intelligence, /strip,
+    //            and the advisor's /cards.
+    //   pro      /this-week, and the advisor's /questions, /ask and /question.
+    // If a gate moves, move the sentence in the same commit.
     const features = {
       free: [
-        'Basic listing on the map',
-        'Venue information display',
-        'User reviews and ratings',
+        'Your listing on the map',
+        'Your venue details on the card users open',
+        'Reviews from Flock users, and your replies',
+        'Set your live crowd number, on any plan',
       ],
       premium: [
-        'Enhanced visibility on the map',
         'Post deals and specials',
-        'Event promotion tools',
-        'Basic analytics dashboard',
+        'List your events',
+        'See which groups have you in their vote',
+        'Crowd forecasts for your venue, today by the hour and a week out',
+        'How your projected night compares to the venues around you',
+        "Roost's cards, every line naming where its number came from",
       ],
       // Only features that actually exist may appear here (SLOP-AUDIT.md C1).
       pro: [
         'Everything in Premium',
-        'Hour-by-hour crowd forecasts for your venue',
-        'Strip view: you vs nearby venues tonight',
-        'Week-ahead projected peaks',
+        'Ask Roost a question and get the answer from your own numbers',
+        'The weekly summary: what your venue did over the last 7 days',
       ],
     };
 
@@ -16464,6 +16523,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               says", it expires after 90 minutes on its own, and recent user
               reports outrank it. All three rules are server-enforced. */}
           {venueTab === 'analytics' && venueBusyNow?.available && renderBusyNowCard()}
+          {/* The same card, the same absence, the same sentence. The Map tab
+              already prints the server's reason when the live number is not
+              available; Analytics printed nothing at all, so a venue with no
+              linked listing opened its main tab to find the control simply not
+              there, with no way to learn that it exists or what would bring it
+              back. An unexplained gap where a control belongs is the shape
+              this dashboard has already had to remove twice. */}
+          {venueTab === 'analytics' && venueBusyNow && !venueBusyNow.available && (
+            <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How full are you right now?</h3>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{venueBusyNow.reason || 'Your live number is unavailable right now.'}</p>
+            </div>
+          )}
           {/* MAP TAB. The venue exactly as consumers get it: same public
               venue lookup, same batch crowd scores, same card a pin tap
               opens on Discover. The slider up top is the same control as
@@ -16475,8 +16547,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {venueTab === 'map' && (
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
               {venueBusyNow?.available && renderBusyNowCard()}
+              {/* Titled, like the Analytics copy of it. A bare sentence in a
+                  card says nothing about WHICH control is missing, and this
+                  one sits where the slider would have been. */}
               {venueBusyNow && !venueBusyNow.available && (
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+                  <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How full are you right now?</h3>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{venueBusyNow.reason || 'Your live number is unavailable right now.'}</p>
                 </div>
               )}
@@ -16530,8 +16606,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
           )}
 
+          {/* Was "Analytics Dashboard" / "Track check-ins, peak hours, and
+              customer traffic with real-time insights." Three things wrong
+              with one sentence: this tab has never shown check-in counts or a
+              traffic figure of any kind, so it sold two things it does not
+              have; "real-time insights" is the marketing register SLOP-AUDIT
+              §B bans; and the plan card behind it is titled Dashboard already.
+              This says what is actually behind the gate. */}
           {venueTab === 'analytics' && !can.analytics && (
-            <LockedTab requiredTier="premium" featureName="Analytics Dashboard" description="Track check-ins, peak hours, and customer traffic with real-time insights." />
+            <LockedTab requiredTier="premium" featureName="Analytics" description="Crowd forecasts for your venue, today by the hour and a week out, next to the venues around you." />
           )}
           {venueTab === 'analytics' && can.analytics && (<>
           {/* No linked listing / loading states.
@@ -16912,7 +16995,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 });
                 setPromotions(prev => [created, ...prev]);
                 setDealDescription('');
-                showToast('Deal posted!', 'success');
+                showToast('Deal posted. It is on your venue card now.', 'success');
                 setVenueTab('promotions');
               } catch (e) {
                 console.error('Post deal failed:', e);
@@ -16986,7 +17069,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
           {/* PROMOTIONS TAB */}
           {venueTab === 'promotions' && !can.postDeals && (
-            <LockedTab requiredTier="premium" featureName="Deals & Promotions" description="Post happy hours, specials, and discounts that show up on user venue cards." />
+            <LockedTab requiredTier="premium" featureName="Deals" description="Post a deal and it shows on your venue card in the app for as long as you leave it up." />
           )}
           {venueTab === 'promotions' && can.postDeals && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -18982,7 +19065,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '24px', textAlign: 'center' }}>
           <img src="/flock-logo.png" alt="Flock" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', marginBottom: '24px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)' }} />
           <h1 style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: '#f0ead8', margin: '0 0 8px' }}>Welcome to Flock for Venues</h1>
-          <p style={{ fontSize: 'var(--t-body)', color: 'rgba(148,163,184,0.7)', lineHeight: 1.5, maxWidth: '300px' }}>Let's set up your venue profile so you can start reaching customers and tracking performance.</p>
+          {/* Was "so you can start reaching customers and tracking
+              performance", which is the register of a plan page rather than a
+              first screen, and names two outcomes nothing here delivers on its
+              own. This says what the next twelve steps actually are. */}
+          <p style={{ fontSize: 'var(--t-body)', color: 'rgba(148,163,184,0.7)', lineHeight: 1.5, maxWidth: '300px' }}>A few questions about your venue. The first five set up your listing, and the rest are things about the room that no dataset holds. Every one of those is skippable.</p>
         </div>
       ),
       // Step 1: pick the venue out of Google Places. THE PLACE ID IS THE POINT.
@@ -19131,7 +19218,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       () => (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
           <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>What are your goals?</h2>
-          <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 20px' }}>Pick all that apply. We'll customize your dashboard.</p>
+          {/* "We'll customize your dashboard" was a promise nothing keeps.
+              backend/routes/venueProfile.js says it in its own header: goals
+              are owner-only and nothing reads them but the dashboard reading
+              them back. The dashboard is the same six tabs whichever of these
+              you tick. So the line now says the true thing, which is that we
+              are asking what you want out of this and keeping the answer. */}
+          <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 20px' }}>Pick all that apply. It tells us what to build for you, and you can change it later in Settings.</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {venueGoals.map(goal => {
               const selected = venueOnboardingData.goals.includes(goal);
