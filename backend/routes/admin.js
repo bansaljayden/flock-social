@@ -1516,7 +1516,8 @@ router.get('/costs', async (req, res) => {
   // -- In-memory meters, turned into plain counts -----------------------------
   const birdieTokensToday = meterOrNull(() => birdieUsage.geminiSpendStatus(null).globalUsed);
   const placesCallsToday = meterOrNull(() => placesBudgetStatus(null).globalUsed);
-  const placesPhotoCallsToday = meterOrNull(() => require('./venueSearch').photoProxyStatus().used);
+  // The photo meter is no longer in this list: it moved out of memory and into
+  // places_photo_spend, so it reads with the durable ledgers below.
   const visionCallsToday = meterOrNull(() => visionBudgetStatus(null).globalUsed);
   const weatherCallsToday = meterOrNull(() => weatherBudgetStatus().dailyUsed);
   const ticketmasterCallsToday = meterOrNull(() => require('./events').budgetStatus().globalUsed);
@@ -1542,6 +1543,12 @@ router.get('/costs', async (req, res) => {
       return null;
     }
   };
+
+  // Google Place Photos, from the durable ledger. Historically the largest line
+  // on the Google bill and, until 2026-08-20, the one meter that read zero after
+  // every deploy, so the panel under-reported photo spend by the most on
+  // exactly the days there was the most of it.
+  const photoSpend = await safe(() => require('../services/photoStore').photoSpendStatus());
 
   const advisorSpend = await safe(async () => {
     const r = await pool.query(
@@ -1620,7 +1627,9 @@ router.get('/costs', async (req, res) => {
     advisorPromptTokens,
     advisorMaxOutputTokens,
     placesCallsToday,
-    placesPhotoCallsToday,
+    placesPhotoCallsToday: photoSpend ? photoSpend.dayUsed : null,
+    placesPhotoCallsMonth: photoSpend ? photoSpend.monthUsed : null,
+    placesPhotoBudget: photoSpend ? photoSpend.limits : null,
     visionCallsToday,
     weatherCallsToday,
     ticketmasterCallsToday,
@@ -1694,6 +1703,11 @@ router.get('/costs', async (req, res) => {
         vision: costModel.RATES.vision.source,
       },
     },
+    // The photo budget, whole, because it is the one ceiling in this panel that
+    // a person is expected to RAISE rather than merely watch. Historically the
+    // largest line on the Google bill, and now the only one with a dollar figure
+    // attached to it instead of a request count.
+    photoBudget: photoSpend,
     venues: {
       paying: payingVenues,
       priceUsd: VENUE_PRICE_USD,
