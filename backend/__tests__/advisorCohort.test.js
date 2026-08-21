@@ -16,16 +16,25 @@
 //     3. A venue with no row on the measured map refuses with a path.
 //
 //   HALF B (same-night actuals, density-gated)
-//     4. At or above the floor of five OTHER reporting venues, the payload is
-//        a median and a count. No minimum, no maximum, no spread, no id, no
-//        name, no per-venue value of any kind.
+//     4. At or above the floor of five OTHER reporting OWNERS, the payload is a
+//        median and a bucket floor on the count. Never the exact count, no
+//        minimum, no maximum, no spread, no id, no name, no per-venue value of
+//        any kind.
 //     5. Below the floor, it refuses, the refusal names the floor and the
 //        density path, and it never states how many venues actually reported.
-//     6. THE DIFFERENCING ATTACK. A venue joining or leaving the reporting set
-//        may not reveal an individual's reading. Pinned three ways: the
-//        statistic is a median and not a mean, fifty-one different joiner
-//        values produce one identical published payload, and a set that drops
-//        under the floor refuses instead of publishing a thinner number.
+//     6. THE DIFFERENCING ATTACK, where the attacker WATCHES a cohort. A venue
+//        joining or leaving the reporting set may not reveal an individual's
+//        reading. Pinned three ways: the statistic is a median and not a mean,
+//        fifty-one different joiner values produce one identical published
+//        payload, and a set that drops under the floor refuses instead of
+//        publishing a thinner number.
+//     6b. THE SANDWICH, where the attacker BUILDS the cohort. Four controlled
+//        venues at the extremes and a fifth to ask from used to make the
+//        published median equal the one honest venue's reading, for every
+//        target value from 0 to 100. Pinned by sweeping all 101 of them, by
+//        checking the ends separately, by proving the refusal is identical with
+//        and without the target so the on/off transition carries no bit, and by
+//        stating the narrow-jaw residual instead of pretending it is closed.
 //
 //   BOTH
 //     7. No venue name reaches a payload, and no query the cohort path issues
@@ -152,6 +161,42 @@ function pctCont(values, p = 0.5) {
   return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
 }
 
+/**
+ * What the reporters query computes, done the same way Postgres does it, so the
+ * fixtures and the module agree on owners, median and support.
+ *
+ * `peers` is either a list of numbers, one per owner, or a list of
+ * { owner, peak } rows, which is how the owner-collapse cases are written.
+ */
+function aggregateFrom(peers) {
+  const byOwner = new Map();
+  (peers || []).forEach((p, i) => {
+    const owner = (p && typeof p === 'object') ? p.owner : 1000 + i;
+    const peak = (p && typeof p === 'object') ? p.peak : p;
+    const held = byOwner.get(owner);
+    byOwner.set(owner, held === undefined ? peak : Math.max(held, peak));
+  });
+  const values = [...byOwner.values()];
+  const median = values.length ? pctCont(values) : null;
+  const grid = advisorCohort.MEDIAN_ROUND_TO;
+  const published = median == null ? null : Math.round(median / grid) * grid;
+  const w = advisorCohort.MEDIAN_SUPPORT_WINDOW;
+  const near = published == null ? [] : values.filter((v) => Math.abs(v - published) <= w);
+  return {
+    owners: values.length,
+    median_peak: median,
+    support: near.length,
+    // A clear step out on each side, which is how the SQL counts them: further
+    // than half the publishing grid, so the reporter the median was taken from
+    // never counts as its own flank. A value propped up from one direction only
+    // is a value sitting at the edge of its company.
+    support_below: near.filter((v) => (published - v) * 2 > grid).length,
+    support_above: near.filter((v) => (v - published) * 2 > grid).length,
+    at_value: near.filter((v) => Math.abs(v - published) * 2 <= grid).length,
+    tight: values.length === 0 || (Math.max(...values) - Math.min(...values)) <= w,
+  };
+}
+
 const CONTEXT_HANDLERS = () => ([
   [/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [{ tier: 'pro' }] })],
   [/SELECT user_id, google_place_id, verified/, () => ({ rows: [profileRow()] })],
@@ -190,13 +235,10 @@ function scriptCohort({ cell = null, night = null, peers = null, typical = null 
     [/AS night, EXTRACT\(HOUR/, () => ({
       rows: night ? [{ night: night.night, hour: night.hour, reading: night.reading }] : [],
     })],
-    // Half B's cohort aggregate. Peers only, aggregated before it leaves SQL.
-    [/WITH reporters AS/, () => ({
-      rows: [{
-        venues: peers ? peers.length : 0,
-        median_peak: peers && peers.length ? pctCont(peers) : null,
-      }],
-    })],
+    // Half B's cohort aggregate. Peers only, aggregated before it leaves SQL:
+    // one row per OWNER, a median over those, and a count of how many of them
+    // sit near the number that would be published.
+    [/WITH reporters AS/, () => ({ rows: [aggregateFrom(peers)] })],
     // Chip availability's EXISTS pair.
     [/SELECT EXISTS/, () => ({ rows: [{ readings: true, served: true }] })],
     // Card 4's two reads, inert here.
@@ -315,7 +357,12 @@ test('half B publishes a median and a count once the floor is cleared, and nothi
   const median = out.find((f) => f.id === 'cohort_night_median');
   assert.ok(median, 'the cohort fact publishes above the floor');
   assert.strictEqual(median.source, 'cohort_reported');
-  assert.strictEqual(median.value.reportingVenues, 6);
+  // Six reported and the card says "at least five". The exact count is the
+  // differencing signal, so it never leaves the module.
+  assert.strictEqual(median.value.reportingVenuesAtLeast, 5);
+  assert.ok(!('reportingVenues' in median.value), 'the exact reporter count is not published');
+  assert.match(median.label, /At least 5 other/);
+  assert.ok(!/\b6\b/.test(median.label), 'the sentence does not print the exact count either');
   // percentile_cont over the six is 42.5, rounded to the published grid.
   assert.strictEqual(median.value.medianReading, advisorCohort.roundToGrid(42.5));
 
@@ -324,7 +371,7 @@ test('half B publishes a median and a count once the floor is cleared, and nothi
   // pinned rather than merely reviewed.
   assert.deepStrictEqual(
     Object.keys(median.value).sort(),
-    ['hourFrom', 'hourTo', 'medianReading', 'night', 'reportingVenues', 'weekday']
+    ['hourFrom', 'hourTo', 'medianReading', 'night', 'reportingVenuesAtLeast', 'weekday']
   );
 
   // The band is the fixed three-hour grid block containing 9 PM, not a window
@@ -387,6 +434,8 @@ test('below the floor half B refuses, names the floor and the path, and never st
   const text = `${refusal.reason} ${refusal.whatWouldUnlock}`;
   assert.ok(!/\b(4|four)\b/i.test(text), 'the current reporter count never appears');
   assert.match(refusal.whatWouldUnlock, /do not say how many/i);
+  // Nor which of the two gates bit. See "one refusal, one sentence".
+  assert.match(refusal.whatWouldUnlock, /which of those two conditions/i);
 });
 
 test('a DATE column arrives as a Date and still reads as the day it was', async () => {
@@ -418,7 +467,7 @@ test('half B needs no corpus: a collected-but-unmodelled venue still gets the st
       : [re, fn])),
     [/AVG\(b\.baseline\)/, () => ({ rows: [{ venues: 0, median_baseline: null }] })],
     [/AS night, EXTRACT\(HOUR/, () => ({ rows: [{ ...NIGHT }] })],
-    [/WITH reporters AS/, () => ({ rows: [{ venues: 7, median_peak: 33 }] })],
+    [/WITH reporters AS/, () => ({ rows: [{ owners: 7, median_peak: 33, support: 5, support_below: 2, support_above: 2, at_value: 1, tight: false }] })],
   ];
   const out = await advisorFacts.buildCohortSameNight(await ctx(), { now: NOW });
   assert.ok(out.some((f) => f.id === 'cohort_night_median'),
@@ -461,7 +510,8 @@ test('differencing: fifty-one different joiner values produce one identical payl
     const out = await advisorFacts.buildCohortSameNight(await ctx(), { now: NOW });
     const f = out.find((x) => x.id === 'cohort_night_median');
     observed.add(JSON.stringify(f.value));
-    assert.strictEqual(f.value.reportingVenues, 6);
+    assert.strictEqual(f.value.reportingVenuesAtLeast, 5,
+      'the joiner does not move the published count either: six reads as "at least five", the same as five');
   }
   assert.strictEqual(observed.size, 1,
     'every joiner from 50 to 100 yields the identical published payload: the observation does not identify the value');
@@ -493,17 +543,197 @@ test('differencing: the asking venue is excluded from its own cohort, and the co
   const agg = queryLog.find((q) => /WITH reporters AS/.test(q.sql));
   assert.ok(agg, 'the aggregate query ran');
   assert.match(agg.sql, /r\.google_place_id <> \$3/, 'the asking venue is excluded, so no value in the median is one it already knows');
+  assert.match(agg.sql, /vp\.user_id IS DISTINCT FROM \$8::int/, 'and so is anything else its owner holds');
   assert.match(agg.sql, /vp\.verified = true/, 'only claimed and verified venues report');
   assert.match(agg.sql, /retracted = false/);
+  assert.match(agg.sql, /GROUP BY vp\.user_id/, 'one row per owner, not one row per venue');
   // City, category and the band are all server-derived. The exclusion id is
   // the caller's own place id, which is not a knob either.
   assert.deepStrictEqual(agg.params.slice(0, 3), ['lehigh', 'bar', PLACE_ID]);
-  assert.deepStrictEqual(agg.params.slice(5), [21, 23], 'the band is the fixed grid block, not a movable window');
+  assert.deepStrictEqual(agg.params.slice(5, 7), [21, 23], 'the band is the fixed grid block, not a movable window');
+  assert.strictEqual(agg.params[7], 11, 'the asking owner is excluded by user id');
+  assert.deepStrictEqual(agg.params.slice(8), [advisorCohort.MEDIAN_ROUND_TO, advisorCohort.MEDIAN_SUPPORT_WINDOW],
+    'the support test runs against the rounded number that would actually be printed');
 
-  // Only aggregates cross the SQL boundary: the projection is a count and a
-  // percentile, so no per-venue reading exists in this process to leak.
-  assert.match(agg.sql, /SELECT COUNT\(\*\)::int AS venues, percentile_cont/);
-  assert.ok(!/SELECT r\.google_place_id AS pid, MAX\(r\.busy_percent\)[^)]*\)\s*$/.test(agg.sql));
+  // Only aggregates cross the SQL boundary: the projection is three counts and
+  // a percentile, so no per-venue reading exists in this process to leak. The
+  // support count is a COUNT of readings near the middle, never the readings.
+  assert.match(agg.sql, /SELECT COUNT\(\*\)::int AS owners, percentile_cont/);
+  assert.match(agg.sql, /SELECT COUNT\(\*\) FROM reporters n WHERE ABS\(n\.peak - s\.grid\)/);
+  assert.match(agg.sql, /AS support_below/);
+  assert.match(agg.sql, /AS at_value/);
+  assert.match(agg.sql, /AS tight/);
+  // The support test has to be measured around the number the owner actually
+  // sees. percentile_cont returns double precision even over a numeric column,
+  // and round() on a double breaks ties to EVEN while roundToGrid, which is
+  // Math.round, breaks them upward: a median of 42.5 is 40 in the database and
+  // 45 on the card. Verified against a real Postgres, not inferred.
+  assert.match(agg.sql, /ROUND\(median_peak::numeric \/ \$9::numeric\)/,
+    'the median is cast to numeric before rounding, so the guard and the card agree on the value');
+  assert.match(agg.sql, /AS support_above/);
+  assert.ok(!/SELECT vp\.user_id AS owner, MAX\(r\.busy_percent\)[^)]*\)\s*$/.test(agg.sql));
+});
+
+// ═══ THE FIVE-VENUE SANDWICH ════════════════════════════════════════════════
+//
+// The differencing tests above all assume the attacker is WATCHING a cohort
+// they do not control. This block assumes they built it. Five verified venues
+// in one city and category is a high precondition and it is not an impossible
+// one, and every guard above is a guard against inversion, not against
+// positioning: a median cannot be inverted, but it can be placed.
+
+/**
+ * Four controlled venues under four accounts post `jaws`, one honest venue
+ * posts `target`, and the fifth controlled venue asks. The asking venue is
+ * excluded from its own cohort, so what the query sees is exactly these five.
+ */
+function sandwich(target, jaws = [0, 0, 100, 100]) {
+  return [...jaws.slice(0, 2), target, ...jaws.slice(2)];
+}
+
+async function askSandwich(target, jaws) {
+  scriptCohort({ night: NIGHT, peers: target == null ? jaws : sandwich(target, jaws) });
+  return advisorFacts.buildCohortSameNight(await ctx(), { now: NOW });
+}
+
+test('the sandwich: four controlled venues at the extremes cannot pin the median on the target', async () => {
+  // Before this guard existed, the published median WAS the target's reading
+  // for every target in 0..100: sorted, [0, 0, t, 100, 100] has t in the middle
+  // and the card printed it rounded to the five-point grid.
+  const leaked = [];
+  for (let target = 0; target <= 100; target++) {
+    const out = await askSandwich(target);
+    const median = out.find((f) => f.id === 'cohort_night_median');
+    if (median) leaked.push({ target, published: median.value.medianReading });
+  }
+  assert.deepStrictEqual(leaked, [],
+    `the sandwich still publishes for ${leaked.length} of 101 target values: ${JSON.stringify(leaked.slice(0, 5))}`);
+
+  // Not because the floor caught it. Five owners reported, the floor is five,
+  // and the number was withheld on the shape of the set rather than its size.
+  scriptCohort({ night: NIGHT, peers: sandwich(60) });
+  queryLog = [];
+  await advisorFacts.buildCohortSameNight(await ctx(), { now: NOW });
+  const agg = queryLog.find((q) => /WITH reporters AS/.test(q.sql));
+  assert.ok(agg, 'the aggregate ran');
+  assert.strictEqual(aggregateFrom(sandwich(60)).owners, advisorCohort.MIN_COHORT_REPORTERS,
+    'the attacker did clear the count floor');
+});
+
+test('the sandwich: a target near a jaw is withheld too, so the edges are not a back door', async () => {
+  // A total-only support test passes at target 10, since the two zeroes sit
+  // inside the window. Both sides have to be occupied, and a jaw is only ever
+  // on one side of what it pins.
+  for (const target of [0, 3, 7, 10, 15, 85, 90, 97, 100]) {
+    const out = await askSandwich(target);
+    assert.ok(!out.some((f) => f.id === 'cohort_night_median'),
+      `a target of ${target} was published from inside a sandwich`);
+  }
+});
+
+test('the sandwich: the on/off transition tells the attacker nothing about participation', async () => {
+  // The refusal has to be identical whether or not the honest venue reported.
+  // Otherwise the attacker reads the transition instead of the number: the old
+  // shape answered with the target present and refused without it, which is
+  // participation disclosure of one named neighbour.
+  const withTarget = await askSandwich(60);
+  const withoutTarget = await askSandwich(null);
+
+  const refusalOf = (entries) => entries.find((e) => advisorFacts.isRefusal(e));
+  const a = refusalOf(withTarget);
+  const b = refusalOf(withoutTarget);
+  assert.ok(a && b, 'both refuse');
+  assert.deepStrictEqual({ ...a }, { ...b },
+    'the refusal is byte for byte the same, so the transition carries no bit');
+
+  // And it does not say which of the two gates bit, which would be the same
+  // leak one level up: "there were enough of you" is a fact about the set.
+  const text = `${a.reason} ${a.whatWouldUnlock}`;
+  assert.ok(!/\b(spread|far apart from each other, so|too few|only)\b/i.test(text.replace(/sit far apart from each other/, '')),
+    'the refusal does not report which condition failed');
+});
+
+test('the sandwich: narrowing the jaws is the residual, and it costs a prior the attacker has to already hold', async () => {
+  // Stated rather than hidden, and pinned so a later change cannot quietly
+  // widen it. Jaws inside the support window straddle the target and publish;
+  // that is confirmation of a belief already accurate to about fifteen points,
+  // not recovery from nothing. Anything wider than the window is refused.
+  const target = 55;
+  const narrow = await askSandwich(target, [45, 45, 65, 65]);
+  assert.ok(narrow.some((f) => f.id === 'cohort_night_median'),
+    'jaws inside the window do publish: this is the documented residual');
+
+  for (const jaws of [[30, 30, 80, 80], [0, 0, 100, 100], [20, 20, 90, 90]]) {
+    const out = await askSandwich(target, jaws);
+    assert.ok(!out.some((f) => f.id === 'cohort_night_median'),
+      `jaws at ${jaws.join(',')} are wider than the support window and must be refused`);
+  }
+});
+
+// ═══ THE HONEST SPARSE COHORT STILL ANSWERS ═════════════════════════════════
+
+test('a genuine sparse cohort of five unrelated venues still gets its street number', async () => {
+  // The point of the guards is to withhold a number that names somebody, not to
+  // withhold the product. Five separate businesses on an ordinary Friday, with
+  // the readings a real street produces, answer at the floor.
+  const nights = [
+    [30, 35, 40, 45, 50],
+    [20, 30, 40, 50, 60],
+    [55, 60, 65, 70, 75],
+    [40, 40, 40, 40, 40],   // a flat street: ties support their own middle
+    [12, 18, 25, 33, 38],
+  ];
+  for (const peers of nights) {
+    scriptCohort({ night: NIGHT, peers });
+    const out = await advisorFacts.buildCohortSameNight(await ctx(), { now: NOW });
+    const median = out.find((f) => f.id === 'cohort_night_median');
+    assert.ok(median, `an honest cohort of ${peers.join(',')} was refused`);
+    assert.strictEqual(median.value.reportingVenuesAtLeast, 5);
+    assert.strictEqual(median.value.medianReading, advisorCohort.roundToGrid(pctCont(peers)));
+  }
+});
+
+test('the count is a bucket floor, so joins and departures move the sentence only at a boundary', async () => {
+  const cases = [[5, 5], [6, 5], [9, 5], [10, 10], [24, 10], [25, 25], [60, 50], [140, 100]];
+  for (const [n, expected] of cases) {
+    assert.strictEqual(advisorCohort.reporterFloor(n), expected);
+  }
+  // End to end: nine reporters and five reporters produce the same sentence.
+  const five = Array.from({ length: 5 }, (_, i) => 38 + i);
+  const nine = Array.from({ length: 9 }, (_, i) => 38 + i);
+  scriptCohort({ night: NIGHT, peers: five });
+  const a = await advisorFacts.buildCohortSameNight(await ctx(), { now: NOW });
+  scriptCohort({ night: NIGHT, peers: nine });
+  const b = await advisorFacts.buildCohortSameNight(await ctx(), { now: NOW });
+  const countOf = (out) => out.find((f) => f.id === 'cohort_night_median').value.reportingVenuesAtLeast;
+  assert.strictEqual(countOf(a), 5);
+  assert.strictEqual(countOf(b), 5, 'four arrivals inside one bucket move nothing the owner can see');
+});
+
+// ═══ ONE OWNER IS NOT A COHORT ══════════════════════════════════════════════
+
+test('one owner cannot constitute a cohort: their venues collapse to a single value', async () => {
+  // venue_profiles.user_id is UNIQUE today, so this configuration is not
+  // reachable through the product yet. It is pinned because the floor is
+  // written in owners on purpose, and a multi-venue operator is a product
+  // decision away.
+  const oneOwnerFiveVenues = [
+    { owner: 900, peak: 0 }, { owner: 900, peak: 0 }, { owner: 900, peak: 100 },
+    { owner: 900, peak: 100 }, { owner: 901, peak: 60 },
+  ];
+  assert.strictEqual(aggregateFrom(oneOwnerFiveVenues).owners, 2,
+    'five venues under two accounts are two reporters');
+  scriptCohort({ night: NIGHT, peers: oneOwnerFiveVenues });
+  const out = await advisorFacts.buildCohortSameNight(await ctx(), { now: NOW });
+  assert.ok(!out.some((f) => f.id === 'cohort_night_median'));
+  assert.ok(out.some((e) => advisorFacts.isRefusal(e) && e.id === 'refuse_cohort_thin_reporters'));
+
+  // And five separate owners, same readings shape, are a cohort by count. The
+  // support guard is what handles that case, not this one.
+  const fiveOwners = [30, 35, 40, 45, 50].map((peak, i) => ({ owner: 900 + i, peak }));
+  scriptCohort({ night: NIGHT, peers: fiveOwners });
+  const ok = await advisorFacts.buildCohortSameNight(await ctx(), { now: NOW });
+  assert.ok(ok.some((f) => f.id === 'cohort_night_median'));
 });
 
 test('the band grid is fixed and shared, so two venues bands are identical or disjoint', () => {
