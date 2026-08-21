@@ -24,8 +24,11 @@
 //
 // The properties that matter, in the order the code meets them:
 //   * the suppression check is INSIDE sendEmail, so no caller can skip it;
-//   * a hard bounce blocks everything, an unsubscribe blocks marketing only
-//     (unsubscribing from the waitlist must not break a password reset);
+//   * a hard bounce blocks everything EXCEPT an emergency, an unsubscribe
+//     blocks marketing only (unsubscribing from the waitlist must not break a
+//     password reset), and the emergency exception is the SOS alert and
+//     nothing else: a bounce is a fact about a mailbox and a complaint about a
+//     venue digest is not a refusal of an ambulance;
 //   * the check FAILS OPEN, because a Postgres blip swallowing an SOS is a
 //     worse outcome than one wasted send;
 //   * an unsubscribe token is scoped to one address and cannot be edited into
@@ -205,6 +208,66 @@ test('a complaint blocks transactional mail too: it is the strongest instruction
       assert.strictEqual(r.sends.length, 0);
     });
   } finally { cap.restore(); r.restore(); }
+});
+
+test('an EMERGENCY walks past every suppression reason, because a bounce is not consent', async () => {
+  // The defect: HARD_REASONS blocked every category, so a trusted contact whose
+  // address once hard bounced, or who once hit "spam" on a Monday venue digest,
+  // received no SOS alert and nobody was told. A trusted contact is a third
+  // party who never signed up, typically a parent, on a product whose floor is
+  // 13. A bounce is a fact about a mailbox on one past day; a complaint is a
+  // refusal of the thing complained about. Neither is a refusal of an
+  // emergency from the person who named that contact, and the cost of being
+  // wrong the other way is an alert that is never sent and never seen to fail.
+  for (const reason of ['bounce', 'complaint', 'unsubscribe']) {
+    resetWorld();
+    suppressionRows.set('parent@example.com', reason);
+    const r = stubResend();
+    const cap = silence();
+    try {
+      // eslint-disable-next-line no-loop-func
+      await withEnv({ RESEND_API_KEY: 'k' }, async () => {
+        emailService.resetClient();
+        const blocked = await emailService.sendEmail({
+          to: 'parent@example.com', subject: 's', html: '<p>x</p>',
+        });
+        if (reason === 'unsubscribe') {
+          assert.strictEqual(blocked.sent, true, 'an unsubscribe never blocked transactional mail');
+        } else {
+          assert.strictEqual(blocked.suppressed, true,
+            `a ${reason} must still stop ordinary transactional mail`);
+        }
+
+        const emergency = await emailService.sendEmail({
+          to: 'parent@example.com', subject: 's', html: '<p>x</p>', category: 'emergency',
+        });
+        assert.strictEqual(emergency.sent, true,
+          `a ${reason} must not stop an emergency alert`);
+        assert.notStrictEqual(emergency.suppressed, true);
+      });
+    } finally { cap.restore(); r.restore(); }
+  }
+});
+
+test('the emergency bypass does not even ask the database, so a blip cannot delay it', async () => {
+  resetWorld();
+  selectFails = true;
+  const out = await suppression.checkSendAllowed('parent@example.com', 'emergency');
+  assert.strictEqual(out.blocked, false);
+  assert.strictEqual(out.bypassed, true);
+  assert.strictEqual(
+    queriesRan.filter((q) => /SELECT reason FROM email_suppressions/.test(q.flat)).length, 0,
+    'an emergency is going to send whatever the answer is, so it must not wait for one'
+  );
+});
+
+test('the bypass is one category and one word: nothing else is treated as an emergency', async () => {
+  resetWorld();
+  suppressionRows.set('gone@example.com', 'bounce');
+  for (const category of ['transactional', 'marketing', 'Emergency', 'urgent', undefined]) {
+    const out = await suppression.checkSendAllowed('gone@example.com', category);
+    assert.strictEqual(out.blocked, true, `${category} must not be a way past a hard bounce`);
+  }
 });
 
 test('the lookup FAILS OPEN: a database outage must not swallow an SOS alert', async () => {

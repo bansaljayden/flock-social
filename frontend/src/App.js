@@ -14775,6 +14775,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>{c.contact_name}</p>
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{c.contact_phone}</p>
                         {c.contact_email && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{c.contact_email}</p>}
+                        {/* Email is the only channel an SOS has. The backend no
+                            longer lets a bounced or complained address block an
+                            emergency send (services/emailSuppression.js
+                            EMERGENCY_CATEGORY), which means a broken address now
+                            fails silently at the provider instead of loudly at
+                            us. So the person who can fix it has to be told.
+                            Deliberately does not say bounce or spam: what the
+                            user needs is that the address is not working. */}
+                        {c.contact_email && c.email_deliverable === false && (
+                          <p style={{ fontSize: 'var(--t-meta)', color: colors.red, fontWeight: '600', margin: '3px 0 0' }}>
+                            Mail to this address has been failing. Check it with them and update it, or alerts may not arrive.
+                          </p>
+                        )}
                         {c.relationship && <span style={{ display: 'inline-block', marginTop: '3px', padding: '1px 8px', background: 'var(--icon-bg)', borderRadius: '10px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', textTransform: 'capitalize' }}>{c.relationship}</span>}
                       </div>
                       <button className="hit44" onClick={() => handleEditContact(c)} style={{ background: 'none', border: 'none', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Edit</button>

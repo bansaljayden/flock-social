@@ -156,10 +156,10 @@ const scrubEventStrings = (val, depth = 0) => {
 // city/region from that IP in the meantime (the property server SDKs set via
 // their disableGeoip option).
 //
-// The privacy policy (website/PrivacyPolicy.js) currently discloses a PostHog
-// cookie; persistence 'localStorage' below means that stopped being true in
-// the good direction. Do not switch persistence back to a cookie mode without
-// re-reading that page.
+// The privacy policy (website/PrivacyPolicy.js) says PostHog keeps its
+// identifier in local storage rather than in a cookie, which is what
+// persistence 'localStorage' below makes true. Do not switch persistence back
+// to a cookie mode without changing that page in the same commit.
 //
 // Exported for src/__tests__/analyticsPrivacy.test.js, which locks every
 // value here and fails on the commit that loosens one.

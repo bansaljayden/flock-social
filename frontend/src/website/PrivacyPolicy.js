@@ -39,6 +39,16 @@ const OPERATOR_ADDRESS = null;
 // inventory in backend/services/costModel.js, which is the one place in the
 // repo that enumerates every outside service Flock touches. When a row is added
 // there, decide here whether it receives anything about a person, and say so.
+//
+// ONE ENTRY IS NOT DERIVED FROM THAT FILE: Cloudflare. It runs the DNS and the
+// Email Routing behind social@flockcorp.com (DOMAIN.md, 2026-08-12), it costs
+// nothing, and costModel.js only carries services that have a meter or a bill,
+// so it never appeared there and therefore never appeared here. It handles
+// every access request, deletion request, child-safety report and copyright
+// notice a person sends us, which makes it a processor whatever it costs. A
+// list that calls itself the whole list has to be derived from what we USE and
+// not from what we PAY FOR; treat costModel.js as a starting point, not as the
+// boundary.
 
 // PER-ROUTE <meta name="description">. CRA has no server rendering, so
 // public/index.html is the response for every route, and until this was added
@@ -309,7 +319,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Check-ins:</strong> a check-in inside the app is stored with your account and the venue. A tap on an NFC tag at a venue while you are signed out is stored with the venue and no account at all.</li>
                 <li><strong>Reliability:</strong> when a plan ends, the host can mark who turned up. We keep a running score from that on your account, and the people in a flock with you can see it. It is a number about attendance and nothing else.</li>
                 <li><strong>On-device storage:</strong> your browser or app keeps your sign-in token, your display preferences (theme, map style, the order of your flocks), your interests, and your last known coordinates so the map opens where you are. Those coordinates stay on the device. PostHog keeps its identifier in local storage rather than in a cookie, so no analytics cookie rides on requests and clearing site data removes it.</li>
-                <li><strong>Connection metadata:</strong> your IP address is used for rate limiting and to spot abuse. It appears in our server logs. Two places also write it to the database: the record of an email verification link, so we can limit how many verification emails one address or one network can trigger, and the record of a password reset request, which holds the requesting address next to a one-way hash of the email and is deleted after 7 days. Verification records are deleted when your account is deleted.</li>
+                <li><strong>Connection metadata:</strong> your IP address is used for rate limiting and to spot abuse. It appears in our server logs. Three places also write it to the database. The record of an email verification link, so we can limit how many verification emails one address or one network can trigger; those are deleted when your account is deleted. The record of a password reset <em>request</em>, which holds the requesting address next to a one-way hash of the email and is deleted after 7 days. And the record of a password reset <em>link</em>, which holds the requesting address next to your account number and the email address the link was sent to, in the clear, so that a link cannot keep working after you change your address. That third record is deleted with your account, and separately once the link is spent or expired and old enough that nothing needs it.</li>
               </ul>
 
               <h3>Location</h3>
@@ -438,10 +448,20 @@ export default function PrivacyPolicy() {
                 your first name, your age bracket (under 18, under 21, or adult, never
                 your birthday), your messages in that conversation, and, only if you have
                 allowed location, your approximate position rounded to about a kilometer.
-                If you ask Birdie about your plans or your friends, the
-                names, venues and times of your flocks and your friends' display names are
-                included so it can answer. When Birdie looks up a venue, the venue and the
-                crowd numbers we hold for it go with the question.
+              </p>
+              <p>
+                Every message also carries where you are in the app, because otherwise Birdie
+                cannot answer "is this place busy". That means the screen and tab you are on
+                and, when you have one open, the name of the flock you are looking at with its
+                venue and status, and the name of the venue you are looking at with its Google
+                place identifier. This goes with every message, not only when you ask about a
+                plan.
+              </p>
+              <p>
+                On top of that, if you ask Birdie about your plans or your friends, the names,
+                venues and times of your flocks and your friends' display names are included so
+                it can answer. When Birdie looks up a venue, the venue and the crowd numbers we
+                hold for it go with the question.
               </p>
               <p>
                 What is not sent: we don't send your email, exact coordinates, or messages
@@ -458,7 +478,7 @@ export default function PrivacyPolicy() {
 
               <h3>Roost, the advisor for venue owners</h3>
               <p>
-                Roost is the paid product for venue owners, and it works two ways. You can
+                Roost is the product venue owners will pay for, and it works two ways. You can
                 tap one of the suggested questions, or you can type your own question about
                 your business.
               </p>
@@ -482,9 +502,10 @@ export default function PrivacyPolicy() {
               <p>
                 What Roost does not send: nothing about any Flock user. No consumer's name,
                 account, message, budget, or position. No other venue's identity or figures.
-                The cohort comparison your answer may draw on is an aggregate, and it is
-                only computed when at least five venues other than yours have reported. See
-                <a href="#venues"> Venue owners and business data</a>.
+                The cohort comparison your answer may draw on is an aggregate, and it is only
+                computed once two floors are cleared: five reporting owners besides you, and
+                three of their readings landing on the number itself. See{' '}
+                <a href="#venues">Venue owners and business data</a>.
               </p>
               <p>
                 What Roost stores: not your question. We keep counts, how many questions
@@ -516,7 +537,7 @@ export default function PrivacyPolicy() {
               <ul>
                 <li><strong>Your business profile:</strong> business name, category, location, description, phone, operating hours, logo or photo, goals, and the Google place your venue corresponds to. This is shown publicly in the app.</li>
                 <li><strong>Operating facts you tell us:</strong> when the kitchen stops, your capacity, how long a table usually turns, your age policy, your reservation policy, the largest walk-in group you take, your typical spend per person, what you believe your busy nights are, and what sits near you that pulls a crowd. Google's opening hours describe your door, not your pass, so this is the only place these facts exist. We use them to answer your own questions and to give groups useful answers about your venue. They are not features in the crowd model.</li>
-                <li><strong>Occupancy readings you post:</strong> the 0 to 100 slider. Every reading is stored with your account, your venue, and the time. It is shown to users attributed to you, in your venue's own words, never as Flock's own estimate, and it expires by itself 90 minutes after you set it. You can retract one. Retracted and expired readings are not deleted, because a labelled observation of a venue-hour is exactly what the crowd model learns from, which is the other half of why this feature exists.</li>
+                <li><strong>Occupancy readings you post:</strong> the 0 to 100 slider. Every reading is stored with your account, your venue, and the time. It is shown to users as coming from your venue, never as Flock's own estimate. The wording that carries it is ours, built from your venue's category rather than from anything you typed, and it expires by itself 90 minutes after you set it. You can retract one. Retracted and expired readings are not deleted, because a labelled observation of a venue-hour is exactly what the crowd model learns from, which is the other half of why this feature exists.</li>
                 <li><strong>What you post to your listing:</strong> promotions, events, and replies to reviews. Public, and screened by the same moderation rules as anything else.</li>
                 <li><strong>Records about your account:</strong> your tier, any comped tier we granted, whether the weekly digest is switched on, and the digest sends we have made.</li>
               </ul>
@@ -531,13 +552,26 @@ export default function PrivacyPolicy() {
               </p>
               <p>
                 That cohort figure is built so that no venue's own number can be read out of
-                it. It is not published at all until at least five venues other than the one
-                asking have reported into the same city, category, night and hour band, which
-                is a higher floor than we use anywhere else, because a venue is a pin on a
-                public map with a name and an address and the set of them is short enough to
-                count. The statistic published is a value some venue actually posted, never an
-                interpolation, and the most anyone can learn about another venue's reading is
-                which published band it fell in.
+                it, and it has to clear two floors before it is published at all. First, at
+                least five reporting <strong>owners</strong> other than the one asking must
+                have posted into the same city, category, night and hour band. We count owners
+                rather than venues so that one company with five rooms cannot become five
+                voices. Second, at least three of those owners' readings must round to the very
+                number we are about to print, so the number describes several businesses rather
+                than sitting on top of one. Both are higher floors than we use anywhere else,
+                because a venue is a pin on a public map with a name and an address and the set
+                of them is short enough to count.
+              </p>
+              <p>
+                The asking venue is inside the group its own figure is drawn from. Leaving it
+                out would make the number change depending on who asked, which is its own way
+                of leaking. The figure itself is the middle reading of that group, rounded to
+                the nearest ten, so it is not read off any single venue exactly: we pick the
+                middle reading rather than averaging the two either side of it, precisely so
+                that no arithmetic connects the published number back to one reading. The most
+                anyone can learn about another venue's reading is which rounded step it fell
+                near. When either floor is missed we say so and give no number, and we do not
+                say which floor it was, because that would itself describe who reported.
               </p>
               <p>
                 Readings are accountable in the other direction too. When three or more
@@ -586,7 +620,8 @@ export default function PrivacyPolicy() {
                 <li><strong>Apple</strong> and <strong>Google</strong> verify sign-in identity, only when you choose those options. Apple additionally receives the revocation call when you delete an account you created with Sign in with Apple.</li>
                 <li><strong>MapTiler</strong> and <strong>CARTO</strong> serve the map tiles. Your device loads tiles from them directly, so whichever one is in use sees your IP address and the area of the map you are looking at. It does not see your account.</li>
                 <li><strong>DiceBear</strong> serves the default avatar for an account with no photo. Your device loads that image directly, so it sees your IP address and nothing else.</li>
-                <li><strong>RevenueCat</strong> would handle subscription receipts. Flock sells nothing today and the paywall has never been switched on. In a build where purchases are on, RevenueCat receives your account number and the receipt the App Store issues, and nothing else. Your card details go to Apple, never to us and never to RevenueCat.</li>
+                <li><strong>RevenueCat</strong> handles subscription receipts, and it is the one vendor here whose answer depends on which build you are running. In the iOS app, if the RevenueCat key was compiled into that build, Flock tells RevenueCat your account number when you sign in, whether or not anything is for sale. On the website it is never loaded at all. Flock sells nothing today and the paywall has never been switched on, so no receipt exists to send; if purchases are ever turned on, RevenueCat receives the receipt the App Store issues alongside that account number, and nothing else. Your card details go to Apple, never to us and never to RevenueCat.</li>
+                <li><strong>Cloudflare</strong> runs our domain's DNS and the mailbox behind {CONTACT_EMAIL}, which it forwards to the inbox we read. Every message you send us passes through it: a request to see your data, a deletion request, a complaint, a child-safety report, a copyright notice. It receives the address you write from and everything you put in the message. This page names it because a data-protection request that arrives by email is handled by whoever carries the email.</li>
                 <li><strong>Sentry</strong> would receive crash and error reports. It is wired up and switched off. <a href="#analytics">Analytics, error reports, and email</a> says what would happen if it were turned on.</li>
               </ul>
 
@@ -690,16 +725,31 @@ export default function PrivacyPolicy() {
               <p>
                 Everything else is optional and every message carries an unsubscribe link that
                 works without signing in. The waitlist confirmation and the Monday venue digest
-                both do. The digest is off by default and only sends if a venue owner switches
-                weekly reports on. Unsubscribing writes your address to a do-not-mail list that
-                is checked inside the one function every outgoing message in Flock passes
-                through, so nothing can walk past it. An address that hard-bounces or is
-                reported as spam is added to the same list automatically.
+                both do, and the two links work differently because the lists are different.
+                Unsubscribing from the waitlist writes your address to a do-not-mail list.
+                Turning off the Monday digest switches off a setting on your venue account
+                instead, so it stops that one email and writes nothing about your address. The
+                digest is off by default and only sends if a venue owner switches weekly
+                reports on. An address that hard-bounces or is reported as spam is added to the
+                do-not-mail list automatically.
               </p>
               <p>
-                One deliberate exception: unsubscribing from a list does not stop a password
-                reset or an SOS alert. Those are different in kind, and a bounce is not a
-                reason to swallow one.
+                The do-not-mail list is checked inside the one function every outgoing message
+                in Flock passes through, rather than in each sender, so there is nothing to
+                forget. One honest limit: if that check cannot reach our database it lets the
+                message go rather than holding it. We would rather send a message we should not
+                have than swallow a password reset or an emergency alert because of a database
+                blip.
+              </p>
+              <p>
+                Two deliberate exceptions. Unsubscribing from a list does not stop a password
+                reset or an SOS alert, because those are not lists you are on. And an SOS alert
+                is sent even to an address that has hard-bounced or reported us as spam. A
+                bounce says a message failed, not that the person refuses to hear from you, and
+                a complaint about a marketing email is not a refusal of an emergency from the
+                person who named that contact. Because nothing on our side stops that send any
+                more, the Safety screen marks a trusted contact whose address has been failing,
+                so you can fix the address rather than find out later.
               </p>
             </section>
 
@@ -711,8 +761,8 @@ export default function PrivacyPolicy() {
                 <li><strong>Crowd reports you file:</strong> kept while your account exists and deleted with it. A model that has already been trained on a report does not forget it, and the training set itself carries no account numbers.</li>
                 <li><strong>Predictions we served you:</strong> 180 days, then deleted automatically.</li>
                 <li><strong>Availability status:</strong> expires at the time you set. You can clear it yourself.</li>
-                <li><strong>Invite links:</strong> expire 14 days after they are created, or a week after the plan, whichever comes first.</li>
-                <li><strong>Password reset requests:</strong> the record of one, which holds the requesting IP address and a one-way hash of the email, is deleted after 7 days.</li>
+                <li><strong>Invite links:</strong> expire 14 days after they are created, or a week after the plan, whichever is <strong>later</strong>. A link made today for a plan two months out therefore lives about ten weeks. An invite link is a bearer credential: anyone holding it can join the flock, read its chat and see live location, so the expiry is the only thing that retires it on its own. If a link gets somewhere it should not, the person who created the plan can ask us to kill it.</li>
+                <li><strong>Password reset records:</strong> the record of a reset <em>request</em>, which holds the requesting IP address and a one-way hash of the email, is deleted after 7 days. The record of an issued reset <em>link</em>, which holds your account number, the address it was mailed to and the requesting IP address, is deleted 7 days after it is spent or expires, and immediately with your account.</li>
                 <li><strong>Stories:</strong> there is no way to post or see a story anywhere in the Flock app, so using Flock does not create one. Our server does support them: a story there stops being visible to everyone 24 hours after it is posted, and the row is then removed by a cleanup that runs at most once an hour and takes stories that expired more than 24 hours ago. A story that has been reported is held until the report is closed.</li>
                 <li><strong>Push notification tokens:</strong> deleted when you sign out on that device or delete your account.</li>
                 <li><strong>Do-not-mail entries:</strong> kept for as long as the address should not be mailed. Removing it is what would let mail resume, so it has no expiry.</li>
@@ -753,19 +803,21 @@ export default function PrivacyPolicy() {
                 <li><strong>A ban tombstone,</strong> but only if the account was banned. A one-way hashed code of the email, phone and sign-in ID, for 12 months, so a banned person cannot sign straight back up. Nothing like it is kept for an account that was not banned.</li>
                 <li><strong>One row per finished plan,</strong> with no names, no messages and no individual amounts, as described under <a href="#how-long">How long we keep it</a>.</li>
                 <li><strong>Sensor readings,</strong> which never contained anything belonging to you. See section 3.</li>
+                <li><strong>Your address on the do-not-mail list,</strong> if it is on it. That list is keyed on the address itself and has no link to your account, so deleting your account does not remove it, and it has no expiry. It exists so that an address that bounced or reported us as spam is not mailed again, which is a promise to whoever holds that mailbox rather than to the account. You can ask us to take an address off it at {mail}.</li>
+                <li><strong>Two references, emptied rather than removed.</strong> If a plan you did not create had a bill split, that split's record of who paid stops pointing at you rather than being deleted, because it belongs to the plan and the plan is somebody else's. The same is true of an invite link somebody else's flock still holds: it stops saying who made it. Neither carries anything about you once your account is gone.</li>
                 <li><strong>Backups,</strong> until they age out.</li>
                 <li><strong>Anything already learned by the crowd model.</strong> A trained model is not a database and cannot have one row removed from it. The training data itself carries no account numbers.</li>
               </ul>
               <p>
-                If you would rather have a copy of your data before you delete it, ask us at {mail}
-                and we will send you one.
+                If you would rather have a copy of your data before you delete it, ask us at{' '}
+                {mail} and we will send you one.
               </p>
             </section>
 
             <section id="your-choices">
               <h2>{num('your-choices')} Your choices and rights</h2>
               <ul>
-                <li><strong>Access, correction, export, deletion:</strong> you can request any of these by emailing {mail}. An export is a machine-readable copy of your account, your plans, your messages, your reports and everything else listed under <a href="#what-we-collect">What we collect</a>. You can delete your account yourself in the app (Profile &rarr; Delete account) or from our <a href="/delete-account">account deletion page</a>. To protect your account, deleting it asks you to confirm your password, or to sign in again if you use Apple or Google.</li>
+                <li><strong>Access, correction, export, deletion:</strong> you can request any of these by emailing {mail}. An export is a machine-readable copy of your account, your settings, your plans and calendar entries, the messages you sent, your votes, budgets, reactions, reviews, crowd reports, check-ins, bill-split shares, SOS records, friends, reports you filed, your trusted contacts, and your reliability score. Four things are not in that file today and we would rather say so than let you assume otherwise: the record of which crowd predictions we showed you, the list of accounts you have blocked, your registered push notification tokens, and your venue profile if you run a venue. Ask and we will send those too. The file itself also lists what it leaves out and why. You can delete your account yourself in the app (Profile &rarr; Delete account) or from our <a href="/delete-account">account deletion page</a>. To protect your account, deleting it asks you to confirm your password, or to sign in again if you use Apple or Google.</li>
                 <li><strong>Location:</strong> Flock asks before it reads your location and never reads it in the background. You can turn the permission off for Flock in your device settings at any time. The map then opens on a default area and venue search asks you where to look.</li>
                 <li><strong>Live location sharing:</strong> stop at any time from within the flock or the conversation you started it in.</li>
                 <li><strong>Push notifications:</strong> Flock asks before it sends any. To stop them, turn notifications off for Flock in your device settings. Signing out also deletes that device's push token from our servers.</li>
@@ -840,8 +892,8 @@ export default function PrivacyPolicy() {
               </p>
               <p>
                 You have the right to know what we collect and why, to get a copy, to correct
-                it, to delete it, and not to be discriminated against for asking. Email {mail}
-                and say which one you want. An authorised agent may ask on your behalf with
+                it, to delete it, and not to be discriminated against for asking. Email{' '}
+                {mail} and say which one you want. An authorised agent may ask on your behalf with
                 written permission we can verify. We verify a request by checking that it comes
                 from the address on the account, or by asking you to confirm from inside the app.
               </p>
@@ -886,13 +938,13 @@ export default function PrivacyPolicy() {
                 <li>Sessions are signed tokens with a fixed algorithm and a version stamp, so signing out everywhere really does invalidate the old ones.</li>
                 <li>The most destructive actions, deleting your account and exporting your data, need proof it is really you: your password again, or a fresh sign-in. Wrong guesses are counted and locked out.</li>
                 <li>Every database query is parameterised, so a message cannot become a command.</li>
-                <li>Rate limits sit on every route, with tighter ones on sign-in, on the assistant, on the venue advisor, and on anything unauthenticated.</li>
+                <li>Rate limits sit on every route people use, with tighter ones on sign-in, on the assistant, on the venue advisor, and on anything unauthenticated. Two routes are exempt and both are machine-to-machine: the notices our email provider and our subscription provider send us. Neither is reachable without the shared secret it is checked against, and rate limiting them would mean discarding a delivery notice we asked for.</li>
                 <li>Security headers are set by Helmet, including a content security policy.</li>
                 <li>Text and images are screened before they are stored, and an image that cannot be screened is refused rather than let through.</li>
                 <li>Uploaded images have their embedded metadata removed before storage.</li>
-                <li>Webhooks from our email and subscription providers are verified against a shared secret in constant time, over the exact bytes that were signed, and refused outright if the secret is missing.</li>
+                <li>Notices from our email provider carry a signature over the exact bytes they sent, and we verify it before reading a word of the message. Our subscription provider does not sign anything; it presents a shared secret in a header, which we compare in constant time. Both are refused outright if the secret on our side is missing or too short to be one.</li>
                 <li>Every push to our code is scanned for leaked secrets automatically.</li>
-                <li>We take database backups, and the tool that makes them restores each one into a throwaway database and checks it before the backup is kept. An untested backup is a guess.</li>
+                <li>We take database backups, and we have a tool that restores one into a throwaway database and checks it, because an untested backup is a guess. Being straight about it: running that tool is a manual step today. Making a backup does not run it.</li>
               </ul>
               <p>
                 No system is perfectly secure. If you find a problem, write to {mail} and we
@@ -924,11 +976,16 @@ export default function PrivacyPolicy() {
                 give it the same legal protection as your own country.
               </p>
               <p>
-                We want to be straight about the mechanism. Flock has not signed separate
-                transfer agreements or Standard Contractual Clauses with anyone. For people in
-                the EEA or the UK, the transfer happens because it is necessary to provide the
-                service you asked us for, and because you agree to it by using Flock. If that
-                changes, this section changes with it.
+                We want to be straight about the mechanism, including about what we do not
+                know. Flock has not separately negotiated a transfer agreement with any of the
+                companies listed above. Several of them apply their own data processing terms,
+                including Standard Contractual Clauses, to every account by default, so those
+                may well cover some of these transfers without our having signed anything
+                bespoke. We have not audited each vendor's terms to tell you which, and we will
+                not claim a protection we have not checked. For people in the EEA or the UK,
+                the transfer happens because it is necessary to provide the service you asked
+                us for, and because you agree to it by using Flock. If we put a specific
+                agreement in place, this section changes with it.
               </p>
             </section>
 
@@ -943,11 +1000,11 @@ export default function PrivacyPolicy() {
                 <li>We do not run ads, and there is no advertising software in the app or on the site.</li>
                 <li>We do not track you across other apps or websites. There is no advertising cookie, no pixel, and no data broker.</li>
                 <li>We do not read your location in the background, ever. Only while Flock is open and only when you have allowed it.</li>
-                <li>We do not keep a location history. Live location is relayed and never written down.</li>
+                <li>We do not keep a location history. Live location sharing is relayed and never written down. The single exception is the SOS record: when you press SOS we store the coordinates that went out, so there is a record of what happened, and it is deleted with your account.</li>
                 <li>We do not upload or store your address book. The numbers you pick for a friend match are checked and discarded.</li>
                 <li>We do not touch card numbers, bank accounts or any payment credential. No money moves through Flock.</li>
                 <li>We do not record your screen, your keystrokes, your microphone or your camera. The only time the camera opens is when you ask it to take a photo or scan a code.</li>
-                <li>We do not send your message content, your budgets, or your exact position to any AI model.</li>
+                <li>We do not send your flock chat, your direct messages, your budgets, or your exact position to any AI model. What you type to Birdie itself does go to Google, because that is the only way it can answer you, along with the context named under <a href="#ai">Birdie and Roost</a>.</li>
                 <li>We do not use your messages to train the crowd model. It learns from venue observations, and its training data holds no account numbers.</li>
                 <li>We do not show any other person your budget amount.</li>
                 <li>We do not tell anybody that a crowd report came from you.</li>

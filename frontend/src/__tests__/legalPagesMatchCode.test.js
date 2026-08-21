@@ -243,6 +243,55 @@ describe('privacy claims that depend on how the code behaves', () => {
     expect(privacy).toMatch(/SOS alerts are sent by <strong>email only<\/strong>/);
   });
 
+  test('the do-not-mail list does not swallow an SOS, and the policy says so', () => {
+    // The defect this pins: HARD_REASONS blocked every category, so a trusted
+    // contact whose address once hard-bounced, or who once marked a Flock
+    // message as spam, got no emergency alert — while the policy said the
+    // opposite in as many words. The code now carries an 'emergency' category
+    // that no suppression reason stops, and the SOS route is its only caller.
+    const suppression = read('backend', 'services', 'emailSuppression.js');
+    const safety = read('backend', 'routes', 'safety.js');
+    expect(suppression).toMatch(/const EMERGENCY_CATEGORY = 'emergency';/);
+    expect(suppression).toMatch(/if \(category === EMERGENCY_CATEGORY\) return \{ blocked: false/);
+    // One caller, and it is the SOS fan-out. If a second one appears, the
+    // argument in emailSuppression.js has to be made about it first.
+    expect(safety.match(/category: EMERGENCY_CATEGORY/g)).toHaveLength(1);
+    expect(privacy).toMatch(/an SOS alert\s+is sent even to an address that has hard-bounced/);
+
+    // The other half of the trade: the user is now the only one who can notice
+    // a broken contact address, so the API has to hand them that fact.
+    expect(safety).toMatch(/email_deliverable/);
+    const app = read('frontend', 'src', 'App.js');
+    expect(app).toMatch(/c\.email_deliverable === false/);
+    expect(privacy).toMatch(/the Safety screen marks a trusted contact whose address has been failing/);
+  });
+
+  test('the suppression check fails open, and the policy admits it', () => {
+    const suppression = read('backend', 'services', 'emailSuppression.js');
+    expect(suppression).toMatch(/console\.error\('\[emailSuppression\] lookup failed, mailing anyway/);
+    expect(privacy).toMatch(/if that check cannot reach our database it lets the\s+message go/);
+    // The old sentence claimed nothing could walk past the list. Two things
+    // can: a database error, and an emergency.
+    expect(privacy).not.toMatch(/so nothing can walk past it/);
+  });
+
+  test('the digest opt-out flips a setting; only the waitlist link writes a suppression row', () => {
+    const digest = read('backend', 'routes', 'venueDigest.js');
+    const unsub = read('backend', 'routes', 'unsubscribe.js');
+    expect(digest).toMatch(/notification_prefs/);
+    expect(digest).not.toMatch(/require\(.*emailSuppression/);
+    expect(unsub).toMatch(/suppress\(address, 'unsubscribe'/);
+    expect(privacy).toMatch(/Unsubscribing from the waitlist writes your address to a do-not-mail list/);
+    expect(privacy).toMatch(/switches off a setting on your venue account/);
+  });
+
+  test('invite links expire at the LATER of the two windows, which is what the policy now says', () => {
+    const flocks = read('backend', 'routes', 'flocks.js');
+    expect(flocks).toMatch(/GREATEST\(\s+NOW\(\) \+ INTERVAL '14 days',/);
+    expect(privacy).toMatch(/whichever is <strong>later<\/strong>/);
+    expect(privacy).not.toMatch(/a week after the plan, whichever comes first/);
+  });
+
   test('contact sync does not store the numbers it checks', () => {
     const friends = read('backend', 'routes', 'friends.js');
     const start = friends.indexOf("router.post('/find-by-phone'");
