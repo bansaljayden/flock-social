@@ -196,7 +196,7 @@ test('a cell below the reporter floor is excluded, not exported', () => {
   assert.ok(feedbackCellToTrainingRow(cellOf(enough), TEST_MAP).row);
 });
 
-test('an exported feedback row is a 44-column row that names itself', () => {
+test('an exported feedback row is a 45-column row that names itself', () => {
   const rows = [
     baseCandidate({ feedback_id: 1, user_id: 1, crowd_level: 3 }),
     baseCandidate({ feedback_id: 2, user_id: 2, crowd_level: 3 }),
@@ -204,7 +204,7 @@ test('an exported feedback row is a 44-column row that names itself', () => {
   ];
   const out = feedbackCellToTrainingRow(cellOf(rows), TEST_MAP);
   const fields = exporter.rowToCsv(out.row).split(',');
-  assert.equal(fields.length, 44, 'the feedback path must not change the export contract');
+  assert.equal(fields.length, 45, 'the feedback path must not change the export contract');
   const at = (name) => fields[HEADER_COLUMNS.indexOf(name)];
 
   // Distinguishable for the rest of its life. Both the raw column and the
@@ -231,6 +231,20 @@ test('an exported feedback row is a 44-column row that names itself', () => {
 
   // BestTime was never asked about this moment: empty, never 0.
   assert.equal(at('vendor_forecast_pct'), '');
+
+  // Round 25: nothing was asked about events either, and the row says so
+  // instead of asserting a quiet street. These three used to export as a hard
+  // 0 under a comment that read "NO WEATHER, NO EVENTS". The code stated
+  // plainly that it was asserting something it had not checked.
+  assert.equal(at('has_nearby_event'), '',
+    'no event lookup ever happened for a feedback-labelled row. A 0 here is a '
+    + 'fabricated negative observation, and 56.1% of the existing corpus is already '
+    + 'that same mistake made by enrichWithEvents.js.');
+  assert.equal(at('event_nearby'), '');
+  assert.equal(at('is_raining'), '');
+  assert.equal(at('events_observed'), '0',
+    'events_observed = 0 states positively that no lookup could have answered, which '
+    + 'is stronger than leaving it to be inferred from an empty feature');
 });
 
 test('a feedback-labelled row carries no feedback FEATURES — that would be the leak', () => {
@@ -430,7 +444,7 @@ test('the real query joins on venue, clock and baseline, and emits one row per c
   const lines = written.join('').split('\n').filter(Boolean);
   assert.equal(lines.length, 1);
   const fields = lines[0].split(',');
-  assert.equal(fields.length, 44);
+  assert.equal(fields.length, 45);
   const at = (name) => fields[HEADER_COLUMNS.indexOf(name)];
   assert.equal(at('venue_id'), String(venueIds.a));
   assert.equal(at('day_of_week'), String(LOCAL_DOW));
@@ -510,7 +524,7 @@ test('runExport is dormant by default and refuses a flag without a mapping', asy
     const withFeedback = fs.readFileSync(path.join(outDir, 'training_data.csv'), 'utf8')
       .split('\n').filter((l) => l.includes(`,${FEEDBACK_LABEL_SOURCE},`));
     assert.equal(withFeedback.length, 1);
-    assert.equal(withFeedback[0].split(',').length, 44);
+    assert.equal(withFeedback[0].split(',').length, 45);
   } finally {
     delete process.env[FEEDBACK_ENABLE_ENV];
     delete process.env[FEEDBACK_CROWD_MAP_ENV];

@@ -2,6 +2,40 @@
 // Enrich ml_training_data with event features from ml_events
 // Cross-references training rows with nearby events by day/hour/distance
 // Run: node backend/scripts/ml/enrichWithEvents.js
+//
+// AN UNCHECKED STREET IS NOT AN EMPTY ONE (2026-08-20, migration 045).
+//
+// Until this change every branch below that did not find an event wrote the
+// same six values: has_nearby_event = false, nearest_event_distance_km = NULL,
+// nearest_event_attendance = 0, total_nearby_events = 0,
+// total_nearby_attendance = 0, nearest_event_type = NULL. Those are exactly the
+// column defaults 006 created, so "the matcher looked and the street was quiet"
+// was byte-identical to "the matcher never touched this row" AND to "ml_events
+// holds no events for this city at all, so there was nothing to match against".
+//
+// The third one is the leak. Events are indexed by city and date; a city whose
+// events were never collected falls through `dowEvents.length === 0` and every
+// row in it is stamped a negative observation. Measured against production on
+// 2026-08-20: 22 of 34 cities hold ZERO rows with has_nearby_event = true,
+// 2,194,300 rows, 56.1% of the corpus. Philadelphia holds 144,665 of them and
+// not one nearby event, which is a statement about Ticketmaster collection
+// wearing the clothes of a statement about Philadelphia.
+//
+// So every write below now also records WHETHER THE LOOKUP COULD HAVE FOUND
+// ANYTHING. events_observed = true means the row was matched against a
+// non-empty index for its own city and its own date, and the values beside it
+// are a measurement including the quiet night. events_observed = false means no
+// match was possible and events_unavailable_reason says which of the three it
+// was; the event columns are written NULL rather than a fabricated 0, so the
+// export can carry them as empty and prepare_features.py's fillna(0) does the
+// imputing where the imputation is visible.
+//
+// THIS FIXES THE FUTURE ONLY. The 3.9M rows already in the table are not
+// retrospectively separable, because an observed false and an invented false left
+// the same bytes behind, and this script does not pretend otherwise. Running it
+// again re-derives provenance for every row it can join to ml_venues, but it
+// cannot tell you what the PREVIOUS run saw, and nothing ever will. See
+// migration 045 and scripts/ml/MODEL-METRICS.md.
 // ---------------------------------------------------------------------------
 
 require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
@@ -117,6 +151,21 @@ async function main() {
     console.log(`  ${city}: ${total} events`);
   }
 
+  // The cities this run can say anything about at all. A city absent from here
+  // has no events in ml_events, so every false it would have produced is a
+  // statement about collection coverage, not about the city, which is the exact
+  // confusion that put 22 cities and 56.1% of the corpus into the fabricated
+  // negatives. Named, counted and reported instead of silently written.
+  const citiesWithEvents = new Set(Object.keys(perCity));
+  const configuredCities = Object.keys(CITIES);
+  const uncoveredCities = configuredCities.filter((c) => !citiesWithEvents.has(c));
+  if (uncoveredCities.length > 0) {
+    console.log(`[Enrich] ${uncoveredCities.length} of ${configuredCities.length} configured cities have NO events `
+      + `in ml_events: ${uncoveredCities.join(', ')}`);
+    console.log('[Enrich] Their rows get events_observed = false / no_events_for_city. They are NOT '
+      + 'evidence that nothing was happening near those venues.');
+  }
+
   // Ensure new columns exist
   console.log('[Enrich] Adding columns if needed...');
   await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS has_nearby_event BOOLEAN DEFAULT false`);
@@ -125,6 +174,12 @@ async function main() {
   await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS total_nearby_events INTEGER DEFAULT 0`);
   await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS total_nearby_attendance INTEGER DEFAULT 0`);
   await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS nearest_event_type VARCHAR(50)`);
+  // Migration 045 is the real home for these two; the ALTERs keep this script
+  // runnable against a database that has not booted the migration yet. NO
+  // DEFAULT on either, for 045's reason: a default of false would say "we know
+  // the lookup failed" about every row written before anyone was recording it.
+  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS events_observed BOOLEAN`);
+  await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS events_unavailable_reason TEXT`);
 
   // Process training data in chunks
   const { rows: countResult } = await pool.query('SELECT COUNT(*) as count FROM ml_training_data');
@@ -134,8 +189,10 @@ async function main() {
   const CHUNK_SIZE = 5000;
   let processed = 0;
   let enriched = 0;
+  let observedQuiet = 0;
   let dateless = 0;
   let offset = 0;
+  const unavailableCounts = {};
 
   while (offset < totalRows) {
     // Fetch chunk with venue info
@@ -155,18 +212,31 @@ async function main() {
     // Process each row
     const updates = [];
     for (const row of chunk) {
-      // Dateless rows (weekly "typical week" snapshots) get no events — a
-      // one-off concert did not happen on a synthetic average Tuesday.
+      // Dateless rows (weekly "typical week" snapshots) have no date a one-off
+      // concert could be attributed to. That is a real reason not to match, and
+      // it is still not an observation of an empty street: the row is marked
+      // unavailable rather than stamped with a negative it never earned.
       const rowDate = observedDateOf(row);
       if (!rowDate) {
-        updates.push({ id: row.id, hasEvent: false });
+        updates.push({ id: row.id, observed: false, reason: 'no_observation_date' });
         dateless++;
+        continue;
+      }
+
+      // Nothing was collected for this city, ever. The old code wrote false
+      // here and that single branch is most of the 2,194,300 fabricated
+      // negatives.
+      if (!citiesWithEvents.has(row.city)) {
+        updates.push({ id: row.id, observed: false, reason: 'no_events_for_city' });
         continue;
       }
 
       const dowEvents = eventsByCityDate.get(`${row.city}|${rowDate}`) || [];
       if (dowEvents.length === 0) {
-        updates.push({ id: row.id, hasEvent: false });
+        // The city has events but none on this date. Nothing in ml_events
+        // records the collection WINDOW, so a date with no events cannot be
+        // told from a date nobody collected. Unavailable, not quiet.
+        updates.push({ id: row.id, observed: false, reason: 'no_events_on_date' });
         continue;
       }
 
@@ -203,6 +273,7 @@ async function main() {
       if (totalNearby > 0) {
         updates.push({
           id: row.id,
+          observed: true,
           hasEvent: true,
           nearestDist: Math.round(nearestDist * 100) / 100,
           nearestAttendance: nearestEvent.attendance,
@@ -212,12 +283,16 @@ async function main() {
         });
         enriched++;
       } else {
-        updates.push({ id: row.id, hasEvent: false });
+        // THE ONLY HONEST NEGATIVE IN THIS FILE. A non-empty index for this
+        // city and this date was searched, and nothing was within 2 km in this
+        // hour. false and 0 here are measurements.
+        updates.push({ id: row.id, observed: true, hasEvent: false });
+        observedQuiet++;
       }
     }
 
     // Batch update — build a single query for all event-matched rows
-    const withEvents = updates.filter(u => u.hasEvent);
+    const withEvents = updates.filter(u => u.observed && u.hasEvent);
     if (withEvents.length > 0) {
       // Build VALUES list for batch update
       const vals = [];
@@ -235,16 +310,19 @@ async function main() {
           nearest_event_attendance = v.att,
           total_nearby_events = v.cnt,
           total_nearby_attendance = v.tot_att,
-          nearest_event_type = v.etype
+          nearest_event_type = v.etype,
+          events_observed = true,
+          events_unavailable_reason = NULL
          FROM (VALUES ${vals.join(',')}) AS v(id, dist, att, cnt, tot_att, etype)
          WHERE t.id = v.id`,
         params
       );
     }
 
-    // Batch reset rows without events
-    const noEvents = updates.filter(u => !u.hasEvent).map(u => u.id);
-    if (noEvents.length > 0) {
+    // Batch reset the rows that WERE searched and came back quiet. false and 0
+    // are the measurement here, and events_observed = true is what says so.
+    const quiet = updates.filter(u => u.observed && !u.hasEvent).map(u => u.id);
+    if (quiet.length > 0) {
       await pool.query(
         `UPDATE ml_training_data SET
           has_nearby_event = false,
@@ -252,9 +330,40 @@ async function main() {
           nearest_event_attendance = 0,
           total_nearby_events = 0,
           total_nearby_attendance = 0,
-          nearest_event_type = NULL
+          nearest_event_type = NULL,
+          events_observed = true,
+          events_unavailable_reason = NULL
          WHERE id = ANY($1::int[])`,
-        [noEvents]
+        [quiet]
+      );
+    }
+
+    // Batch the rows no lookup could have answered, one statement per reason.
+    // Every event column goes NULL rather than to its default: a 0 here would
+    // be the fabricated negative this whole change exists to stop, and
+    // export_training_data.js writes a NULL out as an EMPTY CSV field, which
+    // pandas reads as NaN and prepare_features.py fills with 0 in the one place
+    // the imputation is visible and revisable.
+    const unavailable = updates.filter(u => !u.observed);
+    const byReason = new Map();
+    for (const u of unavailable) {
+      if (!byReason.has(u.reason)) byReason.set(u.reason, []);
+      byReason.get(u.reason).push(u.id);
+    }
+    for (const [reason, ids] of byReason) {
+      unavailableCounts[reason] = (unavailableCounts[reason] || 0) + ids.length;
+      await pool.query(
+        `UPDATE ml_training_data SET
+          has_nearby_event = NULL,
+          nearest_event_distance_km = NULL,
+          nearest_event_attendance = NULL,
+          total_nearby_events = NULL,
+          total_nearby_attendance = NULL,
+          nearest_event_type = NULL,
+          events_observed = false,
+          events_unavailable_reason = $2
+         WHERE id = ANY($1::int[])`,
+        [ids, reason]
       );
     }
 
@@ -271,6 +380,9 @@ async function main() {
     `SELECT
        COUNT(*) as total,
        SUM(CASE WHEN has_nearby_event = true THEN 1 ELSE 0 END) as with_events,
+       COUNT(*) FILTER (WHERE events_observed IS TRUE) as observed_rows,
+       COUNT(*) FILTER (WHERE events_observed IS FALSE) as unavailable_rows,
+       COUNT(*) FILTER (WHERE events_observed IS NULL) as unrecorded_rows,
        AVG(CASE WHEN has_nearby_event = true THEN nearest_event_attendance END) as avg_attendance,
        AVG(CASE WHEN has_nearby_event = true THEN total_nearby_events END) as avg_nearby_count
      FROM ml_training_data`
@@ -278,10 +390,29 @@ async function main() {
 
   console.log(`\n[Enrich] Done!`);
   console.log(`  Total rows: ${summary[0].total}`);
-  console.log(`  Dateless rows (weekly — never event-matched): ${dateless}`);
+  console.log(`  Dateless rows (weekly, no date to attribute a one-off event to): ${dateless}`);
   console.log(`  Rows with nearby events: ${summary[0].with_events}`);
   console.log(`  Avg attendance (when event): ${Math.round(summary[0].avg_attendance || 0)}`);
   console.log(`  Avg nearby events (when event): ${parseFloat(summary[0].avg_nearby_count || 0).toFixed(1)}`);
+
+  // The provenance census. This is the number the corpus was missing: how many
+  // of those negatives anyone actually looked for.
+  console.log('\n[Enrich] Event provenance:');
+  console.log(`  Measured this run: ${enriched} with an event, ${observedQuiet} searched and quiet`);
+  const unavailableTotal = Object.values(unavailableCounts).reduce((a, b) => a + b, 0);
+  if (unavailableTotal > 0) {
+    console.log(`  Not measurable this run: ${unavailableTotal}`);
+    for (const [reason, count] of Object.entries(unavailableCounts).sort((a, b) => b[1] - a[1])) {
+      console.log(`    ${reason}: ${count}`);
+    }
+  }
+  console.log(`  Table-wide: ${summary[0].observed_rows} observed, ${summary[0].unavailable_rows} `
+    + `unavailable, ${summary[0].unrecorded_rows} with no provenance recorded at all.`);
+  if (Number(summary[0].unrecorded_rows) > 0) {
+    console.log('  The unrecorded rows predate migration 045. Their has_nearby_event = false is not '
+      + 'separable into observed and fabricated, it never will be, and nothing here backfills a '
+      + 'guess. See scripts/ml/MODEL-METRICS.md before training on them.');
+  }
 
   await pool.end();
 }
