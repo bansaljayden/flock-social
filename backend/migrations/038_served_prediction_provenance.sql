@@ -76,20 +76,43 @@
 -- time freezes today's trust policy into old rows. The route name is a fact;
 -- whether that route is trusted is a policy, and policy belongs in the reader.
 
+-- WHY THESE HANDLERS ARE NARROW. They said `EXCEPTION WHEN others THEN NULL`
+-- until this was written, which caught the lock_timeout that db/migrate.js
+-- deliberately arms at 10 seconds as if it were "the column is already there".
+-- served_predictions takes a fire-and-forget INSERT on every crowd card and
+-- every vote list, so it is exactly the sort of table a rolling deploy finds
+-- busy. Swallowing that timeout let the runner record 038 as applied with none
+-- of these three columns present, and nothing re-runs a migration the runner
+-- believes is done: routes/crowd.js writes source/local_day/local_hour and
+-- routes/feedback.js filters on all three, so server-side provenance would have
+-- silently degraded to the client's claim for good, which is the forgery this
+-- whole file exists to close.
+--
+-- duplicate_column (42701) and duplicate_object (42710, the auto-named CHECK)
+-- are the only conditions that mean "already there". Everything else, a lock
+-- timeout most of all, propagates and fails the boot, which is recoverable
+-- because the next boot retries. The @requires lines below make the runner
+-- verify the outcome rather than trust the return, and re-verify it on every
+-- later boot so an already-mismarked database repairs itself. See the header of
+-- db/migrate.js.
+-- @requires column served_predictions.source
+-- @requires column served_predictions.local_day
+-- @requires column served_predictions.local_hour
+
 DO $$ BEGIN
   ALTER TABLE served_predictions ADD COLUMN IF NOT EXISTS source VARCHAR(24)
     CHECK (source IN ('detail', 'detail_client_clock', 'batch'));
-EXCEPTION WHEN others THEN NULL; END $$;
+EXCEPTION WHEN duplicate_column OR duplicate_object THEN NULL; END $$;
 
 DO $$ BEGIN
   ALTER TABLE served_predictions ADD COLUMN IF NOT EXISTS local_day SMALLINT
     CHECK (local_day BETWEEN 0 AND 6);
-EXCEPTION WHEN others THEN NULL; END $$;
+EXCEPTION WHEN duplicate_column OR duplicate_object THEN NULL; END $$;
 
 DO $$ BEGIN
   ALTER TABLE served_predictions ADD COLUMN IF NOT EXISTS local_hour SMALLINT
     CHECK (local_hour BETWEEN 0 AND 23);
-EXCEPTION WHEN others THEN NULL; END $$;
+EXCEPTION WHEN duplicate_column OR duplicate_object THEN NULL; END $$;
 
 -- The feedback join is now (user, venue, source, clock) inside a 12-hour
 -- window, newest first. 032's idx_served_predictions_user_venue_at still leads
