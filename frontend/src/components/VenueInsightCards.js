@@ -95,6 +95,12 @@ const SOURCE_LABELS = {
 // Once per device: the one-liner that explains why some cards decline.
 const NOTE_SEEN_KEY = 'flock_advisor_refusal_note_seen';
 
+// The scrubber's hourly strip draws a score of 100 at 40px, so 40 is the
+// smallest well no hour can overflow. See the strip itself for what the well
+// is for; the short version is that a fixed-height row around taller columns
+// overflows upward, into whatever was drawn before it.
+const HOUR_BAR_WELL_PX = 40;
+
 const isRefusal = (entry) => !!entry && entry.status === 'refused';
 
 // A refusal that says "add it in venue settings" and leaves the owner to find
@@ -643,10 +649,22 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
             )}
             {hourly && (
               <div style={{ padding: '8px 0', borderTop: '1px solid var(--border-light)' }}>
-                <div style={{ display: 'flex', gap: '3px', alignItems: 'flex-end', height: '40px' }}>
+                {/* The bar lives in a fixed well and the hour label sits under
+                    it in flow. This row used to declare 40px around columns
+                    that measure 56px at 375px, so every labelled column hung
+                    16px out of the top and painted over the forecast line and
+                    the hairline above it. The row aligns to flex-START because
+                    only every third column has a label, and bottom-aligning
+                    columns of two heights puts their bars on two baselines.
+                    `minWidth: 0` is what lets a labelled column shrink to its
+                    share: the nowrap label otherwise sets a min-content floor
+                    and drew every third bar 26px wide beside 10px neighbours. */}
+                <div style={{ display: 'flex', gap: '3px', alignItems: 'flex-start' }}>
                   {hourly.map((h, i) => (
-                    <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                      <div style={{ width: '100%', height: `${Math.max(2, (Number(h.score) || 0) * 0.4)}px`, backgroundColor: navy, opacity: 0.85, borderRadius: '2px' }} />
+                    <div key={i} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                      <div style={{ width: '100%', height: `${HOUR_BAR_WELL_PX}px`, display: 'flex', alignItems: 'flex-end' }}>
+                        <div style={{ width: '100%', height: `${Math.min(HOUR_BAR_WELL_PX, Math.max(2, (Number(h.score) || 0) * 0.4))}px`, backgroundColor: navy, opacity: 0.85, borderRadius: '2px' }} />
+                      </div>
                       {i % 3 === 0 && <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', marginTop: '3px', whiteSpace: 'nowrap' }}>{h.hour}</span>}
                     </div>
                   ))}

@@ -648,8 +648,14 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
 
       {/* First run only. Once there is a conversation, the conversation is the
           thing to read. */}
+      {/* --t-meta, not --t-micro. index.css names the roles at the top of its
+          scale: micro is 11px, "eyebrows, max twice per screen", and meta is
+          12px "secondary/supporting text". This is a three-sentence paragraph
+          explaining how the whole surface answers, and it is the first thing a
+          new owner reads here. It is supporting text, so it gets the token for
+          supporting text. */}
       {!started && (
-        <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '3px 0 0', lineHeight: 1.5 }}>
+        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0', lineHeight: 1.5 }}>
           {freeText ? LEAD_IN_FREE : LEAD_IN_CHIPS}
         </p>
       )}
