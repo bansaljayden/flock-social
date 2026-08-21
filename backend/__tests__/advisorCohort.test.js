@@ -185,7 +185,7 @@ function scriptCohort({ cell = null, night = null, peers = null, typical = null 
         }],
       };
     }],
-    [/SELECT day_of_week, hour, baseline FROM ml_venue_baselines/, () => ({ rows: ownCurveRows() })],
+    [/SELECT day_of_week, hour, baseline.* FROM ml_venue_baselines/, () => ({ rows: ownCurveRows() })],
     // Half B's own-night read.
     [/AS night, EXTRACT\(HOUR/, () => ({
       rows: night ? [{ night: night.night, hour: night.hour, reading: night.reading }] : [],
