@@ -41,7 +41,8 @@ const OPERATOR_ADDRESS = null;
 // there, decide here whether it receives anything about a person, and say so.
 //
 // ONE ENTRY IS NOT DERIVED FROM THAT FILE: Cloudflare. It runs the DNS and the
-// Email Routing behind social@flockcorp.com (DOMAIN.md, 2026-08-12), it costs
+// Email Routing behind the contact address on flockcorp.com (DOMAIN.md,
+// 2026-08-12), it costs
 // nothing, and costModel.js only carries services that have a meter or a bill,
 // so it never appeared there and therefore never appeared here. It handles
 // every access request, deletion request, child-safety report and copyright

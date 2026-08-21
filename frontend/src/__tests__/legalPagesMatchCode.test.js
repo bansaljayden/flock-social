@@ -411,7 +411,8 @@ describe('house copy rules', () => {
   });
 
   test('the pages point at mailboxes that exist', () => {
-    // social@flockcorp.com is the one verified address (SLOP-AUDIT B). A page
+    // The contact address on flockcorp.com is the one verified mailbox
+    // (SLOP-AUDIT B). A page
     // that mails a dead box is worse than one with no contact at all.
     for (const [name, src] of Object.entries(PAGES)) {
       const addresses = [...src.matchAll(/[\w.]+@flockcorp\.com/g)].map((m) => m[0]);
