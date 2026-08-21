@@ -312,11 +312,28 @@ const LEAD_IN_CHIPS = 'Pick a question. Every answer comes from measured data ab
 // disk.
 let threadStore = { key: null, turns: [] };
 
+// Two DIFFERENT absences, and they used to answer to one name.
+//
+// `NO_SESSION` is nobody signed in. `UNREADABLE_SESSION` is a realm whose
+// localStorage cannot be read at all, which a browser with storage blocked
+// does deterministically on every access rather than intermittently. Both used
+// to return 'anon', so in a storage-blocked realm every account would have
+// collapsed to one key and the identity check below would have been inert.
+//
+// That state is not reachable today and the separation is here so it cannot
+// become reachable quietly. services/api.js reads the same key with a bare
+// `localStorage.getItem('flockToken')` and no try/catch, so a realm that
+// throws on read has no working API client at all: there is no browser state
+// where a request can be authorised AND this function cannot see under whose
+// token it went. If that ever changes, these two keys are already told apart.
+const NO_SESSION = 'anon';
+const UNREADABLE_SESSION = 'storage-unreadable';
+
 const sessionKey = () => {
   try {
-    return (window.localStorage.getItem('flockToken') || '').slice(-32) || 'anon';
+    return (window.localStorage.getItem('flockToken') || '').slice(-32) || NO_SESSION;
   } catch (e) {
-    return 'anon';
+    return UNREADABLE_SESSION;
   }
 };
 
@@ -354,7 +371,21 @@ const sessionKey = () => {
 // the storage event is delivered to every document EXCEPT the one that wrote
 // the value. Cross tab, the listener fires. Same tab, nothing fires at all, and
 // a listener that covers only half the cases is the half that reads as covered.
-const IDENTITY_POLL_MS = 2000;
+//
+// HOW LONG THE PREVIOUS ACCOUNT'S ANSWERS CAN SIT ON THE NEW ONE'S SCREEN.
+//
+// At two seconds they could sit there for two seconds, measured: still drawn at
+// 1999ms, gone at 2001ms. Two things shortened that without buying a second
+// mechanism. The first is free: this card re-reads the key on every commit of
+// its own (see the effect that calls checkOwner with no dependency array), and
+// an in-app sign-in re-renders the tree that owns this card, so in the case the
+// tick exists for the switch is usually caught in the same frame the app
+// notices it. The second is the tick itself, now 400ms, which is what covers a
+// sign-in that somehow re-renders nothing here. The cost of that is one
+// localStorage read every 400ms, a synchronous string fetch measured in
+// microseconds, against a window in which a venue's revenue and staffing
+// answers are drawn for the wrong owner.
+const IDENTITY_POLL_MS = 400;
 
 const restoreThread = () => {
   // SECURITY ROUND 5, 2026-08-20. This used to `return []` and LEAVE THE TURNS
@@ -432,13 +463,28 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
     return () => { alive.current = false; };
   }, []);
 
-  // The card changes hands. Everything the old hands wrote goes.
+  // The card changes hands. EVERYTHING the old hands wrote goes, and that is
+  // more than the conversation.
   //
-  // Not only the module store: the rendered thread, because that is what is on
-  // screen, and the draft, because a half typed question would otherwise be
-  // sent under a token its author never had. `ownerKeyRef` is written first and
-  // synchronously, so a turn resolving in this same tick reads the new identity
-  // instead of the one React has not committed yet.
+  // The thread and the draft are the obvious half: the thread is what is on
+  // screen, and a half typed question would otherwise be sent under a token its
+  // author never had. `ownerKeyRef` is written first and synchronously, so a
+  // turn resolving in this same tick reads the new identity instead of the one
+  // React has not committed yet.
+  //
+  // THE OTHER HALF IS THE CARD ITSELF, and dropping only the thread left it
+  // standing. GET /questions answers FOR AN ACCOUNT: the server offers a venue
+  // only the chips its own data can support, so the chip list that comes back
+  // is a statement about which of that venue's data classes are populated, and
+  // `freeText` is that account's entitlement. Clearing the turns and keeping
+  // the chips handed owner A's data inventory and owner A's entitlement to
+  // owner B, and the mirror case was worse for a paying customer: an owner A
+  // locked out with a 403 left B reading A's locked card copy, with no way back
+  // to a working one short of a remount, however entitled B was.
+  //
+  // So the surface goes back to knowing nothing, and the load effect below
+  // re-runs because `ownerKey` is one of its inputs. A skeleton for one round
+  // trip is the honest state here. Nothing about the new owner is known yet.
   const forgetOwner = useCallback((nextKey) => {
     ownerKeyRef.current = nextKey;
     threadStore = { key: null, turns: [] };
@@ -446,6 +492,15 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
     setThread([]);
     setDraft('');
     setBusy(false);
+    setState('loading');
+    setName(ADVISOR_NAME);
+    setLead([]);
+    setGroups([]);
+    setFreeText(false);
+    setLockedReason(null);
+    setShowMore(false);
+    setShowChips(false);
+    setFocused(false);
   }, []);
 
   // Who is signed in NOW. It returns that key, so a caller about to issue a
@@ -456,12 +511,14 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
     return live;
   }, [forgetOwner]);
 
-  // Three ways to hear that the token moved, because no one of them hears all
+  // Four ways to hear that the token moved, because no one of them hears all
   // of it. `storage` fires here when ANOTHER tab signs in, which is the case
   // the report describes and the only one an event covers. Focus and visibility
   // catch a switch made while this tab sat in the background. The interval
   // catches an in-app sign-in in this very tab, where no event of any kind is
-  // dispatched to the document that did the writing.
+  // dispatched to the document that did the writing. The fourth is below this
+  // one: a read on every commit of this card, which usually beats the interval
+  // to that same case.
   useEffect(() => {
     if (typeof window === 'undefined' || !window.addEventListener) return undefined;
     const onStorage = (e) => {
@@ -482,6 +539,18 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
       clearInterval(tick);
     };
   }, [checkOwner]);
+
+  // A FOURTH WAY, AND IT COSTS NOTHING BUT A STRING READ.
+  //
+  // No dependency array, so this runs after every commit of this card. An
+  // in-app sign-in changes the state that owns the venue dashboard, which
+  // re-renders this card in the same frame the app learns about the new
+  // account, and that is the case the storage event cannot cover because a
+  // document is never told about its own write. Catching it here is what keeps
+  // the previous owner's answers from being drawn for a whole tick of the
+  // interval below. The interval stays for the sign-in that re-renders nothing
+  // here, which is the only case left.
+  useEffect(() => { checkOwner(); });
 
   // Hand the thread to the next mount of this card, but only while the signed
   // in session is still the one these turns were written under. If the token
@@ -523,7 +592,11 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
     }
   }, [fetchQuestions, askQuestion]);
 
-  useEffect(() => { load(); }, [load]);
+  // `ownerKey` is a real input to this, not a spare dependency. The questions,
+  // the free text entitlement and the locked state all belong to whoever is
+  // signed in, so a change of account is a change of answer and has to re-run
+  // the whole load rather than only emptying the thread above it.
+  useEffect(() => { if (ownerKey) load(); }, [load, ownerKey]);
 
   // The box grows with what is in it. Measured against the real scroll height
   // rather than counted in characters, because where a line wraps depends on
@@ -592,23 +665,36 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
     // The token can also move while this one request is in flight, and it is
     // the answer that carries the other account's business. Whatever comes back
     // was authorised by whoever was signed in when it left, so if that is no
-    // longer who is signed in, it is not appended. It is dropped, along with
-    // the rest of the thread it would have joined.
-    const landedForSomebodyElse = () => {
-      const live = sessionKey();
-      if (live === issuedUnder) return false;
-      forgetOwner(live);
-      return true;
-    };
+    // longer who is signed in, it is not appended.
+    //
+    // A STALE RESPONSE DISCARDS ITSELF AND DOES NOTHING ELSE. It used to call
+    // forgetOwner on the way out, which is a stale request reaching forward in
+    // time to wipe state belonging to whoever is signed in NOW, and that was
+    // destructive rather than merely late: owner A asks, owner B signs in and
+    // the identity check correctly drops A's thread, B asks their own question,
+    // and then A's request finally lands and takes B's live pending turn, B's
+    // half typed follow up and, because it also released the busy flag under a
+    // request that was still in flight, B's own answer with it. The turn B was
+    // waiting on resolved into a thread that no longer had a row to update.
+    //
+    // Dropping the thread is the job of whoever NOTICES the change (checkOwner,
+    // the storage listener, the guard at the top of this function). It already
+    // happened, at the moment it was noticed, under the account it belongs to.
+    // By the time a response from a replaced session arrives there is nothing
+    // left for it to do but stop.
+    const stillMine = () => sessionKey() === issuedUnder;
     try {
       const answer = await run();
-      if (!alive.current || landedForSomebodyElse()) return;
+      if (!alive.current || !stillMine()) return;
       setThread((t) => t.map((turn) => (turn.key === key ? { ...turn, status: 'done', answer } : turn)));
     } catch (err) {
-      if (!alive.current || landedForSomebodyElse()) return;
+      if (!alive.current || !stillMine()) return;
       setThread((t) => t.map((turn) => (turn.key === key ? { ...turn, status: 'error' } : turn)));
     } finally {
-      if (alive.current && sessionKey() === issuedUnder) setBusy(false);
+      // Only the account that issued this request gets its busy flag back. The
+      // new owner's own in flight question keeps the card busy, so a late
+      // arrival from the replaced session cannot open the door to a double send.
+      if (alive.current && stillMine()) setBusy(false);
     }
   }, [forgetOwner]);
 
