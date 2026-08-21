@@ -10,18 +10,24 @@
 	archive fails with "provisioning profile does not match the entitlements
 	file".
 
-	Status as of this audit, matching TASKS.md section A2:
+	Status re-derived from evidence 2026-08-20, not copied forward:
 
-	  Sign in with Apple  -  CLAIMED HERE, NOT YET ENABLED ON THE APP ID.
-	    This is the current build blocker, and it is a portal visit, not a
-	    code change. Do not "fix" the build by deleting the key: the button is
+	  Sign in with Apple  -  ENABLED ON THE APP ID AND SHIPPING. This entry
+	    used to read "NOT YET ENABLED ... the current build blocker", which
+	    stopped being true no later than the 2026-08-17 submission. Two
+	    independent proofs: codemagic.yaml builds the archive from a profile
+	    that `app-store-connect fetch-signing-files` derives FROM the App ID,
+	    so a capability that were still off would fail the archive with
+	    "provisioning profile does not match the entitlements file", and the
+	    build that is in App Store review got past that step. The five APPLE_*
+	    variables are also set on Railway, which comes from the .p8 issued in
+	    the same portal visit, so 5.1.1(v) revocation runs for real
+	    (backend/services/appleAuth.js revokeAppleToken) and the promise the
+	    privacy policy and the deletion page make is kept.
+	    Do not "fix" a future build failure by deleting this key: the button is
 	    shipping (components/auth/AppleSignInButton.js, rendered on native iOS)
 	    and Guideline 4.8 requires it wherever Google sign-in is offered, so
 	    removing the entitlement trades a build failure for a rejection.
-	    Separately, account deletion cannot revoke the Apple grant until the
-	    APPLE_* variables are set in Railway from the Sign in with Apple key
-	    (.p8) created during the same portal visit. That is 5.1.1(v), and the
-	    privacy policy and the deletion page already promise it happens.
 
 	  aps-environment: production  -  CORRECT FOR THIS PIPELINE.
 	    "production" is the right value because codemagic.yaml only ever
@@ -31,8 +37,15 @@
 	    from Xcode, which this project does not produce. Push is used:
 	    AppDelegate.swift forwards the APNs token to
 	    @capacitor-firebase/messaging and backend/services/firebaseService.js
-	    sends alert pushes through FCM. Still needs Push Notifications
-	    confirmed ON for the App ID in the portal.
+	    sends alert pushes through FCM. Push Notifications is ON for the App
+	    ID by the same proof as the entry above: the profile is built from the
+	    App ID and the archive that reached review carried this entitlement.
+	    What is NOT settled here is whether a given build can actually deliver
+	    a push, and that is a different gate: codemagic.yaml writes a
+	    PLACEHOLDER GoogleService-Info.plist whenever GOOGLE_SERVICE_INFO_PLIST
+	    is absent from the flock_web group, and a build made that way signs and
+	    installs fine while push stays off at runtime. Check the build log line
+	    for that step before concluding push is broken on device.
 
 	Deliberately NOT here: com.apple.developer.associated-domains. Nothing can
 	be signed with it until the capability is enabled on the App ID and an
