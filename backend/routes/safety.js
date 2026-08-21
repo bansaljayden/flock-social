@@ -23,6 +23,7 @@ const { stripHtml } = require('../utils/sanitize');
 // in the log.
 const emailService = require('../services/emailService');
 const { escapeHtml, isMailableAddress, maskAddress } = emailService;
+const { suppressionReason, EMERGENCY_CATEGORY } = require('../services/emailSuppression');
 
 // Names are capped shorter than a whole subject line because a subject reads
 // "🚨 Emergency Alert from {name}" and the words that matter are at the front.
@@ -37,9 +38,21 @@ function safeSubjectText(str) {
 // from the marketing mailbox.
 const SAFETY_FROM = 'Flock Safety <alerts@flockcorp.com>';
 
-async function sendAlertEmail(to, subject, htmlBody) {
+// `category` is the do-not-mail list's question, and only ONE caller in this
+// file answers it 'emergency': POST /alert. The whole argument is written at
+// EMERGENCY_CATEGORY in services/emailSuppression.js. The short version is that
+// a trusted contact whose address once hard-bounced, or who once hit "spam" on
+// a Monday venue digest, was having their SOS alert dropped by a list that
+// exists to stop marketing. A bounce is a fact about a mailbox and a complaint
+// is a refusal of the thing complained about; neither is a refusal of an
+// emergency from the person who named that contact.
+//
+// The test email and the share-my-location email deliberately do NOT get this.
+// Neither is an emergency, and on both of them a suppression is doing exactly
+// the job it was built for.
+async function sendAlertEmail(to, subject, htmlBody, { category = 'transactional' } = {}) {
   const result = await emailService.sendEmail({
-    to, subject, html: htmlBody, from: SAFETY_FROM,
+    to, subject, html: htmlBody, from: SAFETY_FROM, category,
   });
   if (result.skipped) {
     console.warn('[Safety] alert NOT sent to', maskAddress(to), ': RESEND_API_KEY is not set');
@@ -133,13 +146,40 @@ function readCoords(latitude, longitude) {
 }
 
 // ── Get user's trusted contacts ──
+//
+// Each contact carries `email_deliverable`. It is false when the address is on
+// the do-not-mail list, which since the emergency bypass above no longer stops
+// an SOS — and that is exactly why this field has to exist. The bypass means
+// nothing on our side blocks the send any more, so the only remaining signal
+// that a contact is unreachable is the provider's, and the only person who can
+// act on it is the one who typed the address. Silence here would be the same
+// failure in a different place.
+//
+// A BOOLEAN, NEVER THE REASON. 'bounce' and 'complaint' both render as false
+// and the copy on the screen says the same thing for both, because the reason
+// is a fact about the contact, not about the account holder: telling a
+// 15-year-old that their mother marked Flock as spam discloses something the
+// mother told us and not them. What the user needs is "this address is not
+// working, fix it", which the boolean carries in full.
+//
+// The lookups are per contact and there are at most MAX_TRUSTED_CONTACTS of
+// them, each answered from the module's five-minute cache after the first.
+// suppressionReason never throws and answers null on a database error, so a
+// blip renders every contact as fine rather than failing the screen — the same
+// fail-open direction the send path takes, for the same reason.
 router.get('/contacts', authenticate, async (req, res) => {
   try {
     const result = await pool.query(
       'SELECT * FROM trusted_contacts WHERE user_id = $1 ORDER BY created_at DESC',
       [req.user.id]
     );
-    res.json({ contacts: result.rows });
+    const contacts = await Promise.all(result.rows.map(async (c) => ({
+      ...c,
+      email_deliverable: isMailableAddress(c.contact_email)
+        ? !(await suppressionReason(c.contact_email))
+        : false,
+    })));
+    res.json({ contacts });
   } catch (err) {
     console.error('[Safety] Get contacts error:', err);
     res.status(500).json({ error: 'Failed to load contacts' });
@@ -892,7 +932,13 @@ router.post('/alert', authenticate, async (req, res) => {
     }
 
     const settled = await Promise.allSettled(
-      withEmail.map((c) => sendAlertEmail(c.contact_email, `🚨 Emergency Alert from ${safeSubjectText(userName)}`, htmlBody))
+      withEmail.map((c) => sendAlertEmail(
+        c.contact_email,
+        `🚨 Emergency Alert from ${safeSubjectText(userName)}`,
+        htmlBody,
+        // The one send in Flock that the do-not-mail list does not get a vote on.
+        { category: EMERGENCY_CATEGORY }
+      ))
     );
     settled.forEach((outcome, i) => {
       const c = withEmail[i];

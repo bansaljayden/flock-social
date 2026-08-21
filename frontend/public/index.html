@@ -219,6 +219,15 @@
            the paywall is ever switched on, this block, the og:description
            above and the landing page pricing section change together.
          - featureList entries must each be a feature that ships today.
+         - NO legalName. It said "Flock Corp" until 2026-08-21. `legalName` is
+           schema.org's field for the registered name of an organisation, and
+           nothing in this repository records a registration, a state of
+           incorporation or a registered agent behind that string. Asserting it
+           in JSON-LD hands search engines and answer engines a machine-readable
+           claim that a company exists, which is a different act from printing
+           the name on a page. The pages keep printing it (PrivacyPolicy.js
+           OPERATOR says why). This block does not assert it. Add it back in the
+           same change that records the real entity.
          ═══════════════════════════════════════════════════════════════════ -->
     <script type="application/ld+json">
     {
@@ -228,7 +237,6 @@
           "@type": "Organization",
           "@id": "https://www.flockcorp.com/#organization",
           "name": "Flock",
-          "legalName": "Flock Corp",
           "url": "https://www.flockcorp.com/",
           "email": "social@flockcorp.com",
           "description": "Flock makes a free group planning app that turns a group chat into an actual plan.",
