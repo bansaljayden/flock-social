@@ -617,7 +617,9 @@ function outputShareOf(promptTokens, maxOutputTokens) {
  * @param {number} counts.advisorPromptTokens    the phrasing system prompt, in tokens
  * @param {number} counts.advisorMaxOutputTokens the phrasing maxOutputTokens
  * @param {number} counts.placesCallsToday       placesBudgetStatus().globalUsed
- * @param {number} counts.placesPhotoCallsToday  the photo proxy's own day counter
+ * @param {number} counts.placesPhotoCallsToday  places_photo_spend, today
+ * @param {number} counts.placesPhotoCallsMonth  places_photo_spend, this month
+ * @param {object} counts.placesPhotoBudget      photoSpendStatus().limits, or null
  * @param {number} counts.visionCallsToday       visionBudgetStatus().globalUsed
  * @param {number} counts.weatherCallsToday      weatherBudgetStatus().dailyUsed
  * @param {number} counts.ticketmasterCallsToday routes/events.js day ledger
@@ -691,17 +693,46 @@ function buildObserved(counts = {}) {
   {
     const total = num(c.placesCallsToday);
     const photos = num(c.placesPhotoCallsToday);
+    const photosMonth = num(c.placesPhotoCallsMonth);
+    const photoBudget = c.placesPhotoBudget || null;
     const other = total === null ? null : Math.max(0, total - (photos || 0));
     const sk = RATES.places.skus;
     lines.push({
       id: 'places-photos',
       label: 'Place Details Photos',
-      unit: 'calls today',
+      unit: 'photos bought today',
       count: photos,
+      // The free tier is a MONTHLY allowance, so a day cannot say how much of it
+      // is left. Today's line is priced gross and the month's line below is the
+      // one that applies the free tier, rather than both guessing.
       usd: photos === null ? null : round(priceCalls(photos, sk.photos.perThousand), 4),
-      window: 'today, this process only',
-      durable: false,
-      note: 'Before the 1,000 free photo requests a month. Historically this is where nearly the whole Google bill goes.',
+      window: 'today',
+      durable: true,
+      note: photoBudget
+        ? `From places_photo_spend, so it survives deploys and is shared across instances. Counts photos BOUGHT from Google; cache hits are free and never counted. Priced gross here: the free tier is monthly and is applied on the month line. Daily brake ${photoBudget.burstPerDay}.`
+        : 'From places_photo_spend, so it survives deploys. Counts photos BOUGHT from Google; cache hits are free and never counted.',
+    });
+    // The line that is actually denominated in the budget Jayden set. Google
+    // bills Place Photos per calendar month with the first 1,000 free, so the
+    // month is the period the money question is asked in, and the free tier is
+    // subtracted here rather than pretended away.
+    lines.push({
+      id: 'places-photos-month',
+      label: 'Place Details Photos, month to date',
+      unit: 'photos bought this month',
+      count: photosMonth,
+      usd: photosMonth === null
+        ? null
+        : round(
+          priceCallsAfterFree(photosMonth, sk.photos.perThousand, sk.photos.freePerMonth),
+          4
+        ),
+      window: 'month to date',
+      durable: true,
+      budget: photoBudget,
+      note: photoBudget
+        ? `After the ${sk.photos.freePerMonth} free photo requests a month. The ceiling is ${photoBudget.fetchesPerMonth} photos a month, which is the $${photoBudget.budgetUsdPerYear} a year budget in services/photoStore.js. Reaching it does not blank photos that are already cached; it stops NEW venues being bought until the 1st, and it means the budget wants raising.`
+        : `After the ${sk.photos.freePerMonth} free photo requests a month.`,
     });
     lines.push({
       id: 'places-other',

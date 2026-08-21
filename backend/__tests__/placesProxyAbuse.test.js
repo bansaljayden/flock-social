@@ -43,8 +43,29 @@ delete process.env.PAYWALL_ENABLED;
 const { placesBudgetStatus, __resetPlacesBudget } = require('../utils/placesBudget');
 
 // --- scripted pg ------------------------------------------------------------
+// The photo proxy's durable cache and its spend ledger (migration 046) are both
+// Postgres now, so a stub that answers every statement with no rows reads as
+// "the ledger refused" and the proxy correctly serves nothing. This file is
+// about ABUSE rather than about the store, so the store is scripted to the two
+// answers that keep the proxy on the path these tests are written about: the
+// durable cache is always EMPTY, so every request is a real miss and the
+// expensive case is the one under test, and the ledger always has room.
 const pool = require('../config/database');
-pool.query = () => Promise.resolve({ rows: [], rowCount: 0 });
+let photoLedgerFetches = 0;
+pool.query = (text) => {
+  const sql = String(text && text.text ? text.text : text);
+  if (/FROM places_photo_cache/i.test(sql)) return Promise.resolve({ rows: [], rowCount: 0 });
+  if (/INTO places_photo_cache/i.test(sql)) return Promise.resolve({ rows: [], rowCount: 1 });
+  if (/INTO places_photo_spend/i.test(sql)) {
+    return Promise.resolve({ rows: [{ fetches: ++photoLedgerFetches }], rowCount: 1 });
+  }
+  if (/FROM places_photo_spend/i.test(sql)) {
+    return Promise.resolve({
+      rows: [{ month_used: photoLedgerFetches, day_used: photoLedgerFetches }], rowCount: 1,
+    });
+  }
+  return Promise.resolve({ rows: [], rowCount: 0 });
+};
 
 // --- stubbed collaborators (destructured at load, so patch before require) ---
 const authMod = require('../middleware/auth');
@@ -136,6 +157,8 @@ test.beforeEach(() => {
   googleImpl = null;
   holdUpstream = null;
   venueSearchRouter.__test?.resetPhotoBudget?.();
+  venueSearchRouter.__test?.clearPhotoCache?.();
+  photoLedgerFetches = 0;
 });
 
 async function get(pathname) {
@@ -451,27 +474,26 @@ test('flooding the per-IP photo table cannot reset an exhausted counter', () => 
   assert.ok(t && t.allowPhotoFetch, 'venueSearch must export its photo gate for this pin');
   t.resetPhotoBudget();
 
+  const perIp = t.PHOTO_MISS_PER_IP_HOURLY;
+  assert.ok(Number.isInteger(perIp) && perIp > 0, 'the per-address miss rate must be a real number');
+
   // Spend the attacker's whole hourly allowance.
-  for (let i = 0; i < 300; i++) {
+  for (let i = 0; i < perIp; i++) {
     assert.strictEqual(t.allowPhotoFetch({ ip: 'attacker' }), true, `hit ${i} refused early`);
   }
   assert.strictEqual(t.allowPhotoFetch({ ip: 'attacker' }), false);
 
-  // Flood the table past its ceiling with fresh addresses. The daily photo
-  // budget refuses along the way; rolling the day (what a UTC midnight does —
-  // the IP table survives it) lets the flood continue, exactly as a multi-day
-  // accumulation would.
-  let n = 0;
-  let guard = 0;
-  while (n < 5200) {
-    if (++guard > 20000) throw new Error('flood loop stuck');
-    if (t.allowPhotoFetch({ ip: `flood-${n}` })) n++;
-    else t.resetPhotoBudget({ clearIps: false });
+  // Flood the table past its ceiling with fresh addresses. This gate has no day
+  // counter of its own any more, because the money ceiling moved to Postgres, so the
+  // flood runs straight through, which is the harder version of this test: the
+  // eviction is the ONLY thing standing between the flooder and a reset
+  // counter.
+  for (let n = 0; n < 5200; n++) {
+    assert.strictEqual(t.allowPhotoFetch({ ip: `flood-${n}` }), true, `flood ${n} refused`);
   }
 
-  // Fresh day, so the only thing that can refuse the attacker now is their own
-  // per-IP history — which a wholesale clear() would have wiped.
-  t.resetPhotoBudget({ clearIps: false });
+  // The only thing that can refuse the attacker now is their own per-IP
+  // history, which a wholesale clear() would have wiped.
   assert.strictEqual(t.allowPhotoFetch({ ip: 'attacker' }), false,
     'a flood of fresh addresses handed every throttled address a new allowance');
 });

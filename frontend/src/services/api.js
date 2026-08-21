@@ -1062,6 +1062,13 @@ export async function getVenueDetails(placeId) {
   if (data.venue && data.venue.photos) {
     data.venue.photos = data.venue.photos.map(url => resolvePhotoUrl(url));
   }
+  // photo_url as well as photos. searchVenues resolves this key and this one
+  // did not, so a venue opened from its detail sheet was the one surface in the
+  // app holding a RELATIVE proxy path, which renders as a broken image against
+  // the web origin rather than the API origin.
+  if (data.venue && data.venue.photo_url) {
+    data.venue.photo_url = resolvePhotoUrl(data.venue.photo_url);
+  }
   return data;
 }
 

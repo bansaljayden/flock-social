@@ -11,9 +11,10 @@ const { isPlaceIdShaped } = require('../utils/places');
 // crowd.js and ai.js so every paid Places fetch draws from the SAME pool
 // (round 8). allowGlobalPlacesCall is the door for surfaces with no
 // authenticated user to charge — here, the public photo proxy (round 15).
-// PER_USER_HOURLY and GLOBAL_DAILY are imported, not retyped: two numbers in
-// this file are sized AGAINST them (VENUE_CACHE_MAX and PUBLIC_PHOTO_BUDGET)
-// and a copied constant is an inequality that silently stops holding.
+// PER_USER_HOURLY and GLOBAL_DAILY are imported, not retyped: VENUE_CACHE_MAX
+// is sized AGAINST them and a copied constant is an inequality that silently
+// stops holding. The photo proxy's own sub-ceiling no longer lives in this file
+// at all: it is a dollar budget in services/photoStore.js, kept in Postgres.
 const {
   allowPlacesSearch, allowGlobalPlacesCall, PER_USER_HOURLY, GLOBAL_DAILY,
 } = require('../utils/placesBudget');
@@ -26,45 +27,64 @@ const {
 const {
   willCostUpstreamCall, fetchPlaceDetails,
 } = require('../services/placeDetailsCache');
+// The photo cache and the photo money, both durable, both in Postgres. Read the
+// header of that file before changing any number here: it carries the annual
+// dollar budget every photo limit is derived from, and the quoted Google terms
+// the TTL is chosen against.
+const {
+  PHOTO_CACHE_TTL_MS, photoCacheKey, readStoredPhoto, writeStoredPhoto,
+  chargePhotoFetch, photoSpendStatus,
+  PHOTO_FETCH_BUDGET_MONTH, PHOTO_FETCH_BURST_PER_DAY, PHOTO_BUDGET_USD_PER_YEAR,
+} = require('../services/photoStore');
 
 const router = express.Router();
 
 const API_KEY = process.env.GOOGLE_PLACES_API_KEY;
 
-// Upstream budget for the UNAUTHENTICATED photo proxy: cache misses cost a
-// Google call, so one client cannot burn the quota (round 6). Cache hits are
-// free and never counted.
-const photoIpHits = new Map();
-let photoDayKey = new Date().toISOString().slice(0, 10);
-let photoDayCount = 0;
 // ---------------------------------------------------------------------------
-// PUBLIC_PHOTO_BUDGET, and why 4000 was not a ceiling (round 23).
+// The two limits on the UNAUTHENTICATED photo proxy, and which job each one has.
 // ---------------------------------------------------------------------------
-// This was 4000 against a GLOBAL_DAILY of 3000. A sub-ceiling ABOVE the ceiling
-// it sits under never binds: the effective limit on this unauthenticated door
-// was the whole shared Places day, so 10 addresses at the 300/hour per-IP rate
-// could spend every paid Google call the authenticated product had for the rest
-// of the UTC day, in about an hour. The per-IP dimension existed; the thing it
-// was supposed to be a fraction OF did not.
+// These used to be one thing wearing two hats: a per-IP hourly rate AND a
+// PUBLIC_PHOTO_BUDGET of 1,500 fetches a day, both in this process's memory,
+// both destroyed by every deploy. The day counter was doing the money job
+// badly. 1,500 a day is 45,656 a month, which is $311 a month or $3,738 a
+// year at $7.00 per 1,000, more than twelve times what Jayden has agreed to
+// spend, and it was doing it in the one place a limit must never be reached,
+// because reaching it means a real person sees a venue card with no picture on
+// it.
 //
-// THE PIN: PUBLIC_PHOTO_BUDGET (1500) < GLOBAL_DAILY (3000). Half the day, so
-// the photo proxy can never starve venue search, the crowd card, the owner
-// dashboard or Birdie — the four surfaces that charge the same ledger with a
-// real user behind them. Pinned by __tests__/placesProxyAbuse.test.js against
-// both files' real numbers.
-const PUBLIC_PHOTO_BUDGET = 1500;
+// SPLIT, so each limit answers one question:
+//
+//   THE MONEY QUESTION is services/photoStore.js chargePhotoFetch(). It is a
+//   real count of billable Google fetches in Postgres, derived from one annual
+//   dollar figure, and it survives deploys and is shared across instances. It
+//   is a ceiling on the INVOICE.
+//
+//   THE ABUSE QUESTION is allowPhotoFetch() below. It is a per-address rate on
+//   cache MISSES only, and it exists so that one script cannot spend a shared
+//   budget that everybody else is drawing on. It is not a ceiling on anything
+//   in dollars.
+//
+// Cache hits, in memory or from places_photo_cache, pass BOTH without being
+// counted by either, which is the property that makes "photos always show" and
+// "the bill stays near zero" the same design instead of opposite ones.
+const photoIpHits = new Map();
+// 300/hour per address was sized against a 1,500/day pool. Against a monthly
+// budget of PHOTO_FETCH_BUDGET_MONTH it was absurd: a single address could
+// spend the whole month in about sixteen hours. 100 misses an hour is far more
+// than any real session needs. A person opening the app sees a few dozen
+// venue cards, and on every subsequent load those are hits, which are free and
+// uncounted. It makes a single address a rounding error against the day's
+// brake rather than a threat to it.
+const PHOTO_MISS_PER_IP_HOURLY = 100;
 function allowPhotoFetch(req) {
-  const today = new Date().toISOString().slice(0, 10);
-  if (today !== photoDayKey) { photoDayKey = today; photoDayCount = 0; }
-  if (photoDayCount >= PUBLIC_PHOTO_BUDGET) return false;
   const now = Date.now();
   const ip = req.ip || 'unknown';
   const hits = (photoIpHits.get(ip) || []).filter((t) => now - t < 3600_000);
-  if (hits.length >= 300) return false;
+  if (hits.length >= PHOTO_MISS_PER_IP_HOURLY) return false;
   hits.push(now);
   photoIpHits.set(ip, hits);
   if (photoIpHits.size > 5000) prunePhotoIpHits(now, ip);
-  photoDayCount++;
   return true;
 }
 
@@ -94,27 +114,31 @@ function prunePhotoIpHits(now, keepIp) {
 }
 
 // ---------------------------------------------------------------------------
-// The photo cache, and the hour that was costing most of the invoice (round 26).
+// The photo cache, and the restart that was costing most of the invoice.
 // ---------------------------------------------------------------------------
-// Places photos are the largest single line in this project's real spend. This
-// cache is the only thing standing between a venue card and a billed Google
-// call, and it held each photo for ONE HOUR: so a venue that stays on screen
-// across a day was re-bought roughly 24 times, for bytes that had not changed.
+// Places photos are the largest single line in this project's real spend, and
+// this cache is the only thing standing between a venue card and a billed
+// Google call. It held each photo for ONE HOUR, then for seven days, and the
+// TTL was never the binding problem: the map below lives in this container's
+// heap, so EVERY DEPLOY threw the whole thing away and re-bought every photo in
+// it. On 2026-08-19 this service deployed roughly fifteen times in one night.
+// The daily cap looked like it was defending the budget; what it was actually
+// metering was the same handful of venues being purchased over and over, and
+// when it bound, a real person saw a venue card with no picture on it.
 //
-// They cannot change. A photo resource name (`places/{p}/photos/{q}`) is a
-// handle for one specific immutable photo; Google mints a new name when the
-// photo changes rather than swapping the bytes behind an old one. An hour was
-// never a freshness decision about the IMAGE, it was a default nobody costed.
-// What we cache is the BYTES, not the short-lived signed `photoUri` the metadata
-// call returns, so the entry does not go stale when that URL expires either.
+// So the map is now an L1 in front of a durable L2 in Postgres
+// (services/photoStore.js, migration 046). A deploy still empties L1 and now
+// costs nothing: the first request after it reads the bytes back out of the
+// database instead of out of Google.
 //
-// SEVEN DAYS, AND WHY NOT LONGER. The Google Maps Platform terms permit
-// temporarily caching Places content for up to 30 days (place IDs are the
-// exemption, and are cached separately). Seven days sits comfortably inside
-// that with room for the ceiling to be raised later without anyone having to
-// re-read the terms, and captures essentially the whole benefit: a venue seen
-// twice in a week is bought once.
-const PHOTO_CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days
+// THE BYTES CANNOT GO STALE. A photo resource name (`places/{p}/photos/{q}`) is
+// a handle for one specific immutable photo; Google mints a new name when the
+// photo changes rather than swapping the bytes behind an old one. And what is
+// cached is the BYTES, not the short-lived signed `photoUri` the metadata call
+// returns, so an entry does not rot when that URL expires either. The TTL is
+// therefore a TERMS decision and not a freshness one, which is why it lives in
+// photoStore.js next to the clauses it was chosen against.
+const PHOTO_CACHE_TTL = PHOTO_CACHE_TTL_MS;
 // ---------------------------------------------------------------------------
 // The cap is in BYTES now, because the entry count never bounded anything.
 // ---------------------------------------------------------------------------
@@ -241,9 +265,14 @@ router.get('/photo',
       // cards, 160 covers pins/thumbnails.
       const requested = parseInt(req.query.maxwidth) || 400;
       const maxWidth = requested <= 200 ? 160 : 400;
-      const cacheKey = `${photoRef}|${maxWidth}`;
+      // A HASH, not the name. Google's Place Photos reference says in terms
+      // "You cannot cache a photo name", and this key is written to a database
+      // row, so it must not BE the name. It is also the L1 key, so one photo
+      // has one identity in both tiers.
+      const cacheKey = photoCacheKey(photoRef, maxWidth);
 
-      // Check cache first
+      // L1, this container's memory. Free, and the only tier that costs nothing
+      // at all to consult.
       const cached = photoCache.get(cacheKey);
       if (cached && Date.now() - cached.ts < PHOTO_CACHE_TTL) {
         // A hit is what makes this entry recently used; without the re-insert
@@ -252,26 +281,16 @@ router.get('/photo',
         return sendPhoto(res, cached);
       }
 
-      // A concurrent request for the SAME uncached photo rides the existing
-      // flight like a cache hit: no per-IP charge, no ledger charge — one
-      // Google call is one unit however many viewers share its answer.
+      // Everything past L1 rides ONE flight per key: the L2 database read, the
+      // gates, and the Google call. A concurrent request for the same photo
+      // therefore shares the answer without a second database round trip and
+      // without a second charge: one purchase is one purchase however many
+      // viewers are waiting on it. The gates moved INSIDE the flight when L2
+      // arrived, because a photo already in Postgres must not be refused by a
+      // spending limit: it costs nothing to serve.
       let flight = photoInflight.get(cacheKey);
       if (!flight) {
-        if (!allowPhotoFetch(req)) {
-          return res.status(429).json({ error: 'Too many photo requests right now' });
-        }
-        // allowPhotoFetch is a per-IP request limit with its own separate 4000/day
-        // counter, which is not the same thing as the shared Places ledger: this
-        // proxy is unauthenticated and its first leg (the /media metadata call) is
-        // a PAID Places request, so its spend never reached the "global" daily
-        // ceiling. Charged before the fetch. Cost 1: only the metadata leg is
-        // believed to be metered — the second leg pulls bytes from Google's CDN
-        // with the returned photoUri. If an invoice ever shows that leg billed
-        // too, this is a 2 (see the note in utils/upstream.js).
-        if (!allowGlobalPlacesCall(1)) {
-          return res.status(429).json({ error: 'Too many photo requests right now' });
-        }
-        flight = fetchPhotoOnce(photoRef, maxWidth, cacheKey);
+        flight = fetchPhotoOnce(photoRef, maxWidth, cacheKey, req);
         photoInflight.set(cacheKey, flight);
         flight.then(() => photoInflight.delete(cacheKey));
       }
@@ -313,7 +332,15 @@ function photoContentType(raw) {
 function sendPhoto(res, { buffer, contentType }) {
   res.set('Content-Type', photoContentType(contentType));
   res.set('X-Content-Type-Options', 'nosniff');
-  res.set('Cache-Control', 'public, max-age=86400');
+  // Matched to PHOTO_CACHE_TTL, from the same constant, and marked immutable.
+  // This was a flat 86400 against a server cache that was then seven days, so
+  // the browser came back for bytes we already had, twenty-nine times out of
+  // thirty. `immutable` is honest here rather than optimistic: the URL carries
+  // a photo RESOURCE NAME, which Google mints anew when a venue's photo changes
+  // rather than swapping the bytes behind an existing one, so a given URL can
+  // only ever mean one image. Every second a client holds a photo is a second
+  // it cannot ask us for one, which is the cheapest tier of all.
+  res.set('Cache-Control', `public, max-age=${Math.floor(PHOTO_CACHE_TTL / 1000)}, immutable`);
   res.set('Cross-Origin-Resource-Policy', 'cross-origin');
   res.send(buffer);
 }
@@ -322,8 +349,46 @@ function sendPhoto(res, { buffer, contentType }) {
 // { status: 200, buffer, contentType } or { status, error }, so a failure
 // reaches every coalesced waiter as the same clean response and is never
 // written to photoCache — only a real image is.
-async function fetchPhotoOnce(photoRef, maxWidth, cacheKey) {
+async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req) {
   try {
+    // Step 0: L2, the durable cache in Postgres. This is the tier that makes a
+    // deploy free. It is consulted BEFORE any gate, because serving bytes we
+    // already own costs nothing and no limit in this file is entitled to refuse
+    // it. Its miss path, not its hit path, is what the gates below are for.
+    const stored = await readStoredPhoto(cacheKey);
+    if (stored) {
+      storePhoto(cacheKey, stored);
+      return { status: 200, buffer: stored.buffer, contentType: stored.contentType };
+    }
+
+    // Step 0a: the abuse gate. Per address, on MISSES only, so one script cannot
+    // spend a budget everyone draws on. Nothing about money is decided here.
+    if (!allowPhotoFetch(req)) {
+      return { status: 429, error: 'Too many photo requests right now' };
+    }
+
+    // Step 0b: the shared paid-Places ledger. This proxy is unauthenticated and
+    // its first leg (the /media metadata call) is a PAID Places request, so its
+    // spend has to reach the same ceiling every other paid Google surface does.
+    // Cost 1: only the metadata leg is believed to be metered. The second leg
+    // pulls bytes from Google's CDN with the returned photoUri. If an invoice
+    // ever shows that leg billed too, this is a 2 (see utils/upstream.js).
+    if (!allowGlobalPlacesCall(1)) {
+      return { status: 429, error: 'Too many photo requests right now' };
+    }
+
+    // Step 0c: the money. A real count of billable Google fetches, in Postgres,
+    // derived from one annual dollar figure and surviving deploys and instances.
+    // Charged BEFORE the fetch because Google bills a request it received even
+    // when we abort it on a timeout. This is the ONE limit in this path that is
+    // denominated in dollars; if it refuses, every photo already bought keeps
+    // serving from the two tiers above and only a venue nobody has looked at
+    // yet comes up empty.
+    const charge = await chargePhotoFetch();
+    if (!charge.allowed) {
+      return { status: 429, error: 'Too many photo requests right now' };
+    }
+
     // Step 1: ask Google for the actual CDN url (JSON response)
     const metaUrl = `https://places.googleapis.com/v1/${photoRef}/media?maxWidthPx=${maxWidth}&key=${API_KEY}&skipHttpRedirect=true`;
     // Round 12: both legs of the photo proxy are outbound calls with no
@@ -350,9 +415,14 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey) {
     const buffer = Buffer.from(await imgRes.arrayBuffer());
     const contentType = imgRes.headers.get('content-type') || 'image/jpeg';
 
-    // Store in cache. Eviction is byte-budgeted and least-recently-used; see
-    // MAX_PHOTO_CACHE_BYTES above.
+    // Store in BOTH tiers. L1 is byte-budgeted and least-recently-used (see
+    // MAX_PHOTO_CACHE_BYTES above); L2 is what makes the purchase outlive this
+    // container. The L2 write is deliberately not awaited: the bytes are already
+    // the caller's answer, and a failed write costs a future re-fetch rather
+    // than this request. photoStore logs its own failures and never rejects, so
+    // there is no unhandled rejection to leak here.
     storePhoto(cacheKey, { buffer, contentType, ts: Date.now() });
+    if (buffer.length <= MAX_SINGLE_PHOTO_BYTES) writeStoredPhoto(cacheKey, { buffer, contentType });
 
     return { status: 200, buffer, contentType };
   } catch (err) {
@@ -755,6 +825,14 @@ function shapeDetails(out) {
         user_ratings_total: p.userRatingCount || 0,
         price_level: priceLevelToNum(p.priceLevel),
         photos,
+        // The SAME key the search results and the map pins carry. Without it,
+        // frontend/src/App.js openVenueDetail() replaced the seed object it was
+        // handed (which had a working photo_url) with this one (which did not),
+        // so opening the detail sheet on a venue whose Place Details response
+        // happens to omit photos turned a card that WAS showing a picture into
+        // one showing a map-pin glyph. photos[0] is that same picture; the key
+        // was the only thing missing.
+        photo_url: photos[0] || null,
         opening_hours: p.currentOpeningHours || null,
         types: p.types || [],
         location: p.location || null,
@@ -770,16 +848,16 @@ function shapeDetails(out) {
 
 module.exports = router;
 
-// Tests only (backend/__tests__/placesProxyAbuse.test.js). resetPhotoBudget
-// with { clearIps: false } rolls only the day counter — what a real UTC
-// midnight does; the per-IP table survives it, which is why the flood pin can
-// exist at all. Production code must never reset a spending counter.
+// Tests only (backend/__tests__/placesProxyAbuse.test.js). The photo DAY
+// counter this used to reset no longer exists in this file: the money ledger is
+// in Postgres now (services/photoStore.js), so resetPhotoBudget only clears the
+// per-IP abuse table. Production code must never reset a spending counter.
 module.exports.__test = {
   // Round 23 — the two sized-against-something numbers and the constants they
   // are sized against, so the inequalities are pinned from one source.
   VENUE_CACHE_MAX,
   VENUE_CACHE_LOW_WATER,
-  PUBLIC_PHOTO_BUDGET,
+  PHOTO_MISS_PER_IP_HOURLY,
   PER_USER_HOURLY,
   GLOBAL_DAILY,
   CACHE_TTL,
@@ -802,29 +880,34 @@ module.exports.__test = {
   getPhotoCached: (k) => photoCache.get(k),
   clearPhotoCache: () => { photoCache.clear(); photoCacheBytes = 0; },
   resetPhotoBudget({ clearIps = true } = {}) {
-    photoDayKey = new Date().toISOString().slice(0, 10);
-    photoDayCount = 0;
     if (clearIps) photoIpHits.clear();
   },
+  photoCacheKey,
+  fetchPhotoOnce,
 };
 
-// Non-consuming read of the photo proxy's own day counter, for the admin cost
-// panel (services/costModel.js). This is the ONE place in the repo that can
-// tell a Place Photos request apart from a Text Search or a Place Details
-// request: the shared ledger in utils/placesBudget.js counts calls without
-// recording which SKU each one was, and Google prices Photos at $7 per 1,000
-// against $20 and $35 for the other two. Without this split the panel could
-// only ever quote a band four times as wide as the real number.
+// Non-consuming read of the photo proxy's own spend, for the admin cost panel
+// (routes/admin.js, priced by services/costModel.js). This is the ONE meter in
+// the repo that can tell a Place Photos request apart from a Text Search or a
+// Place Details request: the shared ledger in utils/placesBudget.js counts calls
+// without recording which SKU each one was, and Google prices Photos at $7 per
+// 1,000 against $20 and $35 for the other two. Without this split the panel
+// could only ever quote a band four times as wide as the real number.
 //
-// TWO CAVEATS THE PANEL REPEATS. It lives in this container's memory, so it
-// reads zero after every deploy and divides by the instance count. And
-// allowPhotoFetch charges this counter BEFORE allowGlobalPlacesCall gets its
-// say, so a request refused by the shared ledger still counted here: this
-// number can exceed the photo calls actually made, never undershoot them.
-module.exports.photoProxyStatus = () => ({
-  day: photoDayKey,
-  used: photoDayCount,
-  remaining: Math.max(0, PUBLIC_PHOTO_BUDGET - photoDayCount),
-  limits: { dailyPublic: PUBLIC_PHOTO_BUDGET },
-  inMemory: true,
-});
+// THE CAVEAT THAT USED TO SIT HERE IS GONE, which is the point of the change.
+// This number came out of a module-scope integer, so it read zero after every
+// deploy and divided by the instance count, so the panel reported a fraction
+// of the photo spend on exactly the days there was most of it. It now comes from
+// places_photo_spend, so it is one shared count that survives restarts and is
+// what the invoice will say.
+//
+// One direction of error remains and it is the safe one: allowGlobalPlacesCall
+// is charged just before chargePhotoFetch, so a photo refused by the durable
+// budget has still spent a unit of the shared Places day. That makes the SHARED
+// ledger able to overcount photos, never this one.
+module.exports.photoProxyStatus = () => photoSpendStatus();
+module.exports.photoBudgetLimits = {
+  budgetUsdPerYear: PHOTO_BUDGET_USD_PER_YEAR,
+  fetchesPerMonth: PHOTO_FETCH_BUDGET_MONTH,
+  burstPerDay: PHOTO_FETCH_BURST_PER_DAY,
+};

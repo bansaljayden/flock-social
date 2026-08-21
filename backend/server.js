@@ -1484,6 +1484,8 @@ let nightContextInterval = null;
 let nightContextKickoff = null;
 let venueDigestInterval = null;
 let venueDigestKickoff = null;
+let photoPruneInterval = null;
+let photoPruneKickoff = null;
 
 async function boot() {
   try {
@@ -1533,6 +1535,17 @@ async function boot() {
   venueDigestInterval = setInterval(digestSweep, 60 * 60 * 1000);
   // Staggered behind the other two kickoffs for the same pool-contention reason.
   venueDigestKickoff = setTimeout(digestSweep, 60 * 1000);
+
+  // Expire cached Places photos. This is a TERMS obligation and not
+  // housekeeping: caching Places content is permitted only temporarily, so a
+  // row past PHOTO_CACHE_TTL_MS has to leave the disk whether or not anything
+  // is short of space. The read path already treats an expired row as a miss;
+  // this is what makes the deletion real. Hourly, because the window is 30 days
+  // and the only cost of being an hour late is an hour.
+  const { prunePhotoStore } = require('./services/photoStore');
+  const photoPrune = () => prunePhotoStore().catch((e) => console.error('[photoStore] prune failed:', e.message));
+  photoPruneInterval = setInterval(photoPrune, 60 * 60 * 1000);
+  photoPruneKickoff = setTimeout(photoPrune, 75 * 1000);
 }
 
 // ---------------------------------------------------------------------------
@@ -1577,6 +1590,8 @@ function shutdown(signal) {
   if (nightContextKickoff) clearTimeout(nightContextKickoff);
   if (venueDigestInterval) clearInterval(venueDigestInterval);
   if (venueDigestKickoff) clearTimeout(venueDigestKickoff);
+  if (photoPruneInterval) clearInterval(photoPruneInterval);
+  if (photoPruneKickoff) clearTimeout(photoPruneKickoff);
 
   // Disconnect socket clients FIRST: a live WebSocket is an open connection
   // and server.close() waits on open connections indefinitely. Clients

@@ -393,20 +393,36 @@ const INVENTORY = [
     key: 'req.ip',
     callerControls: 'nothing but the source address',
     protects: 'paid Places /media calls on the UNAUTHENTICATED photo proxy',
-    denominator: 'requests per IP per hour (300), under a 1500/day photo leg',
+    denominator: 'cache MISSES per IP per hour (100), under a derived daily brake',
     bound: '5k entries, expire-then-least-consumed-first',
     verdict: 'SAFE',
-    why: 'Least-consumed eviction; a flood self-evicts before any real counter. Round 23 fixed the number BEHIND it: PUBLIC_PHOTO_BUDGET was 4000 against a GLOBAL_DAILY of 3000, and a sub-ceiling above the ceiling it sits under never binds — 10 addresses at 300/hr could spend the entire shared Places day in about an hour. Now 1500, pinned by a test as PUBLIC_PHOTO_BUDGET < UNAUTH_DAILY(1800) rather than merely under GLOBAL_DAILY(3000): round 5 (M5-1) made the aggregate unauthenticated ceiling the real control, and 1800 was chosen to keep exactly this sub-ceiling strictly binding under it.',
+    why: 'Least-consumed eviction; a flood self-evicts before any real counter. THIS ROW NO LONGER CARRIES THE MONEY. It used to be half of a control that was also trying to be a budget: 300 requests/IP/hour under a PUBLIC_PHOTO_BUDGET of 1500/day, both in heap. 1500 a day is 45,656 a month, which is $311 a month at $7.00 per 1,000, and both counters were destroyed by every deploy, so the day ceiling was reached by re-buying the SAME photos after a restart rather than by real demand, and when it bound, a real person saw a venue card with no picture. The invoice ceiling moved to services/photoStore.js: a real count of billable fetches in Postgres, derived from ONE annual dollar figure, surviving deploys and shared across instances. What is left here is purely an abuse rate, on cache MISSES only, tightened from 300 to 100 because it now sits under a few hundred fetches a day rather than 1500.',
   },
   {
     file: 'routes/venueSearch.js', name: 'photoCache', kind: 'cache',
-    key: '`${photoRef}|${maxWidth}`',
-    callerControls: 'photoRef, but structurally bounded by PHOTO_REF_RE; maxWidth is snapped to exactly two values',
+    key: 'sha256(`${photoRef}|${maxWidth}`)',
+    callerControls: 'photoRef, but structurally bounded by PHOTO_REF_RE; maxWidth is snapped to exactly two values; the key is then hashed, so it is 64 bytes whatever arrives',
     protects: 'paid Google metadata call + CDN bytes, and HEAP (it stores raw image buffers)',
-    denominator: 'cached BYTES, 7d TTL, only status-200 responses cached',
+    denominator: 'cached BYTES, 30d TTL, only status-200 responses cached',
     bound: '32MB total, 2MB per entry, expire-then-least-recently-used to a 90% low-water mark',
     verdict: 'SAFE',
-    why: 'Round 26 applied the fix this row prescribed. The cap was 500 ENTRIES against a full image buffer apiece, so the bytes were unbounded, and single-key eviction let a churn of valid refs push hot photos out one at a time. It is now a byte budget with a per-entry ceiling, a hit re-inserts its key so eviction is least-recently-used rather than FIFO, and eviction runs to a low-water mark so a full cache does not pay the expired-entry scan on every insert. The same round fixed the COST half nobody had filed: the TTL was 1 HOUR on bytes that are immutable by construction: a photo resource name is a handle for one specific photo and Google mints a new name rather than swapping the bytes behind an old one: so a venue card on screen across a day was re-bought roughly 24 times. Seven days now, inside the 30-day Places caching allowance, pinned by __tests__/photoCacheCost.test.js.',
+    why: 'Round 26 applied the fix this row prescribed. The cap was 500 ENTRIES against a full image buffer apiece, so the bytes were unbounded, and single-key eviction let a churn of valid refs push hot photos out one at a time. It is now a byte budget with a per-entry ceiling, a hit re-inserts its key so eviction is least-recently-used rather than FIFO, and eviction runs to a low-water mark so a full cache does not pay the expired-entry scan on every insert. The same round fixed the COST half nobody had filed: the TTL was 1 HOUR on bytes that are immutable by construction: a photo resource name is a handle for one specific photo and Google mints a new name rather than swapping the bytes behind an old one: so a venue card on screen across a day was re-bought roughly 24 times. AND THE LARGER HALF NEITHER ROUND CAUGHT: this map is HEAP, so every Railway deploy threw the whole cache away and re-bought all of it (fifteen deploys in one night on 2026-08-19), which is what was actually reaching the daily cap. It is now L1 in front of a durable L2 in Postgres (services/photoStore.js, migration 046), so a deploy costs nothing. TTL is 30 consecutive calendar days: the Places terms grant that window to latitude and longitude specifically (Maps Service Specific Terms 14.3) and grant photo bytes no caching window at all, so 30 days is the longest window the Places section names for anything rather than an allowance anyone has for this. The clauses are quoted in the photoStore.js header. The key is hashed because the Place Photos reference says a photo NAME cannot be cached. Pinned by __tests__/photoCacheCost.test.js.',
+  },
+  // ── services/photoStore.js ────────────────────────────────────────────────
+  // The durable half of the photo proxy. The CACHE and the LEDGER are Postgres
+  // tables (migration 046) and so are deliberately absent from this file, which
+  // sweeps module-scope heap structures; the only heap thing here is a log
+  // throttle, and it is in the inventory because it is keyed and unbounded-
+  // looking, not because it protects money.
+  {
+    file: 'services/photoStore.js', name: 'lastLoggedAt', kind: 'counter',
+    key: "a fixed reason string: 'day-80' | 'day-burst' | 'month-budget'",
+    callerControls: 'nothing at all',
+    protects: 'the log, not a resource: it keeps a budget refusal to one line an hour instead of one line per refused photo for the rest of the day',
+    denominator: 'wall-clock hours per reason',
+    bound: 'three keys, by construction',
+    verdict: 'SAFE',
+    why: 'The key space is a closed set of literals written in this file. No caller input reaches it, so it cannot grow, and nothing is refused on the strength of it, because throttling the log never throttles a request. It is listed because a keyed Map that protects an operator signal is exactly the kind of thing the four audit rounds found unlisted, and because the signal itself matters: a budget that is being reached is information Jayden needs to act on, so the throttle exists to keep that line readable rather than to hide it.',
   },
   {
     file: 'routes/venueSearch.js', name: 'inflight', kind: 'inflight',
@@ -420,9 +436,9 @@ const INVENTORY = [
   },
   {
     file: 'routes/venueSearch.js', name: 'photoInflight', kind: 'inflight',
-    key: 'the same `${photoRef}|${maxWidth}`',
+    key: 'the same sha256(`${photoRef}|${maxWidth}`)',
     callerControls: 'same as photoCache',
-    protects: 'same',
+    protects: 'same, and now also the L2 database read: the flight wraps the Postgres lookup as well as the Google call, so N concurrent viewers of one uncached photo are one round trip',
     denominator: 'in-flight promises',
     bound: 'none, deleted on settle',
     verdict: 'SAFE',

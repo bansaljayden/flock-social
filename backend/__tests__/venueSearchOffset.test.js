@@ -43,7 +43,24 @@ const { placesBudgetStatus, __resetPlacesBudget } = require('../utils/placesBudg
 
 // --- scripted pg ------------------------------------------------------------
 const pool = require('../config/database');
-pool.query = () => Promise.resolve({ rows: [], rowCount: 0 });
+// The photo proxy's durable cache and spend ledger (migration 046) are Postgres
+// now, so a stub that answers everything with no rows reads as "the budget
+// refused" and every photo request 429s. Answered here so the photo assertions
+// below are about the SHARED Places ledger, which is what this file is for: the
+// durable cache is always empty, so every photo request is a real miss, and the
+// durable budget always has room.
+function photoStoreStub(sql) {
+  if (/DELETE FROM places_photo_cache/i.test(sql)) return { rows: [], rowCount: 0 };
+  if (/FROM places_photo_cache/i.test(sql)) return { rows: [], rowCount: 0 };
+  if (/INTO places_photo_cache/i.test(sql)) return { rows: [], rowCount: 1 };
+  if (/INTO places_photo_spend/i.test(sql)) return { rows: [{ fetches: 1 }], rowCount: 1 };
+  if (/FROM places_photo_spend/i.test(sql)) return { rows: [{ month_used: 0, day_used: 0 }], rowCount: 1 };
+  return null;
+}
+pool.query = (sql) => {
+  const stubbed = photoStoreStub(String(sql && sql.text ? sql.text : sql));
+  return Promise.resolve(stubbed || { rows: [], rowCount: 0 });
+};
 
 // --- stubbed collaborators (destructured at load, so patch before require) ---
 const weatherService = require('../services/weatherService');
