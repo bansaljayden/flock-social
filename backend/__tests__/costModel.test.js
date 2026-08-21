@@ -624,3 +624,300 @@ test('an unreachable ledger leaves that line unmeasured and still serves the pan
   assert.strictEqual(month.usd, null, 'and unpriced, not zero');
   assert.strictEqual(res.body.venues.perVenue, null);
 });
+
+// ===========================================================================
+// PART 5, the inventory, and the rule that a $0 has to say which $0 it is
+// ===========================================================================
+//
+// The blocks above answer "what does this cost". They are organised by how far
+// a number can be trusted, so a vendor that charges nothing lands in whichever
+// of them happens to mention it, and six of them landed in none: PostHog,
+// Sentry, RevenueCat, push, Google Sign-In and Sign in with Apple were all on
+// the rate card and on no screen. DEPENDENCIES answers the other question, the
+// one an owner actually asks, which is what do I depend on.
+//
+// The failure mode this part exists to prevent is a list that goes quietly
+// incomplete. A new vendor gets a rate on the card, or a new exposure gets a
+// watchlist entry, and the inventory never hears about it, so the screen whose
+// whole purpose is completeness is the last place the new dependency appears.
+// The coverage tests below make that a failing build rather than a discovery.
+
+const DEPS = cm.buildDependencies({
+  birdieModel: 'gemini-3.5-flash-lite',
+  advisorModel: 'gemini-3.7-flash',
+});
+const ALL_DEPS = DEPS.groups.flatMap((g) => g.entries);
+
+test('every dependency says what it is, where it lives and which group it is in', () => {
+  assert.ok(ALL_DEPS.length > 0);
+  const seen = new Set();
+  for (const d of ALL_DEPS) {
+    assert.strictEqual(typeof d.id, 'string', 'a dependency has no id');
+    assert.ok(!seen.has(d.id), `${d.id} appears twice`);
+    seen.add(d.id);
+    assert.ok(d.label && d.label.length > 0, `${d.id} has no label`);
+    assert.ok(d.what && d.what.length > 0, `${d.id} does not say what it is`);
+    assert.ok(d.where && d.where.length > 0, `${d.id} does not say where it lives`);
+    assert.ok(['metered', 'fixed', 'free'].includes(d.group), `${d.id} is in no group`);
+  }
+});
+
+test('a dependency that quotes a price also carries the source and the date it was checked', () => {
+  // A rate with no provenance is a number somebody made up six months ago.
+  // Same rule the rate card itself is held to further up this file.
+  for (const d of ALL_DEPS) {
+    if (!d.unitPrice && !d.freeTier) continue;
+    assert.ok(d.source, `${d.id} quotes a price with no source`);
+    assert.match(d.source, /^https:\/\//, `${d.id} source is not a url`);
+    assert.match(d.checked || '', /^\d{4}-\d{2}-\d{2}$/, `${d.id} has no checked date`);
+  }
+});
+
+test('the inventory carries join keys, never a second copy of a number', () => {
+  // Its whole defence against drift is that it owns no figures. The last time
+  // a vendor list in this repo owned its own numbers (the expense array in
+  // frontend/src/App.js) it went five vendors out of date.
+  for (const d of ALL_DEPS) {
+    for (const [k, v] of Object.entries(d)) {
+      if (k === 'unitPrice' || k === 'freeTier') continue; // formatted FROM the rate card
+      assert.ok(typeof v !== 'number', `${d.id} carries a bare number in ${k}`);
+    }
+  }
+});
+
+test('every join key points at something that exists', () => {
+  const observed = cm.buildObserved({});
+  const observedIds = new Set(observed.lines.map((l) => l.id));
+  const fixedIds = new Set(
+    [...cm.FIXED_MONTHLY, ...cm.FIXED_ANNUAL, ...cm.ONE_TIME].map((e) => e.id)
+  );
+  const watchIds = new Set(cm.WATCHLIST.map((w) => w.id));
+  for (const d of ALL_DEPS) {
+    if (d.observedLineId) {
+      assert.ok(observedIds.has(d.observedLineId), `${d.id} points at a meter line that does not exist`);
+    }
+    if (d.fixedId) {
+      assert.ok(fixedIds.has(d.fixedId), `${d.id} points at a fixed line that does not exist`);
+    }
+    if (d.watchlistId) {
+      assert.ok(watchIds.has(d.watchlistId), `${d.id} points at a watchlist entry that does not exist`);
+    }
+  }
+});
+
+test('nothing on the rate card, the fixed list or the watchlist is missing from the inventory', () => {
+  // THE COVERAGE TEST. This is the one that keeps the screen honest as the
+  // repo grows: a vendor cannot be priced, billed or watched without also being
+  // listed. Add the entry, or explain the omission here in writing.
+  const ids = new Set(ALL_DEPS.map((d) => d.id));
+  const fixedIds = [...cm.FIXED_MONTHLY, ...cm.FIXED_ANNUAL, ...cm.ONE_TIME].map((e) => e.id);
+  for (const id of fixedIds) {
+    assert.ok(
+      ALL_DEPS.some((d) => d.fixedId === id),
+      `the fixed bill ${id} is on nobody's inventory row`
+    );
+  }
+  for (const w of cm.WATCHLIST) {
+    assert.ok(
+      ALL_DEPS.some((d) => d.watchlistId === w.id),
+      `the watchlist entry ${w.id} is on nobody's inventory row`
+    );
+  }
+  // Every rate-card group is reachable from some row. `stores` is the App Store
+  // commission, which is not a vendor bill but does decide what a sale is
+  // worth, so it is carried as a free row rather than dropped.
+  const RATE_GROUP_ROW = {
+    gemini: ['gemini-birdie', 'gemini-roost'],
+    places: ['places-photos', 'places-text-search', 'places-details', 'places-nearby'],
+    vision: ['vision'],
+    weather: ['weather'],
+    ticketmaster: ['ticketmaster'],
+    resend: ['resend'],
+    maptiler: ['maptiler'],
+    posthog: ['posthog'],
+    sentry: ['sentry'],
+    revenuecat: ['revenuecat'],
+    push: ['push'],
+    stores: ['apple-commission'],
+  };
+  for (const group of Object.keys(cm.RATES)) {
+    const rows = RATE_GROUP_ROW[group];
+    assert.ok(rows, `RATES.${group} is priced and has no inventory row named for it`);
+    for (const r of rows) assert.ok(ids.has(r), `${r} is named for RATES.${group} and does not exist`);
+  }
+});
+
+test('a free row says which kind of zero it is, and an unknown row does not say zero at all', () => {
+  // "It costs nothing" is three different facts: inside a free tier, unused, or
+  // covered by a flat fee already counted elsewhere. Printing $0 without saying
+  // which one is the same confusion as printing 0 for a meter nobody read.
+  for (const d of ALL_DEPS) {
+    if (d.group === 'free' && !d.unknownCost) {
+      assert.ok(
+        d.costsNothingBecause && d.costsNothingBecause.length > 0,
+        `${d.id} costs nothing and does not say why`
+      );
+    }
+    if (d.unknownCost) {
+      assert.ok(
+        d.unknownAction && d.unknownAction.length > 0,
+        `${d.id} has an unknown cost and does not say where to go and find it`
+      );
+    }
+  }
+  // The three the panel must never round down to free. MapTiler and CARTO are
+  // usage-based map tiles that nothing in this repo counts, and the BestTime
+  // plan may still be charging for a key that is dead.
+  const unknown = new Set(DEPS.unknownCostIds);
+  for (const id of ['maptiler', 'carto', 'besttime-subscription']) {
+    assert.ok(unknown.has(id), `${id} has no defensible figure and must read as unknown`);
+  }
+});
+
+test('a dependency with no meter is named as unmeasured rather than counted as zero', () => {
+  // The photo meter lived in memory until 2026-08-20, read zero after every
+  // deploy, and under-reported the largest line on the Google bill for as long
+  // as it did that. A zero that means "no meter" and a zero that means "no
+  // spend" are different facts.
+  for (const d of ALL_DEPS) {
+    if (d.observedLineId) continue;
+    assert.ok(
+      DEPS.unmeteredIds.includes(d.id),
+      `${d.id} has no meter and is not declared unmeasured`
+    );
+  }
+  // Per-SKU Places usage is the honest example: the ledger counts calls without
+  // recording which SKU each one was, so three of the four cannot be split out.
+  for (const id of ['places-text-search', 'places-details', 'places-nearby']) {
+    const d = ALL_DEPS.find((x) => x.id === id);
+    assert.strictEqual(d.observedLineId, null);
+    assert.ok(d.usageNote && d.usageNote.length > 0, `${id} does not explain why it is unmeasured`);
+  }
+});
+
+test('environment readings report presence and never a value', () => {
+  // This payload goes over the wire to a browser. A key is a key even on an
+  // admin screen.
+  const before = process.env.TICKETMASTER_API_KEY;
+  process.env.TICKETMASTER_API_KEY = 'tm-secret-value';
+  try {
+    const d = cm.buildDependencies({}).groups
+      .flatMap((g) => g.entries)
+      .find((x) => x.id === 'ticketmaster');
+    assert.strictEqual(d.configured, true);
+    assert.strictEqual(d.configuredVia, 'TICKETMASTER_API_KEY');
+    assert.ok(!JSON.stringify(d).includes('tm-secret-value'), 'a key value reached the payload');
+  } finally {
+    if (before === undefined) delete process.env.TICKETMASTER_API_KEY;
+    else process.env.TICKETMASTER_API_KEY = before;
+  }
+  // A dependency the server cannot see reads as unknown, not as unset. The
+  // MapTiler key is a build-time frontend variable and the backend has no
+  // business claiming it is missing.
+  const mt = ALL_DEPS.find((x) => x.id === 'maptiler');
+  assert.strictEqual(mt.configured, null);
+  assert.ok(mt.configuredNote && mt.configuredNote.length > 0);
+});
+
+test('an unpriceable model reads as unpriced on the inventory too, never as free', () => {
+  const d = cm.buildDependencies({ birdieModel: 'gemini-from-the-future' }).groups
+    .flatMap((g) => g.entries)
+    .find((x) => x.id === 'gemini-birdie');
+  assert.strictEqual(d.unitPrice, null);
+  assert.strictEqual(d.unpriceable, true);
+});
+
+// ---------------------------------------------------------------------------
+// The Google-side quota caps
+// ---------------------------------------------------------------------------
+
+test('the quota caps still add up to the budget they were derived from', () => {
+  // The four per-day quotas were set on 2026-08-20 by dividing a $33/month
+  // budget across the four SKUs. If a rate moves or a quota is edited by hand
+  // that agreement breaks silently, and the panel goes on implying a cap it no
+  // longer has.
+  const q = cm.buildGoogleQuotas();
+  assert.strictEqual(q.kind, 'googleQuotas');
+  assert.ok(q.perMonthUsdAfterFree > 0);
+  assert.ok(q.perMonthUsdGross > q.perMonthUsdAfterFree, 'the free allowances did nothing');
+  assert.ok(
+    q.agreesWithBudget,
+    `the quotas price at $${q.perMonthUsdAfterFree}/month against a $${q.budget.usdPerMonth} budget`
+  );
+  for (const l of q.lines) {
+    assert.ok(cm.RATES.places.skus[l.id], `${l.id} is not a SKU on the rate card`);
+    assert.ok(l.perDay > 0);
+    assert.ok(Number.isFinite(l.perMonthUsdAfterFree));
+  }
+});
+
+test('the quota block says which daily photo limit actually refuses first', () => {
+  // Two daily limits now sit on the same SKU: this repo's own brake in
+  // services/photoStore.js, and Google's quota. Only the smaller one ever
+  // fires, and reading the wrong one is how a service comes to be capped well
+  // below where its owner thinks it is.
+  const google = cm.buildGoogleQuotas({ photoBurstPerDay: 451 }).lines.find((l) => l.id === 'photos');
+  assert.strictEqual(google.repoDailyBrake, 451);
+  assert.strictEqual(google.bindingDaily, 'google', 'a 451 brake cannot bind under a 152 quota');
+  const repo = cm.buildGoogleQuotas({ photoBurstPerDay: 40 }).lines.find((l) => l.id === 'photos');
+  assert.strictEqual(repo.bindingDaily, 'repo');
+  // With nothing passed, no claim is made about which one binds.
+  const neither = cm.buildGoogleQuotas().lines.find((l) => l.id === 'photos');
+  assert.strictEqual(neither.repoDailyBrake, null);
+  assert.strictEqual(neither.bindingDaily, null);
+});
+
+test('a budget alert is described as a notification, not as a cap', () => {
+  // It emails at 50, 90 and 100 percent and stops nothing. Calling it a cap on
+  // a screen whose whole subject is ceilings would be the same category error
+  // this file exists to prevent.
+  const q = cm.buildGoogleQuotas();
+  assert.match(q.budget.note, /not a switch|stops nothing/i);
+  assert.deepStrictEqual(q.budget.alertsAtPct, [50, 90, 100]);
+});
+
+test('GET /costs serves the inventory, the quota caps and the provider status', async () => {
+  handlers = EMPTY_LEDGERS;
+  const res = await get('/api/admin/costs');
+  assert.strictEqual(res.status, 200, res.text);
+  const b = res.body;
+
+  assert.strictEqual(b.dependencies.kind, 'dependencies');
+  assert.deepStrictEqual(b.dependencies.groups.map((g) => g.id), ['metered', 'fixed', 'free']);
+  assert.ok(b.dependencies.total >= 30, 'the inventory shrank; something stopped being listed');
+  for (const g of b.dependencies.groups) {
+    assert.ok(g.entries.length > 0, `the ${g.id} group is empty`);
+    assert.ok(g.label && g.note, `the ${g.id} group has no heading`);
+  }
+
+  assert.strictEqual(b.googleQuotas.kind, 'googleQuotas');
+  assert.strictEqual(b.googleQuotas.lines.length, 4);
+  assert.ok(b.googleQuotas.project, 'the quota block does not name the Google project');
+
+  // Whether images can be screened at all. A cost panel that reports Vision
+  // billed nothing, without reporting whether Vision answers, is telling the
+  // owner the least useful true thing available.
+  assert.ok(b.visionProvider, 'the panel does not say whether images can be screened');
+  assert.ok('reachable' in b.visionProvider);
+  if (b.visionProvider.configured === false) {
+    assert.strictEqual(b.visionProvider.reason, 'no_key');
+    assert.strictEqual(b.visionProvider.reachable, null, 'no key is not the same as not reachable');
+  }
+
+  // Provenance for EVERY group on the rate card. Nine of the twelve carried a
+  // checked date and a source that no screen ever showed.
+  for (const group of Object.keys(cm.RATES)) {
+    assert.ok(b.rates.checked[group], `${group} has no checked date on the payload`);
+    assert.match(b.rates.sources[group], /^https:\/\//, `${group} has no source url on the payload`);
+  }
+});
+
+test('the inventory still arrives when every ledger is down', async () => {
+  // The whole point of an inventory is that it is a list, not a measurement.
+  // Postgres being unreachable costs it its usage numbers and nothing else.
+  handlers = [[/.*/, () => Promise.reject(new Error('connection terminated'))]];
+  const res = await get('/api/admin/costs');
+  assert.strictEqual(res.status, 200, res.text);
+  assert.ok(res.body.dependencies.total >= 30);
+  assert.strictEqual(res.body.googleQuotas.lines.length, 4);
+});

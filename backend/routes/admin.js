@@ -1683,6 +1683,12 @@ router.get('/costs', async (req, res) => {
 
   const fixed = costModel.buildFixed();
 
+  // Is Cloud Vision actually reachable on the project its key belongs to.
+  // A key being SET and the API being ENABLED are different facts, and only
+  // the second decides whether an upload can be screened at all. This probe
+  // costs nothing: it sends zero images. utils/moderation.js explains why.
+  const visionProvider = await safe(() => require('../utils/moderation').probeVisionEnabled());
+
   res.json({
     generatedAt: new Date().toISOString(),
     observed,
@@ -1691,23 +1697,47 @@ router.get('/costs', async (req, res) => {
     venueUnitEconomics,
     watchlist: costModel.WATCHLIST,
     reconciled: costModel.RECONCILED,
+    // EVERY group on the rate card, not the three that happened to be named
+    // here. Nine of the twelve carried a checked date and a source that no
+    // screen ever showed, which is the same as not carrying one.
     rates: {
-      checked: {
-        gemini: costModel.RATES.gemini.checked,
-        places: costModel.RATES.places.checked,
-        vision: costModel.RATES.vision.checked,
-      },
-      sources: {
-        gemini: costModel.RATES.gemini.source,
-        places: costModel.RATES.places.source,
-        vision: costModel.RATES.vision.source,
-      },
+      checked: Object.fromEntries(
+        Object.entries(costModel.RATES).map(([k, v]) => [k, v.checked])
+      ),
+      sources: Object.fromEntries(
+        Object.entries(costModel.RATES).map(([k, v]) => [k, v.source])
+      ),
     },
     // The photo budget, whole, because it is the one ceiling in this panel that
     // a person is expected to RAISE rather than merely watch. Historically the
     // largest line on the Google bill, and now the only one with a dollar figure
     // attached to it instead of a request count.
     photoBudget: photoSpend,
+    // THE INVENTORY. Every outside thing Flock depends on, including the ones
+    // that cost nothing. "What am I paying for" and "what am I using" are
+    // different questions and only the first was ever answered on this
+    // screen. It carries join keys rather than numbers: the panel resolves
+    // each entry against observed, fixed and watchlist, so no price and no
+    // sentence exists twice in this payload.
+    dependencies: costModel.buildDependencies({
+      onDate: today,
+      birdieModel,
+      advisorModel,
+    }),
+    // Google's own per-day quota caps, set by hand in the Cloud console on
+    // 2026-08-20. Unlike every other ceiling on this panel these cannot be
+    // raised with a deploy, and hitting one refuses the call, so a quota is
+    // now a real failure mode with a visible shape: a venue card with no
+    // picture, a search that finds nothing.
+    // The photo brake is passed as a LIMIT, read from the constant rather than
+    // from the ledger status, so it still arrives when Postgres is down.
+    googleQuotas: costModel.buildGoogleQuotas({
+      photoBurstPerDay: require('../services/photoStore').PHOTO_FETCH_BURST_PER_DAY,
+    }),
+    // Whether images can be screened at all right now. A cost panel that
+    // says Vision billed nothing, without saying whether Vision answers, is
+    // reporting the least useful true thing available.
+    visionProvider,
     venues: {
       paying: payingVenues,
       priceUsd: VENUE_PRICE_USD,
