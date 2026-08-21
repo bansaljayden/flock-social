@@ -1971,14 +1971,55 @@ function buildFeatureMap(venue, weather, timestamp, eventData, feedback, baselin
   const isLateNight = (hour >= 22 || hour <= 3) ? 1 : 0;
   const isMorning = (hour >= 6 && hour <= 10) ? 1 : 0;
 
-  // Event data (from live Ticketmaster lookup)
+  // Event data (from live Ticketmaster lookup).
+  //
+  // WHAT AN UNOBSERVED LOOKUP IS ALLOWED TO PUT IN THE VECTOR (2026-08-20).
+  //
+  // getNearbyEvents now says whether it actually heard from Ticketmaster
+  // (`observed`), because four different failures used to arrive here wearing
+  // the same zeros. The question this block has to answer is what those
+  // fourteen event slots should hold when the answer is "nobody knows".
+  //
+  // They hold the same values a genuinely event-free hour holds, and that is a
+  // decision rather than the old accident. There is no in-distribution way to
+  // say "unknown" to this model: prepare_features.py ends with fillna(0) over
+  // the feature columns, so every missing event value in the corpus was
+  // trained as 0, and has_nearby_event is a hard 0/1 that every tree splits at
+  // 0.5. A sentinel (-1, NaN, a fractional base rate) would be a value the
+  // model has never seen, which is the same mistake as the `?? 20` that told
+  // it 20F on every weather outage. Train/serve skew invented to express
+  // honesty is still train/serve skew.
+  //
+  // What that produces is the right fallback anyway, and it is worth naming.
+  // With every event slot at its no-information value the event pathway
+  // contributes nothing, and this is a delta model: the answer reverts to
+  // baseline plus what the non-event features say, which IS the venue's own
+  // baseline expectation for that slot. The failure mode being fixed was never
+  // the arithmetic. It was that the system could not tell it had done this,
+  // so an outage was published with the confidence of a measurement and
+  // written into venue_owner_report_context as one. predictBusyness now reads
+  // `observed` and says so in the response, and drops the Ticketmaster claim
+  // out of dataSourcesUsed. It does NOT invent a confidence penalty for it:
+  // see the note above predictBusyness for why an unmeasured deduction would
+  // be the same class of mistake one level up.
+  //
+  // REJECTED: answering from crowdEngine when events are unobserved, the way
+  // the no-climatology weather path does. The rule engine has no event input
+  // either, so it would trade every other feature away for nothing.
+  //
+  // The polarity here is deliberately the opposite of
+  // services/ownerReportContext.js, which treats a shape with no `observed`
+  // flag as unobserved. Writing a fact into a training corpus should fail
+  // closed. Changing a live prediction's inputs should not fire on the absence
+  // of a flag, only on a positive statement that the lookup failed.
   const ev = eventData || {};
-  const hasEvent = ev.hasEvent ? 1 : 0;
-  const nearestAttendance = ev.nearestAttendance || 0;
-  const totalEvents = ev.totalEvents || 0;
-  const totalAttendance = ev.totalAttendance || 0;
-  const nearestDistance = ev.nearestDistance || 0;
-  const nearestType = ev.nearestType || null;
+  const eventsUnobserved = ev.observed === false;
+  const hasEvent = (!eventsUnobserved && ev.hasEvent) ? 1 : 0;
+  const nearestAttendance = eventsUnobserved ? 0 : (ev.nearestAttendance || 0);
+  const totalEvents = eventsUnobserved ? 0 : (ev.totalEvents || 0);
+  const totalAttendance = eventsUnobserved ? 0 : (ev.totalAttendance || 0);
+  const nearestDistance = eventsUnobserved ? 0 : (ev.nearestDistance || 0);
+  const nearestType = eventsUnobserved ? null : (ev.nearestType || null);
   const isBar = (venueCategory === 'bar' || venueCategory === 'nightclub') ? 1 : 0;
 
   // Build feature dict
@@ -2382,6 +2423,24 @@ function applyScoreQuantileMap(score) {
   return Math.max(0, Math.min(100, Math.round(mapped)));
 }
 
+// WHY AN UNCHECKED STREET DOES NOT MOVE THE CONFIDENCE FIGURE.
+//
+// The obvious symmetry with weatherPenalty is wrong, and the reason is worth
+// keeping. Weather's 15 is not a judgement call: it is the exact amount
+// crowdEngine's input-completeness ladder ADDS for having a live reading, so
+// taking it back off is arithmetic on a quantity that already exists. Nothing
+// in this system has ever measured what an unchecked event listing is worth,
+// so any number here would be one somebody made up and then published to a
+// user as a measurement. __tests__/confidenceHonesty.test.js exists because
+// this file already shipped such a number once (`|| 58`), and it re-scans the
+// serving path for new ones on every run.
+//
+// So the fact is stated instead of priced: `eventsObserved` and
+// `eventsUnavailableReason` ride on the response, and 'ticketmaster_events'
+// leaves dataSourcesUsed when the listing was never reached. A caller that
+// wants to discount the score can, on evidence it can see. Measure the cost
+// first, then charge it.
+
 async function predictBusyness(venue, weather, timestamp, options = {}) {
   await init();
   const userId = options && options.userId != null ? options.userId : undefined;
@@ -2418,6 +2477,15 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       getBaseline(placeId, ts.getDay(), ts.getHours(), userId),
       getNeighborActivity(placeId, lat, lng, ts.getDay(), ts.getHours(), userId),
     ]);
+
+    // DID ANYONE ACTUALLY CHECK THE STREET. `observed === false` is
+    // getNearbyEvents saying no answer reached it: a missing key, an exhausted
+    // budget, a provider error, a timeout. The feature vector treats that as
+    // no information (see the long note in buildFeatureMap), which is the right
+    // input but the wrong thing to stay silent about, so it is stated in the
+    // response and taken out of dataSourcesUsed. A shape with no flag at all is
+    // read as observed, matching every caller that predates the contract.
+    const eventsSeen = eventData.observed !== false;
 
     // Best-available baseline: stored table first, else read it directly off
     // the venue's Google popular_times payload so even the FIRST request for
@@ -2592,8 +2660,11 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       };
     }
 
+    // `ticketmaster_events` is a claim that the listing was consulted, so it
+    // needs `observed`, not just `hasEvent`. A quiet night that Ticketmaster
+    // actually answered for IS a source and now says so; an outage never is.
     const dataSources = ['ml_model', hasWeather ? 'weather' : null, 'venue_data'];
-    if (eventData.hasEvent) dataSources.push('ticketmaster_events');
+    if (eventsSeen) dataSources.push('ticketmaster_events');
 
     const response = {
       score,
@@ -2622,6 +2693,14 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       // artifact is served or a venue has three verified reporters, which
       // outrank the holdout and return basis 'user_reports'.
       confidenceMeasurement,
+      // WHETHER THE NEARBY-EVENT INPUT IS A READING OR A BLANK. Always
+      // present and always a boolean, so nothing downstream has to infer it
+      // from the absence of `eventAlert`, which is the inference that let an
+      // outage read as a quiet street. False means the event slots in the
+      // vector held no information and this score is the venue's baseline
+      // expectation for the slot rather than an event-aware number.
+      eventsObserved: eventsSeen,
+      eventsUnavailableReason: eventsSeen ? null : (eventData.unavailableReason || 'unknown'),
       // HOW OLD THE NUMBER UNDER THE SCORE IS. This model is `label_type:
       // 'delta'` — score = baseline + clamp(delta, ±30) — so the baseline is
       // most of the answer, and until now nothing anywhere said when it was
@@ -2656,7 +2735,7 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
     };
 
     // Add event alert when large event nearby
-    if (eventData.hasEvent && eventData.nearestAttendance > 5000) {
+    if (eventsSeen && eventData.hasEvent && eventData.nearestAttendance > 5000) {
       response.eventAlert = {
         hasEvent: true,
         eventName: eventData.nearestName,

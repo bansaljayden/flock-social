@@ -143,6 +143,57 @@ function quiet(what, err) {
   console.error(`[OwnerReportContext] ${what} unavailable, storing NULLs:`, err?.message || err);
 }
 
+// ---------------------------------------------------------------------------
+// A LOOKUP THAT DID NOT HAPPEN IS NOT A QUIET NIGHT (migration 044).
+//
+// This module used to write the event columns as
+//
+//     has_nearby_event    = events ? events.hasEvent === true : null
+//     total_nearby_events = events ? events.totalEvents ?? null : null
+//
+// and `events` was truthy in four situations that are not one fact. Until it
+// was fixed, mlPredictor.getNearbyEvents answered ONE shared no-event object
+// whether Ticketmaster listed nothing, the per-account event budget refused
+// the call, the provider errored, or the request timed out. Three of those
+// four are "nobody looked", and all four were written here as
+// has_nearby_event = false, total_nearby_events = 0: a negative observation
+// that never happened, persisted, and then read back by
+// scripts/ml/train/ownerLabelExport.js as the context of a training label.
+// Every Ticketmaster outage was quietly recording "there were no events near
+// this venue" for as long as it lasted.
+//
+// getNearbyEvents now carries `observed` and `unavailableReason` on every
+// return, so this reader can hold the three states 036's header already
+// implied ("NULL means not observed, never 0"):
+//
+//   observed true   Ticketmaster answered. The columns are a measurement,
+//                   including the genuinely quiet night: false and 0 are then
+//                   facts and are stored as facts.
+//   observed false  the lookup failed or was refused. Every event column is
+//                   NULL and events_unavailable_reason keeps which failure it
+//                   was, so an audit can tell a provider outage from a venue
+//                   that had no coordinates to look near.
+//   observed null   no lookup was attempted and none could have been: no
+//                   coordinates, or mlPredictor would not load.
+//
+// FAIL CLOSED ON A SHAPE THAT CANNOT SAY. A result object with no `observed`
+// flag is treated as unobserved rather than waved through as a measurement.
+// The flag is cheap to add and its absence means the caller predates the
+// contract, which is exactly the state in which its zeros cannot be trusted.
+// ---------------------------------------------------------------------------
+function readEvents(events) {
+  if (!events || typeof events !== 'object') {
+    return { observed: null, reason: null, data: null };
+  }
+  if (events.observed === true) {
+    return { observed: true, reason: null, data: events };
+  }
+  const reason = typeof events.unavailableReason === 'string' && events.unavailableReason
+    ? events.unavailableReason
+    : 'unknown_provenance';
+  return { observed: false, reason, data: null };
+}
+
 const INSERT_CONTEXT_SQL = `
   INSERT INTO venue_owner_report_context (
     report_id,
@@ -152,9 +203,10 @@ const INSERT_CONTEXT_SQL = `
     nearest_event_distance_km, nearest_event_attendance, nearest_event_type,
     served_prediction_id, served_score, served_prediction_method,
     served_model_version, served_at,
-    day_of_week, hour, timezone, venue_category
+    day_of_week, hour, timezone, venue_category,
+    events_observed, events_unavailable_reason
   ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14,
-            $15, $16, $17, $18, $19, $20, $21, $22, $23)
+            $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
   ON CONFLICT (report_id) DO NOTHING`;
 
 /**
@@ -206,10 +258,16 @@ async function captureOwnerReportContext(reportId, { placeId, userId, now, deps 
         Promise.resolve()
           .then(() => getWeather(lat, lon, userId ? { userId } : {}))
           .catch((err) => { quiet('weather', err); return null; }),
+        // A THROW IS A FAILED LOOKUP, NOT AN UNATTEMPTED ONE. Returning null
+        // here would file it under "no coordinates, nobody looked"; it belongs
+        // with the other refusals, named, so the audit can see it.
         getNearbyEvents
           ? Promise.resolve()
               .then(() => getNearbyEvents(lat, lon, at, userId))
-              .catch((err) => { quiet('events', err); return null; })
+              .catch((err) => {
+                quiet('events', err);
+                return { observed: false, unavailableReason: 'lookup_threw' };
+              })
           : Promise.resolve(null),
       ]);
     }
@@ -237,6 +295,11 @@ async function captureOwnerReportContext(reportId, { placeId, userId, now, deps 
       }
     }
 
+    // Three-state read of the event lookup. See readEvents: only `observed`
+    // true produces numbers, and the reason a failure gives is stored beside
+    // the NULLs so the corpus can be audited later.
+    const ev = readEvents(events);
+
     await pool.query(INSERT_CONTEXT_SQL, [
       reportId,
       weather?.temp ?? null,
@@ -246,15 +309,15 @@ async function captureOwnerReportContext(reportId, { placeId, userId, now, deps 
       weather?.conditions ?? null,
       weather?.conditionId ?? null,
       weather ? weather.isRaining === true : null,
-      events ? events.hasEvent === true : null,
-      events ? events.totalEvents ?? null : null,
-      events ? events.totalAttendance ?? null : null,
+      ev.observed === true ? ev.data.hasEvent === true : null,
+      ev.observed === true ? ev.data.totalEvents ?? null : null,
+      ev.observed === true ? ev.data.totalAttendance ?? null : null,
       // Distance/attendance/type of the NEAREST event only mean something
       // when there is one; getNearbyEvents fills 0s into its no-event shape
       // and storing those would fabricate "an event 0 km away".
-      events?.hasEvent ? events.nearestDistance ?? null : null,
-      events?.hasEvent ? events.nearestAttendance ?? null : null,
-      events?.hasEvent ? events.nearestType ?? null : null,
+      ev.observed === true && ev.data.hasEvent ? ev.data.nearestDistance ?? null : null,
+      ev.observed === true && ev.data.hasEvent ? ev.data.nearestAttendance ?? null : null,
+      ev.observed === true && ev.data.hasEvent ? ev.data.nearestType ?? null : null,
       served?.id ?? null,
       served?.score ?? null,
       served?.prediction_method ?? null,
@@ -264,6 +327,8 @@ async function captureOwnerReportContext(reportId, { placeId, userId, now, deps 
       clock?.hour ?? null,
       venue?.timezone ?? null,
       venue?.venue_category ?? null,
+      ev.observed,
+      ev.reason,
     ]);
     return { captured: true };
   } catch (err) {
@@ -275,6 +340,7 @@ async function captureOwnerReportContext(reportId, { placeId, userId, now, deps 
 
 module.exports = {
   captureOwnerReportContext,
+  readEvents,
   localClock,
   SERVE_JOIN_WINDOW_HOURS,
   INSERT_CONTEXT_SQL,
