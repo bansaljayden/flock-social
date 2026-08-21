@@ -651,6 +651,35 @@ const escapeHtml = (s) =>
 // a link that goes somewhere else.
 const httpUrl = (u) => (typeof u === 'string' && /^https?:\/\//i.test(u.trim()) ? u.trim() : null);
 
+// The same link, opened without a handle back to this window.
+//
+// Every `<a target="_blank">` in this file already carries rel="noopener
+// noreferrer". None of the `window.open` calls carried anything, and the two
+// are not equivalent: browsers imply noopener for an ANCHOR with target=_blank
+// and do NOT imply it for window.open, so the page that opens keeps a live
+// `window.opener` pointing at Flock. One line of script on the far side
+// (`opener.location = ...`) repaints the tab the user came from, and the tab
+// they come back to is a sign-in screen they have no reason to distrust. The
+// destinations here are a Ticketmaster event url and a wallet's web link,
+// which is to say strings that arrive over the API from somebody else.
+//
+// httpUrl is the same gate the hrefs use, so a non-http(s) value opens nothing
+// instead of opening a blank tab on the string "null". Deep links are NOT
+// routed through here: a wallet scheme is not http(s), it has no window on the
+// far side to hold an opener, and attemptPaymentHandoff's timing is measured
+// against the bare call.
+//
+// Capacitor's iOS WebViewDelegationHandler answers createWebViewWith by
+// handing the url to UIApplication.open and returning nil, ignoring
+// WKWindowFeatures entirely, so the feature string changes nothing on the
+// native shell.
+const openExternal = (u) => {
+  const url = httpUrl(u);
+  if (!url || typeof window === 'undefined' || typeof window.open !== 'function') return false;
+  window.open(url, '_blank', 'noopener,noreferrer');
+  return true;
+};
+
 // Chat photos travel INSIDE the message body as a data: URL, on whichever
 // transport is up. Socket.IO was raised to 8MB for exactly that; express.json()
 // is still 1mb, so a photo over roughly 750KB sends fine on the socket and 413s
@@ -1296,7 +1325,7 @@ function attemptPaymentHandoff(method, options = {}) {
   // inside the tap rather than raced against anything.
   if (!appUrl) {
     if (webUrl) {
-      win.open(webUrl, '_blank');
+      win.open(webUrl, '_blank', 'noopener,noreferrer');
       return noop;
     }
     // Zelle. The instructions used to be passed to showToast and then
@@ -1728,7 +1757,13 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     const edge = mapIsDark ? '#0b1220' : '#f1ede0';
     const disc = mapIsDark ? '#0f172a' : '#ffffff';
     const initialMap = { Food: 'F', Nightlife: 'N', 'Live Music': 'M', Sports: 'S' };
-    const initial = initialMap[category] || 'P';
+    // Own-property lookup only. `initialMap[category]` answers 'constructor'
+    // and '__proto__' off Object.prototype with something truthy, and the
+    // result is interpolated straight into the innerHTML string below, so a
+    // venue whose category arrived as one of those names drew a pin labelled
+    // with the source of a native function. Same rule, same reason as `own()`
+    // in website/ModerationDashboard.js.
+    const initial = (Object.prototype.hasOwnProperty.call(initialMap, category) && initialMap[category]) || 'P';
     return `<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 42">` +
       `<defs><filter id="s" x="-20%" y="-10%" width="140%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2" flood-opacity="0.35"/></filter></defs>` +
       `<path d="M16 0C7.16 0 0 7.16 0 16c0 12 16 26 16 26s16-14 16-26C32 7.16 24.84 0 16 0z" fill="${body}" stroke="${edge}" stroke-width="2" filter="url(#s)"/>` +
@@ -14048,7 +14083,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     </button>
                   )}
                   {flock.venueLat && flock.venueLng && (
-                    <button className="hit44 glass-btn glass-navy" onClick={() => window.open(`https://maps.google.com/?q=${flock.venueLat},${flock.venueLng}`, '_blank')} style={{ flex: 1, padding: '10px', background: colors.navyBg, border: 'none', borderRadius: '10px', color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                    <button className="hit44 glass-btn glass-navy" onClick={() => openExternal(`https://maps.google.com/?q=${flock.venueLat},${flock.venueLng}`)} style={{ flex: 1, padding: '10px', background: colors.navyBg, border: 'none', borderRadius: '10px', color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                       {Icons.mapPin('white', 14)} Directions
                     </button>
                   )}
@@ -15180,7 +15215,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', marginBottom: '12px', textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Legal</p>
             <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
               <button
-                className="hit44 glass-btn glass-secondary" onClick={() => window.open('https://www.flockcorp.com/terms', '_blank')}
+                className="hit44 glass-btn glass-secondary" onClick={() => openExternal('https://www.flockcorp.com/terms')}
                 style={{
                   padding: '10px 16px',
                   borderRadius: '10px',
@@ -15198,7 +15233,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {Icons.fileText(colors.navy, 14)} Terms of Service
               </button>
               <button
-                className="hit44 glass-btn glass-secondary" onClick={() => window.open('https://www.flockcorp.com/privacy', '_blank')}
+                className="hit44 glass-btn glass-secondary" onClick={() => openExternal('https://www.flockcorp.com/privacy')}
                 style={{
                   padding: '10px 16px',
                   borderRadius: '10px',
@@ -20372,7 +20407,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {Icons.users('white', 16)} Start Flock
             </button>
             {httpUrl(eventDetail.url) && (
-              <button className="hit44" onClick={() => window.open(httpUrl(eventDetail.url), '_blank')} style={{ padding: '12px 20px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+              <button className="hit44" onClick={() => openExternal(eventDetail.url)} style={{ padding: '12px 20px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
                 Tickets {Icons.arrowRight(colors.navy, 14)}
               </button>
             )}
@@ -20624,7 +20659,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   // and WKWebView will hand it to the system. That is the whole
                   // reason the fallback is a prompt and not an automatic
                   // redirect on the timeout.
-                  window.open(fr.webUrl, '_blank');
+                  openExternal(fr.webUrl);
                   close();
                   showToast('After paying, tap "Mark as paid"');
                 }} style={{ ...styles.gradientButton, padding: '14px', marginBottom: '8px' }}>

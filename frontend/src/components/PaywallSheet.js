@@ -254,9 +254,9 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
 
           <p style={{ fontSize: '11px', fontWeight: '500', color: 'var(--text-tertiary)', textAlign: 'center', lineHeight: 1.5, margin: '10px 0 0' }}>
             Subscriptions auto-renew until cancelled in your App Store settings. The yearly plan starts with a 7-day free trial; cancel anytime before it ends and you won't be charged.{' '}
-            <button onClick={() => window.open(TERMS_URL, '_blank')} style={{ border: 'none', background: 'none', padding: 0, fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textDecoration: 'underline', cursor: 'pointer', fontFamily: FONT }}>Terms</button>
+            <button onClick={() => window.open(TERMS_URL, '_blank', 'noopener,noreferrer')} style={{ border: 'none', background: 'none', padding: 0, fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textDecoration: 'underline', cursor: 'pointer', fontFamily: FONT }}>Terms</button>
             {' '}·{' '}
-            <button onClick={() => window.open(PRIVACY_URL, '_blank')} style={{ border: 'none', background: 'none', padding: 0, fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textDecoration: 'underline', cursor: 'pointer', fontFamily: FONT }}>Privacy</button>
+            <button onClick={() => window.open(PRIVACY_URL, '_blank', 'noopener,noreferrer')} style={{ border: 'none', background: 'none', padding: 0, fontSize: '11px', fontWeight: '600', color: 'var(--text-secondary)', textDecoration: 'underline', cursor: 'pointer', fontFamily: FONT }}>Privacy</button>
           </p>
         </div>
       </div>
