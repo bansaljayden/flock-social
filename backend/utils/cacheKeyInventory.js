@@ -699,6 +699,16 @@ const INVENTORY = [
     why: 'The key space is every (me, arbitrary id) pair and 5000 entries flush easily, but the miss is a single indexed lookup on an int pair and the whole surface sits behind the per-USER socket token buckets, which survive reconnect. Amplification is bounded by those buckets; the eviction half costs a real user one extra indexed query. Re-check this if blockCache is ever read from a REST route with a looser limiter.',
   },
   {
+    file: 'utils/relationships.js', name: 'relationshipCache', kind: 'cache',
+    key: 'relationshipKey(a, b) — the two ids, sorted, both already validated as positive integers',
+    callerControls: 'half of it: sockets/handlers.js passes (user.id, receiverId) with receiverId straight off the socket payload, exactly like blockCache above',
+    protects: 'one Postgres query, two indexed EXISTS scans over friendships and direct_messages',
+    denominator: 'cached connected/not-connected answers, 30s TTL',
+    bound: '5000 entries, expire-then-oldest-first',
+    verdict: 'SAFE',
+    why: 'The twin of blockCache and read at the same call sites, so the same reasoning applies: the key space is every (me, arbitrary id) pair, but a miss is two indexed lookups and every reader sits behind the per-USER socket token buckets, which survive a reconnect. Unreadable ids never reach the cache at all — they are refused before the key is built, so the round 20 defect in utils/blocks.js has no counterpart here. It is a positive cache for a gate whose OTHER half (blocks) is checked first and separately, so a stale entry can only delay a new relationship starting, never keep one alive past a block.',
+  },
+  {
     file: 'utils/places.js', name: 'knownVenueCache', kind: 'cache',
     key: 'placeId, pre-gated by PLACE_ID_RE',
     callerControls: 'all of it, including from the UNAUTHENTICATED NFC tap',
