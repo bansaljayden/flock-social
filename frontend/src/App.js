@@ -1136,6 +1136,15 @@ const WEEK_BAR_WELL_PX = 60;
 // the busiest still draws at 1, so a week with spread still shows its spread.
 const WEEK_BAR_WEIGHT_MIN = 0.72;
 
+// "Today, Hour by Hour" has the same well, for the same reason the week chart
+// grew one. That row used to declare `height: 50px` around columns of bar plus
+// hour label that measure 66px at 375px, so every labelled column hung 16px out
+// of the top of its own row and the two tallest landed inside the box of the
+// heading above them. A score of 100 draws 50px at this chart's scale, so 50 is
+// the smallest well no hour can overflow. The row itself declares no height:
+// it is as tall as the well plus the labels that sit under it, in flow.
+const HOUR_BAR_WELL_PX = 50;
+
 // ═══════════════════════════════════════════════════════════════════════════
 // BIRDIE'S CONTEXT WINDOW
 //
@@ -16922,10 +16931,35 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {intelReady && venueIntel.todayHourly?.length > 0 && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Today, Hour by Hour</h3>
-              <div style={{ display: 'flex', gap: '3px', alignItems: 'flex-end', height: '50px' }}>
+              {/* Three fixes, all measured in a browser at 375px.
+                  The bar sits in a fixed well and the hour label sits under
+                  that well in flow, so no box here has a height its contents
+                  can exceed (the Week Ahead defect, one card up, on its
+                  sibling chart). The row aligns to flex-START, because only
+                  every third column carries a label: bottom-aligning columns
+                  of two different heights put their bars on two different
+                  baselines. And `minWidth: 0` lets the labelled columns shrink
+                  like the rest — without it the nowrap hour label sets a
+                  min-content floor and every third bar drew 28px wide next to
+                  9px neighbours, which is a comb with three teeth missing.
+                  Colour comes from the shared crowd scale rather than the
+                  70/45 cutoffs that used to live here: those were a third set
+                  of thresholds, so a 65 read amber on this chart and red on
+                  the map pin for the same venue at the same minute. It takes
+                  the DEEP weight, the same as the Week Ahead chart one card
+                  up, for two reasons beyond matching it. The standard weight
+                  is raw hex (#22C55E for a quiet hour), which measures 2.3:1
+                  against a white card and so fails the 3:1 that WCAG asks of a
+                  graphic carrying meaning; --accent-green-text is 5.87:1. And
+                  the standard weight is a single light-mode value, while the
+                  accent tokens are already resolved per theme, so the strip
+                  stays legible on the dark card instead of sinking into it. */}
+              <div style={{ display: 'flex', gap: '3px', alignItems: 'flex-start' }}>
                 {venueIntel.todayHourly.map((h, i) => (
-                  <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                    <div style={{ width: '100%', height: `${Math.max(2, h.score * 0.5)}px`, backgroundColor: h.score > 70 ? colors.red : h.score > 45 ? colors.amber : colors.steel, borderRadius: '2px' }} />
+                  <div key={i} style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <div style={{ width: '100%', height: `${HOUR_BAR_WELL_PX}px`, display: 'flex', alignItems: 'flex-end' }}>
+                      <div style={{ width: '100%', height: `${Math.min(HOUR_BAR_WELL_PX, Math.max(2, (h.score || 0) * 0.5))}px`, backgroundColor: crowdColorDeepFor(h.score) || 'var(--border-mid)', borderRadius: '2px' }} />
+                    </div>
                     {i % 3 === 0 && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginTop: '4px', whiteSpace: 'nowrap' }}>{h.hour}</span>}
                   </div>
                 ))}
