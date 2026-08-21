@@ -1493,5 +1493,29 @@ export async function getFriendsAvailability() {
   return request('/api/availability/friends');
 }
 
+/* ── THE NFC TAGS ───────────────────────────────────────────────────────────
+   The only two capture calls in this file that belong to a page rather than to
+   an API call, and they are here for the reason every capture is here: this
+   module is the one place a PostHog capture call may appear, which
+   __tests__/analyticsPrivacy.test.js enforces by scanning all of src/.
+
+   src/website/TapPage.js is the caller. It reaches this module through a
+   dynamic import so that the REST client is not in its chunk, so nothing below
+   may assume it is being called from a signed-in session; it is usually a
+   stranger who just tapped a card at a competition.
+
+   `tag` is the ?s= value from the URL (the acrylic table stand sends
+   s=stand, the handout cards send s=card, anything else and anything missing
+   arrives as 'unknown'). TapPage bounds it to 32 lowercase url-safe
+   characters before it gets here. `choice` is one of a short fixed list of
+   button names the page itself defines. Neither is, or can become, a person. */
+export function trackNfcTap(tag) {
+  track('nfc_tap', { source: tag });
+}
+
+export function trackNfcAction(tag, choice) {
+  track('nfc_tap_action', { source: tag, action: choice });
+}
+
 export { getToken, BASE_URL };
 export default request;
