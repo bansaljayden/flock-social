@@ -18,6 +18,33 @@
 // advisory lock and the session timeouts below actually apply to every
 // statement (round 12: tolerant mode used to borrow arbitrary pool
 // connections, where a `SET` would not stick).
+//
+// POST-CONDITIONS (`-- @requires`). "The batch returned without throwing" is a
+// weaker fact than it looks, and two files proved it. 032 and 038 wrap every
+// `ALTER TABLE` in `DO $$ ... EXCEPTION WHEN others THEN NULL`, so a
+// lock_timeout on a busy table (this runner sets one, deliberately, at 10s)
+// raised, was swallowed, and the file was recorded as applied with its columns
+// absent. Nothing retries a migration the runner believes is done, so
+// `routes/feedback.js` and `routes/crowd.js` would have gone on reading columns
+// that were never going to appear. A file can therefore declare what it must
+// leave behind:
+//
+//   -- @requires table served_predictions
+//   -- @requires column venue_feedback.served_prediction_id
+//
+// and the runner does two things with that. It VERIFIES the requirements after
+// running the file and before writing the schema_migrations row, so a swallowed
+// failure cannot be recorded as success. And on every boot it RE-VERIFIES them
+// for files already recorded, so a database that was already falsely marked
+// heals itself: the row is deleted and the file runs again. Declaring
+// @requires is a promise that the file is safe to run twice, which every file
+// in this directory already has to be (__tests__/migrationBootSafety.test.js
+// wipes schema_migrations and replays the whole chain over live data).
+//
+// One rule comes with it. If a LATER migration ever drops something an earlier
+// one declares, delete the earlier `@requires` line in the same change, or the
+// two will fight on every boot: the heal re-applies the old file, the old file
+// puts the column back, and the next boot does it again.
 // ---------------------------------------------------------------------------
 const fs = require('fs');
 const path = require('path');
@@ -148,6 +175,133 @@ function stripComments(s) {
   return s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/--[^\n]*/g, '');
 }
 
+// ---------------------------------------------------------------------------
+// `-- @requires`: what a file promises to leave behind.
+// ---------------------------------------------------------------------------
+// Matched on its own comment line anywhere in the file, so the declaration can
+// sit next to the DDL it describes instead of in a header nobody reads next to
+// the statement. Two forms only, because two are what the catalog can answer
+// cheaply and unambiguously:
+//
+//   -- @requires table <name>
+//   -- @requires column <table>.<name>
+//
+// Identifiers are matched as bare lowercase-able words. Quoted or mixed-case
+// identifiers are not supported and would be a mistake to introduce: nothing in
+// this schema uses them.
+const REQUIRES_RE =
+  /^[ \t]*--[ \t]*@requires[ \t]+(column|table)[ \t]+([A-Za-z_][A-Za-z0-9_]*)(?:\.([A-Za-z_][A-Za-z0-9_]*))?[ \t]*$/gim;
+
+function parseRequirements(sql) {
+  const out = [];
+  REQUIRES_RE.lastIndex = 0;
+  let m;
+  while ((m = REQUIRES_RE.exec(sql)) !== null) {
+    const [, kind, first, second] = m;
+    if (kind === 'column') {
+      if (!second) continue; // `@requires column foo` is malformed; ignore rather than guess
+      out.push({ kind: 'column', table: first, column: second });
+    } else {
+      out.push({ kind: 'table', table: first });
+    }
+  }
+  return out;
+}
+
+// Returns the requirements that are NOT satisfied, as printable strings. At
+// most two catalog SELECTs regardless of how many requirements are passed, and
+// none at all when there are none, so the boot-time scan over every applied
+// file costs a healthy database one query.
+async function findMissingRequirements(client, reqs) {
+  const missing = [];
+  const columnKeys = [...new Set(
+    reqs.filter((r) => r.kind === 'column').map((r) => `${r.table}.${r.column}`)
+  )];
+  const tableNames = [...new Set(reqs.filter((r) => r.kind === 'table').map((r) => r.table))];
+
+  if (columnKeys.length > 0) {
+    const { rows } = await client.query(
+      `SELECT c.table_name || '.' || c.column_name AS key
+         FROM information_schema.columns c
+        WHERE c.table_schema = current_schema()
+          AND (c.table_name || '.' || c.column_name) = ANY($1::text[])`,
+      [columnKeys]
+    );
+    const have = new Set(rows.map((r) => r.key));
+    for (const key of columnKeys) if (!have.has(key)) missing.push(`column ${key}`);
+  }
+
+  if (tableNames.length > 0) {
+    const { rows } = await client.query(
+      `SELECT c.relname
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = current_schema()
+          AND c.relkind IN ('r', 'p')
+          AND c.relname = ANY($1::text[])`,
+      [tableNames]
+    );
+    const have = new Set(rows.map((r) => r.relname));
+    for (const name of tableNames) if (!have.has(name)) missing.push(`table ${name}`);
+  }
+
+  return missing;
+}
+
+// Run after the file's statements, before schema_migrations is written. In the
+// default mode this executes inside the file's own open transaction, so it sees
+// the uncommitted DDL and a throw rolls the whole thing back.
+async function assertRequirementsMet(client, file, reqs) {
+  if (reqs.length === 0) return;
+  const missing = await findMissingRequirements(client, reqs);
+  if (missing.length > 0) {
+    throw new Error(
+      `${file} ran without raising, but ${missing.join(', ')} still missing. ` +
+      'A statement was skipped or its error was swallowed; refusing to record this migration as applied.'
+    );
+  }
+}
+
+// The self-heal. A database that was already marked as having 032/038 while the
+// columns never landed has no other way back: nothing re-runs a migration the
+// runner believes is done. So before the normal loop, re-check the declared
+// post-conditions of every file already in schema_migrations and un-record any
+// that does not hold. The loop below then applies it again like any pending
+// file. On a healthy database this finds nothing and changes nothing.
+async function healFalselyAppliedMigrations(client, dir, files, applied) {
+  const byFile = new Map();
+  const all = [];
+  for (const file of files) {
+    if (!applied.has(file)) continue;
+    let reqs;
+    try {
+      reqs = parseRequirements(fs.readFileSync(path.join(dir, file), 'utf8'));
+    } catch {
+      continue; // unreadable file: the normal loop skips it too, nothing to heal
+    }
+    if (reqs.length === 0) continue;
+    byFile.set(file, reqs);
+    all.push(...reqs);
+  }
+  if (all.length === 0) return;
+
+  const missing = new Set(await findMissingRequirements(client, all));
+  if (missing.size === 0) return;
+
+  for (const [file, reqs] of byFile) {
+    const gone = reqs
+      .map((r) => (r.kind === 'column' ? `column ${r.table}.${r.column}` : `table ${r.table}`))
+      .filter((s) => missing.has(s));
+    if (gone.length === 0) continue;
+    console.error(
+      `[migrate] ${file} is recorded as applied but ${gone.join(', ')} is missing. ` +
+      're-applying it (its error was swallowed on a previous boot)'
+    );
+    await client.query('DELETE FROM schema_migrations WHERE name = $1', [file]);
+    applied.delete(file);
+  }
+}
+
 async function runMigrations(client) {
   await client.query(
     `CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -161,9 +315,12 @@ async function runMigrations(client) {
   const appliedRes = await client.query('SELECT name FROM schema_migrations');
   const applied = new Set(appliedRes.rows.map((r) => r.name));
 
+  await healFalselyAppliedMigrations(client, dir, files, applied);
+
   for (const file of files) {
     if (applied.has(file)) continue;
     const sql = fs.readFileSync(path.join(dir, file), 'utf8');
+    const reqs = parseRequirements(sql);
     const head = sql.trimStart();
     const tolerant = head.startsWith('-- @tolerant');
     const noTransaction = head.startsWith('-- @noTransaction');
@@ -181,8 +338,14 @@ async function runMigrations(client) {
           console.warn(`[migrate] ${file} tolerant skip: ${e.message}`);
         }
       }
-      if (failures === 0) {
+      const unmet = failures === 0 ? await findMissingRequirements(client, reqs) : [];
+      if (failures === 0 && unmet.length === 0) {
         await client.query('INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT DO NOTHING', [file]);
+      } else if (unmet.length > 0) {
+        console.error(
+          `[migrate] ${file}: every statement returned but ${unmet.join(', ')} is missing. ` +
+          'NOT recording as applied, will retry next boot'
+        );
       } else {
         // A transient error (lock, dependency, drift) must not permanently
         // skip DDL: leave the file pending so the next boot replays it. The
@@ -201,11 +364,13 @@ async function runMigrations(client) {
           throw e;
         }
       }
+      await assertRequirementsMet(client, file, reqs);
       await client.query('INSERT INTO schema_migrations (name) VALUES ($1) ON CONFLICT DO NOTHING', [file]);
     } else {
       try {
         await client.query('BEGIN');
         await client.query(sql);
+        await assertRequirementsMet(client, file, reqs);
         await client.query('INSERT INTO schema_migrations (name) VALUES ($1)', [file]);
         await client.query('COMMIT');
       } catch (e) {
@@ -218,4 +383,4 @@ async function runMigrations(client) {
   }
 }
 
-module.exports = { migrate, splitStatements };
+module.exports = { migrate, splitStatements, parseRequirements, findMissingRequirements };

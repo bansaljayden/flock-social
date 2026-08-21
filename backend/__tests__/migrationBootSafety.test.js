@@ -311,6 +311,153 @@ test('the whole chain replays over a populated database without throwing', async
 });
 
 // ---------------------------------------------------------------------------
+// 4. THE SWALLOWED FAILURE. A migration that ran, did nothing, and said it was
+//    done.
+// ---------------------------------------------------------------------------
+//
+// 032 and 038 wrapped every ALTER TABLE in `DO $$ ... EXCEPTION WHEN others
+// THEN NULL`. db/migrate.js arms lock_timeout at 10 seconds on purpose, so DDL
+// cannot queue behind a long query during a rolling deploy. Those two facts
+// together were the bug: the timeout fired, `others` ate it, the batch returned
+// cleanly, and the runner wrote the schema_migrations row. Nothing re-runs a
+// migration the runner believes is done, so the columns routes/crowd.js and
+// routes/feedback.js write were absent permanently and a redeploy did not heal
+// it. The two tests below are the lock and the key.
+
+const COLUMNS_032 = [
+  ['venue_feedback', 'predicted_score_source'],
+  ['venue_feedback', 'client_predicted_score'],
+  ['venue_feedback', 'served_prediction_id'],
+];
+const COLUMNS_038 = [
+  ['served_predictions', 'source'],
+  ['served_predictions', 'local_day'],
+  ['served_predictions', 'local_hour'],
+];
+
+async function columnExists(table, column) {
+  return (await count(
+    `SELECT COUNT(*) AS n FROM information_schema.columns
+      WHERE table_schema = current_schema() AND table_name = $1 AND column_name = $2`,
+    [table, column]
+  )) === 1;
+}
+
+async function dropColumns(table, columns) {
+  await pool.query(
+    `ALTER TABLE ${table} ` + columns.map((c) => `DROP COLUMN IF EXISTS ${c}`).join(', ')
+  );
+}
+
+test('neither 032 nor 038 may go back to catching `others`', async () => {
+  // The narrowing is the fix. A future edit that widens it again puts the
+  // permanent-data-loss failure mode straight back, and the two tests after
+  // this one would still pass, because a swallowed timeout looks like success.
+  for (const f of ['032_served_predictions.sql', '038_served_prediction_provenance.sql']) {
+    const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, f), 'utf8');
+    const code = sql.replace(/^[ \t]*--[^\n]*$/gm, ''); // the headers discuss `others` at length
+    assert.equal(
+      /EXCEPTION\s+WHEN\s+others/i.test(code), false,
+      `${f} must not catch \`others\`: it cannot tell a lock timeout from an existing column`
+    );
+    assert.ok(
+      /^[ \t]*--[ \t]*@requires[ \t]/m.test(sql),
+      `${f} must declare what it requires so the runner can verify it landed`
+    );
+  }
+});
+
+test('a lock timeout during 032 fails the boot instead of being recorded as applied', async () => {
+  // The exact production shape: the columns are not there yet, and something
+  // else is holding the table when the deploy lands.
+  await dropColumns('venue_feedback', COLUMNS_032.map(([, c]) => c));
+  await pool.query(`DELETE FROM schema_migrations WHERE name = '032_served_predictions.sql'`);
+
+  const blocker = await pool.connect();
+  try {
+    await blocker.query('BEGIN');
+    await blocker.query('LOCK TABLE venue_feedback IN ACCESS EXCLUSIVE MODE');
+
+    // Takes lock_timeout (10s) to come back, which is the point: the runner
+    // waits, gives up, and must not call that success.
+    await assert.rejects(
+      migrate(pool),
+      (err) => /lock|timeout|032_served_predictions/i.test(err.message),
+      'the runner must surface the lock timeout rather than swallowing it'
+    );
+
+    assert.equal(
+      await count(
+        `SELECT COUNT(*) AS n FROM schema_migrations WHERE name = '032_served_predictions.sql'`
+      ), 0,
+      'a migration whose ALTER never ran must NOT be recorded as applied, or nothing will ever retry it'
+    );
+    for (const [t, c] of COLUMNS_032) {
+      assert.equal(await columnExists(t, c), false, `${t}.${c} cannot exist yet`);
+    }
+  } finally {
+    await blocker.query('ROLLBACK').catch(() => {});
+    blocker.release();
+  }
+
+  // And the recovery a restart gives you, which is the whole reason failing is
+  // better than pretending: the next boot simply applies it.
+  await migrate(pool);
+  assert.equal(
+    await count(`SELECT COUNT(*) AS n FROM schema_migrations WHERE name = '032_served_predictions.sql'`),
+    1
+  );
+  for (const [t, c] of COLUMNS_032) {
+    assert.ok(await columnExists(t, c), `${t}.${c} must exist after the retry`);
+  }
+});
+
+test('a database already mismarked as having 032 and 038 heals itself on boot', async () => {
+  // Some databases were migrated before the narrowing, so they may already hold
+  // the broken state the test above now prevents: the row in schema_migrations,
+  // and no columns. There is no boot path out of that on its own, so the runner
+  // re-verifies the declared post-conditions of applied files and replays the
+  // ones that do not hold.
+  await pool.query(
+    `INSERT INTO served_predictions (user_id, venue_place_id, score, source, local_day, local_hour)
+     VALUES ($1, 'ChIJheal', 61, 'detail', 5, 22)`,
+    [bobId]
+  );
+
+  // A healthy boot first: nothing is replayed, nothing is touched.
+  const stamps = async () => (await pool.query(
+    `SELECT name, applied_at FROM schema_migrations
+      WHERE name IN ('032_served_predictions.sql', '038_served_prediction_provenance.sql')
+      ORDER BY name`
+  )).rows;
+  const before = await stamps();
+  assert.equal(before.length, 2);
+  await migrate(pool);
+  assert.deepEqual(await stamps(), before, 'a healthy database must not have its migrations re-run');
+
+  // Now the damage, with both files left recorded as applied.
+  await dropColumns('venue_feedback', COLUMNS_032.map(([, c]) => c));
+  await dropColumns('served_predictions', COLUMNS_038.map(([, c]) => c));
+  for (const [t, c] of [...COLUMNS_032, ...COLUMNS_038]) {
+    assert.equal(await columnExists(t, c), false);
+  }
+  assert.equal((await stamps()).length, 2, 'the false records are what make this unrecoverable');
+
+  await migrate(pool); // must not throw: this is a boot
+
+  for (const [t, c] of [...COLUMNS_032, ...COLUMNS_038]) {
+    assert.ok(await columnExists(t, c), `${t}.${c} must be restored by the self-heal`);
+  }
+  assert.equal((await stamps()).length, 2, 'and both files must end up recorded again');
+  assert.equal(
+    await count(`SELECT COUNT(*) AS n FROM served_predictions WHERE venue_place_id = 'ChIJheal'`),
+    1, 'the repair must not take the serve log with it'
+  );
+
+  await pool.query(`DELETE FROM served_predictions WHERE venue_place_id = 'ChIJheal'`);
+});
+
+// ---------------------------------------------------------------------------
 // THE INVARIANT ALL OF THIS IS FOR
 // ---------------------------------------------------------------------------
 

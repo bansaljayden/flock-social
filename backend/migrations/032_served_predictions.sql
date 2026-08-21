@@ -67,18 +67,46 @@ CREATE INDEX IF NOT EXISTS idx_served_predictions_served_at
 --     prune blockable) because of it. The score and source are materialized
 --     here at submit time, so the id is a forensic join key while the log row
 --     lives, not the value's only home.
--- Same tolerant DO-block style as 003/004/005/026 for drifted databases.
+--
+-- THE HANDLERS BELOW USED TO SAY `EXCEPTION WHEN others THEN NULL`, copying
+-- 003/004/005/026, and that was wrong here in a way it is worth writing down.
+-- `others` catches everything, including the things that are not "this already
+-- exists, carry on". db/migrate.js sets lock_timeout to 10 seconds precisely so
+-- a rolling deploy cannot queue DDL behind a long-running query forever;
+-- venue_feedback is a populated, actively written table, so that timeout firing
+-- on one of these ALTERs is an ordinary Tuesday. `others` swallowed it, the
+-- statement batch returned, the runner wrote the schema_migrations row, and the
+-- columns were then absent FOREVER, because nothing re-runs a migration the
+-- runner believes is done. routes/feedback.js writes predicted_score_source,
+-- client_predicted_score and served_prediction_id on every submit, so every
+-- report would have 500'd from that point on and a redeploy would not have
+-- healed it.
+--
+-- So the handlers are narrowed to the two conditions that genuinely mean
+-- "already there": duplicate_column (42701) and duplicate_object (42710, the
+-- auto-named CHECK constraint). A lock timeout (55P03), a permission error, a
+-- missing venue_feedback and anything else now propagates, which fails the boot
+-- loudly and retries on the next one instead of losing the column quietly.
+--
+-- The @requires lines are the belt to that braces: db/migrate.js verifies them
+-- before it records this file, and re-verifies them on every later boot, so a
+-- database that was ALREADY falsely marked applied gets the file replayed
+-- rather than needing a human. See the header of db/migrate.js.
+-- @requires table served_predictions
+-- @requires column venue_feedback.predicted_score_source
+-- @requires column venue_feedback.client_predicted_score
+-- @requires column venue_feedback.served_prediction_id
 
 DO $$ BEGIN
   ALTER TABLE venue_feedback ADD COLUMN IF NOT EXISTS predicted_score_source VARCHAR(10)
     CHECK (predicted_score_source IN ('server', 'client'));
-EXCEPTION WHEN others THEN NULL; END $$;
+EXCEPTION WHEN duplicate_column OR duplicate_object THEN NULL; END $$;
 
 DO $$ BEGIN
   ALTER TABLE venue_feedback ADD COLUMN IF NOT EXISTS client_predicted_score SMALLINT
     CHECK (client_predicted_score BETWEEN 0 AND 100);
-EXCEPTION WHEN others THEN NULL; END $$;
+EXCEPTION WHEN duplicate_column OR duplicate_object THEN NULL; END $$;
 
 DO $$ BEGIN
   ALTER TABLE venue_feedback ADD COLUMN IF NOT EXISTS served_prediction_id BIGINT;
-EXCEPTION WHEN others THEN NULL; END $$;
+EXCEPTION WHEN duplicate_column OR duplicate_object THEN NULL; END $$;
