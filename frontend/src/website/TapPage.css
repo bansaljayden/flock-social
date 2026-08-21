@@ -1,0 +1,238 @@
+/* /tap. The page every physical NFC tag points at.
+   ---------------------------------------------------------------------------
+   THE READER: a DECA judge at a competition who has never heard of Flock, on
+   venue wifi, holding a phone they just tapped against a card or a table
+   stand, giving this about fifteen seconds. That is the whole brief, and it
+   is why this file is small, why there is exactly one screen of content, and
+   why nothing here animates.
+
+   WHY THIS IS NOT LandingPage.css. The tokens below are copied VALUES, not
+   invented ones: every hex is lifted verbatim from the `.lp` block in
+   LandingPage.css, which is the house palette (cream paper, navy ink, one
+   steel accent). Importing that file instead would pull 1651 lines of CSS for
+   a page that uses maybe forty of them, on the one route where the connection
+   is worst. components/auth/AuthShell.js already does exactly this and says
+   so in its own comment. If a token changes there, change it here too. */
+
+/* The face the h1 waits in, copied from LandingPage.css along with its
+   measurement. Fraunces loads with font-display: swap, so there IS a swap,
+   and until this block existed the fallback was ~29% wider than the face that
+   arrived, which reflowed the headline and pushed the buttons down under the
+   reader's thumb. local() only: this costs nothing on the wire.
+
+   Deliberately NO <link rel=preload> for Fraunces on this route. LandingPage
+   preloads it because that page's LCP element is a 72px headline and the
+   visitor is going to stay. Here the font is 67 KB competing with the JS chunk
+   and the logo on venue wifi, and with this fallback in place the page is
+   fully readable and dimensionally stable without it. The real face arrives
+   when it arrives. */
+@font-face {
+  font-family: 'Fraunces Fallback';
+  src: local('Times New Roman'), local('Liberation Serif'), local('DejaVu Serif'), local('Tinos');
+  size-adjust: 97.77%;
+  ascent-override: 100.24%;
+  descent-override: 26.59%;
+  line-gap-override: 0%;
+  font-weight: 100 900;
+}
+
+.tap {
+  --navy: #0f172a;
+  --cream: #f4efe3;      /* 16.3:1 on --navy */
+  --cream-2: #c8c3b2;    /* 10.6:1 on --navy, and what every secondary line uses */
+  --steel-lift: #6d9ac3; /* focus rings on navy: 5.9:1 */
+  --edge-cream: rgba(244, 239, 227, 0.30);
+  --cream-hi: #fffaf0;
+
+  --font-display: 'Fraunces', 'Fraunces Fallback', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+
+  font-family: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.6;
+  color: var(--cream);
+
+  /* The navy is painted by the ELEMENT, not by the photograph. The city image
+     is decoration layered on top of this at low opacity, so if it never
+     arrives (or never arrives in time, which on venue wifi is the same thing)
+     the page still reads exactly as designed. */
+  background: var(--navy);
+
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 100vh;
+
+  /* Safe areas: some judges will tap this on an iPhone, where the WebView-less
+     browser still reports insets in landscape and on the home indicator. The
+     tokens come from index.css and resolve to 0px everywhere else. */
+  padding:
+    calc(32px + var(--safe-top, 0px))
+    calc(20px + var(--safe-right, 0px))
+    calc(32px + var(--safe-bottom, 0px))
+    calc(20px + var(--safe-left, 0px));
+}
+@supports (min-height: 100dvh) { .tap { min-height: 100dvh; } }
+
+.tap *, .tap *::before, .tap *::after { box-sizing: border-box; }
+
+/* ============ the backdrop ============ */
+
+/* A real <img>, not a CSS background, and that is the point: an <img> with
+   loading=lazy and fetchpriority=low can never sit in front of the text and
+   the buttons in the network queue. It is 22 KB and it is the last thing this
+   page asks for. */
+.tap-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.45;
+  /* The photograph is a night city, so it is already dark, but "already dark"
+     is not a contrast measurement. The scrim below puts a near-navy layer
+     between it and every string on this page, which is what lets the cream
+     text keep the 16.3:1 it measures against bare --navy. */
+  filter: saturate(0.75);
+}
+
+.tap::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    rgba(15, 23, 42, 0.68),
+    rgba(10, 17, 32, 0.90)
+  );
+  pointer-events: none;
+}
+
+/* ============ the column ============ */
+
+.tap-in {
+  position: relative;   /* above the scrim */
+  z-index: 1;
+  width: 100%;
+  max-width: 30rem;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.tap-logo {
+  width: 84px;
+  height: 84px;
+  display: block;
+  margin: 0 auto 22px;
+  border-radius: 50%;
+}
+
+.tap h1 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(29px, 1.2rem + 3.2vw, 44px);
+  line-height: 1.08;
+  letter-spacing: -0.005em;
+  margin: 0 0 16px;
+  color: var(--cream);
+  text-wrap: balance;
+}
+
+.tap-lead {
+  font-size: clamp(16px, 1.4vw, 18px);
+  color: var(--cream-2);
+  margin: 0 auto 28px;
+  max-width: 30rem;
+}
+
+/* ============ actions ============ */
+
+.tap-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: center;
+}
+
+.tap-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  max-width: 22rem;
+  min-height: 54px;   /* comfortably past the 44px touch floor */
+  padding: 0 24px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+              border-color 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* The one thing the page is asking for. Cream on navy is the loudest object
+   available in this palette without inventing a colour for it. */
+.tap-btn-primary {
+  background: var(--cream);
+  color: var(--navy);
+}
+.tap-btn-primary:hover { background: var(--cream-hi); }
+
+/* Secondary actions. Both are behind flags today, so this rule usually styles
+   nothing; it is here so that switching one on is genuinely a one-line change
+   and not a one-line change plus a design pass. */
+.tap-btn-ghost {
+  background: transparent;
+  color: var(--cream);
+  border-color: var(--edge-cream);
+}
+.tap-btn-ghost:hover { border-color: var(--cream-2); }
+
+.tap-btn-ghost svg {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  fill: currentColor;
+}
+
+.tap-more {
+  margin: 24px 0 0;
+  font-size: 15px;
+  color: var(--cream-2);
+}
+/* Underlined, and not as decoration: it is the only link on the page that is
+   not shaped like a button, so the underline is the second channel that says
+   it is a control at all (WCAG 1.4.1, do not carry meaning on colour alone). */
+.tap-more a {
+  color: var(--cream-2);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.tap-more a:hover { color: var(--cream); }
+
+/* One focus ring, drawn on the navy every control on this page sits on, where
+   --steel-lift measures 5.9:1 against it. Offset outward so the ring on the
+   cream primary button lands on navy rather than inside the cream. */
+.tap a:focus-visible {
+  outline: 3px solid var(--steel-lift);
+  outline-offset: 3px;
+  border-radius: 12px;
+}
+
+/* Very short screens (a phone in landscape, a judge's older device) get the
+   same content with the air taken out rather than a scrollbar. */
+@media (max-height: 620px) {
+  .tap-logo { width: 64px; height: 64px; margin-bottom: 16px; }
+  .tap-lead { margin-bottom: 20px; }
+  .tap-more { margin-top: 18px; }
+}
+
+/* Nothing on this page animates, so there is no motion to reduce. The two
+   transitions above are colour only, which prefers-reduced-motion does not
+   cover, but a user who asked for less movement gets nothing that moves
+   either way. */
