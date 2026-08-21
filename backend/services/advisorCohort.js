@@ -63,13 +63,21 @@
 // attacker one of the values for free. Excluding it means every value behind
 // the published number is unknown to the reader.
 //
-// WHAT IS PUBLISHED: the median and the count of distinct reporting venues.
-// That is the whole list. Never a per-venue value, never a name, never a rank,
-// never a min, max, range, spread or any other quantile. The extremes are the
-// dangerous ones: a maximum IS one venue's exact reading, attributed to the
-// venue anyone would guess. The per-venue values do not even cross the SQL
-// boundary into JavaScript (see cohortNightAggregate): the aggregation happens
-// inside the query and this process only ever holds a count and a median.
+// WHAT IS PUBLISHED: the median, and a FLOOR on the number of reporting owners
+// ("at least five", "at least ten"), never the count itself. That is the whole
+// list. Never a per-venue value, never a name, never a rank, never a min, max,
+// range, spread or any other quantile. The extremes are the dangerous ones: a
+// maximum IS one venue's exact reading, attributed to the venue anyone would
+// guess. The per-venue values do not even cross the SQL boundary into
+// JavaScript (see cohortNightAggregate): the aggregation happens inside the
+// query and this process only ever holds counts and a median.
+//
+// The exact count used to be published and is not any more. A count that moves
+// by one is a report card on which of an owner's named neighbours posted last
+// night, readable by anyone who can read a map, and it is the signal that makes
+// every join and every departure below observable one at a time. A bucket floor
+// still does the only honest job the count was doing on the card, which is
+// telling the owner the number is not built on two venues.
 //
 // ── THE DIFFERENCING ATTACK, WORKED THROUGH ────────────────────────────────
 //
@@ -112,23 +120,120 @@
 //      about an individual is at best "somewhere on one side of a five-point
 //      bucket".
 //
-//   5. THE COUNT IS NOT NARRATED BELOW THE FLOOR. The refusal names the floor
-//      (five) and never the current number of reporters. "Three more venues
-//      would unlock this" tells an owner who can read a map that exactly two
-//      of their named neighbours posted a reading last night, which is
-//      participation disclosure with a growth-loop bow on it. The refusal says
-//      what the floor is, what would clear it, and that we deliberately do not
-//      say how close it is.
+//   5. THE COUNT IS NEVER EXACT, AND IT IS NOT NARRATED AT ALL BELOW THE FLOOR.
+//      Above the floor the card says "at least five"; the exact number never
+//      leaves this module. Below it, the refusal names the floor (five) and
+//      never the current number of reporters. "Three more venues would unlock
+//      this" tells an owner who can read a map that exactly two of their named
+//      neighbours posted a reading last night, which is participation
+//      disclosure with a growth-loop bow on it. The refusal says what the floor
+//      is, what would clear it, and that we deliberately do not say how close
+//      it is.
 //
-// RESIDUAL, stated rather than hidden: a retraction after publication (031
-// rows can be retracted at any time) removes one value from a window an owner
-// may already have read, and re-reading shows the change. Guards 1 and 4 bound
-// what that reveals to one bit inside a five-point bucket, and dropping below
-// the floor refuses outright rather than publishing a thinner number. Two
-// colluding owners in different bands can learn that somebody reported in one
-// band and not another. Both are participation-shaped, both are bounded, and
-// neither yields a value. Half A has no such surface at all: the corpus is
-// frozen, so its cohort has no joins or departures to difference.
+//   6. THE FLOOR IS COUNTED IN OWNERS, NOT IN VENUES, and every venue one owner
+//      holds collapses to ONE value before the median is taken. A cohort is
+//      five independent businesses or it is not a cohort. Today
+//      venue_profiles.user_id is UNIQUE, so one account holds at most one
+//      verified venue and the two counts are the same number; the constraint is
+//      written in owners anyway, because the day a group operator claims three
+//      bars in one city is the day a venue-counted floor of five quietly becomes
+//      an owner-counted floor of three. See the OPEN PRODUCT QUESTION below.
+//
+//   7. THE MIDDLE HAS TO BE SUPPORTED. Guards 1 to 6 all assume the reporting
+//      set is not mostly one party's construction, and five accounts defeat all
+//      of them at once. Post two readings at 0, two at 100, ask from a fifth
+//      venue, and the sorted set is [0, 0, target, 100, 100], whose median IS
+//      the one honest venue's reading, rounded to our own grid. The median is
+//      not being inverted there, it is being POSITIONED, and bounded influence
+//      is worth nothing when the neighbours on both sides were chosen. So the
+//      number we are about to print has to be one that several reporters could
+//      have supplied. Two conditions, and the value has to pass both:
+//
+//        a. MIN_MEDIAN_SUPPORT (3) reporters sit within MEDIAN_SUPPORT_WINDOW
+//           (15 points) of the number about to be printed, and
+//        b. it sits INSIDE that company rather than at the edge of it. Either
+//           MIN_MEDIAN_FLANK (1) reporter falls a clear step under it and
+//           another a clear step over it, both still inside the window, or three
+//           reporters hold the number itself and the whole reporting set fits
+//           inside one window, which is what an ordinary flat street looks like.
+//           "A clear step" means further from it than half the publishing grid,
+//           which is what keeps the reporter the median was TAKEN from out of
+//           its own flank count: a target of 6 sandwiched between two zeroes
+//           publishes as 5, and counting the 6 as the value above the 5 would
+//           have let it prop itself up.
+//
+//      A sandwich fails (a) by construction, since the entire purpose of the
+//      outer values is to be nowhere near the middle. (b) is what closes the
+//      ends. Counted as a total alone, [0, 0, target, 100, 100] still published
+//      whenever the target reported a nearly empty room: at a target of 10 the
+//      two zeroes are inside the window, the count reaches three, and the card
+//      prints the target's own reading. At a target of exactly 0 the three
+//      zeroes even look like a cluster. Requiring company on both sides, or a
+//      genuinely tight set, says a printed value has to be surrounded rather
+//      than propped up from one direction, and a jaw is only ever on one side of
+//      the thing it pins. An ordinary night, where venues in one city and one
+//      category on one Friday sit in a cluster, clears both without noticing,
+//      and so does a flat night where every venue reports the same number.
+//
+//      The cost is a real one and it is worth naming: a genuinely lopsided
+//      honest night, three venues at 0 and two at 25, is refused as well. The
+//      published number there would be one venue's own reading held up by two
+//      venues sitting underneath nothing. We would rather lose that night's
+//      card than print it.
+//
+// RESIDUAL, stated rather than hidden:
+//
+//   * A retraction after publication (031 rows can be retracted at any time)
+//     removes one value from a window an owner may already have read, and
+//     re-reading shows the change. Guards 1, 4 and 5 bound what that reveals to
+//     one bit inside a five-point bucket, and dropping under the floor refuses
+//     outright rather than publishing a thinner number.
+//   * Guard 7 stops the WIDE sandwich, not the narrow one. An attacker who
+//     already believes the target sits near 55 can set the jaws at 45 and 65
+//     instead of 0 and 100: the support test passes and the published median
+//     confirms the guess to the five-point grid. What the narrow version costs
+//     them is everything the wide one did not: four verified venues in one city
+//     and category under four separate accounts, a prior belief already accurate
+//     to about fifteen points, and one probe per night, since readings are
+//     stamped with the clock and a finished night cannot be re-entered. That
+//     turns exact recovery from a standing start into confirmation of something
+//     already suspected. It is a real residual, and what bounds it is how
+//     expensive a verified venue account is, which is a verification problem
+//     rather than an aggregation one.
+//   * Two colluding owners in different bands can learn that somebody reported
+//     in one band and not another. Participation-shaped, bounded, no value.
+//   * Half A has no such surface at all: the corpus is frozen, so its cohort has
+//     no joins or departures to difference.
+//
+// ── ONE REFUSAL, ONE SENTENCE ──────────────────────────────────────────────
+//
+// Half B has two ways to decline, too few owners and an unsupported middle, and
+// exactly ONE refusal, with one id and one wording. A refusal that said which
+// test failed would hand back the fact it was protecting: "there were enough of
+// you, the readings were simply far apart" is a statement about the shape of
+// that night's distribution, handed to somebody we have just decided may not
+// see the middle of it. Worse, it restores the on/off signal guard 7 exists to
+// remove, since the attacker learns their sandwich landed and only the support
+// test caught it. The copy names both conditions and never says which one bit.
+//
+// ── OPEN PRODUCT QUESTION (Jayden's call, not this module's) ────────────────
+//
+// Should cohort membership be owner-grouped? This module already is: one owner
+// contributes one value however many venues they hold, and the floor counts
+// owners. That is the conservative reading and it costs nothing today, because
+// venue_profiles.user_id is UNIQUE, so no owner holds two verified venues and
+// the two ways of counting give the same number. If multi-venue operators are
+// ever supported the choice starts to matter, and it is a product call:
+//   * KEEP THIS (one value per owner). A three-bar operator moves the street
+//     number no more than any single independent does, and a floor of five means
+//     five separate businesses. Their own bars stay out of their own answer,
+//     which is right, since they already know all three numbers.
+//   * CHANGE IT (one value per venue). The cohort fills faster in thin cities
+//     and reads more like the word "venues" that the card uses. The cost is that
+//     five venues can be three parties, and the floor stops meaning what the
+//     privacy note above says it means.
+// Changing it means changing the GROUP BY in cohortNightAggregate and the
+// wording of the count sentence. Nothing else in this module moves.
 //
 // ── WHY THERE IS NO RADIUS VARIANT ─────────────────────────────────────────
 //
@@ -170,11 +275,41 @@ function F() {
 
 // ─── The floors ─────────────────────────────────────────────────────────────
 
-// Half B. Distinct venues OTHER than the asking one that must have posted a
+// Half B. Distinct OWNERS other than the asking one that must have posted a
 // reading for the same night and band before any cohort number is published.
 // See the privacy section above: higher than crowdEngine's
-// MIN_CALIBRATION_REPORTERS = 3 because venues are identifiable from a map.
+// MIN_CALIBRATION_REPORTERS = 3, since venues are identifiable from a map, and
+// counted in owners rather than in venues per guard 6.
 const MIN_COHORT_REPORTERS = 5;
+
+// Half B, guard 7. The published median has to be a value at least this many
+// reporters could have supplied. Three is the same k the house uses for
+// aggregates over identifiable reporters, applied here to the VALUE rather than
+// to the set: if three reporters sit within the window of the number on the
+// card, that number names none of them.
+const MIN_MEDIAN_SUPPORT = 3;
+
+// And how many supporters have to sit a clear step out on each side of the
+// published value, inside the same window. This is the half that stops a
+// sandwich whose target happened to report near one of the jaws: supporters all
+// crowded below the number mean the number is the top edge of a cluster, which
+// is where a pinned value sits. A clear step is more than half the publishing
+// grid, so the reporter the median was taken from cannot count as its own
+// flank. A flat street has nobody out on either side and clears the guard
+// through the tight-set branch instead. See guard 7.
+const MIN_MEDIAN_FLANK = 1;
+
+// How near the published median a reading has to be to count as supporting it,
+// on the 0-100 index. Fifteen is three times the publishing grid, which is wide
+// enough that an ordinary Friday cluster in one city and category clears it and
+// narrow enough that a sandwich built to pin the middle does not: jaws inside 15
+// points of the target are jaws whose owner already knew the answer to 15
+// points. Widening this weakens guard 7 in direct proportion.
+const MEDIAN_SUPPORT_WINDOW = 15;
+
+// The count of reporting owners is published as the largest of these it reaches,
+// never as itself. Guard 5: an exact count is the differencing signal.
+const REPORTER_COUNT_BUCKETS = [5, 10, 25, 50, 100];
 
 // Half A. Corpus venues that must sit in the (city, category, day, hour) cell
 // before a position inside it means anything. This floor is statistical rather
@@ -223,6 +358,20 @@ function bandFor(hour) {
 
 function roundToGrid(value) {
   return Math.round(Number(value) / MEDIAN_ROUND_TO) * MEDIAN_ROUND_TO;
+}
+
+/**
+ * The largest bucket the reporting-owner count reaches. Guard 5: what goes on
+ * the card is "at least five", not "six", so a venue joining or leaving the
+ * reporting set moves the published sentence on bucket boundaries only.
+ */
+function reporterFloor(count) {
+  const n = Number(count);
+  let floor = REPORTER_COUNT_BUCKETS[0];
+  for (const bucket of REPORTER_COUNT_BUCKETS) {
+    if (n >= bucket) floor = bucket;
+  }
+  return floor;
 }
 
 /** 'YYYY-MM-DD' on the venue's own wall clock. */
@@ -465,40 +614,92 @@ async function ownLatestNight(placeId, tz, today) {
 }
 
 /**
- * The cohort's night, aggregated INSIDE the query. This function returns a
- * count and a median and nothing else: the per-venue peaks never cross into
+ * The cohort's night, aggregated INSIDE the query. This function returns three
+ * counts and a median and nothing else: the per-venue peaks never cross into
  * this process, so no later refactor can leak one by accident, and no logging
- * or error path can hold one.
+ * or error path can hold one. That includes the support count, which is guard
+ * 7's input and is a COUNT of readings near the middle, never the readings.
  *
- * The asking venue is excluded (`<> $3`), the reporting venues must be claimed
- * and verified, and the timezone used is the asking venue's own. Every venue
- * in one CITIES key shares a wall clock, so one tz for the whole cohort is
- * correct rather than convenient.
+ * One row per OWNER, not per venue (guard 6): whatever an owner holds in this
+ * city and category collapses to a single peak before the median sees it, so a
+ * cohort of five is five separate businesses. The asking venue is excluded by
+ * place id, and its owner by user id, so nothing behind the published number is
+ * a value the reader already has.
+ *
+ * The reporting venues must be claimed and verified, and the timezone used is
+ * the asking venue's own. Every venue in one CITIES key shares a wall clock, so
+ * one tz for the whole cohort is correct rather than convenient.
  */
-async function cohortNightAggregate({ city, category, excludePlaceId, tz, night, band }) {
+async function cohortNightAggregate({ city, category, excludePlaceId, excludeOwnerId, tz, night, band }) {
   const { rows } = await pool.query(
     `WITH reporters AS (
-       SELECT r.google_place_id AS pid, MAX(r.busy_percent)::numeric AS peak
+       SELECT vp.user_id AS owner, MAX(r.busy_percent)::numeric AS peak
          FROM venue_owner_reports r
          JOIN ml_venues v ON v.google_place_id = r.google_place_id
          JOIN venue_profiles vp ON vp.google_place_id = r.google_place_id AND vp.verified = true
         WHERE v.city = $1
           AND v.venue_category = $2
           AND r.google_place_id <> $3
+          AND vp.user_id IS NOT NULL
+          AND vp.user_id IS DISTINCT FROM $8::int
           AND r.retracted = false
           AND (r.created_at AT TIME ZONE $4)::date = $5::date
           AND EXTRACT(HOUR FROM (r.created_at AT TIME ZONE $4))::int BETWEEN $6 AND $7
-        GROUP BY 1
+        GROUP BY vp.user_id
+     ),
+     middle AS (
+       SELECT COUNT(*)::int AS owners,
+              percentile_cont(0.5) WITHIN GROUP (ORDER BY peak) AS median_peak
+         FROM reporters
+     ),
+     shown AS (
+       -- ::numeric BEFORE the ROUND, and it is load-bearing. percentile_cont
+       -- returns double precision even over a numeric column, and round() on a
+       -- double is the C library's rint(), which breaks a tie to EVEN: a median
+       -- of 42.5 rounds to 40 there and to 45 in roundToGrid(), which is
+       -- Math.round and breaks ties upward. Guard 7 would then have been
+       -- measured around a number the owner never sees, one grid step away from
+       -- the one printed. round() on a numeric breaks ties away from zero, which
+       -- is what JavaScript does for the 0-100 values this column holds.
+       SELECT owners, median_peak,
+              ROUND(median_peak::numeric / $9::numeric) * $9::numeric AS grid
+         FROM middle
      )
-     SELECT COUNT(*)::int AS venues,
-            percentile_cont(0.5) WITHIN GROUP (ORDER BY peak) AS median_peak
-       FROM reporters`,
-    [city, category, excludePlaceId, tz, night, band.from, band.to]
+     SELECT s.owners,
+            s.median_peak,
+            (SELECT COUNT(*) FROM reporters n
+              WHERE ABS(n.peak - s.grid) <= $10::numeric)::int AS support,
+            (SELECT COUNT(*) FROM reporters n
+              WHERE (s.grid - n.peak) * 2 > $9::numeric
+                AND s.grid - n.peak <= $10::numeric)::int AS support_below,
+            (SELECT COUNT(*) FROM reporters n
+              WHERE (n.peak - s.grid) * 2 > $9::numeric
+                AND n.peak - s.grid <= $10::numeric)::int AS support_above,
+            (SELECT COUNT(*) FROM reporters n
+              WHERE ABS(n.peak - s.grid) * 2 <= $9::numeric)::int AS at_value,
+            (SELECT COALESCE(MAX(n.peak) - MIN(n.peak), 0) <= $10::numeric
+               FROM reporters n) AS tight
+       FROM shown s`,
+    [city, category, excludePlaceId, tz, night, band.from, band.to,
+      excludeOwnerId == null ? null : Number(excludeOwnerId),
+      MEDIAN_ROUND_TO, MEDIAN_SUPPORT_WINDOW]
   );
   const r = rows[0] || {};
   return {
-    venues: Number(r.venues || 0),
+    owners: Number(r.owners || 0),
     medianPeak: r.median_peak != null ? Number(r.median_peak) : null,
+    // Guard 7's inputs, all of them COUNTS of readings near the number we would
+    // publish and one boolean, never the readings. They are measured against
+    // the ROUNDED median, which is the value that actually reaches the owner, so
+    // the guard is stated about the thing on the card rather than about an
+    // intermediate nobody sees. `tight` is a comparison, not a range: the spread
+    // itself stays in the database, since a spread is a publishable-looking
+    // number this process has no business holding.
+    support: Number(r.support || 0),
+    supportBelow: Number(r.support_below || 0),
+    supportAbove: Number(r.support_above || 0),
+    atValue: Number(r.at_value || 0),
+    tight: r.tight === true,
   };
 }
 
@@ -585,19 +786,37 @@ async function buildCohortSameNight(ctx, { now = new Date() } = {}) {
   })];
 
   const cohort = await cohortNightAggregate({
-    city: key.city, category: key.category, excludePlaceId: placeId, tz, night: own.night, band,
+    city: key.city,
+    category: key.category,
+    excludePlaceId: placeId,
+    excludeOwnerId: ctx.profile.user_id,
+    tz,
+    night: own.night,
+    band,
   });
 
-  if (cohort.venues < MIN_COHORT_REPORTERS || cohort.medianPeak == null) {
+  // Two conditions, ONE refusal, and the copy never says which of them bit. See
+  // "ONE REFUSAL, ONE SENTENCE" in the header: naming the failing test would
+  // publish the shape of the distribution to the reader we just decided may not
+  // see the middle of it, and would tell an attacker their sandwich landed.
+  const enoughOwners = cohort.owners >= MIN_COHORT_REPORTERS && cohort.medianPeak != null;
+  // Guard 7. Enough company near the number, and the number sitting inside that
+  // company rather than propped up from one side of it. A flat street clears
+  // the second test through the tight-set branch.
+  const flanked = cohort.supportBelow >= MIN_MEDIAN_FLANK && cohort.supportAbove >= MIN_MEDIAN_FLANK;
+  const clustered = cohort.atValue >= MIN_MEDIAN_SUPPORT && cohort.tight;
+  const supported = cohort.support >= MIN_MEDIAN_SUPPORT && (flanked || clustered);
+  if (!enoughOwners || !supported) {
     out.push(facts.makeRefusal({
       id: 'refuse_cohort_thin_reporters',
-      reason: `Fewer than ${MIN_COHORT_REPORTERS} other ${cityName} ${plural} posted a reading for ${window} that ${weekday}, so there is no street number to give you. Under that floor a middle value sits close enough to one venue's own reading to name them, and venues are findable on a map in a way people are not.`,
-      whatWouldUnlock: `${MIN_COHORT_REPORTERS} venues near you, in your category, posting readings for the same hours. We do not say how many have so far. That count is itself a fact about which of your neighbours reported, and it is theirs, not ours to hand over.`,
+      reason: `We do not hold readings from ${MIN_COHORT_REPORTERS} other ${cityName} ${plural} for ${window} that ${weekday} that add up to a middle value we can state on its own terms, so there is no street number to give you. Under that floor, and when the readings we do hold sit far apart from each other, a middle value sits close enough to one venue's own reading to name them, and venues are findable on a map in a way people are not.`,
+      whatWouldUnlock: `${MIN_COHORT_REPORTERS} venues near you, in your category, under ${MIN_COHORT_REPORTERS} separate owners, posting readings for the same hours. We do not say how many have so far, and we do not say which of those two conditions this night missed. Both are facts about which of your neighbours reported and what they said, and they are theirs, not ours to hand over.`,
     }));
     return out;
   }
 
   const median = roundToGrid(cohort.medianPeak);
+  const atLeast = reporterFloor(cohort.owners);
   out.push(facts.makeFact({
     id: 'cohort_night_median',
     value: {
@@ -605,13 +824,13 @@ async function buildCohortSameNight(ctx, { now = new Date() } = {}) {
       weekday,
       hourFrom: band.from,
       hourTo: band.to,
-      reportingVenues: cohort.venues,
+      reportingVenuesAtLeast: atLeast,
       medianReading: median,
     },
     source: 'cohort_reported',
     asOf: own.night,
-    note: 'The middle reading and the count of venues, rounded. We never publish a single venue\'s number, a highest, a lowest, a spread or a name.',
-    label: `${cohort.venues} other ${cityName} ${plural} posted readings for ${window} that ${weekday}. The middle of those readings was about ${median} on the 0 to 100 index.`,
+    note: 'The middle reading, rounded, and a floor on how many venues stand behind it. We never publish the exact number of reporters, a single venue\'s number, a highest, a lowest, a spread or a name.',
+    label: `At least ${atLeast} other ${cityName} ${plural} posted readings for ${window} that ${weekday}. The middle of those readings was about ${median} on the 0 to 100 index.`,
   }));
 
   const typical = await cohortBandTypical({
@@ -640,11 +859,16 @@ module.exports = {
   // Floors and helpers, exported for the standing test.
   MIN_COHORT_REPORTERS,
   MIN_COHORT_CORPUS_VENUES,
+  MIN_MEDIAN_SUPPORT,
+  MIN_MEDIAN_FLANK,
+  MEDIAN_SUPPORT_WINDOW,
+  REPORTER_COUNT_BUCKETS,
   MEDIAN_ROUND_TO,
   BAND_HOURS,
   OWN_READING_LOOKBACK_DAYS,
   bandFor,
   roundToGrid,
+  reporterFloor,
   toDateStr,
   bandWords,
   cityWords,
