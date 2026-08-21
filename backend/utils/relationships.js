@@ -39,6 +39,81 @@ async function hasDmRelationship(userId, otherId) {
   return r.rows.length > 0;
 }
 
+// ---------------------------------------------------------------------------
+// The same question, asked per keystroke
+// ---------------------------------------------------------------------------
+// The ephemeral DM socket handlers (typing, live location) fire per keystroke
+// and every ten seconds, so the uncached query above is the wrong shape for
+// them: it is two EXISTS scans per packet. utils/blocks.js already solved this
+// exact problem for the block half of the same gate with a short-TTL pair
+// cache, and this is that, deliberately built the same way so the two controls
+// on the same handler behave alike.
+//
+// 30s TTL, matching BLOCK_CACHE_TTL. What that costs is bounded and one-sided:
+// a relationship that has just STARTED can take up to 30 seconds before typing
+// dots flow, which is a cosmetic delay on a feature that has no meaning before
+// the first message anyway. It cannot go the other way and keep a stale "yes"
+// alive past a block, because the block check is a separate control that runs
+// first and has its own invalidation. sockets/handlers.js also invalidates the
+// pair the moment it persists a DM, so the ordinary "you just messaged someone
+// new" path does not wait out the TTL at all.
+//
+// The pair key is arithmetic on two values that are already positive integers
+// (hasDmRelationship's guard rejects everything else and this defers to it), so
+// unlike utils/blocks.js's pairKey there is no mixed-type ordering to get
+// wrong here.
+const relationshipCache = new Map();
+const RELATIONSHIP_CACHE_TTL = 30 * 1000;
+const RELATIONSHIP_CACHE_MAX = 5000;
+
+function relationshipKey(a, b) {
+  return a <= b ? `${a}_${b}` : `${b}_${a}`;
+}
+
+function readableParticipants(a, b) {
+  const x = Number(a);
+  const y = Number(b);
+  if (!Number.isInteger(x) || !Number.isInteger(y) || x === y) return null;
+  return [x, y];
+}
+
+async function hasDmRelationshipCached(userId, otherId) {
+  const pair = readableParticipants(userId, otherId);
+  // Nothing unreadable may reach the cache. Caching a decision under a key
+  // built from junk is how utils/blocks.js's round 20 defect worked, and the
+  // fail-closed answer for "cannot read the id" is false either way.
+  if (!pair) return false;
+  const key = relationshipKey(pair[0], pair[1]);
+  const now = Date.now();
+  const hit = relationshipCache.get(key);
+  if (hit && now - hit.ts < RELATIONSHIP_CACHE_TTL) return hit.connected;
+  const connected = await hasDmRelationship(pair[0], pair[1]);
+  // Delete-then-set so insertion order is least-recently-written, which is what
+  // makes the eviction below oldest-first. Same shape as blocks.js.
+  relationshipCache.delete(key);
+  relationshipCache.set(key, { ts: now, connected });
+  if (relationshipCache.size > RELATIONSHIP_CACHE_MAX) {
+    for (const [k, v] of relationshipCache) {
+      if (now - v.ts >= RELATIONSHIP_CACHE_TTL) relationshipCache.delete(k);
+    }
+    while (relationshipCache.size > RELATIONSHIP_CACHE_MAX) {
+      relationshipCache.delete(relationshipCache.keys().next().value);
+    }
+  }
+  return connected;
+}
+
+// Call after a DM is persisted between two accounts: that row is what CREATES
+// the relationship, so a cached "no" from seconds earlier is now wrong.
+// Deliberately tolerant, like invalidateBlockCache: this runs on the success
+// path of a send, and an id the reader refuses could never have written an
+// entry anyway.
+function invalidateDmRelationshipCache(a, b) {
+  const pair = readableParticipants(a, b);
+  if (!pair) return;
+  relationshipCache.delete(relationshipKey(pair[0], pair[1]));
+}
+
 // One answer for "no such user" and "not connected to you", so neither can be
 // read off the other. Phrased for the case a real person will hit.
 const NOT_CONNECTED_MESSAGE = "You can only do that with people you're connected with.";
@@ -174,4 +249,14 @@ function storyVisibilitySql(options = {}) {
   return parts.join('\n           AND ');
 }
 
-module.exports = { hasDmRelationship, NOT_CONNECTED_MESSAGE, storyVisibilitySql };
+module.exports = {
+  hasDmRelationship,
+  hasDmRelationshipCached,
+  invalidateDmRelationshipCache,
+  NOT_CONNECTED_MESSAGE,
+  storyVisibilitySql,
+};
+
+// Exposed so the socket tests can start from a known-empty cache, the way
+// __resetRateLimiters does for the event buckets.
+module.exports.__test = { relationshipCache, RELATIONSHIP_CACHE_TTL };

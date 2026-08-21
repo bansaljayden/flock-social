@@ -57,8 +57,16 @@ const {
   registerHandlers,
   revalidateSession,
   __resetRateLimiters,
+  PACKETS_PER_WINDOW,
+  PACKET_FLOOD_DISCONNECT,
 } = require('../sockets/handlers');
-const { NOT_CONNECTED_MESSAGE } = require('../utils/relationships');
+const relationships = require('../utils/relationships');
+const { NOT_CONNECTED_MESSAGE } = relationships;
+
+// The DM-relationship answer is cached per pair for 30 seconds (see
+// utils/relationships.js). That is process-global state exactly like the event
+// buckets, so the tests below start it empty the same way.
+const resetRelationshipCache = () => relationships.__test.relationshipCache.clear();
 
 // --- harness (socketSecurity.test.js conventions, plus adapter rooms) -------
 
@@ -561,6 +569,7 @@ test('dm_vote_venue and dm_pin_venue refuse a pair with no relationship before a
 
 test('ephemeral DM events (typing, location) enforce blocks at the socket layer', async () => {
   __resetRateLimiters();
+  resetRelationshipCache();
   const restore = mockPool([
     [BLOCK_PAIR, [{ '?column?': 1 }]],
   ]);
@@ -574,10 +583,138 @@ test('ephemeral DM events (typing, location) enforce blocks at the socket layer'
     await fire(s, 'dm_stop_sharing_location', { receiverId: 1302 });
     assert.strictEqual(s.emitted.length, 0,
       'a blocked pair exchanges nothing, not even typing dots or a location ping');
-    // These handlers deliberately stop at the block check (no relationship
-    // query per keystroke — the round 13 note in handlers.js records the
-    // trade). The PERSISTING DM handlers above all require the relationship.
+    // The block check comes FIRST and is the only query needed to refuse a
+    // blocked pair. The relationship check added below must not be reachable
+    // around it, and must not be paid for once the answer is already no.
   } finally { restore(); }
+});
+
+// --- 7b. round 24: ephemeral DM events also require a relationship ----------
+//
+// Round 13 let typing and location stop at the block check because send_dm
+// admitted any existing user, so these four could reach nobody a message could
+// not already reach. Round 18 closed send_dm behind hasDmRelationship and left
+// them behind, which made them the only remaining way into a stranger's client:
+// a name and live coordinates written straight into the pin App.js draws for
+// whoever the victim is actually talking to, and a stop event that blanks it.
+
+test('a stranger cannot push typing or live location into an account they have no DM relationship with', async () => {
+  __resetRateLimiters();
+  resetRelationshipCache();
+  const calls = [];
+  const restore = mockPool([
+    [BLOCK_PAIR, []],            // nobody has blocked anybody
+    [RELATIONSHIP, []],          // and these two have never spoken
+  ], calls);
+  try {
+    const s = fakeSocket('stranger', { id: 1310, name: 'Mallory' });
+    registerHandlers(fakeIo(), s);
+
+    await fire(s, 'dm_share_location', { receiverId: 1311, lat: 40.7, lng: -74 });
+    await fire(s, 'dm_stop_sharing_location', { receiverId: 1311 });
+    await fire(s, 'dm_typing', { receiverId: 1311 });
+    await fire(s, 'dm_stop_typing', { receiverId: 1311 });
+
+    assert.strictEqual(s.emitted.length, 0,
+      'not blocked is not the same as connected, and an unrelated account gets nothing');
+    assert.ok(calls.some((c) => RELATIONSHIP.test(c.text)), 'the relationship really was asked about');
+  } finally { restore(); }
+});
+
+test('a connected pair still exchanges typing and location, and pays one relationship query for the burst', async () => {
+  __resetRateLimiters();
+  resetRelationshipCache();
+  const calls = [];
+  const restore = mockPool([
+    [BLOCK_PAIR, []],
+    [RELATIONSHIP, [{ '?column?': 1 }]],
+  ], calls);
+  try {
+    const s = fakeSocket('friend', { id: 1320, name: 'Ava' });
+    registerHandlers(fakeIo(), s);
+
+    for (let i = 0; i < 5; i++) await fire(s, 'dm_typing', { receiverId: 1321 });
+    await fire(s, 'dm_share_location', { receiverId: 1321, lat: 40.7, lng: -74 });
+
+    assert.strictEqual(s.emitted.filter((e) => e.event === 'dm_user_typing').length, 5);
+    assert.ok(s.emitted.some((e) => e.event === 'dm_location_update'));
+    assert.strictEqual(calls.filter((c) => RELATIONSHIP.test(c.text)).length, 1,
+      'a per-keystroke event must not mean a per-keystroke query, so the pair answer is cached');
+  } finally { restore(); }
+});
+
+// --- 7c. round 24: a DM tally or pin says WHICH conversation it belongs to --
+
+test('dm_new_vote and dm_venue_pinned name the other side of the conversation, per recipient', async () => {
+  __resetRateLimiters();
+  resetRelationshipCache();
+  const restore = mockPool([
+    [BLOCK_PAIR, []],
+    [RELATIONSHIP, [{ '?column?': 1 }]],
+    [/FROM dm_venue_votes WHERE user1_id/, []],
+    [/DELETE FROM dm_venue_votes/, []],
+    [/INSERT INTO dm_venue_votes/, []],
+    [/FROM dm_venue_votes vv JOIN users/, [{ venue_name: 'Bar', venue_id: null, vote_count: '1', voters: ['Ava'] }]],
+    [/INSERT INTO dm_pinned_venues/, []],
+  ]);
+  // dm_vote_venue serializes its toggle on a checked-out client (advisory
+  // lock), which mockPool does not cover.
+  const realConnect = pool.connect;
+  try {
+    pool.connect = async () => ({
+      query: (text, params) => (/^\s*(BEGIN|COMMIT|ROLLBACK|SELECT pg_advisory)/i.test(text)
+        ? Promise.resolve({ rows: [] })
+        : pool.query(text, params)),
+      release: () => {},
+    });
+
+    const s = fakeSocket('voter', { id: 1330, name: 'Ava' });
+    registerHandlers(fakeIo(), s);
+
+    await fire(s, 'dm_vote_venue', { receiverId: 1331, venue_name: 'Bar' });
+    await fire(s, 'dm_pin_venue', { receiverId: 1331, venue_name: 'Bar' });
+
+    const toThem = s.emitted.filter((e) => e.target === 'user:1331');
+    const toMe = s.emitted.filter((e) => e.target === 'self');
+    assert.strictEqual(toThem.length, 2);
+    assert.strictEqual(toMe.length, 2);
+    for (const e of toThem) {
+      assert.strictEqual(e.payload.withUserId, 1330, 'the recipient is told who the thread is with: the sender');
+    }
+    for (const e of toMe) {
+      assert.strictEqual(e.payload.withUserId, 1331,
+        'voter and pinned_by are the SENDER in both copies, so the echo identified no conversation and a vote in one thread redrew the card in whichever thread was open');
+    }
+  } finally { restore(); pool.connect = realConnect; }
+});
+
+// --- 7d. round 24: one ceiling over every inbound packet -------------------
+//
+// The per-event buckets are keyed on the event NAME, which left two free ways
+// past them: cycle through the handler list instead of hammering one name (the
+// budgets add up to roughly 500 packets per ten seconds before anything is
+// refused), or send an event name nobody registered, which was not metered at
+// all because the meter lives inside the handlers.
+
+test('one socket cannot spend more than the global packet ceiling, whatever it names the events', () => {
+  __resetRateLimiters();
+  const s = fakeSocket('flooder', { id: 1340, name: 'Flooder' });
+  let delivered = 0;
+  s.use = (fn) => { s.middleware = fn; };
+  registerHandlers(fakeIo(), s);
+  assert.strictEqual(typeof s.middleware, 'function', 'the ceiling has to be installed on a real socket');
+
+  for (let i = 0; i < PACKETS_PER_WINDOW; i++) s.middleware(['whatever_' + i], () => { delivered++; });
+  assert.strictEqual(delivered, PACKETS_PER_WINDOW, 'no real client is anywhere near this');
+
+  s.middleware(['one_too_many'], () => { delivered++; });
+  assert.strictEqual(delivered, PACKETS_PER_WINDOW, 'over the ceiling a packet is dropped, not handled');
+  assert.ok(!s.disconnected, 'one packet over is not a flood');
+
+  for (let i = 0; i < PACKET_FLOOD_DISCONNECT; i++) s.middleware(['still_going'], () => { delivered++; });
+  assert.strictEqual(delivered, PACKETS_PER_WINDOW);
+  assert.ok(s.disconnected,
+    'a client still pushing after everything is refused is a script, and the connection goes');
 });
 
 // --- 8. friend events: verified state only, blocks first --------------------
