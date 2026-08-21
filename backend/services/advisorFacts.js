@@ -598,13 +598,34 @@ const intakeAsOf = (profile) =>
 // assumed, no nightlife vocabulary is used; a peak is wherever the venue's own
 // day puts it.
 
+// `source` and `updated_at` join the SELECT for the prime below, not for the
+// curve: the cache entry mlPredictor writes carries the anchoring row's
+// provenance, and priming from a curve that did not read those columns would
+// blank the freshness label the advisor publishes.
 async function fetchBaselineCurve(placeId) {
   const { rows } = await pool.query(
-    `SELECT day_of_week, hour, baseline
+    `SELECT day_of_week, hour, baseline, source, updated_at
        FROM ml_venue_baselines
       WHERE google_place_id = $1`,
     [placeId]
   );
+
+  // THE CURVE IS THE WHOLE WEEK, AND THE LOOPS BELOW ASK FOR IT AN HOUR AT A
+  // TIME. buildWeekAhead calls this, then walks every open hour of all seven
+  // days calling mlPredictor.predictBusyness, each of which called getBaseline,
+  // each of which ran its own three-row query against the table this line just
+  // read in full. Seventy round trips for a venue open ten hours a day, a
+  // hundred and sixty-eight for one that never closes, all sequential, all on
+  // the request path of GET /api/advisor/cards and POST /api/advisor/ask, and
+  // all for rows already sitting in `rows`. Handing them to the predictor's
+  // cache turns every one of those lookups into a hit.
+  //
+  // Placed here rather than in the callers because all three of them
+  // (buildWeekAhead, buildAroundYou, advisorCohort) have the same shape: fetch
+  // the curve, then score hours out of it. A caller that only wants the curve
+  // pays nothing for the prime — it is a loop over rows already in memory.
+  mlPredictor.primeBaselineCache(placeId, rows);
+
   return rows
     .map((r) => ({ day: Number(r.day_of_week), hour: Number(r.hour), baseline: Number(r.baseline) }))
     .filter((r) => Number.isFinite(r.day) && Number.isFinite(r.hour) && Number.isFinite(r.baseline));
