@@ -19336,8 +19336,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Step content */}
         {steps[venueOnboardingStep]()}
 
-        {/* Next button */}
-        <div style={{ padding: '16px 24px 24px', flexShrink: 0 }}>
+        {/* Next button. The 24px bottom is a design gap ABOVE the home
+            indicator, not a substitute for the inset: onboarding renders no
+            BottomNav either, so this footer is the last row in a 100dvh
+            container and a flat 24px leaves the lower third of the primary
+            CTA inside the strip iOS reserves for the swipe-up gesture. Adding
+            var(--safe-bottom) keeps the same visual gap on every device and
+            collapses to the original 24px on the web (SAFE-AREA CONTRACT,
+            index.css). */}
+        <div style={{ padding: '16px 24px calc(24px + var(--safe-bottom))', flexShrink: 0 }}>
           {venueOnboardingError && (
             <p role="alert" style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: '#fca5a5', margin: '0 0 10px', lineHeight: 1.5 }}>{venueOnboardingError}</p>
           )}
