@@ -18421,6 +18421,87 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             const obs = d.observed || {};
             const worst = d.worstCase || {};
             const fixed = d.fixed || {};
+            const dep = d.dependencies || {};
+
+            // THE INVENTORY RESOLVES, IT DOES NOT RESTATE. Every figure on an
+            // inventory row is looked up from the block that owns it: usage
+            // from the observed lines, flat bills from the fixed lines, the
+            // long-form exposure note from the watchlist. So a price exists
+            // once in this payload and this list cannot drift from the
+            // arithmetic, which is exactly how the hand-typed expense array
+            // that used to live in this file went five vendors out of date.
+            const allDeps = (dep.groups || []).flatMap((g) => g.entries);
+            const obsById = Object.fromEntries((obs.lines || []).map((l) => [l.id, l]));
+            const watchById = Object.fromEntries((d.watchlist || []).map((w) => [w.id, w]));
+            const fixedById = {};
+            for (const e of (fixed.monthly || [])) fixedById[e.id] = { ...e, period: '/mo' };
+            for (const e of (fixed.annual || [])) fixedById[e.id] = { ...e, period: '/yr' };
+            for (const e of (fixed.oneTime || [])) fixedById[e.id] = { ...e, period: ', once' };
+
+            const depLine = { fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0', lineHeight: 1.4 };
+            const groupLabel = { fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: '2px 0 0 2px', textTransform: 'uppercase', letterSpacing: '0.5px' };
+            const groupNote = { fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 6px 2px', lineHeight: 1.4 };
+
+            // Four different facts share the right-hand slot on an inventory
+            // row and they must not be allowed to look alike: a measured
+            // figure, a flat bill, a zero that has a reason, and no number at
+            // all. The last one is the reason this is a function and not a
+            // template: printing $0.00 for something nobody counted would
+            // claim coverage this panel does not have.
+            const depCost = (e) => {
+              if (e.fixedId && fixedById[e.fixedId]) {
+                const f = fixedById[e.fixedId];
+                return Number.isFinite(f.usd) ? `${money(f.usd, 0)}${f.period}` : 'No figure';
+              }
+              if (e.unknownCost) return 'Unknown';
+              const o = e.observedLineId ? obsById[e.observedLineId] : null;
+              if (o && Number.isFinite(o.usd)) {
+                if (o.usd === 0) return '$0';
+                return `${money(o.usd, 4)}${Number.isFinite(o.usdHigh) && o.usdHigh > o.usd ? ` to ${money(o.usdHigh, 4)}` : ''}`;
+              }
+              if (o) return o.unpriceable ? 'No rate on file' : 'Not measured';
+              if (e.group === 'free') return '$0';
+              return 'Not measured';
+            };
+
+            const depUsage = (e) => {
+              const o = e.observedLineId ? obsById[e.observedLineId] : null;
+              if (!o) return e.usageNote || 'Not measured. Nothing in this repo counts it.';
+              if (o.count === null) return `Not measured. The meter did not report.`;
+              return `${count(o.count)} ${o.unit}, ${o.window}.`;
+            };
+
+            const depConfigured = (e) => {
+              if (e.configured === true) return `Configured, ${e.configuredVia} is set.`;
+              if (e.configured === false) {
+                const names = (e.configuredEnv || []).join(' or ');
+                return names ? `Not configured. ${names} is unset on the server.` : 'Not configured.';
+              }
+              return e.configuredNote || 'The server cannot see whether this is configured.';
+            };
+
+            const depBlock = (e, i) => {
+              const w = e.watchlistId ? watchById[e.watchlistId] : null;
+              return (
+                <div key={e.id} style={{ padding: i === 0 ? '0 0 9px' : '9px 0', borderTop: i === 0 ? 'none' : '1px solid var(--border-light)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
+                    <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{e.label}</span>
+                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, whiteSpace: 'nowrap' }}>{depCost(e)}</span>
+                  </div>
+                  <p style={depLine}>{e.what} Lives in {e.where}.</p>
+                  <p style={depLine}>
+                    Price: {e.unitPrice || (e.unpriceable ? 'no published rate on file for this model id' : 'no published unit price')}.
+                    {e.freeTier ? ` Free tier: ${e.freeTier}.` : ''}
+                  </p>
+                  <p style={depLine}>Usage: {depUsage(e)} {depConfigured(e)}</p>
+                  {e.costsNothingBecause && <p style={depLine}>{e.costsNothingBecause}</p>}
+                  {e.unknownAction && <p style={depLine}>{e.unknownAction}</p>}
+                  {e.note && <p style={depLine}>{e.note}</p>}
+                  {w && <p style={depLine}>{w.note}</p>}
+                  {e.source && <p style={depLine}>{e.source}, checked {e.checked}.</p>}
+                </div>
+              );
+            };
 
             // Two totals a person actually wants: what leaves the account every
             // month regardless of use, and what the usage on top of it is
@@ -18460,6 +18541,68 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                   {(d.reconciled?.lines || []).map((l) => row(l.id, l.label, `${moneyOr(l.usdPerMonth)}/mo`, l.note))}
                 </div>
+
+                {/* 1b. THE INVENTORY.
+                    ------------------------------------------------------------
+                    Jayden asked for every API on this screen, including the
+                    ones that cost nothing, and that turned out to be a
+                    different question from the one the panel answered. The
+                    blocks here are ordered by how far a number can be trusted,
+                    so a vendor that charges nothing appeared in whichever of
+                    them happened to mention it, and six appeared in none at
+                    all: PostHog, Sentry, RevenueCat, push, Google Sign-In and
+                    Sign in with Apple were on the rate card and on no screen.
+
+                    A dependency that costs $0 is still a dependency. It is
+                    still an account somebody can lock, still a terms of
+                    service, still a thing that breaks. So each one gets a row
+                    saying so, and the row says WHICH kind of $0 it is: inside
+                    a free tier, unused, or covered by a flat fee already
+                    counted somewhere else. Those are three different facts and
+                    a bare zero hides which one applies.
+
+                    Grouped rather than listed, because thirty-four identical
+                    rows is unnavigable (SLOP-AUDIT section S). Group labels sit
+                    outside their container for the same reason. */}
+                {dep.groups && (
+                  <div style={card}>
+                    <h3 style={h3}>Every API and service</h3>
+                    <p style={sub}>
+                      Everything Flock reaches outside itself, priced where there is a price and named where there is not. The rows resolve against the meters, the fixed bills and the watchlist rather than holding their own copy of a number.
+                    </p>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                      <div>
+                        <p style={kicker}>Dependencies</p>
+                        <p style={big}>{dep.total}</p>
+                        <p style={{ ...sub, margin: '3px 0 0' }}>
+                          {dep.groups.map((g) => `${g.entries.length} ${g.short || g.id}`).join(', ')}.
+                        </p>
+                      </div>
+                      <div>
+                        <p style={kicker}>Without a meter</p>
+                        <p style={big}>{(dep.unmeteredIds || []).length}<span style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-tertiary)' }}> of {dep.total}</span></p>
+                        <p style={{ ...sub, margin: '3px 0 0' }}>
+                          Nothing here counts their usage, so those rows read as not measured. A zero meaning no meter and a zero meaning no spend are different facts.
+                        </p>
+                      </div>
+                    </div>
+                    {(dep.unknownCostIds || []).length > 0 && (
+                      <p style={foot}>
+                        {dep.unknownCostIds.length} of them have no defensible figure at all and read as unknown rather than as free: {dep.unknownCostIds.map((id) => (allDeps.find((e) => e.id === id) || {}).label || id).join(', ')}. Each one says where to go and find the number.
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {(dep.groups || []).map((g) => (
+                  <div key={g.id}>
+                    <p style={groupLabel}>{g.label}</p>
+                    <p style={groupNote}>{g.note}</p>
+                    <div style={card}>
+                      {g.entries.map(depBlock)}
+                    </div>
+                  </div>
+                ))}
 
                 {/* 2. FIXED */}
                 <div style={card}>
@@ -18574,6 +18717,144 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   );
                 })()}
 
+                {/* 3c. THE QUOTA CAPS.
+                    ------------------------------------------------------------
+                    Every other ceiling on this screen is one this repo wrote for
+                    itself and can raise with a deploy. These four are Google's.
+                    They were set by hand in the Cloud console on 2026-08-20,
+                    they refuse the call rather than slowing it down, and only a
+                    person with console access can move one. That makes hitting
+                    a quota a real failure mode with a shape a user can see: a
+                    venue card with no picture, a search that finds nothing, an
+                    owner dashboard with no competitors. */}
+                {d.googleQuotas && (() => {
+                  const q = d.googleQuotas;
+                  const pb = d.photoBudget;
+                  return (
+                    <div key="google-quotas" style={card}>
+                      <h3 style={h3}>Google quota caps</h3>
+                      <p style={sub}>
+                        Set by hand in the Cloud console on {q.checked}, on project {q.project}. A quota refuses the call. It does not slow it down and it does not queue it.
+                      </p>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                        <div>
+                          <p style={kicker}>Caps the month at</p>
+                          <p style={big}>{moneyOr(q.perMonthUsdAfterFree, 'Not priced', 0)}</p>
+                          <p style={{ ...sub, margin: '3px 0 0' }}>
+                            {moneyOr(q.perMonthUsdGross, 'nothing', 0)} before each SKU keeps its own free allowance, which is named on its row below. Every quota spent every day, which nothing has ever done.
+                          </p>
+                        </div>
+                        <div>
+                          <p style={kicker}>Budget alert</p>
+                          <p style={big}>{moneyOr(q.budget?.usdPerMonth, 'None', 0)}<span style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-tertiary)' }}>/mo</span></p>
+                          <p style={{ ...sub, margin: '3px 0 0' }}>
+                            Named {q.budget?.name}. It emails at {(q.budget?.alertsAtPct || []).join(', ')} percent. {q.budget?.note}
+                          </p>
+                        </div>
+                      </div>
+                      {(q.lines || []).map((l) => {
+                        const isPhotos = l.id === 'photos';
+                        const observed = isPhotos && pb && Number.isFinite(pb.dayUsed)
+                          ? `${count(pb.dayUsed)} bought today.`
+                          : 'Per SKU usage is not measured, because the shared Places ledger counts calls without recording which SKU each one was.';
+                        const binding = l.bindingDaily === 'google' && Number.isFinite(l.repoDailyBrake)
+                          ? ` Flock's own daily brake is ${count(l.repoDailyBrake)}, so Google refuses first.`
+                          : l.bindingDaily === 'repo' && Number.isFinite(l.repoDailyBrake)
+                            ? ` Flock's own daily brake is ${count(l.repoDailyBrake)}, so it refuses before Google does.`
+                            : '';
+                        return row(
+                          `quota-${l.id}`,
+                          l.label,
+                          `${count(l.perDay)} a day`,
+                          `${moneyOr(l.perMonthUsdAfterFree, 'no figure', 2)} a month at this cap, after the first ${count(l.freePerMonth)} free. ${observed}${binding}`
+                        );
+                      })}
+                      {q.agreesWithBudget === false && (
+                        <p style={foot}>
+                          The four quotas no longer price at the budget beside them. One of them, or one of the rates, has been edited since they were set together. Redo the arithmetic before trusting either number.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* 3d. CAN IMAGES BE SCREENED AT ALL.
+                    ------------------------------------------------------------
+                    This is the one row on the screen where $0 is ambiguous in a
+                    way that matters. Every upload is screened by Cloud Vision
+                    before it is stored, and moderateImage fails CLOSED: an image
+                    that cannot be screened is refused. So a Vision bill of zero
+                    means either that nobody uploaded anything, or that nothing
+                    works and every upload in the app is being rejected. A cost
+                    panel that cannot tell those apart is reporting the least
+                    useful true thing available, so the server probes the
+                    provider (with zero images, so it buys nothing) and reports
+                    what it found rather than what it assumed. */}
+                {d.visionProvider && (() => {
+                  const vp = d.visionProvider;
+                  const visionDep = allDeps.find((e) => e.statusKey === 'vision');
+                  const headline = vp.configured === false
+                    ? 'No key set'
+                    : vp.reachable === true
+                      ? 'Answering'
+                      : vp.reachable === false
+                        ? 'Refusing'
+                        : 'Unknown';
+                  const broken = vp.configured === false || vp.reachable === false;
+                  const refusing = vp.required && broken;
+                  // Four states, not two. "Screening is required and the
+                  // provider did not answer the probe" is not the same as
+                  // "the provider said no", and neither is the same as
+                  // screening being switched off, which is the one state that
+                  // puts unscreened photos in front of a thirteen year old.
+                  const uploads = !vp.required
+                    ? 'Unscreened'
+                    : broken
+                      ? 'Refused'
+                      : vp.reachable === true
+                        ? 'Screened'
+                        : 'Unknown';
+                  return (
+                    <div key="vision-provider" style={{ ...card, border: refusing ? `1px solid ${colors.amber}` : undefined }}>
+                      <h3 style={h3}>Image screening</h3>
+                      <p style={sub}>
+                        Every photo is screened by Cloud Vision before it is stored, and an image that cannot be screened is refused rather than kept. That makes a Vision bill of zero two different things, so this is measured rather than assumed.
+                      </p>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                        <div>
+                          <p style={kicker}>Provider</p>
+                          <p style={big}>{headline}</p>
+                          <p style={{ ...sub, margin: '3px 0 0' }}>
+                            {vp.configured === false
+                              ? 'No VISION_API_KEY on this server.'
+                              : `Asked Google directly, with zero images, so the check bought nothing. Key from ${vp.keyVar}.`}
+                            {vp.detail ? ` ${vp.detail}` : ''}
+                          </p>
+                        </div>
+                        <div>
+                          <p style={kicker}>Uploads</p>
+                          <p style={big}>{uploads}</p>
+                          <p style={{ ...sub, margin: '3px 0 0' }}>
+                            {uploads === 'Unscreened'
+                              ? 'Screening is not required on this server, so an image that cannot be screened is stored anyway. That is the dev default and it must never be the production one.'
+                              : uploads === 'Refused'
+                                ? 'Screening is required and the provider is not usable, so every image upload in the app is being rejected right now.'
+                                : uploads === 'Screened'
+                                  ? 'Screening is required and the provider answers, which is the correct production setting.'
+                                  : 'Screening is required and the probe could not reach Google, which says nothing either way. Check again before concluding anything from it.'}
+                          </p>
+                        </div>
+                      </div>
+                      {row('vision-last', 'Last real screen',
+                        vp.lastOutcome ? (vp.lastOutcome.ok ? 'Answered' : 'Failed') : 'None yet',
+                        vp.lastOutcome
+                          ? `${new Date(vp.lastOutcome.at).toLocaleString()}.${vp.lastOutcome.detail ? ` ${vp.lastOutcome.detail}` : ''} Counted in this container's memory, so it resets on every deploy.`
+                          : 'No image has been screened since this container started. That is normal on a quiet day and says nothing either way.')}
+                      {visionDep && visionDep.finding && <p style={foot}>{visionDep.finding}</p>}
+                    </div>
+                  );
+                })()}
+
                 {/* 4. ONE VENUE */}
                 <div style={card}>
                   <h3 style={h3}>One venue at {moneyOr(v.priceUsd, 'the list price', 0)} a month</h3>
@@ -18641,22 +18922,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   ))}
                 </div>
 
-                {/* 6. WATCHLIST */}
-                <div style={card}>
-                  <h3 style={h3}>Not on a bill today</h3>
-                  <p style={sub}>Found by sweeping the repo for anything that reaches a third party. None of these is charged right now. Each one could be.</p>
-                  {(d.watchlist || []).map((w) => row(
-                    w.id,
-                    w.label,
-                    w.usd === null ? 'No figure' : moneyOr(w.usd, 'No figure', 0),
-                    `${w.where}. ${w.note}`
-                  ))}
-                </div>
+                {/* 6. The watchlist used to be its own panel here, listing
+                    eight vendors that all appear on the inventory above. Two
+                    lists of the same vendors on one screen is worse than one:
+                    the reader has to work out whether the second list is a
+                    subset, a contradiction or an update. The long-form note on
+                    each watchlist entry is now rendered inside that vendor's
+                    inventory row, so the prose still has exactly one home and
+                    the screen has one list. costModel.WATCHLIST is unchanged
+                    and is still what the row resolves against. */}
 
                 {/* 7. PROVENANCE */}
                 <div style={{ ...card, boxShadow: 'none', backgroundColor: 'transparent', padding: '0 2px' }}>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0, lineHeight: 1.5 }}>
-                    Rates last checked: Gemini {d.rates?.checked?.gemini || 'unknown'}, Google Places {d.rates?.checked?.places || 'unknown'}, Cloud Vision {d.rates?.checked?.vision || 'unknown'}.
+                    {Object.keys(d.rates?.checked || {}).length} groups on the rate card, each one named on its own row above with its own source and date. The oldest was checked {Object.values(d.rates?.checked || {}).sort()[0] || 'never'}.
                     {' '}Vendors change published prices without telling anyone, so a stale date means unverified, not wrong.
                     {d.generatedAt ? ` Read at ${new Date(d.generatedAt).toLocaleString()}.` : ''}
                   </p>

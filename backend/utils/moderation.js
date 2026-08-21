@@ -602,6 +602,11 @@ async function moderateImage(imageUrl, { userId } = {}) {
         throw new Error(`incomplete safeSearch annotation: ${key}`);
       }
     }
+
+    // The provider answered, completely. Recorded so the admin cost panel can
+    // tell a $0 that means "nobody uploaded" from a $0 that means "nothing
+    // works". See probeVisionEnabled below.
+    noteVisionOutcome(true);
     // CHILD-SAFETY VISIBILITY. A hard adult flag (LIKELY / VERY_LIKELY) used to
     // produce the same generic refusal as a quota error, so the one class of
     // rejection a human should glance at drowned in fail-closed noise. It gets
@@ -637,12 +642,167 @@ async function moderateImage(imageUrl, { userId } = {}) {
     return { allowed: true, reason: null };
   } catch (err) {
     // Provider configured but call failed → FAIL CLOSED.
+    noteVisionOutcome(false, err.message);
     console.error('🛡️ Image moderation call failed, rejecting upload (fail-closed):', err.message);
     return { allowed: false, reason: 'moderation_error' };
   }
 }
 
 const MAX_MODERATED_IMAGE_BYTES = 8 * 1024 * 1024;
+
+// ---------------------------------------------------------------------------
+// IS THE PROVIDER ACTUALLY REACHABLE. A separate question from "is a key set".
+// ---------------------------------------------------------------------------
+// IT LIVES BELOW moderateImage AND THAT IS DELIBERATE. It holds the second
+// reference to vision.googleapis.com in this file, and
+// __tests__/visionSpendBudget.test.js pins by file position that the spend
+// charge sits above the first one. Put this block higher up and that invariant
+// starts measuring the diagnostic instead of the call that costs money.
+// ---------------------------------------------------------------------------
+// A key can be set, well formed, and belong to a Google Cloud project on which
+// the Vision API was never enabled. Every call then returns 403 SERVICE_DISABLED,
+// moderateImage() fails closed, and EVERY IMAGE UPLOAD IN THE APP IS REFUSED.
+// From the outside that looks like a bug in uploads. On a cost panel it looks
+// like an API that bills nothing, which is true and is the least useful true
+// thing anybody could be told: the $0 is there because nothing was answered.
+//
+// Nothing in this repo could tell those apart before. The boot warning only
+// fires when the key is MISSING, and the per-upload error is one console line
+// inside a request log. So two readings are published here.
+//
+//   1. THE LAST REAL OUTCOME. moderateImage() records whether the most recent
+//      screen it attempted was answered, and Google's own reason when it was
+//      not. In-process and since boot, like every other in-memory meter here,
+//      and labelled that way rather than pretending to be a month.
+//
+//   2. A PROBE THAT COSTS NOTHING. images:annotate with an EMPTY request list
+//      carries zero image units, so it is not billable, and it still has to
+//      pass API-key auth and the service-enabled check before Google can look
+//      at the (absent) payload. A 403 SERVICE_DISABLED or an API_KEY_ error
+//      means the key cannot use Vision on its project. Anything that gets far
+//      enough to complain about the request itself, including a 400, proves the
+//      opposite: the key works and the API is enabled. The result is cached, so
+//      opening the admin panel repeatedly does not turn into a fetch loop.
+//
+// The detail string is scrubbed before it leaves this file. Google's
+// SERVICE_DISABLED message names the project, which is exactly the diagnostic
+// worth showing, and no Google error echoes the key back. The scrub is there so
+// that stays true if one ever does.
+
+const VISION_PROBE_TTL_MS = 10 * 60 * 1000;
+const VISION_PROBE_TIMEOUT_MS = 8000;
+
+let visionLastOutcome = null;   // { at, ok, detail } or null if never attempted
+let visionProbe = { at: 0, result: null, inFlight: null };
+
+/** Strip anything key-shaped out of a provider message before publishing it. */
+function scrubProviderDetail(text) {
+  return String(text || '')
+    .replace(/key=[^\s&"']+/gi, 'key=[redacted]')
+    .replace(/AIza[0-9A-Za-z_-]{10,}/g, '[redacted]')
+    .slice(0, 400);
+}
+
+function noteVisionOutcome(ok, detail) {
+  visionLastOutcome = {
+    at: new Date().toISOString(),
+    ok: !!ok,
+    detail: ok ? null : scrubProviderDetail(detail),
+  };
+}
+
+/**
+ * Ask Google whether this key can use Vision at all, without buying a unit.
+ * Never throws. Returns reachable true, false, or null when it cannot be known.
+ */
+async function probeVisionEnabled() {
+  if (!IMAGE_PROVIDER_CONFIGURED) {
+    return {
+      configured: false,
+      required: IMAGE_MODERATION_REQUIRED,
+      keyVar: null,
+      reachable: null,
+      reason: 'no_key',
+      detail: null,
+      at: null,
+      cached: false,
+      lastOutcome: visionLastOutcome,
+    };
+  }
+
+  const keyVar = process.env.VISION_API_KEY ? 'VISION_API_KEY' : 'GOOGLE_VISION_API_KEY';
+  const base = {
+    configured: true,
+    required: IMAGE_MODERATION_REQUIRED,
+    keyVar,
+    lastOutcome: visionLastOutcome,
+  };
+
+  const fresh = Date.now() - visionProbe.at < VISION_PROBE_TTL_MS && visionProbe.result;
+  if (fresh) return { ...base, ...visionProbe.result, cached: true };
+  if (visionProbe.inFlight) return visionProbe.inFlight.then((r) => ({ ...base, ...r, cached: true }));
+
+  visionProbe.inFlight = (async () => {
+    let result;
+    try {
+      const response = await fetch(
+        `https://vision.googleapis.com/v1/images:annotate?key=${encodeURIComponent(VISION_API_KEY)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          // Zero images, so zero billable units. This asks about the key and
+          // the project, not about a picture.
+          body: JSON.stringify({ requests: [] }),
+          signal: AbortSignal.timeout(VISION_PROBE_TIMEOUT_MS),
+        }
+      );
+      let reason = '';
+      let message = '';
+      try {
+        const body = await response.json();
+        reason = body?.error?.details?.[0]?.reason || body?.error?.status || '';
+        message = body?.error?.message || '';
+      } catch { /* not JSON, which the status alone still answers */ }
+
+      if (response.ok) {
+        result = { reachable: true, reason: 'ok', detail: null, status: response.status };
+      } else if (response.status === 400) {
+        // Google read the request and objected to it, which it could only do
+        // after accepting the key and finding the API enabled.
+        result = {
+          reachable: true,
+          reason: 'ok',
+          detail: 'The API answered and rejected an empty request, which is the expected reply and proves the key works.',
+          status: 400,
+        };
+      } else if (response.status === 403 || response.status === 401) {
+        result = {
+          reachable: false,
+          reason: reason || 'forbidden',
+          detail: scrubProviderDetail(message),
+          status: response.status,
+        };
+      } else {
+        result = {
+          reachable: null,
+          reason: reason || `http_${response.status}`,
+          detail: scrubProviderDetail(message),
+          status: response.status,
+        };
+      }
+    } catch (err) {
+      // A timeout or a DNS failure says nothing about whether the API is
+      // enabled, so it must not read as "not enabled".
+      result = { reachable: null, reason: 'unreachable', detail: scrubProviderDetail(err.message), status: null };
+    }
+    result.at = new Date().toISOString();
+    visionProbe = { at: Date.now(), result, inFlight: null };
+    return result;
+  })();
+
+  const r = await visionProbe.inFlight;
+  return { ...base, ...r, cached: false };
+}
 
 // SSRF guard (round 5): remote fetches must resolve to PUBLIC addresses at
 // every hop — attacker-controlled redirects toward localhost / RFC1918 /
@@ -794,6 +954,7 @@ module.exports = {
   moderateText,
   rejectIfProfane,
   moderateImage,
+  probeVisionEnabled,
   filter,
   TEXT_REJECTED_MESSAGE,
   IMAGE_REJECTED_MESSAGE,

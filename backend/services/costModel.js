@@ -480,6 +480,523 @@ const RECONCILED = {
 };
 
 // ---------------------------------------------------------------------------
+// GOOGLE QUOTA CAPS. Vendor-side ceilings, set by hand in the Cloud console.
+// ---------------------------------------------------------------------------
+// Set on 2026-08-20 on the Places API (New) service, alongside a billing budget
+// named "Flock API spend cap" that alerts at 50%, 90% and 100% of $33 a month.
+//
+// These are NOT the same kind of ceiling as the ones in buildWorstCase(). Those
+// are limits this repo enforces on itself and can raise with a deploy. These are
+// enforced by Google, they refuse the call rather than degrading it, and only a
+// human with console access can move them. That makes hitting one a real
+// failure mode with a user-visible shape: a venue card with no picture, a
+// search that finds nothing, an owner dashboard with no competitors.
+//
+// The arithmetic below is why the four numbers look arbitrary. Priced at the
+// rate card, run every day of an average month, then with each SKU's own 1,000
+// free requests a month taken off, the four together land at about $33, which
+// is the budget. So the quotas ARE the budget, expressed per day per SKU.
+// buildGoogleQuotas() recomputes that rather than restating it, so if a quota
+// or a rate is edited the agreement is rechecked instead of going quietly
+// stale.
+const GOOGLE_QUOTAS = {
+  checked: '2026-08-20',
+  project: 'project-87561d09-85ef-4d7d-a04',
+  console: 'https://console.cloud.google.com/apis/api/places.googleapis.com/quotas',
+  budget: {
+    name: 'Flock API spend cap',
+    usdPerMonth: 33,
+    alertsAtPct: [50, 90, 100],
+    note: 'A budget alert is a notification, not a switch. It emails at each threshold and stops nothing. The per-day quotas are what actually refuse a call.',
+  },
+  perDay: [
+    { id: 'photos', sku: 'photos', perDay: 152, observedLineId: 'places-photos' },
+    { id: 'detailsEnterprise', sku: 'detailsEnterprise', perDay: 38, observedLineId: null },
+    { id: 'textSearchEnterprise', sku: 'textSearchEnterprise', perDay: 37, observedLineId: null },
+    { id: 'nearbySearchEnterprise', sku: 'nearbySearchEnterprise', perDay: 10, observedLineId: null },
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// THE INVENTORY. Every outside thing Flock depends on, including the free ones.
+// ---------------------------------------------------------------------------
+// WHY THIS EXISTS SEPARATELY FROM EVERYTHING ABOVE. The blocks above answer
+// "what does this cost". They are organised by how far a number can be
+// trusted, so a vendor that charges nothing appears in whichever of them
+// happens to mention it, and several vendors appeared in none of them at all:
+// PostHog, Sentry, RevenueCat, push, Google Sign-In and Sign in with Apple were
+// all in the rate card and on no screen. This block answers a different
+// question, and it is the one Jayden asked: what do I actually depend on. A
+// dependency that costs $0 is still a dependency, still an account somebody can
+// lock, still a terms of service, and a zero is a fact worth printing rather
+// than a reason to leave a row out.
+//
+// IT CARRIES NO NUMBERS OF ITS OWN, ON PURPOSE. Every entry is a JOIN KEY, not
+// a copy. `pricing` points at RATES, `observedLineId` at a line buildObserved()
+// produced, `fixedId` at a line in FIXED_MONTHLY / FIXED_ANNUAL / ONE_TIME,
+// `watchlistId` at a WATCHLIST entry. The panel resolves them. So there is
+// exactly one copy of every price and every sentence, and this list cannot
+// drift from the arithmetic the way a hand-typed expense array does. That has
+// already happened once here: frontend/src/App.js held its own vendor array and
+// it was five vendors out of date.
+//
+// `configuredEnv` names the environment variables that switch a dependency on.
+// buildDependencies() reports only whether they are PRESENT, never their
+// values, which turns "is this even wired up" from an assumption into a reading
+// taken from the running process.
+//
+// A dependency with no meter carries `usageNote` and reads as "not measured".
+// It must never read as 0. Those are different facts, and this repo has already
+// confused them once: the photo meter lived in memory, read zero after every
+// deploy, and under-reported the largest line on the Google bill for as long as
+// it did that.
+const DEPENDENCIES = [
+  // -- Metered. Somebody charges per unit, or would if the volume grew. ------
+  {
+    id: 'gemini-birdie',
+    label: 'Google Gemini, Birdie',
+    what: 'The chat assistant in the consumer app.',
+    where: 'backend/routes/ai.js',
+    group: 'metered',
+    pricing: { type: 'gemini', model: 'birdie' },
+    configuredEnv: ['GEMINI_API_KEY'],
+    observedLineId: 'gemini-birdie',
+    usageNote: null,
+    note: 'The model id is BIRDIE_MODEL, switchable from Railway without a deploy, so what a token costs can change without any ceiling changing.',
+  },
+  {
+    id: 'gemini-roost',
+    label: 'Google Gemini, Roost',
+    what: 'The venue advisor: the chips an owner taps and the free-text answers.',
+    where: 'backend/services/advisorPhrasing.js and backend/services/advisorFreeText.js',
+    group: 'metered',
+    pricing: { type: 'gemini', model: 'roost' },
+    configuredEnv: ['GEMINI_API_KEY'],
+    observedLineId: 'gemini-roost-month',
+    usageNote: null,
+    note: 'The only per-venue cost that grows with use. Counted in Postgres, so it survives deploys.',
+  },
+  {
+    id: 'places-photos',
+    label: 'Google Place Photos',
+    what: 'Every venue picture in the app.',
+    where: 'backend/services/photoStore.js',
+    group: 'metered',
+    pricing: { type: 'places', sku: 'photos' },
+    configuredEnv: ['GOOGLE_PLACES_API_KEY'],
+    observedLineId: 'places-photos-month',
+    usageNote: null,
+    note: 'Historically almost the whole Google bill. A bought photo is cached for thirty days in Postgres, so this counts venues photographed rather than cards viewed.',
+  },
+  {
+    id: 'places-text-search',
+    label: 'Google Places Text Search',
+    what: 'Venue search, and every screen that turns a name into a place.',
+    where: 'backend/routes/venueSearch.js',
+    group: 'metered',
+    pricing: { type: 'places', sku: 'textSearchEnterprise' },
+    configuredEnv: ['GOOGLE_PLACES_API_KEY'],
+    observedLineId: null,
+    usageNote: 'The shared Places ledger counts calls without recording which SKU each one was, so this SKU on its own is not measured. The combined non-photo figure is the Text Search and Place Details line in the meter list.',
+    note: 'Bills at the Enterprise rate because the field mask asks for rating, review count, price level and opening hours. Three of those four are trained model inputs, so dropping them to reach the cheaper tier is a retrain, not a billing change.',
+  },
+  {
+    id: 'places-details',
+    label: 'Google Place Details',
+    what: 'The venue detail card and the crowd card, which share one response.',
+    where: 'backend/services/placeDetailsCache.js',
+    group: 'metered',
+    pricing: { type: 'places', sku: 'detailsEnterprise' },
+    configuredEnv: ['GOOGLE_PLACES_API_KEY'],
+    observedLineId: null,
+    usageNote: 'Same shared ledger, same reason. Not measured per SKU.',
+    note: 'Opening one venue cost two of these until 2026-08-20. It costs one now.',
+  },
+  {
+    id: 'places-nearby',
+    label: 'Google Places Nearby Search',
+    what: 'The competitor set on the venue owner dashboard.',
+    where: 'backend/routes/venueDashboard.js',
+    group: 'metered',
+    pricing: { type: 'places', sku: 'nearbySearchEnterprise' },
+    configuredEnv: ['GOOGLE_PLACES_API_KEY'],
+    observedLineId: null,
+    usageNote: 'Same shared ledger, same reason. Not measured per SKU.',
+    note: 'Its own SKU with its own free allowance, not a Text Search, though it prices the same.',
+  },
+  {
+    id: 'vision',
+    label: 'Google Cloud Vision SafeSearch',
+    what: 'Screens every image before it is stored. An upload that cannot be screened is refused.',
+    where: 'backend/utils/moderation.js',
+    group: 'metered',
+    pricing: { type: 'vision' },
+    configuredEnv: ['VISION_API_KEY', 'GOOGLE_VISION_API_KEY'],
+    observedLineId: 'vision',
+    usageNote: null,
+    statusKey: 'vision',
+    finding: 'Checked on 2026-08-20: the Cloud Vision API was NOT enabled on Google project project-87561d09-85ef-4d7d-a04, the project that holds the Places and Gemini keys. If VISION_API_KEY belongs to that project then every screen has been failing and every image upload has been refused, and the $0 beside this row is the sound of nothing working. The provider reading above is the live answer and beats this note. If it says refusing, enable the Vision API on whichever project the key belongs to.',
+    note: 'A safety control before it is a cost. If the Vision API is not enabled on the project the key belongs to, the call fails, the upload is refused, and the bill is $0 because nothing was ever answered. A $0 here can mean "nobody uploaded" or "nothing works", so the panel probes the provider instead of reading the meter.',
+  },
+  {
+    id: 'maptiler',
+    label: 'MapTiler',
+    what: 'The map on Discover, including the only satellite layer the app has.',
+    where: 'frontend/src/App.js',
+    group: 'metered',
+    pricing: { type: 'unknown', rateGroup: 'maptiler' },
+    configuredEnv: null,
+    configuredNote: 'REACT_APP_MAPTILER_KEY is a build-time variable set on Vercel and Codemagic, so the backend cannot see whether it is set.',
+    observedLineId: null,
+    watchlistId: 'maptiler-satellite',
+    usageNote: 'Map loads are not counted anywhere in this repo. Nothing here can say how many of the free plan sessions are left.',
+    unknownCost: true,
+    unknownAction: 'Open the MapTiler dashboard and read the session count. That is the only place the number exists.',
+  },
+  {
+    id: 'carto',
+    label: 'CARTO basemaps',
+    what: 'The light and dark map tiles, used whenever no MapTiler key is set.',
+    where: 'frontend/src/App.js',
+    group: 'metered',
+    pricing: { type: 'unknown' },
+    configuredEnv: null,
+    configuredNote: 'Unkeyed. There is no account and nothing to configure.',
+    observedLineId: null,
+    watchlistId: 'carto-basemaps',
+    usageNote: 'Tiles are pulled straight from the browser and counted nowhere.',
+    unknownCost: true,
+    unknownAction: 'There is no dashboard to read, because there is no account. The exposure here is the attribution terms rather than a bill.',
+    source: 'https://carto.com/basemaps',
+    checked: '2026-08-20',
+  },
+
+  // -- Fixed. The bill arrives whether anybody opens the app or not. ---------
+  {
+    id: 'railway',
+    label: 'Railway',
+    what: 'Runs the backend and the Postgres database.',
+    where: 'the whole server',
+    group: 'fixed',
+    fixedId: 'railway',
+    configuredEnv: ['DATABASE_URL'],
+    observedLineId: null,
+    usageNote: 'Compute and storage draw down the $20 of included credit before anything bills on top. This panel cannot see that meter. The Railway usage page can.',
+  },
+  {
+    id: 'postgres-images',
+    label: 'Postgres storage for uploaded images',
+    what: 'Message, story and profile images are stored as base64 rows rather than as files.',
+    where: 'users.profile_image_url, messages.image_url, stories.image_url',
+    group: 'fixed',
+    watchlistId: 'postgres-images',
+    configuredEnv: null,
+    observedLineId: null,
+    usageNote: 'Nothing counts the bytes. This grows with message volume, not with user count.',
+    unknownCost: true,
+    unknownAction: 'Read the volume size on the Railway dashboard. It sits inside the Railway line above until it does not.',
+  },
+  {
+    id: 'postgres-wal-archive',
+    label: 'Postgres WAL archive',
+    what: 'Continuous backup of the database, written by pgBackRest to object storage.',
+    where: 'the Railway Postgres service, the WAL_ARCHIVE_ variables',
+    group: 'fixed',
+    configuredEnv: null,
+    configuredNote: 'Set on the Postgres service rather than the app service, so the app cannot read it.',
+    observedLineId: null,
+    usageNote: 'Nothing in this repo set it up and nothing here can size it.',
+    unknownCost: true,
+    unknownAction: 'The endpoint comes from the Railway Postgres template, not from anything in this repo, and no separate invoice for it is known. Check the Railway usage page before assuming it is free.',
+  },
+  {
+    id: 'vercel',
+    label: 'Vercel',
+    what: 'Hosts flockcorp.com and the web build of the app.',
+    where: 'the marketing site and the web app',
+    group: 'fixed',
+    fixedId: 'vercel',
+    configuredEnv: null,
+    observedLineId: null,
+    usageNote: 'Bandwidth and build minutes are not read from here.',
+  },
+  {
+    id: 'claude-max',
+    label: 'Claude Max',
+    what: 'Development tooling. No user causes this one.',
+    where: 'not in the product',
+    group: 'fixed',
+    fixedId: 'claude-max',
+    configuredEnv: null,
+    observedLineId: null,
+    usageNote: null,
+  },
+  {
+    id: 'codex',
+    label: 'Codex',
+    what: 'Development tooling, same as above.',
+    where: 'not in the product',
+    group: 'fixed',
+    fixedId: 'codex',
+    configuredEnv: null,
+    observedLineId: null,
+    usageNote: null,
+  },
+  {
+    id: 'apple-developer',
+    label: 'Apple Developer Program',
+    what: 'The App Store account. Also what makes Sign in with Apple and push work.',
+    where: 'the App Store listing',
+    group: 'fixed',
+    fixedId: 'apple-developer',
+    configuredEnv: ['APPLE_TEAM_ID'],
+    observedLineId: null,
+    usageNote: null,
+  },
+  {
+    id: 'domain',
+    label: 'flockcorp.com',
+    what: 'The domain, and the email routing on it.',
+    where: 'every public URL',
+    group: 'fixed',
+    fixedId: 'domain',
+    configuredEnv: null,
+    observedLineId: null,
+    usageNote: null,
+  },
+  {
+    id: 'besttime-corpus',
+    label: 'BestTime training data',
+    what: 'The corpus the crowd model was trained on. Bought once, frozen, finished.',
+    where: 'backend/scripts/ml/',
+    group: 'fixed',
+    fixedId: 'besttime-corpus',
+    configuredEnv: null,
+    observedLineId: null,
+    usageNote: null,
+  },
+
+  // -- Free or unused. Every one is $0, and every one says why. --------------
+  {
+    id: 'weather',
+    label: 'OpenWeatherMap',
+    what: 'Current conditions and the forecast behind the crowd prediction.',
+    where: 'backend/services/weatherService.js',
+    group: 'free',
+    pricing: { type: 'free', rateGroup: 'weather' },
+    configuredEnv: ['WEATHER_API_KEY'],
+    observedLineId: 'weather',
+    usageNote: null,
+    costsNothingBecause: 'Inside the free plan. It covers 1,000,000 calls a month and the repo ceiling caps a fully maxed month near 29,000.',
+  },
+  {
+    id: 'ticketmaster',
+    label: 'Ticketmaster Discovery',
+    what: 'Nearby events, which the crowd model reads as a feature.',
+    where: 'backend/routes/events.js, backend/services/mlPredictor.js and backend/services/nightContext.js',
+    group: 'free',
+    pricing: { type: 'free', rateGroup: 'ticketmaster' },
+    configuredEnv: ['TICKETMASTER_API_KEY'],
+    observedLineId: 'ticketmaster',
+    usageNote: null,
+    costsNothingBecause: 'Free public tier at 5,000 calls a day. The three ledgers together are capped at 3,700.',
+  },
+  {
+    id: 'resend',
+    label: 'Resend',
+    what: 'Email. Verification, password reset, and the Monday venue digest.',
+    where: 'backend/services/emailService.js',
+    group: 'free',
+    pricing: { type: 'free', rateGroup: 'resend' },
+    configuredEnv: ['RESEND_API_KEY'],
+    observedLineId: 'resend',
+    usageNote: 'Only the digest is counted. Transactional mail is not in that number.',
+    costsNothingBecause: 'The free tier is 3,000 a month and 100 a day, and the digest is one email per venue per week.',
+  },
+  {
+    id: 'posthog',
+    label: 'PostHog',
+    what: 'Product analytics in the app, and the token traces behind Birdie.',
+    where: 'frontend/src/index.js and backend/routes/ai.js',
+    group: 'free',
+    pricing: { type: 'free', rateGroup: 'posthog' },
+    configuredEnv: ['POSTHOG_API_KEY'],
+    observedLineId: null,
+    usageNote: 'Event volume is counted by PostHog and by nothing in this repo.',
+    costsNothingBecause: 'Free below 1,000,000 events a month, and Flock has roughly no users.',
+    unknownAction: 'The event count is on the PostHog billing page if you want to see how much of that allowance is gone.',
+  },
+  {
+    id: 'sentry',
+    label: 'Sentry',
+    what: 'Crash and error reporting. Wired up and switched off.',
+    where: 'backend/instrument.js',
+    group: 'free',
+    pricing: { type: 'free', rateGroup: 'sentry' },
+    configuredEnv: ['SENTRY_DSN'],
+    observedLineId: null,
+    usageNote: 'Nothing to measure while nothing is being sent.',
+    costsNothingBecause: 'Unused. With no DSN, instrument.js never calls Sentry.init, so not even the free tier is being consumed. The configured reading beside this row comes from the running process rather than from an assumption.',
+  },
+  {
+    id: 'revenuecat',
+    label: 'RevenueCat',
+    what: 'Would run the consumer subscription. The paywall has never been switched on.',
+    where: 'the paywall, behind PAYWALL_ENABLED',
+    group: 'free',
+    pricing: { type: 'free', rateGroup: 'revenuecat' },
+    configuredEnv: ['REVENUECAT_WEBHOOK_SECRET'],
+    observedLineId: null,
+    usageNote: 'Tracked revenue is $0 because nothing has ever been sold.',
+    costsNothingBecause: 'Free below $2,500 of monthly tracked revenue, then 1% of it.',
+  },
+  {
+    id: 'push',
+    label: 'Push notifications',
+    what: 'Firebase Cloud Messaging, which relays to APNs on iOS.',
+    where: 'backend/services/firebaseService.js',
+    group: 'free',
+    pricing: { type: 'free', rateGroup: 'push' },
+    configuredEnv: ['FIREBASE_SERVICE_ACCOUNT'],
+    observedLineId: null,
+    usageNote: 'Sends are not counted here.',
+    costsNothingBecause: 'FCM is listed at no cost on both Firebase plans. APNs has no published price at all and is covered by the Developer Program, which is a conclusion drawn from an absence rather than from a quoted zero.',
+  },
+  {
+    id: 'google-sign-in',
+    label: 'Google Sign-In',
+    what: 'One of the three ways into an account.',
+    where: 'backend/routes/auth.js and the web client',
+    group: 'free',
+    pricing: { type: 'free' },
+    configuredEnv: ['GOOGLE_CLIENT_ID'],
+    observedLineId: null,
+    usageNote: null,
+    costsNothingBecause: 'Google Identity Services publishes no price for sign-in.',
+    source: 'https://developers.google.com/identity/gsi/web/guides/overview',
+    checked: '2026-08-20',
+  },
+  {
+    id: 'apple-sign-in',
+    label: 'Sign in with Apple',
+    what: 'Required by App Store rules wherever another social login exists.',
+    where: 'backend/services/appleAuth.js',
+    group: 'free',
+    pricing: { type: 'free' },
+    configuredEnv: ['APPLE_CLIENT_ID'],
+    observedLineId: null,
+    usageNote: null,
+    costsNothingBecause: 'Included with the Apple Developer Program, which is already on the fixed list.',
+    source: 'https://developer.apple.com/sign-in-with-apple/',
+    checked: '2026-08-20',
+  },
+  {
+    id: 'dicebear',
+    label: 'DiceBear',
+    what: 'The default avatar for an account with no photo.',
+    where: 'frontend/src/App.js',
+    group: 'free',
+    pricing: { type: 'free' },
+    configuredEnv: null,
+    configuredNote: 'Unkeyed.',
+    observedLineId: null,
+    watchlistId: 'dicebear',
+    usageNote: 'Requests go straight from the browser and are counted nowhere.',
+    costsNothingBecause: 'Free hosted tier, no account, no key.',
+    source: 'https://www.dicebear.com/',
+    checked: '2026-08-20',
+  },
+  {
+    id: 'venmo-cashapp',
+    label: 'Venmo and Cash App',
+    what: 'The bill split hands the phone a payment link. Flock never touches the money.',
+    where: 'frontend/src/App.js',
+    group: 'free',
+    pricing: { type: 'free' },
+    configuredEnv: null,
+    configuredNote: 'Deep links only. There is no API and no account.',
+    observedLineId: null,
+    usageNote: null,
+    costsNothingBecause: 'There is no integration to charge for. Flock builds a URL and opens it.',
+    source: 'https://venmo.com/',
+    checked: '2026-08-20',
+  },
+  {
+    id: 'apple-commission',
+    label: 'App Store commission',
+    what: 'Not a cost today. It is what a subscription is worth when one is finally sold.',
+    where: 'in-app purchase, unbuilt',
+    group: 'free',
+    pricing: { type: 'free', rateGroup: 'stores' },
+    configuredEnv: null,
+    observedLineId: null,
+    usageNote: null,
+    costsNothingBecause: 'Nothing is purchasable. 30% standard, 15% under the Small Business Program and after year one on a subscription.',
+  },
+  {
+    id: 'codemagic',
+    label: 'Codemagic',
+    what: 'Builds the iOS app.',
+    where: 'codemagic.yaml',
+    group: 'free',
+    pricing: { type: 'unknown' },
+    configuredEnv: null,
+    configuredNote: 'Configured in the Codemagic dashboard, not in this repo.',
+    observedLineId: null,
+    watchlistId: 'codemagic',
+    usageNote: 'Builds are not counted here.',
+    costsNothingBecause: 'There is no trigger block, so nothing runs it on a schedule. It bills per build, and only when a build is started by hand.',
+    unknownCost: true,
+    unknownAction: 'What a build costs depends on the plan. Check the Codemagic billing page if the build count ever climbs.',
+  },
+  {
+    id: 'github-actions',
+    label: 'GitHub Actions',
+    what: 'Runs the gitleaks secret scan on every push.',
+    where: '.github/workflows/gitleaks.yml',
+    group: 'free',
+    pricing: { type: 'free' },
+    configuredEnv: null,
+    observedLineId: null,
+    watchlistId: 'github-actions',
+    usageNote: null,
+    costsNothingBecause: 'Free on public repositories, and this one is public.',
+  },
+  {
+    id: 'seatgeek',
+    label: 'SeatGeek',
+    what: 'A second event source for the offline training scripts.',
+    where: 'backend/scripts/ml/eventService.js',
+    group: 'free',
+    pricing: { type: 'free' },
+    configuredEnv: ['SEATGEEK_CLIENT_ID'],
+    observedLineId: null,
+    watchlistId: 'seatgeek',
+    usageNote: null,
+    costsNothingBecause: 'No server code reads the key and nothing schedules the scripts, so it generates no calls.',
+    source: 'https://platform.seatgeek.com/',
+    checked: '2026-08-20',
+  },
+  {
+    id: 'besttime-subscription',
+    label: 'BestTime.app',
+    what: 'Where the training corpus came from. The key is dead and the corpus is frozen.',
+    where: 'backend/scripts/ml/, offline only',
+    group: 'free',
+    pricing: { type: 'unknown' },
+    configuredEnv: ['BESTTIME_API_KEY'],
+    observedLineId: null,
+    watchlistId: 'besttime-subscription',
+    usageNote: 'No server code path calls it, so there is nothing to count.',
+    costsNothingBecause: 'It generates no usage. That is not the same as generating no bill: if a plan is still active on the account, it is being paid for nothing.',
+    unknownCost: true,
+    unknownAction: 'Open the BestTime dashboard and cancel any plan still running.',
+  },
+];
+
+const DEPENDENCIES_CHECKED = '2026-08-20';
+
+// ---------------------------------------------------------------------------
 // Pricing helpers
 // ---------------------------------------------------------------------------
 
@@ -1015,6 +1532,234 @@ function buildFixed() {
 }
 
 // ---------------------------------------------------------------------------
+// GOOGLE QUOTA CAPS, PRICED
+// ---------------------------------------------------------------------------
+
+/**
+ * What the Google-side quota caps permit, priced at the rate card.
+ *
+ * CEILINGS ONLY, exactly like buildWorstCase(): no meter reading is in scope
+ * and none is passed. The panel puts an observed count NEXT to a quota, never
+ * inside it, so the two can be compared without either becoming the other.
+ *
+ * The one argument is ANOTHER CEILING, which is why it is allowed here: the
+ * repo has its own daily photo brake in services/photoStore.js, and the two
+ * limits now overlap. Whichever is smaller is the one that actually refuses,
+ * and reading a limit off the wrong side of that comparison is how a service
+ * comes to be capped a third of the way below where its owner thinks it is.
+ *
+ * @param {object} [limits]
+ * @param {number} [limits.photoBurstPerDay] photoStore PHOTO_FETCH_BURST_PER_DAY
+ */
+function buildGoogleQuotas(limits = {}) {
+  const repoPhotoBrake = Number.isFinite(limits.photoBurstPerDay) && limits.photoBurstPerDay > 0
+    ? limits.photoBurstPerDay
+    : null;
+  const lines = GOOGLE_QUOTAS.perDay.map((q) => {
+    const sku = RATES.places.skus[q.sku];
+    const callsPerMonth = q.perDay * DAYS_PER_MONTH;
+    return {
+      id: q.id,
+      label: sku.label,
+      perDay: q.perDay,
+      perThousandUsd: sku.perThousand,
+      freePerMonth: sku.freePerMonth,
+      callsPerMonth: Math.round(callsPerMonth),
+      perMonthUsdGross: round(priceCalls(callsPerMonth, sku.perThousand)),
+      perMonthUsdAfterFree: round(
+        priceCallsAfterFree(callsPerMonth, sku.perThousand, sku.freePerMonth)
+      ),
+      observedLineId: q.observedLineId,
+      // Only the photo SKU has a second daily limit to lose to.
+      repoDailyBrake: q.id === 'photos' ? repoPhotoBrake : null,
+      bindingDaily: q.id === 'photos' && repoPhotoBrake !== null
+        ? (repoPhotoBrake <= q.perDay ? 'repo' : 'google')
+        : (q.id === 'photos' ? null : 'google'),
+    };
+  });
+  const afterFree = round(lines.reduce((s, l) => s + l.perMonthUsdAfterFree, 0));
+  const gross = round(lines.reduce((s, l) => s + l.perMonthUsdGross, 0));
+  const budget = GOOGLE_QUOTAS.budget.usdPerMonth;
+  return {
+    kind: 'googleQuotas',
+    checked: GOOGLE_QUOTAS.checked,
+    project: GOOGLE_QUOTAS.project,
+    console: GOOGLE_QUOTAS.console,
+    budget: GOOGLE_QUOTAS.budget,
+    lines,
+    perMonthUsdGross: gross,
+    perMonthUsdAfterFree: afterFree,
+    // Do the four quotas still add up to the budget they were derived from? A
+    // rate change or a hand-edited quota breaks that agreement silently
+    // otherwise, and the panel would go on implying a cap it no longer has.
+    agreesWithBudget: Math.abs(afterFree - budget) <= budget * 0.05,
+    note: 'Every quota spent every day of an average month, priced at the rate card, with each free allowance taken off. A ceiling, not a bill.',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// THE INVENTORY, RESOLVED
+// ---------------------------------------------------------------------------
+
+/** The published free allowance of a rate-card group, in words. */
+function freeTierTextFor(groupName) {
+  const g = groupName ? RATES[groupName] : null;
+  if (!g) return null;
+  const n = (x) => Number(x).toLocaleString('en-US');
+  switch (groupName) {
+    case 'weather':
+      return `${n(g.freePerMonth)} calls a month, ${n(g.freePerMinute)} a minute`;
+    case 'ticketmaster':
+      return `${n(g.freePerDay)} calls a day`;
+    case 'resend':
+      return `${n(g.freePerMonth)} emails a month and ${n(g.freePerDay)} a day. The next tier is $${g.nextTierUsd.toFixed(2)} a month for ${n(g.nextTierIncluded)}`;
+    case 'posthog':
+      return `${n(g.freeEventsPerMonth)} events a month, then $${g.perEventOverFree} each`;
+    case 'sentry':
+      return `${n(g.freeErrorsPerMonth)} errors a month. The next tier is $${g.nextTierUsd.toFixed(2)} a month`;
+    case 'revenuecat':
+      return `$${n(g.freeMonthlyTrackedRevenueUsd)} of monthly tracked revenue, then ${g.percentOverFree}% of it`;
+    case 'maptiler':
+      return `${n(g.freeSessionsPerMonth)} map sessions and ${n(g.freeApiRequestsPerMonth)} API requests a month. The next tier is $${g.nextTierUsd.toFixed(2)} a month and it bills overages automatically`;
+    case 'push':
+      return 'No charge published on either leg';
+    default:
+      return null;
+  }
+}
+
+const RATE_GROUP_OF_PRICING_TYPE = { gemini: 'gemini', places: 'places', vision: 'vision' };
+
+/**
+ * Resolve the dependency inventory against the rate card and the environment.
+ *
+ * The only inputs are CONFIGURATION: which Gemini model each caller is set to,
+ * and which environment variable names exist. Neither is a meter and neither is
+ * a ceiling, so this builder sits outside the observed / worst-case wall rather
+ * than straddling it. It returns join keys and prices; the counts come from
+ * buildObserved() and are joined by the panel.
+ *
+ * ENV VARS ARE READ FOR PRESENCE ONLY. A name is returned, a value never is.
+ * This whole payload goes over the wire to an admin browser.
+ *
+ * @param {object} ctx
+ * @param {string} [ctx.birdieModel]  BIRDIE_MODEL in force
+ * @param {string} [ctx.advisorModel] ADVISOR_MODEL in force
+ * @param {string} [ctx.onDate]       YYYY-MM-DD, for rate selection
+ */
+function buildDependencies(ctx = {}) {
+  const onDate = typeof ctx.onDate === 'string' ? ctx.onDate : new Date().toISOString().slice(0, 10);
+  const present = (name) => {
+    const v = process.env[name];
+    return typeof v === 'string' && v.trim() !== '';
+  };
+
+  const entries = DEPENDENCIES.map((d) => {
+    const p = d.pricing || null;
+    const groupName = (p && (p.rateGroup || RATE_GROUP_OF_PRICING_TYPE[p.type])) || null;
+    const g = groupName ? RATES[groupName] : null;
+
+    let unitPrice = null;
+    let freeTier = freeTierTextFor(groupName);
+    let unpriceable = false;
+    let model = null;
+
+    if (p && p.type === 'gemini') {
+      model = p.model === 'birdie'
+        ? (ctx.birdieModel || null)
+        : p.model === 'roost' ? (ctx.advisorModel || null) : p.model;
+      const r = model ? geminiRate(model, onDate) : null;
+      if (r) {
+        unitPrice = `$${r.inputPerMTok.toFixed(2)} per million input tokens, $${r.outputPerMTok.toFixed(2)} per million output`;
+        if (r.promotional && r.changesOn) {
+          unitPrice += `. Promotional, and it doubles on ${r.changesOn}`;
+        }
+        freeTier = 'The Gemini API has a free tier. The reconciled Google bill records $0 from Gemini on both callers to date.';
+      } else {
+        // A model id this file has never heard of must read as unpriced, never
+        // as free. BIRDIE_MODEL and ADVISOR_MODEL are switchable from Railway.
+        unpriceable = true;
+      }
+    } else if (p && p.type === 'places') {
+      const sku = RATES.places.skus[p.sku];
+      unitPrice = `$${sku.perThousand.toFixed(2)} per 1,000 requests`;
+      freeTier = `The first ${Number(sku.freePerMonth).toLocaleString('en-US')} requests of this SKU each month`;
+    } else if (p && p.type === 'vision') {
+      unitPrice = `$${RATES.vision.perThousand.toFixed(2)} per 1,000 images`;
+      freeTier = `The first ${Number(RATES.vision.freePerMonth).toLocaleString('en-US')} images each month`;
+    }
+
+    const envNames = Array.isArray(d.configuredEnv) ? d.configuredEnv : null;
+    const found = envNames ? envNames.filter(present) : [];
+
+    return {
+      id: d.id,
+      label: d.label,
+      what: d.what,
+      where: d.where,
+      group: d.group,
+      unitPrice,
+      freeTier,
+      unpriceable,
+      model,
+      unknownCost: !!d.unknownCost,
+      unknownAction: d.unknownAction || null,
+      costsNothingBecause: d.costsNothingBecause || null,
+      usageNote: d.usageNote || null,
+      note: d.note || null,
+      // Join keys. The panel resolves each against the block that owns it, so
+      // no price and no sentence exists twice in this payload.
+      observedLineId: d.observedLineId || null,
+      fixedId: d.fixedId || null,
+      watchlistId: d.watchlistId || null,
+      statusKey: d.statusKey || null,
+      finding: d.finding || null,
+      // Configuration, read from the running process. null means this process
+      // has no way to see it, which is not the same as it being unset.
+      configured: envNames === null ? null : found.length > 0,
+      configuredVia: found.length > 0 ? found[0] : null,
+      configuredEnv: envNames,
+      configuredNote: d.configuredNote || null,
+      source: d.source || (g ? g.source : null),
+      checked: d.checked || (g ? g.checked : null),
+    };
+  });
+
+  const inGroup = (id) => entries.filter((e) => e.group === id);
+  return {
+    kind: 'dependencies',
+    checked: DEPENDENCIES_CHECKED,
+    onDate,
+    groups: [
+      {
+        id: 'metered',
+        label: 'Metered APIs',
+        short: 'metered',
+        note: 'Charged per call or per token. These are the only lines that can grow a bill on their own.',
+        entries: inGroup('metered'),
+      },
+      {
+        id: 'fixed',
+        label: 'Fixed bills',
+        short: 'fixed',
+        note: 'These arrive whether anybody opens the app or not.',
+        entries: inGroup('fixed'),
+      },
+      {
+        id: 'free',
+        label: 'Free or unused',
+        short: 'free or unused',
+        note: 'Every row here is $0 today, and every row says which kind of $0 it is.',
+        entries: inGroup('free'),
+      },
+    ],
+    total: entries.length,
+    unknownCostIds: entries.filter((e) => e.unknownCost).map((e) => e.id),
+    unmeteredIds: entries.filter((e) => !e.observedLineId).map((e) => e.id),
+    note: 'Everything Flock reaches outside itself, including the free things. A dependency that costs nothing is still an account somebody can lock.',
+  };
+}
+// ---------------------------------------------------------------------------
 // PER-VENUE UNIT ECONOMICS
 // ---------------------------------------------------------------------------
 
@@ -1130,6 +1875,9 @@ function buildVenueUnitEconomics(args = {}) {
 
 module.exports = {
   RATES,
+  GOOGLE_QUOTAS,
+  DEPENDENCIES,
+  DEPENDENCIES_CHECKED,
   FIXED_MONTHLY,
   FIXED_ANNUAL,
   ONE_TIME,
@@ -1147,4 +1895,7 @@ module.exports = {
   buildWorstCase,
   buildFixed,
   buildVenueUnitEconomics,
+  buildGoogleQuotas,
+  buildDependencies,
+  freeTierTextFor,
 };
