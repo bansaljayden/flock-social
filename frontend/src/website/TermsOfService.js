@@ -70,8 +70,8 @@ export default function TermsOfService() {
 
       <section>
         <p>
-          These Terms of Service ("Terms") are a binding agreement between you and {OPERATOR}
-          ("Flock", "we", "us"). They are also the end user licence agreement for the Flock
+          These Terms of Service ("Terms") are a binding agreement between you and{' '}
+          {OPERATOR} ("Flock", "we", "us"). They are also the end user licence agreement for the Flock
           app. By creating an account, by opening a Flock invite link, or by using the Flock
           app or flockcorp.com, you agree to these Terms and to our{' '}
           <a href="/privacy">Privacy Policy</a> and{' '}
@@ -118,8 +118,9 @@ export default function TermsOfService() {
         <p>
           We grant you a personal, limited, non-exclusive, non-transferable, revocable
           licence to install and use the Flock app on a device you own or control, and to use
-          flockcorp.com, for your own non-commercial use, subject to these Terms and to the
-          usage rules of the store you got the app from. This is a licence, not a sale.
+          flockcorp.com, for your own personal use, or to run a venue under section 9 if that
+          is what you are here for, subject to these Terms and to the usage rules of the store
+          you got the app from. This is a licence, not a sale.
           Flock, the software behind it, and everything in it that we made remain ours.
         </p>
         <p>
@@ -352,11 +353,11 @@ export default function TermsOfService() {
           labelled.
         </p>
         <ul>
-          <li>Your report is shown to users as coming from you, in your venue's own words, and never as Flock's own estimate.</li>
+          <li>Your report is shown to users as coming from your venue, and never as Flock's own estimate. The wording around it is ours and is built from your venue's category, so a cafe reads as a cafe. It is not text you write.</li>
           <li>It expires by itself 90 minutes after you set it. After that, users see our estimate again. You do not have to turn it off, and you can retract it early.</li>
           <li>Flock users can report busyness too. When enough of them do, currently three or more, their reports take precedence over yours. You cannot pay to change that, at any tier.</li>
           <li>Reports are attributable. We keep a record of who set what and when, and we keep it after a report expires or is retracted.</li>
-          <li>You allow us to use your reports to correct predictions at your venue, to train the crowd model that serves every venue, and to contribute to aggregate comparisons across venues in your city and category. Those aggregates are built so that no single venue's number can be read back out of them, and they are not published at all until at least five venues other than yours have reported into the same comparison.</li>
+          <li>You allow us to use your reports to correct predictions at your venue, to train the crowd model that serves every venue, and to contribute to aggregate comparisons across venues in your city and category. Those aggregates are built so that no single venue's number can be read back out of them, and they are not published at all until at least five owners other than you have reported into the same comparison and at least three of their readings land on the figure itself.</li>
         </ul>
         <p>
           Misreporting is the one venue behaviour that can cost you the feature, or the
@@ -385,12 +386,18 @@ export default function TermsOfService() {
         <h3>9.6 Venue fees</h3>
         <p>
           <strong>Today, nothing in the venue dashboard costs money and no payment method is
-          collected.</strong> Any tier price shown in the app describes a plan we intend to
-          charge for later, not a charge that exists now. Before we charge any venue anything,
-          we will give at least 30 days' notice to the email on the venue account. Nothing
-          will be retroactive: you will never be billed for a period before you subscribed.
-          If we comp your venue a paid tier during a pilot, that comp can end at any time and
-          is not a promise of future pricing.
+          collected.</strong> These Terms do not set a price for anything. When there is a
+          price it will be published where you buy, and we will give at least 30 days' notice
+          to the email on the venue account before we charge any venue anything. Nothing will
+          be retroactive: you will never be billed for a period before you subscribed. If we
+          comp your venue a paid tier during a pilot, that comp can end at any time and is not
+          a promise of future pricing.
+        </p>
+        <p>
+          If we do bill venues, a subscription will renew by itself until you cancel it, and we
+          will give you a way to cancel it yourself, from inside the venue dashboard, that is
+          at least as easy as the way you signed up. You will not have to email us, phone us,
+          or wait for us to answer to stop a renewal.
         </p>
         <p>
           If paid features ever stop for non-payment, your listing, your ability to reply to
@@ -408,9 +415,12 @@ export default function TermsOfService() {
           about your venue.
         </p>
         <p>
-          We keep records of occupancy reports, tier changes and moderation actions after
-          content is deleted or an account is closed, as our{' '}
-          <a href="/privacy">Privacy Policy</a> describes.
+          We keep records of tier changes and of moderation actions after content is deleted
+          or an account is closed, as our <a href="/privacy">Privacy Policy</a> describes.
+          Occupancy reports are not in that set: they are attached to the venue account that
+          posted them, so closing that account deletes them. While the account exists they
+          outlive the reading itself, including ones you retracted, because each is a labelled
+          observation the crowd model learns from.
         </p>
       </section>
 
@@ -456,8 +466,8 @@ export default function TermsOfService() {
           logo without our written permission, except to refer to Flock accurately.
         </p>
         <p>
-          If you believe content on Flock infringes your copyright, send a notice to {mail}
-          with: enough detail to identify the copyrighted work; enough detail to find the
+          If you believe content on Flock infringes your copyright, send a notice to{' '}
+          {mail} with: enough detail to identify the copyrighted work; enough detail to find the
           content you say infringes it; your contact details; a statement that you believe in
           good faith that the use is not authorised by the owner, its agent, or the law; a
           statement that the information in your notice is accurate and, under penalty of
@@ -492,7 +502,9 @@ export default function TermsOfService() {
         <p>
           We may also stop offering Flock, in whole or in part, at any time. If we shut the
           service down we will give reasonable notice where we can. Sections 6, 7, 8, 11, 13,
-          14, 15 and 17 survive the end of this agreement.
+          14, 15, 16 and 17 survive the end of this agreement. Section 16 is in that list
+          because it is the part Apple is entitled to rely on, and a term that stops applying
+          the moment the agreement ends would not be worth much to anybody.
         </p>
       </section>
 
@@ -542,9 +554,9 @@ export default function TermsOfService() {
       <section>
         <h2>15. Indemnity</h2>
         <p>
-          You agree to defend and indemnify {OPERATOR} against claims, damages and reasonable
-          legal costs arising from content you post, from your breach of these Terms or of the
-          law, or from your infringement of someone else's rights.
+          If someone brings a claim against {OPERATOR} because of content you posted, because
+          you broke these Terms or the law, or because you infringed someone else's rights, you
+          agree to cover our costs for that claim, including reasonable legal fees.
         </p>
         <p>
           If you use Flock as a venue, that also covers claims brought against us because a
@@ -590,13 +602,29 @@ export default function TermsOfService() {
         </p>
       </section>
 
+      {/* GOVERNING LAW IS NOT SETTLED, AND THIS SENTENCE IS NOT COUNSEL'S WORK.
+          VENUE-TOS-DRAFT.md lawyer flag 3 says governing law, forum, and whether
+          to include arbitration and a class waiver are deliberately not drafted
+          and must not be filled in without a lawyer. What shipped here filled in
+          one of the four anyway, and did it with a drafting error: it named "the
+          laws of the United States and the Commonwealth of Pennsylvania", and
+          federal law is not something a contract chooses. A US contract picks a
+          STATE's law; federal law applies of its own force wherever it applies.
+          That error is corrected below. The three questions flag 3 actually
+          raises are still open and still need counsel:
+            1. is Pennsylvania the right choice, given the contracting entity is
+               undecided (flag 1) and the operator is a minor;
+            2. what the forum is, which this section still does not say;
+            3. arbitration and class waiver, yes or no.
+          Do not read the corrected sentence as those questions being answered. */}
       <section>
         <h2>17. Governing law</h2>
         <p>
-          These Terms are governed by the laws of the United States and the Commonwealth of
-          Pennsylvania, without regard to conflict-of-laws rules. Where the law of the place
-          you live gives you rights that cannot be overridden by an agreement like this one,
-          those rights still apply and nothing here takes them away.
+          These Terms are governed by the laws of the Commonwealth of Pennsylvania, without
+          regard to conflict-of-laws rules, and by any federal law of the United States that
+          applies. Where the law of the place you live gives you rights that cannot be
+          overridden by an agreement like this one, those rights still apply and nothing here
+          takes them away.
         </p>
         <p>
           Before starting any formal dispute, please write to us at {mail} and give us a

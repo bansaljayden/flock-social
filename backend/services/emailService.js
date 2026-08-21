@@ -309,9 +309,12 @@ async function sendEmail({ to, subject, html, text, from = 'Flock <hello@flockco
 
   // The do-not-mail list, consulted HERE rather than in each caller, because a
   // suppression list every sender has to remember to check is a suppression
-  // list. A hard bounce or a spam complaint blocks every category; an
-  // unsubscribe blocks marketing and leaves a password reset alone. See
-  // services/emailSuppression.js for why this fails open.
+  // list. A hard bounce or a spam complaint blocks every category except
+  // 'emergency'; an unsubscribe blocks marketing and leaves a password reset
+  // alone. 'emergency' is the SOS alert in routes/safety.js and nothing else,
+  // and the argument for why a bounce must not swallow one is written out at
+  // EMERGENCY_CATEGORY in services/emailSuppression.js. See the same file for
+  // why this fails open.
   const allowed = await suppression.checkSendAllowed(recipient, category);
   if (allowed.blocked) {
     console.warn('[email] suppressed, not sending to', maskAddress(recipient), `(${allowed.reason})`);
