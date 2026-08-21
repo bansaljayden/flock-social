@@ -36,9 +36,11 @@ const { storyVisibilitySql } = require('../utils/relationships');
 const moderation = require('../utils/moderation');
 // The stored data: URL's MIME is re-typed from the sniffed bytes before the
 // INSERT — the declared prefix is a client claim, and the format regex below
-// only ever reads that claim. One byte-typer, defined in sockets/handlers.js
-// and shared with both chat transports; never re-implement it here.
-const { restampImageMime } = require('../sockets/handlers');
+// only ever reads that claim. The same call also removes the EXIF/XMP/IPTC
+// blocks, which on a phone photo carry a GPS fix. One byte-typer and one
+// stripper, defined in sockets/handlers.js and shared with both chat
+// transports; never re-implement either here.
+const { sanitizeStoredImage } = require('../sockets/handlers');
 
 const router = express.Router();
 
@@ -479,9 +481,11 @@ router.post('/',
                   WHERE user_id = $1 AND expires_at > NOW()) < $5::int
          RETURNING id, user_id, caption, created_at, expires_at`,
         [req.user.id,
-          // Re-typed from the sniffed bytes (restampImageMime): the payload is
-          // stored byte-for-byte as screened; only the declared MIME can move.
-          restampImageMime(image_url),
+          // Re-typed from the sniffed bytes and stripped of metadata
+          // (sanitizeStoredImage): the stored payload is the screened one with
+          // its EXIF, XMP and IPTC segments removed. Stripping only ever takes
+          // bytes away, never adds pixels, so nothing can hide behind it.
+          sanitizeStoredImage(image_url),
           caption, STORIES_PER_HOUR, MAX_ACTIVE_STORIES]
       );
 

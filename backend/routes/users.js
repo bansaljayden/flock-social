@@ -32,6 +32,7 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { body, param, query, validationResult } = require('express-validator');
 const multer = require('multer');
+const { stripImageMetadata } = require('../utils/imageMetadata');
 const path = require('path');
 const pool = require('../config/database');
 const {
@@ -145,9 +146,40 @@ const DETECTED_MIME = {
 // entirely: no volume to configure, nothing to leak, nothing to lose on
 // redeploy. The 5 MB limit below bounds the buffer, and the stored data URL is
 // separately capped at 600 KB further down.
+// ---------------------------------------------------------------------------
+// fileSize was the ONLY limit here, and fileSize bounds one part (round 26).
+// ---------------------------------------------------------------------------
+// multer's other ceilings default to Infinity: `fields`, `parts` and `files` are
+// all unbounded unless they are named. `fileSize` therefore bounded the FILE at
+// 5 MB and bounded the REQUEST at nothing at all: a single multipart body of
+// ordinary text fields (`name=a&name=a&...`, no file part at all) is accumulated
+// into `req.body` by multer's own field handler, one allocation per field, until
+// the client stops sending. That is a gigabyte of heap on a Railway container
+// with a few hundred megabytes of it, from one connection, and the billed-image
+// limiter in server.js cannot help: it refuses REQUESTS, and this is one
+// request. The dyno OOMs and every user is offline while it restarts.
+//
+// The numbers are what THIS endpoint actually uses, not generous ones. The
+// client posts exactly one part named `image` and no text fields at all, so
+// `files: 1` and `parts: 2` (the file, plus one spare) are already slack.
+// `fieldSize` and `fieldNameSize` bound the parts that are not the file so a
+// refusal happens on the first oversized one rather than after buffering it.
+//
+// A refused part aborts the read: multer stops consuming the stream and calls
+// back with a MulterError, which the handler below turns into a 400. The bytes
+// past the limit are never allocated, which is the property `fileSize` alone had
+// only for the file part.
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB max
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5 MB max
+    files: 1,
+    parts: 2,
+    fields: 1,
+    fieldSize: 4 * 1024,
+    fieldNameSize: 100,
+    headerPairs: 100,
+  },
   fileFilter: (req, file, cb) => {
     const allowed = /jpeg|jpg|png|gif|webp/;
     const extOk = allowed.test(path.extname(file.originalname).toLowerCase());
@@ -1579,6 +1611,22 @@ router.post('/upload-image', (req, res) => {
       return res.status(400).json({ error: 'File is not a valid image' });
     }
 
+    // Strip EXIF/XMP/IPTC before anything else touches these bytes. An avatar
+    // is the image with the widest blast radius in the app, repeated on every
+    // message row, every roster and every push. A photo straight off a phone
+    // carries a GPS fix, the device serial on some bodies, and often a
+    // full-size thumbnail of the UNCROPPED original. See utils/imageMetadata.js;
+    // it returns the input unchanged if the container does not parse, so this
+    // cannot be the reason an upload fails.
+    //
+    // Ahead of the size ceiling on purpose, in the direction that helps: the
+    // metadata is real bytes, so a photo that was over the 600 KB limit only
+    // because of a fat EXIF thumbnail now fits. Ahead of moderateImage for the
+    // same reason the size check is: a smaller payload is a cheaper Vision
+    // call, and stripping removes metadata segments only, never pixels, so the
+    // screen sees the same picture either way.
+    const imageBytes = stripImageMetadata(req.file.buffer);
+
     try {
       // Convert to base64 data URL and store in DB (survives Railway redeploys).
       //
@@ -1601,7 +1649,7 @@ router.post('/upload-image', (req, res) => {
         console.error(`[Upload] no MIME mapped for detected format "${format}"`);
         return res.status(400).json({ error: 'That image format is not supported.' });
       }
-      const dataUrl = `data:${detectedMime};base64,${req.file.buffer.toString('base64')}`;
+      const dataUrl = `data:${detectedMime};base64,${imageBytes.toString('base64')}`;
 
       // See MAX_AVATAR_DATA_URL_BYTES above for the ceiling and for how the
       // number this refusal quotes is derived from it. Ahead of moderateImage,
@@ -2537,6 +2585,11 @@ module.exports.__testing = {
   searchProbeBudget,
   resetSearchProbeBudget: () => searchProbeBudget.reset(),
   detectImageFormat,
+  // Round 26. The upload middleware itself, so a test can drive a real
+  // multipart body through it: `limits` is the only thing standing between one
+  // connection and the container's whole heap, and defaults that were never
+  // named are exactly what this pins.
+  upload,
   DETECTED_MIME,
   MAX_AVATAR_DATA_URL_BYTES,
   ADVERTISED_AVATAR_KB,

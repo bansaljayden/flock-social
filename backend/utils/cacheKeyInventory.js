@@ -403,10 +403,10 @@ const INVENTORY = [
     key: '`${photoRef}|${maxWidth}`',
     callerControls: 'photoRef, but structurally bounded by PHOTO_REF_RE; maxWidth is snapped to exactly two values',
     protects: 'paid Google metadata call + CDN bytes, and HEAP (it stores raw image buffers)',
-    denominator: 'cache entries, 1h TTL, only status-200 responses cached',
-    bound: '500 entries, expire-then-one-oldest-per-insert',
-    verdict: 'OPEN',
-    why: 'Every miss is gated by 300/IP/hr and the global Places leg, so the spend is capped — but the cap is on ENTRY COUNT and each entry holds a full image buffer, so the bytes are unbounded, and single-key eviction lets a churn of valid refs push hot photos out one at a time. NOT FIXED HERE — outside this change\'s permitted files. Fix: cap total cached bytes rather than entries, and evict to a low-water mark instead of one per insert.',
+    denominator: 'cached BYTES, 7d TTL, only status-200 responses cached',
+    bound: '32MB total, 2MB per entry, expire-then-least-recently-used to a 90% low-water mark',
+    verdict: 'SAFE',
+    why: 'Round 26 applied the fix this row prescribed. The cap was 500 ENTRIES against a full image buffer apiece, so the bytes were unbounded, and single-key eviction let a churn of valid refs push hot photos out one at a time. It is now a byte budget with a per-entry ceiling, a hit re-inserts its key so eviction is least-recently-used rather than FIFO, and eviction runs to a low-water mark so a full cache does not pay the expired-entry scan on every insert. The same round fixed the COST half nobody had filed: the TTL was 1 HOUR on bytes that are immutable by construction: a photo resource name is a handle for one specific photo and Google mints a new name rather than swapping the bytes behind an old one: so a venue card on screen across a day was re-bought roughly 24 times. Seven days now, inside the 30-day Places caching allowance, pinned by __tests__/photoCacheCost.test.js.',
   },
   {
     file: 'routes/venueSearch.js', name: 'inflight', kind: 'inflight',
@@ -505,6 +505,30 @@ const INVENTORY = [
     bound: '20k / 18k, least-consumed, evict before insert',
     verdict: 'SAFE',
     why: 'The rare counter denominated in the thing that is actually billed rather than in requests; a longer prompt only ever spends more, and it is charged before the call and settled up on usageMetadata.',
+  },
+
+  // ── services/emailService.js ──────────────────────────────────────────────
+  {
+    file: 'services/emailService.js', name: 'recipientCounts', kind: 'counter',
+    key: 'the RECIPIENT address, lowercased, + a rolling 24h window',
+    callerControls: 'the address, on exactly one path: an unauthenticated waitlist signup names its own recipient. Every other sender resolves the address from a database row (the venue owner, the account being verified, a trusted contact, an admin).',
+    protects: 'Resend, which bills per send, and the sending domain reputation a runaway loop burns',
+    denominator: 'messages to one address (60 per 24h), charged before the provider is called',
+    bound: '5k entries, expired-first sweep',
+    verdict: 'SAFE',
+    why: 'It is a BACKSTOP, not the control: every caller already has its own throttle (waitlist 3/IP/hr + 500/day, moderation 40/hr, reset debounced hourly, digest one marker per venue per week), and this exists to bound the loop that spans two of them or the caller added later with none. Naming your own address only ever spends YOUR OWN allowance, so the one caller-chosen key is a self-denial-of-service and nothing else. The ceiling is set far above any real path (the busiest legitimate recipient is a moderation address at 40/hr) so it cannot silently swallow an SOS, and it logs at error level when it trips.',
+  },
+
+  // ── services/emailSuppression.js ──────────────────────────────────────────
+  {
+    file: 'services/emailSuppression.js', name: 'cache', kind: 'cache',
+    key: 'the recipient address, lowercased and trimmed',
+    callerControls: 'the address, on the same single path as above (a waitlist signup)',
+    protects: 'a Postgres round trip per outbound message — the digest sweep asks once per venue in a loop, and the SOS path asks while somebody is in trouble',
+    denominator: 'n/a — a read cache, 5 minute TTL',
+    bound: '5k entries, expired-first sweep then clear',
+    verdict: 'SAFE',
+    why: 'A MISS here is a database read, not money and not a security decision, and both outcomes are cached (a null means "checked, not suppressed") so a chosen address cannot be used to force repeated reads. Poisoning it is not possible from outside: the only writer is suppress(), which deletes the key rather than seeding it. Staleness costs at most one more send inside the TTL, in the safe direction.',
   },
 
   // ── services/forecastUsage.js ─────────────────────────────────────────────

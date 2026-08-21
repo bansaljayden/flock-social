@@ -110,9 +110,104 @@ pool.on('error', (err) => {
 // `client.query` and is NOT covered. That is deliberate — the migration runner
 // has to be able to run whatever a migration says — and it is the reason this
 // is a seatbelt rather than a wall.
+// COMMENTS WERE HALF THE PROBLEM. STRING LITERALS ARE THE OTHER HALF.
+//
+// Stripping comments fixed the statement that shipped the outage, and left the
+// identical mistake reachable one quote character away. `stripSqlComments`
+// deliberately PRESERVES quoted text, because a `--` inside a literal does not
+// start a comment in Postgres; the consequence nobody followed through on is
+// that the words inside that literal are then handed to the verb match, so
+//
+//   INSERT INTO venue_profiles (quirks) VALUES ('we truncate the tap list')
+//   SELECT * FROM t WHERE note <> 'DROP TABLE users'
+//
+// are both refused with a 500, for prose, exactly as `truncated` was. Migration
+// 030 added `quirks`, `event_note` and `anchor_note` — three free-text columns
+// whose whole purpose is an owner describing their own room in their own words
+// — so the class of statement that trips this is now a shipped product surface
+// rather than a hypothetical.
+//
+// The fix is to blank literal CONTENTS for the danger match only, AFTER the
+// comment strip. Order is what makes it safe: comments are already gone by the
+// time literals are blanked, so nothing can be hidden from the guard inside a
+// literal that a `--` used to protect. And a verb inside `'...'` is a string,
+// never a statement, so removing it can only take away false positives. Dollar
+// quoted bodies are left alone on purpose — `DO $$ ... DROP TABLE x ... $$`
+// really does drop the table.
+function blankStringLiterals(sql) {
+  let out = '';
+  let i = 0;
+  const n = sql.length;
+  while (i < n) {
+    const c = sql[i];
+    if (c === "'") {                                  // string literal, '' escapes
+      let j = i + 1;
+      while (j < n) {
+        if (sql[j] !== "'") { j++; continue; }
+        if (sql[j + 1] === "'") { j += 2; continue; }
+        j++;
+        break;
+      }
+      out += "''"; i = j; continue;                   // contents gone, quotes kept
+    }
+    if (c === '"') {                                  // quoted identifier: a NAME,
+      const close = sql.indexOf('"', i + 1);          // not data, so it stays
+      const end = close === -1 ? n : close + 1;
+      out += sql.slice(i, end); i = end; continue;
+    }
+    if (c === '$') {                                  // $$ ... $$ executes; keep it
+      const m = /^\$(?:[A-Za-z_]\w*)?\$/.exec(sql.slice(i));
+      if (m) {
+        const tag = m[0];
+        const close = sql.indexOf(tag, i + tag.length);
+        const end = close === -1 ? n : close + tag.length;
+        out += sql.slice(i, end); i = end; continue;
+      }
+    }
+    out += c; i++;
+  }
+  return out;
+}
+
+// An unconditional DELETE is a TRUNCATE that spells itself differently, and the
+// guard blocked one and waved the other through. `DELETE FROM users` empties
+// the table this whole product is, from a `pool.query` call, with no error to
+// say it happened. Scoped by what it does NOT match: any WHERE (however it is
+// spelled, including a WHERE the statement inherits from a CTE), any USING
+// join, and anything where the DELETE is only a word inside a literal — which
+// is why this runs on the blanked text like every other rule. Measured against
+// every SQL string in routes/, services/, sockets/, middleware/, utils/ and
+// db/: 1,096 statements, zero matches, so no live route pays for it.
+// PER STATEMENT, not per query text. A single string handed to pool.query can
+// hold several statements, and "does this text contain a WHERE" is the wrong
+// question for it: `DELETE FROM sessions WHERE id = 1; DELETE FROM users` has
+// a WHERE and still empties the users table. Splitting on the semicolons that
+// survive the comment strip and the literal blanking answers the right question
+// for each half. A dollar-quoted body is left whole by both of those passes, so
+// splitting it here can only produce fragments that lack a WHERE and are
+// therefore refused, which is the safe direction to be wrong in.
+function isUnconditionalDelete(code) {
+  if (!/\bDELETE\s+FROM\b/i.test(code)) return false;
+  return code.split(';').some(
+    (stmt) => /\bDELETE\s+FROM\b/i.test(stmt) && !/\bWHERE\b/i.test(stmt) && !/\bUSING\b/i.test(stmt)
+  );
+}
+
 const SQL_DANGER = [
   [/\bDROP\s+TABLE\b/i, 'DROP TABLE is BLOCKED for safety. Set ALLOW_DROP_TABLES=true in .env to allow, or use migrations instead.'],
   [/\bTRUNCATE\b/i, 'TRUNCATE is BLOCKED for safety. Set ALLOW_DROP_TABLES=true in .env to allow.'],
+  // The four statements that are strictly worse than the two above and were not
+  // on the list. `DROP SCHEMA public CASCADE` takes all 46 tables in one line
+  // and is the single most likely thing to arrive by copy-paste out of a psql
+  // session, which is the exact accident this guard exists for. `DROP OWNED BY`
+  // does the same thing wearing a role name. `DROP DATABASE` needs no comment.
+  // `ALTER TABLE ... DROP COLUMN` is irreversible data loss on a live table and
+  // belongs in a migration, on a client this guard does not wrap, every time.
+  [/\bDROP\s+SCHEMA\b/i, 'DROP SCHEMA is BLOCKED for safety. Set ALLOW_DROP_TABLES=true in .env to allow, or use migrations instead.'],
+  [/\bDROP\s+DATABASE\b/i, 'DROP DATABASE is BLOCKED for safety. Set ALLOW_DROP_TABLES=true in .env to allow.'],
+  [/\bDROP\s+OWNED\b/i, 'DROP OWNED is BLOCKED for safety. Set ALLOW_DROP_TABLES=true in .env to allow.'],
+  [/\bALTER\s+TABLE\b[\s\S]*\bDROP\s+COLUMN\b/i, 'ALTER TABLE ... DROP COLUMN is BLOCKED for safety. Write a migration, or set ALLOW_DROP_TABLES=true in .env to allow.'],
+  [isUnconditionalDelete, 'DELETE with no WHERE clause is BLOCKED for safety: it empties the table. Add a WHERE, or set ALLOW_DROP_TABLES=true in .env to allow.'],
 ];
 
 // Replace every SQL comment with a space, leaving quoted text alone. Postgres
@@ -172,9 +267,10 @@ function stripSqlComments(sql) {
 function dangerousStatement(queryText) {
   if (!queryText || typeof queryText !== 'string') return null;
   if (process.env.ALLOW_DROP_TABLES === 'true') return null;
-  const code = stripSqlComments(queryText);
-  for (const [re, message] of SQL_DANGER) {
-    if (re.test(code)) return message;
+  const code = blankStringLiterals(stripSqlComments(queryText));
+  for (const [rule, message] of SQL_DANGER) {
+    const hit = typeof rule === 'function' ? rule(code) : rule.test(code);
+    if (hit) return message;
   }
   return null;
 }
@@ -194,6 +290,7 @@ pool.query = function safeQuery(...args) {
 // opening a connection.
 pool.__dangerousStatement = dangerousStatement;
 pool.__stripSqlComments = stripSqlComments;
+pool.__blankStringLiterals = blankStringLiterals;
 
 // ---------------------------------------------------------------------------
 // STARTUP CONNECTIVITY CHECK — only in the process that is actually a server.
