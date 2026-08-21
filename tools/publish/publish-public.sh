@@ -25,7 +25,12 @@
 
 set -euo pipefail
 
-PUBLIC_REMOTE="git@github.com:bansaljayden/flock-social.git"
+# HTTPS, not SSH. This machine has no key pair at all: ssh -T git@github.com
+# answers "Permission denied (publickey)" and ~/.ssh holds no public key, so the
+# SSH form failed every time it was run and printed its error into a terminal
+# nobody was reading. The private remote is HTTPS for the same reason, and gh
+# has already configured git's credential helper to authenticate that way.
+PUBLIC_REMOTE="https://github.com/bansaljayden/flock-social.git"
 PUBLIC_REMOTE_HTTPS="https://github.com/bansaljayden/flock-social.git"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DRY_RUN=0
