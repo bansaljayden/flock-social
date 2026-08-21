@@ -297,9 +297,10 @@ function stripComments(s) {
 //
 // Either may be schema-qualified (`table public.served_predictions`,
 // `column public.venue_feedback.served_prediction_id`); an unqualified name is
-// resolved against current_schema() at check time. A schema-qualified name used
-// to parse as a bare table called `public`, which is a requirement nothing can
-// ever satisfy.
+// resolved the way Postgres resolves an unqualified name in the migration's own
+// DDL, by walking the whole search_path. A schema-qualified name used to parse
+// as a bare table called `public`, which is a requirement nothing can ever
+// satisfy.
 //
 // Identifiers are folded to lower case, exactly as Postgres folds an unquoted
 // identifier. `-- @requires table Foo` used to be compared literally against
@@ -399,9 +400,19 @@ function parseRequirements(sql, label = 'migration') {
 // ---------------------------------------------------------------------------
 // Read off the code view, so a DROP inside a $$ body counts and a DROP inside a
 // comment or a string literal does not. Deliberately conservative: it
-// recognises the two shapes this repo writes, `DROP TABLE [IF EXISTS] a, b` and
-// `ALTER TABLE [IF EXISTS] [ONLY] t ... DROP COLUMN [IF EXISTS] c`. Anything it
-// misses only means a requirement stays enforced, which is the old behaviour.
+// recognises the two shapes this repo writes: DROP TABLE, optionally IF EXISTS,
+// over a comma list; and ALTER TABLE, optionally IF EXISTS and ONLY, carrying a
+// DROP COLUMN. Anything it misses only means a requirement stays enforced,
+// which is the old behaviour.
+//
+// Those two are spelled out in prose rather than quoted, and that is not a
+// style preference. __tests__/poolQueryGuard.test.js finds the SQL this app
+// runs by pulling every backtick-delimited run of text out of the source and
+// testing it against the pool's destructive-verb guard, and a markdown quote in
+// a COMMENT is indistinguishable from a template literal to that scan. Quoting
+// the ALTER shape here therefore published a fake ALTER TABLE ... DROP COLUMN
+// out of this file, the guard refused it exactly as it should, and the suite
+// went red over a sentence.
 function parseDrops(sql) {
   const { code } = scanSql(sql);
   const out = new Set();
@@ -463,9 +474,28 @@ function effectiveRequirements(file, loaded) {
 // database reported three missing columns on venue_feedback, the heal deleted
 // 032's row on that evidence, and the re-apply threw 42501 on every boot. Not
 // live on Railway, where migrations run as superuser, but the whole point of
-// this check is to be right about a database it cannot see. A search_path where
-// the table lives outside current_schema() had the same shape, which is what
-// the optional schema qualification on a requirement is for.
+// this check is to be right about a database it cannot see.
+//
+// AN UNQUALIFIED REQUIREMENT IS RESOLVED THE WAY THE MIGRATION'S OWN SQL IS.
+// This used to read `n.nspname = COALESCE(w.sch, current_schema())`, and
+// current_schema() is only the FIRST entry of search_path: it is where a new
+// unqualified object gets CREATED, not where an existing one is FOUND. Postgres
+// finds an existing relation by walking every entry. So with
+// `search_path=migrations,public` and the Flock tables in public, `ALTER TABLE
+// venue_feedback ADD COLUMN ...` inside the migration reached
+// public.venue_feedback and so did every query the application makes, while
+// this verifier looked only in `migrations`, found nothing, and reported the
+// columns missing on a database where they were present and in use. What that
+// costs is not a warning: assertRequirementsMet throws, the file rolls back,
+// migrate() rejects, and server.js exits 1 before it ever listens, on every
+// boot, over a schema that was correct the whole time. The heal has the same
+// evidence and re-applies every already-applied file each boot before giving up
+// and declaring the service degraded.
+//
+// pg_table_is_visible(oid) IS that walk, and it is the same function psql's \d
+// and regclass casts use, so the verifier and the DDL now agree by
+// construction. A qualified requirement still means exactly the schema it
+// names, which is what to write when a name is ambiguous across the path.
 async function findMissingRequirements(client, reqs) {
   const missing = [];
 
@@ -483,12 +513,15 @@ async function findMissingRequirements(client, reqs) {
          FROM unnest($1::text[], $2::text[], $3::text[])
               WITH ORDINALITY AS w(sch, rel, col, ord)
          JOIN pg_class c ON c.relname = w.rel
-         JOIN pg_namespace n
-           ON n.oid = c.relnamespace AND n.nspname = COALESCE(w.sch, current_schema())
+         JOIN pg_namespace n ON n.oid = c.relnamespace
          JOIN pg_attribute a
            ON a.attrelid = c.oid AND a.attname = w.col
           AND a.attnum > 0 AND NOT a.attisdropped
-        WHERE c.relkind = ANY($4::"char"[])`,
+        WHERE c.relkind = ANY($4::"char"[])
+          AND CASE WHEN w.sch IS NULL
+                   THEN pg_catalog.pg_table_is_visible(c.oid)
+                   ELSE n.nspname = w.sch
+              END`,
       [
         want.map((r) => r.schema),
         want.map((r) => r.table),
@@ -506,9 +539,12 @@ async function findMissingRequirements(client, reqs) {
       `SELECT w.ord
          FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS w(sch, rel, ord)
          JOIN pg_class c ON c.relname = w.rel
-         JOIN pg_namespace n
-           ON n.oid = c.relnamespace AND n.nspname = COALESCE(w.sch, current_schema())
-        WHERE c.relkind = ANY($3::"char"[])`,
+         JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relkind = ANY($3::"char"[])
+          AND CASE WHEN w.sch IS NULL
+                   THEN pg_catalog.pg_table_is_visible(c.oid)
+                   ELSE n.nspname = w.sch
+              END`,
       [want.map((r) => r.schema), want.map((r) => r.table), REQUIRABLE_RELKINDS]
     );
     const have = new Set(rows.map((r) => Number(r.ord)));
