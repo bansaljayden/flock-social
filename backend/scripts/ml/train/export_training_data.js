@@ -174,6 +174,51 @@
 // 20 both exist because a label silently sat at weight 1.0. See the HANDOFF
 // comment at the labelProvenance() call site.
 //
+// ---------------------------------------------------------------------------
+// ROUND 25: THE CORPUS STOPPED CONVERTING "WE DID NOT LOOK" INTO "NOTHING WAS
+// THERE", AND THE HONEST ANSWER IS A COLUMN BESIDE THE FEATURE, NOT A SENTINEL
+// INSIDE IT.
+//
+// The serving path was fixed first: getNearbyEvents now returns `observed` and
+// an `unavailableReason`, and services/ownerReportContext.js writes NULL rather
+// than a fabricated false (migration 044). This file was undoing that at the
+// corpus boundary. Three places did it:
+//
+//   1. ownerLabelExport.js mapped a NULL context to `false` twice over
+//      (`ctx_has_nearby_event === true`), so the very NULLs 044 exists to
+//      preserve arrived in training as negative observations.
+//   2. The feedback path hardcoded has_nearby_event: false with a comment
+//      directly above it reading "NO WEATHER, NO EVENTS". The code stated
+//      plainly that it was asserting something it had not checked.
+//   3. rowToCsv wrote every boolean as `x ? 1 : 0`, so even a correct NULL
+//      upstream would have been flattened on the way out.
+//
+// AND THE ORIGINAL, WHICH IS NOT FIXABLE. scripts/ml/enrichWithEvents.js has
+// had this bug since migration 006 created has_nearby_event as `BOOLEAN DEFAULT
+// false`: its no-event branch writes exactly the column defaults, so "the
+// matcher looked and the street was quiet" is byte-identical to "the matcher
+// never ran" and to "ml_events holds no events for this city at all". Measured
+// on 2026-08-20: 3,912,357 rows, 3,688,137 false, 224,220 true, 0 NULL, and 22
+// of 34 cities hold ZERO true rows: 2,194,300 rows, 56.1% of the corpus.
+// Philadelphia contributes 144,665 of them without a single nearby event.
+// Migration 045 gives that script somewhere to record provenance going FORWARD.
+// The existing rows are not retrospectively separable and nothing here pretends
+// otherwise; they export with events_observed empty, which is exactly what is
+// known about them. See MODEL-METRICS.md.
+//
+// WHY A COLUMN AND NOT A VALUE. There is no in-distribution way to say
+// "unknown" to the model that ships today: prepare_features.py ends with
+// fillna(0) over the feature columns and every tree splits has_nearby_event at
+// 0.5, so a sentinel would be train/serve skew invented in the name of honesty
+// (mlPredictor.js makes the same argument at its own vector, and
+// __tests__/eventUnknownVsZero.test.js pins it). So the feature columns keep
+// their no-information values through the existing imputation, the CSV writes
+// the empty field rather than a 0 so the raw corpus stays honest, and
+// events_observed carries the fact into the pickles as a CARRIED column, where
+// the next retrain can weight on it, evaluate on the observed slice alone, or
+// drop the 22 cities. Those are decisions that need the fact recorded and do not need it
+// featurised.
+//
 // EMPTY IS NOT ZERO. Both columns are written as an EMPTY FIELD when the row
 // does not carry a value, and 0 is a legal vendor forecast (a venue nobody is
 // at). pandas reads the empty field as NaN and prepare_features.py never
@@ -298,6 +343,14 @@ function cityQuery(city, optional = {}) {
         -- selecting a column that does not exist is a hard SQL error, so it is
         -- probed like the other optionals rather than assumed.
         ${has('vendor_forecast_pct', 't.vendor_forecast_pct')},
+        -- Round 25: whether the six event columns above are a measurement.
+        -- enrichWithEvents.js writes it from migration 045 onward; NULL on
+        -- every row enriched before that, and NULL is the honest value for
+        -- them, because an observed false and a defaulted false left the same bytes.
+        -- Probed like the other optionals: selecting a column that does not
+        -- exist is a hard SQL error, and a database that has not booted 045
+        -- must still export.
+        ${has('events_observed', 't.events_observed')},
         t.collected_at,
         ${has('observed_date', 't.observed_date AS stored_observed_date', 'stored_observed_date')},
         t.busyness_pct,
@@ -402,6 +455,51 @@ function labelSource(row) {
   const v = row.label_source;
   if (v === null || v === undefined) return '';
   return String(v);
+}
+
+// Round 25: a boolean the export may not fabricate.
+//
+// rowToCsv used to write every boolean as `x ? 1 : 0`, which silently turned
+// NULL into 0. On the event columns that is the whole defect this round is
+// about: a row whose event state was never looked up became a row asserting
+// that nothing was happening. NULL now writes the EMPTY field, exactly as
+// vendorForecastPct does for numbers, and pandas reads it as NaN.
+//
+// Safe for the vendor rows: ml_training_data.has_nearby_event has been
+// `BOOLEAN DEFAULT false` since migration 006 and holds zero NULLs across all
+// 3,912,357 rows, so nothing that used to write 0 starts writing empty. What
+// changes is what the NEW writers may say. enrichWithEvents.js writes NULL on
+// the branches it cannot measure from migration 045 onward, and the feedback
+// and owner paths below carry their unknowns through instead of flattening them.
+function boolField(v) {
+  if (v === null || v === undefined) return '';
+  return v ? 1 : 0;
+}
+
+// Round 25: WHETHER THE EVENT COLUMNS ON THIS ROW ARE A MEASUREMENT.
+//
+// This is a CARRIED column, not a feature, and the distinction is the whole
+// design. prepare_features.py ends with fillna(0) over the feature columns and
+// every tree in the shipped model splits has_nearby_event at 0.5, so there is
+// no in-distribution way to tell THIS model "unknown". A sentinel (-1, NaN
+// held through, a fractional base rate) would be a value it has never seen,
+// which is the `?? 20` mistake mlPredictor.js documents at length. So the
+// feature keeps its no-information value and the honesty lives in a column
+// beside it, where a future retrain can weight on it, slice on it or drop the
+// rows, and where the imputation stays visible instead of being laundered into
+// an observation.
+//
+//   1   the event columns are a measurement, including the genuinely quiet
+//       night where they read false and 0
+//   0   they are not: no lookup could have answered for this row, and the event
+//       columns are empty rather than zero
+//   ''  nothing recorded which of the two it was. Every pre-045 vendor row and
+//       every pre-044 owner-context row is this, and they are NOT
+//       retrospectively separable. MODEL-METRICS.md carries the breakdown.
+function eventsObserved(row) {
+  const v = row.events_observed;
+  if (v === null || v === undefined) return '';
+  return v ? 1 : 0;
 }
 
 // Round 20: BestTime's own forecast for the row's moment.
@@ -752,18 +850,27 @@ function feedbackCellToTrainingRow(cell, crowdMap) {
       // and drive the climate-anomaly feature hard negative on every one of
       // these rows. That imputation has to become provenance-aware before a
       // user_report row may train. It is in the handoff.
+      //
+      // Round 25: is_raining, event_nearby and has_nearby_event used to be
+      // written `false` here while the comment above them said "empty, never
+      // 0". They were the fabrication the comment was warning about: a hard
+      // negative observation on three channels nobody checked, asserted by the
+      // same block that says it checked nothing. They are empty now, and
+      // events_observed = 0 states positively that no event lookup happened
+      // for these rows rather than leaving it to be inferred.
       temperature: null,
       humidity: null,
       wind_speed: null,
       weather_condition: null,
       weather_condition_code: null,
-      is_raining: false,
-      event_nearby: false,
+      is_raining: null,
+      event_nearby: null,
       event_distance_km: null,
       event_size: null,
       event_type: null,
       event_hours_until: null,
-      has_nearby_event: false,
+      has_nearby_event: null,
+      events_observed: false,
       nearest_event_distance_km: null,
       nearest_event_attendance: null,
       total_nearby_events: null,
@@ -909,13 +1016,13 @@ function rowToCsv(row) {
     row.wind_speed,
     row.weather_condition,
     row.weather_condition_code,
-    row.is_raining ? 1 : 0,
-    row.event_nearby ? 1 : 0,
+    boolField(row.is_raining),
+    boolField(row.event_nearby),
     row.event_distance_km,
     row.event_size,
     row.event_type,
     row.event_hours_until,
-    row.has_nearby_event ? 1 : 0,
+    boolField(row.has_nearby_event),
     row.nearest_event_distance_km,
     row.nearest_event_attendance,
     row.total_nearby_events,
@@ -937,10 +1044,11 @@ function rowToCsv(row) {
     labelProvenance(row),
     labelSource(row),
     vendorForecastPct(row),
+    eventsObserved(row),
   ].map(escapeCsv).join(',');
 }
 
-// The corpus contract, 44 columns, in exactly this order.
+// The corpus contract, 45 columns, in exactly this order.
 //
 // prepare_features.py's EXPORT_COLUMNS is the same list and the two are pinned
 // against each other by __tests__/mlPipelineContracts.test.js and
@@ -951,7 +1059,10 @@ function rowToCsv(row) {
 // Round 20's two additions are APPENDED, deliberately. Every column an older
 // reader knows keeps its index, so the growth cannot silently re-point a
 // positional consumer; and a pre-round-20 CSV fails require_export_columns by
-// NAME rather than by arriving one field short somewhere in the middle.
+// NAME rather than by arriving one field short somewhere in the middle. Round
+// 25's events_observed is appended for the same reason and on the same terms:
+// carried, never featurised, and its absence is an error rather than a silent
+// training run on a corpus whose negatives cannot be checked.
 //
 // Keep this a flat array of single-quoted literals with no comments inside it:
 // the contract tests parse it out of the source text, and any other quoted
@@ -974,6 +1085,7 @@ const HEADER = [
   'avg_user_crowd', 'user_feedback_count', 'avg_prediction_error',
   'observed_date', 'label_provenance',
   'label_source', 'vendor_forecast_pct',
+  'events_observed',
 ].join(',');
 
 const UNDECLARED_WEEKLY_MESSAGE =
@@ -991,6 +1103,9 @@ const OPTIONAL_COLUMNS = {
   hour_axis: 'migration 023 adds it; without it NO weekly row can declare its axis',
   vendor_forecast_pct: 'migration 025 adds it; without it the vendor forecast column is empty '
     + 'on every row and a "live" label cannot be checked against the counterfactual',
+  events_observed: 'migration 045 adds it; without it NO row can say whether its '
+    + 'has_nearby_event is a measurement or the column default, which is the state the '
+    + 'whole 3.9M-row corpus is already in',
 };
 
 async function columnsPresent(db, table) {
@@ -1063,6 +1178,29 @@ async function preflight(db, log = console.log) {
     }
   }
 
+  // Round 25: the event-provenance census, said out loud on every export.
+  const events = await eventProvenanceCensus(db, optional);
+  if (events.total > 0) {
+    const share = ((events.zeroEventRows / events.total) * 100).toFixed(1);
+    log(`[Export] Event provenance: ${events.observed} of ${events.total} labelled rows record `
+      + `that their event state was measured, ${events.unavailable} record that it could not be, `
+      + `${events.total - events.observed - events.unavailable} record nothing either way.`);
+    if (events.zeroEventCities.length > 0) {
+      log(`[Export] WARNING: ${events.zeroEventCities.length} of ${events.cities} cities hold `
+        + `ZERO rows with a nearby event: ${events.zeroEventRows} rows, ${share}% of the corpus. `
+        + 'A city where every single row says "no event" is a statement about Ticketmaster '
+        + 'collection coverage, not about the city, and the model reads it as the second one. '
+        + `Cities: ${events.zeroEventCities.map((c) => `${c.city} (${c.rows})`).join(', ')}`);
+    }
+    if (!optional.events_observed) {
+      log('[Export] NOTE: ml_training_data has no events_observed column, so every row exports '
+        + 'with the provenance field empty. That is the honest reading of the pre-045 corpus: '
+        + 'an observed false and a defaulted false left identical bytes and no backfill can '
+        + 'separate them. Apply migration 045 and re-run enrichWithEvents.js to make FUTURE '
+        + 'rows separable. See MODEL-METRICS.md before weighting these rows.');
+    }
+  }
+
   // Round 23: the venue_feedback census. Same doctrine as the round-20 block
   // above — a REPORT, never a gate, because it is zero on the corpus today and
   // a gate on it would block every retrain until the product has users.
@@ -1089,7 +1227,20 @@ async function preflight(db, log = console.log) {
     }
   }
 
-  return { optional, undeclaredWeekly, calendarGaps, provenance, feedback };
+  // Round 25: migration 044's provenance column on the owner-context side. The
+  // owner query names it directly, and naming a column that does not exist is a
+  // hard SQL error, so it is probed rather than assumed, same rule as the
+  // ml_training_data optionals. A database on 036 but not 044 exports owner
+  // rows with the provenance field empty, which is the truth about them.
+  const ownerContextColumns = await columnsPresent(db, 'venue_owner_report_context');
+  const ownerContext = { events_observed: ownerContextColumns.has('events_observed') };
+  if (ownerContextColumns.size > 0 && !ownerContext.events_observed) {
+    log('[Export] NOTE: venue_owner_report_context has no events_observed column (migration '
+      + '044). Owner-label rows export with an empty events_observed: a stored false there '
+      + 'may be a Ticketmaster answer or may be a timeout, and nothing recorded which.');
+  }
+
+  return { optional, undeclaredWeekly, calendarGaps, provenance, feedback, events, ownerContext };
 }
 
 // One pass, both counts, and NULL-safe against a database missing either
@@ -1122,6 +1273,55 @@ async function labelCoverage(db, optional) {
       WHERE collection_mode = 'realtime' AND busyness_pct IS NOT NULL`
   );
   return row;
+}
+
+// Round 25 event-provenance census, per city, on every export.
+//
+// The number this reports is the one the corpus was missing for its entire
+// life, and it is not a number any single-row check could have surfaced: a city
+// where EVERY row says has_nearby_event = false is not a quiet city, it is a
+// city whose events were never collected, and the only way to see that is to
+// group. 22 of 34 cities were in that state on 2026-08-20.
+//
+// A REPORT, never a refusal, for labelCoverage's reason: events_observed is
+// NULL on 100% of the corpus until enrichWithEvents.js next runs, so a gate
+// would block every retrain on a fact about the past that cannot be changed.
+// What it must do is be impossible to miss.
+//
+// COST: one more sequential scan of ml_training_data with a hash aggregate over
+// 34 groups, seconds against a two-hour export, deliberately not folded into the
+// calendar-gap query because the two answer unrelated questions.
+async function eventProvenanceCensus(db, optional) {
+  const observed = optional.events_observed
+    ? `COUNT(*) FILTER (WHERE t.events_observed IS TRUE)::bigint`
+    : '0::bigint';
+  const unavailable = optional.events_observed
+    ? `COUNT(*) FILTER (WHERE t.events_observed IS FALSE)::bigint`
+    : '0::bigint';
+  const { rows } = await db.query(
+    `SELECT v.city,
+            COUNT(*)::bigint AS rows,
+            COUNT(*) FILTER (WHERE t.has_nearby_event IS TRUE)::bigint AS with_event,
+            ${observed} AS observed,
+            ${unavailable} AS unavailable
+       FROM ml_training_data t
+       JOIN ml_venues v ON t.venue_id = v.id
+      WHERE t.busyness_pct IS NOT NULL
+      GROUP BY v.city`
+  );
+  const total = rows.reduce((s, r) => s + Number(r.rows), 0);
+  const zeroEventCities = rows
+    .filter((r) => Number(r.with_event) === 0)
+    .sort((a, b) => Number(b.rows) - Number(a.rows));
+  return {
+    cities: rows.length,
+    total,
+    withEvent: rows.reduce((s, r) => s + Number(r.with_event), 0),
+    observed: rows.reduce((s, r) => s + Number(r.observed), 0),
+    unavailable: rows.reduce((s, r) => s + Number(r.unavailable), 0),
+    zeroEventCities,
+    zeroEventRows: zeroEventCities.reduce((s, r) => s + Number(r.rows), 0),
+  };
 }
 
 // fs.WriteStream.write() returns false when its buffer is full and the rest is
@@ -1333,6 +1533,9 @@ async function runExport({ pool, outDir = __dirname, log = console.log } = {}) {
           rowToCsv,
           baselineAggregateSql: BASELINE_AGGREGATE_SQL,
           write,
+          // Round 25: whether migration 044's provenance column is there to
+          // read. Probed once in preflight, not once per city.
+          optional: pre.ownerContext,
         });
         const added = ownerCounters.emitted - before;
         if (added > 0) {
@@ -1519,4 +1722,8 @@ module.exports = {
   feedbackCensus,
   exportFeedbackCity,
   newFeedbackCounters,
+  // Round 25: event provenance carried rather than fabricated.
+  boolField,
+  eventsObserved,
+  eventProvenanceCensus,
 };

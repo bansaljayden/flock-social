@@ -544,8 +544,60 @@ test('the label exporter joins the context so every column it once shipped NULL 
   assert.strictEqual(bareRow.temperature, null);
   assert.strictEqual(bareRow.weather_condition, null);
   assert.strictEqual(bareRow.total_nearby_events, null);
-  assert.strictEqual(bareRow.is_raining, false, 'unchanged pre-context behavior');
-  assert.strictEqual(bareRow.has_nearby_event, false, 'unchanged pre-context behavior');
+  // These two used to be pinned here as `false`, described as "unchanged
+  // pre-context behavior". They were the last place the fabricated negative
+  // survived: the exporter read `ctx_has_nearby_event === true`, which answers
+  // false for a row that has no context at all, so a reading taken before
+  // migration 036 arrived in training asserting that nothing was happening near
+  // the venue. NULL is what is actually known about it.
+  assert.strictEqual(bareRow.is_raining, null, 'no context row means no reading, not "dry"');
+  assert.strictEqual(bareRow.has_nearby_event, null,
+    'no context row means no lookup, not "no events nearby"');
+  assert.strictEqual(bareRow.event_nearby, null);
+  assert.strictEqual(bareRow.events_observed, null,
+    'and nothing recorded whether a lookup could have happened either');
+});
+
+test('migration 044 provenance rides from the context table into the training row', () => {
+  const ownerExport = require('../scripts/ml/train/ownerLabelExport');
+
+  // The column is named only when it exists. A database on 036 but not 044
+  // would otherwise fail the whole owner path on a hard SQL error.
+  const withCol = ownerExport.ownerCandidateQuery('philadelphia', 'SELECT 1 AS baseline',
+    { events_observed: true }).text;
+  assert.match(withCol, /c\.events_observed\s+AS ctx_events_observed/);
+  const withoutCol = ownerExport.ownerCandidateQuery('philadelphia', 'SELECT 1 AS baseline').text;
+  assert.match(withoutCol, /NULL::boolean\s+AS ctx_events_observed/);
+  assert.ok(!/c\.events_observed/.test(withoutCol),
+    'naming a column that does not exist is a hard SQL error, not a NULL');
+
+  const base = {
+    report_id: 1, busy_percent: 50, created_at: NOW, day_of_week: 3, hour: 17,
+    venue_id: 12, city: 'philadelphia', google_place_id: 'ChIJx', google_types: ['bar'],
+    latitude: 39.95, longitude: -75.16, venue_category: 'bar', price_level: 2,
+    rating: 4.4, review_count: 812, baseline_busyness: 40,
+  };
+  const dates = ['2026-08-12', '2026-08-13', '2026-08-14', '2026-08-15', '2026-08-16'];
+  const build = (ctx) => {
+    const rows = dates.map((d, i) => ({ ...base, ...ctx, report_id: i + 1, local_date: d, hour: 17 + i }));
+    const [group] = ownerExport.groupOwnerVenues(rows);
+    return ownerExport.ownerVenueToTrainingRows(group).rows[0];
+  };
+
+  // A measured quiet night: Ticketmaster answered and there was nothing.
+  const measured = build({ ctx_events_observed: true, ctx_has_nearby_event: false,
+    ctx_total_nearby_events: 0 });
+  assert.strictEqual(measured.events_observed, true);
+  assert.strictEqual(measured.has_nearby_event, false, 'a measured false is still a false');
+  assert.strictEqual(measured.total_nearby_events, 0);
+
+  // A failed lookup: 044 writes NULL to every event column beside it, and the
+  // training row must not turn any of that back into an observation.
+  const failed = build({ ctx_events_observed: false, ctx_has_nearby_event: null,
+    ctx_total_nearby_events: null });
+  assert.strictEqual(failed.events_observed, false);
+  assert.strictEqual(failed.has_nearby_event, null);
+  assert.strictEqual(failed.total_nearby_events, null);
 });
 
 // ── 5. THE SERVE IT RECORDS IS ONE THE SERVER CHOSE (migration 038) ─────────
