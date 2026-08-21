@@ -45,6 +45,18 @@
 -- FALSE would say "we know the lookup failed" about rows written before anyone
 -- was recording that, which is the same class of mistake this migration exists
 -- to end.
+--
+-- HANDLERS NARROW, POST-CONDITIONS DECLARED. Both are 01f7ed6's rule, and this
+-- file is the first written under it. duplicate_column and duplicate_object are
+-- the only two conditions that mean "already there"; a lock_timeout, which
+-- db/migrate.js arms at 10 seconds, must propagate and fail the boot so the next
+-- one retries, rather than be recorded as applied with the columns missing.
+-- services/ownerReportContext.js binds both of these on every owner slider move
+-- from the moment it deploys, so a silently absent column is a capture that
+-- throws for good.
+--
+-- @requires column venue_owner_report_context.events_observed
+-- @requires column venue_owner_report_context.events_unavailable_reason
 
 DO $$ BEGIN
   ALTER TABLE venue_owner_report_context
