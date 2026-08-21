@@ -11,6 +11,10 @@ const { stripHtml } = require('../utils/sanitize');
 // toast instead of console.warn-ing them (App.js, the 'error' listener).
 const { moderateText, TEXT_REJECTED_MESSAGE, moderateImage, imageRejectionMessage } = require('../utils/moderation');
 const { sanitizeVenueData, safeVenuePhotoUrl } = require('../utils/venuePayload');
+// EXIF/XMP/IPTC removal for the bytes that actually get stored. See the header
+// of utils/imageMetadata.js: a chat photo taken on a phone carries a GPS fix,
+// and this app stores every chat photo inline and re-serves it to somebody else.
+const { stripDataUrlMetadata } = require('../utils/imageMetadata');
 const VENUE_REJECTED_MESSAGE = "That venue card couldn't be shared.";
 const { isBlockedBetween, isBlockedBetweenCached, getInvisibleUserIds } = require('../utils/blocks');
 const { isPlaceIdShaped, isKnownVenue } = require('../utils/places');
@@ -187,6 +191,27 @@ function restampImageMime(imageUrl) {
   const mime = format && SNIFFED_MIME[format];
   if (!mime) return imageUrl;
   return `data:${mime};base64,${imageUrl.slice(comma + 1)}`;
+}
+
+// What every image write path stores. Two steps, and the ORDER is the whole
+// point: restampImageMime decides what the file IS from its bytes, and the
+// stripper needs that answer to be about the same bytes it is walking, so the
+// re-type runs first and the strip runs on its output.
+//
+// Why this is a separate function rather than more work inside restampImageMime:
+// that one is a pure re-typer, and its contract ("the payload is byte-for-byte
+// untouched, only the prefix moves") is asserted directly by
+// __tests__/imageTrust.test.js. That is the right contract for a byte-typer to
+// have. Removing metadata is a different job with a different failure mode, so
+// it gets its own function and the call sites compose them here, once, instead
+// of four times.
+//
+// Moderation runs BEFORE this, on the bytes the sender actually sent, and that
+// is deliberate: what gets screened should be what was uploaded, and stripping
+// only ever removes metadata segments, never pixels, so nothing can hide behind
+// it. The stored bytes are a subset of the screened ones.
+function sanitizeStoredImage(imageUrl) {
+  return stripDataUrlMetadata(restampImageMime(imageUrl));
 }
 
 // Drop one socket's presence from one flock, cleaning up the empty room entry.
@@ -1244,7 +1269,7 @@ function registerHandlers(io, socket) {
           // imageCheck is non-null exactly when a (validated, moderated) image
           // is present. Stored with its MIME re-typed from the sniffed bytes —
           // see restampImageMime above; the REST twin does the same.
-          imageCheck ? restampImageMime(image_url) : null,
+          imageCheck ? sanitizeStoredImage(image_url) : null,
         ]
       );
 
@@ -1924,7 +1949,7 @@ function registerHandlers(io, socket) {
          VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
         [user.id, receiverId, text, safeType, dmVenueCheck.data ? JSON.stringify(dmVenueCheck.data) : null,
           // Same re-typing as send_message: the stored MIME is the sniffed one.
-          dmImageCheck ? restampImageMime(image_url) : null,
+          dmImageCheck ? sanitizeStoredImage(image_url) : null,
           replyRow ? replyToId : null]
       );
 
@@ -2505,6 +2530,8 @@ module.exports = {
   // and routes/stories.js import it (never re-implement it), the same way they
   // import the constants above.
   restampImageMime,
+  // What the write paths actually call: restamp, then strip EXIF/XMP/IPTC.
+  sanitizeStoredImage,
   IMAGE_TOO_LARGE_MESSAGE,
   IMAGE_FORMAT_MESSAGE,
   EMPTY_MESSAGE,
