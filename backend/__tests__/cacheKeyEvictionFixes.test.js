@@ -428,12 +428,19 @@ test('the venue cache still evicts, to a low-water mark, once the budget could n
 // ceiling never binds. routes/venueSearch.js's photo leg was exactly that:
 // PUBLIC_PHOTO_BUDGET was 4000 against a GLOBAL_DAILY of 3000, so ten
 // addresses at 300/hour could spend the whole shared Google day in an hour.
+//
+// THE PHOTO DOOR NO LONGER DECLARES ITS CEILING IN REQUESTS. It declares one
+// annual dollar figure (services/photoStore.js PHOTO_BUDGET_USD_PER_YEAR) and
+// derives a monthly fetch ceiling and a daily brake from it, in Postgres. The
+// question this file asks is unchanged and the answer still has to hold: the
+// most that door can spend in a day must sit under the shared day.
 
 test('every unauthenticated Places door has a daily sub-ceiling under the shared day', () => {
   assert.ok(badge.BADGE_DAILY < badge.GLOBAL_DAILY,
     `BADGE_DAILY (${badge.BADGE_DAILY}) must sit under GLOBAL_DAILY (${badge.GLOBAL_DAILY})`);
-  assert.ok(vs.PUBLIC_PHOTO_BUDGET < vs.GLOBAL_DAILY,
-    `PUBLIC_PHOTO_BUDGET (${vs.PUBLIC_PHOTO_BUDGET}) must sit under GLOBAL_DAILY `
+  const PHOTO_DAILY = require('../services/photoStore').PHOTO_FETCH_BURST_PER_DAY;
+  assert.ok(PHOTO_DAILY < vs.GLOBAL_DAILY,
+    `the photo proxy's daily brake (${PHOTO_DAILY}) must sit under GLOBAL_DAILY `
     + `(${vs.GLOBAL_DAILY}); a sub-ceiling above its ceiling never binds`);
 
   // The public demo's own leg is declared inline in routes/publicCrowd.js. Read
@@ -455,7 +462,7 @@ test('every unauthenticated Places door has a daily sub-ceiling under the shared
   // pinned in __tests__/unauthPlacesReserve.test.js. What is checked HERE is
   // the weaker thing this file can check: the per-door ceilings still sum to
   // less than the whole day, so no door is decorative.
-  const unauthenticatedTotal = badge.BADGE_DAILY + vs.PUBLIC_PHOTO_BUDGET + DEMO_DAILY;
+  const unauthenticatedTotal = badge.BADGE_DAILY + PHOTO_DAILY + DEMO_DAILY;
   assert.ok(unauthenticatedTotal < vs.GLOBAL_DAILY,
     `the three unauthenticated doors can together spend ${unauthenticatedTotal} of a `
     + `${vs.GLOBAL_DAILY}-call day, which leaves the signed-in product nothing`);

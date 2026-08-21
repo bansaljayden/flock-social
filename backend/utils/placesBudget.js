@@ -106,6 +106,15 @@
 //                             billed; the second leg pulls bytes from Google's
 //                             CDN. If an invoice ever shows otherwise, that is
 //                             the one number here that should become a 2.
+//                             A MISS NOW MEANS SOMETHING NARROWER than it did:
+//                             the photo cache is durable (Postgres, migration
+//                             046), so a deploy no longer turns every cached
+//                             photo back into a miss, and this door charges far
+//                             less than it used to for the same traffic. Its
+//                             own ceiling is a DOLLAR budget in
+//                             services/photoStore.js, tighter than anything in
+//                             this file; that is where the photo money is
+//                             decided, and this ledger only sees it pass by.
 //
 //   THE UNAUTHENTICATED SHARE, and the sentence that used to be wrong.
 //   SECURITY-AUDIT-money.md M5-1 (MEDIUM). Round 23's commit message said the
@@ -116,8 +125,8 @@
 //   card, the owner dashboard, Birdie — was left 300 paid calls for the rest of
 //   the UTC day. That is ten accounts' hourly allowance at PER_USER_HOURLY, and
 //   the cost of reaching it was about 40 source addresses sustained for an hour
-//   (5 at the photo proxy's 300/IP/hr, 5 at the badge's 120/IP/hr, 30 at the
-//   demo's 20/IP/hr). "Cannot starve" was not what the numbers bought.
+//   (5 at the photo proxy's then-300/IP/hr, 5 at the badge's 120/IP/hr, 30 at
+//   the demo's 20/IP/hr). "Cannot starve" was not what the numbers bought.
 //
 //   The three per-door sub-ceilings still sum to 2700, and they are not what
 //   makes the claim true — an inequality between three constants in three
@@ -129,15 +138,21 @@
 //   any of the three doors or a fourth one added later.
 //
 //   WHY 1800/1200 AND NOT SOME OTHER SPLIT. Two constraints pin it. Upward:
-//   the largest per-door sub-ceiling is the photo proxy's 1500, and a sub-
+//   the largest per-door sub-ceiling WAS the photo proxy's 1500, and a sub-
 //   ceiling ABOVE the ceiling it sits under never binds — that was round 23's
 //   own finding about PUBLIC_PHOTO_BUDGET at 4000 — so the unauthenticated
-//   aggregate has to stay strictly above 1500 or it silently repeals the
-//   per-door limit that is doing the per-address work. Downward: 1200 reserved
+//   aggregate has to stay strictly above the largest per-door number or it
+//   silently repeals the per-door limit that is doing the per-address work.
+//   That constraint has since RELAXED rather than moved: the photo proxy's
+//   1500/day was replaced by a daily brake derived from a $300/year budget
+//   (services/photoStore.js), which is a few hundred, so 1800 now clears the
+//   largest per-door number by much more than it was chosen to. Nothing here
+//   needs changing for that; it is recorded so the next reader does not go
+//   looking for a 1500 that is gone. Downward: 1200 reserved
 //   is 40 account-hours at PER_USER_HOURLY = 30, or roughly 240 real sessions
 //   a day once the 5- and 10-minute response caches are counted, against an
 //   authenticated population that is currently two orders of magnitude below
-//   that. 1800 is the smallest round number above 1500, so it is the largest
+//   that. 1800 was the smallest round number above 1500, so it was the largest
 //   reserve available without breaking the first constraint.
 //
 //   __tests__/unauthPlacesReserve.test.js pins both halves: that the three
