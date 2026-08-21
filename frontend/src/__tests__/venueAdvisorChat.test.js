@@ -344,17 +344,23 @@ describe('Roost chat: it accumulates into a conversation', () => {
     // The in-app case: this tab did the writing, so the browser dispatches no
     // storage event to it. Nothing unmounts and nothing is notified.
     window.localStorage.setItem('flockToken', 'token-for-owner-two');
+    // The next thing owner one does is type, and typing is a render. Round 28
+    // made a render one of the ways this card re-reads the key, so the switch
+    // is caught here rather than up to one tick of the interval later. The card
+    // drops the thread and goes back to loading, this time for owner two, so
+    // the field below is a NEW field and the stale handle is not asked about.
     fireEvent.change(input, { target: { value: 'one more turn' } });
+    await waitFor(() => expect(screen.queryByText('owner one private numbers')).toBeNull());
+    const reloaded = await waitFor(field);
     fireEvent.click(send());
 
     // The question never leaves, because it would leave under owner two's
     // token. Owner one's conversation is off the screen, not merely out of the
     // hand-off store, and the box owner one was typing into is empty.
     expect(asked).toEqual(['owner one private numbers']);
-    await waitFor(() => expect(screen.queryByText('owner one private numbers')).toBeNull());
     expect(screen.queryByText(GROUNDED.text)).toBeNull();
     expect(screen.queryByText('one more turn')).toBeNull();
-    expect(input.value).toBe('');
+    expect(reloaded.value).toBe('');
     live.unmount();
 
     // And owner two's own mount inherits nothing either.
@@ -381,8 +387,10 @@ describe('Roost chat: it accumulates into a conversation', () => {
 
     await waitFor(() => expect(screen.queryByText('owner one private numbers')).toBeNull());
     expect(screen.queryByText(GROUNDED.text)).toBeNull();
-    // Still a working card. It just belongs to owner two now.
-    expect(field()).toBeTruthy();
+    // Still a working card. It just belongs to owner two now, and it is owner
+    // two's own card: the switch re-runs the load, so this is waited for rather
+    // than read off the screen the instant the thread went.
+    expect(await waitFor(field)).toBeTruthy();
     window.localStorage.removeItem('flockToken');
   });
 
@@ -426,6 +434,215 @@ describe('Roost chat: it accumulates into a conversation', () => {
     expect(screen.getByText(GROUNDED.text)).toBeTruthy();
     window.localStorage.removeItem('flock-theme');
     window.localStorage.removeItem('flockToken');
+  });
+
+  // ROUND 28. THE ROUND 27 FIX WAS INCOMPLETE, AND IN ONE PLACE DESTRUCTIVE.
+  //
+  // Two adversarial reviews ran the component above in jsdom and found the same
+  // two holes from opposite ends.
+  //
+  // The first is a stale request reaching forward in time. The handler that
+  // discarded a response from a replaced session also called forgetOwner from
+  // inside that response, so owner one's late answer wiped owner two's live
+  // pending turn, owner two's half typed follow up, and (by releasing the busy
+  // flag under a request that was still in flight) owner two's own answer.
+  // Measured before the fix: B question on screen false, B draft empty, B
+  // answer on screen false, requests issued while the first was in flight 2.
+  //
+  // The second is that the identity change dropped the thread and kept the
+  // card. GET /questions answers FOR AN ACCOUNT, so the chip list it returns is
+  // a statement about which of that venue's data classes are populated, and
+  // freeText is that account's entitlement. Measured before the fix:
+  // fetchQuestions calls since the switch 0, owner one's chip still on screen
+  // for owner two true, owner one's free text composer still rendered true. The
+  // mirror case cost a paying customer more: an owner one locked out with a 403
+  // left owner two reading owner one's locked card until something remounted it.
+  const deferred = () => {
+    let settle;
+    const promise = new Promise((resolve) => { settle = resolve; });
+    return { promise, settle: (v) => settle(v) };
+  };
+
+  test('a late answer from the replaced account discards itself and leaves the new owner alone', async () => {
+    window.localStorage.setItem('flockToken', 'token-for-owner-one');
+    const OWNER_ONE_ANSWER = 'Owner one took 14,200 across the last four Fridays.';
+    const typed = [];
+    const chips = [];
+    const ownerOneRequest = deferred();
+    const ownerTwoRequest = deferred();
+    const live = mount({
+      askQuestion: (q) => { typed.push(q); return ownerOneRequest.promise; },
+      ask: (id) => { chips.push(id); return ownerTwoRequest.promise; },
+    });
+    let input = await waitFor(field);
+
+    // Owner one asks. The request is in the air and stays there.
+    fireEvent.change(input, { target: { value: 'what did we take last month' } });
+    fireEvent.click(send());
+    expect(typed).toEqual(['what did we take last month']);
+
+    // Owner two signs in. The card correctly drops owner one's thread here,
+    // which is round 27 working, and reloads the surface, which is the next
+    // test down.
+    window.localStorage.setItem('flockToken', 'token-for-owner-two');
+    fireEvent(window, new StorageEvent('storage', { key: 'flockToken', newValue: 'token-for-owner-two' }));
+    input = await waitFor(field);
+
+    // Owner two now has a conversation of their own going: a follow up half
+    // typed in the box, and a chip question waiting on the server.
+    fireEvent.change(input, { target: { value: 'and how about tomorrow' } });
+    fireEvent.click(screen.getByRole('button', { name: 'How does today look?' }));
+    expect(chips).toEqual(['tonight_outlook']);
+    expect(screen.getByText('How does today look?')).toBeTruthy();
+
+    // And owner one's request finally lands, long after it stopped being
+    // anyone's. It is not owner two's to draw, and it is not owner two's to
+    // delete either.
+    await act(async () => { ownerOneRequest.settle({ ...GROUNDED, text: OWNER_ONE_ANSWER }); });
+
+    expect(screen.queryByText(OWNER_ONE_ANSWER)).toBeNull();
+    expect(screen.queryByText('what did we take last month')).toBeNull();
+    // The pending line, not the chip label: a chip with the same words is on
+    // screen too whenever the load has not been re-run, and it would answer
+    // this assertion for the wrong reason. Only a live turn is thinking.
+    expect(screen.getByText(/reading your numbers/i)).toBeTruthy();
+    expect(screen.getByText('How does today look?')).toBeTruthy();
+    expect(field().value).toBe('and how about tomorrow');
+
+    // The card is still busy on owner two's own request, so the late arrival
+    // cannot open the door to a second one going out behind the first. The
+    // chips are queried rather than demanded because where they sit depends on
+    // whether owner two's thread survived, which is the thing under test.
+    const opener = screen.queryByRole('button', { name: /suggested questions/i });
+    if (opener) fireEvent.click(opener);
+    const chip = screen.queryByRole('button', { name: 'How does today look?' });
+    if (chip && chip.tagName === 'BUTTON') fireEvent.click(chip);
+    expect(chips).toEqual(['tonight_outlook']);
+
+    // Owner two's own answer reaches owner two.
+    await act(async () => { ownerTwoRequest.settle(GROUNDED); });
+    await waitFor(() => expect(screen.getByText(GROUNDED.text)).toBeTruthy());
+    live.unmount();
+    window.localStorage.removeItem('flockToken');
+  });
+
+  test('a change of account re-runs the whole load, not only the thread', async () => {
+    window.localStorage.setItem('flockToken', 'token-for-owner-one');
+    // A real chip, from the real server vocabulary. It is only ever offered to
+    // a venue whose corpus can answer it, which is why handing it to somebody
+    // else says something about the first venue's data.
+    const OWNER_ONE_CHIP = 'Was it just us, or was everyone slow?';
+    const OWNER_TWO_CHIP = 'How busy were we on Saturday?';
+    const loads = [];
+    const fetchQuestions = async () => {
+      loads.push(window.localStorage.getItem('flockToken'));
+      if (loads.length === 1) {
+        return { name: 'Roost', freeText: true, lead: [{ id: 'slow_night', label: OWNER_ONE_CHIP }], groups: [] };
+      }
+      return { name: 'Roost', freeText: false, lead: [{ id: 'saturday', label: OWNER_TWO_CHIP }], groups: [] };
+    };
+    mount({ fetchQuestions });
+    await waitFor(() => expect(screen.getByRole('button', { name: OWNER_ONE_CHIP })).toBeTruthy());
+    expect(field()).not.toBeDisabled();
+
+    window.localStorage.setItem('flockToken', 'token-for-owner-two');
+    fireEvent(window, new StorageEvent('storage', { key: 'flockToken', newValue: 'token-for-owner-two' }));
+
+    await waitFor(() => expect(screen.getByRole('button', { name: OWNER_TWO_CHIP })).toBeTruthy());
+    expect(loads.length).toBe(2);
+    expect(loads[1]).toBe('token-for-owner-two');
+    expect(screen.queryByRole('button', { name: OWNER_ONE_CHIP })).toBeNull();
+    // The entitlement went with it. Owner two's server said no to typed
+    // questions, so owner two gets the quiet box and the reason, not owner
+    // one's working one.
+    expect(field()).toBeDisabled();
+    expect(screen.getByText(/typed questions are off for now/i)).toBeTruthy();
+    window.localStorage.removeItem('flockToken');
+  });
+
+  test('an owner locked out with a 403 does not lock out the account that replaces them', async () => {
+    window.localStorage.setItem('flockToken', 'token-for-owner-one');
+    const LOCKED = 'Roost is part of the Pro plan.';
+    let call = 0;
+    const fetchQuestions = async () => {
+      call += 1;
+      if (call === 1) {
+        const err = new Error('locked');
+        err.status = 403;
+        err.data = { error: LOCKED };
+        throw err;
+      }
+      return QUESTIONS(true);
+    };
+    mount({ fetchQuestions });
+    await waitFor(() => expect(screen.getByText(LOCKED)).toBeTruthy());
+
+    // The paying customer signs in on the same handset. Inheriting the last
+    // account's 403 would lock them out of something they bought, with no way
+    // back short of a remount.
+    window.localStorage.setItem('flockToken', 'token-for-owner-two');
+    fireEvent(window, new StorageEvent('storage', { key: 'flockToken', newValue: 'token-for-owner-two' }));
+
+    const input = await waitFor(field);
+    expect(input).not.toBeDisabled();
+    expect(screen.queryByText(LOCKED)).toBeNull();
+    expect(call).toBe(2);
+    window.localStorage.removeItem('flockToken');
+  });
+
+  test('a re-render is enough to notice the switch, without waiting for the tick', async () => {
+    // WHAT THIS CLOSES. A storage event is never delivered to the document that
+    // did the writing, which is the whole reason an interval is in there, and
+    // an interval means a window: at two seconds owner one's answers were
+    // measured still on screen at 1999ms and gone at 2001ms. An in-app sign-in
+    // re-renders the tree that owns this card, so reading the key on every
+    // commit catches that case in the same frame for one string read, and the
+    // interval is left to cover a sign-in that re-renders nothing here.
+    window.localStorage.setItem('flockToken', 'token-for-owner-one');
+    const element = () => React.createElement(VenueAdvisorChat, {
+      fetchQuestions: async () => QUESTIONS(true),
+      ask: async () => GROUNDED,
+      askQuestion: async () => GROUNDED,
+      colors: { navy: '#0d2847' },
+    });
+    const live = render(element());
+    const input = await waitFor(field);
+    await askOnce(input, 'owner one private numbers');
+    await waitFor(() => expect(screen.getByText(GROUNDED.text)).toBeTruthy());
+
+    // No storage event and no timer. Only the render the app performs when its
+    // own auth state changes.
+    window.localStorage.setItem('flockToken', 'token-for-owner-two');
+    await act(async () => { live.rerender(element()); });
+
+    expect(screen.queryByText('owner one private numbers')).toBeNull();
+    expect(screen.queryByText(GROUNDED.text)).toBeNull();
+    window.localStorage.removeItem('flockToken');
+  });
+
+  test('the interval behind it is well under the two seconds it used to be', () => {
+    const ms = parseInt(SRC.match(/const IDENTITY_POLL_MS = (\d+);/)[1], 10);
+    expect(ms).toBeGreaterThan(0);
+    expect(ms).toBeLessThanOrEqual(500);
+    // The per-commit read is the cheap half and has no dependency array on
+    // purpose. If it grows one, it stops being a per-commit read.
+    expect(SRC).toMatch(/useEffect\(\(\) => \{ checkOwner\(\); \}\);/);
+  });
+
+  test('a realm whose storage cannot be read is not the same identity as a signed out one', () => {
+    // SPECULATIVE, AND JUDGED. Returning the signed-out key from the catch
+    // meant that in a realm where localStorage throws, every account would
+    // collapse to one key and the check above would be inert. It is not
+    // reachable today: services/api.js reads the same key with a bare getItem
+    // and no try/catch, so a realm that throws on read cannot authorise a
+    // request in the first place, and there is no state with a live token that
+    // this cannot see. The two are told apart anyway, because it costs one
+    // constant, and because the day api.js grows a try/catch is not the day
+    // anyone will remember this.
+    const noSession = SRC.match(/const NO_SESSION = '([^']+)';/)[1];
+    const unreadable = SRC.match(/const UNREADABLE_SESSION = '([^']+)';/)[1];
+    expect(unreadable).not.toBe(noSession);
+    expect(SRC).toMatch(/catch \(e\) \{\s*return UNREADABLE_SESSION;\s*\}/);
   });
 
   test('the owner’s words are on their own side, the answer is not', async () => {
