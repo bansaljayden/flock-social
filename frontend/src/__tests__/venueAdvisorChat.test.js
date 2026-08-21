@@ -464,7 +464,21 @@ describe('Roost chat: SLOP pins on the source itself', () => {
   });
 
   test('no em dash in any owner-visible string (SLOP-AUDIT rule A2)', () => {
-    const strings = SRC.match(/'[^'\n]*'|"[^"\n]*"|`[^`]*`/g) || [];
+    // COMMENTS COME OUT FIRST, and that is the whole difference between this
+    // test measuring the rule and measuring punctuation. SLOP-AUDIT A2 bans
+    // the em dash from copy and says so in as many words: "Comments are not
+    // copy. Count the strings, not the characters." The scanner below cannot
+    // tell an apostrophe from a quote, so a prose comment about somebody
+    // else's thread reads as a string literal opening at that apostrophe and
+    // closing at the next one, and any em dash between them fails a file
+    // whose copy is clean. That is exactly what happened: this test went red
+    // on a security comment in restoreThread and stayed red, which trains the
+    // next person to ignore it. Strip `//` lines and `/* */` blocks, then
+    // scan what is left, which is the only part an owner can read.
+    const code = SRC
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    const strings = code.match(/'[^'\n]*'|"[^"\n]*"|`[^`]*`/g) || [];
     const offenders = strings.filter((s) => s.includes('—'));
     expect(offenders).toEqual([]);
   });
