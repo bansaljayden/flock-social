@@ -188,3 +188,109 @@ test('every hour of the strip carries the same honesty, not just the first', asy
       'an event outage must not cost the strip an hour');
   }
 });
+
+// ---------------------------------------------------------------------------
+// 3. THE STRIP
+//
+// predictBusyness has carried eventsObserved since the contract landed;
+// predictHourlyForecast copied hour, score, label, method and baseline out of
+// each result and dropped the provenance on the floor. Which means the ONE
+// surface that publishes a whole night at once, the owner's hourly strip, was
+// the surface with no field that separates "the provider answered and listed
+// nothing" from "the budget was gone before we asked". Both score through the
+// identical event branch, by design (part 1 above), so the bars are the same
+// bars and only the statement can tell them apart.
+//
+// The field is per entry rather than per strip because the outage is per
+// entry: each hour is its own predictBusyness call against its own event-cache
+// key, and the daily ledger can run out partway down a 24-hour strip.
+// ---------------------------------------------------------------------------
+
+test('the hourly strip states the event provenance on every entry, not just the score', async () => {
+  const strip = await mlPredictor.predictHourlyForecast(VENUE, WEATHER, 18, 4, TS);
+  assert.strictEqual(strip.length, 4);
+  for (const entry of strip) {
+    assert.ok('eventsObserved' in entry,
+      'the field an outage is read off may not be one a consumer has to test for');
+    assert.strictEqual(entry.eventsObserved, false,
+      'no key means no lookup on any hour, and every hour has to be able to say so');
+    assert.strictEqual(typeof entry.eventsUnavailableReason, 'string');
+    assert.notStrictEqual(entry.eventsUnavailableReason, null);
+    if (entry.predictionMethod === 'ml') {
+      assert.strictEqual(entry.eventsUnavailableReason, 'no_api_key',
+        'the reason the strip publishes is the reason the lookup gave, not a generic one');
+    }
+  }
+});
+
+test('an observed strip says observed, so the flag distinguishes rather than always warning', async () => {
+  // The other polarity, and the reason it is here: a fix that hardcoded false
+  // would pass the test above. This one only passes if the value is read off
+  // the prediction.
+  //
+  // Its own coordinates, deliberately. getNearbyEvents caches on
+  // lat/lng/UTC-hour, so sharing VENUE's location would leave observed entries
+  // behind for the hours the no-key tests below score.
+  const listed = { ...VENUE, place_id: 'observed-strip-venue', location: { latitude: 41.88, longitude: -87.63 } };
+  const realFetch = global.fetch;
+  process.env.TICKETMASTER_API_KEY = 'observed-strip-test-key';
+  // Ticketmaster ANSWERING, with nothing on the street. The whole point of the
+  // field is that this and the outage above are different facts, and until the
+  // strip carried it they produced byte-identical entries.
+  global.fetch = async () => ({ ok: true, json: async () => ({ _embedded: { events: [] } }) });
+  try {
+    const strip = await mlPredictor.predictHourlyForecast(listed, WEATHER, 18, 3, TS);
+    assert.strictEqual(strip.length, 3);
+    for (const entry of strip) {
+      assert.strictEqual(entry.eventsObserved, true,
+        'the provider answered, so the strip may say the street was checked');
+      assert.strictEqual(entry.eventsUnavailableReason, null,
+        'a lookup that happened has no reason to give');
+    }
+  } finally {
+    global.fetch = realFetch;
+    delete process.env.TICKETMASTER_API_KEY;
+  }
+});
+
+test('a strip hour whose prediction threw still states that nothing was checked', async () => {
+  // The loop's own catch. predictBusyness swallows everything inside its try,
+  // so reaching this exit needs a throw from the handful of lines ABOVE that
+  // try, of which the options read is the one a caller can drive. A venue with
+  // no coordinates keeps the same read out of the weather branch above the
+  // loop, so the throw lands where the test is aiming.
+  const noCoords = { ...VENUE, place_id: 'throwing-strip-venue', location: null, latitude: 0, longitude: 0 };
+  const hostileOptions = { get userId() { throw new Error('options read failed'); } };
+  const strip = await mlPredictor.predictHourlyForecast(noCoords, WEATHER, 18, 2, TS, hostileOptions);
+  assert.strictEqual(strip.length, 2, 'a throw must not cost the strip an hour');
+  for (const entry of strip) {
+    assert.strictEqual(entry.predictionMethod, 'rule_engine_fallback');
+    assert.strictEqual(entry.eventsObserved, false,
+      'this number came out of the crowd engine and no listing fed it');
+    assert.strictEqual(entry.eventsUnavailableReason, 'not_attempted');
+  }
+});
+
+test('the exception exit of predictBusyness states the provenance the three rule engine exits already did', async () => {
+  // The fourth exit. It answers from the crowd engine after something already
+  // went wrong, and it used to return that answer with no provenance at all,
+  // which every caller that tests `eventsObserved !== false` reads as a street
+  // that was checked.
+  const beforeLookup = { ...VENUE, get location() { throw new Error('coords'); } };
+  const r1 = await mlPredictor.predictBusyness(beforeLookup, WEATHER, TS);
+  assert.strictEqual(r1.predictionMethod, 'rule_engine_fallback');
+  assert.strictEqual(r1.eventsObserved, false);
+  assert.strictEqual(r1.eventsUnavailableReason, 'not_attempted',
+    'the throw beat the lookup, so nothing was attempted and that is what it says');
+
+  // And a throw from AFTER the lookup reports what the lookup actually said,
+  // rather than flattening every failure into one word.
+  const afterLookup = {
+    ...VENUE,
+    get popular_times() { throw new Error('baseline read failed'); },
+  };
+  const r2 = await mlPredictor.predictBusyness(afterLookup, WEATHER, TS);
+  assert.strictEqual(r2.predictionMethod, 'rule_engine_fallback');
+  assert.strictEqual(r2.eventsObserved, false);
+  assert.strictEqual(r2.eventsUnavailableReason, 'no_api_key');
+});

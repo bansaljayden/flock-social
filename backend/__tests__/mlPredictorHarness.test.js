@@ -178,13 +178,24 @@ function assertIsRuleEngine(r, venue, weather, ts, method, what) {
   assert.equal(r.confidence, direct.confidence, `${what}: confidence`);
   assert.deepEqual(r.factors, direct.factors, `${what}: factors`);
   assert.deepEqual(r.dataSourcesUsed, direct.dataSourcesUsed, `${what}: dataSourcesUsed`);
-  // Same seven keys the ML path publishes — the boundary is invisible to a
+  // The same keys the ML path publishes, so the boundary is invisible to a
   // route except through the method channel (heuristicFallback.test.js pins
   // the no-model side of this same shape).
+  //
+  // `eventsObserved` and `eventsUnavailableReason` joined the list when the
+  // event-provenance contract landed, and they are HERE rather than only on the
+  // ML path for the reason the contract exists: a caller reads a missing field
+  // as an observed street, so a rule-engine answer that stayed silent about a
+  // lookup it never made would be asserting the one thing it cannot know. All
+  // four rule-engine exits carry them now, the exception exit included.
   assert.deepEqual(Object.keys(r).sort(), [
-    'confidence', 'dataSourcesUsed', 'factors', 'label',
-    'modelVersion', 'predictionMethod', 'score',
+    'confidence', 'dataSourcesUsed', 'eventsObserved', 'eventsUnavailableReason',
+    'factors', 'label', 'modelVersion', 'predictionMethod', 'score',
   ], `${what}: response shape`);
+  assert.equal(typeof r.eventsObserved, 'boolean',
+    `${what}: whether the street was checked is a boolean on every exit, never an absence`);
+  assert.ok(r.eventsObserved === true || typeof r.eventsUnavailableReason === 'string',
+    `${what}: an unobserved lookup has to name its reason`);
 }
 
 // ---------------------------------------------------------------------------

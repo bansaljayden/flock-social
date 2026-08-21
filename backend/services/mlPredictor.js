@@ -2465,6 +2465,17 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
     return result;
   }
 
+  // Declared OUT here, not inside the try, so the catch at the bottom can say
+  // what it knows. The catch answers from the rule engine after an exception,
+  // and until now it returned that answer with no provenance at all, which
+  // every caller reads as observed: the one exit that fires when something
+  // already went wrong was the one exit that claimed the street had been
+  // checked. If the throw beat the lookup these keep their opening values,
+  // which is the honest reading (nothing was attempted); if it came after, the
+  // assignment below has already recorded what the lookup actually said.
+  let eventsSeen = false;
+  let eventsReason = 'not_attempted';
+
   try {
     // Fetch events, feedback, and baseline in parallel — all from local DB/cache
     const lat = venue.location?.latitude || venue.latitude || venue.lat || 0;
@@ -2491,7 +2502,8 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
     // input but the wrong thing to stay silent about, so it is stated in the
     // response and taken out of dataSourcesUsed. A shape with no flag at all is
     // read as observed, matching every caller that predates the contract.
-    const eventsSeen = eventData.observed !== false;
+    eventsSeen = eventData.observed !== false;
+    eventsReason = eventsSeen ? null : (eventData.unavailableReason || 'unknown');
 
     // Best-available baseline: stored table first, else read it directly off
     // the venue's Google popular_times payload so even the FIRST request for
@@ -2529,7 +2541,7 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       result.predictionMethod = 'rule_engine_no_baseline';
       result.modelVersion = null;
       result.eventsObserved = eventsSeen;
-      result.eventsUnavailableReason = eventsSeen ? null : (eventData.unavailableReason || 'unknown');
+      result.eventsUnavailableReason = eventsReason;
       return result;
     }
 
@@ -2547,7 +2559,7 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       result.predictionMethod = 'rule_engine_no_weather_norm';
       result.modelVersion = null;
       result.eventsObserved = eventsSeen;
-      result.eventsUnavailableReason = eventsSeen ? null : (eventData.unavailableReason || 'unknown');
+      result.eventsUnavailableReason = eventsReason;
       return result;
     }
 
@@ -2710,7 +2722,7 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       // vector held no information and this score is the venue's baseline
       // expectation for the slot rather than an event-aware number.
       eventsObserved: eventsSeen,
-      eventsUnavailableReason: eventsSeen ? null : (eventData.unavailableReason || 'unknown'),
+      eventsUnavailableReason: eventsReason,
       // HOW OLD THE NUMBER UNDER THE SCORE IS. This model is `label_type:
       // 'delta'` — score = baseline + clamp(delta, ±30) — so the baseline is
       // most of the answer, and until now nothing anywhere said when it was
@@ -2760,6 +2772,12 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
     const result = crowdEngine.calculateCrowdScore(venue, weather, timestamp);
     result.predictionMethod = 'rule_engine_fallback';
     result.modelVersion = null;
+    // The fourth exit. The three above were given these fields when the
+    // contract landed; this one was missed, and it is the exit that answers
+    // after an exception, so the shape that reached callers on the worst path
+    // was the shape that asserts the most.
+    result.eventsObserved = eventsSeen;
+    result.eventsUnavailableReason = eventsReason;
     return result;
   }
 }
@@ -2883,6 +2901,27 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
         // strip fall back to model ordering instead of ranking half the night
         // on one number and half on another.
         baselineScore: result.baselineScore ?? null,
+        // WHETHER THIS HOUR'S EVENT LOOKUP HAPPENED. predictBusyness has
+        // carried this since the contract landed and the strip dropped it, so
+        // the one view that shows a whole night at once was the one view with
+        // no way to tell an outage from a quiet street. Exhaust the
+        // Ticketmaster budget for a venue that still has a usable baseline and
+        // every hour is scored through the identical branch that runs when the
+        // provider answered and listed nothing; without this field the bars
+        // are indistinguishable.
+        //
+        // PER ENTRY, NOT PER STRIP, and that is the honest granularity rather
+        // than the convenient one. Each hour is its own predictBusyness call
+        // with its own event-cache key, and allowEventFetch is a running daily
+        // ledger, so a 24-hour strip can and does drain the budget partway
+        // through: the early hours are readings and the later ones are blanks.
+        // A single strip-level flag would have to pick one of those and
+        // publish it over hours it is false for. (It would also not survive
+        // JSON.stringify, since this function returns an array.)
+        eventsObserved: result.eventsObserved !== false,
+        eventsUnavailableReason: result.eventsObserved === false
+          ? (result.eventsUnavailableReason || 'unknown')
+          : null,
       });
     } catch (err) {
       // Fallback for this hour
@@ -2896,6 +2935,11 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
         // what keeps `baselineScore` a field every entry has rather than one a
         // consumer has to test for existence.
         baselineScore: null,
+        // predictBusyness threw, so this number came straight out of the crowd
+        // engine and no event listing fed it. Same reason string the !useML
+        // exit uses: nothing was attempted for this hour.
+        eventsObserved: false,
+        eventsUnavailableReason: 'not_attempted',
       });
     }
   }

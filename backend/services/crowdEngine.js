@@ -880,6 +880,15 @@ function generateHourlyForecast(venue, weather, startHour, count, baseTimestamp)
       // "no baseline" and falls the whole candidate set back to model scores,
       // instead of a missing key that could read as an unset one.
       baselineScore: null,
+      // And the same treatment for the event lookup, constant for the same
+      // reason: this function IS the rule engine, so no listing was ever
+      // queried for any of these hours. Present rather than absent because a
+      // missing field is read as an observed street, which is the inference
+      // the pair exists to remove, and because
+      // __tests__/heuristicFallback.test.js pins that a strip from here and a
+      // strip from mlPredictor are the same shape key for key.
+      eventsObserved: false,
+      eventsUnavailableReason: 'not_attempted',
     });
   }
 
