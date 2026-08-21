@@ -330,12 +330,17 @@ test('throttle: the per-IP hourly budget still bites, with the mail path live', 
 // ===========================================================================
 
 test('injection: the typed address never appears in the HTML body at all', async () => {
-  // The strongest escape is absence. The body interpolates no user-supplied
-  // value, so two different signups produce byte-identical HTML — which means
-  // there is nothing for a hostile address to break out of.
+  // The message used to interpolate no user value at all, so two signups
+  // produced byte-identical HTML. It cannot any more: CAN-SPAM needs an
+  // unsubscribe link in this message, and an unsubscribe link that is not
+  // keyed on the recipient is one that takes other people off the list. So the
+  // invariant moves rather than being dropped, and it moves to the sharper
+  // version of the same claim: the ONLY thing that varies is the token, the
+  // token's alphabet is base64url plus one dot, and no character a person
+  // typed reaches the markup in a form that could break out of it.
   const r = stubResend();
   try {
-    await withEnv({ RESEND_API_KEY: 'k' }, async () => {
+    await withEnv({ RESEND_API_KEY: 'k', JWT_SECRET: 'test-secret-for-unsubscribe-tokens' }, async () => {
       emailService.resetClient();
       const quirky = "o'brien&sons@example.com"; // mailable, and HTML-meaningful if interpolated raw
       const a = await signup(quirky);
@@ -344,10 +349,42 @@ test('injection: the typed address never appears in the HTML body at all', async
       assert.strictEqual(a.status, 201, a.text);
       assert.strictEqual(b.status, 201, b.text);
       assert.strictEqual(r.sends.length, 2);
-      assert.ok(!r.sends[0].payload.html.includes(quirky), 'the raw address reached the HTML body');
-      assert.ok(!r.sends[0].payload.html.includes("o'brien"), 'part of the address reached the HTML body');
-      assert.strictEqual(r.sends[0].payload.html, r.sends[1].payload.html,
-        'the body must not vary with the address: no user value is interpolated');
+      const html = r.sends[0].payload.html;
+      assert.ok(!html.includes(quirky), 'the raw address reached the HTML body');
+      assert.ok(!html.includes("o'brien"), 'part of the address reached the HTML body');
+      assert.ok(!html.includes('&sons'), 'an unescaped ampersand from the address reached the HTML body');
+
+      // Everything outside the token is still byte-identical between the two.
+      const stripToken = (s) => s.replace(/token=[^"]*/g, 'token=X');
+      assert.strictEqual(stripToken(html), stripToken(r.sends[1].payload.html),
+        'nothing but the unsubscribe token may vary with the address');
+
+      // The token's alphabet. base64url has no <, >, ", & or quote in it, so a
+      // hostile address cannot survive the encoding as markup.
+      const token = /token=([^"]+)/.exec(html)[1];
+      assert.match(token, /^[A-Za-z0-9._~%-]+$/, 'the unsubscribe token carries characters that could break the href');
+    });
+  } finally { r.restore(); emailService.resetClient(); }
+});
+
+test('the waitlist mail carries a working unsubscribe: a body link, the RFC 8058 header pair, and a text part', async () => {
+  // The message says "We'll let you know as soon as it's ready", which is an
+  // announced future mailing to a list collected on a public marketing page.
+  // It shipped with no link, no header, and no column that could have recorded
+  // a request to stop.
+  const r = stubResend();
+  try {
+    await withEnv({ RESEND_API_KEY: 'k', JWT_SECRET: 'test-secret-for-unsubscribe-tokens' }, async () => {
+      emailService.resetClient();
+      const out = await emailService.sendWaitlistConfirmation({ to: 'someone@example.com' });
+      assert.strictEqual(out.sent, true);
+      const payload = r.sends[0].payload;
+      assert.match(payload.html, /\/api\/unsubscribe\?token=/, 'no unsubscribe link in the body');
+      assert.match(payload.headers['List-Unsubscribe'], /^<https:\/\/[^>]+\/api\/unsubscribe\?token=[^>]+>$/);
+      assert.strictEqual(payload.headers['List-Unsubscribe-Post'], 'List-Unsubscribe=One-Click');
+      assert.ok(typeof payload.text === 'string' && payload.text.includes('/api/unsubscribe?token='),
+        'the plain-text part needs the link too, or a text-only reader cannot unsubscribe');
+      assert.ok(!/[—–]/.test(payload.text), 'no em dash in user-visible copy (SLOP-AUDIT.md)');
     });
   } finally { r.restore(); emailService.resetClient(); }
 });

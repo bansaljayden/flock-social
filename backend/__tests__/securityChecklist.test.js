@@ -420,6 +420,8 @@ const AUTH_EXEMPT = new Map([
   ['sensors.js', 'Pi ingest, authorised by a hashed x-api-key; the JWT read routes mount authenticate inline'],
   ['users.js', 'DELETE /api/users/me is declared first with authenticateAllowBanned, so a banned user can still erase their account (Apple 5.1.1(v) / GDPR)'],
   ['venueDigest.js', 'GET/POST /api/venue-digest/opt-out is the CAN-SPAM unsubscribe link, opened from a mail client with no session; authorised by a signed single-purpose JWT whose purpose claim is checked in services/venueDigest.js. The GET only renders (mail scanners follow every href), the POST is the write'],
+  ['unsubscribe.js', 'GET/POST /api/unsubscribe is the CAN-SPAM unsubscribe link on the waitlist mail, opened from a mail client by somebody who has no Flock account at all, so a session gate here would be an unsubscribe nobody on that list could use. Authorised by an HMAC over the address under a key derived from JWT_SECRET (services/emailUnsubscribe.js), which scopes it to one recipient. Same split as venueDigest: the GET only renders (mail scanners follow every href), the POST is the write'],
+  ['emailWebhook.js', 'third-party webhook (Resend delivery events), authorised by a Svix signature verified against the raw request bytes with timingSafeEqual and a 5-minute timestamp window; a missing secret answers 503 rather than trusting the sender'],
   ['venueSearch.js', 'GET /api/venues/photo is a deliberately anonymous image proxy with a path-traversal-guarded ref allowlist'],
   ['waitlist.js', 'public landing-page signup; per-IP hourly and global daily caps inside the router'],
 ]);

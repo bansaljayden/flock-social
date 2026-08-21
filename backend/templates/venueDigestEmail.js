@@ -111,10 +111,41 @@ function sortForAudit(cards) {
 // wording is invented around the value: the label IS the line, refused facts
 // render nothing here, and a fact whose value is an object with no label
 // renders nothing rather than "[object Object]".
+//
+// It reads "Aug 19", not "2026-08-19". advisorFacts.js already exports
+// shortDate for exactly this, and its own comment says why: "a date helper that
+// lives in one of three files that all print dates is a raw ISO string waiting
+// to reappear in the other two". It reappeared here. Every fact the engine
+// builds sets `asOf: now.toISOString()`, so every line in every digest carried
+// a database-shaped date in a sentence a bar owner reads on a Monday morning,
+// while the SAME dates inside the fact labels were formatted properly, so one
+// line could read "Your highest reading on Aug 17 ... (your reading,
+// 2026-08-19)".
+//
+// The require is lazy and guarded for the same reason the fact engine is
+// required lazily in services/venueDigest.js: a build without it should lose
+// formatting, not the whole email.
+let shortDateFn;
+function shortDate(value) {
+  if (shortDateFn === undefined) {
+    try {
+      // eslint-disable-next-line global-require
+      shortDateFn = require('../services/advisorFacts').shortDate || null;
+    } catch (err) {
+      shortDateFn = null;
+    }
+  }
+  return shortDateFn ? shortDateFn(value) : value;
+}
+
 function factAsOf(asOf) {
   if (typeof asOf !== 'string' || !asOf.trim()) return '';
-  const m = asOf.match(/^(\d{4}-\d{2}-\d{2})T/);
-  return m ? m[1] : asOf.trim();
+  const m = asOf.match(/^(\d{4}-\d{2}-\d{2})(?:T|$)/);
+  if (m) return shortDate(m[1]);
+  // Already-worded text ("owner-set 2026-08-18") still carries an ISO date
+  // inside a sentence the fact engine wrote, so the same substitution applies
+  // rather than only to values that are a bare date.
+  return asOf.trim().replace(/\d{4}-\d{2}-\d{2}/g, (d) => shortDate(d));
 }
 
 // The fact engine's source vocabulary, worded for a person. An id this map

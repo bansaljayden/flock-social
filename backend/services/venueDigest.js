@@ -431,8 +431,21 @@ async function runVenueDigestSweep(now = new Date()) {
 
       const result = await sendEmail({
         to: row.email,
+        // The digest is a recurring commercial mailing, not a transactional
+        // message, so a recipient who unsubscribed anywhere is off it. The
+        // per-venue weekly switch above is the specific opt-out; this is what
+        // makes the general one bind too, and it is checked inside sendEmail
+        // rather than here so no future sender can skip it.
+        category: 'marketing',
         subject: digestSubject(row.business_name, renderInput.weekLabel),
         html: renderDigestHtml(renderInput),
+        // The plain-text alternative part. It was written months ago and never
+        // sent: this call passed `html` only, and the comment below claimed
+        // Resend "derives a text part from html today", which it does not.
+        // An HTML-only message scores worse with every major spam filter, and
+        // the venue owners this goes to read it on whatever the bar office
+        // computer has.
+        text: renderDigestText(renderInput),
         // RFC 8058. List-Unsubscribe alone gets the client's own unsubscribe
         // affordance shown next to the sender; the -Post header is what tells
         // it the URI takes a POST, so Gmail and Apple Mail unsubscribe the
@@ -444,19 +457,40 @@ async function runVenueDigestSweep(now = new Date()) {
           'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
         },
       });
-      // renderDigestText is the same content for logs/tests and any future
-      // multipart send; Resend derives a text part from html today.
       if (result.sent) {
         tally.sent += 1;
-      } else {
-        // Release the marker so the next hourly sweep inside the window can
-        // retry (covers a provider blip and a missing RESEND_API_KEY alike).
+      } else if (result.skipped || result.refused) {
+        // RELEASE THE MARKER ONLY WHEN NOTHING LEFT THE BUILDING.
+        //
+        // This used to release on every non-sent result, which is a duplicate
+        // send waiting for one slow Monday. sendEmail carries an 8s abort
+        // deadline (utils/upstream.js); a Resend call that is accepted at 8.1
+        // seconds comes back to this loop as `{ sent: false, error: 'aborted' }`
+        // having ALREADY QUEUED the message. The old code deleted the marker on
+        // that, the next hourly sweep inside the 07:00-11:59 window claimed it
+        // again, and the owner got the same digest up to five times, each one
+        // billed. The same is true of any network error after the request left.
+        //
+        // So the two outcomes that are KNOWN not to have sent release:
+        //   * `skipped`  — no RESEND_API_KEY, the provider was never consulted;
+        //   * `refused`  — the provider answered and declined, or sendEmail
+        //                  itself refused (suppressed address, per-recipient
+        //                  cap, unmailable recipient).
+        // An ambiguous failure keeps its marker and this venue simply misses
+        // one Monday. A missed weekly email is a smaller harm than five copies
+        // of it, and the log line below says which happened.
         await pool.query(
           'DELETE FROM venue_digest_sends WHERE venue_profile_id = $1 AND week_start = $2',
           [row.id, weekStart]
         );
         tally.failed += 1;
-        console.warn('[venueDigest] send did not go out for', maskAddress(row.email), result.error || 'skipped');
+        console.warn('[venueDigest] send did not go out for', maskAddress(row.email), result.error || 'skipped', '(will retry this hour)');
+      } else {
+        tally.failed += 1;
+        console.warn(
+          '[venueDigest] send outcome is unknown for', maskAddress(row.email), result.error || 'no result',
+          '- the marker is being kept, so this venue gets no digest this week rather than a possible duplicate.'
+        );
       }
     } catch (err) {
       tally.failed += 1;
