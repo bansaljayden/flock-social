@@ -2456,6 +2456,12 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
     const result = crowdEngine.calculateCrowdScore(venue, weather, timestamp);
     result.predictionMethod = 'rule_engine';
     result.modelVersion = null;
+    // No listing was queried on this path, so the field states that rather than
+    // going absent. An undefined here reads as observed to every caller that
+    // tests eventsObserved !== false, which is the inference this field exists
+    // to remove.
+    result.eventsObserved = false;
+    result.eventsUnavailableReason = 'not_attempted';
     return result;
   }
 
@@ -2522,6 +2528,8 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       const result = crowdEngine.calculateCrowdScore(venue, weather, timestamp);
       result.predictionMethod = 'rule_engine_no_baseline';
       result.modelVersion = null;
+      result.eventsObserved = eventsSeen;
+      result.eventsUnavailableReason = eventsSeen ? null : (eventData.unavailableReason || 'unknown');
       return result;
     }
 
@@ -2538,6 +2546,8 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       const result = crowdEngine.calculateCrowdScore(venue, weather, timestamp);
       result.predictionMethod = 'rule_engine_no_weather_norm';
       result.modelVersion = null;
+      result.eventsObserved = eventsSeen;
+      result.eventsUnavailableReason = eventsSeen ? null : (eventData.unavailableReason || 'unknown');
       return result;
     }
 
