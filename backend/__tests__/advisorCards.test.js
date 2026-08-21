@@ -71,7 +71,10 @@ mlPredictor.predictBusyness = async (_venue, _weather, ts) => {
 };
 
 let eventCalls = [];
-let eventAnswer = () => ({ hasEvent: false, nearestDistance: 0, nearestName: null, nearestType: null });
+// `observed: true` is the stub saying the listing call REACHED Ticketmaster.
+// advisorFacts reads that flag fail-closed, so a stub without it is a stub for
+// an outage, not for a quiet street.
+let eventAnswer = () => ({ hasEvent: false, observed: true, nearestDistance: 0, nearestName: null, nearestType: null });
 mlPredictor._internals.getNearbyEvents = async (lat, lng, instant, userId) => {
   eventCalls.push({ lat, lng, instant: new Date(instant), userId });
   return eventAnswer(eventCalls.length);
@@ -167,7 +170,7 @@ test.beforeEach(() => {
   queryLog = [];
   predictCalls = 0;
   eventCalls = [];
-  eventAnswer = () => ({ hasEvent: false, nearestDistance: 0, nearestName: null, nearestType: null });
+  eventAnswer = () => ({ hasEvent: false, observed: true, nearestDistance: 0, nearestName: null, nearestType: null });
   CURRENT_USER = { id: 7, role: 'venue_owner' };
   delete process.env.VENUE_BILLING_ENABLED;
 });
@@ -410,8 +413,8 @@ test('strip orderings inside the minimum gap refuse; a clear gap yields a fact',
 test('GET /cards leads with the verdict, then the four MVP cards, in the pinned shape', async () => {
   scriptHappyPath();
   eventAnswer = (n) => (n === 5
-    ? { hasEvent: true, nearestDistance: 0.62, nearestName: 'Arena Show', nearestType: 'concert', nearestAttendance: 4000 }
-    : { hasEvent: false, nearestDistance: 0, nearestName: null, nearestType: null });
+    ? { hasEvent: true, observed: true, nearestDistance: 0.62, nearestName: 'Arena Show', nearestType: 'concert', nearestAttendance: 4000 }
+    : { hasEvent: false, observed: true, nearestDistance: 0, nearestName: null, nearestType: null });
 
   const { status, body } = await getCards();
   assert.strictEqual(status, 200);
