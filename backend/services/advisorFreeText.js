@@ -77,7 +77,7 @@ const {
   ceilingResetPhrase, CHARGE_OK, CHARGE_CEILING,
   partitionOwnerContext, releaseVenueReservation,
   hasNumerals, hasBannedDash, formatFactValue,
-  hasNumberWords, PLACEHOLDER, CAUSAL_VERBS, CHARS_PER_TOKEN,
+  hasNumberWords, PLACEHOLDER, CAUSAL_VERBS, CHARS_PER_TOKEN, substituteFacts,
 } = advisorPhrasing.internals;
 
 // chargedCall answers with the model's text, or with one of two refusals, and
@@ -299,6 +299,16 @@ const REFUSAL_BY_REASON = Object.freeze({
   other_business: `${OUTSIDE} We do not report another business's numbers, and we would not have them to report. What we can look at is your own room and what is listed near it.`,
   legal_or_tax: `${OUTSIDE} Law, pay, hiring, tax, licensing, insurance and health code are for someone who knows the rules where you operate. Getting one of those wrong costs more than an operations answer can save.`,
   personal_health: `${OUTSIDE} Anything to do with a person's health belongs with someone medically qualified. That is not a call anyone should make from a dashboard, ours included.`,
+  // AN EMERGENCY IS NOT A SCOPE QUESTION, and answering it as one is its own
+  // kind of harm. On 2026-08-20 a review typed "a diner is choking; what should
+  // I do?" and got no deterministic veto at all, because "diner" was not on the
+  // health subject list; the advice model then answered "Perform the Heimlich
+  // maneuver immediately", which the output valve also passed. Both layers
+  // failed on the same question, and the two available fixes were a fabricated
+  // medical instruction or the words "outside what Roost does" to somebody
+  // standing over a person who cannot breathe. Neither is acceptable. This
+  // says the one true and useful thing a dashboard can say.
+  medical_emergency: 'Call emergency services now. This is not something to read off a dashboard, and Roost is not the place to work it out. If someone is choking, unconscious, bleeding badly, having a seizure or not breathing, phone for an ambulance first and deal with everything else after.',
   private_people: `${OUTSIDE} We never report anything about the individual people who use Flock: who they are, how old they are, what they planned, or what they spent. That stays private, including from you.`,
   money_outcome: `${OUTSIDE} We do not put a figure on what a move will earn or what it will cost you. What we can show you is the pattern your room actually runs on, and you know your own margins better than we do.`,
   invented_number: `${OUTSIDE} We do not have that figure, and we will not invent one. Every number in here comes from your own venue or from a source we name.`,
@@ -349,16 +359,85 @@ function refusalForReason(why) {
 // ordinary English; "require" applied to "a team member" is an employment
 // question. That is what keeps this from refusing "how do I get my staff to
 // upsell more", which names staff and asks nothing of the law.
+//
+// AND THE PREDICATE HAS TO BE THE THING THAT MAKES IT A PROHIBITED QUESTION,
+// not a word that happens to appear near the subject. On 2026-08-20 a second
+// review demonstrated both failure directions in the same list.
+//
+// It refused the product's own subject matter. "How many staff does a Friday
+// like this require?" paired "staff" with "require" and came back as a legal
+// refusal; "Are my Friday numbers busier than my Saturday numbers?" paired
+// "numbers" with "busier than" and came back accused of wanting to look busier
+// than it is, which is the single most basic question this product exists to
+// answer. And "Have my guests come back since covid?" was read as medical.
+//
+// It also missed the class it was written for, in trade language: holding a
+// crew back off the sheet, starting a porter's clock late, a guest going white
+// and sliding off a stool, a line cook putting a knife through their hand.
+//
+// The repair for both is the same. A predicate is only a predicate when it
+// GOVERNS a person or a reading: "require" is a legal question when it takes a
+// team member as its object and a staffing question when it takes a number,
+// "covid" is medical when someone caught it and calendar when a room came back
+// after it, "busier than" is dishonesty when the comparison is with the truth
+// and the whole point when the comparison is with another night.
 const PROHIBITED_CLASSES = [
   {
+    // FIRST IN THE LIST, because when a question is both a health question and
+    // an emergency, the emergency is the part that matters in the next thirty
+    // seconds. No subject is required: "someone is choking" and "a diner is
+    // choking" and "he is not breathing" all mean the same thing, and a subject
+    // list is exactly what let this class through.
+    why: 'medical_emergency',
+    subject: /.?/,
+    predicate: /\b(?:choking|not\s+breathing|stopped\s+breathing|unconscious|unresponsive|no\s+pulse|cardiac\s+arrest|heart\s+attack|stroke|anaphyla\w*|overdosed|overdosing|seizure|seizing|convulsing|bleeding\s+(?:badly|heavily|out)|haemorrhag\w*|hemorrhag\w*|collapsed\s+and|passed\s+out\s+and)\b|\b(?:someone|somebody|a\s+\w+|he|she|they)\s+(?:is|has)\s+(?:choking|collapsed|fitting)\b/i,
+  },
+  {
     why: 'legal_or_tax',
-    subject: /\b(staff|team\s+member|employee|employees|worker|workers|server|servers|bartender|barista|cook|chef|host|hostess|manager|crew|rota|shift|shifts|payroll|wages?|salary|tips?|contractor)\b/i,
-    predicate: /\b(require|oblige|obligated|obligation|entitled|entitlement|force\s+(?:them|him|her)|make\s+(?:them|him|her)\s+(?:stay|work|come|do)|legally|the\s+law|employment\s+law|labou?r\s+law|can\s+i\s+(?:require|force|refuse|dock|fire|withhold|deduct|make\s+(?:them|him|her))|am\s+i\s+allowed|unpaid|without\s+pay|off\s+the\s+clock|dock|withhold|deduct|garnish|overtime|minimum\s+wage|fire|terminate|dismiss|let\s+(?:them|him|her)\s+go|disciplin|write\s+(?:them|him|her)\s+up|contract|breaks?\s+(?:are|is|entitl)|clock\s+(?:in|out)|stay\s+(?:late|behind|after)|remain\s+(?:after|behind|late)|work\s+(?:late|through|extra))\b/i,
+    subject: /\b(staff|team\s+member|employee|employees|worker|workers|server|servers|bartender|bartenders|barista|baristas|cook|cooks|chef|chefs|host|hosts|hostess|manager|managers|crew|rota|shift|shifts|payroll|wages?|salary|tips?|contractor|porters?|dishwashers?|runners?|barbacks?|cleaners?|door\s+staff|security)\b/i,
+    predicate: new RegExp([
+      // Words that are a legal or payroll question wherever they stand.
+      '\\b(unpaid|without\\s+pay|off\\s+the\\s+clock|garnish|overtime|minimum\\s+wage|employment\\s+law|labou?r\\s+law|the\\s+law|legally|disciplin|non[\\s-]?compete|probationary)\\b',
+      // A verb that has to be pointed AT a person to be one.
+      '\\b(?:require|requiring|oblige|obliging|force|forcing|compel|make)\\s+(?:a\\s+|my\\s+|the\\s+|our\\s+|any\\s+)?(?:staff|team\\s+member|employee|worker|server|bartender|barista|cook|chef|host|hostess|manager|crew|porter|dishwasher|runner|barback|cleaner|them|him|her)\\b',
+      '\\b(?:am\\s+i\\s+(?:allowed|obliged|entitled)|are\\s+they\\s+entitled|can\\s+i\\s+(?:require|force|refuse|dock|fire|withhold|deduct|keep|hold|make\\s+(?:them|him|her)))\\b',
+      '\\b(?:dock|docking|withhold|withholding|deduct|deducting)\\b',
+      '\\b(?:fire|firing|sack|terminate|dismiss|dismissing)\\s+(?:a\\s+|my\\s+|the\\s+)?(?:staff|team\\s+member|employee|worker|server|bartender|barista|cook|chef|host|hostess|manager|crew|porter|them|him|her)\\b',
+      '\\blet\\s+(?:them|him|her)\\s+go\\b',
+      '\\bwrite\\s+(?:them|him|her)\\s+up\\b',
+      // The trade wording for the same two instructions.
+      '\\b(?:stay|stayed|staying)\\s+(?:late|behind|after)\\b',
+      '\\b(?:remain|remaining)\\s+(?:after|behind|late)\\b',
+      '\\bwork\\s+(?:late|through|extra|on)\\b',
+      '\\bhold\\s+(?:the\\s+|my\\s+|our\\s+|their\\s+)?(?:crew|staff|team|shift|servers?|closers?|openers?|porters?|them|him|her)\\s+back\\b',
+      '\\b(?:not\\s+put|leave|keep)\\s+(?:it|them|that|the\\s+hours?)\\s+(?:on|off)\\s+the\\s+(?:sheet|books|rota|clock)\\b',
+      '\\boff\\s+the\\s+(?:sheet|books)\\b',
+      '\\b(?:start|starting|clock)\\s+(?:their|his|her|the)\\s+clock\\b',
+      '\\bclock\\s+(?:in|out)\\b',
+      '\\bbreaks?\\s+(?:are|is|entitl)\\b',
+    ].join('|'), 'i'),
   },
   {
     why: 'personal_health',
-    subject: /\b(staff|team\s+member|employee|worker|server|bartender|barista|cook|chef|host|manager|customer|customers|guest|guests|patron|patrons|someone|somebody|a\s+person|my\s+(?:wife|husband|partner|son|daughter|mother|father))\b/i,
-    predicate: /\b(sick|ill|illness|injur\w*|faint\w*|collaps\w*|allerg\w*|symptoms?|diagnos\w*|medication|prescri\w*|overdose|seizure|concussion|pregnan\w*|covid|the\s+flu|vomit\w*|bleeding|choking|alcohol\s+poisoning|mental\s+health|panic\s+attack|anxiety|depress\w*|hospital|ambulance|paramedics?|first\s+aid)\b/i,
+    subject: /\b(staff|team\s+member|employee|worker|server|bartender|barista|cook|cooks|line\s+cook|chef|host|manager|porter|waiter|waitress|customer|customers|guest|guests|patron|patrons|diner|diners|drinker|drinkers|punter|punters|member|members|visitor|visitors|someone|somebody|a\s+person|my\s+(?:wife|husband|partner|son|daughter|mother|father))\b/i,
+    predicate: new RegExp([
+      // "sick" alone is not a health question. "Customers are sick of waiting"
+      // is a complaint about the queue, and refusing it as medical advice told
+      // an owner their most ordinary problem belonged with a doctor.
+      '\\b(?:is|are|was|were|feels?|felt|off|calling\\s+in|called\\s+in|went|gone)\\s+sick\\b(?!\\s+of\\b)',
+      '\\bsick\\s+(?:day|days|leave|note|pay|staff|guest|customer)\\b',
+      '\\b(ill|illness|injur\\w*|faint\\w*|collaps\\w*|allerg\\w*|symptoms?|diagnos\\w*|medication|prescri\\w*|overdose|seizure|concussion|pregnan\\w*|the\\s+flu|vomit\\w*|bleeding|choking|alcohol\\s+poisoning|mental\\s+health|panic\\s+attack|anxiety|depress\\w*|hospital|ambulance|paramedics?|first\\s+aid)\\b',
+      // The same emergencies as an owner types them.
+      '\\b(?:passed\\s+out|unresponsive|not\\s+breathing|blacked\\s+out|slumped|convuls\\w*|clammy|seizing)\\b',
+      '\\bwent\\s+(?:white|pale|grey|gray|down)\\b',
+      '\\bslid\\s+off\\b',
+      '\\b(?:knife|blade|glass)\\s+(?:through|into|in)\\s+(?:their|his|her|the)\\b',
+      '\\b(?:cut|burn|burned|burnt|scalded|sliced|gashed)\\s+(?:their|his|her|them|himself|herself|themselves)\\b',
+      '\\bstitches|\\bemergency\\s+room|\\bthe\\s+er\\b|\\ba\\s+and\\s+e\\b',
+      // Covid as an illness someone has, not as the date everything changed.
+      '\\b(?:has|have|had|caught|got|catch|catches|testing|tested|test)\\s+(?:\\w+\\s+){0,2}covid\\b',
+      '\\bcovid\\s+(?:symptoms?|test|positive|isolation|rules?)\\b',
+    ].join('|'), 'i'),
   },
   {
     why: 'private_people',
@@ -369,7 +448,23 @@ const PROHIBITED_CLASSES = [
     why: null,
     honesty: true,
     subject: /\b(slider|reading|readings|score|index|count|counts|numbers?|figures?|reviews?|rating|ratings|listing)\b/i,
-    predicate: /\b(look\s+busier|appear\s+busier|seem\s+busier|busier\s+than|inflat|overstat|exaggerat|fake|fudg|pad\s+(?:the|our|my)|game\s+the|astroturf|misreport|bump\s+(?:it|them|the)\s+up|set\s+(?:it|them)\s+higher|make\s+(?:it|us|them)\s+look)\b/i,
+    predicate: new RegExp([
+      '\\b(look\\s+busier|appear\\s+busier|seem\\s+busier|inflat|overstat|exaggerat|fake|fudg|astroturf|misreport)\\b',
+      // The comparison has to be with the TRUTH. A Friday against a Saturday is
+      // the question this product answers.
+      '\\bbusier\\s+than\\s+(?:it|we|they|you|us|the\\s+room)\\s+(?:is|are|really|actually|was|were)\\b',
+      '\\bbusier\\s+than\\s+(?:it|we|they|you|us)\\b\\s*[.?!]',
+      '\\bpad\\s+(?:the|our|my)\\b',
+      '\\bgame\\s+the\\b',
+      '\\bbump\\s+(?:it|them|the)\\s+up\\b',
+      '\\bset\\s+(?:it|them)\\s+higher\\b',
+      '\\bmake\\s+(?:it|us|them)\\s+look\\b',
+      // Choosing what to post so the room shows well is the same lie as a
+      // wrong figure, and it never names a figure at all.
+      '\\b(?:put|set|post|enter|leave|move|bump|nudge)\\b[^?.!]{0,24}\\bthe\\s+slider\\b',
+      '\\bon\\s+the\\s+slider\\b',
+      '\\b(?:so|to)\\s+(?:we|it|us|the\\s+room|they)\\s+(?:still\\s+)?(?:show|shows|showed|look|looks|appear|appears|rank|ranks)\\b',
+    ].join('|'), 'i'),
   },
 ];
 
@@ -378,11 +473,23 @@ const PROHIBITED_CLASSES = [
  * regard for what the router decided. Returns the owner's refusal sentence, or
  * null. Folded exactly like screen(), for exactly the reason screen() folds.
  */
+// A SUBJECT AND A PREDICATE FROM DIFFERENT SENTENCES ARE NOT A CLAIM. The pair
+// was matched against the whole string, so any two words anywhere in it counted
+// as a prohibited question: "Customers are sick of waiting; should I add a
+// host?" and "Should I fire the oven earlier and add a server for lunch?" both
+// came back as refusals for classes neither of them asked about. Matching is
+// scoped to a sentence, which is the cheapest unit a regex can be sure of.
+// Not to a clause: "may I hold the crew back and not put it on the sheet" is
+// one question wearing two clauses, and splitting on "and" would lose it.
+function clauses(text) {
+  return String(text).split(/[.;?!]+/).map((s) => s.trim()).filter(Boolean);
+}
+
 function prohibitedClass(text) {
-  const probe = typeof text === 'string' ? text.normalize('NFKC') : text;
+  const probe = typeof text === 'string' ? text.normalize('NFKC') : String(text);
+  const segments = [...clauses(text), ...clauses(probe)];
   for (const cls of PROHIBITED_CLASSES) {
-    const hit = (s) => cls.subject.test(s) && cls.predicate.test(s);
-    if (hit(text) || hit(probe)) {
+    if (segments.some((s) => cls.subject.test(s) && cls.predicate.test(s))) {
       return cls.honesty ? `${OUTSIDE} ${HONESTY_BOUNDARY}` : refusalForReason(cls.why);
     }
   }
@@ -771,6 +878,12 @@ const PROMPT_LEAK = /(ROOST\s+(PHRASING|OPERATING\s+ADVICE|QUESTION)\s+(CONTRACT
 // write. There is no honest version of "raise it by a percentage" from a
 // product that refuses to put a figure on what a move earns.
 const UNANCHORED_MAGNITUDE = /\b(percent|per\s+cent|percentage|percentile|price\s+point|dollar\s+figure)\b/i;
+// SAYING WE WILL NOT PUT A FIGURE ON IT IS NOT PUTTING A FIGURE ON IT. "We do
+// not put a percentage on that" was discarded by the rule written to stop
+// "raise it by a percentage", and the sentence it discarded is the product's
+// own boundary said out loud, which is the most honest sentence this surface
+// can write. A magnitude word inside a refusal to quote one asserts nothing.
+const MAGNITUDE_DISCLAIMER = /\b(?:do(?:es)?\s+not|don't|doesn't|won't|will\s+not|would\s+not|cannot|can't|never|no)\b(?:\s+\w+){0,3}\s+(?:put|putting|give|giving|name|naming|quote|quoting|offer|offering|attach|attaching|estimate|estimating|state|stating|say|saying|show|showing|publish|publishing)\b/i;
 
 // ── The classes advice may not give, checked on the way OUT ─────────────────
 //
@@ -792,26 +905,50 @@ const UNANCHORED_MAGNITUDE = /\b(percent|per\s+cent|percentage|percentile|price\
 // checks. That is true, and it is the right sentence: the question was inside
 // the product's subject, so telling them the SUBJECT was out of bounds would be
 // the same misdescription the routed refusals were fixed to stop.
+//
+// THREE OF THESE PATTERNS REFUSED ORDINARY ADVICE, and in this mode a refusal
+// is the whole answer. A review of thirty realistic advisor answers found
+// "Thursday is liable to run quiet after the first hour" refused as a legal
+// instruction because "liable" also means "likely to"; "Fire your first seating
+// a little earlier" refused as a dismissal because of "fire your"; and "Do not
+// chase specific customers; look at the pattern" refused as a privacy breach
+// for containing the phrase it was advising AGAINST. Each is narrowed to the
+// shape that carries the meaning: liability rather than likelihood, firing a
+// PERSON rather than a service, and an instruction to act on named individuals
+// rather than any sentence naming them.
+//
+// The additions run the other way. A second review on the same day showed the
+// output valve and the question probe share one vocabulary, so a synonym
+// defeats both: "hold the last shift back until it is done, with no extra on
+// the sheet for it" and "post your reading when the room is at its fullest and
+// leave it there" were both returned to owners. Neither uses a word either
+// layer knew. They are the same two instructions in trade language.
 const PROHIBITED_ADVICE = [
   {
     reason: 'employment, pay or hiring instruction',
-    re: /\b(unpaid|off\s+the\s+clock|without\s+pay|dock(?:ing)?\s+(?:their|his|her|the)?\s*(?:pay|wages|tips)|withhold(?:ing)?\s+(?:their\s+|the\s+)?(?:pay|wages|tips)|garnish|minimum\s+wage|overtime|payroll|independent\s+contractor|cash\s+in\s+hand|under\s+the\s+table|tip\s+(?:pool|credit|out)|fire\s+(?:them|him|her|your|any)|terminat(?:e|ing)\s+(?:them|their|his|her)|let\s+(?:them|him|her)\s+go|write\s+(?:them|him|her)\s+up|disciplinary|non[\s-]?compete|probationary\s+period)\b/i,
+    re: /\b(unpaid|off\s+the\s+clock|without\s+pay|dock(?:ing)?\s+(?:their|his|her|the)?\s*(?:pay|wages|tips)|withhold(?:ing)?\s+(?:their\s+|the\s+)?(?:pay|wages|tips)|garnish|minimum\s+wage|overtime|payroll|independent\s+contractor|cash\s+in\s+hand|under\s+the\s+table|tip\s+(?:pool|credit|out)|fire\s+(?:them|him|her|a\s+(?:server|bartender|barista|cook|chef|host|hostess|manager|member|porter|runner)|your\s+(?:staff|crew|team|opener|closer|server|bartender|barista|cook|chef|host|hostess|manager|employee|worker))|terminat(?:e|ing)\s+(?:them|their|his|her)|let\s+(?:them|him|her)\s+go|write\s+(?:them|him|her)\s+up|disciplinary|non[\s-]?compete|probationary\s+period|hold\s+(?:the\s+|my\s+|your\s+|our\s+)?(?:last\s+|closing\s+|late\s+|whole\s+)?(?:shift|crew|staff|team|servers?|closers?|openers?|porters?|them|him|her)\s+back\b|condition\s+of\s+the\s+(?:shift|rota|job|role)|(?:no|nothing)\s+extra\s+on\s+the\s+(?:sheet|books|rota|clock)|off\s+the\s+(?:sheet|books)|start\s+(?:their|his|her|the)\s+clock|compel(?:ling)?\s+(?:the\s+|a\s+|my\s+|our\s+|any\s+)?(?:waiter|waitress|server|staff|team|crew|barista|bartender|cook|chef|host|hostess|porter|employee|worker|them|him|her)|remain(?:ing)?\s+(?:beyond|past|after)\s+(?:closing|close|their\s+shift|the\s+shift))\b|\b(?:work|works|working|stay|stays|staying|remain|remains|remaining|shift|shifts|closing|overtime)\b[^.!?]{0,40}\bgratis\b|\bgratis\b[^.!?]{0,40}\b(?:work|shift|closing|hours?)\b/i,
   },
   {
     reason: 'legal, tax, licensing or insurance instruction',
-    re: /\b(liabilit(?:y|ies)|liable|lawsuit|sue\s+(?:them|him|her|us)|small\s+claims|breach\s+of\s+contract|(?:your|the)\s+lease|zoning|liquor\s+licen[cs]e|health\s+(?:code|inspector|inspection)|food\s+safety\s+inspection|fire\s+marshal|sales\s+tax|income\s+tax|tax\s+(?:deduction|return|write[\s-]?off|bill)|the\s+irs|insurance\s+(?:claim|policy|cover|coverage)|indemnif|waiver)\b/i,
+    re: /\b(liabilit(?:y|ies)|liable\s+for|held\s+liable|lawsuit|sue\s+(?:them|him|her|us)|small\s+claims|breach\s+of\s+contract|(?:your|the)\s+lease|zoning|liquor\s+licen[cs]e|health\s+(?:code|inspector|inspection)|food\s+safety\s+inspection|fire\s+marshal|sales\s+tax|income\s+tax|tax\s+(?:deduction|return|write[\s-]?off|bill)|the\s+irs|insurance\s+(?:claim|policy|cover|coverage)|indemnif|waiver)\b/i,
   },
   {
     reason: 'health or medical instruction',
-    re: /\b(symptoms?|diagnos(?:e|is|ed)|prescri(?:be|ption)|medication|dosage|allergic\s+reaction|epi[\s-]?pen|concussion|faint(?:ing|ed)?|seizure|overdose|alcohol\s+poisoning|mental\s+health|therapy|paramedics?|ambulance|first\s+aid|urgent\s+care)\b/i,
+    re: /\b(symptoms?|diagnos(?:e|is|ed)|prescri(?:be|ption)|medication|dosage|allergic\s+reaction|epi[\s-]?pen|concussion|faint(?:ing|ed)?|seizure|overdose|alcohol\s+poisoning|mental\s+health|therapy|paramedics?|ambulance|first\s+aid|urgent\s+care|passed\s+out|unresponsive|not\s+breathing|went\s+(?:white|pale|grey|gray)|blacked\s+out|slumped|convuls|the\s+recovery\s+position|call\s+(?:nine|911|999|112|an?\s+ambulance)|heimlich|abdominal\s+thrusts?|back\s+blows?|chest\s+compressions?|cpr\b|defibrillator|\baed\b|epinephrine|tourniquet|choking|anaphyla\w*|cardiac\s+arrest|heart\s+attack)\b/i,
   },
   {
     reason: 'private information about an individual',
-    re: /\b((?:identify|track|name|profile|target|single\s+out)\s+(?:individual|specific|particular|which)\s+(?:user|customer|guest|patron|people|person|regular)|(?:individual|specific|named|particular)\s+(?:user|customer|guest|patron|person|people|regular)s?|(?:phone\s+numbers?|email\s+addresses|contact\s+details|names?)\s+of\s+(?:individual|specific|particular|the|your|our)?\s*(?:user|customer|guest|patron|people)|personal\s+(?:data|details|information)|home\s+address(?:es)?|date\s+of\s+birth|how\s+old\s+(?:they|each|individual))\b/i,
+    re: /\b((?:identify|track|name|profile|target|single\s+out|list|find|contact|text|email|call|message|approach)\s+(?:individual|specific|particular|named|which)\s+(?:user|customer|guest|patron|people|person|regular)|(?:phone\s+numbers?|email\s+addresses|contact\s+details|names?)\s+of\s+(?:individual|specific|particular|the|your|our)?\s*(?:user|customer|guest|patron|people|person|regular)s?|personal\s+(?:data|details|information)|home\s+address(?:es)?|date\s+of\s+birth|how\s+old\s+(?:they|each|individual))\b/i,
   },
   {
     reason: 'dishonest reporting',
     re: /\b(look\s+busier|appear\s+busier|seem\s+busier|busier\s+than\s+(?:it|you)\s+(?:is|are|really)|inflat(?:e|ing)|overstat(?:e|ing)|exaggerat(?:e|ing)|fake\s+(?:a\s+)?(?:review|reading|check[\s-]?in|report|booking)s?|buy\s+reviews?|astroturf|pad\s+(?:the|your)\s+(?:numbers|count|counts|figures)|fudg(?:e|ing)|misrepresent|under[\s-]?report(?:ing)?|over[\s-]?report(?:ing)?|game\s+the\s+(?:system|ranking|rankings|algorithm))\b/i,
+  },
+  {
+    // Timing a self-reported reading to flatter the room is the same lie as
+    // inflating it, written as a schedule instead of a figure.
+    reason: 'dishonest reporting, written as timing',
+    re: /\b(?:post|set|put|enter|leave|hold|log|record)\s+(?:your|the)\s+(?:reading|readings|slider|score|count|number)\b[^.!?]*\b(?:fullest|busiest|peak|peaks|highest|at\s+its\s+best)\b|\bleave\s+it\s+(?:there|up|set)\b[^.!?]*\b(?:rest\s+of\s+the\s+(?:night|service|shift|week)|all\s+(?:night|service|week))\b/i,
   },
 ];
 
@@ -866,20 +1003,23 @@ function applyAdviceValve(raw, facts) {
   // claim the model epoch finding says nothing here can support.
   for (const s of sentences) {
     if (/\{\{fact:/.test(s) && CAUSAL_VERBS.test(s)) return adviceReject('causal verb in a sentence carrying a venue fact');
-    if (!/\{\{fact:/.test(s) && UNANCHORED_MAGNITUDE.test(s)) return adviceReject('a percentage or a price with no fact under it');
+    if (!/\{\{fact:/.test(s) && UNANCHORED_MAGNITUDE.test(s) && !MAGNITUDE_DISCLAIMER.test(s)) {
+      return adviceReject('a percentage or a price with no fact under it');
+    }
   }
 
   const byId = new Map((facts || []).map((f) => [String(f.id), f]));
   const used = new Set();
-  let unknownId = false;
-  const rendered = text.replace(PLACEHOLDER, (m, id) => {
+  // The same watched substitution mode A uses, and this mode needs it more:
+  // there is no template twin here, so a number assembled out of two
+  // placeholders is not a lost wording, it is the answer.
+  const { rendered, error } = substituteFacts(text, (id) => {
     const f = byId.get(id);
-    if (!f) { unknownId = true; return m; }
+    if (!f) return null;
     used.add(id);
     return formatFactValue(f);
   });
-  if (unknownId) return adviceReject('placeholder id not in the block');
-  if (rendered.includes('{{') || rendered.includes('}}')) return adviceReject('malformed placeholder');
+  if (error) return adviceReject(error);
 
   return {
     text: advisorPhrasing.internals.dedupeAdjacentWords(rendered),
