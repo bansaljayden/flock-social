@@ -458,6 +458,191 @@ test('a database already mismarked as having 032 and 038 heals itself on boot', 
 });
 
 // ---------------------------------------------------------------------------
+// 5. THE HEAL UNDER CONTENTION. The repair that turned a degraded boot into an
+//    outage.
+// ---------------------------------------------------------------------------
+//
+// The heal above is the only thing that can recover a falsely-marked database,
+// and the first version of it deleted the schema_migrations row in autocommit,
+// BEFORE the re-apply transaction opened, for every unsatisfied file at once.
+// Measured on this same embedded Postgres with a second connection holding
+// `LOCK TABLE venue_feedback IN ACCESS EXCLUSIVE MODE`, which is the rolling
+// deploy the 10s lock_timeout exists for:
+//
+//   before the heal shipped   returned in 23ms      degraded, serving
+//   with that heal            threw after 10,020ms  server.listen() never runs
+//   and boots 2 and 3         threw, row now GONE   permanently unbootable
+//
+// A heal repairs a database that is already broken, so the one thing it may
+// never do is make it worse. This test is that property: contention costs the
+// repair, not the row, not the boot, and not the other files.
+
+const COLUMNS_045 = [
+  ['ml_training_data', 'events_observed'],
+  ['ml_training_data', 'events_unavailable_reason'],
+];
+
+const migrationRowCount = (file) =>
+  count('SELECT COUNT(*) AS n FROM schema_migrations WHERE name = $1', [file]);
+
+test('a heal that cannot get its lock still boots, keeps the row, and repairs the other files', async () => {
+  // The starting state is the one production was in: both files recorded as
+  // applied, their columns gone. Two files, on two different tables, so a
+  // failure on one is visibly not a failure on the other.
+  await dropColumns('venue_feedback', COLUMNS_032.map(([, c]) => c));
+  await dropColumns('ml_training_data', COLUMNS_045.map(([, c]) => c));
+  assert.equal(await migrationRowCount('032_served_predictions.sql'), 1);
+  assert.equal(await migrationRowCount('045_ml_event_provenance.sql'), 1);
+
+  const blocker = await pool.connect();
+  try {
+    await blocker.query('BEGIN');
+    await blocker.query('LOCK TABLE venue_feedback IN ACCESS EXCLUSIVE MODE');
+
+    // Two boots, because the old failure only showed its full shape on the
+    // second one: the first deleted the row, and every boot after it found
+    // nothing to heal and nothing to re-apply.
+    for (const boot of [1, 2]) {
+      const started = Date.now();
+      await migrate(pool); // MUST NOT THROW. A throw here is server.listen() never reached.
+      const elapsed = Date.now() - started;
+      assert.ok(elapsed < 60_000, `boot ${boot} took ${elapsed}ms, which is not a boot any platform waits for`);
+
+      assert.equal(
+        await migrationRowCount('032_served_predictions.sql'), 1,
+        `boot ${boot}: a repair that could not run must leave schema_migrations exactly as it found it`
+      );
+      for (const [t, c] of COLUMNS_032) {
+        assert.equal(await columnExists(t, c), false, `boot ${boot}: ${t}.${c} is still blocked, as expected`);
+      }
+      // The cascade that must not happen: 045 requires columns on a table
+      // nothing is holding, so it is repaired on boot 1 and left alone after.
+      assert.equal(await migrationRowCount('045_ml_event_provenance.sql'), 1);
+      for (const [t, c] of COLUMNS_045) {
+        assert.ok(await columnExists(t, c), `boot ${boot}: ${t}.${c} must be repaired despite the lock on another table`);
+      }
+    }
+  } finally {
+    await blocker.query('ROLLBACK').catch(() => {});
+    blocker.release();
+  }
+
+  // And the recovery, which only exists because the row survived: the next
+  // boot after the contention clears finishes the repair on its own.
+  await migrate(pool);
+  for (const [t, c] of COLUMNS_032) {
+    assert.ok(await columnExists(t, c), `${t}.${c} must be restored once the lock is gone`);
+  }
+  assert.equal(await migrationRowCount('032_served_predictions.sql'), 1, 'and recorded exactly once, still');
+});
+
+test('every migration file declares post-conditions the runner can actually parse', async () => {
+  // parseRequirements throws on a line that looks like a declaration and is
+  // not: mis-cased, schema-mangled, malformed, or buried in a $$ body, a block
+  // comment or a string literal where the old regex still matched it. That
+  // throw is a fatal boot by design, because a requirement the runner cannot
+  // evaluate must never be read as evidence a migration is missing. This is
+  // where it is supposed to be caught.
+  const { parseRequirements, requirementKey, parseDrops } = require('../db/migrate');
+  const files = fs.readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql')).sort();
+  const declared = new Map();
+  for (const f of files) {
+    const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, f), 'utf8');
+    let reqs;
+    assert.doesNotThrow(() => { reqs = parseRequirements(sql, f); }, `${f} has an unusable @requires line`);
+    for (const r of reqs) declared.set(requirementKey(r), f);
+  }
+  assert.ok(declared.size >= 11, 'the four files that declare post-conditions must still be parsed, not skipped');
+
+  // A later file that drops something an earlier one requires does not fight
+  // it and does not resurrect it; the requirement is retired. Nothing in the
+  // directory does that today, and this is the check that says so out loud
+  // rather than leaving it to be discovered by a silent re-add.
+  for (const f of files) {
+    const drops = parseDrops(fs.readFileSync(path.join(MIGRATIONS_DIR, f), 'utf8'));
+    for (const d of drops) {
+      const owner = declared.get(d);
+      if (owner && owner < f) {
+        assert.fail(`${f} drops ${d}, which ${owner} still declares with @requires. Delete that line in this change.`);
+      }
+    }
+  }
+});
+
+test('a requirement is checked against a catalog no role can hide', async () => {
+  const { findMissingRequirements, parseRequirements } = require('../db/migrate');
+  const client = await pool.connect();
+  try {
+    // Case folding: Postgres stores an unquoted identifier lower-cased, and the
+    // old parser compared `Served_Predictions` to `served_predictions` and
+    // failed forever.
+    assert.deepEqual(
+      await findMissingRequirements(client, parseRequirements('-- @requires table Served_Predictions\n')), []
+    );
+    // Schema qualification used to parse as a bare table named `public`.
+    assert.deepEqual(
+      await findMissingRequirements(client, parseRequirements(
+        '-- @requires table public.served_predictions\n-- @requires column public.venue_feedback.served_prediction_id\n'
+      )), []
+    );
+    // A view was invisible to the old relkind filter, so a file that created
+    // one could never satisfy its own post-condition.
+    await client.query('CREATE OR REPLACE VIEW bootsafety_probe_view AS SELECT 1 AS one');
+    assert.deepEqual(
+      await findMissingRequirements(client, parseRequirements(
+        '-- @requires table bootsafety_probe_view\n-- @requires column bootsafety_probe_view.one\n'
+      )), []
+    );
+    // And something genuinely absent is still reported, in printable form.
+    assert.deepEqual(
+      await findMissingRequirements(client, parseRequirements(
+        '-- @requires table bootsafety_no_such_table\n-- @requires column venue_feedback.bootsafety_no_such_column\n'
+      )),
+      ['column venue_feedback.bootsafety_no_such_column', 'table bootsafety_no_such_table']
+    );
+  } finally {
+    await client.query('DROP VIEW IF EXISTS bootsafety_probe_view').catch(() => {});
+    client.release();
+  }
+});
+
+test('a role with no grants on a table does not read its columns as missing', async () => {
+  // information_schema.columns is privilege-filtered and pg_attribute is not.
+  // Reading the first one meant that under any role that is not the table's
+  // owner, a perfectly healthy database reported three missing columns on
+  // venue_feedback, the heal deleted 032's row on that evidence, and the
+  // re-apply threw 42501 on every boot. Railway runs migrations as superuser
+  // today, so this is the trap set for the day it does not.
+  await pool.query('DROP ROLE IF EXISTS bootsafety_hardened');
+  await pool.query("CREATE ROLE bootsafety_hardened LOGIN PASSWORD 'bootsafety'");
+  await pool.query('GRANT USAGE ON SCHEMA public TO bootsafety_hardened');
+  await pool.query('REVOKE ALL ON venue_feedback FROM bootsafety_hardened');
+
+  const hardened = new Pool({
+    connectionString:
+      `postgresql://bootsafety_hardened:bootsafety@127.0.0.1:${PG_PORT}/flock_bootsafety_test`,
+  });
+  try {
+    const { findMissingRequirements, parseRequirements } = require('../db/migrate');
+    const client = await hardened.connect();
+    try {
+      const reqs = parseRequirements(fs.readFileSync(
+        path.join(MIGRATIONS_DIR, '032_served_predictions.sql'), 'utf8'
+      ), '032_served_predictions.sql');
+      assert.deepEqual(
+        await findMissingRequirements(client, reqs), [],
+        'a role that cannot SELECT the table can still see that its columns exist'
+      );
+    } finally {
+      client.release();
+    }
+  } finally {
+    await hardened.end().catch(() => {});
+    await pool.query('DROP ROLE IF EXISTS bootsafety_hardened').catch(() => {});
+  }
+});
+
+// ---------------------------------------------------------------------------
 // THE INVARIANT ALL OF THIS IS FOR
 // ---------------------------------------------------------------------------
 

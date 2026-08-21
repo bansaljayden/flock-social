@@ -36,15 +36,43 @@
 // running the file and before writing the schema_migrations row, so a swallowed
 // failure cannot be recorded as success. And on every boot it RE-VERIFIES them
 // for files already recorded, so a database that was already falsely marked
-// heals itself: the row is deleted and the file runs again. Declaring
-// @requires is a promise that the file is safe to run twice, which every file
-// in this directory already has to be (__tests__/migrationBootSafety.test.js
-// wipes schema_migrations and replays the whole chain over live data).
+// heals itself: the file is applied AGAIN, in its own transaction, with its
+// schema_migrations row left exactly where it was.
 //
-// One rule comes with it. If a LATER migration ever drops something an earlier
-// one declares, delete the earlier `@requires` line in the same change, or the
-// two will fight on every boot: the heal re-applies the old file, the old file
-// puts the column back, and the next boot does it again.
+// THE HEAL NEVER DELETES THAT ROW, and the reason is measured. An earlier
+// version deleted it in autocommit, before the re-apply transaction opened, and
+// it deleted the row of EVERY unsatisfied file before applying any of them. One
+// locked table therefore took the whole set down: the DELETE committed on its
+// own, the re-apply hit the 10s lock_timeout, the ROLLBACK could not restore a
+// row that had never been inside that transaction, and the boot threw. Against
+// embedded Postgres 18 with `LOCK TABLE venue_feedback IN ACCESS EXCLUSIVE
+// MODE` held on a second connection, which is exactly the rolling-deploy
+// contention the heal was written for, the service went from degraded but
+// serving (returned in 23ms) to never booting at all (threw after 10,020ms),
+// and every boot after that repeated it with the row now permanently gone.
+// server.js awaits this before server.listen().
+//
+// So: a heal repairs a database that is ALREADY degraded, and it may only ever
+// improve it. Failing to repair is NOT fatal. It is logged loudly, the row and
+// the missing column are left exactly as they were found, the service boots
+// degraded the way it did before any of this existed, and the next boot tries
+// again. Each file is repaired independently, so contention on one table cannot
+// cost a different migration its row. Declaring @requires is a promise that the
+// file is safe to run twice, which every file in this directory already has to
+// be (__tests__/migrationBootSafety.test.js wipes schema_migrations and replays
+// the whole chain over live data).
+//
+// A LATER MIGRATION THAT DROPS SOMETHING AN EARLIER ONE REQUIRES does not make
+// the two "fight on every boot". The note that used to sit here said it did,
+// and being wrong about that hid something worse. Measured over four boots with
+// a synthetic 046 dropping a required column: boot 1 returned with the column
+// gone, boot 2 SILENTLY PUT IT BACK, boots 3 and 4 said nothing at all, both
+// files stayed recorded as applied, and no error was ever raised. Silently
+// undoing a deliberate drop is far harder to notice than a fight would be. So
+// the runner now reads the drops out of every file: a requirement declared by A
+// is VOIDED as soon as a file sorting after A drops that table or that column,
+// the heal leaves it alone, and startup logs which file voided which line so
+// the stale `@requires` can be deleted from the source.
 // ---------------------------------------------------------------------------
 const fs = require('fs');
 const path = require('path');
@@ -64,6 +92,15 @@ const LOCK_WAIT_MS = 60_000;
 const LOCK_POLL_MS = 1_000;
 const LOCK_TIMEOUT_MS = 10_000;
 const STATEMENT_TIMEOUT_MS = 300_000; // generous: covers a CONCURRENTLY build
+
+// What `-- @requires table x` accepts as x. Anything you can name in a FROM
+// clause: ordinary tables, partitioned tables, views, materialized views and
+// foreign tables. The old check filtered `relkind IN ('r', 'p')`, so a view
+// could never satisfy a requirement and a file that created one would fail its
+// own post-condition forever. That was an accident of the query, not a decision
+// anyone made; this is the decision. The same set is used for the column check,
+// so `-- @requires column some_view.some_col` works too.
+const REQUIRABLE_RELKINDS = ['r', 'p', 'v', 'm', 'f'];
 
 async function migrate(pool) {
   const client = await pool.connect();
@@ -106,6 +143,80 @@ async function acquireLock(client) {
     console.log('[migrate] another instance holds the migration lock, waiting...');
     await new Promise((r) => setTimeout(r, LOCK_POLL_MS));
   }
+}
+
+// ---------------------------------------------------------------------------
+// One scanner, two views of a file.
+// ---------------------------------------------------------------------------
+// Everything that reads SQL in this file reads it through here, because the
+// three things that have to be told apart, code and string literals and
+// comments, cannot be told apart by a regex. `splitStatements` already tracked them and
+// was correct; `parseRequirements` did not track them at all and was not.
+//
+// Returns two same-length strings, so an offset in either one still maps to the
+// same line of the original:
+//   comments: TOP-LEVEL line comments verbatim, everything else blanked. A
+//             `--` inside a $$ body, a /* */ block or a string literal is not
+//             a top-level line comment and does not appear here.
+//   code:     SQL with comments and string-literal CONTENTS blanked. Dollar
+//             quoted bodies are kept, because that is where 032/038/044/045 put
+//             their DDL and a DROP hidden in one still drops.
+function scanSql(sql) {
+  const blank = (s) => s.replace(/[^\n]/g, ' ');
+  let comments = '';
+  let code = '';
+  const emit = (text, opts) => {
+    comments += opts.comment ? text : blank(text);
+    code += opts.code ? text : blank(text);
+  };
+
+  let inSingle = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+  let dollarTag = null;
+  let i = 0;
+
+  while (i < sql.length) {
+    const ch = sql[i];
+    const two = sql.slice(i, i + 2);
+
+    if (inLineComment) {
+      emit(ch, { comment: true });
+      if (ch === '\n') inLineComment = false;
+      i += 1;
+      continue;
+    }
+    if (inBlockComment) {
+      if (two === '*/') { emit(two, {}); i += 2; inBlockComment = false; continue; }
+      emit(ch, {}); i += 1;
+      continue;
+    }
+    if (dollarTag) {
+      if (sql.startsWith(dollarTag, i)) { emit(dollarTag, { code: true }); i += dollarTag.length; dollarTag = null; continue; }
+      emit(ch, { code: true }); i += 1;
+      continue;
+    }
+    if (inSingle) {
+      emit(ch, {});
+      if (ch === "'") {
+        if (sql[i + 1] === "'") { emit("'", {}); i += 2; continue; }
+        inSingle = false;
+      }
+      i += 1;
+      continue;
+    }
+    if (two === '--') { inLineComment = true; emit(two, { comment: true }); i += 2; continue; }
+    if (two === '/*') { inBlockComment = true; emit(two, {}); i += 2; continue; }
+    if (ch === "'") { inSingle = true; emit(ch, {}); i += 1; continue; }
+
+    const dollar = /^\$[A-Za-z_0-9]*\$/.exec(sql.slice(i));
+    if (dollar) { dollarTag = dollar[0]; emit(dollarTag, { code: true }); i += dollarTag.length; continue; }
+
+    emit(ch, { code: true });
+    i += 1;
+  }
+
+  return { comments, code };
 }
 
 // Split a file into statements on top-level semicolons. Aware of single-quoted
@@ -178,71 +289,230 @@ function stripComments(s) {
 // ---------------------------------------------------------------------------
 // `-- @requires`: what a file promises to leave behind.
 // ---------------------------------------------------------------------------
-// Matched on its own comment line anywhere in the file, so the declaration can
-// sit next to the DDL it describes instead of in a header nobody reads next to
-// the statement. Two forms only, because two are what the catalog can answer
-// cheaply and unambiguously:
+// Two forms, because two are what the catalog can answer cheaply and
+// unambiguously:
 //
 //   -- @requires table <name>
 //   -- @requires column <table>.<name>
 //
-// Identifiers are matched as bare lowercase-able words. Quoted or mixed-case
-// identifiers are not supported and would be a mistake to introduce: nothing in
-// this schema uses them.
+// Either may be schema-qualified (`table public.served_predictions`,
+// `column public.venue_feedback.served_prediction_id`); an unqualified name is
+// resolved against current_schema() at check time. A schema-qualified name used
+// to parse as a bare table called `public`, which is a requirement nothing can
+// ever satisfy.
+//
+// Identifiers are folded to lower case, exactly as Postgres folds an unquoted
+// identifier. `-- @requires table Foo` used to be compared literally against
+// pg_class.relname, which holds `foo`, so it could NEVER be satisfied: boot 1
+// FATAL, boot 2 FATAL, boot 3 FATAL, forever, from a capital letter in a
+// comment. Quoted identifiers are not supported and would be a mistake to
+// introduce; nothing in this schema uses them.
+//
+// A declaration is a line comment that starts at COLUMN 0 and holds nothing but
+// the declaration. The old parser was one regex over the raw file text, and it
+// matched a `-- @requires` line inside a $$ body, inside a /* */ block comment,
+// inside a string literal and indented inside prose. This one is handed only
+// the top-level line comments by scanSql.
+//
+// A line that LOOKS like a declaration but does not parse is a hard startup
+// error naming the file and the line, not a line that is quietly never checked.
+// That is deliberate and it is the safe direction: a requirement the runner
+// cannot evaluate must never be read as evidence that a migration is missing,
+// because the heal acts on that evidence. Every file is parsed before the
+// runner touches anything, so this fails identically on every boot and cannot
+// leave a half-repaired database behind. __tests__/migrationBootSafety.test.js
+// parses every file in the directory, so it goes red in CI, not on Railway.
 const REQUIRES_RE =
-  /^[ \t]*--[ \t]*@requires[ \t]+(column|table)[ \t]+([A-Za-z_][A-Za-z0-9_]*)(?:\.([A-Za-z_][A-Za-z0-9_]*))?[ \t]*$/gim;
+  /^--[ \t]*@requires[ \t]+(table|column)[ \t]+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*){0,2})[ \t]*$/gm;
+// Anything that mentions @requires followed by one of the two keywords. Prose
+// that talks ABOUT the convention ("the @requires lines below") does not match,
+// because `lines` is neither `table` nor `column`.
+const REQUIRES_NEARMISS_RE = /^[^\n]*@requires[ \t]+(?:table|column)\b[^\n]*$/gm;
 
-function parseRequirements(sql) {
+function lineNumberAt(text, index) {
+  let n = 1;
+  for (let i = 0; i < index && i < text.length; i += 1) if (text[i] === '\n') n += 1;
+  return n;
+}
+
+function requirementKey(r) {
+  const rel = r.schema ? `${r.schema}.${r.table}` : r.table;
+  return r.kind === 'column' ? `column ${rel}.${r.column}` : `table ${rel}`;
+}
+
+// `label` is the filename, used only so a parse error can say where.
+function parseRequirements(sql, label = 'migration') {
+  const { comments } = scanSql(sql);
   const out = [];
+  const accepted = new Set();
+
   REQUIRES_RE.lastIndex = 0;
   let m;
-  while ((m = REQUIRES_RE.exec(sql)) !== null) {
-    const [, kind, first, second] = m;
+  while ((m = REQUIRES_RE.exec(comments)) !== null) {
+    const [line, kind, dotted] = m;
+    const parts = dotted.toLowerCase().split('.');
     if (kind === 'column') {
-      if (!second) continue; // `@requires column foo` is malformed; ignore rather than guess
-      out.push({ kind: 'column', table: first, column: second });
+      if (parts.length === 2) out.push({ kind: 'column', schema: null, table: parts[0], column: parts[1] });
+      else if (parts.length === 3) out.push({ kind: 'column', schema: parts[0], table: parts[1], column: parts[2] });
+      else {
+        throw new Error(
+          `${label}:${lineNumberAt(comments, m.index)}: \`${line.trim()}\` is not a usable requirement. ` +
+          '`@requires column` needs `<table>.<column>` or `<schema>.<table>.<column>`.'
+        );
+      }
     } else {
-      out.push({ kind: 'table', table: first });
+      if (parts.length === 1) out.push({ kind: 'table', schema: null, table: parts[0] });
+      else if (parts.length === 2) out.push({ kind: 'table', schema: parts[0], table: parts[1] });
+      else {
+        throw new Error(
+          `${label}:${lineNumberAt(comments, m.index)}: \`${line.trim()}\` is not a usable requirement. ` +
+          '`@requires table` needs `<name>` or `<schema>.<name>`.'
+        );
+      }
     }
+    accepted.add(m.index);
+  }
+
+  // Same scan again, wider, to catch the lines that meant to be declarations
+  // and are not. Run over the RAW file, so a declaration hidden in a $$ body or
+  // a block comment is reported rather than silently ignored.
+  REQUIRES_NEARMISS_RE.lastIndex = 0;
+  let n;
+  while ((n = REQUIRES_NEARMISS_RE.exec(sql)) !== null) {
+    const start = n.index;
+    if (accepted.has(start)) continue;
+    // The offsets line up because scanSql preserves length, so an accepted
+    // declaration has the same index in both strings.
+    throw new Error(
+      `${label}:${lineNumberAt(sql, start)}: \`${n[0].trim()}\` looks like a post-condition but will not be ` +
+      'checked. A declaration must be a line comment starting at column 0, outside any $$ body, block comment ' +
+      'or string literal, reading exactly `-- @requires table <name>` or `-- @requires column <table>.<column>`. ' +
+      'Fix it or reword the line so it does not read as one.'
+    );
+  }
+
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// What a file DROPS, so a stale requirement can be retired instead of fought.
+// ---------------------------------------------------------------------------
+// Read off the code view, so a DROP inside a $$ body counts and a DROP inside a
+// comment or a string literal does not. Deliberately conservative: it
+// recognises the two shapes this repo writes, `DROP TABLE [IF EXISTS] a, b` and
+// `ALTER TABLE [IF EXISTS] [ONLY] t ... DROP COLUMN [IF EXISTS] c`. Anything it
+// misses only means a requirement stays enforced, which is the old behaviour.
+function parseDrops(sql) {
+  const { code } = scanSql(sql);
+  const out = new Set();
+  // Schema qualification is dropped on both sides of this comparison: a
+  // requirement is matched on its bare relation name, so `DROP TABLE
+  // public.foo` retires `-- @requires table foo` and vice versa.
+  const bareTable = (raw) => raw.toLowerCase().split('.').pop().trim();
+
+  for (const chunk of code.split(';')) {
+    const dropTable = /\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_.]*(?:\s*,\s*[A-Za-z_][A-Za-z0-9_.]*)*)/gi;
+    let t;
+    while ((t = dropTable.exec(chunk)) !== null) {
+      for (const name of t[1].split(',')) out.add(`table ${bareTable(name.trim())}`);
+    }
+
+    const alter = /\bALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?([A-Za-z_][A-Za-z0-9_.]*)/i.exec(chunk);
+    if (!alter) continue;
+    const table = bareTable(alter[1]);
+    const dropCol = /\bDROP\s+COLUMN\s+(?:IF\s+EXISTS\s+)?([A-Za-z_][A-Za-z0-9_]*)/gi;
+    let c;
+    while ((c = dropCol.exec(chunk)) !== null) out.add(`column ${table}.${c[1].toLowerCase()}`);
   }
   return out;
+}
+
+// A requirement declared by `file` is void once a file sorting AFTER it drops
+// that column, or drops the table the column lives on. Returns the surviving
+// requirements plus a note for each one that was retired, so startup can say so
+// and somebody can delete the dead `@requires` line.
+function effectiveRequirements(file, loaded) {
+  const reqs = loaded.get(file).reqs;
+  if (reqs.length === 0) return { reqs, voided: [] };
+
+  const kept = [];
+  const voided = [];
+  for (const r of reqs) {
+    const key = requirementKey(r);
+    const bare = r.kind === 'column' ? `column ${r.table}.${r.column}` : `table ${r.table}`;
+    const tableKey = `table ${r.table}`;
+    let killer = null;
+    for (const [other, info] of loaded) {
+      if (other <= file) continue;
+      if (info.drops.has(bare) || (r.kind === 'column' && info.drops.has(tableKey))) { killer = other; break; }
+    }
+    if (killer) voided.push({ key, by: killer });
+    else kept.push(r);
+  }
+  return { reqs: kept, voided };
 }
 
 // Returns the requirements that are NOT satisfied, as printable strings. At
 // most two catalog SELECTs regardless of how many requirements are passed, and
 // none at all when there are none, so the boot-time scan over every applied
 // file costs a healthy database one query.
+//
+// Both queries read pg_class / pg_attribute, which are NOT privilege-filtered.
+// The column check used to read information_schema.columns, which IS: under a
+// role that is not the table owner and has no grants on it, a perfectly healthy
+// database reported three missing columns on venue_feedback, the heal deleted
+// 032's row on that evidence, and the re-apply threw 42501 on every boot. Not
+// live on Railway, where migrations run as superuser, but the whole point of
+// this check is to be right about a database it cannot see. A search_path where
+// the table lives outside current_schema() had the same shape, which is what
+// the optional schema qualification on a requirement is for.
 async function findMissingRequirements(client, reqs) {
   const missing = [];
-  const columnKeys = [...new Set(
-    reqs.filter((r) => r.kind === 'column').map((r) => `${r.table}.${r.column}`)
-  )];
-  const tableNames = [...new Set(reqs.filter((r) => r.kind === 'table').map((r) => r.table))];
 
-  if (columnKeys.length > 0) {
-    const { rows } = await client.query(
-      `SELECT c.table_name || '.' || c.column_name AS key
-         FROM information_schema.columns c
-        WHERE c.table_schema = current_schema()
-          AND (c.table_name || '.' || c.column_name) = ANY($1::text[])`,
-      [columnKeys]
-    );
-    const have = new Set(rows.map((r) => r.key));
-    for (const key of columnKeys) if (!have.has(key)) missing.push(`column ${key}`);
+  const columns = new Map();
+  const tables = new Map();
+  for (const r of reqs) {
+    if (r.kind === 'column') columns.set(requirementKey(r), r);
+    else tables.set(requirementKey(r), r);
   }
 
-  if (tableNames.length > 0) {
+  if (columns.size > 0) {
+    const want = [...columns.values()];
     const { rows } = await client.query(
-      `SELECT c.relname
-         FROM pg_class c
-         JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname = current_schema()
-          AND c.relkind IN ('r', 'p')
-          AND c.relname = ANY($1::text[])`,
-      [tableNames]
+      `SELECT w.ord
+         FROM unnest($1::text[], $2::text[], $3::text[])
+              WITH ORDINALITY AS w(sch, rel, col, ord)
+         JOIN pg_class c ON c.relname = w.rel
+         JOIN pg_namespace n
+           ON n.oid = c.relnamespace AND n.nspname = COALESCE(w.sch, current_schema())
+         JOIN pg_attribute a
+           ON a.attrelid = c.oid AND a.attname = w.col
+          AND a.attnum > 0 AND NOT a.attisdropped
+        WHERE c.relkind = ANY($4::"char"[])`,
+      [
+        want.map((r) => r.schema),
+        want.map((r) => r.table),
+        want.map((r) => r.column),
+        REQUIRABLE_RELKINDS,
+      ]
     );
-    const have = new Set(rows.map((r) => r.relname));
-    for (const name of tableNames) if (!have.has(name)) missing.push(`table ${name}`);
+    const have = new Set(rows.map((r) => Number(r.ord)));
+    want.forEach((r, idx) => { if (!have.has(idx + 1)) missing.push(requirementKey(r)); });
+  }
+
+  if (tables.size > 0) {
+    const want = [...tables.values()];
+    const { rows } = await client.query(
+      `SELECT w.ord
+         FROM unnest($1::text[], $2::text[]) WITH ORDINALITY AS w(sch, rel, ord)
+         JOIN pg_class c ON c.relname = w.rel
+         JOIN pg_namespace n
+           ON n.oid = c.relnamespace AND n.nspname = COALESCE(w.sch, current_schema())
+        WHERE c.relkind = ANY($3::"char"[])`,
+      [want.map((r) => r.schema), want.map((r) => r.table), REQUIRABLE_RELKINDS]
+    );
+    const have = new Set(rows.map((r) => Number(r.ord)));
+    want.forEach((r, idx) => { if (!have.has(idx + 1)) missing.push(requirementKey(r)); });
   }
 
   return missing;
@@ -262,23 +532,46 @@ async function assertRequirementsMet(client, file, reqs) {
   }
 }
 
-// The self-heal. A database that was already marked as having 032/038 while the
-// columns never landed has no other way back: nothing re-runs a migration the
-// runner believes is done. So before the normal loop, re-check the declared
-// post-conditions of every file already in schema_migrations and un-record any
-// that does not hold. The loop below then applies it again like any pending
-// file. On a healthy database this finds nothing and changes nothing.
-async function healFalselyAppliedMigrations(client, dir, files, applied) {
+function migrationMode(sql) {
+  const head = sql.trimStart();
+  if (head.startsWith('-- @tolerant')) return 'tolerant';
+  if (head.startsWith('-- @noTransaction')) return 'noTransaction';
+  return 'transaction';
+}
+
+// Read and parse every file once, before anything runs. A parse error here is
+// fatal and happens before the runner has touched a single row.
+function loadMigrations(dir, files) {
+  const loaded = new Map();
+  for (const file of files) {
+    const sql = fs.readFileSync(path.join(dir, file), 'utf8');
+    loaded.set(file, {
+      sql,
+      mode: migrationMode(sql),
+      reqs: parseRequirements(sql, file),
+      drops: parseDrops(sql),
+    });
+  }
+  return loaded;
+}
+
+// ---------------------------------------------------------------------------
+// The self-heal.
+// ---------------------------------------------------------------------------
+// A database marked as having 032/038 while the columns never landed has no
+// other way back: nothing re-runs a migration the runner believes is done. So
+// before the normal loop, re-check the declared post-conditions of every file
+// already in schema_migrations and re-apply the ones that do not hold.
+//
+// The row stays put throughout. A successful repair refreshes applied_at; a
+// failed one changes nothing at all, logs, and lets the boot continue degraded.
+// See the header for what deleting the row first cost.
+async function healFalselyAppliedMigrations(client, loaded, applied) {
   const byFile = new Map();
   const all = [];
-  for (const file of files) {
+  for (const [file, info] of loaded) {
     if (!applied.has(file)) continue;
-    let reqs;
-    try {
-      reqs = parseRequirements(fs.readFileSync(path.join(dir, file), 'utf8'));
-    } catch {
-      continue; // unreadable file: the normal loop skips it too, nothing to heal
-    }
+    const { reqs } = effectiveRequirements(file, loaded);
     if (reqs.length === 0) continue;
     byFile.set(file, reqs);
     all.push(...reqs);
@@ -288,18 +581,70 @@ async function healFalselyAppliedMigrations(client, dir, files, applied) {
   const missing = new Set(await findMissingRequirements(client, all));
   if (missing.size === 0) return;
 
+  let repaired = 0;
+  const failed = [];
   for (const [file, reqs] of byFile) {
-    const gone = reqs
-      .map((r) => (r.kind === 'column' ? `column ${r.table}.${r.column}` : `table ${r.table}`))
-      .filter((s) => missing.has(s));
+    const gone = reqs.map(requirementKey).filter((s) => missing.has(s));
     if (gone.length === 0) continue;
     console.error(
       `[migrate] ${file} is recorded as applied but ${gone.join(', ')} is missing. ` +
       're-applying it (its error was swallowed on a previous boot)'
     );
-    await client.query('DELETE FROM schema_migrations WHERE name = $1', [file]);
-    applied.delete(file);
+    try {
+      await reapplyMigration(client, file, loaded.get(file), reqs);
+      repaired += 1;
+      console.log(`[migrate] repaired ${file}`);
+    } catch (e) {
+      failed.push(file);
+      await client.query('ROLLBACK').catch(() => {});
+      console.error(
+        `[migrate] could not repair ${file}: ${e.message}. Nothing was changed: schema_migrations still ` +
+        `records it and ${gone.join(', ')} is still missing. The service will start DEGRADED, which is the ` +
+        'state it was already in, and the next boot will try again.'
+      );
+    }
   }
+  if (failed.length > 0) {
+    console.error(
+      `[migrate] BOOTING DEGRADED: ${failed.join(', ')} could not be repaired` +
+      (repaired > 0 ? `, ${repaired} other file(s) were` : '') +
+      '. Anything reading the missing columns will fail until the next boot repairs them.'
+    );
+  }
+}
+
+// Re-run a file that is ALREADY recorded as applied. Never touches the row on
+// the way in, and only ever writes it on success, so a throw from here leaves
+// schema_migrations exactly as it found it.
+async function reapplyMigration(client, file, info, reqs) {
+  if (info.mode === 'transaction') {
+    try {
+      await client.query('BEGIN');
+      await client.query(info.sql);
+      await assertRequirementsMet(client, file, reqs);
+      await client.query('UPDATE schema_migrations SET applied_at = NOW() WHERE name = $1', [file]);
+      await client.query('COMMIT');
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw e;
+    }
+    return;
+  }
+
+  // tolerant and noTransaction both autocommit per statement, so there is no
+  // transaction to roll back and never was. The row is still safe, because it
+  // is only written after the requirements are re-checked and only ever with an
+  // UPDATE of applied_at, so a failure leaves the row and the schema alone.
+  for (const stmt of splitStatements(info.sql)) {
+    try {
+      await client.query(stmt);
+    } catch (e) {
+      if (info.mode === 'noTransaction') throw e;
+      console.warn(`[migrate] ${file} tolerant skip: ${e.message}`);
+    }
+  }
+  await assertRequirementsMet(client, file, reqs);
+  await client.query('UPDATE schema_migrations SET applied_at = NOW() WHERE name = $1', [file]);
 }
 
 async function runMigrations(client) {
@@ -312,22 +657,31 @@ async function runMigrations(client) {
 
   const dir = path.join(__dirname, '..', 'migrations');
   const files = fs.readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
+  const loaded = loadMigrations(dir, files);
+
+  for (const file of files) {
+    for (const v of effectiveRequirements(file, loaded).voided) {
+      console.warn(
+        `[migrate] ${file} declares \`${v.key}\` but ${v.by} drops it. The post-condition is being ignored, ` +
+        'not enforced, so the drop stands. Delete that @requires line from the source.'
+      );
+    }
+  }
+
   const appliedRes = await client.query('SELECT name FROM schema_migrations');
   const applied = new Set(appliedRes.rows.map((r) => r.name));
 
-  await healFalselyAppliedMigrations(client, dir, files, applied);
+  await healFalselyAppliedMigrations(client, loaded, applied);
 
   for (const file of files) {
     if (applied.has(file)) continue;
-    const sql = fs.readFileSync(path.join(dir, file), 'utf8');
-    const reqs = parseRequirements(sql);
-    const head = sql.trimStart();
-    const tolerant = head.startsWith('-- @tolerant');
-    const noTransaction = head.startsWith('-- @noTransaction');
-    const mode = tolerant ? ' (tolerant)' : noTransaction ? ' (no transaction)' : '';
+    const info = loaded.get(file);
+    const sql = info.sql;
+    const reqs = effectiveRequirements(file, loaded).reqs;
+    const mode = info.mode === 'tolerant' ? ' (tolerant)' : info.mode === 'noTransaction' ? ' (no transaction)' : '';
     console.log(`[migrate] applying ${file}${mode}`);
 
-    if (tolerant) {
+    if (info.mode === 'tolerant') {
       const stmts = splitStatements(sql);
       let failures = 0;
       for (const stmt of stmts) {
@@ -352,7 +706,7 @@ async function runMigrations(client) {
         // statements are idempotent, so replay is safe and cheap.
         console.error(`[migrate] ${file}: ${failures} statement(s) failed — NOT recording as applied, will retry next boot`);
       }
-    } else if (noTransaction) {
+    } else if (info.mode === 'noTransaction') {
       // Each statement autocommits. There is no rollback, so every statement in
       // such a file must be independently idempotent; the first failure still
       // halts the boot rather than recording a half-applied file.
@@ -383,4 +737,11 @@ async function runMigrations(client) {
   }
 }
 
-module.exports = { migrate, splitStatements, parseRequirements, findMissingRequirements };
+module.exports = {
+  migrate,
+  splitStatements,
+  parseRequirements,
+  parseDrops,
+  findMissingRequirements,
+  requirementKey,
+};
