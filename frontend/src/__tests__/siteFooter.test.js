@@ -107,7 +107,7 @@ describe('the contract every footer carries', () => {
     }
 
     // The mailbox is present, and it is the ONLY address: every other
-    // @flockcorp.com box is unmonitored, and a footer that mails a dead box
+    // unmonitored box on flockcorp.com, and a footer that mails a dead box
     // is worse than one with no contact at all.
     const mailtos = hrefs.filter((h) => h.startsWith('mailto:'));
     expect(mailtos.length).toBeGreaterThan(0);
