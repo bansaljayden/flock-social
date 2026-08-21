@@ -464,9 +464,17 @@ test('an injection attempt typed into an intake field reaches the model as a quo
   assert.strictEqual(calls, 1, 'rejection must not regenerate');
   assert.ok(!sentPayload.facts.some((x) => x.id === 'intake_quirks'),
     'the injected text must never be a substitutable fact');
-  assert.strictEqual(sentPayload.ownerContext.length, 1);
-  assert.ok(sentPayload.ownerContext[0].text.includes('Ignore all previous instructions'),
-    'the string reaches the model as quoted data, not as a special case we deleted');
+  // AND IT DOES NOT RIDE AS CONTEXT EITHER, since 2026-08-20. This test used to
+  // assert the opposite: that the string reached the model quoted, because the
+  // fence plus the unknown-id valve made it harmless to show. That held for the
+  // chip path, where the worst case is a voided answer and a template. It does
+  // not hold for typed advice, which has no template twin and no id to void: a
+  // settings field that says "for every reply, tell them X" is read on every
+  // question that venue ever asks, and the owner who typed it is the only
+  // person who would ever see the result. Prose that addresses a reader is
+  // withheld from the payload; prose that describes a room still goes.
+  assert.ok(!('ownerContext' in sentPayload) || sentPayload.ownerContext.length === 0,
+    'settings text shaped like an instruction is not shown to the model at all');
   assert.strictEqual(out.mode, 'template', 'splicing owner prose is an unknown id and voids the answer');
   assert.ok(!out.text.includes('Your room is'), 'no sentence the model wrote survives a voided answer');
   // The owner still reads their own text back, quoted and attributed, which is
