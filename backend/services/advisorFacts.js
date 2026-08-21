@@ -929,6 +929,26 @@ async function buildAroundYou(ctx, { now = new Date(), userId } = {}) {
       const weekday = WEEKDAY_NAMES[dow];
       const distRounded = Math.round(dist * 10) / 10;
       // The vendor's title, made safe to print and safe to put in a prompt.
+      //
+      // SAFE TO PRINT IS NOT THE SAME AS SAFE TO SUBSTITUTE, and on 2026-08-20
+      // a review showed the difference costs an owner a fabricated number.
+      // externalText strips control characters, bidi marks and braces; it does
+      // NOT strip digits, because a listing called "Ladies Night 90% off til 2
+      // AM at Lot 305" is what Ticketmaster actually called it and the label
+      // below quotes it honestly. What went wrong is that the same string was
+      // also offered to the phrasing model as a {{fact:...}} value, and a
+      // placeholder is substituted AFTER the digit valve has read the draft. A
+      // draft containing no digit at all delivered that title, percent sign and
+      // all, inside a Roost sentence, from a source that is not us.
+      //
+      // The screen is in advisorPhrasing.flattenFacts (see "A SUBSTITUTED VALUE
+      // IS A NUMBER THE SERVER COMPUTED"), which is the one place both the
+      // phrasing path and the free-text path pass through, so it covers this
+      // title, the event type, the weather vendor's conditions phrase, the
+      // venue category and anything string-valued added here later. Nothing
+      // below needs to change; what must not change is the assumption. If you
+      // add a fact whose value is text somebody else wrote, it is not a number
+      // we computed, and the label is where it belongs.
       const evName = externalText(ev.nearestName);
       out.push(makeFact({
         id: `event_${evDate}`,
@@ -957,12 +977,33 @@ async function buildAroundYou(ctx, { now = new Date(), userId } = {}) {
         whatWouldUnlock: 'The listings feed answering again. This is usually transient and nothing on your side is missing.',
       }));
     } else if (!sawEvent) {
+      // THE SENTENCE HAS TO BE AS NARROW AS THE PROBE THAT PAID FOR IT.
+      //
+      // Each of the seven days is looked up at ONE hour, this venue's own
+      // busiest hour for that weekday, and getNearbyEvents searches the window
+      // active around that hour rather than the whole day. `observed: true`
+      // therefore means "that hour answered", and until 2026-08-20 the fact
+      // built on top of it said "over the next 7 days", which is a claim about
+      // 168 hours made out of 7 of them. A cafe whose busiest hour is 10 AM
+      // gets an honest "nothing active" from the Friday 10 AM probe while a
+      // concert starts up the road at 8 PM, and the owner reads that their week
+      // is clear. The refusal path above already refuses to summarise days
+      // nobody asked about; this is the same rule applied to the hours.
+      //
+      // Probing all 24 hours would be the other fix and it costs 24 times the
+      // vendor budget for a card that is context, not a verdict. Saying what we
+      // checked is free, and it is what the rest of this file does.
       out.push(makeFact({
         id: 'no_listed_events',
-        value: { listedEventsWithinRadius: 0, radiusKm: EVENT_RADIUS_KM, windowDays: 7 },
+        value: {
+          listedEventsWithinRadius: 0,
+          radiusKm: EVENT_RADIUS_KM,
+          windowDays: 7,
+          probesPerDay: 1,
+        },
         source: 'events',
         asOf: now.toISOString(),
-        label: 'No big listed events within about a kilometer over the next 7 days. That covers ticketed listings only, not everything happening on your street.',
+        label: 'No big listed events within about a kilometer around your busiest hour on any of the next 7 days. We check one hour a day, the hour your own room is busiest, and only ticketed listings. A show at another time of day would not appear here.',
       }));
     }
   }
