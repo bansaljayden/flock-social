@@ -17,6 +17,13 @@
 //     request. See baseWebUrl below — this is the half that matters.
 // ---------------------------------------------------------------------------
 const { upstreamSignal } = require('../utils/upstream');
+// The do-not-mail list. Required here rather than in each sender for the same
+// reason the abort signal and the recipient gate are: a check every caller has
+// to remember is a check that the fourth caller forgets.
+const suppression = require('./emailSuppression');
+// Address-keyed unsubscribe tokens, for the mail that is not keyed on a row
+// somebody owns. See the header of that file for why the waitlist needed one.
+const { mintUnsubscribeToken } = require('./emailUnsubscribe');
 
 // The hosts we are willing to put in an email. A link in an email outlives the
 // request that made it and is clicked on a device that is not the one that
@@ -235,13 +242,91 @@ function safeHeaders(headers) {
   return Object.keys(out).length ? out : null;
 }
 
-async function sendEmail({ to, subject, html, from = 'Flock <hello@flockcorp.com>', headers }) {
+// ---------------------------------------------------------------------------
+// PER-RECIPIENT DAILY CEILING.
+// ---------------------------------------------------------------------------
+// Every caller has its own throttle (the waitlist route's 500/day, the
+// moderation service's 40/hour, the reset route's hourly debounce, the digest's
+// one-marker-per-venue-per-week) and none of them can see each other. A loop
+// that spans two of them, or a caller added later with no throttle at all, is
+// unbounded outbound mail charged per send. So there is one backstop here, at
+// the only place they all pass through, counted per RECIPIENT because that is
+// what a runaway loop looks like from the mailbox's side.
+//
+// Set well above anything a real path reaches: the busiest legitimate recipient
+// is a moderation address during a report flood, bounded at 40/hour by
+// moderationAlerts. 60 messages to one address in a day is not a busy day, it
+// is a bug, and it says so in the log at error level rather than dropping the
+// message quietly.
+const PER_RECIPIENT_DAILY_CAP = 60;
+const RECIPIENT_WINDOW_MS = 24 * 60 * 60 * 1000;
+const recipientCounts = new Map(); // lowercased address -> { count, resetAt }
+
+function claimRecipientBudget(recipient) {
+  const key = recipient.toLowerCase();
+  const now = Date.now();
+  if (recipientCounts.size > 5000) {
+    for (const [k, v] of recipientCounts) if (now > v.resetAt) recipientCounts.delete(k);
+  }
+  let entry = recipientCounts.get(key);
+  if (!entry || now > entry.resetAt) {
+    entry = { count: 0, resetAt: now + RECIPIENT_WINDOW_MS };
+    recipientCounts.set(key, entry);
+  }
+  if (entry.count >= PER_RECIPIENT_DAILY_CAP) return false;
+  entry.count += 1;
+  return true;
+}
+
+function resetRecipientBudget() {
+  recipientCounts.clear();
+}
+
+// A plain-text alternative part. Two reasons it is not optional:
+//
+//   * every major spam filter scores an HTML-only message worse than a
+//     multipart one, and the messages that matter most here (verification,
+//     password reset) are the ones a spam folder breaks entirely;
+//   * a text part is what a screen reader, a watch, and a text-only client
+//     actually render, and "view this in an HTML mail client" is not a
+//     password reset.
+//
+// Sanitised for the same reason the subject is: this is a body, not a header,
+// but a null byte or a lone CR in it is a message some MTAs reject outright.
+function safeTextBody(text) {
+  if (typeof text !== 'string') return undefined;
+  // eslint-disable-next-line no-control-regex
+  const clean = text.replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, '').trim();
+  return clean ? clean : undefined;
+}
+
+async function sendEmail({ to, subject, html, text, from = 'Flock <hello@flockcorp.com>', headers, category = 'transactional' }) {
   if (!isMailableAddress(to)) {
     console.error('[email] refusing a recipient that is not one deliverable address:', maskAddress(to));
-    return { sent: false, error: 'invalid recipient' };
+    return { sent: false, error: 'invalid recipient', refused: true };
   }
   const recipient = to.trim();
+
+  // The do-not-mail list, consulted HERE rather than in each caller, because a
+  // suppression list every sender has to remember to check is a suppression
+  // list. A hard bounce or a spam complaint blocks every category; an
+  // unsubscribe blocks marketing and leaves a password reset alone. See
+  // services/emailSuppression.js for why this fails open.
+  const allowed = await suppression.checkSendAllowed(recipient, category);
+  if (allowed.blocked) {
+    console.warn('[email] suppressed, not sending to', maskAddress(recipient), `(${allowed.reason})`);
+    return { sent: false, suppressed: true, reason: allowed.reason, refused: true };
+  }
+
+  if (!claimRecipientBudget(recipient)) {
+    console.error(
+      `[email] REFUSING to send: ${maskAddress(recipient)} has already been mailed ${PER_RECIPIENT_DAILY_CAP} times in 24 hours. ` +
+      'That is a send loop, not a busy day. Nothing further goes to this address until the window rolls.'
+    );
+    return { sent: false, error: 'per-recipient daily cap', refused: true };
+  }
   const safeSubject = safeSubjectLine(subject);
+  const safeText = safeTextBody(text);
   // `to` and `subject` are settled above; `from` is the third header and was
   // the only one still passed through untouched. It is a constant at both call
   // sites today, which is the argument for closing it now rather than after a
@@ -273,13 +358,21 @@ async function sendEmail({ to, subject, html, from = 'Flock <hello@flockcorp.com
         to: recipient,
         subject: safeSubject,
         html,
+        ...(safeText ? { text: safeText } : {}),
         ...(extraHeaders ? { headers: extraHeaders } : {}),
       },
       { signal: upstreamSignal('email') }
     );
+    // `refused: true` means the provider ANSWERED and declined, so no message
+    // left the building. That is a different fact from the catch below, where
+    // the request was in flight when it was aborted or the socket died and
+    // nobody knows whether Resend accepted it. A caller that retries (the
+    // Monday digest releases its send marker) has to be able to tell them
+    // apart, because retrying the ambiguous one is how a person gets the same
+    // email twice and Flock gets billed twice.
     if (error) {
       console.error('[email] Resend error for', shown, JSON.stringify(error));
-      return { sent: false, error: error.message || 'send failed' };
+      return { sent: false, error: error.message || 'send failed', refused: true };
     }
     console.log('[email] sent to', shown, 'id:', data?.id);
     return { sent: true, id: data?.id };
@@ -345,6 +438,22 @@ async function sendVerificationEmail({ to, name, link, hours }) {
   return sendEmail({
     to,
     subject: 'Confirm your email for Flock',
+    // The text part carries the RAW name and the RAW link, not the escaped
+    // ones: `&amp;` is correct in an href attribute and wrong in a plain-text
+    // body, where it is what the reader pastes into their browser.
+    text: [
+      'Confirm your email',
+      '',
+      `Hi ${name || 'there'}, someone created a Flock account with this address. Confirm it and the account is yours.`,
+      '',
+      link,
+      '',
+      `This link works once and expires in ${safeHours} hours.`,
+      '',
+      'If you did not sign up, ignore this. Without a confirmation the account cannot add friends, join plans, or store payment handles, and it will stay that way.',
+      '',
+      'The Flock Team',
+    ].join('\n'),
     html: `
       <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 24px;">
         <div style="text-align: center; margin-bottom: 32px;">
@@ -386,6 +495,19 @@ async function sendPasswordResetEmail({ to, name, link, minutes }) {
   return sendEmail({
     to,
     subject: 'Reset your Flock password',
+    text: [
+      'Reset your password',
+      '',
+      `Hi ${name || 'there'}, someone asked to reset the password on the Flock account for this address. Set a new one here.`,
+      '',
+      link,
+      '',
+      `This link works once and expires in ${safeMinutes} minutes.`,
+      '',
+      'If you did not ask for this, you can ignore it. Your password has not changed, and nobody can change it without this link. Setting a new password signs the account out everywhere.',
+      '',
+      'The Flock Team',
+    ].join('\n'),
     html: `
       <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 24px;">
         <div style="text-align: center; margin-bottom: 32px;">
@@ -424,6 +546,17 @@ async function sendPasswordResetOAuthEmail({ to, name, provider }) {
   return sendEmail({
     to,
     subject: 'About your Flock sign-in',
+    text: [
+      'There is no password to reset',
+      '',
+      `Hi ${name || 'there'}, someone asked to reset a Flock password for this address. This account signs in with ${provider === 'apple' ? 'Apple' : 'Google'}, so it has never had a password. Open Flock and tap Continue with ${provider === 'apple' ? 'Apple' : 'Google'}.`,
+      '',
+      baseWebUrl(),
+      '',
+      'Nothing about the account has changed. If this was not you, you can ignore it.',
+      '',
+      'The Flock Team',
+    ].join('\n'),
     html: `
       <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 24px;">
         <div style="text-align: center; margin-bottom: 32px;">
@@ -456,10 +589,60 @@ async function sendPasswordResetOAuthEmail({ to, name, provider }) {
 // provider is consulted (isMailableAddress excludes < > "). Copy is the
 // route's own, unchanged: plain "The Flock Team" signoff, logo from the
 // pinned www host via baseWebUrl().
+//
+// THE UNSUBSCRIBE, added after the round-26 audit. This message announces a
+// future mailing ("We'll let you know as soon as it's ready") to a list of
+// addresses collected on a public marketing page, and it carried no way off
+// that list: no link in the body, no header a mail client could offer, and no
+// column in the waitlist table that could have recorded a request to stop. It
+// is the one message in the codebase that is plainly commercial rather than
+// transactional, so it is the one that CAN-SPAM §7704(a)(3) is about.
+//
+// Same two-verb shape as the digest's opt-out and for the same reason: the
+// href in the body opens a page with a button, and only a POST writes, so
+// Defender Safe Links and Proofpoint cannot unsubscribe somebody by scanning
+// their mail. The RFC 8058 header pair is what makes Gmail and Apple Mail show
+// their own one-tap Unsubscribe next to the sender, which is both what the law
+// wants and the strongest deliverability signal a small sending domain has.
+function unsubscribeUrl(address) {
+  const token = mintUnsubscribeToken(address);
+  if (!token) return null;
+  return `${baseApiUrl()}/api/unsubscribe?token=${encodeURIComponent(token)}`;
+}
+
 async function sendWaitlistConfirmation({ to }) {
+  // Built from the recipient, which sendEmail is about to re-check; a missing
+  // JWT_SECRET yields no link rather than a broken one, and the body then says
+  // where else to write.
+  const optOut = unsubscribeUrl(typeof to === 'string' ? to.trim() : '');
+  const optOutHtml = optOut
+    ? `<a href="${escapeHtml(optOut)}" style="color: #a0aec0;">Stop these emails</a>.`
+    : 'Reply to this message and we will take you off the list.';
+  const optOutText = optOut
+    ? `Stop these emails: ${optOut}`
+    : 'Reply to this message and we will take you off the list.';
   return sendEmail({
     to,
+    category: 'marketing',
     subject: "You're on the Flock waitlist",
+    ...(optOut ? {
+      headers: {
+        'List-Unsubscribe': `<${optOut}>`,
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      },
+    } : {}),
+    text: [
+      "You're on the list.",
+      '',
+      "Thanks for signing up for early access to Flock. We're building the app that replaces the broken group chat planning process with something that actually works.",
+      '',
+      "We'll let you know as soon as it's ready.",
+      '',
+      'The Flock Team',
+      '',
+      `You are getting this because this address was entered on the Flock waitlist at ${baseWebUrl()}.`,
+      optOutText,
+    ].join('\n'),
     html: `
       <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 24px;">
         <div style="text-align: center; margin-bottom: 32px;">
@@ -473,6 +656,9 @@ async function sendWaitlistConfirmation({ to }) {
           We'll let you know as soon as it's ready.
         </p>
         <p style="font-size: 14px; color: #a0aec0;">The Flock Team</p>
+        <p style="font-size: 13px; color: #a0aec0; margin-top: 32px; line-height: 1.6;">
+          You are getting this because this address was entered on the Flock waitlist. ${optOutHtml}
+        </p>
       </div>
     `,
   });
@@ -501,6 +687,10 @@ module.exports = {
   MAILABLE_RE,
   safeSubjectLine,
   safeHeaders,
+  safeTextBody,
   maskAddress,
+  unsubscribeUrl,
+  PER_RECIPIENT_DAILY_CAP,
+  resetRecipientBudget,
   escapeHtml,
 };
