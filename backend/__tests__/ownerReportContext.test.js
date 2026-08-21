@@ -108,6 +108,8 @@ const WEATHER = Object.freeze({
 });
 
 const EVENTS = Object.freeze({
+  observed: true,
+  unavailableReason: null,
   hasEvent: true,
   totalEvents: 3,
   totalAttendance: 12000,
@@ -184,6 +186,9 @@ test('a report insert captures weather, events, the served prediction and the ve
   assert.strictEqual(p[20], 17, 'hour in the venue timezone');
   assert.strictEqual(p[21], 'America/New_York');
   assert.strictEqual(p[22], 'bar', 'venue category');
+  // the event lookup happened, and the row says so (migration 044)
+  assert.strictEqual(p[23], true, 'events_observed');
+  assert.strictEqual(p[24], null, 'no unavailable reason on an observed lookup');
 });
 
 test('a quiet night stores 0 events but no fabricated nearest-event fields', async () => {
@@ -194,8 +199,9 @@ test('a quiet night stores 0 events but no fabricated nearest-event fields', asy
     now: NOW,
     deps: {
       getWeather: async () => WEATHER,
-      // getNearbyEvents' no-event shape fills 0s — 0 km away is not a fact.
+      // getNearbyEvents' no-event shape fills 0s. 0 km away is not a fact.
       getNearbyEvents: async () => ({
+        observed: true, unavailableReason: null,
         hasEvent: false, nearestAttendance: 0, totalEvents: 0,
         totalAttendance: 0, nearestType: null, nearestDistance: 0, nearestName: null,
       }),
@@ -207,9 +213,151 @@ test('a quiet night stores 0 events but no fabricated nearest-event fields', asy
   assert.strictEqual(p[11], null, 'no nearest distance without a nearest event');
   assert.strictEqual(p[12], null);
   assert.strictEqual(p[13], null);
+  assert.strictEqual(p[23], true, 'Ticketmaster answered, so this false is a measurement');
+  assert.strictEqual(p[24], null);
 });
 
 // ── 2. NULL DEGRADATION ─────────────────────────────────────────────────────
+
+// A LOOKUP THAT FAILED IS NOT A QUIET NIGHT (migration 044). Until this was
+// fixed the failure shapes below all wrote has_nearby_event = false and
+// total_nearby_events = 0 into a training corpus, so every Ticketmaster
+// outage recorded "there were no events near this venue" for its duration.
+
+test('a refused or broken event lookup stores NULL event columns and the reason', async () => {
+  const shapeFor = (reason) => ({
+    observed: false, unavailableReason: reason, hasEvent: false, totalEvents: 0,
+    totalAttendance: 0, nearestDistance: 0, nearestAttendance: 0, nearestType: null,
+  });
+  let id = 100;
+  for (const reason of ['budget_exhausted', 'provider_error', 'timeout', 'no_api_key']) {
+    scriptHappyPath();
+    await ctxService.captureOwnerReportContext(id++, {
+      placeId: 'ChIJtestplace000000000000000',
+      userId: 42,
+      now: NOW,
+      deps: { getWeather: async () => WEATHER, getNearbyEvents: async () => shapeFor(reason) },
+    });
+    const p = insertCall().params;
+    for (const i of [8, 9, 10, 11, 12, 13]) {
+      assert.strictEqual(p[i], null,
+        reason + ': event column ' + (i + 1) + ' must be NULL, never a false or a 0');
+    }
+    assert.strictEqual(p[23], false, reason + ': events_observed is false, not null');
+    assert.strictEqual(p[24], reason, reason + ': the reason is kept');
+    // Everything else still lands. A refused event call is not a lost capture.
+    assert.strictEqual(p[1], 71.2, reason + ': weather survived');
+    assert.strictEqual(p[15], 62, reason + ': the served score survived');
+  }
+});
+
+// The zeros in an unobserved shape are placeholders. A caller that carried
+// stale numbers next to observed:false must not have them read as a reading.
+test('an unobserved shape carrying numbers still stores NULLs', async () => {
+  scriptHappyPath();
+  await ctxService.captureOwnerReportContext(110, {
+    placeId: 'ChIJtestplace000000000000000',
+    userId: 42,
+    now: NOW,
+    deps: {
+      getWeather: async () => WEATHER,
+      getNearbyEvents: async () => ({
+        observed: false, unavailableReason: 'provider_error',
+        hasEvent: true, totalEvents: 9, totalAttendance: 40000,
+        nearestDistance: 0.4, nearestAttendance: 30000, nearestType: 'sports',
+      }),
+    },
+  });
+  const p = insertCall().params;
+  for (const i of [8, 9, 10, 11, 12, 13]) assert.strictEqual(p[i], null, 'column ' + (i + 1));
+  assert.strictEqual(p[23], false);
+  assert.strictEqual(p[24], 'provider_error');
+});
+
+// Fail closed on a shape that cannot say. The flag is cheap to add, so its
+// absence means the caller predates the contract, and a caller that predates
+// the contract is exactly the one whose zeros cannot be trusted.
+test('an event shape with no observed flag is treated as unobserved', async () => {
+  scriptHappyPath();
+  await ctxService.captureOwnerReportContext(111, {
+    placeId: 'ChIJtestplace000000000000000',
+    userId: 42,
+    now: NOW,
+    deps: {
+      getWeather: async () => WEATHER,
+      getNearbyEvents: async () => ({
+        hasEvent: false, totalEvents: 0, totalAttendance: 0,
+        nearestDistance: 0, nearestAttendance: 0, nearestType: null,
+      }),
+    },
+  });
+  const p = insertCall().params;
+  assert.strictEqual(p[8], null, 'no flag, no observation');
+  assert.strictEqual(p[9], null);
+  assert.strictEqual(p[23], false);
+  assert.strictEqual(p[24], 'unknown_provenance');
+});
+
+// A throw is a FAILED lookup, not an unattempted one, and the two are
+// different rows in an audit.
+test('an event lookup that throws is recorded as a failure, not as never attempted', async () => {
+  scriptHappyPath();
+  const out = await ctxService.captureOwnerReportContext(112, {
+    placeId: 'ChIJtestplace000000000000000',
+    userId: 42,
+    now: NOW,
+    deps: {
+      getWeather: async () => WEATHER,
+      getNearbyEvents: async () => { throw new Error('Ticketmaster down'); },
+    },
+  });
+  assert.deepStrictEqual(out, { captured: true });
+  const p = insertCall().params;
+  assert.strictEqual(p[8], null);
+  assert.strictEqual(p[23], false);
+  assert.strictEqual(p[24], 'lookup_threw');
+});
+
+// No coordinates means no call was made and none could have been. That is a
+// third state, and it is NULL rather than false.
+test('a venue with no coordinates records events_observed NULL, not false', async () => {
+  scriptHappyPath({ venue: null });
+  let called = false;
+  await ctxService.captureOwnerReportContext(113, {
+    placeId: 'ChIJtestplace000000000000000',
+    userId: 42,
+    now: NOW,
+    deps: {
+      getWeather: async () => { called = true; return WEATHER; },
+      getNearbyEvents: async () => { called = true; return EVENTS; },
+    },
+  });
+  assert.strictEqual(called, false, 'no coordinates, no upstream spend');
+  const p = insertCall().params;
+  assert.strictEqual(p[8], null);
+  assert.strictEqual(p[23], null, 'nobody looked, and nobody could have');
+  assert.strictEqual(p[24], null);
+});
+
+test('the INSERT names as many columns as it binds placeholders', () => {
+  const sql = ctxService.INSERT_CONTEXT_SQL;
+  const cols = sql.slice(sql.indexOf('(') + 1, sql.indexOf(') VALUES')).split(',').length;
+  const highest = Math.max(...[...sql.matchAll(/\$(\d+)/g)].map((m) => Number(m[1])));
+  assert.strictEqual(cols, highest,
+    'a column list and a placeholder list that disagree is a runtime syntax error');
+});
+
+test('migration 044 records whether the event lookup happened, with no default', () => {
+  const sql = fs.readFileSync(
+    path.join(__dirname, '..', 'migrations', '044_owner_report_event_provenance.sql'), 'utf8');
+  assert.ok(/ADD COLUMN IF NOT EXISTS events_observed BOOLEAN/.test(sql));
+  assert.ok(/ADD COLUMN IF NOT EXISTS events_unavailable_reason TEXT/.test(sql));
+  assert.ok(!/events_observed BOOLEAN\s+DEFAULT/.test(sql),
+    'a default of false would claim knowledge about rows written before anyone recorded it');
+  assert.ok(!/ADD COLUMN[^;]*NOT NULL/.test(sql),
+    'pre-044 rows genuinely do not know, and NULL is the only honest value for them');
+});
+
 
 test('a weather outage stores NULL weather columns and loses nothing else', async () => {
   scriptHappyPath();
