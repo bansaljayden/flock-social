@@ -202,6 +202,37 @@ function stripTags(html) {
 // ============================================================================
 // Rendering
 // ============================================================================
+
+// The source chip on every line ended in a raw ISO date, because factAsOf
+// trimmed `2026-08-24T12:00:00Z` to `2026-08-24` and printed that. Every fact
+// the engine builds sets `asOf: now.toISOString()`, so EVERY line of EVERY
+// digest carried one, in an email a bar owner reads on a Monday morning, while
+// the same dates inside the fact labels were formatted properly by
+// advisorFacts.shortDate. advisorFacts' own comment predicted this: "a date
+// helper that lives in one of three files that all print dates is a raw ISO
+// string waiting to reappear in the other two."
+test('no raw ISO date reaches the reader: the source chips read Aug 24, not 2026-08-24', () => {
+  resetWorld();
+  // The chip is the parenthesised `(source, as-of)` suffix this file appends;
+  // the sentence in front of it is the fact engine's label, whose own dates are
+  // formatted by advisorFacts.shortDate (a couple of fixtures here quote raw
+  // ISO strings that the real builders do not produce, which is why the
+  // assertion is scoped to what THIS file writes).
+  const text = tpl.renderDigestText(RENDER_INPUT_PRO);
+  const html = stripTags(tpl.renderDigestHtml(RENDER_INPUT_PRO));
+  for (const out of [text, html]) {
+    const chips = out.match(/\([^()]*\)/g) || [];
+    assert.ok(chips.length, 'no source chips rendered at all');
+    for (const chip of chips) {
+      assert.ok(!/\d{4}-\d{2}-\d{2}/.test(chip), `a raw column-shaped date reached the owner: ${chip}`);
+    }
+    assert.ok(chips.some((c) => c.includes('Aug 24')), 'the as-of date has to still be there, just worded');
+  }
+  // The already-worded form ("owner-set 2026-08-18") gets the same treatment
+  // rather than only bare dates.
+  assert.ok(text.includes('owner-set Aug 18'), 'a date inside worded asOf text is still a raw date');
+});
+
 test('pro digest renders all four cards, one anomaly block, recap before heads-up', () => {
   resetWorld();
   const text = tpl.renderDigestText(RENDER_INPUT_PRO);
@@ -383,15 +414,57 @@ test('losing the dedupe claim means no send (deploy-overlap double-mail guard)',
   assert.strictEqual(sentEmails.length, 0);
 });
 
-test('a failed send releases its marker so the next hourly sweep can retry', async () => {
+test('a send the provider refused releases its marker so the next hourly sweep can retry', async () => {
   resetWorld();
   process.env.DIGEST_ENABLED = 'true';
-  sendResult = { sent: false, error: 'provider blip' };
+  // `refused` is sendEmail's word for "the provider answered and declined", so
+  // nothing left the building and a retry cannot duplicate anything.
+  sendResult = { sent: false, error: 'provider blip', refused: true };
   venueRows = [eligibleVenueRow()];
   const tally = await digest.runVenueDigestSweep(MONDAY_9AM_ET);
   assert.strictEqual(tally.failed, 1);
   assert.strictEqual(markerDeletes.length, 1);
   assert.deepStrictEqual(markerDeletes[0].params, [7, '2026-08-24']);
+});
+
+test('a skipped send (no RESEND_API_KEY) releases its marker too', async () => {
+  resetWorld();
+  process.env.DIGEST_ENABLED = 'true';
+  sendResult = { sent: false, skipped: true };
+  venueRows = [eligibleVenueRow()];
+  const tally = await digest.runVenueDigestSweep(MONDAY_9AM_ET);
+  assert.strictEqual(tally.failed, 1);
+  assert.strictEqual(markerDeletes.length, 1);
+});
+
+// The duplicate-send guard. sendEmail carries an 8s abort deadline, so a Resend
+// call accepted at 8.1 seconds comes back here as a plain error having ALREADY
+// queued the message. Releasing the marker on that let the next sweep inside
+// the 07:00-11:59 window claim it again and mail the same digest a second time,
+// billed a second time, up to five times on one Monday. An outcome nobody can
+// prove was not sent keeps its marker.
+test('an ambiguous failure keeps its marker, so an aborted-but-accepted send cannot be mailed twice', async () => {
+  resetWorld();
+  process.env.DIGEST_ENABLED = 'true';
+  sendResult = { sent: false, error: 'The operation was aborted' };
+  venueRows = [eligibleVenueRow()];
+  const tally = await digest.runVenueDigestSweep(MONDAY_9AM_ET);
+  assert.strictEqual(tally.failed, 1);
+  assert.strictEqual(markerDeletes.length, 0, 'the marker must survive an outcome nobody can prove was not sent');
+});
+
+test('the digest is sent as marketing and carries a plain-text alternative part', async () => {
+  resetWorld();
+  process.env.DIGEST_ENABLED = 'true';
+  venueRows = [eligibleVenueRow()];
+  await digest.runVenueDigestSweep(MONDAY_9AM_ET);
+  assert.strictEqual(sentEmails.length, 1);
+  const msg = sentEmails[0];
+  assert.strictEqual(msg.category, 'marketing',
+    'the digest is a recurring commercial mailing, so a general unsubscribe has to bind on it');
+  assert.ok(typeof msg.text === 'string' && msg.text.trim().length > 0,
+    'an HTML-only message scores worse with every major spam filter');
+  assert.ok(msg.text.includes('Your week at'), 'the text part is the digest, not a placeholder');
 });
 
 test('tier gating: premium venue gets the events-only digest, free venue gets nothing, when billing is enforced', async () => {
