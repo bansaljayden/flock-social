@@ -663,6 +663,22 @@ const aiChatJsonParser = express.json({ limit: AI_CHAT_JSON_BODY_BYTES });
 const WEBHOOK_JSON_BODY_BYTES = 256 * 1024;
 const webhookJsonParser = express.json({ limit: WEBHOOK_JSON_BODY_BYTES });
 
+// The Resend delivery webhook. Also a third-party POST, so the ceiling is the
+// webhook one, but it needs something the RevenueCat route does not: the RAW
+// BYTES. Resend signs with Svix, and a Svix signature covers the exact payload
+// as sent. Re-serialising the parsed object and hashing that is hashing
+// something the sender never signed, so a whitespace difference in the payload
+// would reject every real event while a forged one that happens to round-trip
+// would be indistinguishable. `verify` is body-parser's own hook for this and
+// runs before the parse, so the route gets both the object and the bytes.
+//
+// A bounce event is a few hundred bytes; the ceiling is inherited rather than
+// tuned because the sender is not us and the payload shape is theirs.
+const emailWebhookParser = express.json({
+  limit: WEBHOOK_JSON_BODY_BYTES,
+  verify: (req, _res, buf) => { req.rawBody = buf; },
+});
+
 // POSTs whose body legitimately carries a base64 image. Anchored and
 // case-insensitive: Express routes case-insensitively by default, so a
 // `/api/DM/5` that reaches the DM handler must reach the same parser.
@@ -713,6 +729,7 @@ const imageRoutePath = (req) => req.path.replace(/\/{2,}/g, '/');
 // __tests__/imageSpendLimits.test.js lifts it out of this file by that name.
 const AI_CHAT_BODY_ROUTE = /^\/api\/ai\/chat\/?$/i;
 const WEBHOOK_BODY_ROUTE = /^\/api\/revenuecat\/webhook\/?$/i;
+const EMAIL_EVENTS_BODY_ROUTE = /^\/api\/email-events\/?$/i;
 
 // One table, one dispatch. A fourth scoped parser is a row here, not a second
 // `if` — two places deciding which ceiling a request gets is how the ceiling
@@ -723,6 +740,7 @@ const SCOPED_JSON_PARSERS = [
   ...IMAGE_BODY_ROUTES.map((re) => [re, imageJsonParser]),
   [AI_CHAT_BODY_ROUTE, aiChatJsonParser],
   [WEBHOOK_BODY_ROUTE, webhookJsonParser],
+  [EMAIL_EVENTS_BODY_ROUTE, emailWebhookParser],
 ];
 
 // GET/PUT/PATCH/DELETE take the default unconditionally: every route with a
@@ -1154,6 +1172,20 @@ app.use('/api/public', apiLimiter, publicCrowdRoutes);          // PUBLIC, no au
 // remaining way off the list was signing in to the dashboard.
 // __tests__/venueDigest.test.js now pins this position against server.js itself.
 app.use('/api/venue-digest', digestOptOutLimiter, require('./routes/venueDigest')); // Monday digest unsubscribe link (signed token, no JWT)
+// The waitlist unsubscribe link, and Resend's delivery webhook. Both belong in
+// this block for the same reason /api/venue-digest does: neither carries a JWT,
+// so mounting either below the /api catch-alls would have moderationRoutes'
+// `router.use(authenticate)` answer 401 to an emailed unsubscribe link and to
+// every bounce notification.
+//   * /api/unsubscribe  — HMAC over the address in the query string is the
+//     whole authorisation (services/emailUnsubscribe.js). Same limiter as the
+//     digest's, for the same reason: not a brute-force gate on an unguessable
+//     token, just a ceiling on an open endpoint.
+//   * /api/email-events — Svix-signed by Resend and verified against the RAW
+//     bytes, which is why it gets emailWebhookParser above rather than the
+//     default one.
+app.use('/api/unsubscribe', digestOptOutLimiter, require('./routes/unsubscribe'));
+app.use('/api/email-events', require('./routes/emailWebhook'));
 // /api/users must also precede the two /api catch-alls. Those routers call
 // `router.use(authenticate)`, which runs for EVERY request under /api — so a
 // banned user's DELETE /api/users/me was rejected 403 there before it could

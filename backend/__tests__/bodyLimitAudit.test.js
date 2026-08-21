@@ -458,6 +458,20 @@ test('every route file that takes a body was actually looked at', () => {
     // `List-Unsubscribe=One-Click` form post, takes the default ceiling.
     'venueDigest', 'venueProfile',
     'venueSearch', 'venues', 'waitlist', 'weather',
+    // routes/unsubscribe.js enrolled 2026-08-20: the waitlist mail's
+    // unsubscribe link. Identical shape to venueDigest's above — GET renders,
+    // POST writes, the token rides the query string under the same 2048-char
+    // validator cap, and the router reads no body on either verb. The RFC 8058
+    // one-click POST's fixed form body takes the default ceiling.
+    'unsubscribe',
+    // routes/emailWebhook.js enrolled 2026-08-20: Resend's delivery webhook,
+    // and the second third-party POST in the app. Enumerated in server.js as
+    // its own scoped parser row (EMAIL_EVENTS_BODY_ROUTE) rather than left on
+    // the default, for two reasons: the sender is not us, so the payload shape
+    // is theirs and cannot be re-derived from a validator; and the Svix
+    // signature covers the RAW BYTES, so the parser has to keep them. It reads
+    // no field longer than an address and runs no express-validator chain.
+    'emailWebhook',
   ]);
   const actual = ROUTE_FILES.map((f) => path.basename(f, '.js'));
   for (const name of actual) {
