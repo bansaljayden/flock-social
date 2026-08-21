@@ -334,7 +334,15 @@
 
   </head>
   <body>
-    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <!-- The CRA default read "You need to enable JavaScript to run this app.",
+         which names no product and offers no next step. This is the whole page
+         for anyone with scripting off, and on /tap that person is a stranger
+         who just tapped an NFC tag, so it says who we are and where else to
+         go. It is one string served on every route; keep it generic. -->
+    <noscript>
+      Flock needs JavaScript to run. Turn it on and reload this page, or open
+      flockcorp.com in another browser.
+    </noscript>
     <div id="root"></div>
   </body>
 </html>

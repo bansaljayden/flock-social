@@ -133,6 +133,14 @@
     },
 
     {
+      "source": "/tap",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex" },
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+      ]
+    },
+
+    {
       "source": "/i",
       "headers": [
         { "key": "X-Robots-Tag", "value": "noindex, noarchive" },

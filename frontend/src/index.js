@@ -361,6 +361,18 @@ function PaperLoading() {
   );
 }
 
+// /tap is navy edge to edge from the very first pixel (TapPage.css paints the
+// element, not the photograph), so cream would flash. Same shape as
+// LandingLoading and deliberately its own function: the two pages are free to
+// change colour independently, and a shared fallback would drift silently.
+function TapLoading() {
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: '#0f172a' }}>
+      <p className="sr-only" role="status">Loading Flock.</p>
+    </div>
+  );
+}
+
 // Moderation dashboard paints its own near-black page.
 function DarkLoading() {
   return (
@@ -668,6 +680,20 @@ const PAGES = [
     test: (p) => p === '/about',
     load: () => import('./website/AboutPage'),
     Loading: PaperLoading,
+  },
+  {
+    // Every physical NFC tag Flock has points at this one URL: the acrylic
+    // table stand at the DECA booth (/tap?s=stand) and the business cards
+    // handed to judges (/tap?s=card). A chip holds exactly one URL, so the
+    // page is the thing that changes, never the tags. It has to be a PAGE and
+    // not a fall-through: booting the app bundle here would show a judge a
+    // login screen, and a 404 would show them nothing at all. `path` is
+    // already lowercased and de-trailing-slashed above, so /TAP and /tap/ both
+    // land here; the ?s= query is read by the page off the raw location.
+    id: 'tap',
+    test: (p) => p === '/tap',
+    load: () => import('./website/TapPage'),
+    Loading: TapLoading,
   },
   {
     id: 'delete-account',
