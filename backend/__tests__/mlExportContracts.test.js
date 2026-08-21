@@ -8,7 +8,7 @@
 // had ever been reviewed. Between them they own four things that cannot be
 // checked by reading:
 //
-//   1. the 44-column contract prepare_features.py refuses to run without;
+//   1. the 45-column contract prepare_features.py refuses to run without;
 //   2. `baseline_busyness` — this is a DELTA model, so the anchor the export
 //      writes IS the answer, and it must equal the anchor buildBaselines.js
 //      puts in ml_venue_baselines for mlPredictor to add the delta to;
@@ -98,12 +98,12 @@ function pyStringList(source, name) {
   return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
 }
 
-test('the exporter writes exactly the 44 columns prepare_features.py demands', () => {
-  assert.equal(HEADER_COLUMNS.length, 44);
+test('the exporter writes exactly the 45 columns prepare_features.py demands', () => {
+  assert.equal(HEADER_COLUMNS.length, 45);
   assert.deepEqual(HEADER_COLUMNS, pyStringList(PREPARE_SRC, 'EXPORT_COLUMNS'),
     'export HEADER and prepare_features.EXPORT_COLUMNS have drifted — the contract ' +
     'check exists precisely so these two agree');
-  assert.equal(new Set(HEADER_COLUMNS).size, 44, 'a column name is repeated');
+  assert.equal(new Set(HEADER_COLUMNS).size, 45, 'a column name is repeated');
 });
 
 test('rowToCsv emits one field per header column, in the header order', () => {
@@ -234,7 +234,7 @@ test('a partial export can never be left where prepare_features.py will read it'
   assert.match(EXPORT_JS_SRC, /\.partial/);
   assert.match(EXPORT_JS_SRC, /fs\.renameSync\(trainTmp, trainPath\)/,
     'the CSV must only appear at its real path once it is complete: a truncated file ' +
-    'still has the right header and the right 44 columns, so the contract check ' +
+    'still has the right header and the right 45 columns, so the contract check ' +
     'passes and the retrain runs on a silently shortened corpus');
 });
 
@@ -420,13 +420,13 @@ test('the export runs to completion on a READ-ONLY connection', async () => {
   );
 });
 
-test('every exported row carries 44 fields under the exact header', () => {
+test('every exported row carries 45 fields under the exact header', () => {
   for (const file of ['training_data.csv', 'holdout_data.csv']) {
     const csv = readCsv(path.join(outDir, file));
     assert.deepEqual(csv.header, HEADER_COLUMNS, `${file}: header`);
     for (const line of fs.readFileSync(path.join(outDir, file), 'utf8')
       .split('\n').filter(Boolean)) {
-      assert.equal(line.split(',').length, 44, `${file}: a row with the wrong field count`);
+      assert.equal(line.split(',').length, 45, `${file}: a row with the wrong field count`);
     }
   }
 });
@@ -617,7 +617,7 @@ test('a failure mid-export leaves no CSV at all', async () => {
   for (const f of ['training_data.csv', 'holdout_data.csv',
     'training_data.csv.partial', 'holdout_data.csv.partial']) {
     assert.ok(!fs.existsSync(path.join(outDir, f)),
-      `${f} survived a failed export — a truncated corpus passes the 44-column contract check`);
+      `${f} survived a failed export, a truncated corpus passes the 45-column contract check`);
   }
 });
 

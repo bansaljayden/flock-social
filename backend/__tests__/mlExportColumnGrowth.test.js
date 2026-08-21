@@ -84,7 +84,16 @@ const PREPARE_SRC = fs.readFileSync(PREPARE_PY_PATH, 'utf8');
 const exporter = require('../scripts/ml/train/export_training_data');
 
 const HEADER_COLUMNS = exporter.HEADER.split(',');
-const NEW_COLUMNS = ['label_source', 'vendor_forecast_pct'];
+const ROUND_20_COLUMNS = ['label_source', 'vendor_forecast_pct'];
+// Round 25 appended one more, on the same terms: carried, never featurised.
+// events_observed says whether a row's fourteen event columns are a measurement
+// or migration 006's defaults. It exists because the corpus could not tell the
+// difference: 3,912,357 rows, 3,688,137 has_nearby_event = false, 224,220 true,
+// 0 NULL, and 22 of 34 cities with ZERO event-positive rows (2,194,300 rows,
+// 56.1%), a fact about Ticketmaster collection coverage that the model reads
+// as a fact about those cities.
+const ROUND_25_COLUMNS = ['events_observed'];
+const NEW_COLUMNS = [...ROUND_20_COLUMNS, ...ROUND_25_COLUMNS];
 
 // The 42 columns the contract carried before round 20, verbatim. Written out
 // rather than derived so that "the growth was append-only" is a claim about a
@@ -118,23 +127,26 @@ function pyStringList(source, name) {
 // 1. THE GROWTH ITSELF
 // ---------------------------------------------------------------------------
 
-test('the contract grew to 44 by APPENDING, so no existing column moved', () => {
+test('the contract grew to 45 by APPENDING, so no existing column moved', () => {
   assert.equal(COLUMNS_BEFORE_ROUND_20.length, 42, 'the historical list is wrong');
-  assert.equal(HEADER_COLUMNS.length, 44,
-    'round 20 added exactly two columns: label_source and vendor_forecast_pct');
+  assert.equal(HEADER_COLUMNS.length, 45,
+    'round 20 added label_source and vendor_forecast_pct; round 25 added events_observed');
   assert.deepEqual(HEADER_COLUMNS.slice(0, 42), COLUMNS_BEFORE_ROUND_20,
     'the first 42 columns must be untouched, in their original order. A count check ' +
     'cannot tell a reorder from a clean addition, and the CSV is consumed positionally ' +
     'by anything that reads it without a header.');
-  assert.deepEqual(HEADER_COLUMNS.slice(42), NEW_COLUMNS);
+  assert.deepEqual(HEADER_COLUMNS.slice(42, 44), ROUND_20_COLUMNS,
+    'the two round 20 columns must keep indices 42 and 43. Round 25 appended AFTER them ' +
+    'for the same reason round 20 appended after the original 42.');
+  assert.deepEqual(HEADER_COLUMNS.slice(44), ROUND_25_COLUMNS);
 });
 
-test('prepare_features.py declares the identical 44, in the identical order', () => {
+test('prepare_features.py declares the identical 45, in the identical order', () => {
   const declared = pyStringList(PREPARE_SRC, 'EXPORT_COLUMNS');
   assert.deepEqual(declared, HEADER_COLUMNS,
     'export_training_data.HEADER and prepare_features.EXPORT_COLUMNS have drifted. ' +
     'They are the same contract written twice and must be changed in the same commit.');
-  assert.equal(new Set(declared).size, 44, 'a column name is repeated');
+  assert.equal(new Set(declared).size, 45, 'a column name is repeated');
   for (const c of NEW_COLUMNS) {
     assert.equal(declared.filter((x) => x === c).length, 1,
       `${c} appears more than once in the contract`);
@@ -266,7 +278,7 @@ test('a text value in either new column still cannot shift the CSV', () => {
     else cur += c;
   }
   fields.push(cur);
-  assert.equal(fields.length, 44);
+  assert.equal(fields.length, 45);
   assert.equal(fields[HEADER_COLUMNS.indexOf('label_source')], 'live,forecast');
   assert.equal(fields[HEADER_COLUMNS.indexOf('vendor_forecast_pct')], '12');
 });
@@ -506,26 +518,97 @@ test('preflight counts the coverage instead of guessing at it', async () => {
   assert.equal(Number(cov2.with_vendor_forecast), 0);
 });
 
-test('an export from a database without migration 025 still produces 44 columns', async () => {
+test('an export from a database without migration 025 or 045 still produces 45 columns', async () => {
   // The state every restored backup and staging clone is in. The column must be
   // empty, never absent — a 43-column CSV would fail the contract check for the
   // wrong reason and send the reader looking at the exporter.
   const outDir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'flock-growth-out2-'));
   try {
     const q = exporter.cityQuery('philly',
-      { label_source: false, observed_date: true, hour_axis: true, vendor_forecast_pct: false });
+      { label_source: false, observed_date: true, hour_axis: true,
+        vendor_forecast_pct: false, events_observed: false });
     const { rows } = await roPool.query(q);
     assert.ok(rows.length > 0);
     for (const r of rows) {
       assert.equal(r.vendor_forecast_pct, null);
       assert.equal(r.label_source, null);
+      assert.equal(r.events_observed, null);
       const line = exporter.rowToCsv(r);
-      assert.equal(line.split(',').length, 44);
+      assert.equal(line.split(',').length, 45);
       assert.equal(at(line, 'vendor_forecast_pct'), '');
       assert.equal(at(line, 'label_source'), '');
+      assert.equal(at(line, 'events_observed'), '',
+        'a database without migration 045 records nothing about whether its event '
+        + 'columns were measured, and the export must say that rather than pick a side');
     }
   } finally {
     fs.rmSync(outDir2, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// ROUND 25: AN UNCHECKED STREET IS NOT AN EMPTY ONE, AT THE CORPUS BOUNDARY.
+//
+// rowToCsv wrote every boolean as `x ? 1 : 0`, so a NULL event state left the
+// exporter as a hard 0, a negative observation nobody made. The serving fix
+// (getNearbyEvents observed/unavailableReason) and migration 044 both stop one
+// layer above this one, and this line quietly undid them.
+// ---------------------------------------------------------------------------
+
+test('an unobserved event state exports as EMPTY, not as a fabricated 0', () => {
+  const unknown = exporter.rowToCsv({
+    collection_mode: 'realtime', has_nearby_event: null, event_nearby: null,
+    is_raining: null, events_observed: null,
+  });
+  assert.equal(at(unknown, 'has_nearby_event'), '',
+    'NULL means the lookup did not happen. A 0 here is the fabricated negative that '
+    + 'migration 044 and migration 045 both exist to end.');
+  assert.equal(at(unknown, 'event_nearby'), '');
+  assert.equal(at(unknown, 'is_raining'), '');
+  assert.equal(at(unknown, 'events_observed'), '');
+
+  // And a measured quiet night still says 0, because 0 is a real answer. If
+  // these two ever collapse into each other the whole column is worthless.
+  const quiet = exporter.rowToCsv({
+    collection_mode: 'realtime', has_nearby_event: false, event_nearby: false,
+    is_raining: false, events_observed: true,
+  });
+  assert.equal(at(quiet, 'has_nearby_event'), '0');
+  assert.equal(at(quiet, 'event_nearby'), '0');
+  assert.equal(at(quiet, 'is_raining'), '0');
+  assert.equal(at(quiet, 'events_observed'), '1');
+
+  const failed = exporter.rowToCsv({
+    collection_mode: 'realtime', has_nearby_event: null, events_observed: false,
+  });
+  assert.equal(at(failed, 'events_observed'), '0',
+    'a lookup that was attempted and could not answer is a THIRD state, and it is the '
+    + 'one that separates a Ticketmaster outage from a quiet Tuesday');
+  assert.equal(at(failed, 'has_nearby_event'), '');
+});
+
+test('the owner-label path carries a NULL event context through instead of flattening it', () => {
+  const ownerLabels = require('../scripts/ml/train/ownerLabelExport');
+  const base = {
+    venue_id: 1, day_of_week: 5, hour: 21,
+    venue_category: 'bar', price_level: 2, rating: 4.1, review_count: 90,
+    baseline_busyness: 50, busy_percent: 60, city: 'philly',
+    google_types: ['bar'], latitude: 39.95, longitude: -75.16,
+  };
+  const cells = new Map();
+  for (let i = 0; i < 5; i++) {
+    const row = { ...base, local_date: `2026-05-0${i + 1}`, hour: 20 + (i % 2) };
+    cells.set(`${row.day_of_week}|${row.hour}|${row.local_date}`, { row, at: i });
+  }
+  const out = ownerLabels.ownerVenueToTrainingRows({ venue_id: 1, cells });
+  assert.ok(out.rows.length > 0, 'the anchor floor should be met by five readings on five dates');
+  for (const r of out.rows) {
+    assert.equal(r.has_nearby_event, null,
+      'a missing venue_owner_report_context row means the event state was never recorded. '
+      + 'It used to export as false, which re-manufactured the exact fabricated negative '
+      + 'migration 044 was written to stop.');
+    assert.equal(r.event_nearby, null);
+    assert.equal(r.events_observed, null);
   }
 });
 
@@ -596,6 +679,7 @@ cols = mod.get_feature_columns(frame)
 out['feature_columns'] = {
     'label_source_is_a_feature': 'label_source' in cols,
     'vendor_forecast_is_a_feature': 'vendor_forecast_pct' in cols,
+    'events_observed_is_a_feature': 'events_observed' in cols,
     'label_provenance_is_a_feature': 'label_provenance' in cols,
     'real_feature_survived': 'some_real_feature' in cols,
 }
@@ -687,6 +771,10 @@ test('prepare_features.py, run for real', {
         'raw feature it is the label. It is also empty on 100% of the corpus today, ' +
         'which would make it the twelfth dead slot of 106.');
       assert.equal(f.label_provenance_is_a_feature, false, 'unchanged from round 10');
+      assert.equal(f.events_observed_is_a_feature, false,
+        'events_observed is empty on all 3,912,357 pre-045 rows, so today it is a dead ' +
+        'slot; on the day it carries data it is a proxy for which cities Ticketmaster ' +
+        'was collected in, which is geography laundered through a collection artefact.');
       assert.equal(f.real_feature_survived, true,
         'the exclusion must be by name, not by having broken get_feature_columns');
     });

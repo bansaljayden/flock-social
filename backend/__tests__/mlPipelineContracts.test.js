@@ -47,17 +47,18 @@ function pyStringList(source, name) {
 
 // ── Finding 1: the corpus contract, and no soft column guards ───────────────
 
-test('prepare_features pins the exporter\'s exact 44-column contract', () => {
+test('prepare_features pins the exporter\'s exact 45-column contract', () => {
   const declared = pyStringList(PREPARE, 'EXPORT_COLUMNS');
   const exported = HEADER_COLUMNS;
   assert.deepEqual(declared, exported,
     'EXPORT_COLUMNS in prepare_features.py has drifted from export_training_data.js HEADER. ' +
     'The whole point of the contract check is that these two agree; if the exporter gained ' +
     'or lost a column, update both in the same change.');
-  // 42 until round 20, which appended label_source and vendor_forecast_pct.
+  // 42 until round 20, which appended label_source and vendor_forecast_pct;
+  // 45 since round 25 appended events_observed.
   // mlExportColumnGrowth.test.js owns the detail of that growth; this stays a
   // bare count so a silent addition anywhere cannot slip past both files.
-  assert.equal(exported.length, 44);
+  assert.equal(exported.length, 45);
   assert.ok(exported.includes('venue_id') && exported.includes('label_provenance'),
     'venue_id drives baseline smoothing and label_provenance drives the vendor-forecast ' +
     'sample weight — the 40-column pre-round-10 export lacked both');
