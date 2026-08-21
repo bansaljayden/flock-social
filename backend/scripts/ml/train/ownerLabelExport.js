@@ -102,7 +102,14 @@ const OWNER_EXCLUSION_REASONS = {
 // only, enforced at the source the way the feedback query enforces
 // verified = true: the write path already refuses unverified venues, and this
 // join is what keeps that true for rows written before a venue lost its badge.
-function ownerCandidateQuery(city, baselineAggregateSql) {
+function ownerCandidateQuery(city, baselineAggregateSql, optional = {}) {
+  // Migration 044's provenance column. Naming a column that does not exist is a
+  // hard SQL error, so a database on 036 but not 044 selects a literal NULL,
+  // which is also the honest value for those rows: nothing recorded whether
+  // their stored false was a Ticketmaster answer or a timeout.
+  const eventsObservedSelect = optional.events_observed
+    ? 'c.events_observed          AS ctx_events_observed'
+    : 'NULL::boolean              AS ctx_events_observed';
   return {
     text: `
       SELECT
@@ -129,7 +136,8 @@ function ownerCandidateQuery(city, baselineAggregateSql) {
         c.total_nearby_attendance   AS ctx_total_nearby_attendance,
         c.nearest_event_distance_km AS ctx_nearest_event_distance_km,
         c.nearest_event_attendance  AS ctx_nearest_event_attendance,
-        c.nearest_event_type        AS ctx_nearest_event_type
+        c.nearest_event_type        AS ctx_nearest_event_type,
+        ${eventsObservedSelect}
       -- WEATHER AND EVENTS ONLY, and the omission is worth stating. 036 also
       -- records what Flock itself was publishing when the slider moved
       -- (served_score, served_prediction_id, served_prediction_method). No
@@ -175,6 +183,16 @@ function numOrNull(v) {
   if (v == null || v === '') return null;
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
+}
+
+// The boolean equivalent, and the reason it exists rather than `=== true`.
+// 036's whole doctrine is "NULL means not observed, never 0", and `=== true`
+// silently violates it: it answers false for a NULL, which is the fabricated
+// negative observation migration 044 was written to end. Three states in, three
+// states out; rowToCsv writes the null as an empty field.
+function boolOrNull(v) {
+  if (v === null || v === undefined) return null;
+  return v === true;
 }
 
 function median(nums) {
@@ -260,18 +278,31 @@ function ownerVenueToTrainingRows(venueGroup) {
       // venue outside the corpus) have no context row and stay empty, never 0:
       // same doctrine and same known prepare_features fillna blocker as the
       // feedback path.
+      //
+      // ROUND 25: THESE LINES USED TO SAY `x === true`, WHICH IS NOT THE SAME
+      // DOCTRINE. `=== true` maps NULL to false, so on the two event columns it
+      // converted every honest "we did not observe" that migration 044 exists
+      // to preserve back into "we observed nothing nearby": the fabricated
+      // negative, re-manufactured one layer down from the fix. boolOrNull keeps
+      // the three states apart all the way to the CSV, and events_observed
+      // below says which of them this row is in.
       temperature: numOrNull(meta.ctx_temperature),
       humidity: numOrNull(meta.ctx_humidity),
       wind_speed: numOrNull(meta.ctx_wind_speed),
       weather_condition: meta.ctx_weather_condition ?? null,
       weather_condition_code: numOrNull(meta.ctx_weather_condition_code),
-      is_raining: meta.ctx_is_raining === true,
-      event_nearby: meta.ctx_has_nearby_event === true,
+      is_raining: boolOrNull(meta.ctx_is_raining),
+      event_nearby: boolOrNull(meta.ctx_has_nearby_event),
       event_distance_km: numOrNull(meta.ctx_nearest_event_distance_km),
       event_size: null,
       event_type: meta.ctx_nearest_event_type ?? null,
       event_hours_until: null,
-      has_nearby_event: meta.ctx_has_nearby_event === true,
+      has_nearby_event: boolOrNull(meta.ctx_has_nearby_event),
+      // Round 25: migration 044's answer to "was that false a measurement?",
+      // carried straight through. NULL stays NULL, because on a pre-044 context row
+      // nothing recorded which it was, and inventing either answer here is the
+      // fabrication this round removed.
+      events_observed: boolOrNull(meta.ctx_events_observed),
       nearest_event_distance_km: numOrNull(meta.ctx_nearest_event_distance_km),
       nearest_event_attendance: numOrNull(meta.ctx_nearest_event_attendance),
       total_nearby_events: numOrNull(meta.ctx_total_nearby_events),
@@ -306,8 +337,8 @@ function ownerVenueToTrainingRows(venueGroup) {
 // ONE writer) and BASELINE_AGGREGATE_SQL (the anchor has ONE definition).
 // Passed in rather than required back to keep the module graph acyclic.
 async function exportOwnerCity(pool, city, stream, counters, deps) {
-  const { rowToCsv, baselineAggregateSql, write } = deps;
-  const q = ownerCandidateQuery(city, baselineAggregateSql);
+  const { rowToCsv, baselineAggregateSql, write, optional = {} } = deps;
+  const q = ownerCandidateQuery(city, baselineAggregateSql, optional);
   const client = await pool.connect();
   let rows;
   try {
@@ -393,4 +424,5 @@ module.exports = {
   newOwnerCounters,
   ownerCensus,
   median,
+  boolOrNull,
 };

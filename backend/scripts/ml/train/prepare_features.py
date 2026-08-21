@@ -58,6 +58,18 @@ class CorpusContractError(RuntimeError):
 # export_training_data.js's header). A pre-round-20 CSV now fails
 # require_export_columns by name, which is the point: silently training without
 # them is exactly the class of failure this contract exists to stop.
+#
+# Round 25 grew it to 45 on the same terms: events_observed, appended, carried,
+# never featurised. It says whether the fourteen event columns on a row are a
+# MEASUREMENT or the column defaults of migration 006. It is not a feature
+# because there is no in-distribution way to say "unknown" to the shipped model
+# (add_event_features fills every missing event value with 0 and every tree
+# splits has_nearby_event at 0.5), so the feature keeps its no-information value
+# and the fact rides alongside, where a retrain can weight on it, evaluate the
+# observed slice separately, or drop the affected cities. It is EMPTY on the
+# whole pre-045 corpus and that is not a gap to be filled: an observed false and
+# a defaulted false left identical bytes in ml_training_data and no backfill can
+# separate them. See scripts/ml/MODEL-METRICS.md.
 # ---------------------------------------------------------------------------
 EXPORT_COLUMNS: List[str] = [
     'venue_id',
@@ -77,6 +89,7 @@ EXPORT_COLUMNS: List[str] = [
     'avg_user_crowd', 'user_feedback_count', 'avg_prediction_error',
     'observed_date', 'label_provenance',
     'label_source', 'vendor_forecast_pct',
+    'events_observed',
 ]
 
 EXPORTER_PATH = SCRIPT_DIR / 'export_training_data.js'
@@ -111,7 +124,8 @@ def require_export_columns(df: pd.DataFrame, csv_path: Path, label: str) -> None
         f'baseline smoothing and label_provenance drives the vendor-forecast '
         f'sample weight; without them this script used to skip both in silence.\n'
         f'  label_source and vendor_forecast_pct joined the contract in round 20 '
-        f'(export columns 43 and 44). They are carried, not featurised, so a CSV '
+        f'(export columns 43 and 44) and events_observed in round 25 (column 45). '
+        f'They are carried, not featurised, so a CSV '
         f'that lacks them would still TRAIN — which is precisely why their absence '
         f'has to be an error here: it means the CSV predates the exporter, and a '
         f'stale CSV is never only missing the columns you noticed.'
@@ -741,6 +755,44 @@ def audit_label_columns(df: pd.DataFrame, label: str) -> Dict:
             'fix here — but it means the vendor-forecast downweight still applies to '
             'zero rows. It changes the moment collectRealtime.js runs again.', label)
     return stats
+
+
+def report_event_provenance(df: pd.DataFrame, label: str) -> None:
+    """Say out loud how much of the event signal was ever measured.
+
+    events_observed is a CARRIED column (migration 045). 1 means the event
+    columns beside it are a measurement, including the genuinely quiet night;
+    0 means no lookup could have answered and the columns are empty; NaN means
+    nothing recorded which, which is every row exported before 045.
+
+    This does not raise. The rows it describes are not repairable and refusing
+    them would refuse the corpus. What a retrain does with the number is a
+    decision that belongs to whoever is holding the gate, and it cannot be made
+    from a number nobody printed.
+    """
+    if 'events_observed' not in df.columns:
+        return
+    col = df['events_observed']
+    n = len(df)
+    if n == 0:
+        return
+    observed = int((col == 1).sum())
+    unavailable = int((col == 0).sum())
+    unrecorded = int(col.isna().sum())
+    logger.info(
+        '[%s] event provenance: %d of %d rows record a measured event state, '
+        '%d record that no lookup could answer, %d record nothing either way.',
+        label, observed, n, unavailable, unrecorded)
+    if unrecorded == n:
+        logger.warning(
+            '[%s] NO row carries event provenance. Every has_nearby_event=0 in this '
+            'frame may be an observation or may be the column default migration 006 set, '
+            'and the two are not separable: 22 of 34 cities in the corpus hold zero '
+            'event-positive rows, 56.1%% of it, which is a statement about '
+            'Ticketmaster collection coverage that the model reads as a statement '
+            'about those cities. Not fixable here and not fixable by a backfill. '
+            'See scripts/ml/MODEL-METRICS.md before trusting the importance of any '
+            'event feature in this run.', label)
 
 
 def enforce_label_contract(stats: Dict, label: str) -> None:
@@ -1654,6 +1706,15 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
         # See the block above derive_label_provenance.
         'label_source',
         'vendor_forecast_pct',
+        # Round 25 CARRIED COLUMN. events_observed records whether the event
+        # columns on a row are a measurement or migration 006's defaults. A
+        # feature here would be strictly worse than useless: it is EMPTY on all
+        # 3,912,357 pre-045 rows, so it is a dead slot today, and on the day it
+        # carries data it would be a proxy for WHICH CITIES had Ticketmaster
+        # coverage. 22 of 34 cities hold zero event-positive rows, which is
+        # geography laundered through a data-collection artefact, the same
+        # class of leak latitude and longitude are dropped for.
+        'events_observed',
     }
     exclude |= DROPPED_FEATURES
     feature_cols = [c for c in df.columns if c not in exclude]
@@ -1713,6 +1774,13 @@ def main():
     holdout_label_stats = audit_label_columns(holdout_df, 'holdout')
     enforce_label_contract(label_stats, 'train')
     enforce_label_contract(holdout_label_stats, 'holdout')
+
+    # Round 25: the same treatment for event provenance, as a REPORT and never a
+    # gate. It is empty on the entire pre-045 corpus, so a refusal would block
+    # every retrain on a fact about the past that no run can change; what it can
+    # do is make the size of the unverifiable slice impossible to overlook.
+    report_event_provenance(train_df, 'train')
+    report_event_provenance(holdout_df, 'holdout')
 
     # Drop rows with null label
     train_df = train_df.dropna(subset=['busyness_pct'])
@@ -1896,9 +1964,12 @@ def main():
     # there is data, without another two-hour export. They are NOT in
     # feature_cols, so the fillna(0) below cannot reach them and an absent
     # forecast stays NaN rather than becoming a vendor prediction of 0.
+    # Round 25: events_observed rides along too, so the question "how much of
+    # this holdout's event signal was ever measured" is answerable from the
+    # pickles rather than from another two-hour export.
     keep_extra = ['busyness_pct', 'delta_label', 'baseline_busyness', 'city',
                   'label_provenance', 'venue_category',
-                  'label_source', 'vendor_forecast_pct']
+                  'label_source', 'vendor_forecast_pct', 'events_observed']
     holdout_df = holdout_df[feature_cols + keep_extra]
 
     logger.info(f'Feature count: {len(feature_cols)}')
