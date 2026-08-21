@@ -653,6 +653,15 @@ function dedupeAdjacentWords(text) {
 
 function formatFactValue(fact) {
   const v = fact.value;
+  // "true" IS NOT A WORD ANYBODY SAYS. The composite arithmetic facts carry
+  // booleans for their findings (peakAtOrAfterLastOrder,
+  // fallsOnADayYouProgramme), and String(false) put the bare token in the
+  // middle of a sentence about somebody's kitchen. Section 3h of the prompt
+  // tells the model to read a boolean and say it in English rather than
+  // substitute it; this is the net under that rule, and it uses the same two
+  // words advisorFreeText.intakeFacts already converts booleans to before a
+  // fact is built at all.
+  if (typeof v === 'boolean') return v ? 'yes' : 'no';
   if (fact.unit === 'hour' && Number.isFinite(Number(v))) return clock12(v);
   // A CALENDAR DAY IS NOT A COLUMN. '2026-08-25' reached the owner inside
   // sentences like "your highest peak lands on Tuesday, 2026-08-25" because the
@@ -668,6 +677,11 @@ function formatFactValue(fact) {
     const words = enumWords(v);
     if (words) return words;
   }
+  // The NOUN rides with it, like every other unit here. Rendering the bare
+  // ordinal produced "your usual sits around the 38th among 22 venues like
+  // yours", because Section 3e of the prompt tells the model a substituted
+  // value arrives complete and it therefore does not write the word itself.
+  if (fact.unit === 'percentile' && Number.isFinite(Number(v))) return `${ordinal(v)} percentile`;
   if (fact.unit === 'percent' && Number.isFinite(Number(v))) return `${v}%`;
   if (fact.unit === 'km' && Number.isFinite(Number(v))) return `${v} km`;
   if (fact.unit === 'days' && Number.isFinite(Number(v))) return `${v} days`;
@@ -727,7 +741,47 @@ function partUnit(key) {
   // parts of the weather fact used to inherit one from their parent. A live
   // answer read "scattered clouds at 63 for Friday".
   if (/tempf$/i.test(key)) return 'tempF';
+  // A PERCENTILE IS AN ORDINAL AND THE MODEL CANNOT ADD THE ENDING. It may not
+  // write a digit, so it cannot type "th" onto a number it never sees, and a
+  // live answer read "your usual pattern sits around the 38 percentile".
+  // The suffix is the server's to supply, exactly like the clock and the unit.
+  if (/percentile$/i.test(key)) return 'percentile';
   return undefined;
+}
+
+// 1st, 2nd, 3rd, 11th through 13th, 21st. English, not arithmetic.
+function ordinal(n) {
+  const i = Math.round(Number(n));
+  const rem100 = ((i % 100) + 100) % 100;
+  if (rem100 >= 11 && rem100 <= 13) return `${i}th`;
+  const rem10 = ((i % 10) + 10) % 10;
+  return `${i}${rem10 === 1 ? 'st' : rem10 === 2 ? 'nd' : rem10 === 3 ? 'rd' : 'th'}`;
+}
+
+// A LIST INSIDE A COMPOSITE IS THE ANSWER, AND IT WAS BEING THROWN AWAY.
+// `typeof v === 'object'` is true of an array, so every array-valued part of a
+// composite fact was skipped, and three of the fact engine's arithmetic facts
+// are composites whose parts are ALL arrays. Measured 2026-08-20 against the
+// live model: busy_days_agreement ({youSaid, curveSays, sharedDays}) and
+// anchors_our_listings_miss ({yourAnchors, notCoveredByListings}) contributed
+// ZERO facts to the payload, so the model could not see the answer to "are our
+// busy times what we think they are" at all, and google_baseline_busy_days
+// lost its day list and kept only the window string. The answer that reached
+// the owner was "in our spring corpus, your Google profile's own pattern is
+// measured across the venue's own operating hours", which names no day and
+// answers nothing. event_days_vs_peak lost the days the owner programmes the
+// same way.
+//
+// The template twin never had the bug, because it prints the fact's own label,
+// which is why this survived until the phrasing layer was first switched on.
+// An array of SCALARS is kept whole: formatFactValue already renders one as
+// "a theater or music hall and a shopping center", through the same enum
+// vocabulary a bare array fact goes through. An array holding objects is still
+// skipped, because there is no sentence to make of it, and an empty one is
+// skipped because there is nothing in it to say.
+function scalarList(v) {
+  return Array.isArray(v) && v.length > 0
+    && v.every((x) => x !== null && typeof x !== 'object');
 }
 
 function flattenFacts(facts) {
@@ -735,7 +789,8 @@ function flattenFacts(facts) {
   for (const f of facts) {
     if (f && f.value !== null && typeof f.value === 'object' && !Array.isArray(f.value)) {
       for (const [k, v] of Object.entries(f.value)) {
-        if (v === null || typeof v === 'object') continue;
+        if (v === null) continue;
+        if (typeof v === 'object' && !scalarList(v)) continue;
         out.push({ ...f, sourceId: f.sourceId || f.id, id: `${f.id}_${k}`, value: v, unit: partUnit(k) });
       }
     } else if (f) {
