@@ -1049,7 +1049,7 @@ function resolvePhotoUrl(url) {
 // Venues
 export async function searchVenues(query, location) {
   let endpoint = `/api/venues/search?query=${encodeURIComponent(query)}`;
-  if (location) endpoint += `&location=${location}`;
+  if (location) endpoint += `&location=${encodeURIComponent(location)}`;
   const data = await request(endpoint);
   if (data.venues) {
     data.venues = data.venues.map(v => ({ ...v, photo_url: resolvePhotoUrl(v.photo_url) }));
@@ -1354,10 +1354,19 @@ export async function getPaymentLinks(flockId) {
 }
 
 // Events (Ticketmaster)
+//
+// `location` here, `radius` below it and `location` in searchVenues were the
+// three query VALUES in this file still built by raw interpolation. Every
+// caller in App.js passes `${userLocation.lat},${userLocation.lng}` for the
+// two location parameters, so the comma is the value's own punctuation and has
+// to be percent-encoded to stay that way; a value carrying an `&` would
+// otherwise end its parameter and start another one that the backend's
+// validator never saw declared. Express decodes the query before any route
+// reads it, so the wire format is the only thing that changes here.
 export async function searchEvents(location, query, options = {}) {
-  let endpoint = `/api/events/search?location=${location}`;
+  let endpoint = `/api/events/search?location=${encodeURIComponent(location)}`;
   if (query) endpoint += `&query=${encodeURIComponent(query)}`;
-  if (options.radius) endpoint += `&radius=${options.radius}`;
+  if (options.radius) endpoint += `&radius=${encodeURIComponent(options.radius)}`;
   if (options.category) endpoint += `&category=${encodeURIComponent(options.category)}`;
   return request(endpoint);
 }
@@ -1367,7 +1376,7 @@ export async function getEventDetails(eventId) {
 }
 
 export async function getFeaturedEvents(location, interests = []) {
-  let endpoint = `/api/events/featured?location=${location}`;
+  let endpoint = `/api/events/featured?location=${encodeURIComponent(location)}`;
   if (interests.length > 0) endpoint += `&interests=${encodeURIComponent(interests.join(','))}`;
   return request(endpoint);
 }

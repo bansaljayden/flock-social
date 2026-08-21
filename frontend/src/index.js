@@ -14,12 +14,38 @@ import ErrorBoundary from './components/ErrorBoundary';
 // the account. Both patterns are scrubbed from every analytics and error
 // payload that leaves the device.
 //
+// SO DO COORDINATES, and that is the newer half of this function.
+//
+// Four first-party endpoints take the handset's live GPS fix as a query
+// string: /api/weather?lat=&lon=, /api/weather/forecast?lat=&lon=, and
+// /api/events/search and /api/events/featured, which are handed
+// `${userLocation.lat},${userLocation.lng}` as their `location` value
+// (services/api.js). Sending that to our own backend is the feature working.
+// The leak is what happens NEXT: Sentry records the URL of every fetch as a
+// breadcrumb, as event.request.url, as a transaction name and as a span
+// description, and PostHog copies whatever URL strings it finds into event
+// properties. None of those are our servers. analyticsPrivacy.test.js already
+// forbids a tracked property KEY that could carry coordinates; nothing stopped
+// the same coordinates arriving inside a URL, attached to the account id that
+// api.js identifies with. The youngest permitted user is 13.
+//
+// Only a value that IS a coordinate is touched. `?location=Bethlehem` is a
+// place name a person typed and stays readable; `?location=40.6,-75.4` is a
+// person's position and does not. A parameter has to be the whole name after
+// ? # or & to match, so `?flat=`, `?tokens=` and `?relocation=` are untouched.
+//
 // Exported for src/__tests__/analyticsPrivacy.test.js only.
+const COORD = '-?\\d{1,3}(?:\\.\\d+)?';
 export const scrubUrlTokens = (v) =>
   (typeof v === 'string'
     ? v
       .replace(/\/i\/[A-Za-z0-9_-]+/g, '/i/:token')
       .replace(/([?#&]token=)[^&#\s"']*/gi, '$1redacted')
+      .replace(/([?#&](?:lat|lon|lng|latitude|longitude)=)[^&#\s"']*/gi, '$1redacted')
+      .replace(
+        new RegExp(`([?#&]location=)${COORD}(?:,|%2C)${COORD}`, 'gi'),
+        '$1redacted',
+      )
     : v);
 
 // Sentry (B3) — no-op until REACT_APP_SENTRY_DSN is set (Vercel env). Never commit the DSN.
@@ -32,6 +58,30 @@ export const scrubUrlTokens = (v) =>
 // after boot, so a crash in the first few hundred ms and the pageload
 // transaction can be missed; ErrorBoundary re-reports render crashes through
 // the same lazily-loaded SDK, which covers the case that matters.
+//
+// SPANS ARE A FOURTH PLACE THE URL APPEARS, and they were the one place
+// nothing swept. browserTracingIntegration turns every fetch into a span whose
+// description is "GET <the whole url, query string included>" and whose
+// data carries http.url / url.query. A transaction event holds those spans
+// alongside the transaction name that beforeSendTransaction already scrubbed,
+// so scrubbing only the name left the same string one field to the right.
+// The trace context on an ERROR event carries the same data bag.
+const scrubSentrySpans = (event) => {
+  const bags = [];
+  if (Array.isArray(event?.spans)) {
+    for (const span of event.spans) {
+      if (typeof span?.description === 'string') span.description = scrubUrlTokens(span.description);
+      if (span?.data) bags.push(span.data);
+    }
+  }
+  if (event?.contexts?.trace?.data) bags.push(event.contexts.trace.data);
+  for (const bag of bags) {
+    for (const key of Object.keys(bag)) {
+      if (typeof bag[key] === 'string') bag[key] = scrubUrlTokens(bag[key]);
+    }
+  }
+};
+
 if (process.env.REACT_APP_SENTRY_DSN) {
   import('@sentry/react').then((Sentry) => {
     Sentry.init({
@@ -52,12 +102,14 @@ if (process.env.REACT_APP_SENTRY_DSN) {
             if (typeof b?.message === 'string') b.message = scrubUrlTokens(b.message);
           }
         }
+        scrubSentrySpans(event);
         return event;
       },
       beforeSendTransaction(event) {
         if (!event) return event;
         if (event.request?.url) event.request.url = scrubUrlTokens(event.request.url);
         if (typeof event.transaction === 'string') event.transaction = scrubUrlTokens(event.transaction);
+        scrubSentrySpans(event);
         return event;
       },
     });
