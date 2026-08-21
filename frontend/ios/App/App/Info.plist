@@ -149,14 +149,19 @@
 	     itself; it exists only as the callback GoogleSignIn hands to
 	     ASWebAuthenticationSession.
 
-	     ⚠️ THE VALUE BELOW IS A PLACEHOLDER AND MUST BE REPLACED BEFORE THE
-	     NEXT BUILD. Google Cloud console → APIs & Services → Credentials →
-	     Create credentials → OAuth client ID → Application type "iOS" →
-	     Bundle ID com.flockcorp.flock. The client id it issues looks like
-	     123456789012-abcdefghijklmnop.apps.googleusercontent.com; the reversed
-	     form (which is what goes in the <string> below) is the same thing with
-	     the two halves swapped:
-	         com.googleusercontent.apps.123456789012-abcdefghijklmnop
+	     THE VALUE BELOW IS THE REAL REVERSED CLIENT ID, set in 8e14b96, and it
+	     is not a placeholder any more. This comment said the opposite for two
+	     days after that commit landed, which is worse than saying nothing: the
+	     next reader's instruction was to replace a working callback scheme, and
+	     a wrong one here is a Google sheet that opens and never comes back.
+	     Change it only if the iOS OAuth client itself is reissued.
+
+	     Where it comes from, if it ever has to be reissued: Google Cloud
+	     console → APIs & Services → Credentials → Create credentials → OAuth
+	     client ID → Application type "iOS" → Bundle ID com.flockcorp.flock. The
+	     client id it issues reads <digits>-<hash>.apps.googleusercontent.com;
+	     the reversed form, which is what goes in the <string> below, is the same
+	     thing with the two halves swapped.
 	     The UNreversed client id also has to be set as REACT_APP_GOOGLE_IOS_-
 	     CLIENT_ID in the Codemagic `flock_web` env group; the two are read
 	     together by src/components/auth/useGoogleAuth.js, and while the env

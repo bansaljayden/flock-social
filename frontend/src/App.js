@@ -16393,7 +16393,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Content. The Map tab lays out as a fixed column (slider, then the
             map filling the rest), so it opts out of the scroll the list tabs
             use; scrolling a map page fights the map's own pan gesture. */}
-        <div style={{ flex: 1, overflowY: venueTab === 'map' ? 'hidden' : 'auto', padding: '12px' }}>
+        {/* ── SAFE AREA — the bottom inset lives HERE and nowhere else ─────
+            This dashboard is the one authenticated surface that renders NO
+            BottomNav, and the tab bar is where every other screen picks up
+            var(--safe-bottom). So this scroller's own last pixel is the
+            phone's last pixel: phoneContainer is 100dvh under viewport-fit=
+            cover (see the SAFE-AREA CONTRACT in index.css), which put the
+            final card of every venue tab under the home indicator: the Roost
+            composer, which is deliberately the last thing in its card, the
+            Settings save button, and on the Map tab MapLibre's own
+            attribution control, which is a legal obligation drawn in the
+            strip a thumb cannot reach.
+
+            The Map tab is why this is padding on the scroller rather than
+            margin on the cards: that tab lays out as height:100% inside this
+            box, and padding is outside the content box, so the map shrinks
+            by the inset instead of hanging past it. */}
+        <div style={{ flex: 1, overflowY: venueTab === 'map' ? 'hidden' : 'auto', padding: '12px 12px calc(12px + var(--safe-bottom))' }}>
 
           {/* ANALYTICS TAB */}
           {/* HOW FULL ARE YOU RIGHT NOW — free at every tier, deliberately
