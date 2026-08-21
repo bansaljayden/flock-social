@@ -719,11 +719,16 @@ test('with no model on disk, predictBusyness IS the rule engine plus an honest m
     assert.equal(r.modelVersion, null);
 
     // Same response shape the ML path publishes, so no caller can tell the
-    // difference structurally — routes read these exact keys.
+    // difference structurally, because routes read these exact keys. The two event
+    // fields are part of that shape rather than an ML-only extra: a caller
+    // reads their ABSENCE as a street that was checked, so the exit that never
+    // checks one is the exit that most needs to say so.
     assert.deepEqual(Object.keys(r).sort(), [
-      'confidence', 'dataSourcesUsed', 'factors', 'label',
-      'modelVersion', 'predictionMethod', 'score',
+      'confidence', 'dataSourcesUsed', 'eventsObserved', 'eventsUnavailableReason',
+      'factors', 'label', 'modelVersion', 'predictionMethod', 'score',
     ]);
+    assert.equal(r.eventsObserved, false);
+    assert.equal(r.eventsUnavailableReason, 'not_attempted');
 
     // And the forecast surface falls back to the same generator, same shape.
     const f = await ml.predictHourlyForecast(venue, wx, 20, 4, ts);
@@ -735,8 +740,17 @@ test('with no model on disk, predictBusyness IS the rule engine plus an honest m
       // the deepEqual above already pinned that the ML-path forecast and
       // generateHourlyForecast agree entry for entry.
       assert.deepEqual(Object.keys(entry).sort(),
-        ['baselineScore', 'hour', 'label', 'predictionMethod', 'score']);
+        ['baselineScore', 'eventsObserved', 'eventsUnavailableReason',
+          'hour', 'label', 'predictionMethod', 'score']);
       assert.equal(entry.predictionMethod, 'rule_engine');
+      // The event pair joined every hourly entry on 2026-08-20. predictBusyness
+      // had carried it since the contract landed and the strip copied five
+      // fields out of the result and dropped it, so the one surface that shows
+      // a whole night at once was the one with no way to tell a Ticketmaster
+      // outage from a genuinely quiet street. On this rung no lookup is ever
+      // attempted, and that is what the entry says rather than staying silent.
+      assert.equal(entry.eventsObserved, false);
+      assert.equal(entry.eventsUnavailableReason, 'not_attempted');
       // baselineScore joined every hourly entry on 2026-08-20, when the
       // best-time and peak lines moved off model deltas and onto the
       // popular-times curve for ORDERING (see crowdEngine.orderingAxis and
