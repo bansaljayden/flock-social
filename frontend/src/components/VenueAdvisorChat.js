@@ -320,22 +320,42 @@ const sessionKey = () => {
   }
 };
 
-// WHOSE TURNS THESE ARE IS DECIDED AT MOUNT, NOT AT WRITE TIME (security round
-// 26). The hand-off below used to stamp `sessionKey()` onto the store on every
-// thread change, re-reading localStorage at the moment of the write. That is
-// the wrong moment, because `flockToken` is a SHARED key: a second tab signing
-// in as another owner overwrites it under this realm's feet, and so does an
-// in-app sign-in that never unmounts this card. Either way the next turn
-// re-labelled account A's conversation with account B's key, and the next mount
-// of this card, now sending B's token on every request, restored A's Roost
-// thread into it. That thread is A's revenue, footfall and staffing numbers.
-// This repo has already had one round of parallel sessions writing to prod as
-// the wrong user through exactly this shared key, so it is not hypothetical.
+// WHOSE TURNS THESE ARE IS RE-READ, NOT REMEMBERED (security rounds 26 and 27).
 //
-// So the key is captured once, when the component mounts and the turns start
-// belonging to somebody, and a store write is refused (and the store dropped)
-// the moment the live key no longer matches it. Nothing is handed to a mount
-// that would authenticate as a different account.
+// `flockToken` is a SHARED localStorage key. A second tab signing in as another
+// owner overwrites it under this realm's feet, and so does an in-app sign-in
+// that never unmounts this card. Two shapes of the same bug, because the fix
+// for the first left the second one standing.
+//
+// Round 26: the hand-off stamped `sessionKey()` onto the store on every thread
+// change, re-reading localStorage at the moment of the write. The next turn
+// re-labelled account A's conversation with account B's key, and the next mount
+// of this card restored A's thread into B's. Reading the key once at mount
+// closed that.
+//
+// Round 27: once at mount is not enough either, because the card does not have
+// to remount for the account to change. A mounted card went on DRAWING A's
+// thread after the token became B's, sent A's next question with B's token
+// (services/api.js reads the token at call time, on every request), and
+// appended B's answer to A's live conversation. Dropping the module store,
+// which is all round 26 did, does nothing about any of that: the turns React is
+// rendering are held in component state, and nothing was clearing it.
+//
+// So identity is a live value here. It is re-read when the browser says the
+// store moved, when this tab comes back to the front, on a slow tick that costs
+// one localStorage read, immediately before a question is sent, and again when
+// its answer lands. Any of those finding a different key drops the module
+// store, the rendered thread, and whatever was half typed in the box. That
+// thread is the owner's revenue, footfall and staffing numbers, and this repo
+// has already had one round of parallel sessions writing to production as the
+// wrong user through exactly this shared key, so it is not hypothetical.
+//
+// The tick is the belt to the storage event's braces, and it is here because
+// the storage event is delivered to every document EXCEPT the one that wrote
+// the value. Cross tab, the listener fires. Same tab, nothing fires at all, and
+// a listener that covers only half the cases is the half that reads as covered.
+const IDENTITY_POLL_MS = 2000;
+
 const restoreThread = () => {
   // SECURITY ROUND 5, 2026-08-20. This used to `return []` and LEAVE THE TURNS
   // IN PLACE. The read was already safe — a different key never renders
@@ -389,9 +409,14 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
   const [focused, setFocused] = useState(false);
   const [lockedReason, setLockedReason] = useState(null);
   const [thread, setThread] = useState(restoreThread);
-  // Lazy initialiser: read once, at mount, alongside restoreThread above, so
-  // the two agree about which session this card belongs to for its whole life.
-  const [ownerKey] = useState(sessionKey);
+  // Lazy initialiser: read at mount alongside restoreThread above, so the two
+  // agree about whose card this is on the first render. It does not stay fixed
+  // after that; see forgetOwner below.
+  const [ownerKey, setOwnerKey] = useState(sessionKey);
+  // The same value, reachable from a callback created under an older render.
+  // The turn handlers compare against this rather than the captured `ownerKey`,
+  // so a switch is never missed by a stale closure.
+  const ownerKeyRef = useRef(ownerKey);
   const [busy, setBusy] = useState(false);
   const alive = useRef(true);
   const boxRef = useRef(null);
@@ -406,6 +431,57 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
     alive.current = true;
     return () => { alive.current = false; };
   }, []);
+
+  // The card changes hands. Everything the old hands wrote goes.
+  //
+  // Not only the module store: the rendered thread, because that is what is on
+  // screen, and the draft, because a half typed question would otherwise be
+  // sent under a token its author never had. `ownerKeyRef` is written first and
+  // synchronously, so a turn resolving in this same tick reads the new identity
+  // instead of the one React has not committed yet.
+  const forgetOwner = useCallback((nextKey) => {
+    ownerKeyRef.current = nextKey;
+    threadStore = { key: null, turns: [] };
+    setOwnerKey(nextKey);
+    setThread([]);
+    setDraft('');
+    setBusy(false);
+  }, []);
+
+  // Who is signed in NOW. It returns that key, so a caller about to issue a
+  // request can stamp the request with the same read it just checked.
+  const checkOwner = useCallback(() => {
+    const live = sessionKey();
+    if (live !== ownerKeyRef.current) forgetOwner(live);
+    return live;
+  }, [forgetOwner]);
+
+  // Three ways to hear that the token moved, because no one of them hears all
+  // of it. `storage` fires here when ANOTHER tab signs in, which is the case
+  // the report describes and the only one an event covers. Focus and visibility
+  // catch a switch made while this tab sat in the background. The interval
+  // catches an in-app sign-in in this very tab, where no event of any kind is
+  // dispatched to the document that did the writing.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.addEventListener) return undefined;
+    const onStorage = (e) => {
+      // A storage event names the key that moved, and names none when the whole
+      // store was cleared. A clear is a sign-out, so it counts.
+      if (e && e.key && e.key !== 'flockToken') return;
+      checkOwner();
+    };
+    const doc = typeof document !== 'undefined' && document.addEventListener ? document : null;
+    window.addEventListener('storage', onStorage);
+    window.addEventListener('focus', checkOwner);
+    if (doc) doc.addEventListener('visibilitychange', checkOwner);
+    const tick = setInterval(checkOwner, IDENTITY_POLL_MS);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener('focus', checkOwner);
+      if (doc) doc.removeEventListener('visibilitychange', checkOwner);
+      clearInterval(tick);
+    };
+  }, [checkOwner]);
 
   // Hand the thread to the next mount of this card, but only while the signed
   // in session is still the one these turns were written under. If the token
@@ -500,19 +576,41 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
   // answer; the thread does not care which endpoint answered, only that the
   // answer arrived carrying its own mode.
   const runTurn = useCallback(async (key, question, run, typed = false) => {
+    // WHO IS ASKING, read at the moment the request is issued rather than at
+    // mount. If the token has already moved, this question was composed by
+    // somebody who is no longer signed in: forget them and send nothing, since
+    // the request would go out under the new account's token and its answer
+    // would land in the old account's conversation.
+    const askedUnder = ownerKeyRef.current;
+    const issuedUnder = sessionKey();
+    if (issuedUnder !== askedUnder) {
+      forgetOwner(issuedUnder);
+      return;
+    }
     setBusy(true);
     setThread((t) => [...t, { key, question, typed, status: 'pending', answer: null }]);
+    // The token can also move while this one request is in flight, and it is
+    // the answer that carries the other account's business. Whatever comes back
+    // was authorised by whoever was signed in when it left, so if that is no
+    // longer who is signed in, it is not appended. It is dropped, along with
+    // the rest of the thread it would have joined.
+    const landedForSomebodyElse = () => {
+      const live = sessionKey();
+      if (live === issuedUnder) return false;
+      forgetOwner(live);
+      return true;
+    };
     try {
       const answer = await run();
-      if (!alive.current) return;
+      if (!alive.current || landedForSomebodyElse()) return;
       setThread((t) => t.map((turn) => (turn.key === key ? { ...turn, status: 'done', answer } : turn)));
     } catch (err) {
-      if (!alive.current) return;
+      if (!alive.current || landedForSomebodyElse()) return;
       setThread((t) => t.map((turn) => (turn.key === key ? { ...turn, status: 'error' } : turn)));
     } finally {
-      if (alive.current) setBusy(false);
+      if (alive.current && sessionKey() === issuedUnder) setBusy(false);
     }
-  }, []);
+  }, [forgetOwner]);
 
   const askIntent = useCallback((id, label) => {
     if (busy || typeof ask !== 'function') return;
