@@ -279,19 +279,35 @@ test('a served slice that exists and is garbage is malformed, and never yields a
   assert.notEqual(readServedAccuracy({ training_metrics: { within_15: 87.3 } }).percent, 87.3);
 });
 
-test('the artifact serving production today is unmeasured, and must keep serving', () => {
-  // models/incumbent/model_metadata.json is v2.5.0-starling with
-  // ship_gate.overall_pass true — what a deploy from HEAD would run. It predates
-  // training_metrics_by_population entirely. Refusing it would unload
-  // getBaseline and drop every corpus venue back to a category curve, so the
-  // verdict has to be 'unmeasured' (loads, claims nothing), never 'malformed'.
+test('whatever artifact is on disk loads and reports the verdict its own metrics earn', () => {
+  // This used to assert the on-disk incumbent was 'unmeasured', which was true
+  // of v2.5.0-starling and stopped being true the moment v2.6.0-starling was
+  // built carrying training_metrics_by_population. The file is gitignored, so it
+  // differs per machine and is absent on a fresh clone, and pinning a verdict to
+  // one artifact generation made this test go red for a model upgrade rather
+  // than for a defect. The invariant worth holding is the one the load gate
+  // exists for: a loadable artifact must keep serving whatever it can or cannot
+  // claim, because refusing it unloads getBaseline and drops every corpus venue
+  // back to a category curve. The synthetic cases above already pin each verdict
+  // in isolation, so this one pins the real file against the same contract.
+  if (!fs.existsSync(INCUMBENT_META_FILE)) return;
   const incumbent = JSON.parse(fs.readFileSync(INCUMBENT_META_FILE, 'utf8'));
-  assert.ok(Number.isFinite(incumbent.training_metrics.within_15),
-    'the old artifact does carry a blended figure — that is exactly the trap');
   const got = readServedAccuracy(incumbent);
-  assert.equal(got.status, 'unmeasured');
-  assert.equal(got.percent, undefined,
-    'it has nothing publishable, and the blend it does carry is not a substitute');
+
+  assert.notEqual(got.status, 'malformed',
+    'a loadable artifact must never be refused, whatever it does or does not measure');
+
+  if (incumbent.training_metrics_by_population) {
+    assert.equal(got.status, 'measured');
+    assert.ok(Number.isFinite(got.percent),
+      'an artifact that measured the served slice has a figure to publish');
+  } else {
+    assert.equal(got.status, 'unmeasured');
+    assert.equal(got.percent, undefined,
+      'it has nothing publishable, and the blend it does carry is not a substitute');
+    assert.ok(Number.isFinite(incumbent.training_metrics.within_15),
+      'the old artifact does carry a blended figure, which is exactly the trap');
+  }
 });
 
 // ---------------------------------------------------------------------------
