@@ -774,6 +774,14 @@ export default function LiveDemo() {
     ? `Crowd forecast for the next ${hourly.length} hours, starting now: ${hourly.map(h => (h.open === false ? `${h.hour} closed` : `${h.hour} ${pct(h.score)} percent`)).join(', ')}`
     : 'Hour by hour crowd forecast';
   const shut = isShut(selected);
+  // A failed photo is per venue, so the flag resets when the card changes.
+  // Without the reset one venue with a dead ref would suppress the photo for
+  // every venue selected afterwards.
+  const [photoFailed, setPhotoFailed] = useState(false);
+  const selectedPhoto = selected?.photo_url || null;
+  useEffect(() => { setPhotoFailed(false); }, [selectedPhoto]);
+  const photoSrc = photoFailed || !selectedPhoto ? null : encodeURI(`${BASE_URL}${selectedPhoto}`);
+
   // Read once and used twice, so the "Best time to go" line and the locked
   // note can never both decide they are the right thing to draw.
   const bestTime = (typeof selected?.best_time === 'string' && selected.best_time) ? selected.best_time : null;
@@ -966,6 +974,21 @@ export default function LiveDemo() {
 
           {phase === 'ready' && selected && (
             <>
+              {photoSrc && (
+                // Google has no photo for every place, and a ref can 404 after
+                // a venue changes its listing. Either way the frame is removed
+                // rather than left as a broken image or an empty grey box that
+                // reads as a loading state that never finishes.
+                <div className="lpd-photo">
+                  <img
+                    src={photoSrc}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    onError={() => setPhotoFailed(true)}
+                  />
+                </div>
+              )}
               <div className="lpd-card-head">
                 {/* Closed means nobody is inside, so the dial reads zero in
                     slate rather than showing the model's guess at a crowd that

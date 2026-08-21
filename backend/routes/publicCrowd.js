@@ -205,7 +205,7 @@ const PLACE_FIELDS = 'places.id,places.displayName,places.formattedAddress,place
 //     first bar, the headline number and the recommendation cannot disagree,
 //   - the chart is the first 12 entries of that same array instead of a second
 //     set of predictions that could drift from it (and 12 fewer model calls).
-async function buildCard(v, weather, clock, preScored) {
+async function buildCard(v, weather, clock, preScored, place) {
   // Round 14: the list pin and the card dial are the same venue at the same
   // instant, so they must be the same prediction, not two calls that could
   // straddle an event-cache refill and print 78% on the pin and 76% in the
@@ -231,6 +231,13 @@ async function buildCard(v, weather, clock, preScored) {
   return {
     place_id: v.place_id,
     name: v.name,
+    // The card had every fact about the venue except what it looks like. The
+    // pin row has carried a photo ref all along; the card was built from the
+    // venue shape, which does not include one, so nothing reached the page.
+    // 400 is the card size the photo proxy snaps to, 160 is the pin size.
+    photo_url: place?.photos?.[0]?.name
+      ? `/api/venues/photo?ref=${encodeURIComponent(place.photos[0].name)}&maxwidth=400`
+      : null,
     address: v.formatted_address,
     rating: v.rating,
     reviews: v.user_ratings_total,
@@ -545,7 +552,7 @@ router.get('/demo/venues',
         try {
           const rank = (a, b) => (Number(b.is_open !== false) - Number(a.is_open !== false)) || (b.score - a.score);
           const feature = [...venues].sort(rank)[0];
-          card = await buildCard(feature._shape, weather, feature._clock, feature._scored);
+          card = await buildCard(feature._shape, weather, feature._clock, feature._scored, feature._place);
         } catch { /* card arrives via the venue endpoint instead */ }
       }
 
@@ -618,7 +625,7 @@ router.get('/demo/venue/:placeId',
       const lng = v.location?.longitude;
       const weather = (lat && lng) ? await getWeather(lat, lng, ANON).catch(() => null) : null;
 
-      const result = await buildCard(v, weather, venueClock(p, { time: scoreTime, localHour, localDay }));
+      const result = await buildCard(v, weather, venueClock(p, { time: scoreTime, localHour, localDay }), null, p);
       setCache(cacheKey, result, 10 * 60_000);
       res.json(presentCard(result));
     } catch (err) {
