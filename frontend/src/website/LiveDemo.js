@@ -780,7 +780,15 @@ export default function LiveDemo() {
   const [photoFailed, setPhotoFailed] = useState(false);
   const selectedPhoto = selected?.photo_url || null;
   useEffect(() => { setPhotoFailed(false); }, [selectedPhoto]);
-  const photoSrc = photoFailed || !selectedPhoto ? null : encodeURI(`${BASE_URL}${selectedPhoto}`);
+  // A DROPPED REQUEST IS NOT A VENUE WITH NO PHOTO, and this used to treat them
+  // as the same thing: `photoFailed` removed the frame outright, so a rate
+  // limited proxy or a single flaky load turned a card that has a picture into
+  // a card that looks like it never had one. The frame is now kept and filled
+  // with the same cream placeholder the app uses, and it is only absent when
+  // Google genuinely has no photo of the place.
+  const photoSrc = !selectedPhoto
+    ? null
+    : (photoFailed ? '/marks/venue-placeholder.jpg' : encodeURI(`${BASE_URL}${selectedPhoto}`));
 
   // Read once and used twice, so the "Best time to go" line and the locked
   // note can never both decide they are the right thing to draw.
@@ -975,10 +983,11 @@ export default function LiveDemo() {
           {phase === 'ready' && selected && (
             <>
               {photoSrc && (
-                // Google has no photo for every place, and a ref can 404 after
-                // a venue changes its listing. Either way the frame is removed
-                // rather than left as a broken image or an empty grey box that
-                // reads as a loading state that never finishes.
+                // Google does not have a photo of every place, and that is the
+                // only reason this frame is ever absent. A ref that 404s or a
+                // proxy that refuses gets the placeholder instead, so the card
+                // never silently changes shape between two loads of the same
+                // venue.
                 <div className="lpd-photo">
                   <img
                     src={photoSrc}

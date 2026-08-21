@@ -24,13 +24,17 @@
 // caller with no account has, so the reserve holds however many doors there are.
 //
 // THE SHARE: 1800 unauthenticated / 1200 reserved, i.e. 60/40.
-//   * Upward, 1800 is pinned by the photo proxy's PUBLIC_PHOTO_BUDGET = 1500:
+//   * Upward, 1800 was pinned by the photo proxy's PUBLIC_PHOTO_BUDGET = 1500:
 //     a sub-ceiling above the ceiling it sits under never binds — that was
 //     round 23's own finding about that same constant at 4000 — so the
 //     aggregate has to stay strictly above the largest per-door number or it
 //     silently repeals the per-address work those numbers are doing. 1800 is
-//     the smallest round number that clears 1500, so it is the LARGEST reserve
-//     available without breaking a control that already exists.
+//     the smallest round number that clears 1500, so it was the LARGEST reserve
+//     available without breaking a control that already existed. That upward
+//     constraint has since RELAXED rather than moved: the photo door's daily
+//     brake is derived from a dollar budget in services/photoStore.js and is
+//     now a few hundred, not 1500, so 1800 has more room under it than the
+//     number it was chosen against.
 //   * Downward, 1200 reserved is 40 account-hours at PER_USER_HOURLY = 30, or
 //     roughly 240 real sessions a day behind the 5- and 10-minute response
 //     caches, against an authenticated population currently two orders of
@@ -178,7 +182,7 @@ test('every per-door sub-ceiling still binds strictly under the aggregate', () =
 
   for (const [name, value] of [
     ['BADGE_DAILY', badge.BADGE_DAILY],
-    ['PUBLIC_PHOTO_BUDGET', vs.PUBLIC_PHOTO_BUDGET],
+    ['the photo proxy daily brake', require('../services/photoStore').PHOTO_FETCH_BURST_PER_DAY],
     ['DEMO_DAILY', DEMO_DAILY],
   ]) {
     assert.ok(value < UNAUTH_DAILY,

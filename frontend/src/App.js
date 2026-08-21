@@ -622,6 +622,29 @@ const EmptyMark = ({ name, height = 160, style }) => (
 // Resolve to the API origin whenever a stored value is rendered.
 const resolveVenuePhoto = (u) => (u && u.startsWith('/api/') ? `${BASE_URL}${u}` : u || null);
 
+// ---------------------------------------------------------------------------
+// ONE FAILURE BEHAVIOUR FOR EVERY VENUE PHOTO IN THE APP.
+// ---------------------------------------------------------------------------
+// There were four of them, and three were wrong. `display = 'none'` on the
+// Birdie card, the flock tile, the flock hero and the search list left the
+// element hidden PERMANENTLY for that mount, with nothing in its place and (in
+// two cases) the surrounding box collapsed to zero height, so a single dropped
+// request quietly changed the layout under the reader. The venue detail hero
+// painted a navy gradient over itself instead. Six other rows swapped in an
+// inline SVG rectangle, which is a flat navy square rather than the placeholder
+// the no-photo branch beside them would have drawn.
+//
+// A photo that failed to load is not a venue with no photo. It is a request to
+// retry, and until then the same cream placeholder every other surface uses,
+// so the card keeps its shape and reads as a venue rather than as a hole.
+// Guarded against a placeholder that itself 404s, which would otherwise loop.
+const VENUE_PHOTO_PLACEHOLDER = '/marks/venue-placeholder.jpg';
+const onVenuePhotoError = (e) => {
+  if (!e || !e.target || String(e.target.src || '').endsWith(VENUE_PHOTO_PLACEHOLDER)) return;
+  e.target.onerror = null;
+  e.target.src = VENUE_PHOTO_PLACEHOLDER;
+};
+
 // HTML-escape a user-derived string before it is interpolated into any raw
 // HTML sink (e.g. MapLibre Popup.setHTML, which assigns innerHTML). This must
 // be safe on its own — do NOT rely on upstream stripHtml on the write path.
@@ -4117,8 +4140,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       const venue = detailResult.status === 'fulfilled' ? detailResult.value.venue : fallbackData;
       const crowd = crowdResult.status === 'fulfilled' ? crowdResult.value : null;
 
-      if (venue) setVenueDetailModal({ ...venue, loading: false });
-      else if (fallbackData) setVenueDetailModal({ ...fallbackData, loading: false });
+      // THE PHOTO THE SEED OBJECT WAS CARRYING MUST SURVIVE THIS SWAP. Every
+      // caller of openVenueDetail hands in a venue that already has a working
+      // photo_url (the map pin, the search row, the flock card, the DM card),
+      // and this replaced it wholesale with the Place Details response. That
+      // response now carries photo_url too, but a venue whose details answer
+      // omits photos would still have gone from a card WITH a picture to a card
+      // with a map-pin glyph, purely because a field was dropped in transit.
+      // Neither list is overwritten by an empty one.
+      if (venue) {
+        setVenueDetailModal({
+          ...venue,
+          photo_url: venue.photo_url || (fallbackData && fallbackData.photo_url) || null,
+          photos: (venue.photos && venue.photos.length > 0)
+            ? venue.photos
+            : ((fallbackData && fallbackData.photos) || []),
+          loading: false,
+        });
+      } else if (fallbackData) setVenueDetailModal({ ...fallbackData, loading: false });
       else setVenueDetailModal(null);
 
       setCrowdData(crowd);
@@ -8961,7 +9000,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.steel}12)`, borderBottom: `1px solid ${colors.creamDark}`, flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             {dmPinnedVenue.photo_url ? (
-              <img src={dmPinnedVenue.photo_url} alt="" style={{ width: '52px', height: '52px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="52" height="52"><rect fill="#1a3a5c" width="52" height="52" rx="12"/></svg>'); }} />
+              <img src={dmPinnedVenue.photo_url} alt="" style={{ width: '52px', height: '52px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} onError={onVenuePhotoError} />
             ) : (
               <div style={{ width: '52px', height: '52px', borderRadius: '12px', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}>
                 {Icons.mapPin('white', 22)}
@@ -9150,7 +9189,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     {suggestedVenues.map(venue => (
                       <button key={venue.id || venue.name} className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleDmQuickVote(venue.name, venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'opacity 0.2s', position: 'relative', overflow: 'hidden' }}>
                         {venue.photo_url ? (
-                          <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="36" height="36"><rect fill="#1a3a5c" width="36" height="36" rx="8"/></svg>'); }} />
+                          <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
                         ) : (
                           <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                             {Icons.mapPin('white', 14)}
@@ -9219,9 +9258,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   }}
                   style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left', transition: 'opacity 0.2s ease' }}
                 >
-                  <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    {venue.category === 'Food' ? Icons.pizza('white', 20) : venue.category === 'Nightlife' ? Icons.cocktail('white', 20) : venue.category === 'Live Music' ? Icons.music('white', 20) : Icons.sports('white', 20)}
-                  </div>
+                  {/* The row is about to SEND this venue's photo_url to the
+                      other person, and it was drawing a category gradient
+                      instead of showing it. The "Popular Chains Nearby" rows
+                      thirty lines up already render a 36px photo, so the
+                      gradient here was the outlier, not the standard. The icon
+                      tile stays as the fallback for a venue Google has no photo
+                      of, which is the only reason to show none. */}
+                  {venue.photo_url ? (
+                    <img
+                      src={resolveVenuePhoto(venue.photo_url)}
+                      alt=""
+                      style={{ width: '44px', height: '44px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0 }}
+                      onError={(e) => { e.target.onerror = null; e.target.src = '/marks/venue-placeholder.jpg'; }}
+                    />
+                  ) : (
+                    <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      {venue.category === 'Food' ? Icons.pizza('white', 20) : venue.category === 'Nightlife' ? Icons.cocktail('white', 20) : venue.category === 'Live Music' ? Icons.music('white', 20) : Icons.sports('white', 20)}
+                    </div>
+                  )}
                   <div style={{ flex: 1 }}>
                     <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0 }}>{venue.name}</p>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type} {venue.price ? `\u2022 ${venue.price}` : ''}</p>
@@ -9697,7 +9752,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         return (
                         <div key={vi} style={{ borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', overflow: 'hidden', boxShadow: 'var(--card-shadow-sm, 0 1px 3px rgba(0,0,0,0.05))', maxWidth: '280px', animation: `fadeSlideIn 0.35s ease-out ${vi * 0.08}s both` }}>
                           {photoUrl && (
-                            <img src={photoUrl} alt="" loading="lazy" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.style.display = 'none'; }} />
+                            <img src={photoUrl} alt="" loading="lazy" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
                           )}
 
                           <div style={{ padding: '12px' }}>
@@ -10508,7 +10563,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {selectedVenueForCreate ? (
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '10px', border: `2px solid ${colors.steel}`, display: 'flex', alignItems: 'center', gap: '10px' }}>
                 {selectedVenueForCreate.photo_url ? (
-                  <img src={selectedVenueForCreate.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover' }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect fill="#1a3a5c" width="48" height="48" rx="8"/></svg>'); }} />
+                  <img src={selectedVenueForCreate.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover' }} onError={onVenuePhotoError} />
                 ) : (
                   <div style={{ width: '48px', height: '48px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin(colors.navy, 20)}</div>
                 )}
@@ -10721,6 +10776,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             exit={{ y: 40, opacity: 0 }}
             transition={{ type: 'spring', damping: 22, stiffness: 260, mass: 0.8 }}
             onClick={(e) => e.stopPropagation()} style={{ position: 'absolute', bottom: '12px', left: '8px', right: '8px', top: 'auto', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', zIndex: 45, overflow: 'hidden', maxHeight: 'calc(100% - 24px)', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}>
+            {/* THE CARD THAT HAD THE PHOTO AND NEVER SHOWED IT. This is the
+                primary consumer venue card, the one the map opens on a pin tap
+                and the one the venue dashboard's map tab reuses, and until
+                2026-08-20 it rendered the name, the type, the stars, the
+                address, the crowd forecast and the actions with no image
+                anywhere in it. The photo was already in hand the whole time:
+                venuesToMapPins puts photo_url on every pin, and this card only
+                ever read that field to pass it somewhere else. */}
+            {activeVenue.photo_url && (
+              <img
+                src={resolveVenuePhoto(activeVenue.photo_url)}
+                alt={activeVenue.name || ''}
+                style={{ width: '100%', height: '104px', objectFit: 'cover', display: 'block' }}
+                /* Fall back to the shared placeholder rather than vanishing. A
+                   failed load used to be the one case where the layout silently
+                   changed shape under the reader. */
+                onError={(e) => { e.target.onerror = null; e.target.src = '/marks/venue-placeholder.jpg'; }}
+              />
+            )}
             <div style={{ padding: '8px 10px 10px', position: 'relative' }}>
               <button className="hit44" onClick={() => setActiveVenue(null)} style={{ position: 'absolute', top: '6px', right: '8px', width: '24px', height: '24px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>{Icons.x('var(--text-secondary)', 12)}</button>
               <motion.div initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08, type: 'spring', damping: 20, stiffness: 300 }} style={{ marginBottom: '4px', paddingRight: '32px' }}>
@@ -11588,7 +11662,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-tertiary)'; }}
                 >
                   {venue.photo_url ? (
-                    <img src={venue.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="48" height="48"><rect fill="#1a3a5c" width="48" height="48" rx="10"/></svg>'); }} />
+                    <img src={venue.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '10px', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
                   ) : (
                     <div style={{ width: '48px', height: '48px', borderRadius: '10px', backgroundColor: 'var(--pill-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.mapPin(colors.navyMid, 20)}</div>
                   )}
@@ -12457,7 +12531,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           return (
                             <div style={{ width: '46px', height: '46px', borderRadius: '14px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(13,40,71,0.18)', backgroundColor: swatch.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                               {f.venuePhoto ? (
-                                <img src={f.venuePhoto} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={(e) => { e.target.style.display = 'none'; }} />
+                                <img src={f.venuePhoto} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={onVenuePhotoError} />
                               ) : (
                                 <span aria-hidden="true" style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: swatch.fg, lineHeight: 1, letterSpacing: '-0.01em' }}>{flockTileInitial(f.name)}</span>
                               )}
@@ -12647,7 +12721,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.steel}12)`, borderBottom: `1px solid ${colors.creamDark}`, flexShrink: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
               {flock.venuePhoto ? (
-                <img src={flock.venuePhoto} alt="" style={{ width: '52px', height: '52px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="52" height="52"><rect fill="#1a3a5c" width="52" height="52" rx="12"/></svg>'); }} />
+                <img src={flock.venuePhoto} alt="" style={{ width: '52px', height: '52px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} onError={onVenuePhotoError} />
               ) : (
                 <div style={{ width: '52px', height: '52px', borderRadius: '12px', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}>
                   {Icons.mapPin('white', 22)}
@@ -13566,7 +13640,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       {suggestedVenues.map(venue => (
                         <button key={venue.id || venue.name} className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleQuickVote(venue.name, venue.type || venue.category || 'Venue', venue.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '10px 12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', transition: 'opacity 0.2s', position: 'relative', overflow: 'hidden' }}>
                           {venue.photo_url ? (
-                            <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={(e) => { e.target.onerror = null; e.target.src = 'data:image/svg+xml,' + encodeURIComponent('<svg aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg" width="36" height="36"><rect fill="#1a3a5c" width="36" height="36" rx="8"/></svg>'); }} />
+                            <img src={venue.photo_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
                           ) : (
                             <div style={{ width: '36px', height: '36px', borderRadius: '8px', background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                               {Icons.mapPin('white', 14)}
@@ -13644,17 +13718,30 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       overflow: 'hidden'
                     }}
                   >
-                    <div style={{
-                      width: '44px',
-                      height: '44px',
-                      borderRadius: '12px',
-                      background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center'
-                    }}>
-                      {venue.category === 'Food' ? Icons.pizza('white', 20) : venue.category === 'Nightlife' ? Icons.cocktail('white', 20) : venue.category === 'Live Music' ? Icons.music('white', 20) : Icons.sports('white', 20)}
-                    </div>
+                    {/* Same defect as the DM share list: shareVenueToChat sends
+                        this venue's photo_url onward, and the row drew a
+                        category gradient rather than the picture it was
+                        holding. Icon tile kept as the no-photo fallback. */}
+                    {venue.photo_url ? (
+                      <img
+                        src={resolveVenuePhoto(venue.photo_url)}
+                        alt=""
+                        style={{ width: '44px', height: '44px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0 }}
+                        onError={(e) => { e.target.onerror = null; e.target.src = '/marks/venue-placeholder.jpg'; }}
+                      />
+                    ) : (
+                      <div style={{
+                        width: '44px',
+                        height: '44px',
+                        borderRadius: '12px',
+                        background: `linear-gradient(135deg, ${getCategoryColor(venue.category)}, ${getCategoryColor(venue.category)}cc)`,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center'
+                      }}>
+                        {venue.category === 'Food' ? Icons.pizza('white', 20) : venue.category === 'Nightlife' ? Icons.cocktail('white', 20) : venue.category === 'Live Music' ? Icons.music('white', 20) : Icons.sports('white', 20)}
+                      </div>
+                    )}
                     <div style={{ flex: 1 }}>
                       <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0 }}>{venue.name}</p>
                       {/* `price` is null for every venue Google gives no
@@ -14107,7 +14194,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {hasVenue ? (
             <div style={{ ...styles.card, padding: 0, overflow: 'hidden', marginBottom: '12px' }}>
               {flock.venuePhoto && (
-                <img src={flock.venuePhoto} alt="" width="375" height="170" style={{ width: '100%', height: '170px', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.style.display = 'none'; }} />
+                <img src={flock.venuePhoto} alt="" width="375" height="170" style={{ width: '100%', height: '170px', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
               )}
               <div style={{ padding: '14px' }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', marginBottom: '6px' }}>
@@ -18434,6 +18521,59 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   )}
                 </div>
 
+                {/* 3b. THE PHOTO BUDGET.
+                    Its own panel rather than another row in the observed list,
+                    for one reason: it is the only ceiling on this screen that a
+                    person is expected to RAISE. Every other number here is a
+                    thing to watch. This one is a decision, and if it is ever
+                    reached the right response is usually to buy more photos
+                    rather than to show fewer. It is also the line that has
+                    historically taken almost the whole Google bill, and until
+                    2026-08-20 its meter lived in memory, so it read zero after
+                    every deploy and understated the spend by the most on
+                    exactly the days there was the most of it. */}
+                {d.photoBudget && (() => {
+                  const pb = d.photoBudget;
+                  const lim = pb.limits || {};
+                  const monthPct = lim.fetchesPerMonth
+                    ? Math.min(100, Math.round((pb.monthUsed / lim.fetchesPerMonth) * 100))
+                    : null;
+                  const tight = monthPct !== null && monthPct >= 80;
+                  return (
+                    <div key="photo-budget" style={{ ...card, border: tight ? `1px solid ${colors.amber}` : undefined }}>
+                      <h3 style={h3}>Venue photos</h3>
+                      <p style={sub}>
+                        Google charges for each photo Flock buys, and Flock keeps every one it buys for thirty days in Postgres, so this counts venues photographed rather than cards viewed. A photo already bought costs nothing to show again, however many people look at it.
+                      </p>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                        <div>
+                          <p style={kicker}>This month</p>
+                          <p style={big}>
+                            {count(pb.monthUsed)}
+                            <span style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-tertiary)' }}> of {count(lim.fetchesPerMonth)}</span>
+                          </p>
+                          <p style={{ ...sub, margin: '3px 0 0' }}>
+                            {moneyOr(pb.monthUsd, 'nothing yet')} so far. The first {count(lim.freePerMonth)} photos a month are free.
+                          </p>
+                        </div>
+                        <div>
+                          <p style={kicker}>Budget</p>
+                          <p style={big}>{moneyOr(lim.budgetUsdPerYear, 'Not set', 0)}<span style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: 'var(--text-tertiary)' }}>/yr</span></p>
+                          <p style={{ ...sub, margin: '3px 0 0' }}>
+                            Set in backend/services/photoStore.js, or by PHOTO_BUDGET_USD_PER_YEAR on Railway. Every other photo limit is derived from it.
+                          </p>
+                        </div>
+                      </div>
+                      {row('photo-day', 'Bought today', `${count(pb.dayUsed)} of ${count(lim.burstPerDay)}`,
+                        'A daily brake at three times the even pace, so one bad day cannot spend the month.')}
+                      {row('photo-month-left', 'Left this month', count(pb.monthRemaining),
+                        tight
+                          ? 'Close to the ceiling. Photos already bought keep showing. A venue nobody has looked at this month would have no picture until the 1st, so this is the moment to raise the budget.'
+                          : 'Reaching this stops new venues being bought. It never blanks a photo that is already cached.')}
+                    </div>
+                  );
+                })()}
+
                 {/* 4. ONE VENUE */}
                 <div style={card}>
                   <h3 style={h3}>One venue at {moneyOr(v.priceUsd, 'the list price', 0)} a month</h3>
@@ -20347,7 +20487,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <div style={{ position: 'relative', height: venue.photo_url ? '120px' : '0' }}>
                           {venue.photo_url && (
                             <>
-                              <img src={venue.photo_url} alt="" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.style.display = 'none'; e.target.parentElement.style.height = '0'; }} />
+                              <img src={venue.photo_url} alt="" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
                               <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 40%, rgba(0,0,0,0.6) 100%)' }} />
                               {venue.topRated && (
                                 <div style={{ position: 'absolute', top: '8px', left: '8px', padding: '3px 8px', borderRadius: '8px', backgroundColor: 'rgba(245,158,11,0.9)', display: 'flex', alignItems: 'center', gap: '3px' }}>
@@ -20837,7 +20977,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ position: 'relative', height: '220px', flexShrink: 0, overflow: 'hidden' }}>
               {venueDetailModal.photos && venueDetailModal.photos.length > 0 ? (
                 <>
-                  <img src={venueDetailModal.photos[venueDetailPhotoIdx] || venueDetailModal.photos[0]} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.src = ''; e.target.parentElement.style.background = `linear-gradient(135deg, #1e293b, #1a3a5c)`; e.target.style.display = 'none'; }} />
+                  <img src={venueDetailModal.photos[venueDetailPhotoIdx] || venueDetailModal.photos[0]} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
                   {venueDetailModal.photos.length > 1 && (
                     <>
                       <button aria-label="Previous" className="hit44" onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i > 0 ? i - 1 : venueDetailModal.photos.length - 1); }} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: 'var(--t-body)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>‹</button>
@@ -20851,7 +20991,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   )}
                 </>
               ) : venueDetailModal.photo_url ? (
-                <img src={venueDetailModal.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.src = ''; e.target.style.display = 'none'; e.target.parentElement.style.background = `linear-gradient(135deg, #1e293b, #1a3a5c)`; }} />
+                <img src={venueDetailModal.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
               ) : (
                 <div style={{ width: '100%', height: '100%', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin('rgba(255,255,255,0.3)', 48)}</div>
               )}

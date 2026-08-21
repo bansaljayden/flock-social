@@ -61,6 +61,7 @@ test('with every meter at zero, every observed figure is zero, whatever the ceil
     advisorMaxOutputTokens: 512,
     placesCallsToday: 0,
     placesPhotoCallsToday: 0,
+    placesPhotoCallsMonth: 0,
     visionCallsToday: 0,
     weatherCallsToday: 0,
     ticketmasterCallsToday: 0,
@@ -259,13 +260,25 @@ test('the durable ledgers are marked durable and the in-memory ones are not', ()
     birdieModel: 'gemini-3.5-flash-lite',
     placesCallsToday: 1,
     placesPhotoCallsToday: 1,
+    placesPhotoCallsMonth: 40,
   });
   const byId = Object.fromEntries(observed.lines.map((l) => [l.id, l]));
   assert.strictEqual(byId['gemini-roost-month'].durable, true);
   assert.strictEqual(byId['gemini-roost-month'].window, 'month to date');
   assert.strictEqual(byId['gemini-birdie'].durable, false);
   assert.match(byId['gemini-birdie'].window, /this process only/);
-  assert.strictEqual(byId['places-photos'].durable, false);
+  // Both photo lines are durable as of migration 046: they come from
+  // places_photo_spend rather than from a module-scope integer, which is what
+  // makes a month-to-date photo figure sayable at all. The Text Search and
+  // Place Details remainder is still a heap counter and still is not.
+  assert.strictEqual(byId['places-photos'].durable, true);
+  assert.strictEqual(byId['places-photos'].window, 'today');
+  assert.strictEqual(byId['places-photos-month'].durable, true);
+  assert.strictEqual(byId['places-photos-month'].window, 'month to date');
+  assert.strictEqual(byId['places-other'].durable, false);
+  // The free tier is real money and is applied on the month line, so 40 photos
+  // in a month whose first 1,000 are free costs nothing.
+  assert.strictEqual(byId['places-photos-month'].usd, 0);
   // A month-to-date line must not be added into a day total.
   assert.ok(
     !observed.todayUsd || byId['gemini-roost-month'].usd <= observed.todayUsd + 1,
