@@ -876,7 +876,8 @@ async function buildAroundYou(ctx, { now = new Date(), userId } = {}) {
   } catch { /* no curve is fine; the fallback hour covers it */ }
 
   // Events, one probe per day. Rides mlPredictor's shared event cache and
-  // budget; a missing key refuses instead of reading as a quiet street.
+  // budget; a missing key refuses instead of reading as a quiet street, and so
+  // does any probe the vendor did not answer (see the `observed` check below).
   if (!process.env.TICKETMASTER_API_KEY) {
     out.push(makeRefusal({
       id: 'refuse_events_unavailable',
@@ -890,6 +891,9 @@ async function buildAroundYou(ctx, { now = new Date(), userId } = {}) {
     const mo = offset != null ? shifted.getUTCMonth() : shifted.getMonth();
     const da = offset != null ? shifted.getUTCDate() : shifted.getDate();
     let sawEvent = false;
+    // Days the listing feed did not answer for. A fact of ours may only
+    // describe days it did.
+    let unansweredDays = 0;
     for (let d = 0; d <= 6; d++) {
       const dayForDow = offset != null ? new Date(Date.UTC(y, mo, da + d)) : new Date(y, mo, da + d);
       const dow = offset != null ? dayForDow.getUTCDay() : dayForDow.getDay();
@@ -902,7 +906,22 @@ async function buildAroundYou(ctx, { now = new Date(), userId } = {}) {
       try {
         ev = await mlPredictor._internals.getNearbyEvents(lat, lng, instant, userId);
       } catch { ev = null; }
-      if (!ev || !ev.hasEvent) continue;
+      // A LOOKUP THAT DID NOT HAPPEN IS NOT A QUIET STREET (round 24).
+      //
+      // getNearbyEvents answers `hasEvent: false` when Ticketmaster listed
+      // nothing AND when the budget refused the call, the vendor errored, or
+      // the request timed out. It now says which, in `observed`. Reading the
+      // failures as seven negative observations is how this card came to
+      // publish a sourced, freshly timestamped "no listed events this week"
+      // out of seven calls that never reached the vendor, and an owner can
+      // staff a night against that sentence. A source that did not answer
+      // produces no fact.
+      // Read fail-closed: only an explicit `observed: true` counts as a
+      // listing that ran. An answer shaped by anything other than the current
+      // getNearbyEvents cannot vouch for itself, and silence is the cheap
+      // failure here while a false quiet street is the expensive one.
+      if (!ev || ev.observed !== true) { unansweredDays++; continue; }
+      if (!ev.hasEvent) continue;
       const dist = Number(ev.nearestDistance);
       if (!Number.isFinite(dist) || dist > EVENT_RADIUS_KM) continue;
       sawEvent = true;
@@ -925,7 +944,19 @@ async function buildAroundYou(ctx, { now = new Date(), userId } = {}) {
         label: `${weekday}: a listed event about ${distRounded} km away, ${evName || 'unnamed listing'}.`,
       }));
     }
-    if (!sawEvent) {
+    if (unansweredDays > 0) {
+      // Some or all of the week was never looked up. The days we DID see are
+      // already pushed above and each carries its own date; what we cannot do
+      // is summarise the week, because the summary would be speaking for days
+      // nobody asked about.
+      out.push(makeRefusal({
+        id: 'refuse_events_unavailable',
+        reason: unansweredDays === 7
+          ? 'The event listings did not answer for any of the next 7 days, so we cannot tell you what is on near you.'
+          : `The event listings did not answer for ${unansweredDays} of the next 7 days, so we cannot say the week is clear.`,
+        whatWouldUnlock: 'The listings feed answering again. This is usually transient and nothing on your side is missing.',
+      }));
+    } else if (!sawEvent) {
       out.push(makeFact({
         id: 'no_listed_events',
         value: { listedEventsWithinRadius: 0, radiusKm: EVENT_RADIUS_KM, windowDays: 7 },

@@ -419,7 +419,12 @@ test('predictBusyness forwards the caller identity down to the event fetch', () 
   // still the FOURTH argument, whatever follows it.
   assert.match(src, /getNearbyEvents\(lat, lng, eventInstant, userId[,)]/,
     'the userId must reach getNearbyEvents, or the per-account ceiling is decorative');
-  assert.match(src, /if \(!allowEventFetch\(userId, opts\)\) return noEvents;/,
+  // The return value became `eventsUnavailable('budget_exhausted')` in round
+  // 24, when a refused call stopped being indistinguishable from a street with
+  // nothing listed on it (see __tests__/advisorEventProvenance.test.js). The
+  // gate call is what this line pins; what it returns is pinned there, by
+  // execution rather than by regex.
+  assert.match(src, /if \(!allowEventFetch\(userId, opts\)\) return eventsUnavailable\(/,
     'getNearbyEvents must charge the identified budget, and pass the anonymous marker with it');
   // `slotWeather`, not `weather`, since the per-hour forecast weather fix
   // (2026-08-19): each slot is scored with the reading nearest its own hour.
