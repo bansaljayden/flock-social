@@ -68,13 +68,22 @@ test('the guard exposes its predicate, so this file does not restate it', () => 
 
 const SOURCE_DIRS = ['routes', 'services', 'sockets', 'utils', 'middleware', 'db', 'config'];
 
+// config/database.js is the guard itself, and it is the one file in the repo
+// whose text is SUPPOSED to contain the statements it refuses: its refusal
+// messages quote them ("ALTER TABLE ... DROP COLUMN is BLOCKED"), and its
+// header spells out the examples each rule was written for. Scanning it finds
+// the documentation, not a statement the app runs, and every rule added to
+// SQL_DANGER would fail this test purely for describing itself. The guard's
+// behaviour is pinned by the explicit cases further down instead.
+const SELF = path.join('config', 'database.js');
+
 function jsFiles() {
   const out = [];
   for (const dir of SOURCE_DIRS) {
     const full = path.join(BACKEND, dir);
     if (!fs.existsSync(full)) continue;
     for (const f of fs.readdirSync(full)) {
-      if (f.endsWith('.js')) out.push(path.join(dir, f));
+      if (f.endsWith('.js') && path.join(dir, f) !== SELF) out.push(path.join(dir, f));
     }
   }
   return out;
@@ -204,5 +213,105 @@ test('comments go and quoted text stays', () => {
 test('a non-string query text is not a statement', () => {
   for (const v of [undefined, null, 0, {}, [], { text: 'TRUNCATE users' }]) {
     assert.equal(dangerous(v), null);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 4. THE OTHER HALF OF THE PROSE PROBLEM — string literals
+// ---------------------------------------------------------------------------
+//
+// Stripping comments fixed the statement that shipped the outage and left the
+// identical mistake reachable one quote character away: `stripSqlComments`
+// preserves quoted text (correctly — a `--` inside a literal does not start a
+// comment in Postgres), so the WORDS inside that literal were still handed to
+// the verb match. Migration 030 added three free-text venue columns whose whole
+// purpose is an owner describing their own room in their own words, so this
+// stopped being hypothetical the moment the intake form shipped.
+//
+// The fix blanks literal CONTENTS for the danger match only, AFTER the comment
+// strip, so nothing can be hidden inside a literal that a `--` used to protect.
+
+test('a verb inside a string literal is a word, not a statement', () => {
+  for (const sql of [
+    // Migration 030's free-text columns, written the way a seed or a one-shot
+    // script would write them.
+    "INSERT INTO venue_profiles (quirks) VALUES ('we truncate the tap list at ten')",
+    "UPDATE venue_profiles SET event_note = 'quiz night, we drop table service' WHERE id = 1",
+    "UPDATE venue_profiles SET anchor_note = 'stadium across the road' WHERE quirks <> 'DROP TABLE'",
+    "SELECT * FROM content_reports WHERE details <> 'DROP TABLE users'",
+    "SELECT * FROM t WHERE note = 'TRUNCATE'",
+  ]) {
+    assert.equal(dangerous(sql), null, `must be allowed: ${JSON.stringify(sql)}`);
+  }
+});
+
+test('blanking literals cannot be used to hide a statement', () => {
+  // The property that makes the blanking safe: it runs after comments are
+  // already gone, and a real statement lives outside the quotes.
+  assert.ok(dangerous("SELECT 'TRUNCATE' AS a; TRUNCATE users"));
+  assert.ok(dangerous("SELECT '-- x' AS a; DROP TABLE users"));
+  // A dollar-quoted body EXECUTES, so it is not blanked (migrations 032/038).
+  assert.ok(dangerous('DO $$ BEGIN DROP TABLE users; END $$'));
+  // A quoted identifier is a name, not data, so it stays visible too.
+  assert.ok(dangerous('DROP TABLE "users"'));
+});
+
+// ---------------------------------------------------------------------------
+// 5. THE STATEMENTS THE LIST DID NOT HAVE
+// ---------------------------------------------------------------------------
+//
+// The guard blocked DROP TABLE and TRUNCATE and waved through four things that
+// are strictly worse, plus the one that is TRUNCATE spelled differently.
+
+test('the statements that are worse than DROP TABLE are refused too', () => {
+  for (const sql of [
+    'DROP SCHEMA public CASCADE',       // all 46 tables, one line
+    'drop schema if exists public',
+    'DROP DATABASE railway',
+    'DROP OWNED BY app_user',
+    'ALTER TABLE users DROP COLUMN email',
+    'alter table venue_profiles drop column if exists quirks',
+  ]) {
+    assert.ok(dangerous(sql), `must be refused: ${JSON.stringify(sql)}`);
+  }
+});
+
+test('a DELETE with no WHERE is a TRUNCATE that spells itself differently', () => {
+  for (const sql of [
+    'DELETE FROM users',
+    'delete from venue_owner_reports;',
+    // The reason this is checked per statement rather than per query text: the
+    // text below contains a WHERE and still empties the users table.
+    'DELETE FROM sessions WHERE id = 1; DELETE FROM users',
+  ]) {
+    assert.ok(dangerous(sql), `must be refused: ${JSON.stringify(sql)}`);
+  }
+});
+
+test('every bounded DELETE the app actually issues is still allowed', () => {
+  for (const sql of [
+    'DELETE FROM users WHERE id = $1',
+    'DELETE FROM messages WHERE sender_id = $1',
+    `DELETE FROM served_predictions
+      WHERE served_at < NOW() - INTERVAL '180 days'`,
+    'DELETE FROM a USING b WHERE a.id = b.id',
+    "DELETE FROM night_context_runs WHERE ran_at < NOW() - INTERVAL '90 days'",
+    // A DELETE whose only WHERE is inside a CTE still has one.
+    'WITH doomed AS (SELECT id FROM t WHERE x = 1) DELETE FROM t USING doomed',
+    // And the word inside a literal is not the verb.
+    "UPDATE t SET note = 'DELETE FROM users' WHERE id = 1",
+  ]) {
+    assert.equal(dangerous(sql), null, `must be allowed: ${JSON.stringify(sql)}`);
+  }
+});
+
+test('the new rules are off under ALLOW_DROP_TABLES too', () => {
+  process.env.ALLOW_DROP_TABLES = 'true';
+  try {
+    for (const sql of ['DROP SCHEMA public CASCADE', 'DELETE FROM users', 'ALTER TABLE users DROP COLUMN email']) {
+      assert.equal(dangerous(sql), null, `escape hatch must cover: ${sql}`);
+    }
+  } finally {
+    delete process.env.ALLOW_DROP_TABLES;
   }
 });
