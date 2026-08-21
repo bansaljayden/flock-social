@@ -35,6 +35,10 @@ const eventCache = new Map();
 // single fetch and are removed in a finally.
 const eventInflight = new Map();
 const EVENT_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+// How long a lookup that DID NOT SUCCEED is remembered. Same value and same
+// reasoning as weatherService's WX_NEGATIVE_TTL; the long version sits at the
+// cache read in getNearbyEvents.
+const EVENT_NEGATIVE_TTL = 60 * 1000; // 1 minute
 const EVENT_CACHE_MAX = 500;
 // Upstream budget (round 6): the public demo builds current + 12h + 24h
 // forecasts per card, and each prediction can reach Ticketmaster. Cap the
@@ -1250,6 +1254,45 @@ function trueEventInstant(timestamp, utcOffsetMinutes) {
   return new Date(ts.getTime() - (ts.getTimezoneOffset() + off) * 60 * 1000);
 }
 
+// TWO DIFFERENT ZEROS, AND WHY THEY CANNOT SHARE ONE OBJECT (round 24).
+//
+// This function used to answer with the SAME `noEvents` object in five
+// situations: the key is missing, the budget refused the call, Ticketmaster
+// returned an error, the request timed out, and Ticketmaster answered with an
+// empty list. Only the last of those is an observation. The other four are a
+// question nobody asked, and a caller reading `hasEvent: false` could not tell
+// which it had.
+//
+// The crowd model does not care, because a missing feature and a zero feature
+// score the same way there and the prediction degrades either way. The venue
+// advisor does care, and that is where the indistinguishable sentinel became a
+// falsehood: services/advisorFacts.js counted seven of these as seven negative
+// observations and built a SOURCED fact reading "No big listed events within
+// about a kilometer over the next 7 days" out of seven calls that never
+// happened. An owner can staff a night against that sentence.
+//
+// So every return carries `observed`. True means Ticketmaster answered and
+// this is what it said. False means no answer reached us, `unavailableReason`
+// says which of the four it was, and the zeros in the rest of the object are
+// placeholders rather than measurements. Callers that only read hasEvent keep
+// working unchanged; callers that make CLAIMS about the street must check
+// `observed` first.
+const EVENT_ZERO = {
+  hasEvent: false, nearestAttendance: 0, totalEvents: 0,
+  totalAttendance: 0, nearestType: null, nearestDistance: 0,
+  nearestName: null,
+};
+
+// Ticketmaster answered, and the answer was nothing nearby.
+function eventsObserved() {
+  return { ...EVENT_ZERO, observed: true, unavailableReason: null };
+}
+
+// No answer reached us. The zeros below mean "unknown", not "none".
+function eventsUnavailable(reason) {
+  return { ...EVENT_ZERO, observed: false, unavailableReason: reason };
+}
+
 // `userId` (optional) is the account this cache MISS is charged to. Passing it
 // is what gives the Ticketmaster budget a caller dimension — see the block above
 // allowEventFetch. Cache HITS are answered before the gate and cost nothing,
@@ -1257,12 +1300,8 @@ function trueEventInstant(timestamp, utcOffsetMinutes) {
 // not make masks the real burn rate.
 async function getNearbyEvents(lat, lng, timestamp, userId, opts) {
   const apiKey = process.env.TICKETMASTER_API_KEY;
-  const noEvents = {
-    hasEvent: false, nearestAttendance: 0, totalEvents: 0,
-    totalAttendance: 0, nearestType: null, nearestDistance: 0,
-    nearestName: null,
-  };
-  if (!apiKey || !lat || !lng) return noEvents;
+  if (!apiKey) return eventsUnavailable('no_api_key');
+  if (!lat || !lng) return eventsUnavailable('no_coordinates');
 
   // Round 10: the key used to be hour-only, so the 6-day owner forecast served
   // day 1's events for every future date — the upstream query window is built
@@ -1274,7 +1313,20 @@ async function getNearbyEvents(lat, lng, timestamp, userId, opts) {
     : keyTs.toISOString().slice(0, 13);
   const cacheKey = `${lat.toFixed(3)},${lng.toFixed(3)},${slot}`;
   const cached = eventCache.get(cacheKey);
-  if (cached && Date.now() - cached.ts < EVENT_CACHE_TTL) return cached.data;
+  if (cached) {
+    // A remembered FAILURE expires in a minute, a remembered ANSWER in an hour.
+    // Failures are cached at all for the reason weatherService's WX_NEGATIVE_TTL
+    // states: an outage that is not remembered re-charges the budget on every
+    // request, so a broken upstream is the fastest way to spend a day. But an
+    // hour was the wrong length once the advisor started reading `observed`,
+    // because it holds the venue advisor silent about the street for an hour
+    // after Ticketmaster has already recovered. Sixty seconds keeps the
+    // hundredfold reduction and follows a recovery almost immediately.
+    const ttl = cached.data && cached.data.observed === false
+      ? EVENT_NEGATIVE_TTL
+      : EVENT_CACHE_TTL;
+    if (Date.now() - cached.ts < ttl) return cached.data;
+  }
 
   // IN-FLIGHT COALESCING — the half of the cache that a cache alone cannot do.
   //
@@ -1299,7 +1351,7 @@ async function getNearbyEvents(lat, lng, timestamp, userId, opts) {
   // concurrency rather than by time and needs no eviction policy of its own.
   const inflight = eventInflight.get(cacheKey);
   if (inflight) return inflight;
-  const pending = fetchNearbyEvents(cacheKey, lat, lng, timestamp, userId, noEvents, opts);
+  const pending = fetchNearbyEvents(cacheKey, lat, lng, timestamp, userId, opts);
   eventInflight.set(cacheKey, pending);
   try {
     return await pending;
@@ -1311,10 +1363,12 @@ async function getNearbyEvents(lat, lng, timestamp, userId, opts) {
 // The uncoalesced half of getNearbyEvents. Never call this directly: it neither
 // reads the cache nor dedupes concurrent callers, so a direct call is an
 // unshared paid Ticketmaster request.
-async function fetchNearbyEvents(cacheKey, lat, lng, timestamp, userId, noEvents, opts) {
+async function fetchNearbyEvents(cacheKey, lat, lng, timestamp, userId, opts) {
   const apiKey = process.env.TICKETMASTER_API_KEY;
-  // Budget applies only to cache MISSES (real upstream calls).
-  if (!allowEventFetch(userId, opts)) return noEvents;
+  // Budget applies only to cache MISSES (real upstream calls). A refusal here
+  // is the cheapest of the four unobserved cases: no call was made, so nothing
+  // is cached and the next request in a new budget window asks for real.
+  if (!allowEventFetch(userId, opts)) return eventsUnavailable('budget_exhausted');
 
   try {
     const ts = timestamp ? new Date(timestamp) : new Date();
@@ -1355,16 +1409,21 @@ async function fetchNearbyEvents(cacheKey, lat, lng, timestamp, userId, noEvents
     );
 
     if (!response.ok) {
-      cacheEvents(cacheKey, noEvents);
-      return noEvents;
+      // Ticketmaster refused to answer. That is not an empty street.
+      const failed = eventsUnavailable('provider_error');
+      cacheEvents(cacheKey, failed);
+      return failed;
     }
 
     const data = await response.json();
     const events = data._embedded?.events || [];
 
     if (events.length === 0) {
-      cacheEvents(cacheKey, noEvents);
-      return noEvents;
+      // A real answer, and the answer is nothing. This is the one branch that
+      // may be quoted back to an owner as a listing we made and came up empty.
+      const empty = eventsObserved();
+      cacheEvents(cacheKey, empty);
+      return empty;
     }
 
     // ONE POPULATION, COUNTED ONCE. scripts/ml/enrichWithEvents.js builds the
@@ -1418,6 +1477,8 @@ async function fetchNearbyEvents(cacheKey, lat, lng, timestamp, userId, noEvents
       }
     }
 
+    // Everything Ticketmaster listed was too far away, over, or unplaceable.
+    // The listing ran, so this is observed: an empty street, honestly.
     const result = nearestEvent ? {
       hasEvent: true,
       nearestAttendance: nearestEvent.attendance,
@@ -1426,14 +1487,23 @@ async function fetchNearbyEvents(cacheKey, lat, lng, timestamp, userId, noEvents
       nearestType: nearestEvent.type,
       nearestDistance: Math.round(nearestDist * 100) / 100,
       nearestName: nearestEvent.name,
-    } : noEvents;
+      observed: true,
+      unavailableReason: null,
+    } : eventsObserved();
 
     cacheEvents(cacheKey, result);
     return result;
   } catch (err) {
+    // The timeout lands here (upstreamSignal aborts the fetch), along with a
+    // network error and an unreadable body. None of them saw the street.
     console.error('[MLPredictor] Event lookup failed:', err.message);
-    cacheEvents(cacheKey, noEvents);
-    return noEvents;
+    // Both names, because which one arrives depends on the fetch
+    // implementation: AbortSignal.timeout aborts with a TimeoutError, and
+    // undici has historically surfaced a plain AbortError for the same event.
+    const aborted = err && (err.name === 'AbortError' || err.name === 'TimeoutError');
+    const failed = eventsUnavailable(aborted ? 'timeout' : 'lookup_failed');
+    cacheEvents(cacheKey, failed);
+    return failed;
   }
 }
 
