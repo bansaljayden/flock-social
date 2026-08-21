@@ -781,6 +781,111 @@ async function loadModel() {
 // TURN THE FLAG BACK TO false if the served artifact is ever rolled back to a
 // pre-2026-08-18 model, because then the weights are on the old axis again.
 // ---------------------------------------------------------------------------
+// The three slots a baseline answer is blended from: the hour itself and the
+// hour either side of it, each carrying its own weekday because 23:00 and
+// 00:00 belong to different days. Extracted so the single-slot query below and
+// the whole-curve prime further down cannot drift apart on the arithmetic.
+function baselineNeighborSlots(dayOfWeek, hour) {
+  const prevHour = (hour - 1 + 24) % 24;
+  const nextHour = (hour + 1) % 24;
+  return {
+    prevHour,
+    nextHour,
+    prevDay: prevHour === 23 ? (dayOfWeek - 1 + 7) % 7 : dayOfWeek,
+    nextDay: nextHour === 0 ? (dayOfWeek + 1) % 7 : dayOfWeek,
+  };
+}
+
+// The blend itself, over exactly the three rows the query returns: current
+// hour 60%, each neighbour 20%, a missing neighbour standing in as the current
+// hour so a closed hour either side does not drag the number down. Returns the
+// cache ENTRY body rather than a bare number, because the provenance of the
+// anchoring row is what baselineProvenanceFor publishes and it must be decided
+// here, in the one place that knows which row was the anchor.
+function blendBaselineRows(rows, dayOfWeek, hour) {
+  const { prevHour, nextHour } = baselineNeighborSlots(dayOfWeek, hour);
+  let current = 0, prev = 0, next = 0;
+  let hasCurrent = false;
+  let currentRow = null;
+  for (const r of rows) {
+    const val = parseInt(r.baseline);
+    if (r.day_of_week === dayOfWeek && r.hour === hour) { current = val; hasCurrent = true; currentRow = r; }
+    else if (r.hour === prevHour) prev = val;
+    else if (r.hour === nextHour) next = val;
+  }
+  if (!hasCurrent) return { data: 0, meta: null };
+  const hasNeighbors = prev > 0 || next > 0;
+  const data = hasNeighbors
+    ? Math.round(current * 0.6 + (prev || current) * 0.2 + (next || current) * 0.2)
+    : current;
+  return { data, meta: baselineMeta(currentRow.source || null, currentRow.updated_at || null) };
+}
+
+// ---------------------------------------------------------------------------
+// ONE QUERY FOR A WHOLE WEEK, INSTEAD OF ONE PER HOUR.
+//
+// getBaseline is keyed per (place, day, hour) and reads three rows per call.
+// That is right for the crowd card, which asks about one hour. It is badly
+// wrong for the callers that walk a venue's entire week: services/
+// advisorFacts.js buildWeekAhead scans every open hour of all seven days, so a
+// venue open ten hours a day cost SEVENTY sequential round trips, and a 24/7
+// venue a hundred and sixty-eight — and it had already fetched the whole curve
+// in one query on the line above the loop, then thrown it away and re-read the
+// same table an hour at a time. GET /api/advisor/cards paid that twice over
+// and POST /api/advisor/ask pays it on every chip tap, both on the request
+// path, both against the twenty-slot pool.
+//
+// This takes the curve the caller already has and computes every slot's answer
+// from it with the SAME blend the query path uses, so the loop that follows is
+// a hundred cache hits and no queries at all. Nothing here queries, nothing
+// here is charged to the venue-lookup budget, and nothing here can be reached
+// with a place id the caller did not already pay to read: it only ever writes
+// what the caller's own rows say.
+//
+// Slots the curve has no row for are deliberately NOT primed. getBaseline then
+// misses and takes its normal path, which is the honest answer for an hour the
+// venue has no data on, and it keeps this function incapable of teaching the
+// cache that a slot is zero when nobody looked.
+function primeBaselineCache(placeId, rows) {
+  if (!placeId || !Array.isArray(rows) || rows.length === 0) return 0;
+
+  // `Number(null)` is 0 and `Number('')` is 0, so a null hour would key itself
+  // as midnight and a null weekday as Sunday — a row silently relocated rather
+  // than skipped. ml_venue_baselines makes both columns part of its primary
+  // key so the query path cannot produce one, but this function takes rows from
+  // its caller, and the cheap check is the one that keeps that true.
+  const slotNumber = (v, max) => {
+    if (v === null || v === undefined || v === '') return null;
+    const n = Number(v);
+    return Number.isInteger(n) && n >= 0 && n <= max ? n : null;
+  };
+
+  const bySlot = new Map();
+  for (const r of rows) {
+    const day = slotNumber(r.day_of_week, 6);
+    const hour = slotNumber(r.hour, 23);
+    if (day === null || hour === null) continue;
+    bySlot.set(`${day}_${hour}`, {
+      day_of_week: day, hour, baseline: r.baseline,
+      source: r.source || null, updated_at: r.updated_at || null,
+    });
+  }
+
+  const ts = Date.now();
+  let primed = 0;
+  for (const [slot, row] of bySlot) {
+    const { prevHour, nextHour, prevDay, nextDay } = baselineNeighborSlots(row.day_of_week, row.hour);
+    // Exactly the row set the single-slot query would have returned, in the
+    // same order, so blendBaselineRows cannot tell the two paths apart.
+    const trio = [row, bySlot.get(`${prevDay}_${prevHour}`), bySlot.get(`${nextDay}_${nextHour}`)]
+      .filter(Boolean);
+    const entry = blendBaselineRows(trio, row.day_of_week, row.hour);
+    boundedSet(baselineCache, `${placeId}_${slot}`, { data: entry.data, ts, meta: entry.meta });
+    primed += 1;
+  }
+  return primed;
+}
+
 // `userId` (optional) is the account a cache MISS is charged to — see
 // allowVenueLookup. Hits are answered above the gate and cost nothing.
 async function getBaseline(placeId, dayOfWeek, hour, userId) {
@@ -797,10 +902,7 @@ async function getBaseline(placeId, dayOfWeek, hour, userId) {
 
   try {
     // Fetch current hour + neighbors for smoothing
-    const prevHour = (hour - 1 + 24) % 24;
-    const nextHour = (hour + 1) % 24;
-    const prevDay = prevHour === 23 ? (dayOfWeek - 1 + 7) % 7 : dayOfWeek;
-    const nextDay = nextHour === 0 ? (dayOfWeek + 1) % 7 : dayOfWeek;
+    const { prevHour, nextHour, prevDay, nextDay } = baselineNeighborSlots(dayOfWeek, hour);
 
     const { rows } = await pool.query(
       // `source, updated_at` join the SELECT so the answer can say how old it
@@ -822,38 +924,14 @@ async function getBaseline(placeId, dayOfWeek, hour, userId) {
       return 0;
     }
 
-    // Weighted average: current hour 60%, neighbors 20% each
-    let current = 0, prev = 0, next = 0;
-    let hasCurrent = false;
-    let currentRow = null;
-    for (const r of rows) {
-      const val = parseInt(r.baseline);
-      if (r.day_of_week === dayOfWeek && r.hour === hour) { current = val; hasCurrent = true; currentRow = r; }
-      else if (r.hour === prevHour) prev = val;
-      else if (r.hour === nextHour) next = val;
-    }
-
-    if (!hasCurrent) {
-      boundedSet(baselineCache, cacheKey, { data: 0, ts: Date.now(), meta: null });
-      return 0;
-    }
-
-    // Smooth: blend with neighbors if available
-    const hasNeighbors = prev > 0 || next > 0;
-    const val = hasNeighbors
-      ? Math.round(current * 0.6 + (prev || current) * 0.2 + (next || current) * 0.2)
-      : current;
-
-    // Provenance of the row the answer is anchored on (the current hour; the
-    // neighbours only smooth it). Stored alongside the value so the serve path
-    // can publish the age without a second query — see baselineProvenanceFor.
-    boundedSet(baselineCache, cacheKey, {
-      data: val,
-      ts: Date.now(),
-      meta: baselineMeta(currentRow ? currentRow.source : null,
-        currentRow ? currentRow.updated_at : null),
-    });
-    return val;
+    // Weighted average: current hour 60%, neighbors 20% each. The blend and
+    // the provenance of the row it anchors on both come from
+    // blendBaselineRows, which primeBaselineCache also uses — the two paths
+    // must produce the same number for the same rows or a venue's forecast
+    // would change depending on which one warmed the cache.
+    const entry = blendBaselineRows(rows, dayOfWeek, hour);
+    boundedSet(baselineCache, cacheKey, { data: entry.data, ts: Date.now(), meta: entry.meta });
+    return entry.data;
   } catch (err) {
     console.error('[MLPredictor] Baseline lookup failed:', err.message);
     return 0;
@@ -2684,6 +2762,11 @@ module.exports = {
   findQuieterAlternatives,
   buildCalibrationAdjustment,
   storeGoogleBaselines,
+  // Part of the serving API, not an internal: a caller that has already read a
+  // venue's whole weekly curve hands it here and the per-hour loop that follows
+  // costs no queries. services/advisorFacts.js fetchBaselineCurve is the caller
+  // it was written for; see the header above primeBaselineCache.
+  primeBaselineCache,
   getLabel,
   init,
   // Internals exported for backend/__tests__/mlPipeline.test.js — the
@@ -2754,6 +2837,11 @@ module.exports = {
     // __tests__/venueLookupBudget.test.js. Exported rather than restated in the
     // test so the numbers cannot drift from the comment that argues for them.
     getBaseline,
+    // The blend both baseline paths share, for __tests__/baselinePrime.test.js:
+    // the query path and the whole-curve prime must agree slot for slot.
+    blendBaselineRows,
+    baselineNeighborSlots,
+    baselineCacheEntry: (placeId, day, hour) => baselineCache.get(`${placeId}_${day}_${hour}`),
     // Baseline freshness, for __tests__/baselineFreshness.test.js.
     baselineProvenanceFor,
     baselineMeta,
