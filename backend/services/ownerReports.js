@@ -128,7 +128,44 @@ const LIVE_OWNER_REPORTS_SQL = `
          -- whose entire job is being exactly right about whose claim the
          -- number is.
          -- Free: the join below replaces an EXISTS over the same row.
-         vp.category AS profile_category
+         vp.category AS profile_category,
+         -- WHEN THIS VENUE'S CURRENT ASSERTION BEGAN, which is not the same
+         -- question as when this row was written.
+         --
+         -- The strike needs contemporaneous evidence (round 25 above), and
+         -- "contemporaneous" used to mean "after r.created_at". Since only the
+         -- newest row per place is ever read, that made the write path a reset
+         -- button: routes/venueDashboard.js allows one reading a minute, 48 a
+         -- day, so an owner holding the same false number up could re-post it
+         -- and every report filed against the reading it replaced fell outside
+         -- the window, permanently, because the superseded row is never read
+         -- again. The evidence window collapsed to the gap between re-posts.
+         --
+         -- So the window starts where the ASSERTION starts. A prior row counts
+         -- as the same assertion when it says materially the same thing: the
+         -- file's own definition of material is OWNER_DIVERGENCE_POINTS, the
+         -- gap above which two numbers are a disagreement rather than a
+         -- rounding difference. Post 95, re-post 95, re-post 93: one assertion,
+         -- one window, and the reports filed at any point in it all count.
+         -- Change the number by more than that and it is a different claim
+         -- about the room, which starts its own window. That is the honest
+         -- correction, and it is recognised by what the owner said rather than
+         -- by how fast they said it.
+         --
+         -- No retracted predicate here, deliberately. Retraction takes the
+         -- number down, which is the remedy and stays free, but it must not
+         -- also wipe what the room said while the number was up: retract 95
+         -- and re-post 95 a minute later and the retracted row still anchors
+         -- the window. Bounded to one TTL back, so the evidence window is the
+         -- nominal life of a reading no matter how often it was re-posted.
+         COALESCE((
+           SELECT MIN(p.created_at)
+             FROM venue_owner_reports p
+            WHERE p.google_place_id = r.google_place_id
+              AND p.created_at <= r.created_at
+              AND p.created_at > r.created_at - INTERVAL '90 minutes'
+              AND ABS(p.busy_percent - r.busy_percent) <= ${OWNER_DIVERGENCE_POINTS}
+         ), r.created_at) AS assertion_since
     FROM venue_owner_reports r
     JOIN venue_profiles vp
       ON vp.user_id = r.venue_user_id
@@ -188,7 +225,17 @@ function liveOwnerReport(row, nowMs) {
   };
 }
 
-// Does a live owner reading disagree with what the verified reporters said?
+// Does a live owner reading disagree with what the 28-day blend said?
+//
+// NOT A STRIKE TEST, and no longer on the strike path at all. It reconstructs
+// the rolling average the precedence rule is written against, which is the
+// number the docs mean by "what the reporters said", and round 25 below spells
+// out why that reconstruction must never decide a penalty: it is a 28-day mean
+// of a venue-hour, so it convicts the honest owner on the one night history is
+// wrong and it hands three accounts a durable remote griefing primitive.
+// Retained because it is the only place that arithmetic is written down and
+// __tests__/ownerBusyReports.test.js pins it to OWNER_DIVERGENCE_POINTS.
+//
 // The blended payload does not carry the reporters' own average, but it
 // carries enough to recover it: calibration.predictionDrift is
 // round(avgFeedbackScore - rawEngineScore) (crowdEngine.js), so the reporters'
@@ -231,12 +278,15 @@ function ownerDivergesFromReports(result, percent) {
 //     accounts also delete that venue's training labels. Refreshed monthly, it
 //     never expires. Nobody has to be near the building.
 //
-// So the strike now needs CONTEMPORANEOUS evidence: verified reports filed at
-// or after the moment the owner posted the reading, i.e. while it was the
-// number on screen. That is the sentence the docs already make. The 28-day
-// blend keeps its OTHER job untouched — deciding precedence, which number
-// ships — because that is a question about the best estimate, not about
-// punishing anyone.
+// So the strike now needs CONTEMPORANEOUS evidence: verified reports filed
+// while the venue was asserting this number, i.e. while it was the number on
+// screen. That is the sentence the docs already make. The 28-day blend keeps
+// its OTHER job untouched, deciding precedence and which number ships, because
+// that is a question about the best estimate and not about punishing anyone.
+//
+// "While it was the number on screen" is the ASSERTION's span, not the row's:
+// see assertion_since in the read above. Tying it to the row let the write
+// path erase evidence one re-post at a time.
 //
 // Callers hand in the raw rows they already fetched (`options.feedbackRows`).
 // A caller with none supplies none and NO STRIKE IS STAMPED: the cache-hit
@@ -250,6 +300,27 @@ function reportRowTime(row) {
   return Number.isFinite(t) ? t : NaN;
 }
 
+// The span a report has to fall inside to count as evidence against this
+// reading: from the moment the venue started asserting this number
+// (assertion_since, computed by the read above) to the moment this row's own
+// 90 minutes run out.
+//
+// Both ends are re-derived here rather than trusted, the same belt-and-braces
+// rule liveOwnerReport keeps: `from` is never later than the row itself and
+// never further back than one TTL, so a caller holding a hand-built row, a
+// stale cache or a future column that means something else cannot widen the
+// only punitive mechanism in this file. A row with no assertion_since falls
+// back to its own created_at, which is what the window used to be.
+function assertionWindow(ownerRow) {
+  const at = reportRowTime(ownerRow);
+  if (!Number.isFinite(at)) return null;
+  const since = reportRowTime({ created_at: ownerRow?.assertion_since });
+  const from = Number.isFinite(since)
+    ? Math.min(at, Math.max(since, at - OWNER_REPORT_TTL_MS))
+    : at;
+  return { from, until: at + OWNER_REPORT_TTL_MS };
+}
+
 // Distinct verified reporters whose report lands inside the owner reading's
 // own live window. Deduped per account for the same reason
 // crowdEngine.usableCalibrationReports dedupes: one person filing six reports
@@ -257,10 +328,10 @@ function reportRowTime(row) {
 // accounts is not a floor. An unattributable row (user_id null) counts once
 // on its own, never as a reporter that can be multiplied.
 function contemporaneousReports(feedbackRows, ownerRow, nowMs) {
-  const from = reportRowTime(ownerRow);
-  if (!Number.isFinite(from)) return [];
+  const window = assertionWindow(ownerRow);
+  if (!window) return [];
+  const { from, until } = window;
   const now = Number.isFinite(nowMs) ? nowMs : Date.now();
-  const until = from + OWNER_REPORT_TTL_MS;
   const byReporter = new Map();
   const unattributed = [];
   for (const row of feedbackRows || []) {
@@ -303,15 +374,19 @@ function markDiverged(reportId) {
 // row or alternatives row — anything carrying score/label/calibration) and the
 // raw owner row for its place id, returns the payload that may actually ship.
 //
+// EVERY LIVE READING IS JUDGED, in both branches, before either of them is
+// chosen. See the note at the judgement itself: which branch a reading lands
+// in is a fact about the venue's 28-day report history, and tying the strike
+// to it meant the number users actually saw was the one number that could not
+// be struck.
+//
 // Three outcomes:
 //   no live reading            -> payload unchanged, no ownerReport field.
 //   live, >= 3 reporters       -> users win. Number and basis untouched (the
 //                                 existing capped blend IS the answer); the
 //                                 owner's figure rides along, applied: false,
 //                                 so a client can still show "{the venue} says
-//                                 N" as information beside the number. A
-//                                 reading that diverges from the reporters is
-//                                 stamped.
+//                                 N" as information beside the number.
 //   live, < 3 reporters        -> the reading replaces the published number,
 //                                 labelled: basis 'owner_report', supported
 //                                 true (an operator looking at their own room
@@ -359,17 +434,40 @@ function applyOwnerReport(result, ownerRow, options = {}) {
   const reporters = Number.isFinite(options.reporters)
     ? options.reporters
     : (result.calibration?.feedbackUsed ? Number(result.calibration.reportCount) || 0 : 0);
+
+  // JUDGEMENT COMES BEFORE PRECEDENCE, AND IS NOT A PROPERTY OF EITHER BRANCH.
+  //
+  // This call used to live inside the branch below, which is the branch that
+  // returns applied:false. The invariant that produced was: a reading can be
+  // struck only while it is NOT the published number. The strike system exists
+  // to stop an owner inflating the number consumers see, and it was disarmed
+  // on exactly the readings that reach consumers, because the thing that puts
+  // a reading in the other branch is the venue having three verified reporters
+  // in that venue-hour over 28 days, which is a property of the venue's report
+  // history and not of the owner's honesty. Every venue without a dense
+  // history, which is nearly all of them, had an unpoliceable slider.
+  //
+  // Precedence and accountability answer different questions and are not
+  // allowed to share a condition. Precedence asks which number is the best
+  // estimate, and the 28-day blend answers it (reporters, above). The strike
+  // asks whether the people in the building contradicted what the venue
+  // asserted while it stood, and only strikeableDivergence answers that: the
+  // contemporaneous reporters, their own consensus, the same 25 points. A
+  // caller that hands in no rows stamps nothing, which keeps the cache-hit
+  // path harmless and keeps under-stamping the failure direction.
+  //
+  // The honest owner is safe on the same test they were always safe on, and it
+  // is the current reading that is tested: correct a mistaken 95 to a number
+  // the room agrees with and there is nothing to strike, however fast or slow
+  // the correction was. Correct it to another number the room does not
+  // recognise and it is still a false reading.
+  if (ownerRow.id != null
+      && ownerRow.diverged !== true
+      && strikeableDivergence(options.feedbackRows, ownerRow, live.percent, options.now)) {
+    markDiverged(ownerRow.id);
+  }
+
   if (reporters >= crowdEngine.MIN_CALIBRATION_REPORTERS) {
-    // Precedence (users win) is decided by the 28-day blend above. The STRIKE
-    // is decided only by reporters who were in the room while this reading was
-    // the published number — see strikeableDivergence. A caller that hands in
-    // no rows stamps nothing.
-    if (ownerRow.id != null
-        && ownerRow.diverged !== true
-        && ownerDivergesFromReports(result, live.percent)
-        && strikeableDivergence(options.feedbackRows, ownerRow, live.percent, options.now)) {
-      markDiverged(ownerRow.id);
-    }
     return {
       ...result,
       ownerReport: { ...live, applied: false, outrankedBy: 'user_reports', noun, attribution },
@@ -402,6 +500,7 @@ module.exports = {
   liveOwnerReport,
   applyOwnerReport,
   ownerDivergesFromReports,
+  assertionWindow,
   contemporaneousReports,
   strikeableDivergence,
   markDiverged,
