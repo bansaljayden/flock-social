@@ -137,6 +137,11 @@ function scriptBudgetStatus({ nonSkip, skip, ceiling, callerRow }) {
       rows: [{ total_submissions: String(nonSkip + skip), non_skip_count: String(nonSkip), skip_count: String(skip) }],
     })],
     [/COUNT\(\*\) AS total FROM flock_members/, () => ({ rows: [{ total: '4' }] })],
+    // GET recomputes the MIN over submissions from PRESENT members rather than
+    // reading flocks.budget_ceiling, because nothing refreshes that column when
+    // a member leaves and a departed account's amount was still being published
+    // from it (round 18). Same number either way here: `ceiling` is the MIN.
+    [/SELECT MIN\(amount\) AS ceiling FROM budget_submissions/, () => ({ rows: [{ ceiling }] })],
     [/SELECT amount, skipped FROM budget_submissions/, () => ({ rows: callerRow ? [callerRow] : [] })],
   ];
 }
