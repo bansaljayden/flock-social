@@ -705,13 +705,23 @@ test('the two timestamp questions stayed separate: old rows are still not broadc
   }
 });
 
-// THE ORPHANED REPLY. submit-review is an upsert, and its DO UPDATE list left
-// venue_reply alone — so "write a fair review, wait for the owner to reply,
-// rewrite the review as an abusive one" left the owner's reply, carrying their
-// verified badge, attached underneath words they never saw and could not
-// retract (the reply route only ever sets a reply, never clears one).
-test("editing a review drops the owner's reply to the words it answered", async () => {
-  handlers.push([/AS visited/, () => ({ rows: [{ visited: true }] })]);
+// THE ORPHANED REPLY, AND THE REVIEW THAT RE-DATED ITSELF. submit-review is an
+// upsert. Its DO UPDATE list used to leave venue_reply alone, so "write a fair
+// review, wait for the owner to reply, rewrite the review as an abusive one"
+// left the owner's reply, carrying their verified badge, attached underneath
+// words they never saw. Round 20 answered that by DELETING the reply on a real
+// edit, which handed the reviewer the opposite weapon: one character of edit,
+// repeatable forever, and the business loses its answer with nothing said to
+// anyone. The rule now is RETIREMENT. venue_replied_at is cleared and the text
+// is kept, so the reply stops being published (the public read requires the
+// timestamp) and the owner still has their words, flagged on their own tab.
+//
+// The same list also used to carry `created_at = NOW()`, and the public list is
+// ordered by created_at, so resubmitting an existing review re-dated it and
+// five puppet accounts could push a complaint off the visible page with no new
+// rows at all. created_at now means when this person reviewed this venue.
+test("editing a review retires the owner's reply and does not re-date the review", async () => {
+  handlers.push([/AS visited/, () => ({ rows: [{ visited: true, owns_venue: false }] })]);
   let sql = null;
   handlers.push([/^INSERT INTO venue_reviews/, (_p, s) => { sql = s; return { rows: [{ id: 3 }] }; }]);
   const res = await call('POST', '/api/venue-dashboard/submit-review', {
@@ -719,15 +729,39 @@ test("editing a review drops the owner's reply to the words it answered", async 
   });
   assert.strictEqual(res.status, 201, res.text);
   // Asserted against the statement actually issued, not against a comment.
-  assert.match(sql, /venue_reply = CASE/, 'the reply survives an edit again');
-  assert.match(sql, /venue_replied_at = CASE/, 'the reply TIMESTAMP survives an edit again');
-  // Only a real change clears it: a double-tapped Submit button resends
-  // identical content and must not throw away a reply the owner wrote.
+  assert.match(sql, /venue_replied_at = CASE/, 'the reply is published again after an edit');
+  assert.ok(!/venue_reply = CASE/.test(sql),
+    'a reviewer can destroy a business reply by editing a typo');
+  // Only a real change retires it: a double-tapped Submit button resends
+  // identical content and must not disturb a reply the owner wrote.
   assert.match(sql, /EXCLUDED\.rating IS DISTINCT FROM venue_reviews\.rating/);
   assert.match(sql, /EXCLUDED\.text IS DISTINCT FROM venue_reviews\.text/);
+  // An edit must not move the review up the page.
+  assert.ok(!/created_at/.test(sql),
+    'an edit re-dates the review, which is a suppression tool with no moderation in it');
   // A taken-down review stays taken down however many times its author
   // rewrites it, so is_hidden must NOT appear in the DO UPDATE list.
   assert.ok(!/is_hidden/.test(sql), 'the upsert now resets a moderator takedown');
+});
+
+// THE OWNER RATING THEIR OWN VENUE. Nothing on this write path compared the
+// caller with the claim on the place id being rated, so an owner could post
+// themselves five stars. The guard rides the presence statement, on the same
+// two inputs, and the refusal is its own code rather than a borrowed one.
+test('the write path asks whether the caller claims the place it is rating', async () => {
+  handlers.push([/AS visited/, (_p, s) => {
+    assert.match(String(s).replace(/\s+/g, ' '),
+      /EXISTS \( SELECT 1 FROM venue_profiles WHERE user_id = \$1 AND google_place_id = \$2 \) AS owns_venue/,
+      'submit-review never reads venue_profiles for the place id it is rating');
+    return { rows: [{ visited: true, owns_venue: true }] };
+  }]);
+  handlers.push([/^INSERT INTO venue_reviews/, () => ({ rows: [{ id: 4 }] })]);
+  const res = await call('POST', '/api/venue-dashboard/submit-review', {
+    googlePlaceId: 'PLACE_A', rating: 5, text: 'Best bar in town, honestly',
+  });
+  assert.strictEqual(res.status, 403, res.text);
+  assert.strictEqual(res.body.code, 'OWNER_CANNOT_REVIEW');
+  assert.ok(!res.body.error.includes('\u2014'), 'em dash in user-visible copy');
 });
 
 // THE UNSCREENED HALF OF A PROMOTION. /public-promotions serves time_slot and
