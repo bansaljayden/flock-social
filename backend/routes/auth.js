@@ -1104,6 +1104,21 @@ function oauthIdentityKey(provider, payload, rawToken) {
     .digest('hex');
 }
 
+// ROUND 25 (R5-H2) — THE ACCESS-TOKEN BRANCH'S REPLAY KEY. oauthIdentityKey
+// above cannot key an access token: it is an opaque bearer string, not a JWT,
+// so there is no payload to read and no signature segment to canonicalise. It
+// needs neither. A JWT has sixteen wire spellings of one signature, which is
+// the whole reason that function exists; an access token has exactly one
+// spelling, because the string IS the credential — Google's tokeninfo accepts
+// nothing else. A digest of it is therefore already canonical.
+//
+// Labelled, so an access-token entry and an ID-token entry can never collide in
+// the one map they share.
+function googleAccessTokenKey(accessToken) {
+  if (typeof accessToken !== 'string' || accessToken === '') return null;
+  return crypto.createHash('sha256').update(`google:access_token:${accessToken}`).digest('hex');
+}
+
 function oauthIdentityWasUsed(identityKey, now = Date.now()) {
   if (!identityKey) return false;
   const expiresAt = oauthTokensUsed.get(identityKey);
@@ -1313,6 +1328,12 @@ const UNDERAGE_MSG = "We can't create a Flock account for you.";
 // strong signal — the same email retrying with a new birthday IS the
 // back-button case the FTC FAQ describes.
 //
+// ROUND 25: "the SAME mailbox (24h)" is now two different memories depending on
+// whether the address was PROVED or merely ASSERTED by the caller, because an
+// address asserted by an unauthenticated caller is a write primitive against
+// whoever really owns it. recordUnderageAttempt carries the full argument; do
+// not collapse the two spellings back into one without reading it.
+//
 // Keys are keyed HMAC digests, never plaintext, for the same reason
 // resetBucketKey digests its addresses — and more so here, because this map is
 // by construction a list of addresses children typed. The FAQ's safe harbor
@@ -1357,13 +1378,35 @@ const underageAttempts = new Map();
 // and without changing the value shape, and it leaks nothing: the kind is
 // already implied by which argument the caller filled in, and the address
 // itself stays inside the keyed digest.
-function underageKey(kind, value) {
+function underageDigest(label, canonical) {
   const pepper = process.env.BAN_TOMBSTONE_SECRET || process.env.JWT_SECRET || '';
+  return pepper
+    ? crypto.createHmac('sha256', pepper).update(`underage:${label}:${canonical}`).digest('hex')
+    : crypto.createHash('sha256').update(`underage:${label}:${canonical}`).digest('hex');
+}
+
+function underageKey(kind, value) {
   const canonical = kind === 'email' ? canonicalEmail(value) : String(value);
-  const digest = pepper
-    ? crypto.createHmac('sha256', pepper).update(`underage:${kind}:${canonical}`).digest('hex')
-    : crypto.createHash('sha256').update(`underage:${kind}:${canonical}`).digest('hex');
-  return `${kind}:${digest}`;
+  return `${kind}:${underageDigest(kind, canonical)}`;
+}
+
+// ROUND 25 (R5-H1) — THE SECOND SPELLING OF AN EMAIL ENTRY, and the whole of
+// the lockout-versus-write-primitive fix. See recordUnderageAttempt below for
+// the reasoning; this is only the key.
+//
+// It lives in the SAME `email:` class as underageKey('email', …): identical
+// TTL, identical budget, identical eviction ordering. Nothing about the A5-2
+// segmentation argument changes, because from the eviction's point of view
+// this is just another email entry. What changes is who it bites.
+//
+// The digest label is `email+ip`, not `email`, so the two spellings can never
+// collide: a plaintext address is hashed under one label and an
+// address-plus-source-address pair under the other, and no value of one can
+// ever produce the digest of the other. The two halves of the pair are joined
+// on a NUL, which cannot occur in either a canonical address or an IP string,
+// so no pair can be spelled as a different pair.
+function underagePairKey(email, ip) {
+  return `email:${underageDigest('email+ip', `${canonicalEmail(email)}\u0000${String(ip)}`)}`;
 }
 
 // ROUND 23 (cache-key inventory sweep). This map's memory guard used to end in
@@ -1478,19 +1521,90 @@ function evictUnderageAttempts(now = Date.now()) {
   evictUnderageClass('ip:', UNDERAGE_IP_MAX_KEYS, UNDERAGE_IP_LOW_WATER);
 }
 
-function recordUnderageAttempt(email, ip, now = Date.now()) {
+// ROUND 25 (R5-H1, HIGH) — WHO IS ALLOWED TO WRITE A MEMORY ABOUT WHOSE
+// MAILBOX. Read this before changing either function below; both halves of the
+// tension are real and the code has to hold both.
+//
+// THE CHILD-SAFETY HALF. The FTC's COPPA FAQ asks a neutral age screen to take
+// "reasonable steps" against a child who is refused and simply presses back and
+// changes the year. That is what this map is: the FAQ's session cookie, moved
+// server-side where the browser cannot clear it. Removing the memory entirely
+// would make the age gate a suggestion, which is the round-4/A5-2 finding and
+// is not on the table.
+//
+// THE LOCKOUT HALF, which is what this round found. The EMAIL half of that
+// memory used to be written from `POST /api/auth/signup` on an address that is
+// nothing more than a string in an UNAUTHENTICATED request body. Nobody proved
+// they could read that mailbox. So one request — victim's address, a birthday
+// in 2020 — wrote a 24-hour block against a stranger's address, and
+// underageBlocked is consulted by password signup AND the Google create branch
+// AND the Apple create branch, so all three of the victim's doors answered the
+// same neutral refusal. authLimiter allows on the order of 14,400 addresses a
+// day from one IP and the block clears only on its TTL or a redeploy, so it was
+// a renewable, self-service denial of any chosen person's account, with no way
+// for the victim to tell it from a genuine age refusal and no way out.
+//
+// THE SPLIT. The two halves separate cleanly on one question: WAS THE ADDRESS
+// PROVED, or merely ASSERTED?
+//
+//   PROVED — the caller demonstrated the address is theirs before we ever got
+//   here. Either they completed a sign-in on the account that owns it
+//   (enforceDobOnLogin, which runs after the password/OAuth check and is
+//   recording actual knowledge about a row it just froze), or a provider signed
+//   a token vouching for it (the Google and Apple creation branches, with
+//   email_verified true). A stranger cannot seed either one, because a stranger
+//   cannot produce the password or the provider's signature. These keep the
+//   full-strength 24-hour block against the ADDRESS, reachable from any
+//   network, which is what stops "back button, new year, different Wi-Fi".
+//
+//   ASSERTED — the address is a field in an unauthenticated body. The memory is
+//   still written, and still for 24 hours, but it is keyed on the address AND
+//   the source IP together (underagePairKey). It bites the caller who typed it
+//   and nobody else. A child who presses back is on the same network seconds
+//   later, so it lands on them; an attacker on a different network cannot reach
+//   the victim's own signup at all.
+//
+// WHY THE IP HALF IS STILL HERE AND STILL 15 MINUTES. It is the half that
+// actually models the back button — same device, same network, immediately —
+// and it is deliberately short because signups come off shared school and
+// campus NATs where a long block refuses real 13+ users. The pair key extends
+// that same-network memory to 24 hours for the ONE mailbox that was refused,
+// which is a far narrower blast radius than the IP key already has, so it adds
+// no collateral the 15-minute key did not already impose.
+//
+// THE HONEST RESIDUAL. An attacker who shares a NAT with their victim can still
+// pin that victim's address from that NAT for 24 hours. They could already deny
+// every address on that NAT for 15 minutes, renewably, so this is not a new
+// capability against a co-located target — and unlike before, the victim has a
+// self-service escape: any other network works immediately.
+function recordUnderageAttempt(email, ip, now = Date.now(), { addressProved = false } = {}) {
   // Bounded: a spray of refused signups must not grow this without limit — and
   // must never be able to EMPTY it. Never clear().
   if (underageAttempts.size > UNDERAGE_MAX_KEYS) evictUnderageAttempts(now);
   if (typeof email === 'string' && email.includes('@')) {
-    underageAttempts.set(underageKey('email', email), now + UNDERAGE_EMAIL_TTL_MS);
+    // Exactly one email-class entry per refusal, either way, so the class
+    // budget arithmetic above is unchanged. `addressProved` is the caller's
+    // assertion that the address was proved BEFORE this call; the default is
+    // false, so a call site added later fails toward the narrow key rather
+    // than toward the write primitive.
+    if (addressProved) {
+      underageAttempts.set(underageKey('email', email), now + UNDERAGE_EMAIL_TTL_MS);
+    } else if (ip) {
+      underageAttempts.set(underagePairKey(email, ip), now + UNDERAGE_EMAIL_TTL_MS);
+    }
   }
   if (ip) underageAttempts.set(underageKey('ip', ip), now + UNDERAGE_IP_TTL_MS);
 }
 
 function underageBlocked(email, ip, now = Date.now()) {
   const keys = [];
-  if (typeof email === 'string' && email.includes('@')) keys.push(underageKey('email', email));
+  if (typeof email === 'string' && email.includes('@')) {
+    // Both spellings, because a mailbox can have been refused either way and
+    // the reader does not know which. Checking the pair key costs one map
+    // lookup and is what makes the asserted-address memory bite at all.
+    keys.push(underageKey('email', email));
+    if (ip) keys.push(underagePairKey(email, ip));
+  }
   if (ip) keys.push(underageKey('ip', ip));
   for (const key of keys) {
     const expiresAt = underageAttempts.get(key);
@@ -1583,7 +1697,12 @@ async function enforceDobOnLogin(user, req, res) {
       [supplied, user.id]
     );
     revokeUserSessions(req.app.get('io'), user.id);
-    recordUnderageAttempt(user.email, req.ip);
+    // PROVED (R5-H1). This runs only after /login has checked the password, or
+    // after a provider token verified for this row — so `user.email` is the
+    // address of an account the caller just demonstrated they hold, not a
+    // string they typed. A stranger cannot reach this line with somebody else's
+    // address, which is exactly what makes the wide 24-hour block safe here.
+    recordUnderageAttempt(user.email, req.ip, Date.now(), { addressProved: true });
     res.status(403).json({ error: UNDERAGE_MSG });
     return false;
   }
@@ -2527,6 +2646,28 @@ router.post('/google', [
       }
     } else {
       const at = req.body.access_token;
+      // ROUND 25 (R5-H2), FIRST HALF — GOOGLE_REQUIRE_NONCE NOW MEANS WHAT ITS
+      // NAME SAYS ON THE WHOLE ENDPOINT.
+      //
+      // The flag makes nonce binding mandatory. It used to be read in the
+      // `credential` branch only, so turning it on refused half of POST
+      // /api/auth/google and left the other half signing people in with no
+      // nonce at all — an operator who set it believed the endpoint was bound
+      // and it was not, which is worse than not having the flag.
+      //
+      // An access token cannot satisfy the requirement. There is no nonce claim
+      // anywhere in the flow: tokeninfo does not return one, the token is not a
+      // JWT, and nothing about it is bound to a value this server issued. So the
+      // only honest reading of "nonce required" here is that this branch is
+      // closed while the flag is on. Refused BEFORE the outbound fetch, so a
+      // request that cannot succeed does not cost a call to Google.
+      //
+      // Same 400 and the same neutral sentence as the credential branch's
+      // no-nonce refusal, so the two halves of the endpoint answer alike.
+      if (process.env.GOOGLE_REQUIRE_NONCE === 'true') {
+        console.warn(`[auth] refused Google access-token sign-in: GOOGLE_REQUIRE_NONCE is on and an access token carries no nonce (${req.ip})`);
+        return res.status(400).json({ error: 'Google sign-in failed' });
+      }
       // Round 12: sign-in blocked on Google with no deadline — a Google
       // brownout parked login requests (and pg pool slots) for ~5 minutes.
       const infoRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?access_token=${encodeURIComponent(at)}`, { signal: upstreamSignal('oauth') });
@@ -2537,6 +2678,51 @@ router.post('/google', [
       if (info.aud !== process.env.GOOGLE_CLIENT_ID) {
         return res.status(401).json({ error: 'Google sign-in failed' });
       }
+      // ROUND 25 (R5-H2), SECOND HALF — THIS BRANCH IS SINGLE-USE TOO.
+      //
+      // The old comment at the success line below argued that an access token is
+      // "legitimately re-presentable" and that Google re-validates it live at
+      // tokeninfo, so replay protection was unnecessary here. Both halves of
+      // that are true and neither one addresses the consequence: every
+      // presentation reaches signUserToken, and every token signUserToken mints
+      // carries a FRESH `iat`. A fresh `iat` is the entire sudo-mode proof for
+      // an OAuth account (hasFreshSession in routes/users.js), and it gates
+      // DELETE /api/users/me, the phone-number change and the full data export.
+      // So a captured access token was not one stolen sign-in, it was a renewable
+      // supply of sudo-capable sessions for the hour Google keeps honouring it —
+      // which is precisely what the ID-token comment 200 lines above calls the
+      // reason replay matters. Both `claim` and `create` are reachable from here,
+      // so it also mints those sessions on a row it can take over.
+      //
+      // "Legitimately re-presentable" is answered by the release half of the
+      // R4-A1 contract rather than by leaving the door open: a refusal or an
+      // upstream blip hands the credential back in the `finally` below, so the
+      // client can retry with the SAME access token. What can no longer happen
+      // is a second COMPLETED sign-in on one credential. The shipped clients do
+      // not need one — the GIS browser flow (frontend useGoogleAuth.js) runs a
+      // fresh consent exchange per sign-in and posts the resulting token once.
+      //
+      // Claimed here rather than before tokeninfo because `info.expires_in` is
+      // what sizes the entry: the memory has to outlive Google's own acceptance
+      // of the token and no longer, exactly as the ID-token path uses `exp`.
+      const accessKey = googleAccessTokenKey(at);
+      if (!accessKey) {
+        return res.status(401).json({ error: 'Google sign-in expired, please try again' });
+      }
+      // `undefined`, not null, when tokeninfo does not tell us: markOauthIdentityUsed
+      // falls back to OAUTH_REPLAY_MAX_TTL_MS on a non-finite value, and
+      // Number(null) is 0, which is finite and would size the entry to the
+      // 60-second floor instead — an entry that lapses long before the token it
+      // is remembering does.
+      const expiresIn = Number(info.expires_in);
+      const accessAcceptedUntil = Number.isFinite(expiresIn)
+        ? Math.floor(Date.now() / 1000) + expiresIn
+        : undefined;
+      if (!claimOauthIdentity(accessKey, accessAcceptedUntil)) {
+        console.warn(`[auth] rejected replayed Google access token from ${req.ip}`);
+        return res.status(401).json({ error: 'Google sign-in expired, please try again' });
+      }
+      claimedIdentity = accessKey;
       const profileRes = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
         headers: { Authorization: `Bearer ${at}` },
         signal: upstreamSignal('oauth'), // round 12
@@ -2631,10 +2817,37 @@ router.post('/google', [
         // real owner's DMs, flocks and live location right through the
         // handover. Bumping token_version invalidates every token already
         // issued for this user id (middleware/auth.js compares the `tv` claim).
+        // ROUND 25 (R5-H3) — THE PAYMENT HANDLES GO WITH THE PASSWORD.
+        //
+        // The round-16 squat is closed against an attacker who cannot read the
+        // victim's mail. It is NOT closed against one who gets the victim to
+        // read it for them, which costs nothing: the squatter registers the
+        // victim's address, and the verification mail the signup sends lands in
+        // the VICTIM's inbox. One click from a person who assumes a stray
+        // confirmation email is theirs and the row is "proved", the
+        // UNVERIFIED_DENY gate opens, and the squatter writes venmo_username,
+        // cashapp_cashtag and zelle_identifier onto it. When the real owner
+        // later signs in with Google, claimDecision says 'claim' — correctly,
+        // the address IS theirs — and this statement handed them the row with
+        // the attacker's payout handles still on it. Every bill split the victim
+        // runs from then on pays the attacker, under the victim's own name.
+        //
+        // releaseSquattedAddress already clears these three columns for exactly
+        // this reason and calls itself "the belt to that pair of braces". The
+        // claim path is the other outcome of the same fork and was missing it.
+        // Clearing `password` cuts the squatter's credential and bumping
+        // token_version kills their session; neither one removes what they left
+        // behind, and the handles are the part that keeps earning after they are
+        // locked out.
+        //
+        // ACCEPTED COST: a genuine password-to-Google upgrader re-enters their
+        // payment handles once. That is a settings screen; the alternative is a
+        // silent payment redirect that neither party can see.
         const claimed = await pool.query(
           `UPDATE users SET oauth_provider = 'google', oauth_id = $1, password = NULL,
              profile_image_url = COALESCE(profile_image_url, $2),
              email_verified = TRUE, verified_email = email,
+             venmo_username = NULL, cashapp_cashtag = NULL, zelle_identifier = NULL,
              token_version = token_version + 1, updated_at = NOW()
            WHERE id = $3 RETURNING *`,
           [googleId, picture || null, claimTarget.id]
@@ -2666,7 +2879,14 @@ router.post('/google', [
         // screen that only guards one of the three account-creation doors is
         // not the neutral screen the COPPA FAQ describes, it is a suggestion.
         if (dobAge < MIN_AGE) {
-          recordUnderageAttempt(email, req.ip);
+          // PROVED when Google vouched for the address (R5-H1). `email` here
+          // came out of a token this handler verified Google's signature on, so
+          // an attacker cannot put a stranger's address in it — but only
+          // `email_verified` makes it an address Google says the signer can
+          // read, and that flag is checked further down rather than here. Pass
+          // it through: an unvouched address falls back to the narrow
+          // address-plus-IP key, and is refused a few lines later anyway.
+          recordUnderageAttempt(email, req.ip, Date.now(), { addressProved: emailVerified === true });
           return res.status(403).json({ error: UNDERAGE_MSG });
         }
         if (underageBlocked(email, req.ip)) {
@@ -2725,13 +2945,17 @@ router.post('/google', [
     // protection — the release half of the R4-A1 contract is what preserves
     // that now that the record happens up front.
     //
-    // The access_token branch has no equivalent: an access token is a
-    // longer-lived credential a client may legitimately present more than once,
-    // and Google re-validates it live at tokeninfo on every call. R2-3 is about
-    // the `credential` (ID token) path, which is the one that mints a session
-    // from a value the client cannot re-fetch.
+    // ROUND 25 (R5-H2): both branches commit. This used to be
+    // `if (req.body.credential)`, back when the access-token branch took no
+    // claim to commit; it now takes one, for the fresh-`iat` reason spelled out
+    // at the claim itself. Keyed off `claimedIdentity` rather than off which
+    // field the body carried, so a third credential shape added later cannot
+    // take a claim and silently fail to keep it — which would release the
+    // winner's entry and make the credential replayable again.
+    if (claimedIdentity) identityClaimCommitted = true;
+    // The nonce belongs to the ID-token path alone; an access token never
+    // carries one, and spending an empty string is a no-op either way.
     if (req.body.credential) {
-      identityClaimCommitted = true;
       spendOauthNonce(suppliedNonce);
     }
 
@@ -2985,9 +3209,15 @@ router.post('/apple', [
         if (decision === 'claim') {
           // Round 13: same session handover as the Google claim — bump
           // token_version so any JWT the squatter still holds dies immediately.
+          // ROUND 25 (R5-H3): and the same three payment-handle columns, for the
+          // reason written out in full at the Google claim above. A squat whose
+          // verification link the victim clicks arrives here loaded with the
+          // attacker's payout handles, and clearing the password does not
+          // remove them.
           const claimed = await pool.query(
             `UPDATE users SET oauth_provider = 'apple', oauth_id = $1, password = NULL,
                email_verified = TRUE, verified_email = email,
+               venmo_username = NULL, cashapp_cashtag = NULL, zelle_identifier = NULL,
                token_version = token_version + 1, updated_at = NOW()
              WHERE id = $2 RETURNING *`,
             [appleId, existingByEmail.id]
@@ -3029,7 +3259,13 @@ router.post('/apple', [
       // paths. Apple may omit the email; recordUnderageAttempt then keys on
       // the IP alone, which still covers the immediate-retry case.
       if (appleDobAge < MIN_AGE) {
-        recordUnderageAttempt(email, req.ip);
+        // PROVED only when Apple actually gave us an address AND vouched for
+        // it (R5-H1), the same rule as the Google twin. When Apple omits the
+        // address there is nothing to key on but the IP, which still covers the
+        // immediate-retry case.
+        recordUnderageAttempt(email, req.ip, Date.now(), {
+          addressProved: Boolean(email) && appleEmailVerified === true,
+        });
         return res.status(403).json({ error: UNDERAGE_MSG });
       }
       if (underageBlocked(email, req.ip)) {
@@ -3190,6 +3426,13 @@ module.exports.__testing = {
   // directly as well as through the two routes.
   claimOauthIdentity,
   releaseOauthIdentityClaim,
+  // Round 25 (R5-H2): the access-token branch is single-use too, so a suite
+  // that reuses one literal token string across independent tests now gets a
+  // replay refusal on the second one. Test-only reset, the same shape as
+  // clearUnderageAttempts: the production code never clears this map (see
+  // markOauthIdentityUsed for why a wholesale clear() was the bug there).
+  clearOauthIdentityClaims: () => oauthTokensUsed.clear(),
+  googleAccessTokenKey,
   canonicalJwtSignature,
   OAUTH_REPLAY_MAX_TTL_MS,
   OAUTH_VERIFIER_SKEW_MS,
@@ -3248,6 +3491,7 @@ module.exports.__testing = {
   // the entry a flooder is aiming at outlives their own writes.
   evictUnderageAttempts,
   underageKey,
+  underagePairKey,
   seedUnderageAttempt: (key, expiresAt) => underageAttempts.set(key, expiresAt),
   underageAttemptHas: (key) => underageAttempts.has(key),
   clearUnderageAttempts: () => underageAttempts.clear(),

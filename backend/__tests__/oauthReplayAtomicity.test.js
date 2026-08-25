@@ -569,9 +569,13 @@ test('R4-A1: neither handler still checks at the top and records at the bottom',
   assert.strictEqual(bareRecords, 1,
     'markOauthIdentityUsed must be called only from claimOauthIdentity — a second call site is a record separated from its check');
 
-  // And both handlers claim, then release in a finally.
-  assert.strictEqual((code.match(/if \(!claimOauthIdentity\(/g) || []).length, 2,
-    'both the Google and Apple handlers must claim');
+  // And every credential branch claims, then releases in a finally. Three, not
+  // two, as of round 25 (R5-H2): the Google handler claims on BOTH of its
+  // branches now. The access-token branch used to take no claim at all, so one
+  // captured access token minted an unbounded supply of sessions carrying a
+  // fresh `iat`, which is the whole sudo-mode proof for an OAuth account.
+  assert.strictEqual((code.match(/if \(!claimOauthIdentity\(/g) || []).length, 3,
+    'the Google credential branch, the Google access-token branch and the Apple handler must all claim');
   assert.strictEqual(
     (code.match(/if \(claimedIdentity && !identityClaimCommitted\) releaseOauthIdentityClaim\(claimedIdentity\);/g) || []).length, 2,
     'both handlers must release the claim on every path that is not a completed sign-in');

@@ -70,8 +70,11 @@ test('the age gate survives the flood that used to clear() it', () => {
   clearUnderageAttempts();
   const t0 = Date.now();
 
-  // The refusal the attacker wants gone: one mailbox, one address.
-  recordUnderageAttempt('kid@example.com', '198.51.100.7', t0);
+  // The refusal the attacker wants gone: one mailbox, one address. Recorded
+  // as a PROVED refusal (round 25, R5-H1) so the mailbox half is the wide,
+  // address-keyed 24-hour entry rather than the address-plus-IP one — that is
+  // the entry with the most to lose and therefore the one worth flooding at.
+  recordUnderageAttempt('kid@example.com', '198.51.100.7', t0, { addressProved: true });
   assert.strictEqual(underageBlocked('kid@example.com', null, t0 + 1), true);
   assert.strictEqual(underageBlocked(null, '198.51.100.7', t0 + 1), true);
 
@@ -79,7 +82,7 @@ test('the age gate survives the flood that used to clear() it', () => {
   // rather than once — a fix that only survives the first pass is not a fix.
   const FLOOD = UNDERAGE_MAX_KEYS * 2 + 5000;
   for (let i = 0; i < FLOOD; i++) {
-    recordUnderageAttempt(`flood-${i}@example.com`, null, t0 + 1000 + i);
+    recordUnderageAttempt(`flood-${i}@example.com`, null, t0 + 1000 + i, { addressProved: true });
   }
   const after = t0 + 1000 + FLOOD;
 
@@ -111,11 +114,11 @@ test('a refused signup cannot buy anyone else a passing date: eviction order is 
   clearUnderageAttempts();
   const t0 = Date.now();
   // Two blocks recorded at the same instant, one email (24h) and one IP (15m).
-  recordUnderageAttempt('early@example.com', null, t0);
+  recordUnderageAttempt('early@example.com', null, t0, { addressProved: true });
   recordUnderageAttempt(null, '203.0.113.5', t0);
   // Fill past the ceiling with entries that all expire later than both.
   for (let i = 0; i < UNDERAGE_MAX_KEYS + 2500; i++) {
-    recordUnderageAttempt(`late-${i}@example.com`, null, t0 + 10 + i);
+    recordUnderageAttempt(`late-${i}@example.com`, null, t0 + 10 + i, { addressProved: true });
   }
   const now = t0 + 10 + UNDERAGE_MAX_KEYS + 2500;
   assert.strictEqual(underageBlocked(null, '203.0.113.5', now), true,
