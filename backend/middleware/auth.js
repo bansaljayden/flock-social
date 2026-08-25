@@ -184,7 +184,16 @@ const UNVERIFIED_DENY = [
   // 3. Flock membership — routes/flocks.js. Creating a flock makes you its
   //    first member, so it belongs on the list next to join and invite.
   { method: 'POST', pattern: /^\/api\/flocks$/ },
-  { method: 'POST', pattern: /^\/api\/flocks\/[^/]+\/(join|invite|invite-link)$/ },
+  //    `rerun` is the "Do it again" door added with friend flock history: it
+  //    creates a NEW flock from an old one with the caller as an accepted
+  //    member, which is the same thing POST /api/flocks does and therefore the
+  //    same reason to be here. It mounts requireVerified explicitly in
+  //    routes/flocks.js, so it is gated today; what it was missing is the
+  //    SECOND gate the other four doors have. This list is the backstop for
+  //    exactly the case where a refactor drops a requireVerified from a
+  //    handler's argument list, and a door protected by one gate fails open
+  //    silently when that happens while the other four do not.
+  { method: 'POST', pattern: /^\/api\/flocks\/[^/]+\/(join|invite|invite-link|rerun)$/ },
   //    The SECOND door into accepted membership, added with the invite-link
   //    join (routes/guest.js POST /:token/join). It has to be on this list for
   //    the same reason the four above are, and specifically because the B3-4

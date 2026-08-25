@@ -305,11 +305,38 @@ test('a gmail dot/plus variant of the refused mailbox is the same mailbox to the
   const first = await post('/api/auth/signup', signupBody({ email: 'kid.one@gmail.com', date_of_birth: CHILD_DOB }));
   assert.strictEqual(first.status, 403);
   clearUnderageAttempts();
-  // Re-record via the exported function so ONLY the email key exists (the
+  // Re-record via the exported function so ONLY an email-class key exists (the
   // wire path records the IP too, which this test must not lean on).
-  recordUnderageAttempt('kid.one@gmail.com', null);
-  assert.strictEqual(underageBlocked('kidone+new@gmail.com', null), true,
+  //
+  // Round 25: an address a caller merely ASSERTED is remembered against the
+  // address AND the source IP, so the recording and the lookup both name one.
+  // The canonical-alphabet property is what is under test here, and it holds
+  // inside that scope: a dot/plus respelling is the same mailbox to the pair
+  // key exactly as it was to the address-only key.
+  recordUnderageAttempt('kid.one@gmail.com', '203.0.113.4');
+  assert.strictEqual(underageBlocked('kidone+new@gmail.com', '203.0.113.4'), true,
     'canonical alphabet: dots and +tags must not mint a fresh identity');
+  // A PROVED refusal is remembered against the address alone, and canonicalises
+  // the same way. This is the wide block, so it holds from any address.
+  clearUnderageAttempts();
+  recordUnderageAttempt('kid.one@gmail.com', '203.0.113.4', Date.now(), { addressProved: true });
+  assert.strictEqual(underageBlocked('kidone+new@gmail.com', '198.51.100.30'), true,
+    'a proved refusal must follow the mailbox, in every spelling of it');
+});
+
+// Round 25 (R5-H1). The mailbox half of the lockout is only as wide as the
+// evidence behind the address. A stranger typing a victim's address into
+// POST /api/auth/signup is not evidence, and while it wrote a 24-hour
+// address-only block it was a denial-of-account primitive against anyone.
+test('an address a stranger merely typed cannot be used to deny that address an account', () => {
+  clearUnderageAttempts();
+  const victim = 'targeted@example.com';
+  recordUnderageAttempt(victim, '198.51.100.66');   // the attacker's request
+  assert.strictEqual(underageBlocked(victim, '198.51.100.66'), true,
+    'the caller who typed it is still held to it — this is the back-button case');
+  assert.strictEqual(underageBlocked(victim, '203.0.113.12'), false,
+    'a stranger denied the address an account from a network they were never on');
+  clearUnderageAttempts();
 });
 
 test('the same IP is locked out even under a brand-new email', async () => {
@@ -335,27 +362,40 @@ test('when the lockout expires, the same signup goes through — the block was t
 test('lockout TTLs: email holds for 24 hours, IP for 15 minutes, and both expire', () => {
   clearUnderageAttempts();
   const t0 = Date.now();
+  const ip = 15 * 60 * 1000;
+  const day = 24 * 60 * 60 * 1000;
+
+  // An ASSERTED address: the mailbox entry is scoped to the source IP, so the
+  // reader has to name that IP for it. Round 25, R5-H1.
   recordUnderageAttempt('kid@example.com', '203.0.113.9', t0);
 
   // Both keys live immediately.
-  assert.strictEqual(underageBlocked('kid@example.com', null, t0), true);
+  assert.strictEqual(underageBlocked('kid@example.com', '203.0.113.9', t0), true);
   assert.strictEqual(underageBlocked('other@example.com', '203.0.113.9', t0), true);
   // A different mailbox from a different IP was never blocked.
   assert.strictEqual(underageBlocked('other@example.com', '198.51.100.1', t0), false);
+  // Neither was the same mailbox from a different IP, which is the whole point
+  // of the scoping: a stranger's refusal cannot travel with the address.
+  assert.strictEqual(underageBlocked('kid@example.com', '198.51.100.1', t0), false);
 
   // 15 minutes: the IP side expires (shared school NATs must not stay
   // burned), the mailbox side holds.
-  const ip = 15 * 60 * 1000;
   assert.strictEqual(underageBlocked('other@example.com', '203.0.113.9', t0 + ip - 1), true);
   assert.strictEqual(underageBlocked('other@example.com', '203.0.113.9', t0 + ip), false);
-  assert.strictEqual(underageBlocked('kid@example.com', null, t0 + ip), true,
+  assert.strictEqual(underageBlocked('kid@example.com', '203.0.113.9', t0 + ip), true,
     'the mailbox key must outlive the IP key');
 
   // 24 hours: the mailbox side expires too — the digests are age-screen
   // data, kept no longer than the screen needs (FTC FAQ / §312.10).
-  const day = 24 * 60 * 60 * 1000;
+  assert.strictEqual(underageBlocked('kid@example.com', '203.0.113.9', t0 + day - 1), true);
+  assert.strictEqual(underageBlocked('kid@example.com', '203.0.113.9', t0 + day), false);
+
+  // A PROVED address takes the same 24-hour TTL, keyed on the address alone.
+  clearUnderageAttempts();
+  recordUnderageAttempt('kid@example.com', '203.0.113.9', t0, { addressProved: true });
   assert.strictEqual(underageBlocked('kid@example.com', null, t0 + day - 1), true);
   assert.strictEqual(underageBlocked('kid@example.com', null, t0 + day), false);
+
   assert.strictEqual(UNDERAGE_IP_TTL_MS, ip);
   assert.strictEqual(UNDERAGE_EMAIL_TTL_MS, day);
   clearUnderageAttempts();

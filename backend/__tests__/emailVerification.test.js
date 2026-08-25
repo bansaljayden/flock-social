@@ -359,6 +359,10 @@ function reset() {
   appleConfigured = false;
   appleExchange = async () => ({ refresh_token: 'apple-refresh' });
   emailService.resetClient();
+  // Round 25 (R5-H2): the Google access_token branch is single-use now, and the
+  // OAuth tests below present the same short literal token. Independent tests
+  // must not inherit each other's spent credentials.
+  require('../routes/auth').__testing.clearOauthIdentityClaims();
 }
 
 async function withGoogle(profile, fn) {

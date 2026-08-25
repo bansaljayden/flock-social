@@ -512,6 +512,10 @@ function reset() {
   // the client IP, and every test here shares 127.0.0.1 — one under-13 test
   // would otherwise block every later account creation in the file.
   authRouter.__testing.clearUnderageAttempts();
+  // Round 25 (R5-H2): the Google access_token branch is single-use now, and
+  // several tests here present the same short literal. Independent tests must
+  // not inherit each other's spent credentials.
+  authRouter.__testing.clearOauthIdentityClaims();
 }
 
 async function withGoogle(profile, fn) {
@@ -598,7 +602,16 @@ test('the Google claim bumps token_version, and the squatter\'s live JWT dies wi
   assert.strictEqual(userById(5).password, null, 'the squatter\'s password is cut off');
   assert.strictEqual(userById(5).verified_email, 'me@gmail.com',
     'verified_email records the address on the row at claim time');
-  assert.strictEqual(userById(5).venmo_username, 'my-venmo', 'a real upgrade keeps its own data');
+  // ROUND 25 (R5-H3): the claim clears the three payment-handle columns, and
+  // this assertion used to require the opposite. A squat whose verification
+  // link the victim was tricked into clicking arrives at this statement carrying
+  // the SQUATTER's payout handles, and clearing `password` does not remove them
+  // — the victim would then have been handed a row that routes every bill split
+  // to the attacker. releaseSquattedAddress already cleared them on the other
+  // outcome of the same fork. The accepted cost is exactly what this line now
+  // pins: a genuine password-to-Google upgrader re-enters their handles once.
+  assert.strictEqual(userById(5).venmo_username, null,
+    'the claim must not hand over payment handles set before it');
 
   // The consequence the bump exists for.
   const after = await call('GET', '/api/auth/me', null, staleToken);

@@ -300,7 +300,20 @@ test('R2-3: the replay cache is ONE cache shared with the Apple path', () => {
   assert.ok(!/appleTokensUsed/.test(src), 'the Apple-only replay cache is back');
   // ...and it is never emptied wholesale, which would make every token in it
   // replayable again at a moment the flooder chooses (R2-2's shape).
-  assert.ok(!/oauthTokensUsed\.clear\(\)/.test(src), 'the replay cache is cleared wholesale again');
+  //
+  // Round 25 (R5-H2) allows exactly one clear(): a test-only export, the same
+  // carve-out and the same shape as clearUnderageAttempts on the lockout map.
+  // The access-token branch is single-use now, so a suite that reuses one
+  // literal token string across independent tests needs a way to start clean —
+  // and a suite that could not would end up with tests inheriting each other's
+  // spent credentials, which is a worse failure mode than this line prevents.
+  // Comments are stripped first: the prose above quotes the call.
+  const code = src.replace(/^\s*\/\/.*$/gm, '');
+  const clears = code.split('\n').filter((l) => l.includes('oauthTokensUsed.clear()'));
+  assert.strictEqual(clears.length, 1,
+    `oauthTokensUsed.clear() appears ${clears.length} times; it may exist only on the __testing export`);
+  assert.ok(/clearOauthIdentityClaims:\s*\(\)\s*=>\s*oauthTokensUsed\.clear\(\)/.test(clears[0]),
+    `the surviving clear() is not the test-only export: ${clears[0].trim()}`);
 });
 
 // ===========================================================================

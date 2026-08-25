@@ -282,6 +282,10 @@ const reset = () => {
   // the client IP, and every test here shares 127.0.0.1 — one under-13 test
   // would otherwise block every later account creation in the file.
   authRouter.__testing.clearUnderageAttempts();
+  // Round 25 (R5-H2): the Google access_token branch is single-use now, and
+  // several tests here present the same short literal. Independent tests must
+  // not inherit each other's spent credentials.
+  authRouter.__testing.clearOauthIdentityClaims();
 };
 
 // Google's tokeninfo + userinfo endpoints, stubbed for the duration of one
