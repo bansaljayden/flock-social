@@ -31,6 +31,7 @@ set -euo pipefail
 # nobody was reading. The private remote is HTTPS for the same reason, and gh
 # has already configured git's credential helper to authenticate that way.
 PUBLIC_REMOTE="https://github.com/bansaljayden/flock-social.git"
+REDACTIONS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/redactions.txt"
 PUBLIC_REMOTE_HTTPS="https://github.com/bansaljayden/flock-social.git"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DRY_RUN=0
@@ -59,6 +60,7 @@ STRIP=(
   # "step-by-step exploitation notes against production". Every path added here
   # has zero commits touching it, so filter-repo rewrites nothing and no public
   # hash moves; that is what makes closing the gap free.
+  --path PUBLIC-REPO-AUDIT.md
   --path VENUE-ADVISOR.md
   --path PAYMENTS-ROUTING.md
   --path MODEL-EPOCH-FINDING.md
@@ -102,6 +104,46 @@ echo "==> erasing published-excluded paths from all history"
 # contribution timeline match the private repo exactly. That is deliberate:
 # this repo doubles as a record of how long the project has been worked on.
 python "$FILTER_REPO" --force --invert-paths --prune-empty=never "${STRIP[@]}" >/dev/null
+
+# ---------------------------------------------------------------------------
+# REDACT SECRETS THAT LIVE INSIDE FILES THE REPO LEGITIMATELY KEEPS.
+# ---------------------------------------------------------------------------
+# The strip list above removes whole PATHS. It cannot help when the secret is a
+# string inside a file that belongs in the repository, and on 2026-08-25 that
+# is exactly what happened: a real password sat in three
+# public commits inside backend/seeds/demo-data.js as the password for a real
+# account. gitleaks was green throughout and structurally could not catch it,
+# because a dictionary word inside bcrypt.hash() has no key-shaped signature.
+#
+# Every literal listed in redactions.txt is replaced across ALL history. Adding
+# a line here renumbers every public hash, which is why this file and the strip
+# list are both append-with-care, but a leaked credential is worth a force
+# push and a rewritten public history.
+if [ -s "$REDACTIONS" ]; then
+  echo "==> redacting in-file secrets from all history"
+  python "$FILTER_REPO" --force --replace-text "$REDACTIONS" >/dev/null
+
+  # Prove it. Every literal on the left of ==> must appear in ZERO blobs across
+  # every commit, not merely in the current tree. A surviving literal is a
+  # refusal, because the whole point of this step is that the push is the last
+  # moment anything can be caught.
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    case "$line" in '#'*) continue ;; esac
+    literal="${line%%==>*}"
+    [ -z "$literal" ] && continue
+    # Pickaxe, not git grep over every rev: passing 995 commit ids as argv
+    # overflows the command line and the script exits 126 before it can refuse.
+    # -S counts occurrences per commit, so a literal that never exists anywhere
+    # produces no commits at all.
+    hits="$(git log --all --oneline -S"$literal" -- . 2>/dev/null | wc -l)"
+    if [ "$hits" != "0" ]; then
+      echo "REFUSING TO PUSH: redaction literal still present in $hits blob(s)" >&2
+      exit 1
+    fi
+  done < "$REDACTIONS"
+  echo "    redaction verified: every literal absent from all history"
+fi
 
 AFTER_COMMITS="$(git rev-list --count HEAD)"
 SIZE="$(git count-objects -vH | awk '/size-pack/{print $2, $3}')"
