@@ -450,6 +450,38 @@ router.post('/:flockId/lock',
       const flockId = parseInt(req.params.flockId);
       const userId = req.user.id;
 
+      // EXISTENCE ORACLE, closed (object-authz sweep, round 2).
+      //
+      // This route read the flocks row on the id alone and only THEN compared
+      // creator_id, so a total outsider got 403 for a real flock and 404 for a
+      // made-up one. flocks.id is a SERIAL, so that difference walks the whole
+      // table one request at a time, and nothing on this route is rationed by a
+      // probe budget. GET /:flockId and /submit in this same file check
+      // membership FIRST and therefore answer a stranger identically whether
+      // the flock exists or not, which made this an inconsistency inside one
+      // file rather than a policy choice. routes/flocks.js states the rule at
+      // hasMembershipRow: "unless you hold a membership row, every flock looks
+      // like it does not exist".
+      //
+      // Same statement, same 403 body as the two siblings, so the four budget
+      // routes now refuse a stranger identically and none of them can be told
+      // which ids are real.
+      //
+      // The distinction that MATTERS survives. An accepted member who is not
+      // the creator passes this gate and falls through to the creator check
+      // below, which still runs under FOR UPDATE, so he is still told in so
+      // many words that only the creator may lock, and the app can still
+      // explain a disabled button. It is only the TOTAL OUTSIDER, who cannot be
+      // told anything at all without confirming the flock exists, whose answer
+      // is flattened onto the answer for an id that is not there.
+      const memberCheck = await pool.query(
+        "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
+        [flockId, userId]
+      );
+      if (memberCheck.rows.length === 0) {
+        return res.status(403).json({ error: 'You are not a member of this flock' });
+      }
+
       // PRIVACY INVARIANT (README "hard invariants"): the ceiling is the MIN of
       // submissions, so revealing it below the 3-submission threshold exposes an
       // individual's exact budget. The threshold check, lock, and ceiling read
@@ -469,6 +501,8 @@ router.post('/:flockId/lock',
         );
         if (flockResult.rows.length === 0) {
           await client.query('ROLLBACK');
+          // Reachable only as a race now (the flock was deleted between the
+          // membership check and this lock), never by an outsider probing ids.
           return res.status(404).json({ error: 'Flock not found' });
         }
         if (flockResult.rows[0].creator_id !== userId) {
@@ -557,12 +591,29 @@ router.post('/:flockId/remind',
       const flockId = parseInt(req.params.flockId);
       const userId = req.user.id;
 
+      // EXISTENCE ORACLE, closed (object-authz sweep, round 2). Identical fault
+      // and identical fix to /lock above, where the reasoning is written out:
+      // this read the flocks row on the id alone and only then compared
+      // creator_id, so a stranger got 403 for a real flock and 404 for a fake
+      // one and could walk the SERIAL id space. The member who is not the
+      // creator still reaches the creator check below and is still told why he
+      // cannot send reminders.
+      const memberCheck = await pool.query(
+        "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
+        [flockId, userId]
+      );
+      if (memberCheck.rows.length === 0) {
+        return res.status(403).json({ error: 'You are not a member of this flock' });
+      }
+
       // Verify creator
       const flockResult = await pool.query(
         'SELECT creator_id, name, budget_enabled FROM flocks WHERE id = $1',
         [flockId]
       );
       if (flockResult.rows.length === 0) {
+        // A race, not a probe: the membership row above says this flock existed
+        // a statement ago.
         return res.status(404).json({ error: 'Flock not found' });
       }
       if (flockResult.rows[0].creator_id !== userId) {
