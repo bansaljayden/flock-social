@@ -122,7 +122,7 @@ test('the round-23 eviction really does lose a victim email block at 18,009 rota
 
 test('18,009 rotating-address refusals do not evict the victim email block', () => {
   clearUnderageAttempts();
-  recordUnderageAttempt('victim@example.com', '203.0.113.1', T0);
+  recordUnderageAttempt('victim@example.com', '203.0.113.1', T0, { addressProved: true });
   const victimEmail = underageKey('email', 'victim@example.com');
   const victimIp = underageKey('ip', '203.0.113.1');
   assert.strictEqual(underageAttemptHas(victimEmail), true, 'sanity: the block was recorded');
@@ -147,7 +147,7 @@ test('the flood does not win by being ten times longer either', () => {
   // point of segmenting is that there is no scale at which it breaks, so the
   // test runs an order of magnitude past the reported number.
   clearUnderageAttempts();
-  recordUnderageAttempt('victim@example.com', '203.0.113.1', T0);
+  recordUnderageAttempt('victim@example.com', '203.0.113.1', T0, { addressProved: true });
   const victimEmail = underageKey('email', 'victim@example.com');
   const victimIp = underageKey('ip', '203.0.113.1');
 
@@ -174,7 +174,7 @@ test('an IP flood cannot reach an email block, and an email flood cannot reach a
   // The two directions of the property the segmentation buys, driven one class
   // at a time so neither result can be explained by the other class filling up.
   clearUnderageAttempts();
-  recordUnderageAttempt('victim@example.com', '203.0.113.1', T0);
+  recordUnderageAttempt('victim@example.com', '203.0.113.1', T0, { addressProved: true });
   const victimEmail = underageKey('email', 'victim@example.com');
   const victimIp = underageKey('ip', '203.0.113.1');
 
@@ -188,10 +188,10 @@ test('an IP flood cannot reach an email block, and an email flood cannot reach a
     "an address-only flood evicted an older address's block");
 
   clearUnderageAttempts();
-  recordUnderageAttempt('victim@example.com', '203.0.113.1', T0);
+  recordUnderageAttempt('victim@example.com', '203.0.113.1', T0, { addressProved: true });
   // Mailboxes only. Twice the email class ceiling.
   for (let i = 0; i < UNDERAGE_EMAIL_MAX_KEYS * 2; i++) {
-    recordUnderageAttempt(`only-${i}@example.com`, null, T0 + 1000 + i);
+    recordUnderageAttempt(`only-${i}@example.com`, null, T0 + 1000 + i, { addressProved: true });
   }
   assert.strictEqual(underageAttemptHas(victimIp), true,
     'a mailbox-only flood reached across into the IP class — this is the A5-2 shape, inverted');
@@ -245,7 +245,7 @@ test('the eviction never spends a deletion on the other class', () => {
 
 test('the TTLs still expire, and expiry still runs before eviction', () => {
   clearUnderageAttempts();
-  recordUnderageAttempt('kid@example.com', '203.0.113.9', T0);
+  recordUnderageAttempt('kid@example.com', '203.0.113.9', T0, { addressProved: true });
   assert.strictEqual(underageBlocked('kid@example.com', null, T0 + 1), true);
   assert.strictEqual(underageBlocked(null, '203.0.113.9', T0 + 1), true);
 
