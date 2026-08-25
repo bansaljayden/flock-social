@@ -239,4 +239,11 @@ function requireVenueTier(minTier) {
   };
 }
 
-module.exports = { requireVenueTier, getVenueTier, getVenueEntitlement, resolveGrantedTier, venueBillingEnabled };
+// GRANT_LIVE_STATUSES is exported so the ONE public surface that has to make
+// this decision in SQL (GET /api/venue-dashboard/public-promotions/:placeId,
+// which serves a paid benefit to end users and cannot call the resolver per
+// row) binds the same vocabulary rather than retyping it. Frozen array, because
+// it is bound straight into a query as a text[] parameter.
+const GRANT_LIVE_STATUS_LIST = Object.freeze([...GRANT_LIVE_STATUSES]);
+
+module.exports = { requireVenueTier, getVenueTier, getVenueEntitlement, resolveGrantedTier, venueBillingEnabled, GRANT_LIVE_STATUS_LIST };
