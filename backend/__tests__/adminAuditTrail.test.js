@@ -528,7 +528,7 @@ test('a promotion that does not exist, or is not yours, is still a 404', async (
 
 test('a retired row is gone from the owner lists and from the edit route', async () => {
   CURRENT_USER = OWNER;
-  const venueCtx = [/SELECT id, google_place_id, verified, category FROM venue_profiles/, () => ({
+  const venueCtx = [/SELECT id, google_place_id, verified, category, verification_requested_at FROM venue_profiles/, () => ({
     rows: [{ id: 7, google_place_id: 'place-1', verified: true }], rowCount: 1,
   })];
   handlers = [

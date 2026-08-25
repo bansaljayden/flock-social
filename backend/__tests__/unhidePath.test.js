@@ -542,7 +542,7 @@ test('a ban still force-disconnects and announces nothing about content', async 
 // ===========================================================================
 
 const OWNER = { id: 1, name: 'Ava', role: 'venue_owner' };
-const venueCtx = [/SELECT id, google_place_id, verified, category FROM venue_profiles/, () => ({
+const venueCtx = [/SELECT id, google_place_id, verified, category, verification_requested_at FROM venue_profiles/, () => ({
   rows: [{ id: 7, google_place_id: 'place-1', verified: true }], rowCount: 1,
 })];
 
