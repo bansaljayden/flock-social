@@ -1,8 +1,8 @@
 const express = require('express');
 const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
-const { authenticate } = require('../middleware/auth');
-const { requireVenueTier, venueBillingEnabled } = require('../services/venueEntitlements');
+const { authenticate, requireVerified } = require('../middleware/auth');
+const { requireVenueTier, venueBillingEnabled, GRANT_LIVE_STATUS_LIST } = require('../services/venueEntitlements');
 // The owner's live 0-100 reading: liveness, expiry and precedence rules all
 // live in ONE service (routes/crowd.js applies them to every published
 // number). This router only owns the write path.
@@ -795,6 +795,44 @@ function reviewPageSize(raw) {
   return Math.min(n, REVIEW_PAGE_MAX);
 }
 
+// THE SAME RULE THE PROMOTION VIEW COUNTER ALREADY ENFORCES, APPLIED TO THE
+// NUMBER THAT ACTUALLY SELLS THE VENUE.
+//
+// `views` carries `venue_user_id <> $2` and a long note about not letting an
+// owner move a figure we charge them to read. The star rating never got the
+// same reasoning, and it is the number CONSUMERS choose a venue by: nothing on
+// the submit path compared req.user.id to the claim on the place being rated,
+// so a verified owner could post themselves five stars and it landed in both
+// aggregates, rendered as an ordinary customer review under their own name and
+// photo. One owner POST took a 1.0 venue to 3.0.
+//
+// The write path refuses that now (see `owns_venue` in submit-review), but a
+// write gate alone is only half the rule, for two reasons:
+//   * rows written before this change are still in the table;
+//   * the ordering can be reversed. Review the bar as a customer first, claim
+//     and verify it afterwards, and no write gate that exists at write time can
+//     have seen it coming.
+// So the rating is defined on the READ side too: a review by an account that
+// claims the place it is rating is not a customer review, and it is left out of
+// the list AND out of the aggregate, on the public card and on the owner's own
+// tab alike. Owner and public must agree, which is why this is one constant and
+// not four hand-copied clauses.
+//
+// ANY claim, not only a verified one. An unverified claim is still this account
+// saying it IS the business; and a claim on a place you did not visit costs the
+// claimant their own review of it, which is a trade nobody makes to grief
+// someone else (only you can create your own claim).
+//
+// Interpolated rather than parameterised because it is a module constant with
+// no request data anywhere in it, exactly as routes/feedback.js keeps
+// VERIFIED_PRESENCE_SQL. It correlates on vr, so every read that uses it must
+// alias venue_reviews as vr.
+const NOT_OWNER_OF_THE_PLACE = `AND NOT EXISTS (
+           SELECT 1 FROM venue_profiles vpo
+           WHERE vpo.user_id = vr.user_id
+             AND vpo.google_place_id = vr.google_place_id
+         )`;
+
 // GET /api/venue-dashboard/reviews — get Flock reviews for this venue
 router.get('/reviews', async (req, res) => {
   try {
@@ -830,7 +868,8 @@ router.get('/reviews', async (req, res) => {
        FROM venue_reviews vr
        JOIN users u ON u.id = vr.user_id
        WHERE vr.google_place_id = $1
-         AND COALESCE(vr.is_hidden, false) = false`,
+         AND COALESCE(vr.is_hidden, false) = false
+         ${NOT_OWNER_OF_THE_PLACE}`,
       [venue.google_place_id]
     );
     const s = statsResult.rows[0] || {};
@@ -839,12 +878,24 @@ router.get('/reviews', async (req, res) => {
     const { rows } = await pool.query(
       // Same visibility predicate as the stats above, for the same reason the
       // JOIN is duplicated: the two must never disagree about which rows count.
-      `SELECT vr.*, u.name, u.profile_image_url
+      //
+      // reply_needs_review is the owner's half of the retired-reply rule (see
+      // the upsert in submit-review). A reply whose review was rewritten under
+      // it stops being published but is NOT destroyed: the text stays in the
+      // row and comes back here with its timestamp cleared, so the owner can
+      // read what they wrote, see that the review changed, and decide whether
+      // to post it again. The boolean is computed here rather than inferred by
+      // the client from a null timestamp, because a null timestamp next to a
+      // non-null reply is exactly the kind of implicit state a client gets
+      // wrong.
+      `SELECT vr.*, u.name, u.profile_image_url,
+              (vr.venue_reply IS NOT NULL AND vr.venue_replied_at IS NULL) AS reply_needs_review
        FROM venue_reviews vr
        JOIN users u ON u.id = vr.user_id
        WHERE vr.google_place_id = $1
          AND COALESCE(vr.is_hidden, false) = false
-       ORDER BY vr.created_at DESC
+         ${NOT_OWNER_OF_THE_PLACE}
+       ORDER BY vr.created_at DESC, vr.id DESC
        LIMIT $2`,
       [venue.google_place_id, limit]
     );
@@ -921,8 +972,41 @@ router.post('/reviews/:id/reply', [
 
 // ─── PUBLIC: User submits a review (no venue-owner auth needed) ──────────────
 
-// POST /api/venue-dashboard/submit-review — any logged-in user can review a venue
-router.post('/submit-review', [
+// POST /api/venue-dashboard/submit-review — any verified user can review a venue
+//
+// requireVerified, added in round 22 with the self-dealing guard, because the
+// presence rule and the value of the thing it protects have drifted apart.
+//
+// middleware/auth.js states the doctrine: an unverified account MAY READ AND BE
+// REACHED, BUT MUST NOT ACCUMULATE. A public review is accumulation of exactly
+// the kind that matters here: it moves a real business's public star rating and
+// it is signed with a name and a photo.
+//
+// The presence gate has two branches and they are not equally reachable from an
+// unverified account. The flock branch already implies a verified one, because
+// routes/flocks.js mounts requireVerified on create, join, invite-link and
+// rerun, and routes/guest.js on the invite-link join, so there is no way to
+// become an accepted member of anything without a confirmed address. The NFC
+// branch had no such floor, and the NFC credential is a STATIC HMAC over the
+// place id: one signed tap URL, once leaked or photographed off a tag, is a
+// permanent transferable proof of presence at that venue for anybody who holds
+// it. That was priced when a tap only gated a crowd report, which expires in
+// hours and moves a number nobody is billed for. It now also gates a review.
+// Without this line, one leaked URL is unlimited five-star reviews for that
+// venue from unlimited throwaway accounts, forever.
+//
+// WHAT THIS DOES NOT FIX, said plainly so nobody reads it as closed: the tag
+// credential is still static and still transferable. Making it not so is a
+// change to how routes/checkin.js signs and verifies a tap (a rotating or
+// single-use token), it belongs with the NFC hardware work rather than here,
+// and until it happens the honest description of a tap is "somebody had this
+// URL", not "somebody was there". What the line does is put a cost on the
+// account doing the reviewing, which is the half that lives on this route.
+//
+// It costs an honest reviewer nothing: every reviewer who got here through the
+// product's own loop is already verified, and the refusal it can produce is the
+// standard one the app already knows how to explain and recover from.
+router.post('/submit-review', requireVerified, [
   // Round 12: venue_reviews.google_place_id is VARCHAR(255) — an unbounded id
   // overflowed it and surfaced as a 500 instead of a 400.
   // Round 20 (shape sweep). All three fields were reachable as arrays:
@@ -1035,9 +1119,41 @@ router.post('/submit-review', [
          OR EXISTS (
            SELECT 1 FROM venue_reviews
            WHERE user_id = $1 AND google_place_id = $2
-         ) AS visited`,
+         ) AS visited,
+         -- THE ANTI-SELF-DEALING HALF, and it rides the same statement on
+         -- purpose: it answers with the same two inputs ($1, $2) and it must be
+         -- impossible for one of the two to be evaluated without the other.
+         -- venue_profiles.user_id is UNIQUE (migration 001), so this is a
+         -- single-row index probe, not a scan.
+         --
+         -- Ownership is asked FIRST in the JavaScript below, ahead of presence.
+         -- An owner can always arrange to have been at their own venue, so
+         -- refusing them on presence grounds would be both wrong and confusing;
+         -- the reason they cannot review it is that they are it.
+         EXISTS (
+           SELECT 1 FROM venue_profiles
+           WHERE user_id = $1 AND google_place_id = $2
+         ) AS owns_venue`,
       [req.user.id, googlePlaceId]
     );
+    // A venue owner reviewing their own venue is the star-rating version of the
+    // self-inflated view counter, and it is worse: `views` is a number we show
+    // one owner about themselves, while the rating is the number every consumer
+    // picks a venue by. Refused for ANY claim on this place id held by this
+    // account, verified or not, because an unverified claim is still this
+    // account asserting that it IS the business. The reads exclude these rows
+    // as well (NOT_OWNER_OF_THE_PLACE), so a review written before the claim
+    // does not keep counting either.
+    //
+    // Said plainly rather than hidden behind VISIT_REQUIRED: the owner has done
+    // nothing wrong by tapping the button, and a truthful refusal is also the
+    // one that cannot be mistaken for a bug.
+    if (presence.rows[0]?.owns_venue === true) {
+      return res.status(403).json({
+        error: 'You cannot review a venue you have claimed as its owner.',
+        code: 'OWNER_CANNOT_REVIEW',
+      });
+    }
     if (presence.rows[0]?.visited !== true) {
       return res.status(403).json({
         error: 'You can review a venue after you have been there with a flock.',
@@ -1045,7 +1161,26 @@ router.post('/submit-review', [
       });
     }
 
-    // Round 20: an edit that CHANGES the review drops the owner's reply.
+    // Round 22: THE EDIT NO LONGER RE-DATES THE REVIEW.
+    //
+    // `created_at = NOW()` used to be in the DO UPDATE list, and the public list
+    // is ORDER BY created_at DESC LIMIT n. Together those two lines were a
+    // suppression tool that moderation cannot see: five accounts resubmitting
+    // reviews they ALREADY had, unchanged, jumped above a genuine complaint and
+    // pushed it off the visible page. No takedown, no reply, not one new row,
+    // nothing for a moderator to look at. It cost nothing to repeat because
+    // presence for an existing reviewer is permanent (the third EXISTS above),
+    // and one fabricated flock buys presence for every account it accepted.
+    //
+    // created_at now means what it says: when this person reviewed this venue.
+    // An edit changes the words, not the date, which is also the honest answer
+    // for a reader deciding how recent an opinion is. The perpetual edit right
+    // stays exactly as it was and now buys only what it was meant to buy, the
+    // ability to correct your own words. It no longer buys a position on the
+    // page. Ordering an honest reviewer cannot be pushed out of is worth more
+    // than a "recently edited" sort nobody asked for.
+    //
+    // Round 20: an edit that CHANGES the review retires the owner's reply.
     //
     // This is an upsert, so the same POST rewrites an existing review — and the
     // DO UPDATE list left venue_reply and venue_replied_at alone. On the public
@@ -1056,27 +1191,38 @@ router.post('/submit-review', [
     // The owner had no way to notice and no way to retract it: the reply route
     // only ever sets a reply, never clears one.
     //
-    // Only a real change clears it. A resubmit of identical content — which is
-    // what a double-tapped Submit button sends — must not throw away a reply
-    // the owner wrote, so the CASE compares the incoming values with
-    // IS DISTINCT FROM rather than clearing unconditionally. is_hidden is
+    // Only a real change touches it. A resubmit of identical content, which is
+    // what a double-tapped Submit button sends, must not disturb a reply the
+    // owner wrote, so the CASE compares the incoming values with
+    // IS DISTINCT FROM rather than firing unconditionally. is_hidden is
     // deliberately still untouched: a taken-down review stays taken down
     // however many times its author rewrites it.
     //
-    // A cleared reply is a deletion, not a takedown, so nothing is said about
-    // it here; the owner sees the reply gone from their reviews tab and can
-    // reply again to the words that are actually there now.
+    // ROUND 22: RETIRED, NOT DELETED, AND THAT IS THE WHOLE CHANGE HERE.
+    //
+    // The round 20 rule was right about the direction and wrong about the
+    // remedy. Deleting the reply outright handed the reviewer a weapon: one
+    // character of edit, repeatable forever, and the business loses its answer
+    // with nothing said to anybody. A customer fixing a typo should not cost an
+    // owner the reply they wrote either. But the alternative that was rejected
+    // is still rejected: a reply must never ride words its author never saw,
+    // because that misleads the READER, and misleading the reader is a worse
+    // harm than annoying the owner.
+    //
+    // So the edit clears venue_replied_at and KEEPS venue_reply. A reply with
+    // no timestamp is retired: it is not published on the venue card (the
+    // public read requires venue_replied_at IS NOT NULL), and it comes back on
+    // the owner's own tab with reply_needs_review = true, carrying the text
+    // they wrote. The reviewer can silence a reply, which they can always do by
+    // rewriting what it answers, but they cannot destroy it, and the owner is
+    // shown that it happened instead of finding a blank space. Replying again
+    // sets both columns and publishes the new answer.
     const { rows } = await pool.query(
       `INSERT INTO venue_reviews (google_place_id, user_id, rating, text)
        VALUES ($1, $2, $3, $4)
        ON CONFLICT (google_place_id, user_id) DO UPDATE SET
          rating = EXCLUDED.rating,
          text = EXCLUDED.text,
-         created_at = NOW(),
-         venue_reply = CASE
-           WHEN EXCLUDED.rating IS DISTINCT FROM venue_reviews.rating
-             OR EXCLUDED.text IS DISTINCT FROM venue_reviews.text
-           THEN NULL ELSE venue_reviews.venue_reply END,
          venue_replied_at = CASE
            WHEN EXCLUDED.rating IS DISTINCT FROM venue_reviews.rating
              OR EXCLUDED.text IS DISTINCT FROM venue_reviews.text
@@ -1084,7 +1230,13 @@ router.post('/submit-review', [
        RETURNING *`,
       [googlePlaceId, req.user.id, rating, text || null]
     );
-    res.status(201).json(rows[0]);
+    // A retired reply is unpublished, and this write endpoint is not a way to
+    // read one back: the reviewer gets their own row without the business's
+    // unpublished words in it. Same reasoning as the reply route's refusal to
+    // hand back a hidden review.
+    const saved = rows[0];
+    if (saved && saved.venue_replied_at === null) saved.venue_reply = null;
+    res.status(201).json(saved);
   } catch (err) {
     console.error('Submit review error:', err);
     res.status(500).json({ error: 'Failed to submit review' });
@@ -1130,21 +1282,29 @@ router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
            SELECT 1 FROM user_blocks b
            WHERE (b.blocker_id = $2 AND b.blocked_id = vr.user_id)
               OR (b.blocker_id = vr.user_id AND b.blocked_id = $2)
-         )`,
+         )
+         ${NOT_OWNER_OF_THE_PLACE}`,
       [req.params.placeId, req.user.id]
     );
     const total = statsResult.rows[0]?.total || 0;
     const average = total > 0 ? parseFloat(Number(statsResult.rows[0].average).toFixed(1)) : 0;
 
-    // venue_reply comes from whoever claimed the place — expose it publicly
+    // venue_reply comes from whoever claimed the place, so expose it publicly
     // only when that claim is verified. User reviews themselves always show.
     // EXISTS rather than the previous LEFT JOIN on venue_profiles: nothing
     // makes google_place_id unique in that table, so two verified claims on one
     // place duplicated every review row in this response (and would have
     // double-weighted them in the average).
+    //
+    // Round 22: AND the reply has to still be live. `venue_replied_at IS NOT
+    // NULL` is the published test for a reply, because the upsert retires one
+    // whose review was rewritten under it by clearing that timestamp and
+    // keeping the text (see submit-review). Without this line a retired reply
+    // would go straight back onto the card attached to words its author never
+    // read, which is the harm the retirement exists to prevent.
     const { rows } = await pool.query(
       `SELECT vr.id, vr.rating, vr.text,
-              CASE WHEN EXISTS (
+              CASE WHEN vr.venue_replied_at IS NOT NULL AND EXISTS (
                 SELECT 1 FROM venue_profiles vp
                 WHERE vp.google_place_id = vr.google_place_id AND vp.verified = true
               ) THEN vr.venue_reply ELSE NULL END AS venue_reply,
@@ -1162,7 +1322,10 @@ router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
            WHERE (b.blocker_id = $2 AND b.blocked_id = vr.user_id)
               OR (b.blocker_id = vr.user_id AND b.blocked_id = $2)
          )
-       ORDER BY vr.created_at DESC
+         ${NOT_OWNER_OF_THE_PLACE}
+       -- A LIMIT over a tie is a page that can drop a row and show another
+       -- twice. id DESC breaks it deterministically, and it is the write order.
+       ORDER BY vr.created_at DESC, vr.id DESC
        LIMIT $3`,
       [req.params.placeId, req.user.id, limit]
     );
@@ -1278,16 +1441,56 @@ router.get('/public-promotions/:placeId', placeIdParam, async (req, res) => {
     // venue owner acts Pro" holds for this public route the same way
     // requireVenueTier makes it hold for the owner-facing ones. A NULL tier
     // fails the ANY test, so an unrecognised tier is not served either.
+    //
+    // ROUND 22: "RIGHT NOW" HAS TO MEAN WHAT THE GATE MEANS BY IT.
+    //
+    // Round 16 read venue_profiles.tier, and migration 040 then made that
+    // column a CACHE of the grant rather than the authority: services/
+    // venueEntitlements.js resolves a tier from venue_subscriptions and never
+    // trusts the column over it. Every owner-facing paid route went through the
+    // resolver. This one did not, and it was the only tier decision left that
+    // skipped it, so a comp that lapsed at midnight produced a venue whose own
+    // dashboard answered 403 UPGRADE_REQUIRED while its promotion was still
+    // being served in full to strangers, still incrementing the view counter
+    // the product is priced on. A canceled or unpaid grant had the same hole.
+    // Only an explicit admin downgrade bit, because that rewrites the cache.
+    //
+    // The three rules below are resolveGrantedTier's three rules, in the same
+    // order, with the same fail-closed direction:
+    //   1. NO GRANT ROW (vs.tier IS NULL, which also covers the LEFT JOIN
+    //      finding nothing) means the cached column is the answer. Pre-040 rows
+    //      and scripts/e2e-local.js live here; a row with no grant has no
+    //      expiry to have missed.
+    //   2. A DEAD GRANT is the free tier whatever the cache says: a status
+    //      outside the live set, or an end date that has passed.
+    //   3. A LIVE GRANT serves only if BOTH tiers are serving tiers, which is
+    //      the SQL spelling of "the lower of the two". min(premium, pro) is
+    //      still a serving tier, so the two readings cannot disagree.
+    // The live-status vocabulary is BOUND FROM THE SERVICE rather than retyped
+    // here, so Stripe's status map has one definition; past_due keeps serving
+    // on both sides, as VENUE-BILLING.md says it must.
+    //
+    // NOW() is the database clock where resolveGrantedTier uses the app clock.
+    // Both are NTP-synced and an expiry is a date rather than a microsecond
+    // fence, which is the same trade the service documents.
     const { rows } = await pool.query(
       `SELECT p.id, p.title, p.description, p.time_slot, p.days FROM venue_promotions p
        JOIN venue_profiles vp ON vp.user_id = p.venue_user_id
          AND vp.google_place_id = p.google_place_id
          AND vp.verified = true
-         AND ($2::boolean = false OR vp.tier = ANY($3::text[]))
+       LEFT JOIN venue_subscriptions vs ON vs.user_id = vp.user_id
        WHERE p.google_place_id = $1 AND p.active = true AND COALESCE(p.is_hidden, false) = false
+         AND ($2::boolean = false OR (
+           vp.tier = ANY($3::text[])
+           AND (vs.tier IS NULL OR (
+             vs.tier = ANY($3::text[])
+             AND vs.status = ANY($4::text[])
+             AND (vs.expires_at IS NULL OR vs.expires_at > NOW())
+           ))
+         ))
        ORDER BY p.created_at DESC
        LIMIT 100`,
-      [req.params.placeId, venueBillingEnabled(), SERVING_TIERS]
+      [req.params.placeId, venueBillingEnabled(), SERVING_TIERS, GRANT_LIVE_STATUS_LIST]
     );
     // Count the view — see the two rules above claimPromotionViews. Bounded by
     // the LIMIT above, so the ANY($1) set never grows without limit either.

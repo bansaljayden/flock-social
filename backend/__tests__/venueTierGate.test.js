@@ -267,7 +267,12 @@ test('public-promotions gates on tier, not only on verification', async () => {
   const q = ran(/FROM venue_promotions p/)[0];
   assert.ok(/vp\.verified = true/.test(q.sql), 'the verification join is gone');
   assert.ok(/vp\.tier = ANY\(\$3::text\[\]\)/.test(q.sql), 'there is no current-tier filter');
-  assert.deepStrictEqual(q.params, ['PLACE_A', true, ['premium', 'pro']]);
+  // $4 is the live grant-status vocabulary, bound from services/
+  // venueEntitlements.js: the cached column is the lower bound, and the grant
+  // itself decides whether the tier is still alive. See section 3b of
+  // venueTierExpiry.test.js for what that predicate does case by case.
+  assert.ok(/LEFT JOIN venue_subscriptions vs/.test(q.sql), 'the grant is not consulted');
+  assert.deepStrictEqual(q.params, ['PLACE_A', true, ['premium', 'pro'], ['active', 'trialing', 'past_due']]);
 });
 
 test('the promotions tier filter is inert while the kill switch is off', async () => {
