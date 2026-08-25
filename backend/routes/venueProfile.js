@@ -373,6 +373,15 @@ function profileView(row) {
     ...row,
     corpus_summary: corpusSummary(row),
     has_model_backed_data: hasModelBackedData(row),
+    // The verification state as ONE word the dashboard can branch on, derived
+    // here for the same reason the two corpus fields are: the sentence an
+    // owner reads about their own claim must have one definition, and
+    // 'pending' exists so the screen can stop instructing an owner to request
+    // what they have already requested. 'unverified' means the request button
+    // is the next step; 'pending' means a human has it; 'verified' means done.
+    verification_status: row.verified
+      ? 'verified'
+      : (row.verification_requested_at ? 'pending' : 'unverified'),
   };
 }
 
@@ -442,6 +451,13 @@ router.post('/', requireVerified, [
          verified = CASE WHEN EXCLUDED.google_place_id IS NOT NULL
                           AND EXCLUDED.google_place_id IS DISTINCT FROM venue_profiles.google_place_id
                          THEN false ELSE venue_profiles.verified END,
+         -- A pending verification request binds to the place for the same
+         -- reason: the owner asked us to confirm ownership of the OLD listing,
+         -- and carrying the request onto a new claim would put an unexamined
+         -- place at the front of the admin queue wearing an old timestamp.
+         verification_requested_at = CASE WHEN EXCLUDED.google_place_id IS NOT NULL
+                          AND EXCLUDED.google_place_id IS DISTINCT FROM venue_profiles.google_place_id
+                         THEN NULL ELSE venue_profiles.verification_requested_at END,
          updated_at = NOW()
        RETURNING *`,
       [req.user.id, businessName, category || null, location || null, description || null, goals || [], googlePlaceId || null]
@@ -556,6 +572,82 @@ router.get('/', async (req, res) => {
   }
 });
 
+// POST /api/venue-profile/request-verification — the owner's half of the
+// verification path.
+//
+// THE DEAD END THIS CLOSES (TestFlight, 2026-08-21). Three surfaces told an
+// unverified owner to "verify your venue" and nothing anywhere started one:
+// the admin half has existed since migration 020 (routes/admin.js lists
+// unverified claims and flips `verified` with an audit row), but the queue was
+// just "every unverified profile, newest first", so an owner could not ask and
+// an admin could not tell who was waiting. This sets
+// venue_profiles.verification_requested_at (migration 047); the admin queue
+// orders requested claims first, oldest request first, and the admin decision
+// clears it in either direction.
+//
+// requireVerified for the same reason the POST above carries it: asking a
+// human to confirm you own a business is ACCUMULATING, and it must not be
+// cheaper than joining a hangout.
+//
+// No body is read. There is nothing to say: the claim already names the place,
+// and the one free-text thing an owner might type here (a plea) is exactly
+// what a verification decision must not be made from.
+//
+// IDEMPOTENT ON PURPOSE, first press wins. The COALESCE keeps the original
+// timestamp so pressing the button twice cannot move a claim up (or down) the
+// oldest-first admin queue. The second press answers 200 with the same
+// timestamp and copy that says it is already in, because answering an anxious
+// re-tap with an error teaches the owner the button is broken.
+router.post('/request-verification', requireVerified, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      'SELECT id, google_place_id, verified, verification_requested_at FROM venue_profiles WHERE user_id = $1',
+      [req.user.id]
+    );
+    if (rows.length === 0) return res.status(404).json({ error: 'No venue profile found' });
+    const profile = rows[0];
+
+    if (profile.verified) {
+      // Not an error: the state the button exists to reach is already true.
+      return res.json({
+        verification_status: 'verified',
+        verification_requested_at: null,
+        message: 'This venue is already verified.',
+      });
+    }
+    if (!profile.google_place_id) {
+      // A claim on nothing cannot be checked against anything. Same next step
+      // the advisor and dashboard name for the same condition.
+      return res.status(400).json({ error: 'Link your Google listing in Edit Profile first. Verification confirms you own a specific listed place, and this profile does not name one yet.' });
+    }
+    if (await claimedByAnother(profile.google_place_id, req.user.id)) {
+      return res.status(409).json({ error: CLAIMED_MSG });
+    }
+
+    const upd = await pool.query(
+      `UPDATE venue_profiles
+          SET verification_requested_at = COALESCE(verification_requested_at, NOW()),
+              updated_at = NOW()
+        WHERE user_id = $1
+        RETURNING verification_requested_at`,
+      [req.user.id]
+    );
+    if (upd.rows.length === 0) return res.status(404).json({ error: 'No venue profile found' });
+
+    const already = !!profile.verification_requested_at;
+    res.json({
+      verification_status: 'pending',
+      verification_requested_at: upd.rows[0].verification_requested_at,
+      message: already
+        ? 'Your request is already in. We confirm ownership by hand, and verified features turn on once that clears.'
+        : 'Request received. We confirm ownership by hand, and verified features turn on once that clears.',
+    });
+  } catch (err) {
+    console.error('Request venue verification error:', err);
+    res.status(500).json({ error: 'Failed to request verification' });
+  }
+});
+
 // PUT /api/venue-profile — update venue profile (all settings)
 router.put('/', [
   // Same shape rule as the create route — the two must not drift.
@@ -626,6 +718,10 @@ router.put('/', [
         -- against the OLD row, so this compares new id vs current id.
         verified = CASE WHEN $9 IS NOT NULL AND $9 IS DISTINCT FROM google_place_id
                         THEN false ELSE verified END,
+        -- The pending request resets with it: it was a request about the old
+        -- place. Same trigger, same reasoning as the POST path's reset.
+        verification_requested_at = CASE WHEN $9 IS NOT NULL AND $9 IS DISTINCT FROM google_place_id
+                        THEN NULL ELSE verification_requested_at END,
         photo_url = COALESCE($10, photo_url),
         updated_at = NOW()
       WHERE user_id = $11

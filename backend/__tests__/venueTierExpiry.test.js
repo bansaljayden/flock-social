@@ -143,7 +143,7 @@ const HOUR = 3600000;
 // The join services/venueEntitlements.js issues. `tier` is the cached column on
 // venue_profiles; everything prefixed grant_ comes from venue_subscriptions.
 const grantIs = (row) => [/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: row ? [row] : [] })];
-const ctxIs = (row) => [/SELECT id, google_place_id, verified, category FROM venue_profiles/, () => ({ rows: row ? [row] : [] })];
+const ctxIs = (row) => [/SELECT id, google_place_id, verified, category, verification_requested_at FROM venue_profiles/, () => ({ rows: row ? [row] : [] })];
 const VERIFIED_CTX = { id: 9, google_place_id: 'PLACE_A', verified: true };
 
 // ---------------------------------------------------------------------------

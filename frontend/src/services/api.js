@@ -724,6 +724,22 @@ export async function updateVenueProfile(data) {
   return request('/api/venue-profile', { method: 'PUT', body: JSON.stringify(data) });
 }
 
+// The owner's half of verification. Until this existed the dashboard told an
+// unverified owner to verify their venue in three places and nothing anywhere
+// started one, so the instruction was a dead end (found on TestFlight,
+// 2026-08-21). No body: the claim already names the place, and there is
+// nothing an owner could type that a hand-checked ownership decision should
+// be made from.
+//
+// Idempotent server-side, first press wins, so a second tap cannot move the
+// claim in the admin queue. Answers 200 with { verification_status,
+// verification_requested_at, message } on success and on a repeat; the
+// message is display copy and is printed verbatim by both surfaces that
+// offer the button.
+export async function requestVenueVerification() {
+  return request('/api/venue-profile/request-verification', { method: 'POST' });
+}
+
 // Venue dashboard CRUD
 export async function getVenuePromotions() {
   return request('/api/venue-dashboard/promotions');

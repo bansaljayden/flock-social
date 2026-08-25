@@ -304,13 +304,19 @@ const parseWeekDays = (entries) => {
   return days;
 };
 
-const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHours, onOpenSettings, now }) => {
+const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHours, onOpenSettings, now, verificationStatus, onRequestVerification }) => {
   const navy = colors?.navy || 'var(--text-primary)';
   // 'loading' | 'ready' | 'locked' | 'error'
   const [state, setState] = useState('loading');
   const [payload, setPayload] = useState(null);
   const [lockedReason, setLockedReason] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null);
+  // The verification request offered under the unverified refusal. `verifyNote`
+  // is the server's own message after a successful press and replaces the
+  // reason line, which was written for the state the press just left.
+  const [verifyBusy, setVerifyBusy] = useState(false);
+  const [verifyNote, setVerifyNote] = useState(null);
+  const [verifyError, setVerifyError] = useState(null);
   const [noteDismissed, setNoteDismissed] = useState(() => {
     try { return window.localStorage.getItem(NOTE_SEEN_KEY) === '1'; } catch { return true; }
   });
@@ -347,6 +353,26 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
   }, [fetchCards]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Roost refuses an unverified venue, and the refusal used to name a next step
+  // the product did not offer anywhere. The parent owns the request (both this
+  // card and the analytics card above it press the same handler) and hands back
+  // the server's message; this only decides what the card says afterwards.
+  const requestVerification = useCallback(async () => {
+    if (typeof onRequestVerification !== 'function' || verifyBusy) return;
+    setVerifyBusy(true);
+    setVerifyError(null);
+    try {
+      const message = await onRequestVerification();
+      if (!alive.current) return;
+      setVerifyNote(message || null);
+    } catch (err) {
+      if (!alive.current) return;
+      setVerifyError(err?.message || 'The request did not go through. Try again.');
+    } finally {
+      if (alive.current) setVerifyBusy(false);
+    }
+  }, [onRequestVerification, verifyBusy]);
 
   const clock = now instanceof Date ? now : new Date();
   const todayStr = localDateStr(clock);
@@ -435,7 +461,23 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
     return (
       <div style={CARD_STYLE}>
         <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 4px' }}>{FEATURE_NAME}</h3>
-        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{payload.reason || 'Nothing to show yet.'}</p>
+        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{verifyNote || payload.reason || 'Nothing to show yet.'}</p>
+        {/* Unverified is the one unavailable state the owner can act on, so it
+            is the one that gets a button. No button once the request is in:
+            the server has it, and pressing again cannot change the answer. */}
+        {payload.unverified === true && verificationStatus !== 'pending' && !verifyNote && typeof onRequestVerification === 'function' && (
+          <button
+            className="hit44"
+            onClick={requestVerification}
+            disabled={verifyBusy}
+            style={{ marginTop: '10px', padding: '8px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: verifyBusy ? 'default' : 'pointer', opacity: verifyBusy ? 0.55 : 1 }}
+          >
+            Request verification
+          </button>
+        )}
+        {verifyError && (
+          <p style={{ fontSize: 'var(--t-meta)', color: colors?.red || 'var(--text-secondary)', margin: '8px 0 0', lineHeight: 1.5 }}>{verifyError}</p>
+        )}
       </div>
     );
   }

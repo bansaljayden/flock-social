@@ -536,6 +536,72 @@ test('a heal that cannot get its lock still boots, keeps the row, and repairs th
   assert.equal(await migrationRowCount('032_served_predictions.sql'), 1, 'and recorded exactly once, still');
 });
 
+// ---------------------------------------------------------------------------
+// 6. THE EDITED MIGRATION. The drift no suite could see, because every suite
+//    runs the chain and production ran the FILE, once, as it stood that hour.
+// ---------------------------------------------------------------------------
+//
+// 003 was applied to production at 2026-08-13 07:06 UTC and EDITED afterwards:
+// rounds 6 and 7 appended the venue_reviews / venue_promotions is_hidden
+// ALTERs to a file the runner had already recorded. Every fresh database got
+// the columns; production alone did not, and from round 18 (2026-08-14) every
+// statement filtering on them answered 42703 there — the owner Reviews tab,
+// both public card reads, the owner reply, the promotion edit, the admin
+// queue, and the moderation hide for both types. A week of 500s that this
+// whole suite stayed green through, which is the point of this section: the
+// chain being correct proves nothing about a database that ran an older copy
+// of one of its files. 048 re-states the two ALTERs in a new file, with
+// @requires, and this is the test that 048 actually reaches such a database.
+
+const COLUMNS_048 = [
+  ['venue_reviews', 'is_hidden'],
+  ['venue_promotions', 'is_hidden'],
+];
+
+test("048 reaches a database that applied 003 before the is_hidden ALTERs existed", async () => {
+  // Production's exact shape on 2026-08-21, reconstructed twice over. First as
+  // the deploy that ships the fix: 003 recorded, the columns absent, 048 not
+  // yet applied — the runner must apply it as an ordinary pending file.
+  await dropColumns('venue_reviews', ['is_hidden']);
+  await dropColumns('venue_promotions', ['is_hidden']);
+  await pool.query(`DELETE FROM schema_migrations WHERE name = '048_restore_ugc_takedown_columns.sql'`);
+  for (const [t, c] of COLUMNS_048) {
+    assert.equal(await columnExists(t, c), false, `${t}.${c} must start absent, as production had it`);
+  }
+
+  await migrate(pool); // the deploy
+
+  assert.equal(await migrationRowCount('048_restore_ugc_takedown_columns.sql'), 1);
+  for (const [t, c] of COLUMNS_048) {
+    assert.ok(await columnExists(t, c), `${t}.${c} must exist after the deploy that carries 048`);
+  }
+
+  // Second, as a later loss with 048 already recorded: @requires means the
+  // self-heal notices on the next boot instead of a route noticing with a 500.
+  await dropColumns('venue_reviews', ['is_hidden']);
+  await dropColumns('venue_promotions', ['is_hidden']);
+  assert.equal(await migrationRowCount('048_restore_ugc_takedown_columns.sql'), 1);
+
+  await migrate(pool); // a boot
+
+  for (const [t, c] of COLUMNS_048) {
+    assert.ok(await columnExists(t, c), `${t}.${c} must be healed while 048 stays recorded once`);
+  }
+  assert.equal(await migrationRowCount('048_restore_ugc_takedown_columns.sql'), 1);
+
+  // And the statement that was answering 42703 in production — the stats read
+  // of GET /api/venue-dashboard/reviews — now parses and runs.
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS total, AVG(vr.rating)::float AS average
+       FROM venue_reviews vr
+       JOIN users u ON u.id = vr.user_id
+      WHERE vr.google_place_id = $1
+        AND COALESCE(vr.is_hidden, false) = false`,
+    ['ChIJbootsafety048']
+  );
+  assert.equal(rows[0].total, 0, 'the reviews stats statement must run, not 42703');
+});
+
 test('every migration file declares post-conditions the runner can actually parse', async () => {
   // parseRequirements throws on a line that looks like a declaration and is
   // not: mis-cased, schema-mangled, malformed, or buried in a $$ body, a block

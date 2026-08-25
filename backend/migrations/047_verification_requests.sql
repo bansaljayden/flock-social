@@ -1,0 +1,25 @@
+-- @requires column venue_profiles.verification_requested_at
+--
+-- 047: the owner's half of venue verification.
+--
+-- THE DEAD END THIS FIXES (TestFlight, 2026-08-21). The dashboard told an
+-- owner in three places that their venue "isn't verified yet" and to "verify
+-- your venue", and the product provided no way to do that. The admin half has
+-- existed since migration 020: GET /api/admin/venues/unverified lists every
+-- unverified claim and PUT /api/admin/venues/:profileId/verify flips
+-- `verified` with an audit row. What never existed was the owner's action, so
+-- the instruction pointed at nothing.
+--
+-- verification_requested_at is that action. NULL means the owner has never
+-- asked; a timestamp means they pressed the button and the claim is waiting
+-- for a human. It is set by POST /api/venue-profile/request-verification
+-- (first press wins; a second press does not move it, so queue position is
+-- honest), cleared by routes/admin.js when an admin decides either direction,
+-- and cleared by routes/venueProfile.js when the claim moves to a different
+-- google_place_id, for the same reason `verified` resets there: the request
+-- was about the old place.
+--
+-- No new moderation_actions value is needed, so no CHECK is widened here: the
+-- request is a column on the claim, and the admin decision already writes
+-- 'venue_verified' / 'venue_unverified' (legal since migration 020).
+ALTER TABLE venue_profiles ADD COLUMN IF NOT EXISTS verification_requested_at TIMESTAMPTZ;

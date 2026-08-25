@@ -1,0 +1,46 @@
+-- 048: the two takedown columns production never received.
+--
+-- WHAT HAPPENED. 003_feedback_verified_and_tombstones.sql was applied to
+-- production at 2026-08-13 07:06 UTC, minutes after it was first committed
+-- (ac87075). Later that same day, rounds 6 and 7 (4911787, 21d25f0) EDITED the
+-- already-applied file, appending sections 4 and 5:
+--
+--   ALTER TABLE venue_reviews    ADD COLUMN IF NOT EXISTS is_hidden ...
+--   ALTER TABLE venue_promotions ADD COLUMN IF NOT EXISTS is_hidden ...
+--   (and the content_reports content_type CHECK widening)
+--
+-- The runner never re-runs a file schema_migrations already records, and 003
+-- declares no @requires post-conditions, so nothing ever noticed: every fresh
+-- database (including the embedded-Postgres test suites, which is why every
+-- suite stayed green) got the columns, and production alone did not. The CHECK
+-- widening was independently re-done by 016 and 019, both new files, so it
+-- healed by accident; the two columns had no second author and stayed missing.
+--
+-- WHAT THAT BROKE, from 2026-08-14 (round 18, when the routes started
+-- filtering on the column) until this file: every statement reading
+-- venue_reviews.is_hidden or venue_promotions.is_hidden answered 42703 in
+-- production — the owner dashboard's GET /reviews (the TestFlight "We couldn't
+-- load your reviews" report of 2026-08-21, confirmed in the deploy log:
+-- "Get reviews error: error: column vr.is_hidden does not exist"), the owner
+-- reply route, both public card reads (/public-reviews, /public-promotions),
+-- the promotion edit CTE, the admin reports queue, and the moderation hide
+-- action for both content types.
+--
+-- THE RULE THIS FILE RESTATES BY EXISTING: a migration that has shipped is
+-- immutable. New DDL goes in a NEW file, exactly as 016 and 019 did when they
+-- widened 003's CHECK a second and third time. Editing an applied file is the
+-- one change no boot, no test and no heal can see.
+--
+-- Plain ALTERs, no DO/EXCEPTION wrappers: ADD COLUMN IF NOT EXISTS raises
+-- nothing when the column is already there (every non-production database), so
+-- there is no benign error to swallow, and anything else — a lock timeout above
+-- all — must fail the transaction and the boot, which the next boot retries.
+-- The @requires lines make the runner verify the columns actually landed
+-- before recording this file, and re-verify them on every later boot, so a
+-- database that loses them again heals instead of serving 500s for a week.
+-- @requires column venue_reviews.is_hidden
+-- @requires column venue_promotions.is_hidden
+
+ALTER TABLE venue_reviews ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT false;
+
+ALTER TABLE venue_promotions ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT false;

@@ -98,7 +98,7 @@ function dispatch(rawSql, params = []) {
   log.push({ sql, params });
 
   // Venue context (getVenueCtx)
-  if (/SELECT id, google_place_id, verified, category FROM venue_profiles/.test(sql)) {
+  if (/SELECT id, google_place_id, verified, category, verification_requested_at FROM venue_profiles/.test(sql)) {
     const u = pidx(sql, /user_id = \$(\d+)/);
     const rows = PROFILES
       .filter((p) => u === null || p.user_id === params[u])

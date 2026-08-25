@@ -836,7 +836,7 @@ test('the strip hands the model every feature it paid Google for', async () => {
   CURRENT_USER = { id: 4242, name: 'Owner', role: 'venue_owner' };
   handlers = [
     [/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [{ tier: 'insights' }] })],
-    [/SELECT id, google_place_id, verified, category FROM venue_profiles/, () => ({ rows: [VERIFIED_CTX] })],
+    [/SELECT id, google_place_id, verified, category, verification_requested_at FROM venue_profiles/, () => ({ rows: [VERIFIED_CTX] })],
     [/[\s\S]*/, () => ({ rows: [] })],
   ];
   NEARBY = [
