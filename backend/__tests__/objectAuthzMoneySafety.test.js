@@ -179,7 +179,11 @@ async function dispatch(text, params = []) {
 
   // ── budget ──
   if (has('FROM budget_submissions WHERE flock_id = $1 AND user_id = $2')) return { rows: [], rowCount: 0 };
-  if (has('FROM budget_submissions WHERE flock_id = $1')) {
+  // Matched on the table alone: every aggregate here now reads submissions
+  // through a JOIN on flock_members (round 18, so a departed account's row
+  // stops setting the group MIN), so the statement no longer reads
+  // "FROM budget_submissions WHERE flock_id = $1".
+  if (has('FROM budget_submissions')) {
     // nonSkipSubmissions is 0 for every attack case; a test that needs the
     // creator's lock to actually reach the write sets it to 3 first.
     return {

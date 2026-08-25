@@ -7,23 +7,29 @@
 // The design is explicit about what it will and will not publish: the ceiling
 // is MIN(non-skipped amounts), it is published as a BAND rather than the raw
 // minimum, and it is withheld entirely until THREE non-skipped submissions
-// exist. The documented residual is that colluders learn a band.
+// exist.
 //
-// This file attacks past that line. What it establishes:
+// This file attacked past that line and found three defects. All three are now
+// fixed in routes/budget.js and every case below asserts the FIXED behaviour;
+// the attacks are kept in the words of the attack so a regression reads as the
+// abuse it would restore.
 //
-//   E. POISON AND RUN (defect). budget_submissions has no relationship to
-//      flock_members. A member can submit $0.01, leave the flock, and the row
-//      stays: it keeps setting the group MIN forever, and the departing
-//      account can no longer edit or withdraw it because /submit requires an
-//      accepted membership row. The creator cannot clear it either — there is
-//      no delete path on this router at all. routes/venues.js closed exactly
-//      this shape for venue_votes in round 17 (the tally now JOINs
-//      flock_members); budget_submissions never got the same treatment.
+//   E. POISON AND RUN (was a defect, closed). budget_submissions had no
+//      relationship to flock_members, so a member could submit $0.01, leave,
+//      and the row went on setting the group MIN forever: the author was then
+//      403'd off their own row, this router has no delete path, and /lock
+//      recomputed the same MIN and committed the group to a cent.
+//      routes/venues.js closed exactly this shape for venue_votes in round 17.
+//      Every aggregate here now reads submissions through flock_members, so a
+//      departed account's row is inert until they rejoin.
 //
-//   F. BORROWED ANONYMITY (defect). The >= 3 non-skip threshold exists to give
-//      an amount a crowd to hide in. It counts ROWS, not present members, so
-//      rows left behind by departed accounts carry a live flock over the line.
-//      Two people in a room can be shown a ceiling whose anonymity set is two.
+//   F. BORROWED ANONYMITY (was a defect, closed by the same join). The >= 3
+//      non-skip threshold exists to give an amount a crowd to hide in, and it
+//      counted ROWS, not present members: one throwaway that submitted and
+//      left carried a two-person flock over the line, and the two people in
+//      the room were shown a band around one of their own amounts. Counting
+//      present members only, the reveal now needs three people who are
+//      actually there, and it reverses if one of them leaves.
 //
 //   G. DIFFERENCING (attacked, held at the band). A member who resubmits and
 //      re-reads can binary-search the others' minimum, but bandCeiling floors
@@ -31,10 +37,16 @@
 //      Pinned here so a future change to the band steps is measured against
 //      what an attacker actually recovers.
 //
-//   H. SKIP COUNT (defect, small). skipCount is returned raw to every member.
-//      In a two-person flock it is a direct read of whether the other person
-//      skipped, which is per-member information the rest of the route is
-//      careful never to publish.
+//   H. SKIP COUNT (was a defect, closed). skipCount was returned raw to every
+//      member. The caller knows their own answer, so in a two-person flock it
+//      was a direct read of whether the other person declined to share a
+//      number, and in a three-person flock 0 or 2 named both of the others. It
+//      is now withheld (null) unless it ranges over at least three co-members.
+//
+//   NOTED, and not fixable: one member alone, with no collusion, always learns
+//      the BAND of everyone else's minimum by submitting the maximum. See the
+//      case at the end of section G. The residual the privacy policy and the
+//      terms have to describe is the band, not collusion.
 //
 // No database: pool.query is a semantic fixture. Unmodelled statements throw
 // rather than answering with an empty result.
@@ -69,9 +81,22 @@ const FLOCK = 4200;
 function submission(flockId, userId) {
   return world.submissions.find((s) => s.flock_id === flockId && s.user_id === userId);
 }
+
+// Every aggregate on this router must read submissions THROUGH flock_members.
+// The fixture answers only queries that carry that join, so dropping it does
+// not quietly return to counting departed accounts: the statement becomes
+// unscripted, dispatch throws, and assertQueriesUnderstood names it.
+const MEMBER_JOIN = "JOIN flock_members bm ON bm.flock_id = bs.flock_id AND bm.user_id = bs.user_id AND bm.status = 'accepted'";
+const overMembers = (flat) => flat.includes(MEMBER_JOIN);
+function memberSubmissions(flockId) {
+  const accepted = new Set(
+    world.members.filter((m) => m.flock_id === flockId && m.status === 'accepted').map((m) => m.user_id),
+  );
+  return world.submissions.filter((s) => s.flock_id === flockId && accepted.has(s.user_id));
+}
 function minNonSkipped(flockId) {
-  const amts = world.submissions
-    .filter((s) => s.flock_id === flockId && s.skipped === false && s.amount != null)
+  const amts = memberSubmissions(flockId)
+    .filter((s) => s.skipped === false && s.amount != null)
     .map((s) => Number(s.amount));
   return amts.length ? Math.min(...amts) : null;
 }
@@ -121,7 +146,8 @@ async function dispatch(sql, params) {
     else world.submissions.push({ flock_id: fid, user_id: uid, amount, skipped: !!skipped });
     return { rows: [], rowCount: 1 };
   }
-  if (/^SELECT MIN\(amount\) AS ceiling FROM budget_submissions WHERE flock_id = \$1 AND skipped = false$/.test(flat)) {
+  if (/^SELECT MIN\(amount\) AS ceiling FROM budget_submissions bs /.test(flat)
+      && overMembers(flat) && /WHERE bs\.flock_id = \$1 AND skipped = false$/.test(flat)) {
     return { rows: [{ ceiling: minNonSkipped(Number(p[0])) }], rowCount: 1 };
   }
   if (/^UPDATE flocks SET budget_ceiling = \$1/.test(flat)) {
@@ -134,8 +160,8 @@ async function dispatch(sql, params) {
     if (f) { f.budget_locked = true; f.budget_ceiling = p[1]; }
     return { rows: [], rowCount: f ? 1 : 0 };
   }
-  if (/COUNT\(\*\) AS total_submissions/.test(flat)) {
-    const rows = world.submissions.filter((s) => s.flock_id === Number(p[0]));
+  if (/COUNT\(\*\) AS total_submissions/.test(flat) && overMembers(flat)) {
+    const rows = memberSubmissions(Number(p[0]));
     return {
       rows: [{
         total_submissions: String(rows.length),
@@ -145,8 +171,9 @@ async function dispatch(sql, params) {
       rowCount: 1,
     };
   }
-  if (/^SELECT COUNT\(\*\)::int AS n FROM budget_submissions WHERE flock_id = \$1 AND skipped = false$/.test(flat)) {
-    const n = world.submissions.filter((s) => s.flock_id === Number(p[0]) && !s.skipped).length;
+  if (/^SELECT COUNT\(\*\)::int AS n FROM budget_submissions bs /.test(flat)
+      && overMembers(flat) && /WHERE bs\.flock_id = \$1 AND skipped = false$/.test(flat)) {
+    const n = memberSubmissions(Number(p[0])).filter((s) => !s.skipped).length;
     return { rows: [{ n }], rowCount: 1 };
   }
   if (/^SELECT COUNT\(\*\) AS total FROM flock_members WHERE flock_id = \$1 AND status = 'accepted'$/.test(flat)) {
@@ -156,6 +183,13 @@ async function dispatch(sql, params) {
   if (/^SELECT name FROM flocks WHERE id = \$1$/.test(flat)) {
     const f = world.flocks.get(Number(p[0]));
     return f ? { rows: [{ name: f.name }], rowCount: 1 } : { rows: [], rowCount: 0 };
+  }
+  // The socket fan-out roster (sockets/handlers.js emitToFlockMembers).
+  if (/^SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted'$/.test(flat)) {
+    const rows = world.members
+      .filter((m) => m.flock_id === Number(p[0]) && m.status === 'accepted')
+      .map((m) => ({ user_id: m.user_id }));
+    return { rows, rowCount: rows.length };
   }
   if (/^SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2$/.test(flat)) {
     const rows = world.members
@@ -225,7 +259,7 @@ const status = () => call('GET', `/api/budget/${FLOCK}`);
 // E. POISON AND RUN
 // ═════════════════════════════════════════════════════════════════════════════
 
-test('ABUSE E: a member submits $0.01, leaves, and the group budget is stuck at a cent forever', async () => {
+test('ABUSE E: a member submits $0.01 and leaves, and the cent leaves with them', async () => {
   seedFlock({ creator: 1, members: [1, 2, 3, 4] });
 
   // The three real participants say what they can spend.
@@ -238,7 +272,9 @@ test('ABUSE E: a member submits $0.01, leaves, and the group budget is stuck at 
   assert.strictEqual(s.body.isReady, true);
   assert.strictEqual(s.body.ceiling, 60, 'a healthy $60 band');
 
-  // The griefer joins the conversation with a cent and then walks out.
+  // The griefer joins the conversation with a cent and then walks out. While
+  // they are IN the flock the cent counts, and it should: a present member who
+  // can only spend a cent is exactly what the ceiling is for.
   const G = 9;
   world.members.push({ flock_id: FLOCK, user_id: G, status: 'accepted' });
   as(G);
@@ -246,34 +282,38 @@ test('ABUSE E: a member submits $0.01, leaves, and the group budget is stuck at 
   assert.strictEqual(poisoned.status, 200, poisoned.text);
   assert.strictEqual(poisoned.body.ceiling, 0.01, 'the sub-dollar band');
 
-  // POST /api/flocks/:id/leave deletes the flock_members row and nothing else.
+  // POST /api/flocks/:id/leave deletes the flock_members row and nothing else,
+  // so the submission row still exists...
   world.members = world.members.filter((m) => m.user_id !== G);
+  assert.ok(submission(FLOCK, G), 'the row is still in the table');
 
-  // The row survives, and it is still the MIN.
-  assert.ok(submission(FLOCK, G), 'budget_submissions has no membership relationship at all');
+  // ...and it no longer counts, because every aggregate reads through
+  // flock_members now.
   as(1);
   s = await status();
-  assert.strictEqual(s.body.ceiling, 0.01,
-    'every member is now told the group can spend one cent');
+  assert.strictEqual(s.body.ceiling, 60, 'the group is back to what its members can spend');
+  assert.strictEqual(s.body.submissionCount, 3, 'the departed row stopped being counted');
+  assert.strictEqual(s.body.totalMembers, 4,
+    'and "3 of 4 answered" is arithmetic again: a departed submitter used to push the left number past the right one',
+  );
 
-  // Nobody can undo it. The author is refused for lack of membership...
+  // The author still cannot edit the row from outside the flock, which is the
+  // correct answer and is no longer a trap: leaving IS the withdrawal.
   as(G);
   const retry = await submit(60);
-  assert.strictEqual(retry.status, 403, 'the poisoner cannot withdraw or raise their own number');
+  assert.strictEqual(retry.status, 403, 'a non-member writes nothing here');
 
-  // ...and there is no delete/clear path on this router for anyone else.
+  // No delete path is needed, and there still is none: membership is the
+  // relationship, so an orphaned row is inert rather than permanent.
   const paths = [];
   budgetRouter.stack.forEach((layer) => {
     if (layer.route) paths.push(`${Object.keys(layer.route.methods).join(',')} ${layer.route.path}`);
   });
-  assert.deepStrictEqual(
-    paths.filter((r) => r.startsWith('delete')), [],
-    'routes/budget.js exposes no way to remove a submission, so the poison is permanent',
-  );
+  assert.deepStrictEqual(paths.filter((r) => r.startsWith('delete')), []);
   assertQueriesUnderstood();
 });
 
-test('ABUSE E2: the poisoned ceiling survives the LOCK, which is the number the group commits to', async () => {
+test('ABUSE E2: the LOCK commits the group to the members\' MIN, not a departed account\'s', async () => {
   seedFlock({ creator: 1, members: [1, 2, 3] });
   as(1); await submit(70);
   as(2); await submit(65);
@@ -287,11 +327,15 @@ test('ABUSE E2: the poisoned ceiling survives the LOCK, which is the number the 
   as(1);
   const locked = await call('POST', `/api/budget/${FLOCK}/lock`);
   assert.strictEqual(locked.status, 200, locked.text);
-  assert.strictEqual(locked.body.ceiling, 0.01,
-    'the lock recomputes MIN over submissions, including the departed one');
+  assert.strictEqual(locked.body.ceiling, 60,
+    'MIN over the three present members is $65, banded down to $60',
+  );
   assert.strictEqual(world.flocks.get(FLOCK).budget_locked, true);
+  assert.strictEqual(world.flocks.get(FLOCK).budget_ceiling, 60,
+    'and the cached column holds that, so no later reader republishes the cent',
+  );
 
-  // And once locked, no member can move it back.
+  // Locking is still one-way: nobody can move the number afterwards.
   as(1);
   const after = await submit(70);
   assert.strictEqual(after.status, 400, after.text);
@@ -299,11 +343,61 @@ test('ABUSE E2: the poisoned ceiling survives the LOCK, which is the number the 
   assertQueriesUnderstood();
 });
 
+test('HELD: a LOCKED ceiling does not move when someone leaves afterwards', async () => {
+  // The deliberate exception to recomputing on read. Locking is the group
+  // committing to a number; if a member walks out after that, the figure
+  // everyone agreed to has to stay the figure everyone agreed to, and must not
+  // quietly climb to the MIN of whoever is left.
+  seedFlock({ creator: 1, members: [1, 2, 3, 4] });
+  as(1); await submit(70);
+  as(2); await submit(65);
+  as(3); await submit(200);
+  as(4); await submit(90);
+
+  as(1);
+  const locked = await call('POST', `/api/budget/${FLOCK}/lock`);
+  assert.strictEqual(locked.body.ceiling, 60, 'MIN $65, banded to $60');
+
+  // User 2, whose $65 was the binding constraint, leaves. Three sharers are
+  // still present, so the number is still publishable, and a recompute would
+  // now say $70.
+  world.members = world.members.filter((m) => m.user_id !== 2);
+
+  as(1);
+  const s = await status();
+  assert.strictEqual(s.body.budgetLocked, true);
+  assert.strictEqual(s.body.isReady, true);
+  assert.strictEqual(s.body.ceiling, 60,
+    'the committed number is still the committed number, not the MIN of who is left');
+  assertQueriesUnderstood();
+});
+
+test('ABUSE E3: a departed submitter cannot hold the lock threshold open either', async () => {
+  // The mirror of E2. Three shared amounts, one of them from an account that
+  // has left: the flock is back to two, and the creator is told so in the
+  // words of the rule rather than handed a two-person reveal.
+  seedFlock({ creator: 1, members: [1, 2] });
+  as(1); await submit(70);
+  as(2); await submit(43.20);
+
+  const G = 9;
+  world.members.push({ flock_id: FLOCK, user_id: G, status: 'accepted' });
+  as(G); await submit(10000);
+  world.members = world.members.filter((m) => m.user_id !== G);
+
+  as(1);
+  const locked = await call('POST', `/api/budget/${FLOCK}/lock`);
+  assert.strictEqual(locked.status, 400, locked.text);
+  assert.match(locked.body.error, /3 people have shared an amount/);
+  assert.strictEqual(world.flocks.get(FLOCK).budget_locked, false);
+  assertQueriesUnderstood();
+});
+
 // ═════════════════════════════════════════════════════════════════════════════
 // F. BORROWED ANONYMITY — the >=3 threshold counts rows, not people
 // ═════════════════════════════════════════════════════════════════════════════
 
-test('ABUSE F: two present members are shown a ceiling whose anonymity set is two', async () => {
+test('ABUSE F: a puppet who submits and leaves cannot lend a two-person flock a third person', async () => {
   // A and B are the flock. A wants B's number and cannot have it: two
   // non-skips is below the threshold, so the ceiling is withheld.
   seedFlock({ creator: 1, members: [1, 2] });
@@ -315,9 +409,7 @@ test('ABUSE F: two present members are shown a ceiling whose anonymity set is tw
   assert.strictEqual(s.body.isReady, false);
   assert.strictEqual(s.body.ceiling, null, 'correctly withheld at two submissions');
 
-  // A brings in one puppet, who submits anything at all and then LEAVES. The
-  // puppet is not in the room, cannot see the flock, and is not part of the
-  // plan — but their row counts.
+  // A brings in one puppet, who submits anything at all and then LEAVES.
   const P = 8;
   world.members.push({ flock_id: FLOCK, user_id: P, status: 'accepted' });
   as(P); await submit(10000);
@@ -326,17 +418,23 @@ test('ABUSE F: two present members are shown a ceiling whose anonymity set is tw
   as(1);
   s = await status();
   assert.strictEqual(s.body.totalMembers, 2, 'the flock really is two people');
-  assert.strictEqual(s.body.submissionCount, 3, 'but three rows exist');
-  assert.strictEqual(s.body.isReady, true, 'so the privacy threshold is satisfied');
-  assert.strictEqual(s.body.ceiling, 40,
-    "and A now reads B's amount to within a $5 band with nobody else in the room");
+  assert.strictEqual(s.body.submissionCount, 2, 'and only two submissions count');
+  assert.strictEqual(s.body.isReady, false, 'so the privacy threshold is not satisfied');
+  assert.strictEqual(s.body.ceiling, null,
+    "B's amount stays withheld, which is the whole point of the threshold");
 
-  // The bound on what A learned, stated exactly: B is in [40, 45).
+  // What A would have learned had the row counted, stated exactly, so the
+  // stakes of a regression are on the page: B in [40, 45).
   assert.ok(bandCeiling(43.20) === 40 && bandCeiling(44.99) === 40 && bandCeiling(45) === 45);
   assertQueriesUnderstood();
 });
 
-test('ABUSE F2: the same borrowed row survives even when the puppet SKIPS afterwards is impossible, so it cannot be taken back', async () => {
+test('ABUSE F2: a third account that STAYS is the honest residual, and its departure reverses the reveal', async () => {
+  // The join does not pretend to stop collusion, and it should not: a third
+  // person who is really in the flock is a third person, and A and the puppet
+  // comparing notes is the documented tradeoff. What changed is that the
+  // puppet has to remain in the roster everyone can see, and the moment they
+  // leave the flock stops being three people and stops being told a number.
   seedFlock({ creator: 1, members: [1, 2] });
   as(1); await submit(10000);
   as(2); await submit(43.20);
@@ -344,17 +442,25 @@ test('ABUSE F2: the same borrowed row survives even when the puppet SKIPS afterw
   const P = 8;
   world.members.push({ flock_id: FLOCK, user_id: P, status: 'accepted' });
   as(P); await submit(10000);
-  world.members = world.members.filter((m) => m.user_id !== P);
-
-  // Even a puppet who regrets it cannot convert their row to a skip and pull
-  // the flock back under the threshold: /submit needs membership.
-  as(P);
-  const regret = await skip();
-  assert.strictEqual(regret.status, 403, 'a departed account cannot change its own row in either direction');
 
   as(1);
-  const s = await status();
-  assert.strictEqual(s.body.isReady, true, 'so the reveal is irreversible');
+  let s = await status();
+  assert.strictEqual(s.body.totalMembers, 3, 'the puppet is visibly in the flock');
+  assert.strictEqual(s.body.isReady, true);
+  assert.strictEqual(s.body.ceiling, 40, 'three present people, so a band is published');
+
+  // The puppet leaves. A departed account still cannot rewrite its own row,
+  // which is unchanged and correct, but it no longer needs to, because
+  // leaving withdraws the row's effect.
+  world.members = world.members.filter((m) => m.user_id !== P);
+  as(P);
+  const regret = await skip();
+  assert.strictEqual(regret.status, 403, 'a non-member writes nothing here');
+
+  as(1);
+  s = await status();
+  assert.strictEqual(s.body.isReady, false, 'the reveal is not permanent');
+  assert.strictEqual(s.body.ceiling, null);
   assertQueriesUnderstood();
 });
 
@@ -398,10 +504,22 @@ test('HELD: resubmit-and-difference recovers the BAND of the others\' minimum an
   assertQueriesUnderstood();
 });
 
-test('NOTED: one member alone, with no collusion, always learns the band of everyone else\'s minimum', async () => {
+test('NOTED, NOT FIXABLE: one member alone, with no collusion, always learns the band of everyone else\'s minimum', async () => {
   // The documented tradeoff says COLLUDERS learn a band. The floor is lower
   // than that: in any flock that reaches the threshold, submitting the maximum
   // makes the published ceiling a pure function of the other members' minimum.
+  //
+  // VERDICT: not fixable while the feature keeps its point, and left as is on
+  // purpose. The published cap has to be a number every member can afford, and
+  // the only such number is the minimum, so whoever is not the binding
+  // constraint learns a fact purely about the others by arithmetic. Noise
+  // upward would publish a cap somebody cannot pay, which is the one thing the
+  // ceiling exists to prevent; noise downward is what banding already is; a
+  // per-member number would stop being a group cap. What is left is the BAND,
+  // and the honest statement of the residual is "every member learns an
+  // interval containing the lowest amount among the others, never an exact
+  // figure and never a name", which is what the privacy policy and the terms
+  // now have to say, in place of the collusion-only version.
   seedFlock({ creator: 1, members: [1, 2, 3] });
   as(2); await submit(52.75);
   as(3); await submit(140);
@@ -418,25 +536,30 @@ test('NOTED: one member alone, with no collusion, always learns the band of ever
 // H. SKIP COUNT
 // ═════════════════════════════════════════════════════════════════════════════
 
-test('ABUSE H: skipCount is a direct per-person read in a two-member flock', async () => {
+test('ABUSE H: skipCount is withheld in a two-member flock, where it named the other person', async () => {
   seedFlock({ creator: 1, members: [1, 2] });
   as(1); await submit(50);
 
   as(1);
   let s = await status();
-  assert.strictEqual(s.body.skipCount, 0, 'user 2 has not answered yet');
+  assert.ok('skipCount' in s.body, 'the field stays on the wire; a withheld number is null, not a missing key');
+  assert.strictEqual(s.body.skipCount, null);
 
   as(2); await skip();
 
   as(1);
   s = await status();
-  assert.strictEqual(s.body.skipCount, 1,
-    'and now user 1 knows, precisely and by name, that user 2 declined to share a number');
-  assert.strictEqual(s.body.isReady, false, 'while the amount itself stays withheld');
+  assert.strictEqual(s.body.skipCount, null,
+    'user 1 is not told whether user 2 declined to share a number');
+  // What A is still told, and should be: somebody answered. Waiting on a
+  // person is coordination; what they answered is the private part.
+  assert.strictEqual(s.body.submissionCount, 2, 'both people have answered');
+  assert.strictEqual(s.body.totalMembers, 2);
+  assert.strictEqual(s.body.isReady, false, 'and the amount itself stays withheld');
   assertQueriesUnderstood();
 });
 
-test('ABUSE H2: skipCount deanonymises in a three-member flock too, once the caller subtracts themselves', async () => {
+test('ABUSE H2: withheld in a three-member flock too, where 0 or 2 named both of the others', async () => {
   seedFlock({ creator: 1, members: [1, 2, 3] });
   as(1); await skip();
   as(2); await submit(40);
@@ -444,19 +567,58 @@ test('ABUSE H2: skipCount deanonymises in a three-member flock too, once the cal
 
   as(1);
   const s = await status();
-  // The caller knows their own answer, so skipCount - 1 is the others' skips,
-  // and with two others and one skip among them the set is not anonymous once
-  // user 2's own "userSkipped: false" is compared by user 2 in the same way.
-  assert.strictEqual(s.body.skipCount, 2);
-  assert.strictEqual(s.body.userSkipped, true);
+  // The caller knows their own answer, so a published count of 2 here would
+  // have told user 1 that user 3 skipped, and told user 2 that both of the
+  // others did. Two co-members is not a crowd.
+  assert.strictEqual(s.body.skipCount, null);
+  assert.strictEqual(s.body.userSkipped, true, 'the caller still sees their own answer');
   assert.strictEqual(s.body.submissionCount, 3);
-  // From user 2's seat the arithmetic names user 1 and user 3 exactly.
   as(2);
   const s2 = await status();
-  assert.strictEqual(s2.body.skipCount, 2);
-  assert.strictEqual(s2.body.userSkipped, false,
-    'user 2 did not skip, so both skips belong to the other two members, individually identified',
-  );
+  assert.strictEqual(s2.body.skipCount, null);
+  assert.strictEqual(s2.body.userSkipped, false);
+  assertQueriesUnderstood();
+});
+
+test('HELD: skipCount is still published once it ranges over three co-members', async () => {
+  // The fix is a floor, not a deletion. A flock big enough for the count to
+  // be a count still gets it, so "2 of 5 shared an amount" keeps working and
+  // nobody's honest submission got harder or more confusing.
+  seedFlock({ creator: 1, members: [1, 2, 3, 4] });
+  as(2); await skip();
+  as(3); await submit(60);
+
+  as(1);
+  const s = await status();
+  assert.strictEqual(s.body.totalMembers, 4, 'three co-members besides the caller');
+  assert.strictEqual(s.body.skipCount, 1);
+  assert.strictEqual(s.body.submissionCount, 2);
+
+  // And the submit response and the socket fan-out carry the same rule, so a
+  // member cannot read from one door what the other withholds.
+  const sub = await submit(80);
+  assert.strictEqual(sub.body.skipCount, 1);
+  assertQueriesUnderstood();
+});
+
+test('HELD: the socket fan-out withholds the skip count exactly as the response does', async () => {
+  const emitted = [];
+  app.set('io', { to: (room) => ({ emit: (event, payload) => emitted.push({ room, event, payload }) }) });
+  try {
+    seedFlock({ creator: 1, members: [1, 2] });
+    as(1);
+    await submit(50);
+  } finally {
+    app.set('io', null);
+  }
+
+  const updates = emitted.filter((e) => e.event === 'budget_updated');
+  assert.ok(updates.length > 0, 'no budget_updated fan-out');
+  for (const u of updates) {
+    assert.strictEqual(u.payload.skipCount, null,
+      'the socket payload is the same aggregate the response is');
+    assert.strictEqual(u.payload.ceiling, null);
+  }
   assertQueriesUnderstood();
 });
 
