@@ -448,11 +448,17 @@ test('out of seats and out of rows are the same answer', async () => {
 // in 005): undefined_table (42P01) and undefined_column (42703). On such a
 // deploy there are no guest votes to miss, so answering with none is correct.
 
-test('guest votes count toward the tally members see', async () => {
+test('guest votes count toward the tally members see, up to what the members have cast', async () => {
+  // The game-rule abuse round capped the guest WEIGHT at the total number of
+  // member votes in the flock (floor of 1), because guest_votes rows have no
+  // identity behind them and routes/guest.js caps RSVPs at 50 per FLOCK, not
+  // per person: one holder of the share link used to outvote the whole roster.
+  // This fixture has one member vote, so two guest votes weigh one between
+  // them. guest_count still reports both, which is the number the UI shows.
   const res = await getVotes();
   assert.strictEqual(res.status, 200, res.text);
   assert.deepStrictEqual(res.body.votes, [{
-    venue_name: 'The Fig', venue_id: 'ChIJfig', vote_count: 3, guest_count: 2,
+    venue_name: 'The Fig', venue_id: 'ChIJfig', vote_count: 2, guest_count: 2,
     voters: [{ id: ME, name: 'Ava' }],
   }]);
   assertQueriesUnderstood();
