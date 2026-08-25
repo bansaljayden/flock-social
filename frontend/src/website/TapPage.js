@@ -55,8 +55,15 @@ const APP_STORE_URL = 'https://apps.apple.com/app/id6781442127';
      2. decide the source stays private, in which case delete this constant,
         the URL, the button and the icon rather than leaving a dead switch
         sitting in the file.
-   Do not flip this to true and hope. Open the URL in a private window first. */
-const GITHUB_LIVE = false;
+   Do not flip this to true and hope. Open the URL in a private window first.
+
+   2026-08-25: condition 1 is met. The old mirror was deleted because a real
+   reused password had reached its history inside a seed file, and a fresh
+   public repository was published in its place with that literal redacted from
+   all 998 commits and the full timeline from 2026-01-18 preserved. Verified
+   unauthenticated before flipping: the repository page and the raw README both
+   answer 200 with no login wall. */
+const GITHUB_LIVE = true;
 const GITHUB_URL = 'https://github.com/bansaljayden/flock-social';
 
 /* CRA does no server rendering, so public/index.html is the byte-for-byte
