@@ -16,6 +16,9 @@ const { scalarOnly, freeText } = require('../validators/shape');
 // carry its own copy, which had already drifted from routes/stories.js — see
 // the long note on storyVisibilitySql for which differences are deliberate.
 const { storyVisibilitySql } = require('../utils/relationships');
+// Per-user probe budget, the same primitive routes/users.js and routes/friends.js
+// ration their directory answers with. See blockProbeBudget below.
+const { createUserBudget } = require('../utils/probeBudget');
 
 const router = express.Router();
 router.use(authenticate);
@@ -449,14 +452,90 @@ function badId(req, res) {
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// Directory-probe budget for the block route (object-authz sweep, round 2)
+// ---------------------------------------------------------------------------
+// This route answers the same question GET /api/users/:id/card and
+// POST /api/friends/request answer, "is there an account behind this id", and
+// it was the last one in the backend answering it for free. It ran
+// `SELECT id FROM users WHERE id = $1` and branched: 201 "User blocked" for a
+// real id, 404 "User not found" for a made-up one. users.id is a SERIAL, so
+// that is a walkable integer space, and the only ceiling in front of it was the
+// generic apiLimiter at 3000 requests per 15 minutes, i.e. 12,000 an hour. The
+// side effect landed in the CALLER'S OWN block list, which DELETE
+// /api/blocks/:userId removes again, so a walk was repeatable and left no trace
+// on the accounts it found. It also confirmed BANNED accounts, which
+// GET /:id/card deliberately hides.
+//
+// The shape below is the one those two routes already use: one refusal body for
+// every refused case, a per-user budget charged on hits AND misses alike so the
+// misses are not the free answers, and an exhausted budget answering exactly
+// what a miss answers. A distinguishable 429 would move the oracle rather than
+// close it, which is the reasoning written out at friends.js's `miss()`.
+//
+// WHY 60/HOUR AND 150/DAY, above friends.js's 20/60 and below users.js's
+// 120/400. THIS IS A SAFETY CONTROL, so the number is set by the worst
+// legitimate hour rather than the typical one, and it must not be reachable by
+// anybody acting on their own behalf. The heaviest case anyone has described is
+// "I was pulled into a flock full of strangers and I want none of them able to
+// reach me": a link-joined flock caps at LINK_JOIN_MEMBER_CAP = 50 members, so
+// 60 covers blocking every one of them with room left over, the same way
+// users.js's search budget sits above its heaviest typing session rather than
+// exactly on it. 150 a day covers three such episodes back to back. Typical use
+// is a handful of blocks in the lifetime of an account, so nothing a real
+// person does comes near this.
+//
+// It still cuts a directory walk from ~288,000 ids a day to 150, and unlike the
+// IP limiter a fresh lane costs a fresh account rather than a fresh proxy.
+//
+// A SEPARATE budget from the friend and card probes, for the reason users.js
+// gives: folding a safety action's allowance into a social one would either
+// starve the safety action or widen the social one.
+const BLOCK_PROBE_HOURLY = 60;
+const BLOCK_PROBE_DAILY = 150;
+const blockProbeBudget = createUserBudget({ name: 'block-probe', hourly: BLOCK_PROBE_HOURLY, daily: BLOCK_PROBE_DAILY });
+
 router.post('/blocks/:userId', [param('userId').isInt({ min: 1, max: INT4_MAX })], async (req, res) => {
   try {
     if (badId(req, res)) return;
     const blockedId = parseInt(req.params.userId, 10);
     if (blockedId === req.user.id) return res.status(400).json({ error: 'You cannot block yourself' });
 
-    const exists = await pool.query('SELECT id FROM users WHERE id = $1', [blockedId]);
-    if (exists.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    // The single response for "nothing here". A nonexistent id, a banned
+    // account and a spent budget all end here, with the same status and the
+    // same body, so none of the three can be told apart from the others.
+    const miss = () => res.status(404).json({ error: 'User not found' });
+
+    // Runs FIRST because it reads the caller's OWN rows and therefore carries
+    // no directory information: it decides whether this call is a probe at all.
+    // Re-blocking somebody you have already blocked tells you nothing you did
+    // not already know, so it stays free, and the block button cannot burn a
+    // frightened user's allowance on double-taps. Same exemption, same reason,
+    // as the existing-friendship exemption in friends.js.
+    const already = await pool.query(
+      'SELECT 1 FROM user_blocks WHERE blocker_id = $1 AND blocked_id = $2',
+      [req.user.id, blockedId]
+    );
+
+    // Charged on every probe at a stranger, hit or miss. Charging only on hits
+    // would leave the misses free and unbounded, and "the free answers are the
+    // misses" is the enumeration signal itself.
+    const withinBudget = already.rows.length > 0 || blockProbeBudget.allow(req.user.id);
+
+    // Deliberately queried even when the budget is spent, so the exhausted path
+    // does the same one lookup a genuine miss does and cannot be separated from
+    // it by response time.
+    //
+    // `AND is_banned IS NOT TRUE` is where a banned account becomes invisible:
+    // GET /:id/card already reads banned as deleted, and the block route must
+    // not be the one surface left that confirms such an account exists. IS NOT
+    // TRUE rather than = false, because a NULL in that column has to read as
+    // "not banned" (the same NULL rule flocks.js writes out for its gates).
+    const exists = await pool.query(
+      'SELECT id FROM users WHERE id = $1 AND is_banned IS NOT TRUE',
+      [blockedId]
+    );
+    if (!withinBudget || exists.rows.length === 0) return miss();
 
     await pool.query(
       `INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)
@@ -525,4 +604,16 @@ router.delete('/blocks/:userId', [param('userId').isInt({ min: 1, max: INT4_MAX 
 module.exports = router;
 // Exposed for __tests__/safetyFlow.test.js. A property on the router changes
 // nothing about the mount in server.js (same pattern as checkin.js/safety.js).
-module.exports.__test = { VALID_CONTENT_TYPES, VALID_REASONS, REPORTS_PER_HOUR, REPORT_ACCEPTED };
+module.exports.__test = {
+  VALID_CONTENT_TYPES,
+  VALID_REASONS,
+  REPORTS_PER_HOUR,
+  REPORT_ACCEPTED,
+  // The block probe budget is process-wide in-memory state, so a suite needs a
+  // way to start each case from a clean allowance and to read what a call
+  // actually consumed. Nothing in the running server calls these.
+  blockProbeBudget,
+  resetBlockProbeBudget: () => blockProbeBudget.reset(),
+  BLOCK_PROBE_HOURLY,
+  BLOCK_PROBE_DAILY,
+};

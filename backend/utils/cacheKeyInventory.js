@@ -288,6 +288,16 @@ const INVENTORY = [
     verdict: 'SAFE',
     why: 'Key space is registered accounts and the sweep never resets a live counter; the missing hard cap is memory-only and costs an account per entry.',
   },
+  {
+    file: 'routes/moderation.js', name: 'blockProbeBudget', kind: 'counter',
+    key: "createUserBudget name:'block-probe' - authenticated user id (60/hr, 150/day)",
+    callerControls: 'nothing',
+    protects: 'the user directory through POST /blocks/:userId, which answered "does account N exist" for free',
+    denominator: 'blocks aimed at an account the caller has not already blocked (a re-block is free)',
+    bound: 'probeBudget: 20k, least-consumed-first',
+    verdict: 'FIXED-THIS-ROUND',
+    why: 'Charged on hits and misses alike, and the exhausted answer is the same 404 body a missing row and a banned row get, so the refusal is not a new oracle. Limits sit above the friend probe on purpose: this is a safety control, and the worst legitimate hour is blocking every stranger in a 50-person link-joined flock.',
+  },
 
   // ── routes/publicCrowd.js ─────────────────────────────────────────────────
   {

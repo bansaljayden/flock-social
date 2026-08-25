@@ -213,6 +213,10 @@ test('submitting a budget echoes aggregates only, never a neighbour amount', asy
 
 test('the budget lock refuses to publish a ceiling backed by fewer than three people', async () => {
   handlers = [
+    // The membership gate /lock now runs first, so that a stranger's refusal
+    // cannot be used to tell a real flock id from a fake one. The creator is
+    // always an accepted member.
+    [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, isMember],
     [/SELECT creator_id, budget_enabled FROM flocks/, () => ({ rows: [{ creator_id: 1, budget_enabled: true }] })],
     [/COUNT\(\*\)::int AS n FROM budget_submissions/, () => ({ rows: [{ n: 2 }] })],
     [/SELECT MIN\(amount\)/, () => ({ rows: [{ ceiling: String(VICTIM_AMOUNT) }] })],
