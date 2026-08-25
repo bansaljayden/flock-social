@@ -1099,9 +1099,20 @@ router.get('/venues/unverified', async (req, res) => {
       // this was the only admin query whose response size was set by how many
       // junk claims exist. The queue and the audit log have carried LIMIT 200
       // since they were written.
-      `SELECT vp.id, vp.user_id, vp.business_name, vp.location, vp.google_place_id, vp.created_at, u.email
+      // Claims whose owner pressed "Request verification" come FIRST, oldest
+      // request first, so the person who has waited longest cannot fall off
+      // the window — the same fairness rule the report queue adopted in round
+      // 24, for the same reason. Un-requested claims (junk included) keep the
+      // old newest-first order below them. verification_requested_at is
+      // migration 047; routes/venueProfile.js POST /request-verification is
+      // the only writer of a non-null value.
+      `SELECT vp.id, vp.user_id, vp.business_name, vp.location, vp.google_place_id,
+              vp.created_at, vp.verification_requested_at, u.email
        FROM venue_profiles vp JOIN users u ON u.id = vp.user_id
-       WHERE vp.verified = false ORDER BY vp.created_at DESC
+       WHERE vp.verified = false
+       ORDER BY (vp.verification_requested_at IS NOT NULL) DESC,
+                vp.verification_requested_at ASC,
+                vp.created_at DESC
        LIMIT 200`
     );
     res.json({ venues: result.rows });
@@ -1191,7 +1202,11 @@ router.put('/venues/:profileId/verify', async (req, res) => {
          LIMIT 1
        ),
        upd AS (
-         UPDATE venue_profiles SET verified = $1, updated_at = NOW()
+         -- The pending request clears in BOTH directions: verifying fulfils
+         -- it, and un-verifying (or declining) is a decision made, so leaving
+         -- the timestamp would tell the owner a human still has it and keep a
+         -- decided claim at the front of the queue above people still waiting.
+         UPDATE venue_profiles SET verified = $1, verification_requested_at = NULL, updated_at = NOW()
          WHERE id = $2 AND NOT EXISTS (SELECT 1 FROM blocked)
          RETURNING id, business_name, verified
        ),

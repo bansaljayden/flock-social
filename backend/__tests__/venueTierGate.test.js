@@ -143,7 +143,7 @@ async function call(method, path, body) {
 
 const ran = (re) => log.filter((q) => re.test(q.sql));
 const tierIs = (tier) => [/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [{ tier }] })];
-const ctxIs = (row) => [/SELECT id, google_place_id, verified, category FROM venue_profiles/, () => ({ rows: row ? [row] : [] })];
+const ctxIs = (row) => [/SELECT id, google_place_id, verified, category, verification_requested_at FROM venue_profiles/, () => ({ rows: row ? [row] : [] })];
 const VERIFIED_CTX = { id: 9, google_place_id: 'PLACE_A', verified: true };
 const UNVERIFIED_CTX = { id: 10, google_place_id: 'PLACE_A', verified: false };
 

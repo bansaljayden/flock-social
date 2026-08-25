@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, getVenueAdvisorCards, getAdvisorQuestions, askAdvisor, askAdvisorQuestion } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, getVenueAdvisorCards, getAdvisorQuestions, askAdvisor, askAdvisorQuestion, requestVenueVerification } from './services/api';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onGuestRsvp } from './services/socket';
 import { requestNotificationPermission, onForegroundMessage, getNotificationStatus, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
@@ -15456,6 +15456,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Venue Dashboard state — hoisted to FlockAppInner so VenueDashboard can be a plain function
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [venueProfile, setVenueProfile] = useState(null);
+  // The verification request the owner can now actually make. `Note` holds the
+  // server's own message after a successful press and stands in for the reason
+  // line, which was written for the state the press just left.
+  const [verificationRequestBusy, setVerificationRequestBusy] = useState(false);
+  const [verificationRequestNote, setVerificationRequestNote] = useState(null);
+  const [verificationRequestError, setVerificationRequestError] = useState(null);
   const [promotions, setPromotions] = useState([]);
   const [showPromoModal, setShowPromoModal] = useState(false);
   const [editingPromo, setEditingPromo] = useState(null);
@@ -15601,6 +15607,42 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     getVenueIntelligence()
       .then((d) => setVenueIntel(d))
       .catch(() => setVenueIntel({ available: false, code: 'load_failed', reason: 'The forecast request did not come back. Check your connection and try again.' }));
+  };
+
+  // THE ONE PLACE a verification request is made, shared by both surfaces that
+  // offer the button (the analytics top card and the Roost card under it).
+  //
+  // Until this existed the dashboard said "verify your venue" in three places
+  // and nothing anywhere started one, which is a dead end an owner cannot walk
+  // out of. It flips the profile to 'pending' from the server's own answer,
+  // which is what removes the button from both cards, and returns the server's
+  // message so the caller prints it verbatim rather than paraphrasing it.
+  //
+  // It does NOT swallow failures: the 400 for a profile with no linked Google
+  // listing carries the server's sentence naming Edit Profile as the next
+  // step, and that sentence has to reach the button that was pressed.
+  const requestVerificationNow = async () => {
+    const res = await requestVenueVerification();
+    setVerificationRequestNote(res?.message || null);
+    setVenueProfile((prev) => (prev ? {
+      ...prev,
+      verification_status: res?.verification_status || 'pending',
+      verification_requested_at: res?.verification_requested_at ?? prev.verification_requested_at,
+    } : prev));
+    return res?.message || null;
+  };
+
+  const handleRequestVerification = async () => {
+    if (verificationRequestBusy) return;
+    setVerificationRequestBusy(true);
+    setVerificationRequestError(null);
+    try {
+      await requestVerificationNow();
+    } catch (err) {
+      setVerificationRequestError(err?.message || 'The request did not go through. Try again.');
+    } finally {
+      setVerificationRequestBusy(false);
+    }
   };
 
   // After the owner's number lands or clears, refetch the venue's PUBLISHED
@@ -16373,6 +16415,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       tier: venueTier,
     };
     const intelReady = venueIntel?.available;
+    // The three verification states are exactly the three the server reports:
+    // 'verified', 'pending', 'unverified'. This is the middle one, and the only
+    // thing the screen does with it is stop asking for what it already has.
+    const venueVerificationPending = venueProfile?.verification_status === 'pending';
     const weekPeak = intelReady && venueIntel.week?.length
       ? venueIntel.week.reduce((a, b) => (b.peakScore > a.peakScore ? b : a))
       : null;
@@ -16728,15 +16774,38 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {venueIntel && !venueIntel.available && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '16px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 6px' }}>
-                {venueIntel.unverified ? "Your venue isn't verified yet"
+                {venueIntel.unverified ? (venueVerificationPending ? 'Verification requested' : "Your venue isn't verified yet")
                   : venueIntel.code === 'load_failed' || venueIntel.code === 'lookup_failed' ? "The forecast couldn't load"
                   : 'No forecast for your venue yet'}
               </p>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{venueIntel.reason || 'Nothing we track grounds a forecast for your venue so far.'}</p>
+              {/* The server writes this sentence and it is state-aware, so it
+                  already says the right thing for un-requested and for pending.
+                  A successful press swaps in the response's own message until
+                  the next load, because the reason in hand was written for the
+                  state the press just left. */}
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{verificationRequestNote || venueIntel.reason || 'Nothing we track grounds a forecast for your venue so far.'}</p>
               {(venueIntel.code === 'load_failed' || venueIntel.code === 'lookup_failed') && (
                 <button className="hit44" onClick={retryVenueIntel} style={{ marginTop: '10px', padding: '8px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
                   Try again
                 </button>
+              )}
+              {/* The way out of the dead end. No button once the request is in:
+                  the state is settled from the owner's side, and a button there
+                  would be the same instruction with nothing behind it. Same
+                  rule as the Try again above, which only appears where trying
+                  again can change the answer. */}
+              {venueIntel.unverified && !venueVerificationPending && !verificationRequestNote && (
+                <button
+                  className="hit44"
+                  onClick={handleRequestVerification}
+                  disabled={verificationRequestBusy}
+                  style={{ marginTop: '10px', padding: '8px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: verificationRequestBusy ? 'default' : 'pointer', opacity: verificationRequestBusy ? 0.55 : 1 }}
+                >
+                  Request verification
+                </button>
+              )}
+              {venueIntel.unverified && verificationRequestError && (
+                <p style={{ fontSize: 'var(--t-meta)', color: colors.red, margin: '8px 0 0', lineHeight: 1.5 }}>{verificationRequestError}</p>
               )}
             </div>
           )}
@@ -16844,6 +16913,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                to already know to act on the sentence they just read, so the
                card gets the door and this is the far side of it. */
             onOpenSettings={() => setVenueTab('settings')}
+            /* Roost refuses an unverified venue for a real reason, and until
+               now the refusal named a next step the product did not offer.
+               The card gets the same button the top card has, off the same
+               handler, so one press settles both. */
+            verificationStatus={venueProfile?.verification_status || null}
+            onRequestVerification={requestVerificationNow}
           />
           {/* Roost chat: suggested questions, plus a field the owner can type into.
               Grounded answers come from the same fact engine as the cards above;

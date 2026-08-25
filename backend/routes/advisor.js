@@ -370,7 +370,7 @@ async function bridgeFactBlock(userId, intentId) {
     };
   }
   if (!ctx.profile.verified) {
-    return { intent: intentId, facts: [], refusals: [UNVERIFIED_REASON] };
+    return { intent: intentId, facts: [], refusals: [unverifiedReason(ctx.profile)] };
   }
 
   const opts = { now: new Date(), userId };
@@ -414,8 +414,12 @@ function factEngine() {
 // screen, not an error. Verified claims only, same soft answer /intelligence
 // and /strip use. Pinned by __tests__/advisorCards.test.js.
 
-// Same sentence /intelligence and /strip use for the same condition.
-const UNVERIFIED_REASON = 'Verify your venue to unlock this. We check ownership before turning on forecasts.';
+// The same sentences /intelligence and /strip use for the same condition, from
+// the one module that owns them (utils/verificationCopy.js). The old constant
+// here told the owner to verify their venue and named no way to do it; the
+// copy now names the request path, and says a different thing once the
+// request is pending, which is why it is a function of the profile row.
+const { unverifiedReason } = require('../utils/verificationCopy');
 
 // The four MVP cards, in the order the product shape lists them.
 //
@@ -484,7 +488,7 @@ router.get('/cards', authenticate, requirePremium, async (req, res) => {
       return res.json({ available: false, reason: `Link your Google listing in Edit Profile to see your ${FEATURE_NAME} cards`, cards: [] });
     }
     if (!ctx.profile.verified) {
-      return res.json({ available: false, unverified: true, reason: UNVERIFIED_REASON, cards: [] });
+      return res.json({ available: false, unverified: true, reason: unverifiedReason(ctx.profile), cards: [] });
     }
 
     // With billing off everyone acts pro, mirroring requireVenueTier itself.

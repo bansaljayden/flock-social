@@ -459,7 +459,7 @@ function corpusGate(profile) {
  */
 async function getVenueContext(userId) {
   const { rows } = await pool.query(
-    `SELECT user_id, google_place_id, verified, business_name, updated_at,
+    `SELECT user_id, google_place_id, verified, verification_requested_at, business_name, updated_at,
             corpus_status, corpus_baseline_rows, corpus_checked_at,
             ${INTAKE_COLUMNS.join(', ')}
        FROM venue_profiles WHERE user_id = $1`,
