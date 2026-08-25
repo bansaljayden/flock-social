@@ -56,6 +56,70 @@ const INT4_MAX = 2147483647;
 // ---------------------------------------------------------------------------
 const inviteBudget = createUserBudget({ name: 'flock-invite', hourly: 25, daily: 60 });
 
+// ---------------------------------------------------------------------------
+// RELIABILITY ACCRUES AT THE SPEED OF THE CALENDAR (game-rule abuse round)
+//
+// The reliability score is shown to other people as a reason to trust someone
+// with an evening, so inflating it is a harm to whoever reads it, not a game.
+// The self-credit audit closed the SOLO case (a flock earns nothing unless two
+// accounts accepted it). The two-member bar was the ONLY bar, and it priced
+// exactly one thing: a second real, email-verified account. It priced no TIME.
+// So two cooperating accounts minted an unlimited score: seed a flock, accept,
+// PUT status=completed, POST attendance, repeat. Twelve loops in a few seconds
+// wrote total_plans_attended: 12, and nine loops turned a genuine 0-of-1
+// no-show into a displayed 90.
+//
+// Every obvious clock breaks an honest plan, and this file has already rejected
+// one of them in writing: a lead-time floor (created_at vs event_time) would
+// rob the "we're going out right now" flock, which is the coordination Flock
+// exists for. So the rules below are chosen to be things that are true of real
+// evenings and false of a scripted loop, and NONE of them refuses a request:
+// they decide what COUNTS, exactly like the two-member bar, so an honest group
+// is never told no.
+//
+//   1. A plan cannot be scheduled for before it was made. Enforced on PUT
+//      /:id (see the event_time floor there). Without it every clock below is
+//      decoration, because one PUT could backdate event_time 45 days and close
+//      the flock in the same request.
+//
+//   2. A plan cannot be certified before it starts. `ev.started` below. This
+//      costs spontaneity nothing: a flock created for right now has an
+//      event_time that is already in the past, and rule 1 means a farm cannot
+//      manufacture an earlier one. A flock with no event_time at all falls back
+//      to created_at, which is un-forgeable and always in the past, so those
+//      flocks are unaffected too.
+//
+//   3. A person cannot be in two places at once. This is the one that actually
+//      bounds the farm. Credited plans are counted by DISTINCT time SLOT rather
+//      than by row, so a pile of flocks sharing an evening is one evening.
+//      Combined with rules 1 and 2, a farm can only earn another point by
+//      waiting for another slot to arrive in real time: the ceiling stops being
+//      "requests per second" and becomes "slots per day", which is the same
+//      ceiling real life imposes on real people.
+//
+// FOUR HOURS is the slot. It has to be long enough that a scripted loop cannot
+// clear it in a burst and short enough that a real double-header still counts:
+// brunch at 11 and dinner at 7 are different slots, drinks at 7 and a late bar
+// at 10 are different slots, and it is coffee at 3 with dinner at 5 that
+// collapses into one. That collapse is the intended reading, not a casualty:
+// two plans two hours apart ARE one outing, and the collapsed slot is dropped
+// from the numerator and the denominator together (same rule the solo-flock bar
+// uses), so an honest user's ratio is unchanged by it.
+//
+// WHEN A SLOT COLLAPSES, THE FLAKE IS THE ONE THAT SURVIVES (ev.slot_flaked).
+// A slot that contains a no_show cannot count as attended, whatever else is in
+// it. Without that, slot-dedupe would be a BETTER flake eraser than the bug it
+// replaces: one farm flock timed into the same afternoon as a real no-show
+// would have covered it. Reading it the other way costs an honest user the
+// case where they made one plan and stood up another two hours later, which is
+// a flake by any honest description of the evening.
+//
+// WHAT IS NOT HERE, and why: no presence requirement. Requiring a check-in, an
+// NFC tap or a known venue would price a farm properly and would also refuse
+// every real plan at a venue with no tag, which is nearly all of them. That is
+// a product decision about what Flock demands of its users, not a patch.
+const RELIABILITY_SLOT_SECONDS = 4 * 60 * 60;
+
 // A flock is a plan, not a mailing list. This bounds the OTHER shape of the
 // same abuse: one flock accumulating thousands of `invited` rows (and the push
 // notification each one sends) across many callers or many days.
@@ -894,6 +958,45 @@ router.put('/:id',
       if (venue_address && rejectIfProfane(res, venue_address)) return;
       // Photo-proxy-only, same as creation (round 8).
       const safePhotoUrl = safeVenuePhotoUrl(venue_photo_url);
+
+      // ── A PLAN CANNOT BE SCHEDULED FOR BEFORE IT WAS MADE ────────────────
+      //
+      // event_time was a free-form write. One PUT could set it 45 days into the
+      // past AND close the flock in the same request, which is what made the
+      // reliability clock meaningless: any rule of the form "the event must
+      // have happened" is satisfied instantly by an attacker who gets to say
+      // when the event was. created_at is the one timestamp on this row that
+      // nobody can move, so event_time is floored to it.
+      //
+      // Nothing honest is refused. Nobody creates a flock on Tuesday for last
+      // Monday, and rescheduling a live plan in either direction inside its own
+      // lifetime is untouched, including moving it EARLIER for a group that
+      // decided to go sooner. What is refused is inventing a history.
+      //
+      // Rewriting the time of a flock that is already completed is refused for
+      // the same reason: the evening happened, and the record of when it
+      // happened is not an editable field any more. Cancelled flocks stay
+      // editable, since nothing was certified about them.
+      //
+      // Only read when event_time is actually in the body, so the common PUT
+      // (a venue pick, a rename, a status flip) still costs one statement.
+      if (event_time !== undefined && event_time !== null) {
+        const current = await pool.query('SELECT created_at, status FROM flocks WHERE id = $1', [flockId]);
+        if (current.rows.length === 0) {
+          return res.status(404).json({ error: 'Flock not found' });
+        }
+        if (current.rows[0].status === 'completed') {
+          return res.status(409).json({ error: 'This plan is finished, so its time cannot be changed' });
+        }
+        const createdAt = current.rows[0].created_at ? new Date(current.rows[0].created_at).getTime() : null;
+        const requested = new Date(event_time).getTime();
+        // A whole minute of slack, because a client that echoes the flock's own
+        // creation moment back can round it, and a clock that disagrees with
+        // Postgres by a second must not turn an honest edit into an error.
+        if (Number.isFinite(createdAt) && Number.isFinite(requested) && requested < createdAt - 60000) {
+          return res.status(400).json({ error: 'A plan cannot be scheduled for before it was created' });
+        }
+      }
 
       const result = await pool.query(
         `UPDATE flocks
@@ -2022,13 +2125,16 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
     if (rejectInvalid(req, res)) return;
     const flockId = req.params.id;
 
-    const flock = await pool.query('SELECT id, name, creator_id FROM flocks WHERE id = $1', [flockId]);
+    // `status` joined this SELECT for the completed-flock refusal below. It is
+    // the same row the route already read, so it costs no extra round trip.
+    const flock = await pool.query('SELECT id, name, creator_id, status FROM flocks WHERE id = $1', [flockId]);
     if (flock.rows.length === 0) {
       return res.status(404).json({ error: 'Flock not found' });
     }
 
     const isCreator = flock.rows[0].creator_id === req.user.id;
     const flockName = flock.rows[0].name;
+    const flockStatus = flock.rows[0].status;
 
     // Round 5: without this, any authenticated user who guessed a flock id
     // could learn its name and broadcast fake departures that decrement every
@@ -2049,6 +2155,43 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
       // (declining by another name); only the departure event is now reserved
       // for someone who had actually joined.
       wasAccepted = mem.rows[0].status === 'accepted';
+
+      // ── YOU CANNOT LEAVE THE PAST (game-rule abuse round) ────────────────
+      //
+      // This route had no flock-status check and DELETEd the flock_members row
+      // outright, so a user the host had marked `no_show` on a completed flock
+      // could leave it and take the evidence with them. The recompute in
+      // POST /:id/attendance tallies over CURRENT accepted members, so the next
+      // recompute (which the same person can trigger themselves) did not merely
+      // outweigh the flake, it removed it from the DENOMINATOR: 0 of 1 became
+      // 100 of 1. The host was told nothing, and nothing in the leave path so
+      // much as reads reliability_score, so the erasure was invisible.
+      //
+      // The refusal is scoped as narrowly as it can be and still work:
+      //
+      //   - Only 'completed'. Every other status stays open, including
+      //     'cancelled'. Backing out of a plan is the whole point of an RSVP,
+      //     and refusing it would trap people in plans they no longer want,
+      //     which is a worse product than the bug.
+      //   - A completed flock is not a plan any more, it is a record. There is
+      //     no commitment left to be released from, so this traps nobody: it
+      //     refuses to let one participant delete the group's account of an
+      //     evening that already happened, including the part of it that is
+      //     about them.
+      //
+      // What this deliberately does NOT do is refuse a leave BEFORE the host
+      // marks. See the `unrecorded` note in POST /:id/attendance: someone can
+      // still accept, not turn up, and leave before the sheet is filled in.
+      // Closing that needs a membership row that survives departure, and
+      // flock_members.status is CHECK-constrained to invited/accepted/declined
+      // (migration 000), so it needs a migration and a decision about what a
+      // departure after the event means. That is a product call, not a patch,
+      // and it is written up in the report rather than guessed at here.
+      if (flockStatus === 'completed') {
+        return res.status(409).json({
+          error: 'This plan is already finished, so it stays on your history. You can leave a plan before it happens, not after.',
+        });
+      }
     }
 
     const io = req.app.get('io');
@@ -2192,6 +2335,7 @@ router.post('/:id/attendance',
 
       const client = await pool.connect();
       const results = [];
+      let unrecordedUserIds = [];
       try {
         await client.query('BEGIN');
 
@@ -2273,6 +2417,24 @@ router.post('/:id/attendance',
         // above has always read the same field defensively; this one did not.
         const affectedUserIds = [...new Set(attendance.map(a => parseInt(a?.userId)).filter(id => Number.isFinite(id) && memberSet.has(id)))];
 
+        // ── AND THE HOST IS TOLD WHO DID NOT LAND (game-rule abuse round) ───
+        // The line above is scoped to CURRENT accepted members, which is right:
+        // an arbitrary id in the body must not reach a stranger's score. But an
+        // id the host actually NAMED and that is no longer on the roster was
+        // being dropped in silence. That is the no-exploit-needed flake: accept
+        // the invite, do not turn up, leave the flock before the host gets
+        // round to marking. The host then names them in an honest attendance
+        // POST, the row is gone, nothing is written, and the host is told the
+        // marking succeeded. They have no way to find out it did not.
+        //
+        // These ids do not get scored (there is no membership row to score),
+        // but they are named back to the caller so the surface that asked can
+        // say so. This is the honest half of the fix; the half that would keep
+        // the record itself is discussed at POST /:id/leave.
+        unrecordedUserIds = [...new Set(attendance
+          .map(a => parseInt(a?.userId))
+          .filter(id => Number.isInteger(id) && id > 0 && id <= INT4_MAX && !memberSet.has(id)))];
+
         if (affectedUserIds.length > 0) {
           // The two per-user COUNTs, asked once for the whole set.
           //
@@ -2322,18 +2484,36 @@ router.post('/:id/attendance',
           // missing row here would leave their old score in place instead of
           // clearing it, which the per-user loop never did. The member count
           // is a LATERAL for the same reason: it must never drop the t.uid row.
+          //
+          // ── AND ONE PLAN PER SLOT (game-rule abuse round) ─────────────────
+          // COUNT(*) FILTER became COUNT(DISTINCT slot), and both counts gained
+          // `ev.started`. The full reasoning, including why a slot containing a
+          // no_show can never count as attended and why no presence signal is
+          // required, is at RELIABILITY_SLOT_SECONDS near the top of this file.
+          // The two predicates and the two-member bar are otherwise untouched,
+          // and still appear once in each count for the same reason as before.
+          //
+          // The slot arithmetic is INTERPOLATED, not parameterised: it is a
+          // module constant this file owns, it appears in three places inside
+          // one statement (twice in the correlated EXISTS, which has to bucket
+          // the other flock the same way), and repeating a bind parameter to
+          // say the same thing three times reads worse than the number does.
           const tally = await client.query(
             `SELECT t.uid,
-                    COUNT(*) FILTER (
-                      WHERE f.status = 'completed'
-                        AND fm.status = 'accepted'
-                        AND fm.attendance <> 'unmarked'
+                    COUNT(DISTINCT CASE
+                      WHEN f.status = 'completed'
+                        AND fm.status = 'accepted' AND fm.attendance <> 'unmarked'
                         AND mc.accepted_count >= 2
+                        AND ev.started
+                      THEN ev.slot END
                     )::int AS joined,
-                    COUNT(*) FILTER (
-                      WHERE f.status = 'completed'
+                    COUNT(DISTINCT CASE
+                      WHEN f.status = 'completed'
                         AND fm.attendance = 'attended'
                         AND mc.accepted_count >= 2
+                        AND ev.started
+                        AND NOT ev.slot_flaked
+                      THEN ev.slot END
                     )::int AS attended
              FROM UNNEST($1::int[]) AS t(uid)
              LEFT JOIN flock_members fm ON fm.user_id = t.uid
@@ -2343,6 +2523,27 @@ router.post('/:id/attendance',
                FROM flock_members m2
                WHERE m2.flock_id = fm.flock_id AND m2.status = 'accepted'
              ) mc ON TRUE
+             LEFT JOIN LATERAL (
+               SELECT COALESCE(f.event_time, f.created_at) <= NOW() AS started,
+                      FLOOR(EXTRACT(EPOCH FROM COALESCE(f.event_time, f.created_at))
+                            / ${RELIABILITY_SLOT_SECONDS}) AS slot,
+                      EXISTS (
+                        SELECT 1
+                        FROM flock_members m3
+                        JOIN flocks f3 ON f3.id = m3.flock_id
+                        WHERE m3.user_id = t.uid
+                          AND m3.status = 'accepted'
+                          AND m3.attendance = 'no_show'
+                          AND f3.status = 'completed'
+                          AND COALESCE(f3.event_time, f3.created_at) <= NOW()
+                          AND FLOOR(EXTRACT(EPOCH FROM COALESCE(f3.event_time, f3.created_at))
+                                    / ${RELIABILITY_SLOT_SECONDS})
+                              = FLOOR(EXTRACT(EPOCH FROM COALESCE(f.event_time, f.created_at))
+                                      / ${RELIABILITY_SLOT_SECONDS})
+                          AND (SELECT COUNT(*) FROM flock_members m4
+                               WHERE m4.flock_id = m3.flock_id AND m4.status = 'accepted') >= 2
+                      ) AS slot_flaked
+             ) ev ON TRUE
              GROUP BY t.uid`,
             [affectedUserIds]
           );
@@ -2431,7 +2632,12 @@ router.post('/:id/attendance',
         }
       }
 
-      res.json({ success: true, results });
+      // `unrecorded` is added only when it is non-empty: the success shape of
+      // this response is a contract several suites pin, and a key that is
+      // always present but almost always empty is noise on every honest call.
+      res.json(unrecordedUserIds.length > 0
+        ? { success: true, results, unrecorded: unrecordedUserIds }
+        : { success: true, results });
 
       // Push to offline users, AFTER the response, for the same reason as the
       // confirm path above: the transaction has committed, `results` is already
