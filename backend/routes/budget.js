@@ -84,6 +84,87 @@ const CEILING_BANDS = [
 ];
 const SUB_DOLLAR_CEILING = 0.01;
 
+// WHAT THE BAND ACTUALLY GUARANTEES, stated honestly (round 18).
+//
+// The published residual used to be described as "two people who compare notes
+// learn the band containing a third person's amount". That prices it wrong, and
+// the understatement is the interesting part: COLLUSION IS NOT REQUIRED.
+//
+// The ceiling is MIN(amounts). Any member who submits $10,000, the maximum the
+// validator allows, has removed themselves from the minimum, so the number
+// published back to them is band(MIN(everyone else)) and nothing of their own.
+// One account, one submission, no second party. `__tests__/abuseBudgetAnonymity`
+// pins it. The real threshold for learning that band is not "colluders", it is
+// "any flock that reaches three shared amounts", which is every flock the
+// feature works in at all.
+//
+// This is not fixable while the feature keeps its point. The published cap has
+// to be a number every member can afford, and the only such number IS the
+// minimum; whoever is not the binding constraint learns a fact purely about the
+// others, by arithmetic, no matter how the value is computed. Adding noise
+// upward would publish a cap somebody in the flock cannot actually pay, which
+// is the one thing the ceiling exists to prevent, and noise downward is what
+// banding already is. Publishing a different number to each member would stop
+// it being a group cap.
+//
+// So the guarantee is the BAND, not secrecy: every member learns an interval
+// ($1, $5 or $10 wide) containing the lowest amount among the others, and never
+// an exact figure or a name. The privacy policy and terms have to say that, not
+// the collusion-only version.
+//
+// SKIP COUNT IS A PER-PERSON READ IN A SMALL FLOCK.
+//
+// skipCount was returned raw to every member. The caller always knows their own
+// answer, so what they receive is really "how many of my co-members declined to
+// share a number", and in a two-person flock that is a direct read of the one
+// fact the mechanism exists to hide, with no arithmetic and no second account.
+// In a three-person flock, 0 or 2 names both other members exactly.
+//
+// The same "three is a crowd" floor the ceiling uses applies here, measured over
+// the population the count actually ranges over: the caller's co-members. Below
+// three of them the split between "shared an amount" and "skipped" is withheld
+// and the field is null. submissionCount and totalMembers are unaffected, so
+// "2 of 4 answered" still renders and nobody's honest submission gets harder.
+// The field stays present on the wire in both cases; a null is a withheld
+// number, not a missing key.
+const SKIP_COUNT_MIN_OTHERS = 3;
+function publishableSkipCount(skipCount, totalMembers) {
+  return (totalMembers - 1) >= SKIP_COUNT_MIN_OTHERS ? skipCount : null;
+}
+
+// MEMBERSHIP IS THE RELATIONSHIP (round 18).
+//
+// budget_submissions carries a flock_id and a user_id and no relationship to
+// flock_members at all, and POST /api/flocks/:id/leave deletes the membership
+// row and nothing else. So a submission outlived its author. Since the whole
+// mechanism is a MIN, that is a griefing primitive with no counterplay:
+// submit $0.01, leave, and the cent is the group's budget forever. The author
+// cannot withdraw it (every write here needs an accepted membership row, so
+// they are 403'd off their own row), nobody else can either (this router has no
+// delete path), and /lock recomputes the same MIN and commits the group to it.
+//
+// routes/venues.js closed exactly this shape for venue_votes in round 17, where
+// a vote outlived its voter and skewed the tally the flock goes by. Same rule
+// here, and the stakes are higher, because the aggregate is also the privacy
+// control: >= 3 non-skipped submissions is what unlocks the reveal, and rows
+// left behind by departed accounts were carrying live flocks over that line.
+// Two people in a room plus one throwaway that submits and leaves, and the
+// ceiling those two are shown is a band around ONE of their amounts, with
+// nobody else present to hide in. The throwaway cannot even take it back.
+//
+// So every aggregate on this router reads only rows whose author is still an
+// accepted member. A JOIN, matching venues.js; flock_members is
+// UNIQUE(flock_id, user_id), so it cannot multiply a submission row and inflate
+// a COUNT that a privacy threshold is read from.
+//
+// The row itself is deliberately left in place. While its author is gone it is
+// inert, and if they rejoin their number counts again, which is the same answer
+// venues.js gives a returning voter. Deleting on leave would also destroy the
+// one copy of a figure the account is entitled to see in its own data export.
+const MEMBER_SUBMISSIONS = `budget_submissions bs
+           JOIN flock_members bm ON bm.flock_id = bs.flock_id AND bm.user_id = bs.user_id
+            AND bm.status = 'accepted'`;
+
 function bandCeiling(raw) {
   if (raw === null || raw === undefined) return null;
   const n = typeof raw === 'number' ? raw : parseFloat(raw);
@@ -221,9 +302,12 @@ router.post('/:flockId/submit',
           [flockId, userId, skipped ? null : amount, !!skipped]
         );
 
-        // Recalculate ceiling: MIN of non-skipped amounts
+        // Recalculate ceiling: MIN of non-skipped amounts from PRESENT members
+        // (see MEMBER_SUBMISSIONS: a departed account's cent used to set this
+        // forever).
         const ceilingResult = await client.query(
-          'SELECT MIN(amount) AS ceiling FROM budget_submissions WHERE flock_id = $1 AND skipped = false',
+          `SELECT MIN(amount) AS ceiling FROM ${MEMBER_SUBMISSIONS}
+           WHERE bs.flock_id = $1 AND skipped = false`,
           [flockId]
         );
         // Band it before anything else can see it. The cached column is read by
@@ -247,12 +331,16 @@ router.post('/:flockId/submit',
         // "others' non-skips" is exactly non_skip_count minus this user's
         // contribution, already known. Reliability pass 2026-08-14: dropped the
         // redundant query (submit transaction: 9 statements -> 8).
+        //
+        // Counted over present members only, same as the MIN above: the
+        // non-skip count IS the privacy threshold, so a row from someone who
+        // left was borrowing anonymity for a flock that does not have it.
         const countResult = await client.query(
           `SELECT
              COUNT(*) AS total_submissions,
              COUNT(*) FILTER (WHERE skipped = false) AS non_skip_count,
              COUNT(*) FILTER (WHERE skipped = true) AS skip_count
-           FROM budget_submissions WHERE flock_id = $1`,
+           FROM ${MEMBER_SUBMISSIONS} WHERE bs.flock_id = $1`,
           [flockId]
         );
         countRow = countResult.rows[0];
@@ -284,6 +372,9 @@ router.post('/:flockId/submit',
       // then it is the band, not the MIN (`ceiling` was banded above).
       const isReady = nonSkipCount >= 3;
       const visibleCeiling = isReady ? ceiling : null;
+      // And the skip/share split only when it ranges over three co-members or
+      // more. See publishableSkipCount.
+      const visibleSkipCount = publishableSkipCount(skipCount, totalMembers);
 
       // Emit socket event to flock room
       const io = req.app.get('io');
@@ -302,7 +393,7 @@ router.post('/:flockId/submit',
           submissionCount,
           totalMembers,
           isReady,
-          skipCount,
+          skipCount: visibleSkipCount,
         }).catch((e) => console.error('budget_updated fan-out failed:', e.message));
       }
 
@@ -330,7 +421,7 @@ router.post('/:flockId/submit',
         submissionCount,
         totalMembers,
         isReady,
-        skipCount,
+        skipCount: visibleSkipCount,
         userSubmitted: true,
       });
     } catch (err) {
@@ -378,7 +469,7 @@ router.get('/:flockId',
            COUNT(*) AS total_submissions,
            COUNT(*) FILTER (WHERE skipped = false) AS non_skip_count,
            COUNT(*) FILTER (WHERE skipped = true) AS skip_count
-         FROM budget_submissions WHERE flock_id = $1`,
+         FROM ${MEMBER_SUBMISSIONS} WHERE bs.flock_id = $1`,
         [flockId]
       );
 
@@ -409,13 +500,50 @@ router.get('/:flockId',
       );
       const userSubmission = userResult.rows[0] || null;
 
+      // The reveal gate is the COUNT, on this route and on the four other
+      // surfaces that publish the same number (the flock list, the flock
+      // detail, the flock update, and the ghost commit in routes/billing.js).
+      // budgetCeilingReadParity pins all five answering alike, so "locked, and
+      // therefore once revealed, therefore still revealable" is not a shortcut
+      // this route gets to take on its own. A locked flock that falls back
+      // under three sharers withholds, like every other reader of it.
       const isReady = nonSkipCount >= 3;
-      // Re-band on read. Submissions cache the banded value, so this is a no-op
-      // for anything written since the M1 fix; for a flock whose ceiling was
-      // cached as a raw MIN before it, this is what keeps that MIN off the wire
-      // until someone submits again.
-      const ceiling = bandCeiling(flock.budget_ceiling);
+
+      // RECOMPUTE, DO NOT TRUST THE CACHE (round 18, the other half of the
+      // poison-and-run fix).
+      //
+      // flocks.budget_ceiling is written by /submit and by /lock and by nothing
+      // else. Leaving a flock writes nothing at all. So teaching the aggregates
+      // to skip a departed account's row only half closed it: the cached column
+      // still HELD that account's number, and this route, which is the screen
+      // every member actually looks at, went on publishing the griefer's cent
+      // until somebody happened to submit again. A stale cache is the same leak
+      // one statement later.
+      //
+      // Recomputing over present members is the only reading that cannot be
+      // stale, and it runs AFTER the count above for the reason spelled out
+      // there: a crossing mid-request errs to "withhold".
+      //
+      // A LOCKED budget is the deliberate exception. Locking is the group
+      // committing to a number; a member leaving afterwards must not silently
+      // move the figure everyone agreed to. There the cached value IS the
+      // answer, re-banded on the way out so a row cached as a raw MIN before
+      // the M1 fix cannot publish an exact amount.
+      let ceiling;
+      if (flock.budget_locked) {
+        ceiling = bandCeiling(flock.budget_ceiling);
+      } else {
+        const ceilingResult = await pool.query(
+          `SELECT MIN(amount) AS ceiling FROM ${MEMBER_SUBMISSIONS}
+           WHERE bs.flock_id = $1 AND skipped = false`,
+          [flockId]
+        );
+        ceiling = bandCeiling(ceilingResult.rows[0].ceiling);
+      }
       const visibleCeiling = isReady ? ceiling : null;
+      // See publishableSkipCount: in a flock with fewer than three co-members
+      // this number names who declined to share.
+      const visibleSkipCount = publishableSkipCount(skipCount, totalMembers);
 
       res.json({
         budgetEnabled: flock.budget_enabled,
@@ -425,7 +553,7 @@ router.get('/:flockId',
         submissionCount,
         totalMembers,
         isReady,
-        skipCount,
+        skipCount: visibleSkipCount,
         userSubmitted: !!userSubmission,
         userAmount: userSubmission && !userSubmission.skipped ? parseFloat(userSubmission.amount) : null,
         userSkipped: userSubmission ? userSubmission.skipped : false,
@@ -515,8 +643,8 @@ router.post('/:flockId/lock',
         }
 
         const countResult = await client.query(
-          `SELECT COUNT(*)::int AS n FROM budget_submissions
-           WHERE flock_id = $1 AND skipped = false`,
+          `SELECT COUNT(*)::int AS n FROM ${MEMBER_SUBMISSIONS}
+           WHERE bs.flock_id = $1 AND skipped = false`,
           [flockId]
         );
         if ((countResult.rows[0]?.n || 0) < 3) {
@@ -537,11 +665,14 @@ router.post('/:flockId/lock',
         // Recompute inside the transaction — the cached column could be stale
         // relative to the submissions this count just validated.
         const ceilingResult = await client.query(
-          'SELECT MIN(amount) AS ceiling FROM budget_submissions WHERE flock_id = $1 AND skipped = false',
+          `SELECT MIN(amount) AS ceiling FROM ${MEMBER_SUBMISSIONS}
+           WHERE bs.flock_id = $1 AND skipped = false`,
           [flockId]
         );
         // Same banding as the submit path, and the locked value is what gets
         // cached, so the lock cannot re-publish a raw MIN a submit had banded.
+        // Same membership join too: the lock is where a poisoned cent became
+        // the number the group actually committed to.
         ceiling = bandCeiling(ceilingResult.rows[0].ceiling);
 
         await client.query(
