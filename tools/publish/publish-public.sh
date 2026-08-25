@@ -60,6 +60,11 @@ STRIP=(
   # "step-by-step exploitation notes against production". Every path added here
   # has zero commits touching it, so filter-repo rewrites nothing and no public
   # hash moves; that is what makes closing the gap free.
+  # redactions.txt names the very secrets it exists to remove, so it is the one
+  # file in this repository that must never reach the mirror. It stays tracked
+  # privately, because a fresh clone with no redactions file would silently skip
+  # the redaction step and the guard would have nothing to check.
+  --path tools/publish/redactions.txt
   --path PUBLIC-REPO-AUDIT.md
   --path VENUE-ADVISOR.md
   --path PAYMENTS-ROUTING.md
