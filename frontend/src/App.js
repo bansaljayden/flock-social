@@ -41,7 +41,16 @@ import { motion, AnimatePresence } from 'framer-motion';
 // the cream bird; the default is cobalt Birdie. Both are used deliberately:
 // cobalt where the subject is Flock users, warm where it is the owner's own
 // space. Neither is ever a functional glyph — Icons.birdie stays the glyph.
-import BirdieBird, { BirdieStill, WARM_BIRD } from './components/ui/BirdieBird';
+//
+// BirdNote is the shared shape every bird-carrying empty and error state uses
+// (bird plus title, body and an optional action, stacked or in a row). Jayden,
+// TestFlight build 26: "Birds on empty and error states. Yes. It should be
+// everywhere." The old rule that a bird marked genuine-empty ONLY is retired by
+// that instruction; what survives is the honesty half of it, which is that the
+// bird decorates a state and never relabels one. Error copy still says the load
+// failed. BIRDIE and WARM_BIRD are both imported so the sweep can alternate
+// them rather than repeat one bird twenty times.
+import BirdieBird, { BirdieStill, BirdNote, BIRDIE, WARM_BIRD } from './components/ui/BirdieBird';
 import Icons, { starSvgString } from './components/ui/Icons';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -615,6 +624,73 @@ const EmptyMark = ({ name, height = 160, style }) => (
       style={{ display: 'block', height: `${height}px`, width: 'auto', maxWidth: '100%', objectFit: 'contain', ...style }}
     />
   </picture>
+);
+
+// ---------------------------------------------------------------------------
+// FormGroup / FormRow: the shape a form screen is built out of.
+//
+// Written for the Create Flock rebuild (Jayden, TestFlight build 26: "don't
+// just add the bird graphics, revamp the page so it follows SLOP-AUDIT"). That
+// screen was one undifferentiated column of six controls stacked on the page
+// background, which is the failure SLOP-AUDIT section S names: every row
+// carries identical weight, so the eye has nowhere to rest and the user reads
+// all of it to find one thing.
+//
+// The rules those two components encode, straight out of section S:
+//
+//   3. Groups are separated by the PAGE BACKGROUND, rows inside a group by
+//      inset hairlines. Never one card per row, which is the rounded-bubble
+//      tile grid A14 bans.
+//   4. The group label sits OUTSIDE the container, small and grey. It is a
+//      signpost, so giving it card chrome of its own doubles its weight for
+//      nothing.
+//
+// Deliberately not a card grid, not an icon in a rounded square, and not a
+// section that animates in. A hairline and a grey word do the whole job.
+// ---------------------------------------------------------------------------
+const FormGroup = ({ label, children, style }) => (
+  <section style={{ marginBottom: '18px', ...style }}>
+    {label && (
+      <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', margin: '0 0 6px 4px', textTransform: 'uppercase', letterSpacing: '0.6px' }}>{label}</p>
+    )}
+    <div style={{ backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', borderRadius: '14px', boxShadow: 'var(--card-shadow-sm)' }}>
+      {children}
+    </div>
+  </section>
+);
+
+const FormRow = ({ children, divided = false, style }) => (
+  <div style={{ padding: '12px', borderTop: divided ? '1px solid var(--divider)' : 'none', ...style }}>{children}</div>
+);
+
+// A choice chip. One function for the day grid, the hour row and the budget
+// context row, because they were three hand-rolled versions of the same
+// control and two of them lit up GREEN with a coloured glow behind them on
+// selection. Green is not in the palette (cream, navy, steel) and a glow is
+// the ornament SLOP-AUDIT keeps cutting. Selected is a filled steel chip with
+// white type: one channel of colour, one of weight, no shadow.
+const ChoiceChip = ({ selected, onClick, children, style, ...rest }) => (
+  <button
+    type="button"
+    className="hit44"
+    aria-pressed={selected}
+    onClick={onClick}
+    style={{
+      padding: '9px 14px',
+      borderRadius: '10px',
+      border: selected ? '1.5px solid transparent' : '1.5px solid var(--border-default)',
+      backgroundColor: selected ? '#2d5a87' : 'var(--bg-card-solid)',
+      color: selected ? '#ffffff' : 'var(--text-primary)',
+      fontWeight: '600',
+      fontSize: 'var(--t-label)',
+      cursor: 'pointer',
+      transition: 'background-color 0.15s ease, color 0.15s ease',
+      ...style,
+    }}
+    {...rest}
+  >
+    {children}
+  </button>
 );
 
 // The backend stores venue photo URLs as RELATIVE proxy paths
@@ -2789,6 +2865,27 @@ const colors = colorsLight;
 // (Capacitor) or any phone-sized viewport it must not render — otherwise the app
 // draws a fake phone border inside the actual phone. Native detection + width
 // check; evaluated once (rotation/resize edge cases don't need live re-eval).
+// VENUE PLAN PRICES. One copy, because there used to be three and they
+// disagreed with the server.
+//
+// $99 is VENUE-PRICING.md's call (2026-08-20), which supersedes the $75 Pro
+// price set on 2026-08-14, and it is already what the backend bills against:
+// `VENUE_PRICE_USD = 99` in backend/routes/admin.js, which is the only place
+// in the whole product that has ever held a venue price. There is no route a
+// venue owner can call that returns it, so this is still a hardcode; it is one
+// hardcode instead of three, it agrees with the server's, and both carry the
+// same citation.
+//
+// Premium stays at $35 here on purpose. VENUE-PRICING.md §4 collapses the
+// three tiers to two and retires Premium, but that move drops server-side
+// gates (promotions, events, incoming-flocks) at the same time. Changing the
+// cards without the gates would advertise features the backend still refuses,
+// so the collapse is one commit that has to include backend/routes, and this
+// is not it.
+const VENUE_PLAN_PRICE = { premium: 35, pro: 99 };
+const venuePlanPriceLabel = (tier, per = 'mo') =>
+  VENUE_PLAN_PRICE[tier] ? `$${VENUE_PLAN_PRICE[tier]}/${per}` : null;
+
 const isFullBleedNow = () => (typeof window !== 'undefined') && (
   (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
   (window.matchMedia && window.matchMedia('(max-width: 500px)').matches)
@@ -5609,6 +5706,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // remember it. Server-supplied, from GET /api/venue-profile: the same resolved
   // answer the gate enforces, never a countdown and never a prompt to buy.
   const [venueTierEndsAt, setVenueTierEndsAt] = useState(null);
+  // HOW the plan was granted, straight off GET /api/venue-profile. `tier_source`
+  // is one of comp / admin / stripe (migration 040) and `tier_reason` is one of
+  // founding_comp / paid / admin / demo (the admin grant route's whitelist).
+  // The settings screen needs these because "Pro Plan" over a dollar figure is
+  // wrong for the only kind of Pro venue that exists today: a comped one, which
+  // is being charged nothing. Both are null when the entitlement lookup failed,
+  // and the screen says nothing about billing in that case rather than guessing.
+  const [venueTierSource, setVenueTierSource] = useState(null);
+  const [venueTierReason, setVenueTierReason] = useState(null);
   const [venueTab, setVenueTab] = useState('analytics'); // Lifted to App level to persist across re-renders
   const [adminTab, setAdminTab] = useState('revenue'); // Lifted to App level to persist across re-renders
 
@@ -9966,6 +10072,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </button>
                       )) : (
                         <div style={{ padding: '24px 20px', textAlign: 'center' }}>
+                          <BirdieStill bird={WARM_BIRD} size={80} style={{ margin: '0 auto 10px' }} />
                           <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 4px' }}>No flocks to send this to yet</p>
                           <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 14px' }}>Start a flock and this venue can go straight into the chat.</p>
                           <button className="hit44" onClick={() => { setAiShareVenue(null); closeAiChat(); setSelectedVenueForCreate({ name: aiShareVenue.name, addr: aiShareVenue.address, rating: aiShareVenue.rating, price_level: aiShareVenue.price_level, place_id: aiShareVenue.place_id }); setCurrentScreen('create'); }} style={{ padding: '10px 20px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>
@@ -10364,15 +10471,30 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
           {!pastFlocksLoading && pastFlocksError && (
             <div style={{ ...styles.card, marginBottom: '10px' }}>
-              <p style={{ fontSize: 'var(--t-label)', color: colors.red, fontWeight: '600', margin: '0 0 10px' }}>{pastFlocksError}</p>
-              <button className="hit44 glass-btn glass-navy" onClick={loadPastFlocks} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>
+              {/* A bird beside a failure, not instead of one. The copy still
+                  says the read failed and the retry is still the action; the
+                  bird is company. */}
+              <BirdNote
+                layout="row"
+                size={48}
+                bird={WARM_BIRD}
+                title={pastFlocksError}
+                body="Nothing has been lost. Your finished flocks are still there."
+                action={<button className="hit44 glass-btn glass-navy" onClick={loadPastFlocks} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
+              />
             </div>
           )}
 
           {/* A claim about the user's history, so it waits for a fetch that
               actually landed (pastFlocks stays null until one does). */}
           {!pastFlocksLoading && !pastFlocksError && pastFlocks && pastFlocks.length === 0 && (
-            <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', textAlign: 'center', margin: '48px 0 0' }}>Nothing here yet. Finished flocks land here.</p>
+            <BirdNote
+              size={96}
+              bird={WARM_BIRD}
+              title="Nothing here yet"
+              body="A flock lands here once its night has been and gone."
+              style={{ marginTop: '36px' }}
+            />
           )}
 
           {/* Not gated on the error flag: a failed refresh must not delete the
@@ -10547,178 +10669,259 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>Start a Flock</h1>
         </div>
 
-        <div style={{ flex: 1, padding: '16px', overflowY: 'auto', backgroundColor: 'var(--bg-primary)' }}>
-          <div style={{ marginBottom: '16px' }}>
-            <label htmlFor="flock-name-input" style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '6px' }}>What's the plan?</label>
-            <SearchInputLocal aria-label="Flock name" aria-invalid={flockNameError ? 'true' : undefined} aria-describedby={flockNameError ? 'flock-name-error' : undefined} key="flock-name-input" id="flock-name-input" type="text" initialValue={flockName} onCommit={(v) => { setFlockName(v); if (v.trim()) setFlockNameError(''); }} placeholder="Movie night, dinner, party..." style={flockNameError ? { ...styles.input, borderColor: colors.red } : styles.input} autoComplete="off" />
-            {flockNameError && (
-              <p id="flock-name-error" role="alert" style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.red, margin: '6px 0 0' }}>{flockNameError}</p>
-            )}
-          </div>
+        {/* THE SCREEN THE PRODUCT IS NAMED AFTER.
+            Rebuilt 2026-08-25 (Jayden, TestFlight build 26). It was six form
+            controls stacked in one flat column on cream: a title field, a
+            dashed Browse Venues button, four day buttons, five hour pills, a
+            search field, a toggle. Nothing said which of those decisions
+            mattered, nothing grouped the two that belong together, and the
+            green check marks and coloured glows on the selected chips were the
+            only visual event on the page.
 
-          {/* VENUE PICKER — Browse on Discover tab */}
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '6px' }}>{Icons.mapPin(colors.navy, 12)} Venue</label>
+            What changed, and nothing else did. Every control below is wired to
+            exactly the state it was wired to before; this is layout, grouping
+            and chrome. The four groups are the four questions the flow asks in
+            the order it asks them, each labelled outside its container, each a
+            single surface with hairline-divided rows inside it (SLOP-AUDIT
+            section S). Selection is a filled steel chip instead of green type
+            over a glow. And the footer now reads the plan back before it asks
+            you to commit to it. */}
+        <div style={{ flex: 1, padding: '16px 16px 8px', overflowY: 'auto', backgroundColor: 'var(--bg-primary)' }}>
 
-            {selectedVenueForCreate ? (
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '10px', border: `2px solid ${colors.steel}`, display: 'flex', alignItems: 'center', gap: '10px' }}>
-                {selectedVenueForCreate.photo_url ? (
-                  <img src={selectedVenueForCreate.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover' }} onError={onVenuePhotoError} />
-                ) : (
-                  <div style={{ width: '48px', height: '48px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin(colors.navy, 20)}</div>
-                )}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedVenueForCreate.name}</p>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
-                    {selectedVenueForCreate.rating && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{selectedVenueForCreate.rating}</span>}
-                    {selectedVenueForCreate.rating && <StarRating rating={selectedVenueForCreate.rating} />}
-                    {selectedVenueForCreate.price_level && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{priceLabel(selectedVenueForCreate.price_level)}</span>}
-                  </div>
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedVenueForCreate.addr}</p>
-                </div>
-                <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '4px 10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>Change</button>
+          {/* Birdie opens the screen. Not decoration for its own sake: this is
+              where a first-time user has the least idea what a flock is, and
+              one plain sentence beside the mascot is cheaper than a tour. */}
+          <BirdNote
+            layout="row"
+            size={72}
+            body="Name it and say when. The venue can wait, because everyone you invite gets to vote on where."
+            style={{ marginBottom: '18px' }}
+          />
+
+          <FormGroup label="The plan">
+            <FormRow>
+              <label htmlFor="flock-name-input" style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '6px' }}>What's the plan?</label>
+              <SearchInputLocal aria-label="Flock name" aria-invalid={flockNameError ? 'true' : undefined} aria-describedby={flockNameError ? 'flock-name-error' : undefined} key="flock-name-input" id="flock-name-input" type="text" initialValue={flockName} onCommit={(v) => { setFlockName(v); if (v.trim()) setFlockNameError(''); }} placeholder="Movie night, dinner, party..." style={flockNameError ? { ...styles.input, borderColor: colors.red } : styles.input} autoComplete="off" />
+              {flockNameError && (
+                <p id="flock-name-error" role="alert" style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.red, margin: '6px 0 0' }}>{flockNameError}</p>
+              )}
+            </FormRow>
+
+            {/* VENUE PICKER, Browse on Discover tab. Now a row of the same
+                group as the name rather than a card of its own, because
+                "what is it" and "where is it" are one question and the venue
+                is the optional half of it. */}
+            <FormRow divided>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{Icons.mapPin(colors.navy, 12)} Venue</label>
+                <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', fontWeight: '600' }}>Optional</span>
               </div>
-            ) : (
-              <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: `2px dashed ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                {Icons.mapPin(colors.steel, 18)} Browse Venues
-              </button>
-            )}
-          </div>
 
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '6px' }}>When</label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
-              {FLOCK_DAY_CHOICES.map(d => (
-                <button className="hit44" key={d} onClick={() => setFlockDate(d)} style={{ padding: '10px', borderRadius: '10px', border: flockDate === d ? '2px solid #2d5a87' : '1.5px solid var(--border-default)', backgroundColor: flockDate === d ? 'rgba(45,90,135,0.12)' : 'var(--bg-card-solid)', color: flockDate === d ? '#22c55e' : 'var(--text-primary)', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: flockDate === d ? '0 0 12px rgba(34,197,94,0.2)' : 'none' }}>{flockDate === d ? '✓ ' : ''}{d}</button>
-              ))}
-            </div>
-          </div>
-
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '6px' }}>Time</label>
-            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-              {FLOCK_HOUR_CHOICES.map(t => (
-                <button className="hit44" key={t} onClick={() => setFlockTime(t)} style={{ padding: '6px 14px', borderRadius: '20px', border: flockTime === t ? '2px solid #2d5a87' : '1.5px solid var(--border-default)', backgroundColor: flockTime === t ? 'rgba(45,90,135,0.12)' : 'var(--bg-card-solid)', color: flockTime === t ? '#22c55e' : 'var(--text-primary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: flockTime === t ? '0 0 10px rgba(34,197,94,0.2)' : 'none' }}>{t}</button>
-              ))}
-            </div>
-            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '8px 0 0', fontWeight: '500' }}>
-              {resolveEventTime(flockDate, flockTime).toLocaleString([], { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-            </p>
-          </div>
-
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '6px' }}>{Icons.users(colors.navy, 12)} Invite {flockFriends.length > 0 && `(${flockFriends.length})`}</label>
-
-            {/* Selected friends chips */}
-            {flockFriends.length > 0 && (
-              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '8px' }}>
-                {flockFriends.map(f => (
-                  <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px 4px 4px', borderRadius: '20px', backgroundColor: colors.navyBg, color: 'white' }}>
-                    <div style={{ width: '22px', height: '22px', borderRadius: '11px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500' }}>
-                      {f.profile_image_url ? <img src={f.profile_image_url} alt="" style={{ width: '22px', height: '22px', borderRadius: '11px', objectFit: 'cover' }} /> : f.name[0]?.toUpperCase()}
+              {selectedVenueForCreate ? (
+                <div style={{ backgroundColor: 'var(--bg-primary)', borderRadius: '10px', padding: '8px', border: `1px solid ${colors.creamDark}`, display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  {selectedVenueForCreate.photo_url ? (
+                    <img src={selectedVenueForCreate.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
+                  ) : (
+                    <div style={{ width: '48px', height: '48px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.mapPin(colors.navy, 20)}</div>
+                  )}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedVenueForCreate.name}</p>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+                      {selectedVenueForCreate.rating && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{selectedVenueForCreate.rating}</span>}
+                      {selectedVenueForCreate.rating && <StarRating rating={selectedVenueForCreate.rating} />}
+                      {selectedVenueForCreate.price_level && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{priceLabel(selectedVenueForCreate.price_level)}</span>}
                     </div>
-                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500' }}>{f.name.split(' ')[0]}</span>
-                    <button aria-label="Close" className="hit44" onClick={() => setFlockFriends(prev => prev.filter(x => x.id !== f.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', display: 'flex', alignItems: 'center' }}>{Icons.x('rgba(255,255,255,0.7)', 12)}</button>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedVenueForCreate.addr}</p>
                   </div>
+                  <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '4px 10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>Change</button>
+                </div>
+              ) : (
+                <>
+                  <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ width: '100%', padding: '12px', borderRadius: '10px', border: `1.5px solid var(--border-default)`, backgroundColor: 'var(--bg-primary)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                    {Icons.mapPin(colors.steel, 18)} Browse venues
+                  </button>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0', lineHeight: 1.5 }}>Leave it blank and the group votes on where to go.</p>
+                </>
+              )}
+            </FormRow>
+          </FormGroup>
+
+          <FormGroup label="When">
+            <FormRow>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
+                {FLOCK_DAY_CHOICES.map(d => (
+                  <ChoiceChip key={d} selected={flockDate === d} onClick={() => setFlockDate(d)}>{d}</ChoiceChip>
                 ))}
               </div>
-            )}
+            </FormRow>
+            <FormRow divided>
+              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                {FLOCK_HOUR_CHOICES.map(t => (
+                  <ChoiceChip key={t} selected={flockTime === t} onClick={() => setFlockTime(t)} style={{ flex: '1 1 auto', padding: '9px 10px', fontSize: 'var(--t-meta)' }}>{t}</ChoiceChip>
+                ))}
+              </div>
+            </FormRow>
+            {/* The resolved date, on its own hairline-separated row. It is the
+                answer the two rows above add up to, so it reads as a result
+                rather than as another caption. */}
+            <FormRow divided style={{ padding: '10px 12px', backgroundColor: 'var(--bg-primary)', borderBottomLeftRadius: '13px', borderBottomRightRadius: '13px' }}>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, fontWeight: '600' }}>
+                {resolveEventTime(flockDate, flockTime).toLocaleString([], { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+              </p>
+            </FormRow>
+          </FormGroup>
 
-            {/* Suggested friends - quick add */}
-            {suggestedUsers.filter(u => !flockFriends.some(f => f.id === u.id)).length > 0 && (
-              <div style={{ marginBottom: '8px' }}>
-                <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Suggested</p>
-                <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
-                  {suggestedUsers.filter(u => !flockFriends.some(f => f.id === u.id)).slice(0, 5).map(user => (
-                    <button key={user.id} className="hit44 glass-btn glass-secondary" onClick={() => setFlockFriends(prev => [...prev, user])} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 10px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', flexShrink: 0, transition: 'opacity 0.15s ease' }}>
-                      <div style={{ width: '24px', height: '24px', borderRadius: '12px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', overflow: 'hidden', flexShrink: 0 }}>
-                        {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '24px', height: '24px', borderRadius: '12px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
+          <FormGroup label={`Who${flockFriends.length > 0 ? ` (${flockFriends.length} invited)` : ''}`}>
+            <FormRow>
+              {/* Selected friends chips */}
+              {flockFriends.length > 0 && (
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
+                  {flockFriends.map(f => (
+                    <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px 4px 4px', borderRadius: '20px', backgroundColor: colors.navyBg, color: 'white' }}>
+                      <div style={{ width: '22px', height: '22px', borderRadius: '11px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500' }}>
+                        {f.profile_image_url ? <img src={f.profile_image_url} alt="" style={{ width: '22px', height: '22px', borderRadius: '11px', objectFit: 'cover' }} /> : f.name[0]?.toUpperCase()}
                       </div>
-                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, whiteSpace: 'nowrap' }}>{user.name.split(' ')[0]}</span>
-                      <span style={{ fontSize: 'var(--t-meta)', color: colors.steel, fontWeight: '500' }}>+</span>
+                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500' }}>{f.name.split(' ')[0]}</span>
+                      <button aria-label="Close" className="hit44" onClick={() => setFlockFriends(prev => prev.filter(x => x.id !== f.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px', display: 'flex', alignItems: 'center' }}>{Icons.x('rgba(255,255,255,0.7)', 12)}</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Suggested friends - quick add */}
+              {suggestedUsers.filter(u => !flockFriends.some(f => f.id === u.id)).length > 0 && (
+                <div style={{ marginBottom: '10px' }}>
+                  <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Suggested</p>
+                  <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
+                    {suggestedUsers.filter(u => !flockFriends.some(f => f.id === u.id)).slice(0, 5).map(user => (
+                      <button key={user.id} className="hit44 glass-btn glass-secondary" onClick={() => setFlockFriends(prev => [...prev, user])} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 10px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', flexShrink: 0, transition: 'opacity 0.15s ease' }}>
+                        <div style={{ width: '24px', height: '24px', borderRadius: '12px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', overflow: 'hidden', flexShrink: 0 }}>
+                          {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '24px', height: '24px', borderRadius: '12px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
+                        </div>
+                        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, whiteSpace: 'nowrap' }}>{user.name.split(' ')[0]}</span>
+                        <span style={{ fontSize: 'var(--t-meta)', color: colors.steel, fontWeight: '500' }}>+</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Search input */}
+              <div style={{ position: 'relative' }}>
+                <input aria-label="Search people by name or email"
+                  type="text"
+                  value={inviteSearch}
+                  onChange={(e) => handleInviteSearch(e.target.value)}
+                  placeholder="Search by name or email..."
+                  style={{ ...styles.input, paddingLeft: '36px', paddingRight: inviteSearch ? '36px' : '12px', fontSize: 'var(--t-meta)' }}
+                  autoComplete="off"
+                />
+                <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(colors.textTertiary, 14)}</span>
+                {inviteSearch && (
+                  <button aria-label="Close" className="hit44" onClick={() => { setInviteSearch(''); setInviteResults([]); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 14)}</button>
+                )}
+              </div>
+
+              {/* Search results */}
+              {inviteSearching && (
+                <div style={{ marginTop: '6px' }}>
+                  <ListSkeleton count={3} thumb={32} thumbRadius={16} label="Searching people" />
+                </div>
+              )}
+              {!inviteSearching && inviteSearch.trim().length >= 1 && inviteResults.length > 0 && (
+                <div style={{ maxHeight: '160px', overflowY: 'auto', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', marginTop: '6px' }}>
+                  {inviteResults.filter(u => !flockFriends.some(f => f.id === u.id)).map((user, i, arr) => (
+                    <button className="hit44" key={user.id} onClick={() => {
+                      setFlockFriends(prev => [...prev, user]);
+                      setInviteSearch('');
+                      setInviteResults([]);
+                    }} style={{ width: '100%', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: i < arr.length - 1 ? `1px solid ${colors.creamDark}` : 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
+                      <div style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', flexShrink: 0, overflow: 'hidden' }}>
+                        {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '32px', height: '32px', borderRadius: '16px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: 0 }}>{user.name}</p>
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{user.email}</p>
+                      </div>
+                      <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.steel, fontSize: 'var(--t-meta)', fontWeight: '500', flexShrink: 0 }}>Add</div>
                     </button>
                   ))}
                 </div>
-              </div>
-            )}
-
-            {/* Search input */}
-            <div style={{ position: 'relative' }}>
-              <input aria-label="Search people by name or email"
-                type="text"
-                value={inviteSearch}
-                onChange={(e) => handleInviteSearch(e.target.value)}
-                placeholder="Or search by name or email..."
-                style={{ ...styles.input, paddingLeft: '36px', paddingRight: inviteSearch ? '36px' : '12px', fontSize: 'var(--t-meta)' }}
-                autoComplete="off"
-              />
-              <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(colors.textTertiary, 14)}</span>
-              {inviteSearch && (
-                <button aria-label="Close" className="hit44" onClick={() => { setInviteSearch(''); setInviteResults([]); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 14)}</button>
               )}
-            </div>
+              {/* A search that found nobody. Warm bird, because this is about
+                  the user's own people rather than a Flock-wide list. */}
+              {!inviteSearching && inviteSearch.trim().length >= 1 && inviteResults.length === 0 && (
+                <BirdNote
+                  layout="row"
+                  size={48}
+                  bird={WARM_BIRD}
+                  title="Nobody by that name"
+                  body="Check the spelling, or try the email they signed up with."
+                  style={{ marginTop: '10px' }}
+                />
+              )}
+              {/* Nothing to suggest and nothing typed: a real empty state, and
+                  the one place on this screen where the bird gets room. */}
+              {!inviteSearch.trim() && flockFriends.length === 0 && suggestedUsers.filter(u => !flockFriends.some(f => f.id === u.id)).length === 0 && (
+                <BirdNote
+                  size={72}
+                  title="No one to suggest yet"
+                  body="Search above for anyone already on Flock. You can also make the flock now and invite people from the chat."
+                  style={{ padding: '10px 0 0' }}
+                />
+              )}
+            </FormRow>
+          </FormGroup>
 
-            {/* Search results */}
-            {inviteSearching && (
-              <div style={{ marginTop: '6px' }}>
-                <ListSkeleton count={3} thumb={32} thumbRadius={16} label="Searching people" />
+          <FormGroup label="Money">
+            <FormRow>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
+                <label style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0 }}>{Icons.dollar(colors.navy, 14)} Group budget</label>
+                <Toggle label="Shared cash pool" on={flockCashPool} onChange={() => setFlockCashPool(!flockCashPool)} />
               </div>
-            )}
-            {!inviteSearching && inviteSearch.trim().length >= 1 && inviteResults.length > 0 && (
-              <div style={{ maxHeight: '160px', overflowY: 'auto', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', marginTop: '6px' }}>
-                {inviteResults.filter(u => !flockFriends.some(f => f.id === u.id)).map((user, i, arr) => (
-                  <button className="hit44" key={user.id} onClick={() => {
-                    setFlockFriends(prev => [...prev, user]);
-                    setInviteSearch('');
-                    setInviteResults([]);
-                  }} style={{ width: '100%', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: i < arr.length - 1 ? `1px solid ${colors.creamDark}` : 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
-                    <div style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', flexShrink: 0, overflow: 'hidden' }}>
-                      {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '32px', height: '32px', borderRadius: '16px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: 0 }}>{user.name}</p>
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{user.email}</p>
-                    </div>
-                    <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.steel, fontSize: 'var(--t-meta)', fontWeight: '500', flexShrink: 0 }}>Add</div>
-                  </button>
-                ))}
-              </div>
-            )}
-            {!inviteSearching && inviteSearch.trim().length >= 1 && inviteResults.length === 0 && (
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '8px 0', margin: 0 }}>No users found</p>
-            )}
-          </div>
-
-          <div style={{ marginBottom: '16px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-              <label style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, display: 'flex', alignItems: 'center', gap: '4px' }}>{Icons.dollar(colors.navy, 14)} Group Budget</label>
-              <Toggle label="Shared cash pool" on={flockCashPool} onChange={() => setFlockCashPool(!flockCashPool)} />
-            </div>
+              {!flockCashPool && (
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0', lineHeight: 1.5 }}>Turn this on and everyone sets a number nobody else can see.</p>
+              )}
+            </FormRow>
             {flockCashPool && (
-              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', border: `1px solid ${colors.creamDark}` }}>
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginBottom: '8px', margin: '0 0 8px' }}>What's this for?</p>
+              <FormRow divided>
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>What's this for?</p>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
                   {['dinner', 'drinks', 'movie', 'concert', 'activity'].map(ctx => (
-                    <button key={ctx} className={`hit44 ${flockBudgetContext === ctx ? '' : 'glass-btn glass-secondary'}`} onClick={() => setFlockBudgetContext(ctx)}
-                      style={{ padding: '6px 14px', borderRadius: '20px', border: flockBudgetContext === ctx ? `2px solid ${colors.steel}` : '1.5px solid var(--border-color)', backgroundColor: flockBudgetContext === ctx ? `${colors.steel}B3` : 'var(--bg-card-solid)', fontSize: 'var(--t-meta)', fontWeight: flockBudgetContext === ctx ? '600' : '600', color: flockBudgetContext === ctx ? '#ffffff' : colors.navy, cursor: 'pointer', textTransform: 'capitalize', transition: 'all 0.2s ease', boxShadow: flockBudgetContext === ctx ? `0 0 12px ${colors.steel}66` : 'none' }}>
+                    <ChoiceChip key={ctx} selected={flockBudgetContext === ctx} onClick={() => setFlockBudgetContext(ctx)} style={{ padding: '7px 13px', fontSize: 'var(--t-meta)', textTransform: 'capitalize' }}>
                       {ctx}
-                    </button>
+                    </ChoiceChip>
                   ))}
                 </div>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Members will set their own budget anonymously after joining</p>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--divider)' }}>
-                  <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--divider)' }}>
+                  <div style={{ minWidth: 0 }}>
                     <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 1px' }}>Ghost Mode</p>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Let members pre-commit their share before going out</p>
                   </div>
                   <Toggle label="Ghost mode" on={flockGhostMode} onChange={() => setFlockGhostMode(!flockGhostMode)} />
                 </div>
-              </div>
+              </FormRow>
             )}
-          </div>
+          </FormGroup>
         </div>
 
-        <div style={{ padding: '12px 16px 16px', flexShrink: 0 }}>
+        {/* THE READ-BACK, then the commit. The footer used to be a single blue
+            button under a form with no summary, so the last thing you saw
+            before creating a flock was the budget toggle. Every fact on this
+            line is state the screen already holds; nothing here is computed
+            from anything the user did not choose. */}
+        <div style={{ padding: '10px 16px 16px', flexShrink: 0, backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--divider)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 10px', minWidth: 0 }}>
+            <span style={{ fontSize: 'var(--t-meta)', fontWeight: '700', color: colors.navy, whiteSpace: 'nowrap', flexShrink: 0 }}>
+              {resolveEventTime(flockDate, flockTime).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}
+            </span>
+            <span aria-hidden="true" style={{ width: '3px', height: '3px', borderRadius: '2px', backgroundColor: 'var(--text-tertiary)', flexShrink: 0 }} />
+            <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
+              {flockFriends.length === 0 ? 'Just you so far' : `You and ${flockFriends.length} more`}
+              {selectedVenueForCreate ? ` at ${selectedVenueForCreate.name}` : ''}
+            </span>
+          </div>
           <button className="hit44 glass-btn glass-primary" onClick={handleCreate} disabled={isLoading} style={{
             width: '100%', padding: '16px', borderRadius: '16px', border: 'none',
             background: colors.navy,
@@ -12592,7 +12795,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '8px 20px 24px', minHeight: chatSearch ? '0' : 'calc(100vh - 300px)' }}>
               {/* The mark belongs to the true-empty inbox. A search that found
                   nothing is a different state and gets the small icon. */}
-              {chatSearch ? Icons.messageSquare(colors.textTertiary, 40) : <EmptyMark name="crowd" />}
+              {chatSearch ? <BirdieStill bird={WARM_BIRD} size={72} /> : <EmptyMark name="crowd" />}
               <h3 style={{ fontFamily: 'var(--font-display)', fontSize: chatSearch ? 'var(--t-title)' : 'var(--t-display)', fontWeight: '600', color: 'var(--text-primary)', margin: '14px 0 0', letterSpacing: '-0.005em', lineHeight: 1.15 }}>{chatSearch ? 'No results found' : 'No conversations yet'}</h3>
               <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 0', maxWidth: '280px' }}>{chatSearch ? 'Try a different search.' : 'Every flock gets its own chat. Start one and it shows up here.'}</p>
               {!chatSearch && (
@@ -12895,6 +13098,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             return (m.text || '').toLowerCase().includes(q) || (m.sender || '').toLowerCase().includes(q);
           }).length === 0 && (
             <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+              <BirdieStill bird={WARM_BIRD} size={72} style={{ margin: '0 auto 8px' }} />
               <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-tertiary)', fontWeight: '500' }}>No messages match "{chatSearch}"</p>
             </div>
           )}
@@ -13889,7 +14093,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </div>
               )}
               {!flockInviteSearching && flockInviteSearch.trim().length >= 1 && flockInviteResults.length === 0 && (
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '8px 0', margin: 0 }}>No friends found</p>
+                <BirdNote
+                  layout="row"
+                  size={48}
+                  title="No friends by that name"
+                  body="Try a shorter piece of the name."
+                  style={{ padding: '8px 0' }}
+                />
               )}
 
               {/* When search is empty: show friends who are down/maybe (the magic) */}
@@ -13998,6 +14208,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // whole app. Neither is allowed to be a dead end.
   const MissingFlockPanel = () => (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', alignItems: 'center', justifyContent: 'center', gap: '14px', padding: '32px 24px', backgroundColor: 'var(--bg-primary)', textAlign: 'center' }}>
+      <BirdieStill size={104} />
       <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.005em' }}>This plan isn't open anymore</h2>
       <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, maxWidth: '26em', lineHeight: 1.5 }}>
         It was either deleted or you are no longer in it. Your other plans are all still here.
@@ -14865,14 +15076,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                 {!blockedLoading && blockedError && (
                   <div style={styles.card}>
-                    <p style={{ fontSize: 'var(--t-label)', color: colors.red, fontWeight: '600', margin: '0 0 10px' }}>{blockedError}</p>
-                    <button className="hit44 glass-btn glass-navy" onClick={loadBlockedUsers} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>
+                    <BirdNote
+                      layout="row"
+                      size={48}
+                      title={blockedError}
+                      body="Nobody has been unblocked. This is the list failing to load, not the list being empty."
+                      action={<button className="hit44 glass-btn glass-navy" onClick={loadBlockedUsers} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
+                    />
                   </div>
                 )}
 
                 {!blockedLoading && !blockedError && blockedUsers.length === 0 && (
                   <div style={{ ...styles.card, textAlign: 'center', padding: '28px 20px' }}>
-                    <div style={{ marginBottom: '10px', display: 'flex', justifyContent: 'center' }}>{Icons.ban('var(--text-tertiary)', 34)}</div>
+                    <BirdieStill bird={WARM_BIRD} size={84} style={{ margin: '0 auto 10px' }} />
                     <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>You have not blocked anyone</p>
                     {/* Both routes verified against the code they describe: a
                         tap on a message bubble opens the actions row with the
@@ -15976,6 +16192,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             setVenueTier(p.tier);
           }
           setVenueTierEndsAt(p.tier_expires_at || null);
+          setVenueTierSource(p.tier_source || null);
+          setVenueTierReason(p.tier_reason || null);
           // Load saved logo. photo_url is stored as the RELATIVE proxy path
           // (/api/venues/photo?...), which is not an origin this SPA serves —
           // rendered raw it 404s against Vercel. resolveVenuePhoto prefixes
@@ -16440,7 +16658,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // control inside the iOS binary that offers a paid plan and does not
     // deliver it is an App Review 3.1.1 question and a dead button besides.
     // There is no venue purchase flow yet, so the honest action is to reach us.
-    const VENUE_SALES_EMAIL = 'support@flockcorp.com';
+    //
+    // The social mailbox, not the support one. SLOP-AUDIT section B flagged
+    // the support address as one nobody has confirmed receives mail, and
+    // CommunityGuidelines.js deliberately routes every contact route to the
+    // social one for that exact reason. A venue owner trying to cancel a paid
+    // plan is the last person who should be answered by a mailbox that may not
+    // exist, so this screen now uses the address that was verified with a real
+    // send. (Neither address is spelled out in this comment on purpose. The
+    // flowtype eslint rule treats an at-sign followed by an f, anywhere in a
+    // comment, as a malformed Flow pragma, and our domain contains exactly
+    // that pair. Writing the address here turns the build yellow.)
+    const VENUE_SALES_EMAIL = 'social@flockcorp.com';
     const requestTierUpgrade = (target) => {
       const subject = encodeURIComponent(`Flock venue upgrade request: ${target}`);
       const body = encodeURIComponent(
@@ -16541,7 +16770,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </div>
         <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 6px' }}>{featureName}</h3>
         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.5' }}>{description}</p>
-        <p style={{ fontSize: 'var(--t-micro)', color: requiredTier === 'pro' ? 'var(--accent-purple-text)' : 'var(--accent-amber-text)', fontWeight: '700', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requires {requiredTier === 'pro' ? 'Pro · $75/mo' : 'Premium · $35/mo'}</p>
+        <p style={{ fontSize: 'var(--t-micro)', color: requiredTier === 'pro' ? 'var(--accent-purple-text)' : 'var(--accent-amber-text)', fontWeight: '700', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requires {requiredTier === 'pro' ? `Pro · ${venuePlanPriceLabel('pro')}` : `Premium · ${venuePlanPriceLabel('premium')}`}</p>
         <button className="hit44 glass-btn glass-primary" onClick={() => setShowUpgradeModal(true)} style={{ padding: '10px 20px', borderRadius: '10px', border: 'none', background: requiredTier === 'pro' ? '#2d5a87' : 'var(--accent-amber-text)', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
           Upgrade to {requiredTier === 'pro' ? 'Pro' : 'Premium'}
         </button>
@@ -16707,6 +16936,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               )}
               {venueMapState && !venueMapState.available && (
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '16px', boxShadow: 'var(--card-shadow-sm)' }}>
+                  {/* Warm bird: this card is about the owner's own listing. */}
+                  <BirdieStill bird={WARM_BIRD} size={64} style={{ marginBottom: '8px' }} />
                   <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 6px' }}>
                     {venueMapState.reason === 'no_listing' ? "Your venue isn't on the map yet"
                       : venueMapState.reason === 'no_coords' ? 'Google has no coordinates for your listing'
@@ -16773,6 +17004,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               nothing else, one screen away from the better version. */}
           {venueIntel && !venueIntel.available && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '16px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+              {/* Cobalt Birdie: the forecast is Flock's read on the room,
+                  not the owner's own copy, so it gets the Flock bird. */}
+              <BirdieStill size={64} style={{ marginBottom: '8px' }} />
               <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 6px' }}>
                 {venueIntel.unverified ? (venueVerificationPending ? 'Verification requested' : "Your venue isn't verified yet")
                   : venueIntel.code === 'load_failed' || venueIntel.code === 'lookup_failed' ? "The forecast couldn't load"
@@ -17269,8 +17503,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     suppressed, because that is the line that is not true. */}
                 {venueListErrors.promotions && (
                   <div style={{ padding: '10px', marginBottom: '8px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>We couldn't load your promotions. Nothing has been deleted.</p>
-                    <button className="hit44" onClick={() => loadVenuePromotions()} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>
+                    <BirdNote
+                      layout="row"
+                      size={48}
+                      bird={WARM_BIRD}
+                      body="We couldn't load your promotions. Nothing has been deleted."
+                      action={<button className="hit44" onClick={() => loadVenuePromotions()} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>}
+                    />
                   </div>
                 )}
                 {promotions.length === 0 ? (
@@ -17368,8 +17607,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     the promotions and events tabs. */}
                 {venueListErrors.incomingFlocks && (
                   <div style={{ padding: '10px', marginBottom: '8px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>We couldn't load the flocks heading your way.</p>
-                    <button className="hit44" onClick={() => loadIncomingFlocks()} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>
+                    <BirdNote
+                      layout="row"
+                      size={48}
+                      bird={BIRDIE}
+                      body="We couldn't load the flocks heading your way."
+                      action={<button className="hit44" onClick={() => loadIncomingFlocks()} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>}
+                    />
                   </div>
                 )}
                 {/* A plan refusal, which is not a failure. No "Try again": the
@@ -17421,8 +17665,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     the promotions tab above. */}
                 {venueListErrors.events && (
                   <div style={{ padding: '10px', marginBottom: '8px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>We couldn't load your events. Nothing has been deleted.</p>
-                    <button className="hit44" onClick={() => loadVenueEvents()} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>
+                    <BirdNote
+                      layout="row"
+                      size={48}
+                      bird={WARM_BIRD}
+                      body="We couldn't load your events. Nothing has been deleted."
+                      action={<button className="hit44" onClick={() => loadVenueEvents()} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>}
+                    />
                   </div>
                 )}
                 {venueEventsList.length === 0 ? (
@@ -17478,8 +17727,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   a partial load still shows what it has. */}
               {venueListErrors.reviews && (
                 <div style={{ padding: '10px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>We couldn't load your reviews. Nothing has been deleted.</p>
-                  <button className="hit44" onClick={() => loadVenueReviews()} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>
+                  <BirdNote
+                    layout="row"
+                    size={48}
+                    bird={BIRDIE}
+                    body="We couldn't load your reviews. Nothing has been deleted."
+                    action={<button className="hit44" onClick={() => loadVenueReviews()} style={{ padding: '8px 16px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>}
+                  />
                 </div>
               )}
               {/* Rating Overview */}
@@ -17788,18 +18042,52 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   setting has somewhere to live and this panel comes back with
                   it. What must not come back is the panel without the sends. */}
 
-              {/* Subscription */}
+              {/* SUBSCRIPTION, and the dead end that used to live here.
+                  Jayden, TestFlight build 26: this block read "Pro Plan /
+                  $75/month / No end date" and there was no way to change or
+                  cancel it anywhere in the product. Same shape as the venue
+                  verification dead end: the screen stated a fact about money
+                  and offered no control over it.
+
+                  Two things are wrong with a bare price on a settings screen,
+                  and they are separate.
+
+                  THE NUMBER WAS WRONG. $75 was the 2026-08-14 call.
+                  VENUE-PRICING.md superseded it on 2026-08-20 with $99, which
+                  is already the number the server bills against
+                  (`VENUE_PRICE_USD = 99` in backend/routes/admin.js). Rather
+                  than move the wrong number to a right one and leave a third
+                  copy of it on this screen, the price is gone from here
+                  entirely: the plan sheet is the pricing surface, this screen
+                  says what the owner HOLDS, and "See plans and pricing" is the
+                  one route between them. One number, one place.
+
+                  THE PRICE WAS ALSO NOT TRUE OF THIS VENUE. Every paid tier in
+                  production today is an admin grant, most of them comped, and
+                  telling a comped founding venue they are on "$75/month" is a
+                  claim about their bank account that is simply false. tier_source
+                  and tier_reason already come down with the profile, so the
+                  screen can say what actually happened instead. */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.creditCard(colors.navy, 14)} Subscription</h3>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px' }}>
-                  <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px' }}>
+                  <div style={{ minWidth: 0 }}>
                     <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>{tierBadge[venueData.tier].label} Plan</p>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{/* "Free forever" was a promise about future pricing that nobody has
-                        made. The tier is free today; that is all this can say.
-                        Pricing call made 2026-08-14: $35 Premium / $75 Pro is
-                        canonical. VENUE-BILLING.md's old $49 / $149 figures are
-                        being updated to match these, not the other way round. */}
-                    {venueTier === 'free' ? 'Free' : venueTier === 'premium' ? '$35/month' : '$75/month'}</p>
+                    {/* WHERE THE PLAN CAME FROM, when the server told us. Four
+                        reasons exist and only one of them involves money. A
+                        missing reason prints nothing: the entitlement lookup
+                        failing is not evidence of a billing arrangement. */}
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>
+                      {venueTier === 'free'
+                        ? 'No charge. Your listing, your hours, your replies.'
+                        : venueTierReason === 'paid'
+                          ? 'Billed monthly.'
+                          : venueTierReason === 'founding_comp'
+                            ? 'Comped as a founding venue. Nothing is being charged.'
+                            : venueTierSource || venueTierReason
+                              ? 'Given to you by us. Nothing is being charged.'
+                              : 'Set by us.'}
+                    </p>
                     {/* WHEN IT ENDS, said plainly and once. A comped venue is
                         owed this: the founding offer is six months
                         (VENUE-PRICING.md), and before migration 040 nothing
@@ -17822,11 +18110,58 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     )}
                   </div>
                   {venueTier !== 'pro' && (
-                    <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#2d5a87', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
+                    <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#2d5a87', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0 }}>
                       Upgrade
                     </button>
                   )}
                 </div>
+
+                {/* THE CONTROL. This is the part that did not exist.
+
+                    California's Automatic Renewal Law, and the several state
+                    laws written from it, require that cancelling be no harder
+                    than signing up. That test is passed here rather than
+                    dodged: there is no self-serve signup either. Nobody can buy
+                    a venue plan in this app. Every tier is granted by one
+                    admin-only route, POST /api/admin/venues/:userId/tier, so
+                    "write to us" is literally the same effort as the signup
+                    path it mirrors.
+
+                    What this is NOT: a Cancel button that toasts success and
+                    changes nothing. No cancellation endpoint exists (checked
+                    across routes/venueProfile.js, routes/venueDashboard.js,
+                    services/venueEntitlements.js, routes/billing.js and
+                    routes/revenuecat.js. None of them writes a tier, and the
+                    PUT explicitly refuses a client-supplied one). Inventing the
+                    button would be the deactivate button's old bug again, and
+                    a worse one, because this one is about money.
+
+                    The mailto carries the business name and the current plan so
+                    the owner does not have to describe their own account, which
+                    is the part of "email us to cancel" that people give up on.
+                    The address is printed underneath for a device with no mail
+                    app, exactly as the Danger Zone does it. */}
+                {venueTier !== 'free' && (
+                  <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--divider)' }}>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      <button className="hit44" onClick={() => {
+                        const subject = encodeURIComponent('Flock venue plan: change or cancel');
+                        const body = encodeURIComponent(
+                          `Business: ${venueProfile?.business_name || ''}\nCurrent plan: ${tierBadge[venueData.tier].label}\nWhat I want: (change plan / cancel)\n`
+                        );
+                        try { window.location.href = `mailto:${VENUE_SALES_EMAIL}?subject=${subject}&body=${body}`; } catch { /* address is printed below */ }
+                      }} style={{ flex: '1 1 150px', minWidth: 0, padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
+                        Change or cancel this plan
+                      </button>
+                      <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ flex: '1 1 130px', minWidth: 0, padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
+                        See plans and pricing
+                      </button>
+                    </div>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: 1.5 }}>
+                      There is no switch for this in the app yet, and there is no switch to sign up with either. Write to {VENUE_SALES_EMAIL} and we will change or stop the plan and email you back to confirm.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* Danger Zone */}
@@ -17875,7 +18210,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ border: `2px solid ${venueTier === 'premium' ? 'var(--accent-amber-text)' : colors.creamDark}`, borderRadius: '12px', padding: '12px', marginBottom: '10px', backgroundColor: venueTier === 'premium' ? 'var(--accent-amber-bg)' : 'var(--bg-card-solid)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                     <span style={{ fontWeight: '700', color: 'var(--accent-amber-text)' }}>Premium</span>
-                    <span style={{ fontWeight: '700', color: 'var(--accent-amber-text)' }}>$35/mo</span>
+                    <span style={{ fontWeight: '700', color: 'var(--accent-amber-text)' }}>{venuePlanPriceLabel('premium')}</span>
                   </div>
                   <ul style={{ margin: 0, paddingLeft: '16px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
                     {features.premium.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
@@ -17887,7 +18222,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ border: '2px solid #2d5a87', borderRadius: '12px', padding: '12px', marginBottom: '16px', backgroundColor: 'var(--accent-purple-bg)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                     <span style={{ fontWeight: '700', color: 'var(--accent-purple-text)' }}>Pro</span>
-                    <span style={{ fontWeight: '700', color: 'var(--accent-purple-text)' }}>$75/mo</span>
+                    <span style={{ fontWeight: '700', color: 'var(--accent-purple-text)' }}>{venuePlanPriceLabel('pro')}</span>
                   </div>
                   <ul style={{ margin: 0, paddingLeft: '16px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
                     {features.pro.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
@@ -17925,8 +18260,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 )}
                 {venueLogoPicker === 'error' && (
                   <div style={{ textAlign: 'center', padding: '8px 0 16px' }}>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px' }}>Couldn't load your listing's photos.</p>
-                    <button className="hit44" onClick={() => openVenueLogoPicker()} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', backgroundColor: colors.navy, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>
+                    <BirdNote
+                      size={64}
+                      bird={WARM_BIRD}
+                      body="Couldn't load your listing's photos."
+                      action={<button className="hit44" onClick={() => openVenueLogoPicker()} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', backgroundColor: colors.navy, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>}
+                      style={{ padding: '0 0 4px' }}
+                    />
                   </div>
                 )}
                 {typeof venueLogoPicker === 'object' && venueLogoPicker.photos.length === 0 && (
@@ -18487,6 +18827,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             if (!d) {
               return (
                 <div style={{ ...card, border: `1px dashed ${colors.creamDark}` }}>
+                  {!costsLoading && <BirdieStill size={64} style={{ marginBottom: '8px' }} />}
                   <h3 style={h3}>{costsLoading ? 'Reading the meters' : costsError ? 'These numbers did not load' : 'Nothing read yet'}</h3>
                   <p style={sub}>
                     {costsLoading
@@ -19216,6 +19557,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '20px 14px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }} role="status">
+                    {!researchLoading && <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 8px' }} />}
                     <h3 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 6px' }}>
                       {researchLoading ? 'Reading the database' : researchError ? 'These numbers did not load' : 'Nothing read yet'}
                     </h3>
@@ -19682,15 +20024,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               </div>
             )}
             {venueSearchError && (
-              <p role="alert" style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#fca5a5', margin: '10px 0 0', lineHeight: 1.5 }}>{venueSearchError}</p>
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px', margin: '10px 0 0' }}>
+                <BirdieStill size={56} style={{ flexShrink: 0 }} />
+                <p role="alert" style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#fca5a5', margin: 0, lineHeight: 1.5, flex: 1, minWidth: 0 }}>{venueSearchError}</p>
+              </div>
             )}
             {venueSearchState === 'searching' && (
               <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(148,163,184,0.6)', margin: '10px 0 0' }}>Looking...</p>
             )}
             {venueSearchState === 'none' && !venueSearchError && (
-              <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'rgba(148,163,184,0.75)', margin: '10px 0 0', lineHeight: 1.5 }}>
-                No match. Flock links a venue to its Google Maps listing, so try the name exactly as it appears there. If your business has no listing yet, create one first, then come back. Stuck? <a href="mailto:support@flockcorp.com" style={{ color: '#f0ead8' }}>support@flockcorp.com</a>
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: '10px', margin: '10px 0 0' }}>
+              <BirdieStill bird={WARM_BIRD} size={64} style={{ flexShrink: 0 }} />
+              <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'rgba(148,163,184,0.75)', margin: 0, lineHeight: 1.5, flex: 1, minWidth: 0 }}>
+                No match. Flock links a venue to its Google Maps listing, so try the name exactly as it appears there. If your business has no listing yet, create one first, then come back. Stuck? <a href="mailto:social@flockcorp.com" style={{ color: '#f0ead8' }}>social@flockcorp.com</a>
               </p>
+              </div>
             )}
           </div>
           )}
@@ -22100,7 +22448,7 @@ const SESSION_END_COPY = {
   session_expired: 'Your session expired. Sign in again to pick up where you left off.',
   session_revoked: 'Your sign-in details changed, so Flock signed you out everywhere. Sign in again.',
   account_deleted: 'This account was deleted. Sign in with another one, or make a new account.',
-  account_suspended: 'This account is suspended. Email support@flockcorp.com if that looks wrong.',
+  account_suspended: 'This account is suspended. Email social@flockcorp.com if that looks wrong.',
 };
 
 function sessionEndCopy(reason) {

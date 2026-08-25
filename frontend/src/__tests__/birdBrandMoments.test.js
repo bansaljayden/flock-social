@@ -16,10 +16,23 @@
  *      Birdie AI chat surface — and nowhere else in App.js, because the
  *      dashboards are work tools and the rAF loop is a per-instance cost.
  *
- *   3. The bird marks GENUINE-empty, never an error dressed as empty. The
- *      venue dashboard just relearned (venueListErrors) that a failed read is
- *      not an empty list; parking the mascot on the failure branch would be
- *      the same lie with a friendlier face.
+ *   3. RETIRED 2026-08-25, and replaced, not deleted. The rule used to be
+ *      "the bird marks genuine-empty, never an error". Jayden, reviewing
+ *      TestFlight build 26: "Birds on empty and error states. Yes. It should
+ *      be everywhere." So errors get birds now.
+ *
+ *      What that rule was protecting is still protected, and it is the half
+ *      worth keeping: a failed read is not an empty list, and no bird may
+ *      make it look like one. So the successor rule is about WORDS, not
+ *      about the bird. An error state's copy must still say the read failed,
+ *      and its retry must still be there. The venue dashboard's four banners
+ *      are the case that taught this: each one keeps its verbatim sentence
+ *      and its Try again, and the bird now sits beside them.
+ *
+ *      The one thing that must never happen is the reason the old rule
+ *      existed: an error rendered with empty-state copy. That is tested
+ *      below by pinning the sentences themselves, which is a stronger check
+ *      than counting mascots ever was.
  *
  *   4. Both birds, on purpose. Cobalt where the subject is Flock users, warm
  *      where it is the owner's or the flock's own space. If one of them drops
@@ -160,7 +173,7 @@ describe('BirdieStill costs nothing at rest', () => {
   });
 });
 
-describe('the bird marks genuine-empty, never an error dressed as empty', () => {
+describe('empty AND error states carry a bird', () => {
   test('promotions: bird rides the branch the error guard already suppresses', () => {
     const block = before('No promotions yet. Create your first one!');
     expect(block).toContain('venueListErrors.promotions ? null');
@@ -175,23 +188,17 @@ describe('the bird marks genuine-empty, never an error dressed as empty', () => 
     expect(block).toContain('BirdieStill');
   });
 
-  test('reviews: the true-empty gets the bird, the failed read does not', () => {
+  test('reviews: the true-empty gets the bird', () => {
     expect(
       before('No reviews yet. Reviews from Flock users will appear here.</p>')
     ).toContain('BirdieStill');
-    // "Ratings unavailable right now." is the failed-read branch. Nothing
-    // between the guard that selects it and its copy may mount a bird.
-    const failedBranch = APP.slice(
-      APP.indexOf('venueListErrors.reviews ? ('),
-      APP.indexOf('Ratings unavailable right now.')
-    );
-    expect(failedBranch.length).toBeGreaterThan(0);
-    expect(failedBranch).not.toContain('BirdieStill');
   });
 
-  test('the error banners themselves stay bird-free', () => {
-    // Each banner runs from its sentence to its own Try again button. That
-    // slice IS the banner; the genuine-empty (and its bird) sits after it.
+  // This is the assertion that replaced "the error banners stay bird-free".
+  // Each of the venue dashboard's four failed-read banners now renders a
+  // BirdNote, and the bird is the part that changed; the words are the part
+  // that must not.
+  test('the four venue banners each render a bird', () => {
     for (const banner of [
       "We couldn't load your promotions",
       "We couldn't load the flocks heading your way",
@@ -200,9 +207,51 @@ describe('the bird marks genuine-empty, never an error dressed as empty', () => 
     ]) {
       const i = APP.indexOf(banner);
       expect(i).toBeGreaterThan(-1);
-      const j = APP.indexOf('Try again', i);
-      expect(j).toBeGreaterThan(i);
-      expect(APP.slice(i, j)).not.toContain('BirdieStill');
+      // The BirdNote opens above its own body copy.
+      expect(APP.slice(Math.max(0, i - 500), i)).toContain('<BirdNote');
+    }
+  });
+
+  test('every error state still says the read failed, and still offers a retry', () => {
+    // The half of the retired rule that survives it. A bird beside a failure
+    // is company; a bird INSTEAD of the sentence would be the lie.
+    for (const banner of [
+      "We couldn't load your promotions. Nothing has been deleted.",
+      "We couldn't load the flocks heading your way.",
+      "We couldn't load your events. Nothing has been deleted.",
+      "We couldn't load your reviews. Nothing has been deleted.",
+    ]) {
+      const i = APP.indexOf(banner);
+      expect(i).toBeGreaterThan(-1);
+      const window = APP.slice(i, i + 700);
+      expect(window).toContain('Try again');
+    }
+    // And the failed read must never borrow the empty state's words.
+    const failedBranch = APP.slice(
+      APP.indexOf('venueListErrors.reviews ? ('),
+      APP.indexOf('Ratings unavailable right now.')
+    );
+    expect(failedBranch.length).toBeGreaterThan(0);
+    expect(failedBranch).not.toContain('No reviews yet');
+  });
+
+  test('the states Jayden named by hand all have one', () => {
+    // "The Reviews tab that failed to load, lists with nothing in them,
+    // failed fetches, blocked-users-empty, no-friends, no-flocks,
+    // no-search-results, and so on."
+    const anchored = [
+      ['blocked accounts, failed read', '{blockedError}'],
+      ['blocked accounts, empty', 'You have not blocked anyone'],
+      ['past flocks, failed read', '{pastFlocksError}'],
+      ['past flocks, empty', 'A flock lands here once its night has been and gone.'],
+      ['a person search that found nobody', 'No friends by that name'],
+      ['a flock that no longer exists', "This plan isn't open anymore"],
+    ];
+    for (const [label, anchor] of anchored) {
+      const i = APP.indexOf(anchor);
+      expect([label, i]).not.toEqual([label, -1]);
+      const around = APP.slice(Math.max(0, i - 700), i + 200);
+      expect([label, /<BirdNote|<BirdieStill/.test(around)]).toEqual([label, true]);
     }
   });
 });
@@ -219,11 +268,17 @@ describe('both birds, deliberately mixed, never as glyphs', () => {
   });
 
   test('no still bird is rendered below 40px', () => {
+    // BirdNote is counted too now that the error sweep uses it: it renders a
+    // BirdieStill underneath, so a 24px BirdNote would be a smudge by another
+    // route. (Its row layout floors at 48 on its own; this catches the stack.)
     const stills = APP.match(/<BirdieStill\b[^>]*>/g) || [];
     expect(stills.length).toBeGreaterThan(0);
-    for (const tag of stills) {
+    const notes = APP.match(/<BirdNote\b[\s\S]*?\/>/g) || [];
+    expect(notes.length).toBeGreaterThan(0);
+    for (const tag of [...stills, ...notes]) {
       const m = tag.match(/size=\{(\d+)\}/);
-      // A BirdieStill with no size prop defaults to 96, which passes.
+      // No size prop defaults to 96 on BirdieStill and 64 on BirdNote, and
+      // both pass.
       if (m) expect(Number(m[1])).toBeGreaterThanOrEqual(40);
     }
   });

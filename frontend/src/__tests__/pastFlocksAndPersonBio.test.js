@@ -200,9 +200,20 @@ describe('past flocks screen', () => {
     expect(codeOnly(loader)).toContain('useState(null)');
   });
 
-  it('the real empty state is one quiet sentence, no illustration', () => {
-    expect(screen).toContain('Nothing here yet. Finished flocks land here.');
+  it('the real empty state names itself, and carries a bird', () => {
+    // This used to read "one quiet sentence, no illustration" and pinned the
+    // absence of any mark. Jayden, TestFlight build 26: "Birds on empty and
+    // error states. Yes. It should be everywhere." So the sentence became a
+    // BirdNote. What is still pinned is the part that mattered: this state
+    // says plainly that there is nothing here, rather than looking like a
+    // load that has not finished.
+    expect(screen).toContain('Nothing here yet');
+    expect(screen).toContain('A flock lands here once its night has been and gone.');
+    // Still not the full-bleed EmptyMark flock, which belongs to the Nest and
+    // the inbox. A history with nothing in it is a smaller moment than those.
     expect(screenCode).not.toContain('<EmptyMark');
+    const around = screenCode.slice(0, screenCode.indexOf('Nothing here yet') + 400);
+    expect(around).toContain('<BirdNote');
   });
 
   it('a failed refresh does not delete the list already on screen', () => {
