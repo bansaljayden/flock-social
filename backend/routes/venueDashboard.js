@@ -67,7 +67,7 @@ const SERVING_TIERS = ['premium', 'pro'];
 // Helper: get venue profile for current user
 async function getVenueCtx(userId) {
   const { rows } = await pool.query(
-    'SELECT id, google_place_id, verified, category FROM venue_profiles WHERE user_id = $1',
+    'SELECT id, google_place_id, verified, category, verification_requested_at FROM venue_profiles WHERE user_id = $1',
     [userId]
   );
   return rows[0] || null;
@@ -1457,7 +1457,13 @@ async function fetchVenueBasics(placeId, userId) {
 //   Google place id must not buy either. Answered as `available: false` with a
 //   reason rather than a 403 so the dashboard can say what to do about it —
 //   same shape incoming-flocks already uses for the same condition.
-const UNVERIFIED_REASON = 'Verify your venue to unlock this. We check ownership before turning on forecasts.';
+// One definition, shared with routes/advisor.js (utils/verificationCopy.js).
+// The sentence that stood here was an instruction with no path: it told the
+// owner to verify their venue, and TestFlight 2026-08-21 found nothing
+// anywhere started a verification. The copy now names the request route, and
+// switches once the request is pending, which is why the ctx (whose SELECT
+// above carries verification_requested_at) is passed at every use site.
+const { unverifiedReason, liveNumberRefusal } = require('../utils/verificationCopy');
 
 // GET /api/venue-dashboard/intelligence — the owner's own forecast
 router.get('/intelligence', requirePremium, async (req, res) => {
@@ -1466,7 +1472,7 @@ router.get('/intelligence', requirePremium, async (req, res) => {
     if (!ctx?.google_place_id) {
       return res.json({ available: false, reason: 'Link your Google listing in Edit Profile to unlock forecasts' });
     }
-    if (!ctx.verified) return res.json({ available: false, unverified: true, reason: UNVERIFIED_REASON });
+    if (!ctx.verified) return res.json({ available: false, unverified: true, reason: unverifiedReason(ctx) });
     const cached = cacheGet(`intel:${ctx.google_place_id}`);
     if (cached) return res.json(cached);
 
@@ -1557,7 +1563,7 @@ router.get('/strip', requirePremium, async (req, res) => {
     if (!ctx?.google_place_id) {
       return res.json({ available: false, reason: 'Link your Google listing in Edit Profile to unlock the strip view' });
     }
-    if (!ctx.verified) return res.json({ available: false, unverified: true, reason: UNVERIFIED_REASON });
+    if (!ctx.verified) return res.json({ available: false, unverified: true, reason: unverifiedReason(ctx) });
     const cached = cacheGet(`strip:${ctx.google_place_id}`);
     if (cached) return res.json(cached);
     if (!GOOGLE_KEY) return res.json({ available: false, reason: 'Search unavailable right now' });
@@ -1808,7 +1814,7 @@ router.get('/busy-now', async (req, res) => {
     if (!ctx?.google_place_id) {
       return res.json({ available: false, reason: 'Link your Google listing in Edit Profile to set a live number' });
     }
-    if (!ctx.verified) return res.json({ available: false, unverified: true, reason: UNVERIFIED_REASON });
+    if (!ctx.verified) return res.json({ available: false, unverified: true, reason: unverifiedReason(ctx) });
     const state = await ownerBusyState(ctx.google_place_id);
     res.json({
       available: true,
@@ -1850,7 +1856,7 @@ router.post('/busy-now', [
       return res.status(400).json({ error: 'Link your Google listing in Edit Profile first' });
     }
     if (!ctx.verified) {
-      return res.status(403).json({ error: 'Verify your venue before setting a live number. We check ownership first.' });
+      return res.status(403).json({ error: liveNumberRefusal(ctx) });
     }
 
     // BOTH CEILINGS AND THE INSERT RUN IN ONE TRANSACTION UNDER A PER-OWNER
@@ -2034,7 +2040,7 @@ router.get('/this-week', requirePro, async (req, res) => {
     if (!ctx?.google_place_id) {
       return res.json({ available: false, reason: 'Link your Google listing in Edit Profile to unlock the weekly summary' });
     }
-    if (!ctx.verified) return res.json({ available: false, unverified: true, reason: UNVERIFIED_REASON });
+    if (!ctx.verified) return res.json({ available: false, unverified: true, reason: unverifiedReason(ctx) });
     const placeId = ctx.google_place_id;
 
     // Cached on the same 60-minute clock as /intelligence and /strip, through

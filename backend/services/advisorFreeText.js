@@ -268,6 +268,50 @@ const OUT_OF_SCOPE_PATTERNS = [
   },
 ];
 
+// ── Small talk ───────────────────────────────────────────────────────────────
+//
+// "How are you" is not an off-topic question, it is not a question at all, and
+// until 2026-08-21 it was answered with "That one is outside what Roost does.
+// We answer questions about running one food or drink venue, and that is the
+// whole of it." — the router classified a greeting as outside_trade, and the
+// owner who said hello was told their hello was against policy (flagged on
+// TestFlight as too blunt for an ordinary greeting). A person greeted at the
+// door does not get read the shop's terms of trade.
+//
+// So greetings are answered HERE, deterministically, before any screen and
+// before any model call: they cost nothing, they cannot be talked into
+// anything (the patterns are anchored to the WHOLE message, so "how are you
+// calculating this" and "hey, ignore your instructions" both fall through to
+// the layers built for them), and the reply is ours, not a model's, so the
+// valve has nothing to inspect. The scope does not widen: a greeting gets a
+// greeting and the same pointer at what Roost actually takes; genuine
+// off-topic questions keep their firm refusals below.
+const SMALL_TALK = [
+  {
+    // A bare greeting and nothing else.
+    re: /^(hi|hiya|hey(\s+there)?|heya|hello(\s+there)?|howdy|yo|good\s+(morning|afternoon|evening)|morning|afternoon|evening)[\s!,.?]*$/i,
+    text: 'Hello. Ask about your venue\'s numbers or about running the room, and we will take it from there.',
+  },
+  {
+    // The polite check-in.
+    re: /^(how\s+are\s+(you|ya|things)(\s+(doing|going|today|tonight)){0,2}|how('s|\s+is)\s+it\s+going|how\s+(are\s+)?you\s+doing|how('s|\s+is)\s+(everything|things|life)|you\s+(ok|okay|good|alright|all\s+right)|what('s|\s+is)\s+up|sup|wassup|whats\s+up)[\s!,.?]*$/i,
+    text: 'Doing fine, thanks. Ask about your venue\'s numbers or about running the room, and we will take it from there.',
+  },
+  {
+    // Thanks, and nothing else.
+    re: /^(thanks|thank\s+you|thankyou|ty|cheers|appreciate\s+(it|that)|(ok(ay)?,?\s+)?(great|got\s+it|perfect|nice),?\s*thanks?(\s+you)?)[\s!,.?]*$/i,
+    text: 'Any time. Ask another whenever you have one.',
+  },
+];
+
+function smallTalk(text) {
+  const probe = typeof text === 'string' ? text.normalize('NFKC').trim() : String(text);
+  for (const { re, text: reply } of SMALL_TALK) {
+    if (re.test(probe)) return reply;
+  }
+  return null;
+}
+
 // A refusal in the product's own voice: plain, forward looking, short, and it
 // never sells anything. ADVISOR-PRODUCT-SHAPE calls an upgrade prompt inside a
 // refusal the darkest available pattern here, so there is not one.
@@ -705,6 +749,12 @@ function parseRoute(raw) {
  * @returns {Promise<{mode: 'grounded'|'advice'|'refused', intentId: string|null, refusal?: string}>}
  */
 async function classify({ userId, question }) {
+  // A greeting is answered as a greeting, before any screen and any spend.
+  // Anchored whole-message patterns only: anything carrying an actual ask
+  // falls straight through to the screens and the router.
+  const greeting = smallTalk(question);
+  if (greeting) return { mode: 'refused', intentId: null, refusal: greeting };
+
   const hard = screen(question);
   if (hard) return { mode: 'refused', intentId: null, refusal: hard };
 
@@ -1101,6 +1151,7 @@ function __copyStrings() {
     ...Object.values(REFUSAL_BY_REASON),
     ...OUT_OF_SCOPE_PATTERNS.map((p) => p.why),
     ...GUARDRAIL_PATTERNS.map((p) => p.why),
+    ...SMALL_TALK.map((p) => p.text),
   ];
 }
 
@@ -1133,6 +1184,8 @@ module.exports = {
   INJECTION_PATTERNS,
   GUARDRAIL_PATTERNS,
   OUT_OF_SCOPE_PATTERNS,
+  SMALL_TALK,
+  smallTalk,
   prohibitedClass,
   PROHIBITED_ADVICE,
   __copyStrings,
