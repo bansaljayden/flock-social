@@ -238,6 +238,69 @@ export function BirdieStill({ size = 96, bird = BIRDIE, style, eager = false }) 
   );
 }
 
+// ---------------------------------------------------------------------------
+// BirdNote — the one shape every bird-carrying empty and error state shares.
+//
+// Jayden, reviewing build 26 (2026-08-21): "Any error page or no-content page
+// needs a bird. We have five birds, and we can add multiple of them." This is
+// the reusable form of that instruction, so the sweep is one component reused
+// rather than twenty pasted <img> stacks.
+//
+// Two layouts, chosen by what the state is:
+//
+//   stack   a centered column — bird, then the words. For states that own
+//           their card or page (a true-empty inbox, a body with nothing in
+//           it). The bird gets room here, 64px and up.
+//   row     the bird beside the words, feet level with the text block. For
+//           error banners and notice cards, where a full-height centered
+//           stack would shout about a failure the copy states quietly.
+//
+// The honesty rule survives the sweep: the bird DECORATES a state, it never
+// relabels one. Error copy still says the load failed; the bird beside it is
+// company, not a claim that the list is empty. (The old rule — birds only on
+// genuine-empty — was superseded by the instruction quoted above, and
+// birdBrandMoments.test.js records the handover.)
+//
+// `title`/`body` are plain strings styled off the app tokens; `action` is a
+// ready ReactNode (usually the Try again button the call site already had).
+// ---------------------------------------------------------------------------
+export function BirdNote({
+  bird = BIRDIE,
+  size = 64,
+  layout = 'stack',
+  title,
+  body,
+  action,
+  eager = false,
+  style,
+}) {
+  const words = (
+    <>
+      {title && (
+        <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 4px' }}>{title}</p>
+      )}
+      {body && (
+        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{body}</p>
+      )}
+      {action && <div style={{ marginTop: '10px' }}>{action}</div>}
+    </>
+  );
+  if (layout === 'row') {
+    return (
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: '12px', ...style }}>
+        <BirdieStill bird={bird} size={Math.max(48, size)} eager={eager} style={{ flexShrink: 0 }} />
+        <div style={{ flex: 1, minWidth: 0, paddingBottom: '2px' }}>{words}</div>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '14px 0 6px', ...style }}>
+      <BirdieStill bird={bird} size={size} eager={eager} />
+      <div style={{ marginTop: '10px', maxWidth: '300px' }}>{words}</div>
+    </div>
+  );
+}
+
 // `dark` is accepted so existing call sites keep working. The photo carries
 // its own light and reads on both surfaces, so no per-theme treatment.
 //

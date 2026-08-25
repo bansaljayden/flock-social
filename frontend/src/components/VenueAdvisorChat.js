@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { BirdieStill, BirdNote } from './ui/BirdieBird';
 
 // Roost, the chat half of the venue advisor: a Q&A thread on the venue
 // dashboard, below the insight cards.
@@ -171,8 +172,40 @@ const ADVICE_MARKER = 'General advice, not from your data.';
 const PENDING_CHIP = 'Reading your numbers…';
 const PENDING_TYPED = 'Working on it…';
 
+// BIRDIE IS PRESENT WHILE ROOST WORKS, AND ONLY VISUALLY (Jayden, build 26
+// review, 2026-08-21: "have Birdie pop out when it's talking so that it feels
+// interactive. Like you're not just talking to a blank wall.")
+//
+// He is the ANSWER'S AVATAR, the way every chat that prints long answers draws
+// one: he appears the moment the question is sent, in the place the answer is
+// about to occupy, and he is still standing there when it lands. He does not
+// blink out of existence at the exact moment there is finally something to
+// read. That is what makes the card an exchange rather than a form that
+// briefly played an animation.
+//
+// WHAT THE MOTION IS ALLOWED TO MEAN. Exactly one thing: an answer is in
+// flight. He pops in when the turn opens and bobs while the server is working,
+// and the bob stops when the turn resolves. Nothing about him changes with
+// WHAT resolved. A refusal gets the same bird, the same size, in the same
+// place, holding just as still as a grounded answer does, because a mascot
+// that looked pleased with one answer and sorry about another would be making
+// a claim about an answer it has not read. Roost's answers are fact-gated and
+// the bird is not a fact: he is company, never a source, and he never lets a
+// declined question look like a failed one.
+//
+// Still photographs plus two CSS keyframes (index.css, roostPop/roostBob,
+// both collapsed by the global reduced-motion rule), never the animated
+// BirdieBird — that rAF loop stays on Birdie's own consumer surface
+// (birdBrandMoments.test.js rule 2), because this is a work tool.
+//
+// 44px, not smaller. Below about 40 the photograph turns to a smudge and the
+// register belongs to an icon instead (the same rule the App.js call sites are
+// held to).
+const AVATAR_SIZE = 44;
+
 const ThreadTurn = ({ turn, first, navy, navyBg, onRetry }) => {
   const advice = turn.status === 'done' && turn.answer && turn.answer.mode === 'advice';
+  const pending = turn.status === 'pending';
   return (
     <div
       style={{
@@ -206,55 +239,77 @@ const ThreadTurn = ({ turn, first, navy, navyBg, onRetry }) => {
           {turn.question}
         </p>
       </div>
-      <div
-        style={{
-          margin: '10px 0 0',
-          paddingLeft: advice ? '10px' : '0px',
-          // Longhand, not the `border-left` shorthand: a shorthand carrying a
-          // custom property is dropped by the CSS parser the test suite runs
-          // on, so the rule would be invisible to any check that it is there.
-          borderLeftWidth: advice ? '2px' : '0px',
-          borderLeftStyle: advice ? 'solid' : 'none',
-          borderLeftColor: 'var(--border-light)',
-        }}
-      >
-        {turn.status === 'pending' && (
-          <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: 0, lineHeight: 1.55 }}>
-            {turn.typed ? PENDING_TYPED : PENDING_CHIP}
-          </p>
-        )}
-        {turn.status === 'error' && (
-          <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.55 }}>
-            That did not go through.{' '}
-            <button
-              type="button"
-              onClick={onRetry}
-              style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: navy, textDecoration: 'underline', cursor: 'pointer' }}
-            >
-              Try again
-            </button>
-          </p>
-        )}
-        {turn.status === 'done' && (
-          <>
-            {/* A refusal wears the same chrome as an answer: quieter ink, no
-                lock icon, no upsell. The text itself says what is missing. */}
-            <AnswerText
-              text={turn.answer.text}
-              tone={turn.answer.mode === 'refusal' ? 'var(--text-secondary)' : 'var(--text-primary)'}
-            />
-            {advice && (
-              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>
-                {ADVICE_MARKER}
-              </p>
-            )}
-            {sourcesLine(turn.answer.sources) && (
-              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>
-                {sourcesLine(turn.answer.sources)}
-              </p>
-            )}
-          </>
-        )}
+      {/* ROOST'S SIDE, and Birdie standing in it. The bird is a fixed column
+          on the left of every answer, so nothing moves vertically when the
+          turn goes from pending to answered: the words simply arrive under a
+          bird who was already there. `flex-start` puts his head level with the
+          first line and his feet a couple of lines down, which is where a
+          photographed bird wants to stand. */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', margin: '10px 0 0' }}>
+        <span
+          /* The two classes are the ONLY difference between a turn in flight
+             and a turn that has resolved. They are added when the turn opens
+             and removed when it settles, whatever it settled into. */
+          className={pending ? 'roost-pop' : undefined}
+          aria-hidden="true"
+          style={{ display: 'block', flexShrink: 0 }}
+        >
+          <span className={pending ? 'roost-bob' : undefined} style={{ display: 'block' }}>
+            <BirdieStill size={AVATAR_SIZE} eager />
+          </span>
+        </span>
+        <div
+          style={{
+            flex: 1,
+            minWidth: 0,
+            paddingLeft: advice ? '10px' : '0px',
+            // Longhand, not the `border-left` shorthand: a shorthand carrying a
+            // custom property is dropped by the CSS parser the test suite runs
+            // on, so the rule would be invisible to any check that it is there.
+            borderLeftWidth: advice ? '2px' : '0px',
+            borderLeftStyle: advice ? 'solid' : 'none',
+            borderLeftColor: 'var(--border-light)',
+          }}
+        >
+          {pending && (
+            <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: 0, lineHeight: 1.55 }}>
+              {turn.typed ? PENDING_TYPED : PENDING_CHIP}
+            </p>
+          )}
+          {turn.status === 'error' && (
+            <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.55 }}>
+              That did not go through.{' '}
+              <button
+                type="button"
+                onClick={onRetry}
+                style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: navy, textDecoration: 'underline', cursor: 'pointer' }}
+              >
+                Try again
+              </button>
+            </p>
+          )}
+          {turn.status === 'done' && (
+            <>
+              {/* A refusal wears the same chrome as an answer: quieter ink, no
+                  lock icon, no upsell, and the same bird beside it holding the
+                  same still pose. The text itself says what is missing. */}
+              <AnswerText
+                text={turn.answer.text}
+                tone={turn.answer.mode === 'refusal' ? 'var(--text-secondary)' : 'var(--text-primary)'}
+              />
+              {advice && (
+                <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>
+                  {ADVICE_MARKER}
+                </p>
+              )}
+              {sourcesLine(turn.answer.sources) && (
+                <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>
+                  {sourcesLine(turn.answer.sources)}
+                </p>
+              )}
+            </>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -739,8 +794,8 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
   if (state === 'locked') {
     return (
       <div style={CARD_STYLE}>
-        <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: navy, margin: 0 }}>{ADVISOR_NAME}</p>
-        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '6px 0 0', lineHeight: 1.5 }}>{lockedReason}</p>
+        <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: navy, margin: '0 0 8px' }}>{ADVISOR_NAME}</p>
+        <BirdNote layout="row" size={48} body={lockedReason} />
       </div>
     );
   }
@@ -748,17 +803,21 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
   if (state === 'error') {
     return (
       <div style={CARD_STYLE}>
-        <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: navy, margin: 0 }}>{ADVISOR_NAME}</p>
-        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '6px 0 0' }}>
-          Could not load right now.{' '}
-          <button
-            type="button"
-            onClick={load}
-            style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', color: navy, textDecoration: 'underline', cursor: 'pointer' }}
-          >
-            Try again
-          </button>
-        </p>
+        <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: navy, margin: '0 0 8px' }}>{ADVISOR_NAME}</p>
+        <BirdNote
+          layout="row"
+          size={48}
+          body="Could not load right now."
+          action={(
+            <button
+              type="button"
+              onClick={load}
+              style={{ background: 'none', border: 'none', padding: 0, font: 'inherit', fontSize: 'var(--t-meta)', color: navy, textDecoration: 'underline', cursor: 'pointer' }}
+            >
+              Try again
+            </button>
+          )}
+        />
       </div>
     );
   }
@@ -838,20 +897,48 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
           explaining how the whole surface answers, and it is the first thing a
           new owner reads here. It is supporting text, so it gets the token for
           supporting text. */}
+      {/* Before a word is exchanged, Birdie is the greeter — the same shape
+          Birdie's own panel opens with, because Jayden asked for this surface
+          to "feel like a regular chat" (build 26 review, 2026-08-21). The
+          lead-in copy is unchanged: the bird adds presence, not promises. */}
       {!started && (
-        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0', lineHeight: 1.5 }}>
-          {freeText ? LEAD_IN_FREE : LEAD_IN_CHIPS}
-        </p>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '14px 0 2px' }}>
+          <BirdieStill size={88} eager />
+          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '10px 0 0', lineHeight: 1.5, maxWidth: '300px' }}>
+            {freeText ? LEAD_IN_FREE : LEAD_IN_CHIPS}
+          </p>
+        </div>
       )}
 
+      {/* Birdie stays behind the conversation as a whisper, exactly as he
+          does behind his own thread in the consumer panel: fixed to the
+          scrollback's frame (not its content, so he does not ride away with
+          the scroll), faint enough to read through, and pointer-transparent.
+          The opacity is a token (index.css --roost-whisper) because the same
+          photograph needs a little more presence on the dark surface.
+
+          HE IS SIZED BY THE PANE, not by a number. A fixed 150px bird was the
+          obvious version and it was wrong: a one-turn thread is barely taller
+          than that, so the first thing an owner ever saw behind their first
+          answer was a cropped torso. Bottom-anchored and told to fill the
+          frame instead, he scales down to stand on the floor of a short
+          thread and up to 200px on a long one, and he is never cut. */}
       {started && (
-        <div
-          ref={scrollRef}
-          style={{ margin: '12px 0 2px', maxHeight: `${THREAD_MAX_HEIGHT}px`, overflowY: 'auto' }}
-        >
-          {thread.map((turn, i) => (
-            <ThreadTurn key={turn.key} turn={turn} first={i === 0} navy={navy} navyBg={navyBg} onRetry={() => retry(turn)} />
-          ))}
+        <div style={{ position: 'relative', margin: '12px 0 2px' }}>
+          <div
+            aria-hidden="true"
+            style={{ position: 'absolute', inset: 0, overflow: 'hidden', opacity: 'var(--roost-whisper, 0.05)', pointerEvents: 'none' }}
+          >
+            <BirdieStill size={200} style={{ position: 'absolute', left: 0, right: 0, bottom: 0, width: '100%', height: '100%', maxHeight: '200px' }} />
+          </div>
+          <div
+            ref={scrollRef}
+            style={{ position: 'relative', maxHeight: `${THREAD_MAX_HEIGHT}px`, overflowY: 'auto' }}
+          >
+            {thread.map((turn, i) => (
+              <ThreadTurn key={turn.key} turn={turn} first={i === 0} navy={navy} navyBg={navyBg} onRetry={() => retry(turn)} />
+            ))}
+          </div>
         </div>
       )}
 

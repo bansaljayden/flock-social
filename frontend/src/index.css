@@ -653,6 +653,39 @@ code {
   }
 }
 
+/* Roost chat: Birdie arrives beside the answer the moment a question is sent
+   and bobs while the server is working (VenueAdvisorChat.js). Both classes
+   come off when the turn resolves, so the motion says exactly one thing, an
+   answer in flight, and says nothing whatever about what the answer turned
+   out to be. That matters on this surface more than on any other: Roost is
+   fact-gated and refuses questions its data cannot reach, and a bird still
+   labouring away over a declined question would be the interface implying
+   knowledge the server just said it does not have.
+
+   Transform and opacity only, so neither keyframe touches layout, and the
+   global prefers-reduced-motion rule above already collapses both (duration
+   0.001ms, one iteration) down to the still photograph.
+
+   EASE OUT, NEVER BACK OUT. The obvious curve here is the overshoot one the
+   FAB below uses, and it is wrong for this: BirdieBird.js says it in its own
+   comments, "a photographed bird that overshoots looks like a glitch." A
+   drawn mascot can squash. A photograph of a bird cannot.
+
+   The whisper token is the opacity of the bird standing behind the thread.
+   The same photograph needs a little more presence on the dark surface. */
+@keyframes roostPop {
+  from { opacity: 0; transform: translateY(10px) scale(0.7); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes roostBob {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-3px); }
+}
+.roost-pop { animation: roostPop 0.3s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.roost-bob { animation: roostBob 1.6s ease-in-out 0.35s infinite; }
+:root { --roost-whisper: 0.05; }
+[data-theme="dark"] { --roost-whisper: 0.13; }
+
 /* FAB press animation */
 .fab-press {
   transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s ease;
