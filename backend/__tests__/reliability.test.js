@@ -220,6 +220,14 @@ async function dispatch(text, params = [], sink) {
   }
 
   // ── budget remind ─────────────────────────────────────────────────────────
+  // /remind now checks membership before it reads the flock, the way GET
+  // /:flockId and /submit always did, so that a stranger cannot tell a real
+  // flock id from a fake one by its refusal. Alice is the creator here, and a
+  // creator is always an accepted member (routes/flocks.js inserts the row on
+  // create, and a creator leaving deletes the flock), so this answers yes.
+  if (has("FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'")) {
+    return { rows: [{ id: 1 }], rowCount: 1 };
+  }
   if (has('SELECT creator_id, name, budget_enabled FROM flocks')) {
     return { rows: [{ creator_id: 1, name: 'Dinner', budget_enabled: true }], rowCount: 1 };
   }
