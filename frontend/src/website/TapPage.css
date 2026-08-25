@@ -3,8 +3,15 @@
    THE READER: a DECA judge at a competition who has never heard of Flock, on
    venue wifi, holding a phone they just tapped against a card or a table
    stand, giving this about fifteen seconds. That is the whole brief, and it
-   is why this file is small, why there is exactly one screen of content, and
-   why nothing here animates.
+   is why this file is small and why there is exactly one screen of content.
+
+   WHAT MOVES, AND WHAT IT COSTS. Two things: the city behind the type is the
+   real clip rather than one frame of it, and Birdie breathes. Neither is on
+   the path to first paint. The clip has no src until the browser goes idle
+   and never gets one at all under reduced-motion or Data Saver (TapPage.js
+   holds that logic and the reasoning); the breath is a 6s transform, which
+   the compositor owns, and the block at the bottom of this file removes it.
+   Nothing here animates a layout property and nothing overshoots.
 
    WHY THIS IS NOT LandingPage.css. The tokens below are copied VALUES, not
    invented ones: every hex is lifted verbatim from the `.lp` block in
@@ -51,10 +58,10 @@
   line-height: 1.6;
   color: var(--cream);
 
-  /* The navy is painted by the ELEMENT, not by the photograph. The city image
-     is decoration layered on top of this at low opacity, so if it never
-     arrives (or never arrives in time, which on venue wifi is the same thing)
-     the page still reads exactly as designed. */
+  /* The navy is painted by the ELEMENT, not by the photograph and not by the
+     clip. Both are decoration layered on top of this, so if neither arrives
+     (or neither arrives in time, which on venue wifi is the same thing) the
+     page still reads exactly as designed. */
   background: var(--navy);
 
   position: relative;
@@ -66,7 +73,13 @@
 
   /* Safe areas: some judges will tap this on an iPhone, where the WebView-less
      browser still reports insets in landscape and on the home indicator. The
-     tokens come from index.css and resolve to 0px everywhere else. */
+     tokens come from index.css and resolve to 0px everywhere else.
+
+     Symmetric here, because on a wide screen the 30rem column and the bird
+     in the far corner are hundreds of pixels apart and there is nothing to
+     reserve. Below 900px they can reach each other, and the rule that keeps
+     them apart is extra BOTTOM PADDING rather than a z-index: the column is
+     lifted clear of the corner instead of being layered over it. */
   padding:
     calc(32px + var(--safe-top, 0px))
     calc(20px + var(--safe-right, 0px))
@@ -79,23 +92,49 @@
 
 /* ============ the backdrop ============ */
 
+/* Everything that dims the footage lives on this wrapper, not on the two
+   layers inside it. That is not tidiness: the video cross-fades OVER the
+   still, and if each carried its own 0.45 opacity the two would composite to
+   a brighter picture than either one for the length of the fade, and the
+   headline's contrast would dip in the middle of it. Dimming the group once
+   means the swap changes what is moving and nothing else. */
+.tap-bg {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  opacity: 0.45;
+  /* The footage is a night city, so it is already dark, but "already dark" is
+     not a contrast measurement. The scrim below puts a near-navy layer between
+     it and every string on this page. Measured against the worst frame the
+     clip can produce (a pure white pixel, full screen) the headline still
+     holds 10.1:1 and the secondary lines 6.6:1, so no sentence here depends
+     on which frame happens to be on screen. */
+  filter: saturate(0.75);
+}
+
 /* A real <img>, not a CSS background, and that is the point: an <img> with
    loading=lazy and fetchpriority=low can never sit in front of the text and
-   the buttons in the network queue. It is 22 KB and it is the last thing this
-   page asks for. */
-.tap-bg {
+   the buttons in the network queue. It is 22 KB, and until the clip arrives
+   it IS the design rather than a placeholder for it. */
+.tap-plate,
+.tap-video {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  opacity: 0.45;
-  /* The photograph is a night city, so it is already dark, but "already dark"
-     is not a contrast measurement. The scrim below puts a near-navy layer
-     between it and every string on this page, which is what lets the cream
-     text keep the 16.3:1 it measures against bare --navy. */
-  filter: saturate(0.75);
 }
+
+/* Fades in over the still once it can actually play. Linear, over most of a
+   second: an eased fade on a 24fps night skyline reads as a flicker, and a
+   fast one reads as a second image landing rather than the same picture
+   starting to move. */
+.tap-video {
+  opacity: 0;
+  transition: opacity 700ms linear;
+}
+.tap-video.is-live { opacity: 1; }
 
 .tap::after {
   content: '';
@@ -142,16 +181,20 @@
 .tap-lead {
   font-size: clamp(16px, 1.4vw, 18px);
   color: var(--cream-2);
-  margin: 0 auto 28px;
+  margin: 0 auto 26px;
   max-width: 30rem;
 }
 
 /* ============ actions ============ */
 
+/* Four of these, once the App Store listing is live. The stack is the layout
+   at every width on purpose: three secondary buttons side by side would be
+   150px each at 390px, which is not a tappable label, and a 2+1 grid would
+   make the odd one out look like the important one. */
 .tap-actions {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   align-items: center;
 }
 
@@ -159,15 +202,15 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 9px;
   width: 100%;
   max-width: 22rem;
-  min-height: 54px;   /* comfortably past the 44px touch floor */
-  padding: 0 24px;
+  min-height: 48px;   /* comfortably past the 44px touch floor */
+  padding: 0 20px;
   border-radius: 12px;
   border: 1px solid transparent;
   font-family: inherit;
-  font-size: 17px;
+  font-size: 15.5px;
   font-weight: 600;
   text-decoration: none;
   cursor: pointer;
@@ -175,17 +218,22 @@
               border-color 0.18s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* The one thing the page is asking for. Cream on navy is the loudest object
-   available in this palette without inventing a colour for it. */
+/* The one thing the page is asking for, and the only control that is filled,
+   54px tall and set in 17px. With four buttons on screen that difference is
+   what answers "which one do I press" in the first second. Cream on navy is
+   the loudest object available in this palette without inventing a colour
+   for it. */
 .tap-btn-primary {
   background: var(--cream);
   color: var(--navy);
+  min-height: 54px;
+  font-size: 17px;
 }
 .tap-btn-primary:hover { background: var(--cream-hi); }
 
-/* Secondary actions. Both are behind flags today, so this rule usually styles
-   nothing; it is here so that switching one on is genuinely a one-line change
-   and not a one-line change plus a design pass. */
+/* The secondary row: the website, the source, and the App Store when there is
+   one. Identical geometry to each other so they read as one group of "and
+   here is more of it" rather than three competing offers. */
 .tap-btn-ghost {
   background: transparent;
   color: var(--cream);
@@ -194,14 +242,23 @@
 .tap-btn-ghost:hover { border-color: var(--cream-2); }
 
 .tap-btn-ghost svg {
-  width: 20px;
-  height: 20px;
+  width: 19px;
+  height: 19px;
   flex: none;
   fill: currentColor;
 }
+/* The globe is drawn, not filled: a solid 19px globe next to the Apple and
+   GitHub marks is a dark blob where they are shapes. */
+.tap-btn-ghost svg.tap-stroke {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 
 .tap-more {
-  margin: 24px 0 0;
+  margin: 22px 0 0;
   font-size: 15px;
   color: var(--cream-2);
 }
@@ -224,15 +281,122 @@
   border-radius: 12px;
 }
 
-/* Very short screens (a phone in landscape, a judge's older device) get the
-   same content with the air taken out rather than a scrollbar. */
-@media (max-height: 620px) {
-  .tap-logo { width: 64px; height: 64px; margin-bottom: 16px; }
-  .tap-lead { margin-bottom: 20px; }
-  .tap-more { margin-top: 18px; }
+/* ============ the bird ============ */
+
+/* Birdie, standing on the bottom edge of the screen. He sits ABOVE the scrim
+   (z-index 1, same layer as the column) so he is lit at full strength against
+   a dimmed city: a character in front of the picture, not a shape inside it.
+   The drop shadow is what stops him floating on a surface with no floor.
+
+   pointer-events: none, and absolutely positioned, so he takes the column no
+   vertical space and intercepts no taps. The room he needs is reserved by
+   .tap's bottom padding, which is why the padding is asymmetric. */
+.tap-perch {
+  position: absolute;
+  z-index: 1;
+  right: max(16px, 4vw);
+  bottom: var(--safe-bottom, 0px);
+  width: 188px;
+  height: 188px;
+  pointer-events: none;
+  filter: drop-shadow(0 10px 22px rgba(0, 0, 0, 0.5));
+  animation: tapBreath 6s ease-in-out infinite;
 }
 
-/* Nothing on this page animates, so there is no motion to reduce. The two
-   transitions above are colour only, which prefers-reduced-motion does not
-   cover, but a user who asked for less movement gets nothing that moves
-   either way. */
+/* The <picture> elements are pure transport for the WebP <source>: they must
+   not exist as far as layout is concerned, or the two absolutely positioned
+   layers would resolve against a new inline box instead of the perch. */
+.tap-perch picture { display: contents; }
+
+/* Both layers on one canvas, so the head lands over the body with no offset
+   maths: the two files are the same 315x400 frame. contain rather than cover
+   because the bird must not be cropped, and center bottom so his feet sit on
+   the bottom edge of the box, which sits on the bottom edge of the screen. */
+.tap-perch img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center bottom;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Two and a half pixels over six seconds, on a transform. It is not meant to
+   be noticed as an animation; it is meant to stop him reading as a sticker.
+   No overshoot, no scale, nothing that touches layout. */
+@keyframes tapBreath {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50%      { transform: translate3d(0, -2.5px, 0); }
+}
+
+/* ============ smaller screens ============ */
+
+/* 900px is where the centred column stops being able to ignore the corner:
+   below it a 22rem button and the bird are close enough to meet, so the bird
+   comes down to 126px and the column is given the bottom padding that keeps
+   it above him. The number is set for the FOUR-button case, not the three
+   showing today, which is why it looks generous now. */
+@media (max-width: 900px) {
+  .tap { padding-bottom: calc(96px + var(--safe-bottom, 0px)); }
+  .tap-perch { width: 126px; height: 126px; right: max(6px, 1.5vw); }
+}
+
+/* Short screens get the same content with the air taken out rather than a
+   scrollbar, in three tiers. These come after the width tiers on purpose:
+   they carry the same specificity, so source order is what lets a short
+   screen overrule what a narrow one asked for.
+
+   Tier 1, under 740px tall: an iPhone-SE-class phone holding four buttons.
+   Nothing is dropped, the air between the blocks is. */
+@media (max-height: 740px) {
+  .tap { padding-top: calc(22px + var(--safe-top, 0px)); }
+  .tap-logo { width: 68px; height: 68px; margin-bottom: 16px; }
+  .tap-lead { margin-bottom: 20px; }
+  .tap-more { margin-top: 16px; }
+}
+
+/* Tier 2, under 700px tall: THE BIRD GOES. Measured, not guessed. Below this
+   the column reaches the bottom of the screen, so a bird in the corner is
+   either standing on the /about link or being paid for with padding the
+   column needs. He is decoration and the link is not, so he leaves and the
+   bottom padding goes back to matching the top. */
+@media (max-height: 700px) {
+  .tap { padding-bottom: calc(32px + var(--safe-bottom, 0px)); }
+  .tap-perch { display: none; }
+}
+
+/* Tier 3, under 660px tall: a phone in landscape, or an old small handset.
+   Everything comes down a step, including the display size, because at this
+   height four buttons and a five-line paragraph do not both fit at the sizes
+   above and a judge scrolling to find the primary action is the one outcome
+   this page cannot have. 660 rather than a rounder number is where a 360x640
+   handset stopped being 4px short with the App Store button on. */
+@media (max-height: 660px) {
+  .tap {
+    padding-top: calc(16px + var(--safe-top, 0px));
+    padding-bottom: calc(16px + var(--safe-bottom, 0px));
+  }
+  .tap-logo { width: 52px; height: 52px; margin-bottom: 10px; }
+  .tap h1 { font-size: clamp(24px, 1rem + 2.4vw, 32px); margin-bottom: 12px; }
+  .tap-lead { font-size: 15px; margin-bottom: 16px; }
+  .tap-actions { gap: 8px; }
+  .tap-btn { min-height: 46px; font-size: 15px; }
+  .tap-btn-primary { min-height: 50px; font-size: 16px; }
+  .tap-more { margin-top: 14px; font-size: 14px; }
+}
+
+/* ============ reduced motion ============ */
+
+/* Asked for less movement, gets a page with none: the breath stops on its
+   first frame rather than mid-cycle, and the clip is removed from the box
+   entirely. The video is never FETCHED in this case either, which TapPage.js
+   decides before it assigns a src, so this rule is the belt to that braces
+   and covers the user who changes the setting with the page already open.
+   What is left is the still, the bird, and the type: the page as designed. */
+@media (prefers-reduced-motion: reduce) {
+  .tap-perch { animation: none; transform: none; }
+  .tap-video { display: none; }
+  .tap-btn { transition: none; }
+}
