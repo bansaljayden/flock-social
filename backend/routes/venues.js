@@ -47,6 +47,46 @@ async function verifyFlockMember(flockId, userId) {
   return result.rows.length > 0;
 }
 
+// ---------------------------------------------------------------------------
+// THE TALLY HAS A CLOSING TIME (game-rule abuse round)
+//
+// POST and DELETE /:id/vote checked membership and nothing else. They never
+// loaded the `flocks` row at all, so no state of the plan could refuse them:
+//
+//   - a COMPLETED flock still accepted new votes. The evening had happened, at
+//     a venue the group had already gone to, and one member could re-open the
+//     standings afterwards and make the record say the group had been split;
+//   - a vote could be WITHDRAWN after the fact. Three members vote 2-1 for the
+//     taqueria, the flock goes there, and then the two taqueria voters delete
+//     their votes. The tally now says ramen was the only venue anyone ever
+//     wanted. The flock's own history of what it chose is rewritten by the
+//     people who lost.
+//
+// Only 'completed' and 'cancelled' are refused, deliberately. 'planning' and
+// 'confirmed' both stay open: groups change their minds about where to go right
+// up to the door, and a confirmed venue that nobody can vote against any more
+// would be a worse product than the bug. What is refused is voting on a plan
+// that is OVER, where there is no decision left to influence and the only thing
+// a vote can still do is alter the record.
+//
+// Reading stays open on any status (GET /:id/votes is untouched): seeing what
+// the group picked for a plan that already happened is the honest use.
+const VOTING_CLOSED = new Set(['completed', 'cancelled']);
+
+// Returns null when the flock is open to votes, or the message explaining why
+// it is not. Called AFTER verifyFlockMember on every write path, so a
+// non-member's 403 is still decided without consulting `flocks` and the route
+// stays the non-oracle it already was.
+async function votingClosedReason(flockId) {
+  const flock = await pool.query('SELECT status FROM flocks WHERE id = $1', [flockId]);
+  if (flock.rows.length === 0) return 'Flock not found';
+  const status = flock.rows[0].status;
+  if (!VOTING_CLOSED.has(status)) return null;
+  return status === 'cancelled'
+    ? 'This plan was cancelled, so its venue vote is closed'
+    : 'This plan is finished, so its venue vote is closed';
+}
+
 // Every tally in this file comes from here so the REST responses, the socket
 // broadcasts and the GET all agree: member votes carry identities (kept
 // internally so each recipient's blocked users can be stripped), guest-link
@@ -123,17 +163,57 @@ async function collectVoteRows(flockId) {
   });
   const guestByVenue = Object.fromEntries(guests.rows.map(g => [g.venue_name, g.guest_count]));
 
+  // ── THE GUEST LINK CANNOT OUTWEIGH THE ROSTER (game-rule abuse round) ─────
+  //
+  // A guest_votes row counted one for one with a member vote in vote_count, and
+  // routes/guest.js caps guest RSVPs at 50 PER FLOCK, not per person: whoever
+  // holds the share link can mint RSVPs up to that cap and vote every one of
+  // them. So one anonymous link-holder outvoted a three-member roster 50 to 3,
+  // with no account, no email and no name attached to any of it. The members
+  // could not even argue with it, because the voters list is empty for guests
+  // by design (they have no identity to show).
+  //
+  // The guest link is a real feature and the people who use it are usually real
+  // invitees without accounts, so their votes are not thrown away. They are
+  // BOUNDED: the guest weight counted for any ONE venue is capped at the total
+  // number of member votes cast in this flock. Guests weigh in alongside the
+  // members and can tip a decision the members are split on; they can never be
+  // louder than all the members put together, so a bloc of them cannot beat the
+  // venue the members are agreed on, only draw level with it (and tailorVotes
+  // breaks that tie toward the members).
+  //
+  // Members' turnout rather than the roster size, for two reasons: it compares
+  // like with like (votes against votes, not votes against headcount), and it
+  // is already in hand, so the tally does not grow a round trip on a read that
+  // runs on every vote, every un-vote, every guest vote and every screen open.
+  // The floor of 1 keeps an early tally sane: before any member has voted, a
+  // guest's pick is still worth a vote, it just cannot be worth fifty.
+  //
+  // guest_count is still reported RAW, so the UI's "+N guests" keeps telling the
+  // truth about how many link votes came in; only the weight that feeds
+  // vote_count is capped. A tally that quietly under-reported the guest count
+  // would just move the confusion somewhere else.
+  //
+  // The root cause (one person being able to BE fifty guests) lives in
+  // routes/guest.js, which owns RSVP creation, and how much an anonymous
+  // opinion should weigh at all is a product question. This is the tally's
+  // half: even with the sybil door wide open, what it can do here is bounded.
+  const memberVotesCast = raw.rows.reduce((n, v) => n + v.member_count, 0);
+  const guestCap = Math.max(memberVotesCast, 1);
+  const weigh = (n) => Math.min(n, guestCap);
+
   const rows = raw.rows.map(v => ({
     venue_name: v.venue_name,
     venue_id: v.venue_id,
     member_count: v.member_count,
     guest_count: guestByVenue[v.venue_name] || 0,
+    guest_weight: weigh(guestByVenue[v.venue_name] || 0),
     voter_rows: v.voter_rows || [],
   }));
   // Venues only guests have voted on so far still show up for members.
   for (const [name, n] of Object.entries(guestByVenue)) {
     if (!rows.some(r => r.venue_name === name)) {
-      rows.push({ venue_name: name, venue_id: null, member_count: 0, guest_count: n, voter_rows: [] });
+      rows.push({ venue_name: name, venue_id: null, member_count: 0, guest_count: n, guest_weight: weigh(n), voter_rows: [] });
     }
   }
   return rows;
@@ -144,18 +224,30 @@ async function collectVoteRows(flockId) {
 // voterObjects keeps the { id, name } rows the GET has always returned; the
 // POST/DELETE and socket payloads stay a names array.
 function tailorVotes(rows, invisible, { voterObjects = false } = {}) {
-  return rows
+  // Sorted on the SOURCE rows, not on the wire objects: the tiebreak needs
+  // member_count, and member_count is not part of the wire shape (payload
+  // equality is pinned by __tests__/arrayShapeSweep.test.js, and adding a field
+  // to a broadcast is a change to what every recipient is told).
+  //
+  // Ties break toward the venue MEMBERS picked. Without this a capped guest
+  // bloc that draws level with the roster still took the top row and read as
+  // the group's choice on every screen that shows the leader.
+  return [...rows]
+    .sort((a, b) =>
+      ((b.member_count + b.guest_weight) - (a.member_count + a.guest_weight))
+      || (b.member_count - a.member_count))
     .map(v => {
       const visible = v.voter_rows.filter(p => !invisible.has(p.id));
       return {
         venue_name: v.venue_name,
         venue_id: v.venue_id,
-        vote_count: v.member_count + v.guest_count,
+        // Members count themselves; guests count up to the roster's own size
+        // (see collectVoteRows). guest_count below is still the raw number.
+        vote_count: v.member_count + v.guest_weight,
         guest_count: v.guest_count,
         voters: voterObjects ? visible : visible.map(p => p.name),
       };
-    })
-    .sort((a, b) => b.vote_count - a.vote_count);
+    });
 }
 
 // Broadcast the new tallies to every other accepted member, tailored to what
@@ -211,6 +303,12 @@ router.post('/:id/vote',
 
       if (!(await verifyFlockMember(flockId, req.user.id))) {
         return res.status(403).json({ error: 'Not a member of this flock' });
+      }
+
+      // The plan has to still be a plan (see votingClosedReason).
+      const closed = await votingClosedReason(flockId);
+      if (closed) {
+        return res.status(closed === 'Flock not found' ? 404 : 409).json({ error: closed });
       }
 
       const { venue_name, venue_id } = req.body;
@@ -289,6 +387,13 @@ router.delete('/:id/vote', flockIdParam(), async (req, res) => {
 
     if (!(await verifyFlockMember(flockId, req.user.id))) {
       return res.status(403).json({ error: 'Not a member of this flock' });
+    }
+
+    // Taking a vote back is the half of this that rewrites history rather than
+    // just adding to it, so it gets the same closing time (votingClosedReason).
+    const closed = await votingClosedReason(flockId);
+    if (closed) {
+      return res.status(closed === 'Flock not found' ? 404 : 409).json({ error: closed });
     }
 
     const removed = await pool.query(
