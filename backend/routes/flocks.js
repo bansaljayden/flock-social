@@ -593,6 +593,12 @@ router.post('/',
 
       console.log('[Flock Create] User:', req.user.id, '| Name:', name, '| Venue:', venue_name || '(none)');
 
+      // Who to push to once the transaction is done with, and about which flock.
+      // Both stay empty unless the create committed. See the block below the
+      // `finally` for why the push cannot live inside it.
+      let pushTargets = [];
+      let pushFlock = null;
+
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
@@ -712,6 +718,10 @@ router.post('/',
         // the list can be shorter than what was asked for, and a client that
         // assumes "everyone I listed" would show a member count nobody has.
         res.status(201).json({ flock, invited_user_ids: invitedUids });
+        // Carried out of the transaction block so the push below runs after the
+        // connection is released and outside the ROLLBACK handler. See there.
+        pushTargets = invitedUids.map((uid) => ({ user_id: uid }));
+        pushFlock = { id: flock.id, name: flock.name };
       } catch (err) {
         // .catch: on a dead or reset connection ROLLBACK throws too, and an
         // unguarded await here would replace the REAL failure with a generic
@@ -722,10 +732,51 @@ router.post('/',
       } finally {
         client.release();
       }
+
+      // ── THE INVITE THAT NOBODY WAS TOLD ABOUT ──────────────────────────────
+      //
+      // This is the door most invites come through. The Create Flock screen
+      // picks friends and sends them as `invited_user_ids` on THIS request
+      // (frontend/src/App.js, handleCreate -> apiCreateFlock), so for most plans
+      // this route is the only invite call that ever runs.
+      //
+      // It emitted the socket event above and stopped. `flock_invite_received`
+      // only reaches a friend who has the app open at that moment; everyone else
+      // got a membership row and no signal of any kind. No push, no badge,
+      // nothing on a lock screen. They find out the next time they happen to
+      // open Flock, which for the people you most need at a plan is exactly the
+      // thing this product exists to stop.
+      //
+      // POST /:id/invite and POST /:id/rerun have both pushed since they were
+      // written; this one never did, and it is the busiest of the three. Same
+      // helper, so the debounce, the offline check, the block and ban gates and
+      // the copy stay one implementation rather than three.
+      //
+      // AFTER the response and OUTSIDE the transaction block above, which is not
+      // stylistic. Inside it, a throw would run ROLLBACK against an already
+      // committed transaction and then rethrow into the outer catch, which would
+      // try to write a 500 onto a response that has already gone out.
+      // pushInvitesToOffline swallows its own failures, so this is belt to its
+      // suspenders, and the headersSent guard below is the other half.
+      //
+      // `pushTargets` is the list that actually got rows, not the list that was
+      // asked for, so a blocked, throttled or non-existent id is not notified
+      // and cannot be probed for by watching whose phone buzzes.
+      if (pushTargets.length > 0 && pushFlock) {
+        await pushInvitesToOffline({
+          io: req.app.get('io'),
+          inviter: req.user,
+          flockId: pushFlock.id,
+          flockName: pushFlock.name,
+          invited: pushTargets,
+        });
+      }
     } catch (err) {
       console.error('[Flock Create] Error:', err.message);
       console.error('[Flock Create] Detail:', err.detail || 'none');
-      res.status(500).json({ error: 'Failed to create flock' });
+      // headersSent: the invite push above runs post-response, so a failure
+      // there must not attempt a second write to a finished response.
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to create flock' });
     }
   }
 );

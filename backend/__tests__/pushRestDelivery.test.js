@@ -105,6 +105,15 @@ test.beforeEach(() => {
   pushBehaviour = async () => ({ skipped: true, reason: 'disabled' });
   CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
   newGuestLog.clear();
+  // The RSVP digest window in routes/flocks.js is process-wide in-memory state
+  // keyed on the flock id, and every case in this file uses flock 42. Without
+  // this, the join case above leaves a window open and the guest RSVP case
+  // below is folded into it, so a test asserting an immediate push fails on
+  // leaked state rather than on the behaviour it names. It only became
+  // observable when the guest RSVP started sharing that window with the two
+  // member doors, which is the whole point of the window; the leak was always
+  // here.
+  flocksRouter.__resetBudgets();
 });
 
 function on(re, fn) { handlers.push([re, fn]); }
