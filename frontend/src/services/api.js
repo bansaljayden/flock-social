@@ -1425,10 +1425,18 @@ export async function sendAiChat(messages, location, currentContext) {
 }
 
 // Push Notifications
-export async function registerDeviceToken(token, deviceType = 'web') {
+// timezone is the device's own IANA zone name, and it is what makes quiet
+// hours possible at all: the backend has no other source for a recipient's
+// local clock, and evaluating "do not ring at 3am" against the server's UTC
+// would mute the entire night out for a US user. Optional, because a client
+// whose runtime cannot answer must still be able to register for push;
+// services/pushHelper.js treats an unknown zone as "deliver now".
+export async function registerDeviceToken(token, deviceType = 'web', timezone) {
+  const body = { token, deviceType };
+  if (timezone) body.timezone = timezone;
   return request('/api/notifications/register', {
     method: 'POST',
-    body: JSON.stringify({ token, deviceType }),
+    body: JSON.stringify(body),
   });
 }
 

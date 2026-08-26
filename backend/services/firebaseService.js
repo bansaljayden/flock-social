@@ -283,7 +283,9 @@ function buildFcmMessage(token, title, body, data = {}) {
   // placeholder that looks like data.
   const stringData = {};
   let dataBytes = Buffer.byteLength(`link${link}`, 'utf8');
-  const entries = Object.entries(data);
+  // `badge` is routing for the ICON, not for the app, so it is spent on the aps
+  // payload below rather than on the 512 byte data budget the deep link shares.
+  const entries = Object.entries(data).filter(([k]) => k !== 'badge');
   const ordered = [
     ...entries.filter(([k]) => DATA_PRIORITY.includes(k)),
     ...entries.filter(([k]) => !DATA_PRIORITY.includes(k)),
@@ -308,6 +310,36 @@ function buildFcmMessage(token, title, body, data = {}) {
   const safeBody = normalizeBody(body, type);
   const url = absoluteLink(link);
 
+  // ---------------------------------------------------------------------------
+  // THE APP ICON BADGE
+  //
+  // Until 2026-08-25 the aps payload carried a sound and a thread id and no
+  // badge at all, so the icon never showed an unread count for any notification
+  // this app has ever sent.
+  //
+  // WHAT THE NUMBER MEANS, stated here because a badge that means something
+  // vague is worse than no badge. It is the recipient's unread DIRECT MESSAGE
+  // count, and only that, because direct_messages.read_status is the only read
+  // state the database actually holds. Flock chat has none, so a badge claiming
+  // to count "everything unread" would be a number the server cannot compute.
+  // services/pushHelper.js computes it and passes it on every push it sends.
+  //
+  // WHY IT IS SAFE TO SEND ON EVERY TYPE: aps.badge is ABSOLUTE, not an
+  // increment. Sending the true count with a flock invite or a bill is what
+  // makes the icon self-correcting, so reading your DMs on one device and then
+  // receiving any notification at all clears the badge rather than leaving a
+  // number nobody can get rid of.
+  //
+  // Absent rather than zero when we could not compute it: aps.badge of 0 CLEARS
+  // the icon, so a failed count must not read as "you have nothing waiting".
+  // ---------------------------------------------------------------------------
+  const rawBadge = data.badge;
+  const badge = Number.isFinite(Number(rawBadge)) && Number(rawBadge) >= 0
+    ? Math.min(Math.floor(Number(rawBadge)), 9999)
+    : null;
+  const aps = { sound: 'default', 'thread-id': tag };
+  if (badge !== null) aps.badge = badge;
+
   const message = {
     token,
     notification: { title: safeTitle, body: safeBody },
@@ -315,7 +347,12 @@ function buildFcmMessage(token, title, body, data = {}) {
     android: {
       priority: 'high',
       collapseKey: tag,
-      notification: { sound: 'default', tag },
+      // notificationCount is Android's half of the same idea: it drives the
+      // launcher's badge on the OEMs that support one. Same number, same
+      // meaning, same absolute semantics as aps.badge above.
+      notification: badge !== null
+        ? { sound: 'default', tag, notificationCount: badge }
+        : { sound: 'default', tag },
     },
     apns: {
       headers: {
@@ -325,7 +362,7 @@ function buildFcmMessage(token, title, body, data = {}) {
       },
       // Without an explicit sound an APNs alert arrives silently, which on a
       // locked phone is indistinguishable from not arriving at all.
-      payload: { aps: { sound: 'default', 'thread-id': tag } },
+      payload: { aps },
     },
     webpush: {
       notification: {

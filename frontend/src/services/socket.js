@@ -5,6 +5,46 @@ let socket = null;
 let socketToken = null;
 
 /**
+ * THIS DEVICE'S PUSH TOKEN, AND WHY A SOCKET CARRIES ONE.
+ *
+ * The backend used to suppress a push whenever ANY socket sat in the
+ * recipient's `user:{id}` room. That is a statement about a connection, not
+ * about a person, and it was wrong in both directions that matter: a phone
+ * that had just been backgrounded still looked online for up to 85 seconds
+ * (server.js sets pingTimeout 60000, pingInterval 25000), and a laptop tab
+ * left open on flockcorp.com occupied that room forever, so the phone in the
+ * owner's pocket received nothing, indefinitely, with no symptom at all.
+ *
+ * The fix needs the server to be able to tell WHICH device a connection speaks
+ * for. The handshake is the cheapest place to say it: the FCM registration
+ * token this browser or app already registered goes up alongside the JWT, so
+ * services/pushHelper.js can line a live socket up with a row in device_tokens
+ * and suppress only that device. A socket that names no token speaks for no
+ * device and now silences nothing.
+ *
+ * It is pushed in here by services/firebase.js rather than read out of
+ * localStorage, for the reason that file's own header gives: the storage key
+ * belongs to one module, and a second copy of it is how a rename silently
+ * unregisters everybody.
+ */
+let devicePushToken = null;
+
+export function setDevicePushToken(token) {
+  const next = typeof token === 'string' && token ? token : null;
+  if (next === devicePushToken) return;
+  devicePushToken = next;
+  // The handshake is fixed at connect time, so a token that arrives or rotates
+  // mid-session only reaches the server on the next one. Rebuild rather than
+  // leave the connection claiming a device it no longer is.
+  if (socket && socketToken) {
+    const stale = socket;
+    socket = null;
+    dispose(stale);
+    connectSocket();
+  }
+}
+
+/**
  * SUBSCRIPTION REGISTRY — read before changing anything in this file.
  *
  * Every onX(callback) helper below used to do `socket.on(event, callback)`
@@ -146,7 +186,11 @@ function createSocket(token) {
   // socket's own retry loop and stops.
   fatalAuthStrikes = 0;
   const instance = io(BASE_URL, {
-    auth: { token },
+    // pushToken names the device this connection speaks for. See the block at
+    // the top of the file. Omitted rather than sent as null when we do not
+    // have one, so the server's "a socket that names no device suppresses
+    // nothing" branch is reached by absence rather than by a sentinel.
+    auth: devicePushToken ? { token, pushToken: devicePushToken } : { token },
     transports: ['websocket', 'polling'],
     reconnection: true,
     // Was 10. Ten attempts on a 1s-to-5s backoff gives up after well under a
@@ -273,10 +317,93 @@ function nudge() {
   reconnectSocket();
 }
 
+/**
+ * HIDDEN MEANS GONE.
+ *
+ * This listener used to do one thing: reconnect when the tab came back. The
+ * other half was missing, and it was the expensive half. A connection that is
+ * merely OPEN was being read by the backend as "this person is looking at
+ * this", so a tab left open on a laptop suppressed push notifications on the
+ * owner's phone for as long as the tab existed. Nobody would ever have
+ * diagnosed that: the app is open, the messages are there when you look, and
+ * the phone is simply silent forever.
+ *
+ * So a hidden document now gives its socket up. Two timings:
+ *
+ *   native (Capacitor): immediately. A WKWebView goes hidden when the app is
+ *   backgrounded, which is unambiguous. There is no such thing as glancing at
+ *   another app for two seconds and expecting the socket to have survived, and
+ *   holding it open is precisely the 85 second window that swallowed
+ *   notifications on a phone that had just gone into a pocket.
+ *
+ *   web: after a short grace, because a hidden tab on a desktop is often a
+ *   two second alt-tab, and tearing a websocket down and rebuilding it for
+ *   that is worse for everyone. Fifteen seconds is longer than any glance and
+ *   far shorter than the indefinite silence it replaces.
+ *
+ * Coming back is the path that already existed: nudge() reconnects, and the
+ * 'connect' handler replays every room, so a chat that was open before the tab
+ * was hidden is still live after it comes back.
+ */
+const HIDDEN_GRACE_MS = 15000;
+let hiddenTimer = null;
+
+function isNativeShell() {
+  return typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true;
+}
+
+function cancelHiddenTimer() {
+  if (hiddenTimer) {
+    clearTimeout(hiddenTimer);
+    hiddenTimer = null;
+  }
+}
+
+// Give the connection up without forgetting anything. The instance is kept, so
+// the room registry, the subscription registry and socketToken all survive and
+// a later connect() comes back whole; only the transport goes.
+function releaseWhileHidden(force = false) {
+  hiddenTimer = null;
+  // Re-checked at fire time, not at schedule time: the grace timer must not
+  // tear down a tab the user came back to nine seconds in. pagehide passes
+  // force, because a page being unloaded is gone whatever it says it is.
+  if (!force && typeof document !== 'undefined' && document.visibilityState !== 'hidden') return;
+  if (!socket || !socket.active) return;
+  try { socket.disconnect(); } catch { /* already torn down */ }
+}
+
+// The throttle on nudge() exists to stop a flapping connection from becoming a
+// retry storm. Coming back to a tab is not flapping, and letting an 'online'
+// event a second earlier eat the reconnect is how an app comes back to the
+// foreground still disconnected.
+function nudgeNow() {
+  lastNudge = Date.now();
+  if (!socket || socket.connected) return;
+  reconnectSocket();
+}
+
 if (typeof window !== 'undefined') {
   window.addEventListener('online', nudge);
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') nudge();
+    if (document.visibilityState === 'visible') {
+      cancelHiddenTimer();
+      nudgeNow();
+      return;
+    }
+    cancelHiddenTimer();
+    if (isNativeShell()) {
+      releaseWhileHidden();
+      return;
+    }
+    hiddenTimer = setTimeout(releaseWhileHidden, HIDDEN_GRACE_MS);
+  });
+  // A closing tab does not always fire visibilitychange in time, and a socket
+  // the server has not noticed is gone is a device that keeps suppressing its
+  // own notifications. This is best effort by definition and costs nothing
+  // when it does not run.
+  window.addEventListener('pagehide', () => {
+    cancelHiddenTimer();
+    releaseWhileHidden(true);
   });
   // api.js fires this after a 401 proves the token dead and clears it. The
   // socket is authenticated with that same token and would keep re-presenting

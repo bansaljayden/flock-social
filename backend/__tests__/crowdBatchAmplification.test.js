@@ -70,6 +70,20 @@ pool.query = (sql, params) => {
   // No live readings in these fixtures — the batch amplification cases are about
   // fan-out, not about the override.
   if (/FROM venue_owner_reports/.test(flat)) return Promise.resolve({ rows: [], rowCount: 0 });
+  // --- the push delivery machinery (migration 050) --------------------------
+  // Modelled rather than left to the zero-rows default, which is exactly the
+  // failure this file's own strictness guard exists to catch: a debounce claim
+  // answered with rowCount 0 reads as "another instance already sent it" and
+  // would suppress every push in this file for the wrong reason.
+  if (/INSERT INTO push_debounce/.test(flat)) return Promise.resolve({ rows: [{ debounce_key: (params || [])[0] }], rowCount: 1 });
+  if (/DELETE FROM push_debounce/.test(flat)) return Promise.resolve({ rows: [], rowCount: 1 });
+  if (/INSERT INTO push_sends/.test(flat)) return Promise.resolve({ rows: [], rowCount: 1 });
+  if (/INSERT INTO push_outbox/.test(flat)) return Promise.resolve({ rows: [], rowCount: 1 });
+  if (/UPDATE device_tokens SET updated_at/.test(flat)) return Promise.resolve({ rows: [], rowCount: 1 });
+  // No stored zone in these fixtures, so quiet hours never apply and the
+  // invite fan-out under test is decided by the debounce alone.
+  if (/SELECT timezone FROM device_tokens/.test(flat)) return Promise.resolve({ rows: [], rowCount: 0 });
+  if (/SELECT token FROM device_tokens/.test(flat)) return Promise.resolve({ rows: [], rowCount: 0 });
   if (/SELECT 1 FROM user_blocks/.test(flat)) {
     const [a, b] = params || [];
     const hit = BLOCKED_PAIRS.some(([x, y]) => (
