@@ -351,6 +351,29 @@ const globalBackstopLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later' },
+  // This limiter answers BEFORE the cors middleware below, which is the whole
+  // point of its position: it has to be able to refuse a request without the
+  // body ever being read. The cost is that its 429 would otherwise carry no
+  // Access-Control-Allow-Origin, so a browser refuses to let the page read it
+  // and the fetch rejects as a network error instead. The guest invite page
+  // then shows its generic failure, whose copy says the link is probably fine
+  // and to try again, which is the one piece of advice that makes a rate limit
+  // worse. The per-route apiLimiter is mounted after cors and never had this
+  // problem, which is why only this one lane was mis-told.
+  //
+  // So the refusal echoes the origin itself, for allowed origins only, using
+  // the same predicate the skip above uses rather than a second copy of the
+  // allowlist. An origin cors would refuse still gets the 429 with no header,
+  // which is correct: it was never entitled to read the response.
+  handler: (req, res, _next, options) => {
+    const origin = req.headers.origin;
+    if (typeof origin === 'string' && isAllowedOrigin(origin)) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Vary', 'Origin');
+    }
+    res.status(options.statusCode).json(options.message);
+  },
 });
 
 app.use(globalBackstopLimiter);
