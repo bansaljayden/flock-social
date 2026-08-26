@@ -5,17 +5,18 @@
 > It is built for the part of a night out that usually dies in the group chat:
 > deciding.
 
-Flock runs in a web browser at https://www.flockcorp.com and an iPhone app is in
-development. Users never pay. Venues pay to appear in front of groups that are
-choosing a place.
+Flock runs in a web browser at https://www.flockcorp.com. An iPhone app is in
+App Store review and cannot be downloaded yet. Users never pay. Venues are the
+side Flock is built to charge, and no venue is being charged today.
 
-www.flockcorp.com is a client-rendered React application, but a crawler that does
-not execute JavaScript is not stuck with an empty page body: the main pages listed
-below serve a full static HTML rendering of their content to AI and answer-engine
-user agents, generated from the same copy human visitors see. This file is the
-summary and the index.
+www.flockcorp.com is a client-rendered React application. Four of the pages
+listed below serve a full static HTML rendering of their content to AI and
+answer-engine user agents, generated from the same copy human visitors see:
+/about, /support, /privacy and /terms. The home page, /guidelines and
+/delete-account are not among them and need JavaScript to read. This file is
+the summary and the index.
 
-Updated: August 14, 2026.
+Updated: August 26, 2026.
 
 ## What Flock does
 
@@ -45,7 +46,7 @@ Updated: August 14, 2026.
 ## Key facts about the crowd model
 
 Each of these is taken from the metadata of the model that ships in the product,
-as of the August 12, 2026 training run (version 2.5.0 "Starling").
+as of the August 18, 2026 training run (version 2.6.0 "Starling").
 
 - Flock trains and serves its own crowd-prediction model (gradient-boosted trees,
   XGBoost, exported to ONNX). It is not a wrapper around another provider's
@@ -69,13 +70,20 @@ enforced minimum age is 13, checked from a stored date of birth.
 
 Flock is free for users. There is no card required, and unlimited flocks, friends,
 venue voting, group chat, crowd levels, budget matching, bill splitting, and SOS are
-all included at no cost. Venues pay for placement in front of nearby groups that are
-picking a place.
+all included at no cost.
+
+Venues are the side Flock intends to charge, and nothing charges a venue today:
+there is no billing code in the product. The venue tools that do ship are a
+dashboard an owner signs into, holding the flocks that chose their venue, their
+own hour-by-hour forecast from the same crowd model, replies to reviews, and a
+deal they can put on their own venue card for groups that open it. Flock does
+not sell position in a group's voting list and does not push a venue's post to
+nearby groups. Neither exists.
 
 ## Pages
 
 - [About](https://www.flockcorp.com/about): What Flock is, the problem it targets,
-  how the crowd model works, and why venues pay while users do not.
+  how the crowd model works, and why venues are the paying side and users are not.
 - [Support](https://www.flockcorp.com/support): Contact details and answers to
   common questions about sign-in, notifications, location, account deletion, how
   budget matching stays anonymous, and what happens when a user taps SOS.
