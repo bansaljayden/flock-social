@@ -221,15 +221,33 @@
 		</dict>
 	</array>
 
-	<!-- No com.apple.developer.associated-domains, so
-	     iOS currently delivers NO universal link to this app. Both halves of
-	     services/pushNavigation.js `intentFromUrl` are therefore unreachable on
-	     device today: the custom-scheme branch (flock://flock/123) and the
-	     universal-link paths (/f/123, /dm/45). Push taps still route correctly,
-	     because those come through the FCM notification payload rather than a
-	     URL.
+	<!-- ASSOCIATED DOMAINS IS ON NOW, AND STILL NOTHING OPENS THE APP. This
+	     block said the opposite until 2026-08-26 and the correction matters,
+	     because the two states look identical from a phone and have different
+	     fixes.
 
-	     Neither is added here on purpose, and the reasons are different.
+	     What changed in 9fab8a9: the Associated Domains capability was enabled
+	     on App ID com.flockcorp.flock and App.entitlements now declares
+	     com.apple.developer.associated-domains for flockcorp.com and
+	     www.flockcorp.com. What did NOT change: every path in the association
+	     file is excluded. frontend/api/apple-app-site-association.js claims
+	     nothing, on purpose, and says at each entry why. iOS fetches the file,
+	     finds no path claimed, and hands the app no universal link, so the path
+	     branches of services/pushNavigation.js `intentFromUrl` (/f/123, /dm/45)
+	     are still unreachable on device. The reason is now "no path is claimed",
+	     not "no entitlement exists". Look in that file, not this one.
+
+	     `appUrlOpen` itself is NOT dead any more, and that is the other half of
+	     the correction. CFBundleURLTypes above declares Google's reversed client
+	     id, so iOS already delivers that callback URL to the app on every native
+	     Google sign-in, and pushNavigation's listener already sees it.
+	     `intentFromUrl` answers null for it (no invite, flock, dm, admin or tab
+	     parameter, and a pathname of /oauth2redirect), which is the correct
+	     answer and is why nothing misroutes. Do not "simplify" that function on
+	     the belief that no URL ever reaches it.
+
+	     Push taps still route through the FCM notification payload rather than a
+	     URL, unchanged by any of this.
 
 	     A `flock://` CFBundleURLTypes entry stays out, and the array above is
 	     not one: that entry is Google's OAuth callback, which the SDK itself
@@ -247,22 +265,22 @@
 	     people actually hit, which is the next paragraph. Add it in the SAME
 	     change as the first thing that emits such a URL, not before.
 
-	     Associated domains cannot be fixed from this repo at all: the
-	     entitlement only signs once the Associated Domains capability is
-	     enabled on App ID com.flockcorp.flock AND an apple-app-site-association
-	     file is served from https://www.flockcorp.com/.well-known/ with the
-	     correct Team ID. Adding the entitlement before those two exist fails
-	     the archive. This is the half that costs growth: an invite link
-	     (https://www.flockcorp.com/i/<token>, shared via navigator.share) opens
-	     the web invite page in Safari even on a phone with the app installed.
+	     The half that still costs growth is the invite link. An invite
+	     (https://www.flockcorp.com/i/<token>, shared via navigator.share) still
+	     opens the web invite page in Safari on a phone that has the app,
+	     because /i/* is excluded in the association file. Two things have to
+	     land together before that exclusion can be dropped, and both are code
+	     rather than configuration.
 
-	     One more thing has to land with that capability, and it is code, not
-	     configuration: services/pushNavigation.js `intentFromUrl` parses /f/:id
-	     and /dm/:id and does NOT parse /i/<token>, so an invite universal link
-	     would be delivered and then resolve to no intent at all. The app also
-	     has no route that redeems an invite token; today that is the guest web
-	     page. Turning the capability on without that work would replace "opens
-	     Safari" with "opens the app on whatever screen it was already on". -->
+	     services/pushNavigation.js `intentFromUrl` parses /f/:id and /dm/:id and
+	     does NOT parse /i/<token>, so an invite universal link would be
+	     delivered and then resolve to no intent at all. And the app has no
+	     screen that redeems an invite token; today that is the guest web page.
+	     Claiming /i/* before both exist would replace "opens Safari", which
+	     works, with "opens the app on whatever screen it was already on", which
+	     leaves the person no route to the plan at all. That is why the
+	     exclusion is written as a decision in the association file and not as a
+	     TODO. -->
 
 	<!-- Export compliance, verified against the bundle on 2026-08-14. The only
 	     cryptography this app performs is standard TLS supplied by the OS: the
