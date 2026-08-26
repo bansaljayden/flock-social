@@ -45,6 +45,9 @@ const ModerationDashboard = require('../website/ModerationDashboard').default;
 
 const REPORTS = '/api/admin/reports';
 const ACTIONS = '/api/admin/moderation-actions';
+// Both the unverified list and a decision PUT sit under this prefix, and the
+// longest-match lookup above resolves the specific one a test registers.
+const VENUES = '/api/admin/venues';
 
 let routes;
 let calls;
@@ -99,6 +102,11 @@ beforeEach(() => {
     return Promise.resolve(handler(p, options));
   };
   // jsdom implements neither; the console calls both.
+  // The console reads THREE lists on mount: the queue, the audit log and the
+  // unverified venue claims. A default stub for the third so every test written
+  // before it existed still describes a console whose other two reads worked;
+  // any test that cares overrides this key.
+  routes[VENUES] = () => respond({ venues: [] });
   window.confirm = () => true;
   window.alert = () => {};
 });

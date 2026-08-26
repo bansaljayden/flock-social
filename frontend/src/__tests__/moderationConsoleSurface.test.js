@@ -176,6 +176,9 @@ const evalDeclaration = (source, name) => {
 // ───────────────────────────────────────────────────────────────────────────
 const REPORTS = '/api/admin/reports';
 const ACTIONS = '/api/admin/moderation-actions';
+// Both the unverified list and a decision PUT sit under this prefix, and the
+// longest-match lookup above resolves the specific one a test registers.
+const VENUES = '/api/admin/venues';
 
 let routes;
 let calls;
@@ -230,6 +233,11 @@ beforeEach(() => {
     return Promise.resolve(handler(p, options));
   };
   // jsdom implements neither, and the console calls both.
+  // The console reads THREE lists on mount: the queue, the audit log and the
+  // unverified venue claims. A default stub for the third so every test written
+  // before it existed still describes a console whose other two reads worked;
+  // any test that cares overrides this key.
+  routes[VENUES] = () => respond({ venues: [] });
   window.confirm = () => true;
   window.alert = () => {};
 });
@@ -286,11 +294,12 @@ describe('iOS focus zoom: no focusable control renders under 16px', () => {
     // is the failure mode of every "grep for the bad thing" test.
     expect(focusableTags(sheetSrc).map((t) => t.tag)).toEqual(['textarea']);
     expect(focusableTags(venueSrc).filter((t) => t.tag === 'input').length).toBeGreaterThanOrEqual(4);
-    // The console gained exactly one control: the per-card audit-reason input.
-    // Its font-size lives in S.reasonInput rather than inline in the tag, so
-    // the inline sweep below cannot see it; the 16px floor for it is asserted
-    // by name in section 2, where S is already evaluated.
-    expect(focusableTags(consoleSrc).map((t) => t.tag)).toEqual(['input']);
+    // The console has exactly two controls: the per-report audit-reason input
+    // and the per-claim one on a venue verification card. BOTH take their
+    // font-size from S.reasonInput rather than inline in the tag, so the
+    // inline sweep below cannot see either; the 16px floor for that one style
+    // is asserted by name in section 2, where S is already evaluated.
+    expect(focusableTags(consoleSrc).map((t) => t.tag)).toEqual(['input', 'input']);
   });
 
   test.each(OWNED)('%s declares no inline font-size below 16px on a focusable control', (name, source) => {
@@ -1242,5 +1251,171 @@ describe('a takedown says what it closed', () => {
     fireEvent.click(screen.getByText('Hide content'));
     await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
     expect(screen.queryByText(/other reports about the same content/)).toBeNull();
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// 12. VENUE VERIFICATION, which had a backend and no screen at all
+// ════════════════════════════════════════════════════════════════════════════
+//
+// GET /api/admin/venues/unverified and PUT /api/admin/venues/:id/verify have
+// existed since migration 020, migration 047 gave the owner a button that asks,
+// and until now NO FRONTEND CALLED EITHER ROUTE. The only notice of a request
+// was an operator email telling somebody to run the PUT by hand.
+//
+// The two assertions that matter most here are the ones about lying: a decline
+// must send verified:false explicitly (the route defaults an absent key to
+// TRUE, so a decline that forgot would grant the badge it meant to withhold),
+// and a failed read must never render as "no venue claims are waiting".
+
+const aClaim = (over = {}) => ({
+  id: 7,
+  user_id: 42,
+  business_name: 'The Bird Bar',
+  location: '12 Main St',
+  google_place_id: 'ChIJplace',
+  created_at: '2026-08-01T10:00:00Z',
+  verification_requested_at: '2026-08-20T10:00:00Z',
+  email: 'owner@bird.example',
+  ...over,
+});
+
+describe('the venue verification queue is on the screen that decides it', () => {
+  test('a requested claim renders with what the admin has to check', async () => {
+    routes[REPORTS] = () => respond(queueBody([]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    routes[VENUES] = () => respond({ venues: [aClaim()] });
+    await renderConsole();
+    expect(screen.getByText('The Bird Bar')).toBeInTheDocument();
+    expect(screen.getByText('REQUESTED')).toBeInTheDocument();
+    // The address, the owner account and the place id are the whole of the
+    // ownership check, and none of them is derivable from the others.
+    expect(screen.getByText(/12 Main St/)).toBeInTheDocument();
+    expect(screen.getByText(/owner@bird\.example/)).toBeInTheDocument();
+    expect(screen.getByText(/ChIJplace/)).toBeInTheDocument();
+  });
+
+  test('a waiting claim is counted in the header, so nobody has to scroll to find out', async () => {
+    routes[REPORTS] = () => respond(queueBody([]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    routes[VENUES] = () => respond({ venues: [aClaim()] });
+    await renderConsole();
+    expect(screen.getByText('Venues waiting')).toBeInTheDocument();
+  });
+
+  test('no waiting claim means no badge, rather than a permanent zero', async () => {
+    routes[REPORTS] = () => respond(queueBody([]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    routes[VENUES] = () => respond({ venues: [] });
+    await renderConsole();
+    expect(screen.queryByText('Venues waiting')).toBeNull();
+  });
+
+  test('Verify PUTs verified:true to that claim', async () => {
+    routes[REPORTS] = () => respond(queueBody([]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    routes['/api/admin/venues/unverified'] = () => respond({ venues: [aClaim()] });
+    routes['/api/admin/venues/7/verify'] = () => respond({ id: 7, business_name: 'The Bird Bar', verified: true });
+    await renderConsole();
+    fireEvent.click(screen.getByText('Verify'));
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
+    const put = calls.find((c) => c.method === 'PUT');
+    expect(put.path).toBe('/api/admin/venues/7/verify');
+    expect(JSON.parse(put.body)).toEqual({ verified: true });
+  });
+
+  test('Decline sends verified:false EXPLICITLY, because an absent key verifies', async () => {
+    routes[REPORTS] = () => respond(queueBody([]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    routes['/api/admin/venues/unverified'] = () => respond({ venues: [aClaim()] });
+    routes['/api/admin/venues/7/verify'] = () => respond({ id: 7, business_name: 'The Bird Bar', verified: false });
+    await renderConsole();
+    fireEvent.click(screen.getByText('Decline'));
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
+    expect(JSON.parse(calls.find((c) => c.method === 'PUT').body).verified).toBe(false);
+  });
+
+  test('a typed reason rides with the decision into the audit log', async () => {
+    routes[REPORTS] = () => respond(queueBody([]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    routes['/api/admin/venues/unverified'] = () => respond({ venues: [aClaim()] });
+    routes['/api/admin/venues/7/verify'] = () => respond({ id: 7, business_name: 'The Bird Bar', verified: true });
+    await renderConsole();
+    fireEvent.change(screen.getByLabelText('Reason for the decision on The Bird Bar'), {
+      target: { value: '  called the landline  ' },
+    });
+    fireEvent.click(screen.getByText('Verify'));
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
+    expect(JSON.parse(calls.find((c) => c.method === 'PUT').body))
+      .toEqual({ verified: true, reason: 'called the landline' });
+  });
+
+  test('a refusal is shown on the claim it is about, not thrown away in an alert', async () => {
+    routes[REPORTS] = () => respond(queueBody([]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    routes['/api/admin/venues/unverified'] = () => respond({ venues: [aClaim()] });
+    routes['/api/admin/venues/7/verify'] = () => respond(
+      { error: 'Another account (user 12) is already the verified owner of Google place ChIJplace. Un-verify that claim first.' },
+      { ok: false, status: 409 },
+    );
+    await renderConsole();
+    fireEvent.click(screen.getByText('Verify'));
+    await waitFor(() => expect(screen.getByText(/already the verified owner of Google place/)).toBeInTheDocument());
+  });
+
+  test('a failed venue read never renders as "no venue claims are waiting"', async () => {
+    routes[REPORTS] = () => respond(queueBody([]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    routes[VENUES] = () => respond({ error: 'Failed to load venues' }, { ok: false, status: 500 });
+    await renderConsole();
+    expect(screen.queryByText('No venue claims are waiting.')).toBeNull();
+    expect(screen.getByText('The venue queue could not be loaded, so this is not a count of anything.')).toBeInTheDocument();
+    // And the queue read, which worked, still says what it found.
+    expect(screen.getByText('Queue is clear.')).toBeInTheDocument();
+  });
+
+  test('a malformed 200 is a failure, not an empty queue', async () => {
+    routes[REPORTS] = () => respond(queueBody([]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    routes[VENUES] = () => respond({ venues: 'not an array' });
+    await renderConsole();
+    expect(screen.queryByText('No venue claims are waiting.')).toBeNull();
+  });
+
+  test('a claim with no Google listing is offered no Verify button', async () => {
+    routes[REPORTS] = () => respond(queueBody([]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    routes[VENUES] = () => respond({ venues: [aClaim({ google_place_id: null, verification_requested_at: null })] });
+    await renderConsole();
+    // Collapsed with the rest of the unasked claims, and still no button once open.
+    fireEvent.click(screen.getByText(/Show 1 claim nobody has asked about/));
+    expect(screen.getByText('The Bird Bar')).toBeInTheDocument();
+    expect(screen.queryByText('Verify')).toBeNull();
+    expect(screen.getByText(/nothing to check ownership against/)).toBeInTheDocument();
+  });
+
+  test('a claim nobody asked about is collapsed and cannot be declined', async () => {
+    routes[REPORTS] = () => respond(queueBody([]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    routes[VENUES] = () => respond({ venues: [aClaim({ verification_requested_at: null })] });
+    await renderConsole();
+    expect(screen.getByText('Nobody has asked to be verified.')).toBeInTheDocument();
+    expect(screen.queryByText('The Bird Bar')).toBeNull();
+    fireEvent.click(screen.getByText(/Show 1 claim nobody has asked about/));
+    expect(screen.getByText('The Bird Bar')).toBeInTheDocument();
+    // Verify is a decision an admin can make unprompted. Decline is an answer
+    // to a request, and there is no request to answer.
+    expect(screen.getByText('Verify')).toBeInTheDocument();
+    expect(screen.queryByText('Decline')).toBeNull();
+  });
+
+  test('the console never asks the server for more claims than the route will send', () => {
+    const routeSrc = read(path.join(SRC, '..', '..', 'backend', 'routes', 'admin.js'));
+    const listQuery = routeSrc.slice(routeSrc.indexOf("router.get('/venues/unverified'"));
+    const serverLimit = /LIMIT (\d+)/.exec(listQuery);
+    expect(serverLimit).not.toBeNull();
+    const consoleLimit = /^const VENUE_LIST_LIMIT = (\d+);/m.exec(consoleSrc);
+    expect(consoleLimit).not.toBeNull();
+    expect(Number(consoleLimit[1])).toBe(Number(serverLimit[1]));
   });
 });
