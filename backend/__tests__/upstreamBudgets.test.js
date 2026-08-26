@@ -11,6 +11,9 @@ const assert = require('node:assert');
 const placesBudget = require('../utils/placesBudget');
 const { createUserBudget } = require('../utils/probeBudget');
 const { UPSTREAM_TIMEOUT_MS, upstreamSignal } = require('../utils/upstream');
+// AbortSignal.timeout() is unref'd by Node itself, so a test that waits for one
+// to fire has to keep the loop referenced itself. See the helper.
+const { withEventLoopHeldOpen } = require('./helpers/eventLoopAnchor');
 
 const {
   allowPlacesSearch,
@@ -456,7 +459,9 @@ test('weather: an aborted upstream degrades to null and cannot hang the caller',
   });
   try {
     const started = Date.now();
-    const result = await weatherService.getWeather(37.0, -82.0);
+    // Nothing settles this but the AbortSignal.timeout deadline, whose timer
+    // Node unrefs, so the loop has to be anchored while we wait for it.
+    const result = await withEventLoopHeldOpen(() => weatherService.getWeather(37.0, -82.0));
     assert.strictEqual(result, null);
     assert.ok(Date.now() - started < UPSTREAM_TIMEOUT_MS.weather + 2000,
       'the deadline must actually bound the wait');

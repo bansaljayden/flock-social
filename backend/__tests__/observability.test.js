@@ -33,6 +33,9 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 const util = require('node:util');
+// The health probe's own deadline is an unref()'d timer (server.js), so a test
+// that waits for it has to keep the loop referenced itself. See the helper.
+const { withEventLoopHeldOpen } = require('./helpers/eventLoopAnchor');
 
 const BACKEND = path.join(__dirname, '..');
 const serverSrc = fs.readFileSync(path.join(BACKEND, 'server.js'), 'utf8');
@@ -242,7 +245,9 @@ test('a probe that HANGS (pool saturated, not refused) still answers 503 inside 
   const h = loadHealthBlock(() => new Promise(() => {})); // never settles
   const started = Date.now();
   const res = fakeRes();
-  await h.handler({}, res);
+  // The probe's 1.5s timer is the ONLY thing that can end this await, and it is
+  // unref()'d on purpose, so the loop has to be anchored while we wait for it.
+  await withEventLoopHeldOpen(() => h.handler({}, res));
   const elapsed = Date.now() - started;
   assert.equal(res.statusCode, 503, 'a pool that cannot answer SELECT 1 is not serving users either');
   assert.ok(elapsed < h.HEALTH_DB_TIMEOUT_MS + 1500,
