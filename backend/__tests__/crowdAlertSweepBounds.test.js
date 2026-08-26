@@ -59,10 +59,16 @@ const SCAN = (() => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 test('the pre-event window is measured in UTC, not in the database session zone', () => {
-  assert.match(SCAN, /f\.event_time > \(NOW\(\) AT TIME ZONE 'UTC'\)/,
+  // The zone NAME is read in either case, and that is not laxity. Postgres
+  // resolves time zone names case-insensitively, services/photoStore.js already
+  // writes AT TIME ZONE 'utc' in lower case, and flockCompletionSweep.test.js
+  // already reads this same literal with the i flag. Pinning the capitals would
+  // fail a correct rewrite on the case of three letters, which is the defect
+  // this pattern exists to stop making.
+  assert.match(SCAN, /f\.event_time > \(NOW\(\) AT TIME ZONE '[Uu][Tt][Cc]'\)/,
     'both sides of the comparison have to be naive UTC, because event_time is a '
     + 'naive column holding a UTC wall clock');
-  assert.match(SCAN, /f\.event_time < \(NOW\(\) AT TIME ZONE 'UTC'\) \+ INTERVAL '3 hours'/);
+  assert.match(SCAN, /f\.event_time < \(NOW\(\) AT TIME ZONE '[Uu][Tt][Cc]'\) \+ INTERVAL '3 hours'/);
   assert.ok(!/event_time [<>] NOW\(\)/.test(SCAN),
     'a bare NOW() against event_time silently borrows the Postgres session TimeZone');
 });
@@ -72,7 +78,7 @@ test('the sweep and the completion sweep read the same column the same way', () 
   // them starts reading event_time in a different zone, one of them is wrong
   // and neither will say so.
   const sweep = fs.readFileSync(path.join(__dirname, '..', 'services', 'flockSweep.js'), 'utf8');
-  assert.match(sweep, /NOW\(\) AT TIME ZONE 'UTC'/,
+  assert.match(sweep, /NOW\(\) AT TIME ZONE '[Uu][Tt][Cc]'/,
     'services/flockSweep.js compares the same column and must resolve it the same way');
 });
 
