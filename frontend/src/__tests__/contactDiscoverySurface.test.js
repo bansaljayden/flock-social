@@ -418,3 +418,129 @@ describe('syncContacts stops where the server said it would', () => {
     expect(out.users).toEqual([{ id: 4, name: 'Ali' }]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The web Contacts Picker path, which the last pass left open on purpose.
+//
+// TEST-EFFECTIVENESS-FRONTEND.md: "the web Contacts Picker path
+// (`navigator.contacts.select`) is untested; reading a dismissed picker as a
+// denial still passes. It is the desktop-browser path, not the launch
+// platform, which is why it is last."
+//
+// It is last, and it is also small, and the defect it hides is the one the
+// native path was fixed for. The Picker API REJECTS when the person closes it
+// without choosing anybody, and what it rejects with is a TypeError. Read that
+// as a refusal and the screen shows the permission-denied state to a user who
+// did not deny anything: on the web there is no permission to deny, because the
+// browser asks fresh every time the picker opens, so the state is unreachable
+// and unrecoverable in the same breath. `readContactPhoneNumbers` throws with a
+// `code`, and 'cancelled' versus 'denied' is the whole distinction.
+//
+// This runs on a plain-web window with a stand-in picker, so it exercises the
+// branch `contactsMode()` selects, not a mock of it.
+// ---------------------------------------------------------------------------
+describe('the browser Contacts Picker', () => {
+  const asPickerWeb = (select) => {
+    delete window.Capacitor;
+    window.ContactsManager = function ContactsManager() {};
+    Object.defineProperty(window.navigator, 'contacts', {
+      value: { select },
+      configurable: true,
+    });
+  };
+
+  afterEach(() => {
+    delete window.ContactsManager;
+    if ('contacts' in window.navigator) delete window.navigator.contacts;
+  });
+
+  test('a browser with the picker is the web mode, and asks the plugin nothing', async () => {
+    asPickerWeb(jest.fn());
+    expect(service.contactsMode()).toBe('web');
+    // The browser asks every time the picker opens, so there is no stored
+    // state to read and nothing to ask the native plugin about. A mode that
+    // reported anything other than 'prompt' here would render the Contacts tab
+    // in a state the person cannot act on.
+    await expect(service.contactsPermissionState()).resolves.toBe('prompt');
+    expect(mockPlugin.checkPermissions).not.toHaveBeenCalled();
+  });
+
+  test('a dismissed picker is a cancellation, not a refusal', async () => {
+    // THE defect this block exists for. The Picker API rejects with a
+    // TypeError when the sheet is closed with nothing picked.
+    asPickerWeb(jest.fn().mockRejectedValue(new TypeError('user cancelled')));
+    await expect(service.readContactPhoneNumbers()).rejects.toMatchObject({ code: 'cancelled' });
+  });
+
+  test('picking nobody and pressing done is a cancellation too', async () => {
+    // The other way to choose nothing: the picker resolves with an empty list.
+    asPickerWeb(jest.fn().mockResolvedValue([]));
+    await expect(service.readContactPhoneNumbers()).rejects.toMatchObject({ code: 'cancelled' });
+  });
+
+  test('a picker that fails for any other reason is NOT reported as a cancellation', async () => {
+    // And the half that keeps "always cancelled" from passing the two above.
+    // A SecurityError is a real refusal by the browser and the screen must be
+    // allowed to say so.
+    const denied = new Error('blocked by permissions policy');
+    denied.name = 'SecurityError';
+    asPickerWeb(jest.fn().mockRejectedValue(denied));
+    await expect(service.readContactPhoneNumbers()).rejects.toMatchObject({ code: 'denied' });
+  });
+
+  test('the projection is the request: tel and nothing else', async () => {
+    // Same rule the native path is held to. Asking for names or emails here
+    // would collect them, and nothing in the feature needs either.
+    const select = jest.fn().mockResolvedValue([{ tel: ['555-000-1111'] }]);
+    asPickerWeb(select);
+
+    const out = await service.readContactPhoneNumbers();
+    expect(select).toHaveBeenCalledWith(['tel'], { multiple: true });
+    expect(out.numbers).toEqual(['555-000-1111']);
+    expect(out.contactCount).toBe(1);
+    expect(out.permission).toBe('granted');
+  });
+
+  test('a card with six numbers on it contributes two', async () => {
+    // The same ceiling the native path applies. A work address book of cards
+    // carrying six numbers each is six times the payload for no extra match.
+    asPickerWeb(jest.fn().mockResolvedValue([
+      {
+        tel: [
+          '555-000-0001', '555-000-0002', '555-000-0003',
+          '555-000-0004', '555-000-0005', '555-000-0006',
+        ],
+      },
+    ]));
+    const out = await service.readContactPhoneNumbers();
+    expect(out.numbers).toEqual(['555-000-0001', '555-000-0002']);
+  });
+
+  test('a number too short to dial is dropped rather than sent', async () => {
+    // dedupe() keys on the last ten digits and discards anything shorter, so a
+    // stored extension or a short code never reaches the lookup endpoint. The
+    // native path relies on the same line; this is the web path proving it.
+    asPickerWeb(jest.fn().mockResolvedValue([{ tel: ['611'] }, { tel: ['555-000-4444'] }]));
+    const out = await service.readContactPhoneNumbers();
+    expect(out.numbers).toEqual(['555-000-4444']);
+  });
+
+  test('the same number on two cards leaves the browser once', async () => {
+    // Deduping happens before anything is sent, and every number removed here
+    // is one that never leaves the machine.
+    asPickerWeb(jest.fn().mockResolvedValue([
+      { tel: ['(555) 000-1111'] },
+      { tel: ['555.000.1111'] },
+      { tel: ['555-000-2222'] },
+    ]));
+    const out = await service.readContactPhoneNumbers();
+    expect(out.numbers).toHaveLength(2);
+    expect(out.contactCount).toBe(3);
+  });
+
+  test('a card with no numbers on it is skipped rather than crashing the sheet', async () => {
+    asPickerWeb(jest.fn().mockResolvedValue([{}, { tel: ['555-000-3333'] }]));
+    const out = await service.readContactPhoneNumbers();
+    expect(out.numbers).toEqual(['555-000-3333']);
+  });
+});
