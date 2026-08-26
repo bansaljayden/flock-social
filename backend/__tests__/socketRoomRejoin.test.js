@@ -691,12 +691,22 @@ test('the batch crowd payload forwards each venue\'s own utcOffsetMinutes', () =
 // ===========================================================================
 
 // The whole VenueDashboard body, so these assertions cannot be satisfied by
-// some unrelated part of a 16,000-line file.
-const dashboard = (() => {
-  const start = APP_SRC.indexOf('const VenueDashboard = ');
-  assert.ok(start > 0, 'VenueDashboard not found');
-  return APP_SRC.slice(start, APP_SRC.indexOf('// Hours Modal', start) || APP_SRC.length);
-})();
+// some unrelated part of App.js.
+//
+// This used to slice App.js between `const VenueDashboard = ` and a
+// `// Hours Modal` comment, because the screen was an arrow function declared
+// inside FlockAppInner. It moved to its own file in 6a20048 and is now
+// `export default function VenueDashboard({`, so both the start marker and the
+// end marker stopped existing and the slice threw "VenueDashboard not found".
+//
+// Reading the dedicated file is what the original slice was approximating, and
+// it is a stronger guarantee than the slice ever was: the boundary is the file
+// rather than a comment that any edit could move or delete. If the screen is
+// ever split again, this is the line to follow it.
+const dashboard = fs.readFileSync(
+  path.join(CLIENT_DIR, 'screens', 'VenueDashboard.js'),
+  'utf8'
+);
 
 test('deleting a promotion or an event reports the server refusal', () => {
   for (const [name, api] of [['deletePromo', 'deleteVenuePromotion'], ['deleteEvent', 'deleteVenueEvent']]) {
