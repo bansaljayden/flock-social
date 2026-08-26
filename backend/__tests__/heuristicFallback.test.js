@@ -492,8 +492,21 @@ test('the bar-before-night_club ordering in estimateCapacity is pinned in source
 
   const start = src.indexOf('function estimateCapacity(');
   assert.ok(start > 0, 'estimateCapacity must still be a named function in crowdEngine.js');
-  const end = src.indexOf('\nfunction ', start + 1);
-  const body = src.slice(start, end > 0 ? end : undefined);
+  // End at this function's own column-zero close brace rather than at the next
+  // `\nfunction ` declaration. The old bound fell back to `undefined` (the rest
+  // of the file) whenever the NEXT function was not spelled as a declaration,
+  // which is a behaviour-preserving thing to write. The ordering assertions
+  // below are all first-occurrence indexOf calls, so a body that runs past the
+  // end of estimateCapacity happily finds a bar guard or a night_club branch
+  // belonging to some later function and reports the ordering of code this test
+  // is not about. That failure is silent in the direction that matters: it
+  // passes.
+  const end = src.indexOf('\n}', start);
+  assert.ok(end > start, 'estimateCapacity has no column-zero closing brace; this parser needs updating rather than crowdEngine.js');
+  const body = src.slice(start, end);
+  assert.ok(!/\nfunction /.test(body),
+    'the parsed estimateCapacity body ran past its own end and now spans another function; '
+    + 'the ordering assertions below would be measuring the wrong code');
 
   const nightClub = body.indexOf("hasType(types, 'night_club')");
   assert.ok(nightClub > 0, 'estimateCapacity must still have a night_club branch');
