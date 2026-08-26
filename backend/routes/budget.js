@@ -934,6 +934,15 @@ module.exports.bandCeiling = bandCeiling;
 // routes/billing.js read the cached column too, and the WHEN rule has to have
 // one implementation for the same reason the banding does. See settledCeiling.
 module.exports.settledCeiling = settledCeiling;
+// The WHO rule, exported for the same reason the WHEN rule above is.
+// settledCeiling answers "may this number be published yet"; the reveal
+// threshold answers "are there still three present people to hide in", and
+// that question is only answered correctly by counting submissions whose
+// author is STILL an accepted member (see MEMBER_SUBMISSIONS). routes/billing.js
+// gates its ghost commit on the same threshold and was counting
+// budget_submissions with no membership join, so a submitter who left the flock
+// kept the reveal open on that route after this one had closed it.
+module.exports.MEMBER_SUBMISSIONS = MEMBER_SUBMISSIONS;
 module.exports.CEILING_BANDS = CEILING_BANDS;
 module.exports.SUB_DOLLAR_CEILING = SUB_DOLLAR_CEILING;
 
