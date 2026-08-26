@@ -166,8 +166,29 @@ const LIST_LIMIT = 200;
 // __tests__ pin the two against each other.
 const WINDOW_MAX = 1000;
 
+// Must match the LIMIT on GET /api/admin/venues/unverified in
+// backend/routes/admin.js. That route has no offset and no hasMore, so a full
+// list is the only signal that there may be more behind it, and a console that
+// does not say so presents a truncated list as the whole of it.
+const VENUE_LIST_LIMIT = 200;
+
+// How long a request has been sitting, in whole days, from the timestamp the
+// server sent. Derived, never invented: an unparseable or future value returns
+// nothing at all rather than a confident "0 days".
+const daysWaiting = (t) => {
+  if (!t) return null;
+  const then = new Date(t).getTime();
+  if (Number.isNaN(then)) return null;
+  const days = Math.floor((Date.now() - then) / 86400000);
+  return days >= 0 ? days : null;
+};
+
 export default function ModerationDashboard() {
-  // TWO READS, TWO VERDICTS, AND EACH VERDICT LIVES WITH ITS OWN DATA.
+  // ONE READ, ONE VERDICT, AND EACH VERDICT LIVES WITH ITS OWN DATA.
+  //
+  // Three reads now, not the two this note was written about: the queue, the
+  // audit log, and the unverified venue claims. The rule did not change with
+  // the third, which is the whole point of writing it down as a rule.
   //
   // One shared `error` string had two failure modes, both of them the console
   // saying something untrue about a list it never touched. An audit-log failure
@@ -223,6 +244,41 @@ export default function ModerationDashboard() {
   //               text, clipped, totalLength, error }
   // Same keying, same reason, same shape as `images` above.
   const [texts, setTexts] = useState({});
+  // THE VENUE CLAIMS WAITING ON A HUMAN, which nothing rendered anywhere.
+  //
+  // Migration 047 gave an owner a button that asks to be verified, and
+  // routes/venueProfile.js answers "we confirm ownership by hand". The admin
+  // half of that promise has existed since migration 020 (GET
+  // /api/admin/venues/unverified lists the claims requested-first,
+  // PUT /api/admin/venues/:profileId/verify decides one and writes a
+  // moderation_actions row) and NO FRONTEND HAS EVER CALLED EITHER ROUTE. The
+  // only notice a request generated was an email telling the operator to run
+  // the PUT by hand, and the only way to see the queue was a psql prompt. So
+  // "we confirm ownership by hand" was a promise kept by nobody: verification
+  // gates the public badge, promotions, review replies and the whole Roost
+  // advisor, and every claim sat where it landed.
+  //
+  // Its own state and its own error, for the reason the queue and the audit
+  // log have theirs: one shared `error` string is how a screen ends up saying
+  // something untrue about a list it never read.
+  const [venues, setVenues] = useState({ list: [], error: '' });
+  // profileId -> the optional reason typed for that claim, sent with whichever
+  // decision is clicked and stored verbatim in moderation_actions. The same
+  // control the report cards carry, and it matters more here: "why does this
+  // business hold a badge" is a question with a person's word behind it.
+  const [venueReasons, setVenueReasons] = useState({});
+  const [venueBusyId, setVenueBusyId] = useState(null);
+  // profileId -> the server's own refusal. A place already verified by someone
+  // else comes back as a 409 naming the conflicting account and the place id,
+  // which is the whole answer to why the click did nothing. alert() would
+  // throw that sentence away the moment it is dismissed, so it renders on the
+  // card it is about.
+  const [venueErrors, setVenueErrors] = useState({});
+  const [venueNote, setVenueNote] = useState('');
+  // Claims nobody has asked about are collapsed. An owner who has not pressed
+  // the button has not asked, and 200 unrequested claims above the audit log
+  // would bury the handful that are actually waiting.
+  const [showUnrequested, setShowUnrequested] = useState(false);
 
   // Drop the opened evidence for reports that are no longer in the queue.
   // `images` holds base64 bodies up to 700KB of reported UGC, sometimes
@@ -261,6 +317,35 @@ export default function ModerationDashboard() {
     } catch (e) { setLog((p) => ({ ...p, error: e.message || 'The audit log could not be loaded.' })); }
   }, []);
 
+  // The venue claims, alone, for the same reason: three endpoints, and one
+  // being down says nothing about the other two. The rows are deliberately NOT
+  // cleared on a failure, so a dropped request does not empty a list somebody
+  // is working through; the banner says the read failed instead.
+  const loadVenues = useCallback(async () => {
+    try {
+      const v = await adminFetch('/api/admin/venues/unverified');
+      if (!Array.isArray(v.venues)) {
+        throw new Error('The venue queue came back in a shape this console does not understand. Reload the page.');
+      }
+      setVenues({ list: v.venues, error: '' });
+      // Typed-but-unsent reasons and stale refusals belong to claims that are
+      // still on the screen. A claim that has been decided leaves this list,
+      // and its draft must not sit silently attached to nothing.
+      const live = new Set(v.venues.map((row) => String(row.id)));
+      const prune = (prev) => {
+        const keys = Object.keys(prev).filter((k) => !live.has(k));
+        if (keys.length === 0) return prev;
+        const next = { ...prev };
+        for (const k of keys) delete next[k];
+        return next;
+      };
+      setVenueReasons(prune);
+      setVenueErrors(prune);
+    } catch (e) {
+      setVenues((p) => ({ ...p, error: e.message || 'The venue verification queue could not be loaded.' }));
+    }
+  }, []);
+
   const load = useCallback(async ({ background = false } = {}) => {
     if (background) setRefreshing(true); else setLoading(true);
     try {
@@ -288,14 +373,18 @@ export default function ModerationDashboard() {
         // request. They are labelled as stale in the header instead.
       } catch (e) { setQueue((p) => ({ ...p, error: e.message || 'The queue could not be loaded.' })); }
 
-      // Deliberately not chained off the queue read: they are two endpoints and
-      // one being down says nothing about the other.
-      await loadLog();
+      // Deliberately not chained off the queue read: they are three endpoints
+      // and one being down says nothing about the other two. Promise.all
+      // rather than two awaits so a refresh costs one round trip instead of
+      // two; neither of these can reject, because each swallows its own
+      // failure into its own state, which is what makes the parallel form safe
+      // here and would not be if either threw.
+      await Promise.all([loadLog(), loadVenues()]);
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [loadLog, pruneEvidence]);
+  }, [loadLog, loadVenues, pruneEvidence]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -518,7 +607,59 @@ export default function ModerationDashboard() {
     } finally { setBusyId(null); }
   };
 
+  // Verify a claim, or decline the request for one.
+  //
+  // Both are the same route with a different boolean, and `verified` is always
+  // sent explicitly: PUT /api/admin/venues/:profileId/verify defaults an absent
+  // key to TRUE, so a decline that forgot to say so would grant the badge it
+  // meant to withhold.
+  //
+  // Declining does not un-verify anything (the claim is already unverified).
+  // What it does is clear verification_requested_at, which is what takes the
+  // claim out of the waiting group and off the front of the admin queue, and
+  // write a 'venue_unverified' audit row saying a human decided. Leaving the
+  // request standing would keep telling the owner somebody still has it.
+  const decideVenue = async (venue, verified) => {
+    const name = venue.business_name || 'this venue';
+    const question = verified
+      ? `Verify ${name} as the owner of this listing?`
+      : `Decline the verification request from ${name}?`;
+    if (!window.confirm(question)) return;
+    setVenueBusyId(venue.id);
+    setVenueErrors((p) => {
+      if (!Object.prototype.hasOwnProperty.call(p, String(venue.id))) return p;
+      const next = { ...p };
+      delete next[venue.id];
+      return next;
+    });
+    try {
+      const reason = (own(venueReasons, venue.id) || '').trim();
+      const body = reason ? { verified, reason } : { verified };
+      await adminFetch(`/api/admin/venues/${venue.id}/verify`, {
+        method: 'PUT',
+        body: JSON.stringify(body),
+      });
+      setVenueNote(verified
+        ? `${name} is verified. The badge, promotions and review replies are on for that account.`
+        : `The request from ${name} is closed. The claim stays unverified and the owner can ask again.`);
+    } catch (e) {
+      setVenueNote('');
+      // The server's own words, kept: "Another account (user 12) is already the
+      // verified owner of Google place X. Un-verify that claim first." names
+      // both the conflict and the next step, and no shorter sentence does.
+      setVenueErrors((p) => ({ ...p, [venue.id]: e.message || 'That decision could not be applied.' }));
+    } finally {
+      setVenueBusyId(null);
+      // Re-read either way. On success the claim has left the list; on a
+      // refusal the card is describing a row that has moved on, and leaving it
+      // untouched leaves a button up that can only refuse again.
+      await loadVenues();
+    }
+  };
+
   const countOf = (s) => (queue.counts.find((c) => c.status === s) || {}).count || 0;
+  const venuesRequested = venues.list.filter((v) => v.verification_requested_at);
+  const venuesUnrequested = venues.list.filter((v) => !v.verification_requested_at);
 
   return (
     <div style={S.page}>
@@ -546,7 +687,7 @@ export default function ModerationDashboard() {
             collision on the error path of a moderation console. It also reads
             better — that sentence is about the network rather than about either
             list, so saying it twice says nothing extra. */}
-        {Array.from(new Set([queue.error, log.error].filter(Boolean))).map((m) => (
+        {Array.from(new Set([queue.error, log.error, venues.error].filter(Boolean))).map((m) => (
           <div key={m} style={S.err} role="alert">
             {m}{needsSignIn(m) ? '. Sign in to the app as an admin account first, then reload this page.' : ''}
           </div>
@@ -560,6 +701,12 @@ export default function ModerationDashboard() {
           {countOf('under_review') > 0 ? <Badge label="Under review" value={countOf('under_review')} color="#f5a623" /> : null}
           <Badge label="Resolved" value={countOf('resolved')} color="#30a46c" />
           <Badge label="Dismissed" value={countOf('dismissed')} color="#7c7c87" />
+          {/* Venue claims are not reports and this row is otherwise about
+              reports, so the badge appears only when a real number is waiting.
+              Same rule as Under review above, and it is here rather than only
+              down beside the list because the failure this whole section fixes
+              is nobody knowing a venue asked. */}
+          {venuesRequested.length > 0 ? <Badge label="Venues waiting" value={venuesRequested.length} color="#f5a623" /> : null}
         </div>
         {/* Counts survive a failed refresh so the header does not flash to zero,
             which means they can be older than the screen implies. Say so rather
@@ -729,6 +876,73 @@ export default function ModerationDashboard() {
                 )}
               </div>
             ) : null}
+
+            <h2 style={S.h2}>Venue verification</h2>
+            <p style={{ ...S.dimSmall, margin: '0 0 10px' }}>
+              A venue owner asks to be verified from their dashboard. Check that the account really runs
+              the listing before you decide. Verifying turns on the public badge, promotions and review
+              replies for that business, and every decision is recorded in the audit log below.
+            </p>
+            {venueNote ? <div style={S.note} role="status">{venueNote}</div> : null}
+            {venues.list.length === 0 ? (
+              // Same rule as "Queue is clear.": an empty list and an unread
+              // list look identical, and only one of them means there is
+              // nothing to do.
+              <p style={S.dim}>
+                {venues.error
+                  ? 'The venue queue could not be loaded, so this is not a count of anything.'
+                  : 'No venue claims are waiting.'}
+              </p>
+            ) : (
+              <div style={S.list}>
+                {venuesRequested.length === 0 ? (
+                  <p style={{ ...S.dim, margin: 0 }}>Nobody has asked to be verified.</p>
+                ) : venuesRequested.map((v) => (
+                  <VenueClaim
+                    key={v.id}
+                    venue={v}
+                    busy={venueBusyId === v.id}
+                    error={own(venueErrors, v.id)}
+                    reason={own(venueReasons, v.id) || ''}
+                    onReason={(value) => setVenueReasons((p) => ({ ...p, [v.id]: value }))}
+                    onDecide={(verified) => decideVenue(v, verified)}
+                  />
+                ))}
+                {venuesUnrequested.length > 0 ? (
+                  <div style={S.moreBlock}>
+                    <button onClick={() => setShowUnrequested((s) => !s)} style={S.imgBtn}>
+                      {showUnrequested
+                        ? 'Hide the claims nobody has asked about'
+                        : `Show ${venuesUnrequested.length} ${venuesUnrequested.length === 1 ? 'claim' : 'claims'} nobody has asked about`}
+                    </button>
+                    {showUnrequested ? (
+                      <>
+                        <p style={{ ...S.dimSmall, margin: 0 }}>
+                          These accounts claimed a venue and never pressed the verify button. Verifying one
+                          nobody asked about is a decision you are making on your own, not an answer to a request.
+                        </p>
+                        {venuesUnrequested.map((v) => (
+                          <VenueClaim
+                            key={v.id}
+                            venue={v}
+                            busy={venueBusyId === v.id}
+                            error={own(venueErrors, v.id)}
+                            reason={own(venueReasons, v.id) || ''}
+                            onReason={(value) => setVenueReasons((p) => ({ ...p, [v.id]: value }))}
+                            onDecide={(verified) => decideVenue(v, verified)}
+                          />
+                        ))}
+                      </>
+                    ) : null}
+                  </div>
+                ) : null}
+                {venues.list.length >= VENUE_LIST_LIMIT ? (
+                  <p style={{ ...S.dimSmall, margin: 0 }}>
+                    {`The server sends at most ${VENUE_LIST_LIMIT} unverified claims, requested ones first. Decide these and refresh to pull the next forward.`}
+                  </p>
+                ) : null}
+              </div>
+            )}
 
             <h2 style={S.h2}>
               Audit log
@@ -1005,6 +1219,88 @@ function ReportedContent({ report: r, image, onToggleImage, onImageBroken, text,
   );
 }
 
+// One unverified venue claim, and the decision on it.
+//
+// WHAT THE ADMIN HAS TO CHECK, all of it on the card, because the check is not
+// something this console can do: does the account on file plausibly run the
+// business at that Google listing. So the card carries the business name, the
+// address the owner typed, the Google place id the claim is bound to, and the
+// email of the account that would receive the badge. Nothing here is a
+// judgement, and the console does not pretend to make one.
+//
+// NO VERIFY BUTTON WITHOUT A GOOGLE LISTING, and that is not the server
+// refusing. PUT /api/admin/venues/:profileId/verify would happily set
+// verified = true on a claim whose google_place_id is NULL, and migration 002's
+// partial unique index does not stop it either, because NULLs are distinct.
+// What lands is a verified profile bound to no place: /public-reviews and
+// /public-promotions both serve by place id, so the badge attaches to nothing
+// and the only thing the flip does is hand out entitlements. An owner cannot
+// even ASK in that state (POST /request-verification refuses a claim with no
+// listing and says to link one first), so a claim with no place id is
+// somebody who has not finished, not somebody waiting. The card says that
+// instead of offering a button whose result would be a badge on nothing.
+function VenueClaim({ venue: v, busy, error, reason, onReason, onDecide }) {
+  const requested = !!v.verification_requested_at;
+  const waited = requested ? daysWaiting(v.verification_requested_at) : null;
+  const linked = !!v.google_place_id;
+  return (
+    <div style={S.card}>
+      <div style={S.cardTop}>
+        <span style={S.reason}>{v.business_name || 'Unnamed venue'}</span>
+        {requested ? <span style={S.requestedTag}>REQUESTED</span> : null}
+        <span style={S.type}>claim #{v.id}</span>
+      </div>
+      <div style={S.meta}>
+        {v.location || 'No address on file'}
+        {'  ·  '}owner: {v.email || 'no address on file'}
+      </div>
+      <div style={{ ...S.dimSmall, marginTop: 2 }}>
+        {linked ? `Google place ${v.google_place_id}` : 'No Google listing linked'}
+        {'  ·  '}claimed {fmt(v.created_at)}
+      </div>
+      {requested ? (
+        <div style={{ ...S.record, marginTop: 6 }}>
+          <div>
+            Asked on {fmt(v.verification_requested_at)}
+            {waited === null ? '' : waited === 0 ? ', today.' : waited === 1 ? ', one day ago.' : `, ${waited} days ago.`}
+          </div>
+        </div>
+      ) : null}
+
+      {linked ? (
+        <>
+          <input
+            value={reason}
+            onChange={(e) => onReason(e.target.value)}
+            disabled={busy}
+            maxLength={1000}
+            placeholder="Reason for the audit log (optional)"
+            aria-label={`Reason for the decision on ${v.business_name || 'this venue'}`}
+            style={S.reasonInput}
+          />
+          {error ? <div style={{ ...S.imgErr, marginTop: 8 }} role="alert">{error}</div> : null}
+          <div style={S.actions}>
+            <button disabled={busy} onClick={() => onDecide(true)} style={S.btnHide}>Verify</button>
+            {/* Declining is only meaningful against a standing request: it
+                clears the request and records the decision. On a claim nobody
+                asked about there is nothing to decline, and a button that
+                writes an audit row saying we refused something nobody asked
+                for is a control that does not mean what it says. */}
+            {requested ? (
+              <button disabled={busy} onClick={() => onDecide(false)} style={S.btn}>Decline</button>
+            ) : null}
+          </div>
+        </>
+      ) : (
+        <div style={{ ...S.dimSmall, marginTop: 8 }}>
+          This claim names no Google listing, so there is nothing to check ownership against.
+          The owner has to link one in Edit Profile before verification means anything.
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Badge({ label, value, color }) {
   return (
     <div style={S.badge}>
@@ -1058,6 +1354,10 @@ const S = {
   // read before pressing anything, and it has to be the loudest thing on the
   // card without pretending to be a button.
   childTag: { color: '#f5a623', border: '1px solid #7a5a12', borderRadius: 5, padding: '1px 6px', fontSize: 10, letterSpacing: 0.5, fontWeight: 700 },
+  // Amber like the Under-review badge, not the child-safety amber weight: this
+  // marks work that is waiting, not an instruction to stop and read. Deliberately
+  // NOT the takedown steel, which on this screen means "a state the content is in".
+  requestedTag: { color: '#f5a623', border: '1px solid #7a5a12', borderRadius: 5, padding: '1px 6px', fontSize: 10, letterSpacing: 0.5 },
   childNotice: { marginTop: 12, background: '#251c08', border: '1px solid #7a5a12', color: '#f0cf95', borderRadius: 10, padding: '10px 12px', fontSize: 13, lineHeight: 1.45 },
   note: { background: '#12281c', border: '1px solid #2d6a45', color: '#a7e0bf', padding: '10px 14px', borderRadius: 10, margin: '12px 0 0', fontSize: 14 },
   content: { marginTop: 10, background: '#121216', border: '1px solid #24242a', borderRadius: 10, padding: '10px 12px' },
