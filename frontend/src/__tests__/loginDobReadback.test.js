@@ -183,8 +183,9 @@ describe('the shape of the choice, so it is not undone by accident', () => {
 
 describe('the venue portal carries the same read-back on its sign-in half', () => {
   // Same field, same server path, and the account it would end belongs to a
-  // customer. The SIGNUP half of that form is a different question and keeps
-  // its capped field and its hint.
+  // customer. The SIGNUP half of that form is a different question: it takes
+  // any date and lets the server answer, and is pinned in
+  // signupNeutralAgeScreen.test.js alongside the consumer one.
   it('blocks the submit until the date is confirmed', async () => {
     api.login.mockRejectedValueOnce(
       Object.assign(new Error('Add your date of birth to continue.'), {
