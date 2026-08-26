@@ -781,3 +781,44 @@ module.exports = {
   findMissingRequirements,
   requirementKey,
 };
+
+// ---------------------------------------------------------------------------
+// RUNNING THIS FILE DIRECTLY. `node db/migrate.js`.
+// ---------------------------------------------------------------------------
+// Until 2026-08-26 this block did not exist, and the consequence was not a
+// missing convenience. It was a restore procedure that quietly did nothing.
+//
+// `node db/migrate.js` is step 4 of the restore drill in
+// BACKUP-AND-VERIFICATION.md and the middle line of the three-line restore in
+// scripts/encrypt-backup.md. Without an entry point, running it defined some
+// functions, exported them, and exited 0. No output, no error, no migrations.
+// An operator following the written procedure got the thirteen bootstrap tables
+// from schema.sql and none of the fifty-two files after it, then loaded the
+// dump on top and watched it die on the first table migration 001 introduced.
+// Measured, not theorised: `DATABASE_URL=postgresql://nonexistent:1/x node
+// db/migrate.js` returned 0 in well under a second, having never opened a
+// socket.
+//
+// That failure is loud, because the restore step runs psql with
+// ON_ERROR_STOP=1. It is still the worst possible time to find out, since by
+// then the database exists, the dump is decrypted on disk, and the person
+// reading the error has no reason to suspect the step that printed nothing.
+//
+// Exit codes are the contract here: 0 only when every pending file applied, 1
+// on any failure, so a script can chain on it the way server.js depends on the
+// promise rejecting.
+if (require.main === module) {
+  const pool = require('../config/database');
+  migrate(pool)
+    .then(() => {
+      console.log('[migrate] all migrations are applied');
+      return pool.end();
+    })
+    .then(() => process.exit(0))
+    .catch((err) => {
+      console.error(`[migrate] FATAL: ${err.message}`);
+      console.error('The database was NOT left half-migrated: the failing file rolled back.');
+      console.error('Fix the migration and run this again. Do not hand-insert a schema_migrations row.');
+      pool.end().catch(() => {}).finally(() => process.exit(1));
+    });
+}
