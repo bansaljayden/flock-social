@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, getVenueAdvisorCards, getAdvisorQuestions, askAdvisor, askAdvisorQuestion, requestVenueVerification, getUserProfile, setPhoneDiscovery } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, getVenueAdvisorCards, getAdvisorQuestions, askAdvisor, askAdvisorQuestion, requestVenueVerification, getUserProfile, setPhoneDiscovery } from './services/api';
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
@@ -900,6 +900,62 @@ const isServerId = (id) => typeof id === 'number' && Number.isInteger(id) && id 
 //    argument above does not apply. Screen entry does NOT ask for this: it is
 //    the one moment a clean read of the server's truth is wanted, and the local
 //    list there can be a stale session's.
+// One shape for a stored row, wherever it was read from. Both message screens
+// now have two readers each, the entry read and the older-page read behind
+// "Load earlier messages", and two copies of a mapping are two chances for a
+// field to be dropped on one path only. Kept at module scope so the older-page
+// loaders and the history loaders cannot drift.
+const mapDmRow = (m, myId) => ({
+  id: m.id,
+  sender: String(m.sender_id) === String(myId) ? 'You' : (m.sender_name || 'Unknown'),
+  senderId: m.sender_id,
+  text: m.message_text,
+  time: new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+  message_type: m.message_type || 'text',
+  venue_data: m.venue_data,
+  image_url: m.image_url,
+  reactions: m.reactions || [],
+  reply_to: m.reply_to ? { id: m.reply_to.id, text: m.reply_to.message_text, sender: m.reply_to.sender_name } : null,
+});
+
+const mapFlockRow = (m, myId) => ({
+  id: m.id,
+  sender: String(m.sender_id) === String(myId) ? 'You' : (m.sender_name || 'Unknown'),
+  senderId: m.sender_id,
+  senderImage: m.sender_image || null,
+  time: new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+  text: m.message_text,
+  message_type: m.message_type || 'text',
+  venue_data: m.venue_data || null,
+  reactions: (m.reactions || []).map(r => r.emoji),
+  ...(m.image_url ? { image: m.image_url } : {}),
+});
+
+// Put an older page in front of what is on screen, dropping anything already
+// there. The cursor is exclusive server-side, so an overlap can only come from
+// a row that arrived between the two reads, which belongs where it already is.
+const prependOlder = (current, older) => {
+  const have = new Set((current || []).map(m => m.id));
+  const fresh = (older || []).filter(m => !have.has(m.id));
+  return fresh.length === 0 ? current : [...fresh, ...(current || [])];
+};
+
+// The oldest row on screen that the server actually gave us an id for. Pending
+// and failed bubbles carry temp string ids and can never be a cursor.
+const oldestServerId = (messages) => {
+  let oldest = null;
+  for (const m of messages || []) {
+    if (!isServerId(m.id)) continue;
+    if (oldest === null || m.id < oldest) oldest = m.id;
+  }
+  return oldest;
+};
+
+// What both message routes return when no `limit` is given. A page this size
+// means there is probably more behind it; a shorter one is the top of the
+// conversation. Change it here if the routes' default ever moves.
+const DM_PAGE_SIZE = 50;
+
 const mergeHistory = (local, history, { keepOlder = false } = {}) => {
   const hist = history || [];
   const mine = local || [];
@@ -952,6 +1008,49 @@ const messagePreview = (m) => {
   if (m.message_type === 'venue_card' || m.venue_data) return 'Venue';
   if (m.message_type === 'image' || m.image_url || m.image || m.hadContent) return 'Photo';
   return '';
+};
+
+// The one refusal the server gives for "no such account" and "not connected to
+// you" alike (backend/utils/relationships.js NOT_CONNECTED_MESSAGE, deliberately
+// one sentence so neither can be read off the other). It arrives as a 403 body
+// over REST and on the socket's generic 'error' channel, and it is the answer to
+// the most obvious thing a new user does: open New Message, search a name, and
+// type. Matched on a phrase rather than the exact string so a wording change
+// degrades to the old toast instead of to silence.
+const NOT_CONNECTED_HINT = /connected with/i;
+
+// The highest server id among messages somebody ELSE sent. Optimistic bubbles
+// carry temp string ids and are excluded by isServerId, and your own messages
+// are excluded because reading your own sending is not a thing to be told
+// about. Returns null when there is nothing to compare, which is what "this
+// chat's history has not been fetched" looks like and is deliberately NOT the
+// same as zero: the caller has to be able to tell "nothing new" from "nothing
+// known", and only the second one may not draw a dot.
+const newestFromOthers = (messages) => {
+  let newest = null;
+  for (const m of messages || []) {
+    if (!m || m.sender === 'You') continue;
+    if (!isServerId(m.id)) continue;
+    if (newest === null || m.id > newest) newest = m.id;
+  }
+  return newest;
+};
+
+// One clock for every conversation row. A DM row printed
+// `toLocaleDateString(month, day)` unconditionally, so a message that landed a
+// minute ago read "Aug 25" while the flock row beside it read "3:45 PM" for the
+// same instant. Today gets the time, yesterday says so, and anything older gets
+// the date, which is the only one of the three the old code ever showed.
+const conversationStamp = (value) => {
+  if (!value) return '';
+  const then = new Date(value);
+  if (Number.isNaN(then.getTime())) return '';
+  const now = new Date();
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  if (then >= midnight) return then.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const yesterday = new Date(midnight.getTime() - 24 * 60 * 60 * 1000);
+  if (then >= yesterday) return 'Yesterday';
+  return then.toLocaleDateString([], { month: 'short', day: 'numeric' });
 };
 
 // A guest's identity arrives in two forms and the roster used to keep only the
@@ -1116,6 +1215,30 @@ const ListSkeleton = ({ count = 3, thumb = 46, thumbRadius = 14, label = 'Loadin
           <div className="skeleton" style={{ width: '40%', height: '11px', borderRadius: '4px', marginBottom: '10px' }} />
           <div className="skeleton" style={{ width: '80%', height: '10px', borderRadius: '4px' }} />
         </div>
+      </div>
+    ))}
+  </div>
+);
+
+/* ── CHAT SKELETON ───────────────────────────────────────────────────────
+   The same argument as ListSkeleton, one screen further in. Opening a DM used
+   to render "Say hi to start the conversation!" while the history was still on
+   the wire, so every first open of a thread with months of messages in it
+   opened on a sentence saying there were none. The flock chat had the milder
+   version of the same thing: its empty state is correctly gated on
+   `messagesLoading`, which left the message area completely blank instead.
+   Bubbles in the shape of bubbles, alternating sides. */
+const ChatSkeleton = ({ label = 'Loading messages' }) => (
+  <div role="status" aria-label={label} style={{ padding: '4px 0' }}>
+    {[
+      { mine: false, w: '62%' },
+      { mine: true, w: '48%' },
+      { mine: false, w: '72%' },
+      { mine: true, w: '38%' },
+    ].map((row, i) => (
+      <div key={i} style={{ display: 'flex', gap: '10px', marginBottom: '14px', flexDirection: row.mine ? 'row-reverse' : 'row' }}>
+        <div className="skeleton" style={{ width: '32px', height: '32px', borderRadius: '16px', flexShrink: 0 }} />
+        <div className="skeleton" style={{ width: row.w, height: '38px', borderRadius: '16px' }} />
       </div>
     ))}
   </div>
@@ -5767,6 +5890,51 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [deletedDmUserIds, setDeletedDmUserIds] = useState(() => {
     try { return JSON.parse(localStorage.getItem('flock_deleted_dms') || '[]'); } catch { return []; }
   });
+  // How far each flock chat has been caught up, flockId -> highest message id
+  // that was on screen when you last had that chat open.
+  //
+  // The dot this feeds used to be `f.messages.some(m => m.sender !== 'You' &&
+  // !m.read)`, and nothing in this app has ever written `read` on a flock
+  // message, so that expression was true for every message anyone else had
+  // ever sent. Flocks load with `messages: []`, so the only way a flock has any
+  // history at all is that you opened its chat. The dot therefore appeared the
+  // moment you READ a flock and then stayed lit for the rest of the session,
+  // and a flock full of genuinely unread messages showed nothing. Backwards in
+  // both directions, which is why "the unread dot never clears" was the report.
+  //
+  // What replaces it is limited to what the client can actually know. Flock
+  // chat has NO read state in the database: `messages` has no read column,
+  // `flock_members` has no last-read cursor, and there is no route to record
+  // one. What the client DOES get is live: sockets/handlers.js fans `new_message`
+  // out to each member's `user:{id}` room rather than to `flock:{id}`, so a
+  // message lands in a flock this session has never opened and onNewMessage
+  // appends it. So this dot means "something arrived in this flock after you
+  // last looked at it, while this app has been open", it lights for real
+  // traffic, and it clears when you read. A flock whose history has never been
+  // fetched and that nothing has arrived in shows nothing, which is honest
+  // rather than a guess. Surviving a RELOAD needs a server cursor, because
+  // nothing in the database records what you have seen. See the handoff.
+  const [flockSeen, setFlockSeen] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('flock_chat_seen') || '{}'); } catch { return {}; }
+  });
+  // Conversations the server has refused to carry because the two accounts are
+  // not connected, userId -> true. See NOT_CONNECTED_HINT: the New Message
+  // sheet searches every account by name or email, so the ordinary way to
+  // start a DM finds strangers, and the thread it opens looks like any other
+  // one until the first send comes back refused. Held here so the screen can
+  // say what is wrong and offer the one thing that fixes it, instead of a two
+  // second toast and a red bubble that will fail identically on every retry.
+  const [dmNotConnected, setDmNotConnected] = useState({});
+  // Conversations the server will not show at all because of a block in either
+  // direction, userId -> true. GET /api/dm/:userId answers a blocked pair with
+  // `{ messages: [], blocked: true }` and the client used to read only the
+  // empty array, so a thread with months of history in it turned into the
+  // brand-new-chat empty state, under the words "Say hi to start the
+  // conversation", with a live composer that could only ever be refused. The
+  // flag is honoured now, and the wording is the server's own so it never
+  // reveals which side did the blocking.
+  const [dmBlocked, setDmBlocked] = useState({});
+  const [dmRequestSending, setDmRequestSending] = useState(false);
   const [dmIsTyping, setDmIsTyping] = useState(false);
   const [dmTypingUser, setDmTypingUser] = useState('');
   const dmTypingTimeoutRef = useRef(null);
@@ -6744,21 +6912,43 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     () => allVenues.filter(v => !v.price_level || v.price_level <= budgetMaxPL),
     [allVenues, budgetMaxPL]
   );
-  const chatMsgCountRef = useRef(0);
+  // Keyed on the LAST message, not on how many there are. Now that "Load
+  // earlier messages" exists, the list can grow at the TOP, and a length check
+  // read that as new traffic and threw the reader straight back down to the
+  // newest message the instant they asked for scrollback.
+  const chatTailRef = useRef(null);
   useEffect(() => {
     if (currentScreen === 'chatDetail' && chatEndRef.current) {
       const msgs = selectedFlock?.messages || [];
-      if (msgs.length !== chatMsgCountRef.current || chatMsgCountRef.current === 0) {
-        chatMsgCountRef.current = msgs.length;
+      const tail = msgs.length ? String(msgs[msgs.length - 1].id) : 'empty';
+      if (tail !== chatTailRef.current) {
+        chatTailRef.current = tail;
         // Always instant scroll when entering the chat
         chatEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
         setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' }), 50);
       }
     } else {
-      // Reset counter when leaving chat so re-entering triggers instant scroll
-      chatMsgCountRef.current = 0;
+      // Reset when leaving chat so re-entering triggers instant scroll
+      chatTailRef.current = null;
     }
   }, [selectedFlock?.messages, currentScreen]);
+
+  // Having the chat open IS reading it, so the caught-up mark follows the
+  // messages while you are in there rather than only on the way out: a message
+  // that arrives while you are looking at it must not put a dot on the row you
+  // are about to walk back to. Writing through to localStorage in the same
+  // place keeps the stored copy and the state copy from ever disagreeing.
+  useEffect(() => {
+    if (currentScreen !== 'chatDetail' || !selectedFlockId) return;
+    const newest = newestFromOthers(selectedFlock?.messages);
+    if (newest === null) return;
+    setFlockSeen((prev) => {
+      if ((prev[selectedFlockId] || 0) >= newest) return prev;
+      const next = { ...prev, [selectedFlockId]: newest };
+      try { localStorage.setItem('flock_chat_seen', JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, [currentScreen, selectedFlockId, selectedFlock?.messages]);
 
   // Load suggested users when opening Create screen
   useEffect(() => {
@@ -6770,6 +6960,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Read again: the chat's empty state must not flash while history is still
   // in flight, so it waits on this.
   const [messagesLoading, setMessagesLoading] = useState(false);
+  // The DM twin. Screen entry sets it; the reconnect catch-up does not, because
+  // that runs under a thread the user is already reading and must not replace
+  // it with a skeleton.
+  const [dmMessagesLoading, setDmMessagesLoading] = useState(false);
   const prevFlockIdRef = useRef(null);
   const newlyCreatedFlockRef = useRef(null);
   const sharingLocationRef = useRef(sharingLocationForFlock);
@@ -6830,18 +7024,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     if (showSpinner) setMessagesLoading(true);
     return getMessages(flockId)
       .then((data) => {
-        const msgs = (data.messages || []).map(m => ({
-          id: m.id,
-          sender: String(m.sender_id) === String(meRef.current?.id) ? 'You' : (m.sender_name || 'Unknown'),
-          senderId: m.sender_id,
-          senderImage: m.sender_image || null,
-          time: new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-          text: m.message_text,
-          message_type: m.message_type || 'text',
-          venue_data: m.venue_data || null,
-          reactions: (m.reactions || []).map(r => r.emoji),
-          ...(m.image_url ? { image: m.image_url } : {}),
-        }));
+        const msgs = (data.messages || []).map(m => mapFlockRow(m, meRef.current?.id));
         setFlocks(prev => prev.map(f => f.id === flockId
           ? { ...f, messages: mergeHistory(f.messages, msgs, { keepOlder }) }
           : f));
@@ -6856,28 +7039,88 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }, []);
 
   // The DM twin of loadFlockMessages, for the same two callers.
-  const loadDmMessages = useCallback((userId, { keepOlder = false } = {}) => {
+  const loadDmMessages = useCallback((userId, { keepOlder = false, showSkeleton = false } = {}) => {
     historyReadAtRef.current[`dm:${userId}`] = Date.now();
+    if (showSkeleton) setDmMessagesLoading(true);
     return getDMs(userId)
       .then((data) => {
-        const msgs = (data.messages || []).map(m => ({
-          id: m.id,
-          sender: String(m.sender_id) === String(meRef.current?.id) ? 'You' : (m.sender_name || 'Unknown'),
-          senderId: m.sender_id,
-          text: m.message_text,
-          time: new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
-          message_type: m.message_type || 'text',
-          venue_data: m.venue_data,
-          image_url: m.image_url,
-          reactions: m.reactions || [],
-          reply_to: m.reply_to ? { id: m.reply_to.id, text: m.reply_to.message_text, sender: m.reply_to.sender_name } : null,
-        }));
+        // A block in either direction. The server sends no messages with it,
+        // so merging would leave whatever is already on screen sitting there
+        // under a composer that cannot send. Replace, and say so.
+        if (data.blocked) {
+          setDmBlocked(prev => (prev[String(userId)] ? prev : { ...prev, [String(userId)]: true }));
+          setDirectMessages(prev => prev.map(d => (d.userId === userId
+            ? { ...d, messages: [], unread: 0 }
+            : d)));
+          return;
+        }
+        setDmBlocked(prev => {
+          if (!prev[String(userId)]) return prev;
+          const next = { ...prev };
+          delete next[String(userId)];
+          return next;
+        });
+        const msgs = (data.messages || []).map(m => mapDmRow(m, meRef.current?.id));
         setDirectMessages(prev => prev.map(d => d.userId === userId
           ? { ...d, messages: mergeHistory(d.messages, msgs, { keepOlder }), unread: 0 }
           : d));
       })
-      .catch(() => { historyReadAtRef.current[`dm:${userId}`] = 0; });
+      .catch(() => { historyReadAtRef.current[`dm:${userId}`] = 0; })
+      .finally(() => { if (showSkeleton) setDmMessagesLoading(false); });
   }, []);
+
+  // ── Scrollback ──────────────────────────────────────────────────────────
+  // Both message routes take a `before` message-id cursor and have taken one
+  // for rounds. Nothing sent it, so every conversation in this app was the
+  // newest 50 messages and a hard floor: a thread with three hundred messages
+  // in it had two hundred and fifty that no screen could reach, and the only
+  // thing that moved the floor was sending more messages, which pushed the
+  // oldest reachable one further out of view. These are the two readers that
+  // walk backwards.
+  //
+  // Exhaustion is recorded per conversation rather than guessed from a count.
+  // A page shorter than the limit means the top has been reached; so does a
+  // page that adds nothing new. Without that the button would sit there
+  // forever at the start of every conversation, doing nothing when tapped.
+  const [olderLoading, setOlderLoading] = useState(false);
+  const [dmAtTop, setDmAtTop] = useState({});
+  const [flockAtTop, setFlockAtTop] = useState({});
+
+  // The cursor is passed in rather than read out of state inside a state
+  // updater: an updater has to be a pure function of the previous state, and
+  // React re-runs it, so a fetch started in there would fire twice. The screen
+  // already holds the message list it is rendering, so it can name the cursor.
+  const loadOlderDms = useCallback((userId, cursor) => {
+    if (!isServerId(cursor)) return;
+    setOlderLoading(true);
+    getDMs(userId, { before: cursor })
+      .then((data) => {
+        const rows = data.messages || [];
+        const older = rows.map(m => mapDmRow(m, meRef.current?.id));
+        if (rows.length < DM_PAGE_SIZE) setDmAtTop(t => ({ ...t, [userId]: true }));
+        setDirectMessages(cur => cur.map(d => (d.userId === userId
+          ? { ...d, messages: prependOlder(d.messages, older) }
+          : d)));
+      })
+      .catch((err) => showToast(err?.message || "Couldn't load earlier messages. Try again.", 'error'))
+      .finally(() => setOlderLoading(false));
+  }, [showToast]);
+
+  const loadOlderFlockMessages = useCallback((flockId, cursor) => {
+    if (!isServerId(cursor)) return;
+    setOlderLoading(true);
+    getMessages(flockId, { before: cursor })
+      .then((data) => {
+        const rows = data.messages || [];
+        const older = rows.map(m => mapFlockRow(m, meRef.current?.id));
+        if (rows.length < DM_PAGE_SIZE) setFlockAtTop(t => ({ ...t, [flockId]: true }));
+        setFlocks(cur => cur.map(f => (f.id === flockId
+          ? { ...f, messages: prependOlder(f.messages, older) }
+          : f)));
+      })
+      .catch((err) => showToast(err?.message || "Couldn't load earlier messages. Try again.", 'error'))
+      .finally(() => setOlderLoading(false));
+  }, [showToast]);
 
   useEffect(() => {
     if (currentScreen === 'chatDetail' && selectedFlockId) {
@@ -9051,7 +9294,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Load messages when opening a DM conversation
   useEffect(() => {
     if (currentScreen === 'dmDetail' && selectedDmId) {
-      loadDmMessages(selectedDmId);
+      loadDmMessages(selectedDmId, { showSkeleton: true });
       // Load venue votes for this conversation
       getDmVenueVotes(selectedDmId).then(data => setDmVenueVotes(data.votes || [])).catch(() => {});
       // Load pinned venue for this conversation
@@ -9131,11 +9374,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         // reactions and reports would address a temp id the server never had.
         const saved = data?.message;
         settle(saved?.id ? { id: saved.id, pending: false } : { pending: false });
+        setDmNotConnected(prev => {
+          if (!prev[userId]) return prev;
+          const next = { ...prev };
+          delete next[userId];
+          return next;
+        });
       }).catch((err) => {
         // api.js words the offline, unreachable and timeout cases; the server
         // words a moderation refusal. Keep the bubble (the photo is IN it) so
         // retry is one tap and nobody has to pick the picture again.
-        showToast(err?.message || "That message didn't send. Tap it to retry.", 'error');
+        // "Not connected" is not a transient failure, so it does not get the
+        // retry wording that implies trying again might work. The thread shows
+        // a standing explanation instead.
+        if (NOT_CONNECTED_HINT.test(err?.message || '')) {
+          setDmNotConnected(prev => (prev[userId] ? prev : { ...prev, [userId]: true }));
+        } else {
+          showToast(err?.message || "That message didn't send. Tap it to retry.", 'error');
+        }
         settle({ pending: false, failed: true });
       });
     }
@@ -9209,6 +9465,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       const message = typeof data?.message === 'string' ? data.message.trim() : '';
       if (!message) return;
       if (pendingEchoRef.current.size === 0 && dmEchoRef.current.size === 0) return;
+      // The socket twin of the REST branch in transmitDm. Same refusal, same
+      // standing explanation instead of a toast that outlives nothing. The
+      // channel carries no correlation id, so this marks the conversations
+      // that actually have a send in flight, in practice the one open thread.
+      if (NOT_CONNECTED_HINT.test(message) && dmEchoRef.current.size > 0) {
+        const waiting = [...dmEchoRef.current.values()].map(p => p.userId);
+        setDmNotConnected(prev => {
+          const next = { ...prev };
+          let changed = false;
+          for (const id of waiting) { if (!next[id]) { next[id] = true; changed = true; } }
+          return changed ? next : prev;
+        });
+        return;
+      }
       showToast(message, 'error');
     });
   }, [authUser?.id, showToast]);
@@ -9218,6 +9488,38 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     const unsub = onNewDm((msg) => {
       const otherUserId = msg.sender_id === authUser?.id ? msg.receiver_id : msg.sender_id;
       const isYou = msg.sender_id === authUser?.id;
+      // Is this thread the screen the user is actually looking at? Read off
+      // catchUpTargetRef, which every render writes, because this effect is
+      // keyed on authUser and would otherwise close over a stale selectedDmId
+      // for the whole session.
+      //
+      // Two things followed from not asking. The badge: a DM that landed while
+      // you were reading the thread still did `unread + 1`, so walking back to
+      // the list showed a count for a message you had just watched arrive. And
+      // the database: GET /api/dm/:userId marks read as a side effect of
+      // FETCHING history, so it only ever covers what existed when the screen
+      // opened. Everything that arrived afterwards stayed read_status = FALSE,
+      // and the count came back on the next reload: the list and the thread
+      // disagreeing, which is exactly the thing a badge must never do.
+      const target = catchUpTargetRef.current || {};
+      const threadOpen = !isYou
+        && target.screen === 'dmDetail'
+        && String(target.dmId) === String(otherUserId)
+        && (typeof document === 'undefined' || document.visibilityState === 'visible');
+      // A message moving in either direction IS the relationship the server was
+      // asking for (utils/relationships.js counts one stored DM), so the
+      // standing refusal comes down the moment one lands.
+      setDmNotConnected(prev => {
+        if (!prev[otherUserId]) return prev;
+        const next = { ...prev };
+        delete next[otherUserId];
+        return next;
+      });
+      if (threadOpen && isServerId(msg.id)) {
+        // Best effort. A failed mark is a stale badge on the next load, not a
+        // lost message, and the next open of the thread fixes it anyway.
+        markDmRead(msg.id).catch(() => {});
+      }
       const mapped = {
         id: msg.id,
         sender: isYou ? 'You' : (msg.sender_name || 'Unknown'),
@@ -9276,7 +9578,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 return { ...d, messages: updated, lastMessage: previewText, lastMessageIsYou: true, lastMessageTime: msg.created_at };
               }
             }
-            return { ...d, messages: [...d.messages, mapped], lastMessage: previewText, lastMessageIsYou: isYou, lastMessageTime: msg.created_at, unread: isYou ? d.unread : d.unread + 1 };
+            return { ...d, messages: [...d.messages, mapped], lastMessage: previewText, lastMessageIsYou: isYou, lastMessageTime: msg.created_at, unread: (isYou || threadOpen) ? d.unread : d.unread + 1 };
           });
         }
         return [{
@@ -9393,6 +9695,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   useEffect(() => {
     return onBlockedBy(({ userId }) => {
       setDmSharingLocation(prev => (String(prev) === String(userId) ? null : prev));
+      // The other half of the same event. Without this the thread stayed open,
+      // fully populated and fully typeable, and every send was refused with a
+      // two second toast until the screen was left and re-entered.
+      setDmBlocked(prev => (prev[String(userId)] ? prev : { ...prev, [String(userId)]: true }));
     });
   }, [dmSharingLocation]);
 
@@ -9438,14 +9744,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }, [selectedDmId]);
 
   // Auto-scroll DM chat to bottom
-  const dmMsgCountRef = useRef(0);
+  // Tail, not length. See the flock twin above, same reason.
+  const dmTailRef = useRef(null);
   useEffect(() => {
-    const len = selectedDm?.messages?.length || 0;
-    if (currentScreen === 'dmDetail' && len > 0 && len !== dmMsgCountRef.current) {
-      dmMsgCountRef.current = len;
-      requestAnimationFrame(() => dmChatEndRef.current?.scrollIntoView({ behavior: 'auto' }));
-    }
-  }, [currentScreen, selectedDm?.messages?.length]); // eslint-disable-line react-hooks/exhaustive-deps
+    const msgs = selectedDm?.messages || [];
+    if (currentScreen !== 'dmDetail') { dmTailRef.current = null; return; }
+    if (msgs.length === 0) return;
+    const tail = String(msgs[msgs.length - 1].id);
+    if (tail === dmTailRef.current) return;
+    dmTailRef.current = tail;
+    requestAnimationFrame(() => dmChatEndRef.current?.scrollIntoView({ behavior: 'auto' }));
+  }, [currentScreen, selectedDm?.messages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keep DM chat search focused
   useEffect(() => {
@@ -9910,7 +10219,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       )}
 
       {/* Messages area */}
-      <div onScroll={() => document.activeElement?.blur()} style={{ flex: 1, padding: '16px', overflowY: 'auto', background: `linear-gradient(180deg, ${colors.cream} 0%, ${colors.cream}cc 100%)`, scrollBehavior: 'smooth' }}>
+      <div onScroll={() => document.activeElement?.blur()} style={{ flex: 1, padding: '16px', overflowY: 'auto', overflowX: 'hidden', background: `linear-gradient(180deg, ${colors.cream} 0%, ${colors.cream}cc 100%)`, scrollBehavior: 'smooth' }}>
         {showDmChatSearch && dmChatSearch.trim() && selectedDm.messages.filter(m => {
           const q = dmChatSearch.toLowerCase();
           return m.text?.toLowerCase().includes(q) || m.sender?.toLowerCase().includes(q);
@@ -9921,13 +10230,33 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </span>
           </div>
         )}
-        {selectedDm.messages.length === 0 ? (
+        {/* Scrollback. Only offered when the thread is showing a full page,
+            which is the only case where there can be anything behind it, and
+            it retires itself the moment the server hands back a short page. */}
+        {!dmMessagesLoading && !showDmChatSearch && !dmAtTop[selectedDmId] && selectedDm.messages.length >= DM_PAGE_SIZE && (
+          <div style={{ textAlign: 'center', marginBottom: '14px' }}>
+            <button
+              className="hit44"
+              disabled={olderLoading}
+              onClick={() => loadOlderDms(selectedDmId, oldestServerId(selectedDm.messages))}
+              style={{ padding: '8px 14px', borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: olderLoading ? 'default' : 'pointer', opacity: olderLoading ? 0.6 : 1 }}
+            >
+              {olderLoading ? 'Loading' : 'Load earlier messages'}
+            </button>
+          </div>
+        )}
+        {dmMessagesLoading && selectedDm.messages.length === 0 ? (
+          <ChatSkeleton label={`Loading your messages with ${selectedDm.name}`} />
+        ) : selectedDm.messages.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '40px 20px' }}>
             <div style={{ width: '60px', height: '60px', borderRadius: '30px', background: colors.navyBg, margin: '0 auto 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-display)', fontWeight: '600', color: 'white', overflow: 'hidden' }}>
               {selectedDm.image ? <img src={selectedDm.image} alt="" style={{ width: '60px', height: '60px', borderRadius: '30px', objectFit: 'cover' }} /> : (selectedDm.name?.[0]?.toUpperCase() || '?')}
             </div>
-            <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>Chat with {selectedDm.name}</h3>
-            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>Say hi to start the conversation!</p>
+            <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>{dmBlocked[String(selectedDmId)] ? selectedDm.name : `Chat with ${selectedDm.name}`}</h3>
+            {/* A blocked pair is shown no messages at all, so this is where a
+                conversation with months of history landed. It must not read as
+                a fresh chat waiting for a hello. */}
+            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{dmBlocked[String(selectedDmId)] ? 'These messages are not available.' : 'Say hi to start the conversation.'}</p>
           </div>
         ) : (
           (showDmChatSearch && dmChatSearch.trim()
@@ -9941,7 +10270,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   : (selectedDm.image ? <img src={selectedDm.image} alt="" style={{ width: '32px', height: '32px', borderRadius: '16px', objectFit: 'cover' }} /> : (selectedDm.name?.[0]?.toUpperCase() || '?'))
                 }
               </div>
-              <div style={{ maxWidth: '75%', position: 'relative' }}>
+              {/* A send in flight is dimmed and says so below. `pending` has
+                  been set on every optimistic bubble since the echo work
+                  landed and nothing ever rendered it, so a message sat looking
+                  exactly like a delivered one until either the server echoed
+                  it or the 8 second timer turned it red. On a slow phone that
+                  is eight seconds of a photo that looks sent and is not. */}
+              <div style={{ maxWidth: '75%', position: 'relative', opacity: m.pending ? 0.6 : 1, transition: 'opacity 0.2s ease' }}>
                 {/* Reply reference. A quoted photo has no text of its own, so
                     the quote says what it is instead of sitting empty. */}
                 {m.reply_to && (
@@ -10009,7 +10344,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                 ) : (
                   /* Text message */
-                  <div onClick={() => setShowDmReactionPicker(showDmReactionPicker === m.id ? null : m.id)} style={{ borderRadius: '16px', padding: '10px 14px', fontSize: 'var(--t-label)', backgroundColor: m.sender === 'You' ? (isDark ? '#1e3a5c' : colorsLight.navy) : 'var(--msg-received-bg)', color: m.sender === 'You' ? 'white' : 'var(--msg-received-text)', borderTopRightRadius: m.sender === 'You' ? '4px' : '16px', borderTopLeftRadius: m.sender === 'You' ? '16px' : '4px', boxShadow: 'var(--card-shadow-sm)', cursor: 'pointer' }}>
+                  /* overflowWrap: 'anywhere' is load-bearing, not polish. The
+                     row caps at 75% but a message with no spaces in it (a
+                     pasted link, a keysmash, a wall of one repeated character)
+                     has nowhere to break, so the bubble grew past the phone and
+                     took the chat's horizontal scrollbar with it. SLOP-AUDIT
+                     H19: nothing cut off at 320-390px. */
+                  <div onClick={() => setShowDmReactionPicker(showDmReactionPicker === m.id ? null : m.id)} style={{ borderRadius: '16px', padding: '10px 14px', fontSize: 'var(--t-label)', overflowWrap: 'anywhere', backgroundColor: m.sender === 'You' ? (isDark ? '#1e3a5c' : colorsLight.navy) : 'var(--msg-received-bg)', color: m.sender === 'You' ? 'white' : 'var(--msg-received-text)', borderTopRightRadius: m.sender === 'You' ? '4px' : '16px', borderTopLeftRadius: m.sender === 'You' ? '16px' : '4px', boxShadow: 'var(--card-shadow-sm)', cursor: 'pointer' }}>
                     {showDmChatSearch && dmChatSearch.trim() && m.text?.toLowerCase().includes(dmChatSearch.toLowerCase()) ? (
                       m.text.split(new RegExp(`(${dmChatSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')).map((part, pi) =>
                         part.toLowerCase() === dmChatSearch.toLowerCase() ? <mark key={pi} style={{ background: 'var(--search-highlight)', color: 'inherit', borderRadius: '2px', padding: '0 1px' }}>{part}</mark> : part
@@ -10040,7 +10381,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     )}
                   </div>
                 )}
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 4px 0', textAlign: m.sender === 'You' ? 'right' : 'left' }}>{getRelativeTime(m.time)}</p>
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 4px 0', textAlign: m.sender === 'You' ? 'right' : 'left' }}>{m.pending ? 'Sending' : getRelativeTime(m.time)}</p>
               </div>
             </div>
           ))
@@ -10062,6 +10403,51 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div ref={dmChatEndRef} />
       </div>
 
+      {/* The server refused this conversation. Standing, not a toast: retrying
+          will be refused identically, so the screen has to say what is wrong
+          and offer the one action that changes the answer. The wording covers
+          both halves of the server's single refusal, since the account may not
+          exist at all, without telling the sender which one it was, which
+          whole reason that refusal is one sentence. */}
+      {/* Blocked, either direction. The composer below is replaced rather than
+          disabled: a greyed-out text field with no explanation is the state
+          this is fixing. */}
+      {dmBlocked[String(selectedDmId)] && (
+        <div style={{ padding: '14px 16px calc(14px + var(--safe-bottom))', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-tertiary)', flexShrink: 0 }}>
+          <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 4px' }}>You can no longer message {selectedDm.name}</p>
+          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+            This conversation is closed on both sides. Anyone you have blocked yourself can be unblocked in Settings, under Blocked accounts.
+          </p>
+        </div>
+      )}
+
+      {!dmBlocked[String(selectedDmId)] && dmNotConnected[selectedDmId] && (
+        <div style={{ padding: '12px 14px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-tertiary)', flexShrink: 0 }}>
+          <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 4px' }}>You are not connected to {selectedDm.name} yet</p>
+          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.5 }}>
+            Messages start going through once they accept your friend request. Until then nothing you send here is delivered.
+          </p>
+          <button
+            className="hit44 glass-btn glass-secondary"
+            disabled={dmRequestSending}
+            onClick={async () => {
+              setDmRequestSending(true);
+              try {
+                await sendFriendRequest(selectedDmId);
+                showToast(`Friend request sent to ${selectedDm.name}.`);
+              } catch (err) {
+                showToast(err?.message || "That request didn't send. Try again.", 'error');
+              } finally {
+                setDmRequestSending(false);
+              }
+            }}
+            style={{ padding: '10px 14px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: dmRequestSending ? 'default' : 'pointer', opacity: dmRequestSending ? 0.6 : 1 }}
+          >
+            {dmRequestSending ? 'Sending request' : 'Send a friend request'}
+          </button>
+        </div>
+      )}
+
       {/* Reply bar */}
       {dmReplyingTo && (
         <div style={{ padding: '8px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
@@ -10076,7 +10462,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {/* Input bar — text + camera + venue search + send */}
       {/* DM composer. The DM conversation screen does not render the tab bar,
           so this row IS the bottom of the phone and carries the home-indicator
-          inset itself (SAFE-AREA CONTRACT in index.css). */}
+          inset itself (SAFE-AREA CONTRACT in index.css). It is not rendered at
+          all for a blocked pair: the bar above has taken its place and its
+          safe-area inset with it. */}
+      {!dmBlocked[String(selectedDmId)] && (
       <div style={{ padding: '10px 12px calc(10px + var(--safe-bottom))', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)' }}>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
           {/* Camera and camera roll, both one tap (see the flock composer). */}
@@ -10094,6 +10483,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <button aria-label="Send" className="hit44 glass-btn glass-navy" onClick={() => sendDmMessage()} disabled={!chatInputHasText} style={{ width: '42px', height: '42px', minWidth: '42px', flexShrink: 0, borderRadius: '21px', border: 'none', background: chatInputHasText ? colors.navyBg : 'var(--pill-bg)', color: 'white', cursor: chatInputHasText ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.send('white', 18)}</button>
         </div>
       </div>
+      )}
 
     </div>
   );
@@ -13125,7 +13515,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '3px' }}>
                         <h2 style={{ fontSize: 'var(--t-body)', fontWeight: dm.unread ? '600' : '600', color: colors.navy, margin: 0 }}>{dm.name}</h2>
-                        {dm.lastMessageTime && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500' }}>{new Date(dm.lastMessageTime).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>}
+                        {dm.lastMessageTime && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500' }}>{conversationStamp(dm.lastMessageTime)}</span>}
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                                 <p style={{ fontSize: 'var(--t-meta)', color: dm.unread ? colors.navy : 'var(--text-tertiary)', fontWeight: dm.unread ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsgPreview && lastMsg?.sender === 'You' ? 'You: ' : ''}{lastMsgPreview || 'Start a conversation'}</p>
@@ -13212,7 +13602,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 // A photo posted to a flock has no text, so the row said
                 // "You: " and stopped. One line gets one label.
                 const lastMsgPreview = messagePreview(lastMsg);
-                const hasUnread = f.messages.some(m => m.sender !== 'You' && !m.read);
+                // See flockSeen. `!m.read` was true for every message anybody
+                // else ever sent, because nothing writes `read` on a flock
+                // message anywhere in this app.
+                const newestFromOthersId = newestFromOthers(f.messages);
+                const hasUnread = newestFromOthersId !== null && newestFromOthersId > (flockSeen[f.id] || 0);
                 const statusColor = f.status === 'completed' ? '#4a7ba7' : f.status === 'confirmed' ? '#22C55E' : f.status === 'voting' ? '#F59E0B' : colors.steel;
                 // statusColor is the DOT (decorative, keeps the vivid hue). The chip
                 // LABEL sits on a 8%-alpha wash of the same hue, where the vivid
@@ -13277,10 +13671,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', marginLeft: 'auto', flexShrink: 0 }}>{f.memberCount || 0} {Icons.users(colors.textTertiary, 12)}</span>
                         </div>
 
-                        {/* Last message */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                    <p style={{ fontSize: 'var(--t-meta)', color: hasUnread ? colors.navy : 'var(--text-tertiary)', fontWeight: hasUnread ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{lastMsg ? `${lastMsg.sender === 'You' ? 'You' : lastMsg.sender}: ${lastMsgPreview}` : 'No messages yet'}</p>
-                        </div>
+                        {/* Last message. Only drawn when there IS one to draw.
+                            Flocks arrive from GET /api/flocks with no messages
+                            attached and the history is fetched per chat on
+                            entry, so on a cold start every row here said "No
+                            messages yet", including flocks holding hundreds.
+                            The row still carries the name, the stage, the venue
+                            and the headcount, so an absent line is quieter than
+                            a wrong sentence. */}
+                        {lastMsg && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <p style={{ fontSize: 'var(--t-meta)', color: hasUnread ? colors.navy : 'var(--text-tertiary)', fontWeight: hasUnread ? '500' : '400', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{`${lastMsg.sender === 'You' ? 'You' : lastMsg.sender}: ${lastMsgPreview}`}</p>
+                          </div>
+                        )}
                       </div>
 
                       {/* Pin button (edit mode) or unread badge */}
@@ -13608,7 +14011,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
         )}
 
-        <div onScroll={() => document.activeElement?.blur()} style={{ flex: 1, padding: '16px', overflowY: 'auto', background: `linear-gradient(180deg, ${colors.cream} 0%, ${colors.cream}cc 100%)`, scrollBehavior: 'smooth' }}>
+        <div onScroll={() => document.activeElement?.blur()} style={{ flex: 1, padding: '16px', overflowY: 'auto', overflowX: 'hidden', background: `linear-gradient(180deg, ${colors.cream} 0%, ${colors.cream}cc 100%)`, scrollBehavior: 'smooth' }}>
           {showChatSearch && chatSearch.trim() && flock.messages.filter(m => {
             const q = chatSearch.toLowerCase();
             return (m.text || '').toLowerCase().includes(q) || (m.sender || '').toLowerCase().includes(q);
@@ -13616,6 +14019,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ textAlign: 'center', padding: '40px 20px' }}>
               <BirdieStill bird={WARM_BIRD} size={72} style={{ margin: '0 auto 8px' }} />
               <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-tertiary)', fontWeight: '500' }}>No messages match "{chatSearch}"</p>
+            </div>
+          )}
+
+          {/* The history is on the wire. Bubbles in the shape of bubbles beat
+              the blank rectangle this used to be, and the empty state below
+              stays gated so it can never claim an empty chat during a fetch. */}
+          {messagesLoading && flock.messages.length === 0 && <ChatSkeleton label={`Loading messages in ${flock.name}`} />}
+
+          {/* Scrollback, same contract as the DM thread. */}
+          {!messagesLoading && !(showChatSearch && chatSearch.trim()) && !flockAtTop[flock.id] && flock.messages.length >= DM_PAGE_SIZE && (
+            <div style={{ textAlign: 'center', marginBottom: '14px' }}>
+              <button
+                className="hit44"
+                disabled={olderLoading}
+                onClick={() => loadOlderFlockMessages(flock.id, oldestServerId(flock.messages))}
+                style={{ padding: '8px 14px', borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: olderLoading ? 'default' : 'pointer', opacity: olderLoading ? 0.6 : 1 }}
+              >
+                {olderLoading ? 'Loading' : 'Load earlier messages'}
+              </button>
             </div>
           )}
 
@@ -13682,12 +14104,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </div>
                 {m.sender !== 'You' && idx === 0 && <div style={{ position: 'absolute', bottom: '-1px', right: '-1px', width: '10px', height: '10px', borderRadius: '5px', backgroundColor: '#22C55E', border: '2px solid var(--bg-card-solid)' }} />}
               </div>
-              <div style={{ maxWidth: '72%', display: 'inline-flex', flexDirection: 'column', alignItems: m.sender === 'You' ? 'flex-end' : 'flex-start' }}>
+              {/* Dimmed while in flight, same as the DM bubble. */}
+              <div style={{ maxWidth: '72%', display: 'inline-flex', flexDirection: 'column', alignItems: m.sender === 'You' ? 'flex-end' : 'flex-start', opacity: m.pending ? 0.6 : 1, transition: 'opacity 0.2s ease' }}>
                 {/* Sender name and timestamp */}
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px', padding: '0 4px' }}>
                   <span style={{ fontSize: 'var(--t-meta)', color: colors.navy, fontWeight: '500' }}>{m.sender}</span>
                   <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>•</span>
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500' }}>{m.time || getRelativeTime(m.time)}</span>
+                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500' }}>{m.pending ? 'Sending' : (m.time || getRelativeTime(m.time))}</span>
                 </div>
                 {m.failed && (
                   <button className="hit44" onClick={() => retryFailedMessage(flock.id, m)} style={{ background: 'none', border: 'none', padding: '0 4px 4px', cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--accent-red-text, #b91c1c)', display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -13777,7 +14200,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       transition: 'transform 0.15s ease, box-shadow 0.15s ease'
                     }}
                   >
-                    <p style={{ fontSize: 'var(--t-body)', lineHeight: '1.45', margin: 0, fontWeight: '500' }}>{showChatSearch && chatSearch.trim() && m.text && m.text.toLowerCase().includes(chatSearch.toLowerCase()) ? (() => {
+                    {/* overflowWrap: 'anywhere', same reason as the DM bubble:
+                        a message with nowhere to break used to widen the row
+                        past the phone and give the whole chat a horizontal
+                        scrollbar. */}
+                    <p style={{ fontSize: 'var(--t-body)', lineHeight: '1.45', margin: 0, fontWeight: '500', overflowWrap: 'anywhere' }}>{showChatSearch && chatSearch.trim() && m.text && m.text.toLowerCase().includes(chatSearch.toLowerCase()) ? (() => {
                       const q = chatSearch.toLowerCase();
                       const i = m.text.toLowerCase().indexOf(q);
                       return <>{m.text.slice(0, i)}<mark style={{ backgroundColor: 'var(--search-highlight)', color: 'inherit', borderRadius: '2px', padding: '0 1px' }}>{m.text.slice(i, i + chatSearch.length)}</mark>{m.text.slice(i + chatSearch.length)}</>;
