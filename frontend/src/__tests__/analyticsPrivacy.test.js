@@ -30,12 +30,13 @@ const readSrc = (...p) => fs.readFileSync(path.join(SRC, ...p), 'utf8');
 
 let scrubUrlTokens;
 let POSTHOG_PRIVACY_CONFIG;
+let isLocalAnalyticsOrigin;
 
 beforeAll(() => {
   // Neither analytics SDK may lazy-load during the module boot below.
   delete process.env.REACT_APP_POSTHOG_KEY;
   delete process.env.REACT_APP_SENTRY_DSN;
-  ({ scrubUrlTokens, POSTHOG_PRIVACY_CONFIG } = require('../index'));
+  ({ scrubUrlTokens, POSTHOG_PRIVACY_CONFIG, isLocalAnalyticsOrigin } = require('../index'));
 });
 
 describe('scrubUrlTokens', () => {
@@ -205,21 +206,135 @@ describe('capture-site sweep: what leaves the device is a short, named list', ()
     expect(api).not.toMatch(/posthog\.identify\([^)]*,\s*\{/);
   });
 
-  test('no tracked property key could carry message text, coordinates, or DOB', () => {
+  // Every capture goes through track(event, props) with a LITERAL props object,
+  // which is not a style preference: it is what makes the sweep below able to
+  // read the keys at all. track(event, someVariable) would not match this
+  // pattern and would leave the file silently.
+  const trackCalls = () => {
     const api = readSrc('services', 'api.js');
-    // Every capture goes through track(event, props); pull each literal props
-    // object and check its keys against the names PII arrives under.
-    const calls = [...api.matchAll(/\btrack\(\s*'([^']+)'\s*(?:,\s*\{([^}]*)\})?\s*\)/g)];
+    return [...api.matchAll(/\btrack\(\s*'([^']+)'\s*(?:,\s*\{([^}]*)\})?\s*\)/g)];
+  };
+
+  // Reads a key off each comma-separated segment whether it is written
+  // `key: value` or as an ES6 shorthand `key`. The earlier version required
+  // the colon, so a shorthand property was not checked by anything. A value
+  // containing a top-level comma can contribute a spurious name here, which
+  // makes the check stricter rather than weaker.
+  const propKeys = (props) => (props
+    ? props.split(',').map((seg) => (seg.match(/^\s*([A-Za-z_$][\w$]*)/) || [])[1]).filter(Boolean)
+    : []);
+
+  test('no tracked property key could carry message text, coordinates, or DOB', () => {
+    const calls = trackCalls();
     expect(calls.length).toBeGreaterThan(0);
     const banned = /message|text|content|body|\blat\b|\blng\b|\blon\b|coord|location|geo|dob|birth|age|email|phone|name|address|token|password|secret|\bip\b/i;
     for (const [, eventName, props] of calls) {
-      const keys = props
-        ? [...props.matchAll(/(?:^|,)\s*([A-Za-z_$][\w$]*)\s*:/g)].map((m) => m[1])
-        : [];
-      for (const key of keys) {
+      for (const key of propKeys(props)) {
         expect({ eventName, key, banned: banned.test(key) })
           .toEqual({ eventName, key, banned: false });
       }
     }
+  });
+
+  // The vocabulary is pinned, not merely reviewed. A capture that appears
+  // without landing in this list is a widening of what leaves a 13-year-old's
+  // phone, and it should cost a deliberate edit here rather than sliding in
+  // with the feature that wanted it. Removing a name is fine; adding one is
+  // the decision.
+  test('the event vocabulary is exactly this list', () => {
+    const names = [...new Set(trackCalls().map(([, name]) => name))].sort();
+    expect(names).toEqual([
+      'app_opened',          // did anyone come back, and on which shell
+      'attendance_marked',   // did the people who said yes turn up
+      'birdie_message',      // is the assistant used, and how deep
+      'budget_submitted',    // is budget matching used or skipped
+      'crowd_feedback',      // is the crowd report submitted
+      'dm_sent',
+      'flock_created',
+      'flock_message_sent',
+      'flock_rerun',
+      'flock_rsvp',          // does an invited person ever answer
+      'flock_status_set',    // does a plan reach confirmed, or die in planning
+      'invite_link_created',
+      'invite_link_joined',
+      'invite_link_opened',  // was the link the product spreads through opened
+      'login',
+      'login_failed',        // locked out, or uninterested
+      'nfc_tap',
+      'nfc_tap_action',
+      'signup',
+      'signup_failed',       // the drop between the form and the account
+      'venue_vote_cast',     // does the mechanic the product is named for run
+    ]);
+  });
+
+  // The age gate is the one refusal that must produce no event. See the long
+  // note above signup() in services/api.js: PostHog merges a device's
+  // anonymous history into whoever eventually signs up on it, so an "underage"
+  // marker would attach permanently to a real minor's profile.
+  test('a 403 auth refusal is not recorded, and neither is a needsDob re-prompt', () => {
+    const api = readSrc('services', 'api.js');
+    expect(api).toMatch(/function authFailureIsRecordable\(err\) \{[\s\S]*?err\.status !== 403/);
+    expect(api).toMatch(/function authFailureIsRecordable\(err\) \{[\s\S]*?needsDob\) return false;/);
+    // Every auth failure capture is gated on it, none of them fires bare.
+    const gated = [...api.matchAll(/track\('(signup_failed|login_failed)'/g)];
+    expect(gated.length).toBe(5);
+    for (const m of gated) {
+      const line = api.slice(api.lastIndexOf('\n', m.index), m.index);
+      expect({ event: m[1], gated: /authFailureIsRecordable\(err\)\)\s*$/.test(line) })
+        .toEqual({ event: m[1], gated: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A dev server is not a user. frontend/.env carries a live key, so every
+// `npm start` reported into the production project: 1,526 of 1,794 pageviews
+// came from a localhost origin and 244 from www.flockcorp.com.
+//
+// The two cases that matter most here are the ones that LOOK local and are
+// not. iOS serves from capacitor://localhost and Android from
+// https://localhost, and losing either would be a worse bug than the one this
+// closes, because the native app is the launch surface.
+// ---------------------------------------------------------------------------
+describe('isLocalAnalyticsOrigin', () => {
+  const at = (protocol, hostname, bridge = false) =>
+    isLocalAnalyticsOrigin({ protocol, hostname }, bridge);
+
+  test('a browser dev server is local, on every port and every loopback spelling', () => {
+    expect(at('http:', 'localhost')).toBe(true);
+    expect(at('http:', '127.0.0.1')).toBe(true);
+    expect(at('http:', '0.0.0.0')).toBe(true);
+    expect(at('http:', '[::1]')).toBe(true);
+    expect(at('https:', 'localhost')).toBe(true); // serve -s build over TLS
+    expect(at('http:', 'Jaydens-MacBook.local')).toBe(true);
+  });
+
+  test('production and the native shells are not', () => {
+    expect(at('https:', 'www.flockcorp.com')).toBe(false);
+    expect(at('https:', 'flock-app-w65m.vercel.app')).toBe(false);
+    // iOS: capacitor://localhost. The protocol is the whole signal.
+    expect(at('capacitor:', 'localhost')).toBe(false);
+    // Android: https://localhost, identical to a dev server but for the bridge.
+    expect(at('https:', 'localhost', true)).toBe(false);
+    expect(at('http:', 'localhost', true)).toBe(false);
+  });
+
+  test('a hostname that merely contains localhost is production', () => {
+    expect(at('https:', 'localhost.flockcorp.com')).toBe(false);
+    expect(at('https:', 'notlocalhost')).toBe(false);
+  });
+
+  test('a missing or hostile location never throws and never blocks reporting', () => {
+    expect(isLocalAnalyticsOrigin(null, false)).toBe(false);
+    expect(isLocalAnalyticsOrigin({}, false)).toBe(false);
+    expect(isLocalAnalyticsOrigin({ protocol: 'http:', get hostname() { throw new Error('x'); } }, false)).toBe(false);
+  });
+
+  test('init is gated on it, and the local build can still opt back in', () => {
+    const index = readSrc('index.js');
+    expect(index).toMatch(/const analyticsEnabled = [\s\S]*?isLocalAnalyticsOrigin\(window\.location, !!window\.Capacitor\)/);
+    expect(index).toMatch(/REACT_APP_POSTHOG_ALLOW_LOCAL === 'true'/);
+    expect(index).toMatch(/if \(analyticsEnabled\) \{\s*\n\s*import\('posthog-js'\)/);
   });
 });
