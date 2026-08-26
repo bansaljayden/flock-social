@@ -63,6 +63,7 @@ const SUITE_SLOTS = {
   photoSpendLedger: 11,          // new in 2026-08-20; never had a hardcoded port
   flockLifecycle: 12,            // new in 2026-08-25; never had a hardcoded port
   accountDeletionSurface: 13,    // new in 2026-08-26; never had a hardcoded port
+  dumpLiteralRestore: 14,        // new in 2026-08-26; never had a hardcoded port
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the

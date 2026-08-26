@@ -150,12 +150,37 @@ CREATE TABLE IF NOT EXISTS bill_split_shares (
 
 CREATE INDEX IF NOT EXISTS idx_bill_split_shares_bill ON bill_split_shares(bill_id);
 
-DELETE FROM budget_submissions
-        WHERE flock_id IN (
-          SELECT id FROM flocks
-          WHERE status IN ('completed', 'cancelled')
-          AND updated_at < NOW() - INTERVAL '24 hours'
-        );
+-- REMOVED 2026-08-26: a one-off retention sweep that deleted budget_submissions
+-- for flocks that had been completed or cancelled for more than 24 hours.
+--
+-- It was the only statement in the whole chain whose match set was keyed on
+-- WALL-CLOCK AGE rather than on "is this row still in its pre-migration state",
+-- and that is the difference between a backfill and a time bomb. Every other
+-- backfill here has a done-marker (021's value comparison, 028's
+-- `WHERE expires_at IS NULL`, 052's `WHERE email_set_at IS NULL`) so a second
+-- run matches nothing. This one matched a LARGER set every time it ran: replay
+-- it six months later and it deletes every budget submission for every flock
+-- completed in the meantime, none of which existed when it was written.
+--
+-- That replay is not hypothetical. db/migrate.js re-runs files (the heal, and
+-- any database that lost schema_migrations), and
+-- __tests__/migrationBootSafety.test.js wipes schema_migrations and replays the
+-- entire chain over populated data on purpose. A restore that loaded data
+-- before running migrations would have hit it too.
+--
+-- The rows are user-typed amounts, written by routes/budget.js from what a
+-- member entered. Nothing captured them first: no shadow table, no audit row.
+-- routes/users.js reads budget_submissions for the ACCOUNT DATA EXPORT, so a
+-- replay quietly shrank what a person could download about themselves, and
+-- routes/billing.js and routes/flocks.js count them for the bill-split path.
+-- Nothing else in the codebase ever deletes them, so this was not a migration
+-- mirroring a retention policy the app maintains. It was a cleanup somebody ran
+-- once, left where it would run again.
+--
+-- Deleting the statement is the whole fix and it changes nothing anywhere that
+-- matters: every existing database has already applied 001, and a fresh one has
+-- no aged flocks to sweep. If budget retention is ever wanted, it belongs in a
+-- scheduled job that says so, not in the baseline schema file.
 
 CREATE TABLE IF NOT EXISTS device_tokens (
       id SERIAL PRIMARY KEY,

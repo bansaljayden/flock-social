@@ -83,8 +83,7 @@ then add `C:\Program Files\PostgreSQL\17\bin` to PATH.
 ```bash
 gpg -d "backups/flock-$STAMP.sql.gz.gpg" 2>/dev/null | gzip -dc > /tmp/restore.sql
 
-psql "$TARGET_DATABASE_URL" -f database/schema.sql
-node db/migrate.js                            # with DATABASE_URL=$TARGET_DATABASE_URL
+DATABASE_URL="$TARGET_DATABASE_URL" node db/migrate.js
 psql "$TARGET_DATABASE_URL" -v ON_ERROR_STOP=1 -f /tmp/restore.sql
 
 shred -u /tmp/restore.sql 2>/dev/null || rm -f /tmp/restore.sql
@@ -92,6 +91,15 @@ shred -u /tmp/restore.sql 2>/dev/null || rm -f /tmp/restore.sql
 
 `ON_ERROR_STOP=1` is not optional. Without it psql prints errors and keeps
 going, and you end up with a half-restored database that looks like a success.
+
+Two corrections made on 2026-08-26, both of which used to break this exact
+block. There was a `psql -f database/schema.sql` line above the migrate line:
+that file is only the thirteen bootstrap tables, `000_bootstrap.sql` already
+contains it, and the migration chain builds the whole schema on its own. And
+`node db/migrate.js` did nothing at all, because the module had no entry point
+for being run directly, so it exited 0 in silence and the data load then died on
+the first table any migration had added. Both are fixed. If you are reading an
+older copy of this card, those are the two lines to distrust.
 
 ---
 
