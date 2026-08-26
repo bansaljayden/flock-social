@@ -168,3 +168,141 @@ test('both the REST callback and the socket handshake use the one predicate', ()
     'the bypassed preview regex is back in server.js'
   );
 });
+
+// ---------------------------------------------------------------------------
+// A REFUSED ORIGIN IS NOT A SERVER FAULT (2026-08-26).
+// ---------------------------------------------------------------------------
+// Adversarial pass over 546a734, which moved globalBackstopLimiter above cors
+// because "one request header on any URL bought an unbounded stream of Sentry
+// events". Measured against the real server booted on embedded Postgres, the
+// header still bought them; it just bought 8,500 per key per fifteen minutes
+// instead of an unlimited number, because the mount order bounds the VOLUME and
+// leaves the KIND alone. Every refusal was still:
+//
+//   HTTP/1.1 500 Internal Server Error
+//   [unhandled-error] GET /nothing-here user=anon: Error: Not allowed by CORS
+//       at origin (server.js) ... plus the rest of the stack
+//
+// The cause is one missing property. Sentry's defaultShouldHandleError reads
+// `error.status || error.statusCode || error.status_code ||
+// error.output?.statusCode` and treats a MISSING one as 500, so a bare Error is
+// always captured; and server.js's own error handler falls through to its
+// "genuine server fault" branch for anything it does not recognise, which is
+// where the stack and the 500 come from. Naming the status at the throw site
+// takes the refusal out of both.
+//
+// This is measured through the REAL @sentry/node error handler rather than a
+// restatement of its rule, because that rule is what decides whether the alert
+// storm happens, and a copy of it in this file could go stale against a version
+// bump with nothing failing. No DSN is needed: the handler sets `res.sentry` to
+// an event id exactly when it decided to capture.
+test('the refusal carries a 4xx status, so Sentry does not capture it and the handler does not log a stack', async () => {
+  const express = require('express');
+  const http = require('node:http');
+  const cors = require('cors');
+  const Sentry = require('@sentry/node');
+
+  // The origin callback exactly as server.js writes it, lifted rather than
+  // restated for the same reason buildAllowlist above is lifted.
+  const callbackSrc = /origin: \(origin, callback\) => \{[\s\S]*?\n {2}\},/.exec(
+    serverSrc.slice(serverSrc.indexOf('app.use(cors({'))
+  );
+  assert.ok(callbackSrc, 'the cors origin callback has moved or been renamed');
+  const originCallback = new Function(
+    'isAllowedOrigin', 'CORS_REFUSED',
+    `"use strict"; return ({ ${callbackSrc[0]} }).origin;`
+  )(isAllowedOrigin, 'cors.origin.refused');
+
+  // What the callback hands back for a refusal, on its own.
+  let refused = null;
+  originCallback('https://evil.example', (err) => { refused = err; });
+  assert.ok(refused instanceof Error, 'a disallowed origin must still be refused');
+  assert.strictEqual(refused.status, 403,
+    'the refusal has no status again. Sentry reads a missing status as 500 and captures the error as an '
+    + 'unhandled server exception, so one request header from any address turns into an alert storm that '
+    + 'the rate limiter can only bound, never stop.');
+  assert.strictEqual(refused.type, 'cors.origin.refused',
+    'the marker the global error handler branches on is gone, so the refusal falls back to the 500 branch');
+
+  // And an ALLOWED origin still passes, so the status is not being handed out
+  // by a callback that has quietly stopped refusing anything.
+  let allowedErr = 'unset';
+  let allowedOk = null;
+  originCallback('https://flockcorp.com', (e, ok) => { allowedErr = e; allowedOk = ok; });
+  assert.strictEqual(allowedErr, null);
+  assert.strictEqual(allowedOk, true);
+
+  // End to end, through the real cors middleware and the real Sentry handler.
+  const app = express();
+  app.use(cors({ origin: originCallback, credentials: true }));
+  app.use((_req, res) => res.status(404).json({ error: 'Route not found' }));
+  app.use(Sentry.expressErrorHandler());
+  app.use((err, _req, res, _next) => {
+    // Stands in for the two branches of server.js's handler that matter here.
+    const captured = res.sentry === undefined ? null : String(res.sentry);
+    if (err && err.type === 'cors.origin.refused') return res.status(403).json({ captured });
+    return res.status(500).json({ captured });
+  });
+
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    for (const [what, init] of [
+      ['a plain GET carrying a refused Origin', { headers: { origin: 'https://evil.example' } }],
+      ['a preflight from a refused Origin', {
+        method: 'OPTIONS',
+        headers: { origin: 'https://evil.example', 'access-control-request-method': 'POST' },
+      }],
+      ['two Origin headers, which Node joins into one string that matches nothing', {
+        headers: { origin: 'https://evil.example, https://flockcorp.com' },
+      }],
+    ]) {
+      const res = await fetch(`${base}/nothing-here`, init);
+      const body = await res.json();
+      assert.strictEqual(res.status, 403, `${what} answered ${res.status}, not 403`);
+      assert.strictEqual(body.captured, null,
+        `${what} was captured by Sentry as an unhandled exception. That is the alert storm this test `
+        + 'exists to stop, and it comes back the moment the refusal loses its status.');
+    }
+
+    // The control: an error with NO status IS captured, which is what makes the
+    // assertions above mean something rather than measuring a disabled SDK.
+    const control = express();
+    control.get('/boom', (_req, _res, next) => next(new Error('a real fault')));
+    control.use(Sentry.expressErrorHandler());
+    control.use((err, _req, res, _next) => res.status(500).json({
+      captured: res.sentry === undefined ? null : String(res.sentry),
+    }));
+    const controlServer = http.createServer(control);
+    await new Promise((r) => controlServer.listen(0, r));
+    try {
+      const res = await fetch(`http://127.0.0.1:${controlServer.address().port}/boom`);
+      const body = await res.json();
+      assert.notStrictEqual(body.captured, null,
+        'the Sentry express handler captured nothing even for a status-less Error, so the assertions '
+        + 'above prove nothing. Its capture rule has changed and this test needs rewriting.');
+    } finally {
+      await new Promise((r) => controlServer.close(r));
+    }
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('the global error handler answers the refusal itself instead of falling through to the 500 branch', () => {
+  // The source half. The end-to-end test above builds a stand-in handler,
+  // because lifting the real one would drag in the body-parser table and the
+  // headersSent guard. This is what pins the real file to the same shape.
+  const handler = serverSrc.slice(serverSrc.indexOf('const BODY_PARSER_CLIENT_ERRORS'));
+  const corsBranch = handler.indexOf('err.type === CORS_REFUSED');
+  const faultBranch = handler.indexOf('[unhandled-error]');
+  assert.ok(corsBranch > 0, 'the global error handler no longer has a branch for a refused origin');
+  assert.ok(faultBranch > 0, 'the unhandled-error branch has been renamed');
+  assert.ok(corsBranch < faultBranch,
+    'the refused-origin branch is now BELOW the unhandled-error branch, so every refusal logs a stack '
+    + 'and answers 500 again');
+  assert.match(serverSrc, /const CORS_REFUSED = 'cors\.origin\.refused';/,
+    'CORS_REFUSED is the one spelling shared by the throw site and the handler, and two spellings is '
+    + 'how the branch stops matching');
+});
