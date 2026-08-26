@@ -60,6 +60,12 @@ const { isBlockedBetween } = require('../utils/blocks');
 // The card answers a question about SOMEBODY ELSE by bare sequential id, which
 // is the exact shape utils/probeBudget.js was written for. See cardProbeBudget.
 const { createUserBudget } = require('../utils/probeBudget');
+// Contact discovery. `phoneDiscoveryHash` is the ONLY thing written into
+// users.phone_hash, and it is an HMAC over a canonical E.164 string under a
+// namespace of its own — deliberately a different namespace from the ban
+// tombstone digests below, so neither table's rows can be compared with the
+// other's. See utils/phone.js.
+const { phoneDiscoveryHash } = require('../utils/phone');
 
 const router = express.Router();
 const SALT_ROUNDS = 10;
@@ -230,7 +236,12 @@ const AVATAR_TOO_LARGE_MESSAGE =
 router.get('/profile', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, email, name, phone, interests, role, profile_image_url, bio, venmo_username, cashapp_cashtag, zelle_identifier, is_premium, created_at, updated_at
+      // phone_discoverable is here because the client cannot render an honest
+      // toggle for it otherwise, and a settings switch that does not show its
+      // real state is worse than no switch. phone_hash is NOT here and must
+      // never be: it is a matching key, the row's owner has no use for it, and
+      // the fewer places it is copied to the better.
+      `SELECT id, email, name, phone, phone_discoverable, interests, role, profile_image_url, bio, venmo_username, cashapp_cashtag, zelle_identifier, is_premium, created_at, updated_at
        FROM users WHERE id = $1`,
       [req.user.id]
     );
@@ -624,10 +635,31 @@ function identityDigest(kind, value) {
   return crypto.createHmac('sha256', key).update(`${kind}:${value}`).digest('hex');
 }
 
-// Match the comparison friend discovery actually uses: POST
-// /api/friends/find-by-phone strips non-digits and compares the last 10, so a
-// tombstone keyed on anything else would be defeated by retyping the number
-// with different punctuation or a country code.
+// The BAN TOMBSTONE canonical form, which is deliberately looser than the
+// contact-discovery one and must stay that way.
+//
+// This used to say "match the comparison friend discovery actually uses", and
+// that was true until 2026-08-25, when find-by-phone moved to a canonical E.164
+// string (utils/phone.js `toE164`). The two are now different on purpose:
+//
+//   discovery  +1 then exactly 10 valid NANP digits, or a whole international
+//              number as written. A fragment resolves to nothing, because a
+//              fragment used to match a thousand real numbers at once.
+//   tombstone  the last 10 digits, 7 or more. Looser is CORRECT here. This
+//              answers "is the person creating this account the banned person
+//              who left", and the banned person is actively trying to look
+//              different: a country code added, a leading 1 dropped, a number
+//              stored in a shape `toE164` would decline. A tombstone that only
+//              matched perfectly formed numbers would be evaded by retyping.
+//              Nothing is returned to a caller from this comparison, so its
+//              looseness costs a rare false positive on signup and never leaks
+//              a directory answer.
+//
+// These two digests also live under different HMAC namespaces ('phone:' here,
+// 'contact-discovery:v1:' there), so a value from one table can never be
+// compared against a value from the other even where the canonical forms would
+// have agreed. Changing THIS function invalidates every stored tombstone; do
+// not fold the two together.
 function canonicalPhone(phone) {
   if (typeof phone !== 'string' && typeof phone !== 'number') return '';
   const digits = String(phone).replace(/\D/g, '').slice(-10);
@@ -1340,6 +1372,24 @@ router.put('/profile',
       // Written as CASE over $2 rather than a new parameter on purpose: $2 is
       // already `changingEmail ? email : null`, so the two columns move with the
       // address and only with the address, and the statement keeps its shape.
+      //
+      // THE DISCOVERY DIGEST MOVES WITH THE NUMBER, OR IT IS A LIE ($8/$9).
+      // users.phone_hash is what POST /api/friends/find-by-phone matches on, so
+      // leaving it behind on a number change would keep an opted-in user
+      // findable by the number they just gave up (which may already belong to a
+      // stranger) and unfindable by the one they actually hold. $8 is a marker
+      // that is non-null only on a real change, so an untouched form rewrites
+      // neither column, and it is a CASE over that marker for the same reason
+      // the email pair above is: the columns move with the field and only with
+      // the field.
+      //
+      // phone_discoverable ($10) FAILS CLOSED on a number this server cannot
+      // canonicalise. No digest means no way to be found, so the flag must not
+      // stay TRUE claiming otherwise. A number that DOES canonicalise keeps the
+      // user's existing choice, because the consent was to being findable by
+      // their number and it is the number that moved. NULL on every other edit,
+      // so COALESCE leaves the stored choice alone.
+      const nextPhoneHash = changingPhone ? phoneDiscoveryHash(phone) : null;
       const result = await pool.query(
         `UPDATE users
          SET name = COALESCE($1, name),
@@ -1351,9 +1401,11 @@ router.put('/profile',
              password = COALESCE($5, password),
              token_version = token_version + CASE WHEN $5::text IS NULL THEN 0 ELSE 1 END,
              bio = COALESCE($7, bio),
+             phone_hash = CASE WHEN $8::text IS NULL THEN phone_hash ELSE $9::text END,
+             phone_discoverable = COALESCE($10, phone_discoverable),
              updated_at = NOW()
          WHERE id = $6
-         RETURNING id, email, name, phone, interests, role, profile_image_url, bio, email_verified, token_version, created_at, updated_at`,
+         RETURNING id, email, name, phone, phone_discoverable, interests, role, profile_image_url, bio, email_verified, token_version, created_at, updated_at`,
         // Only write the email column on a real change, so an unchanged form
         // never silently rewrites a stored address into its normalized form.
         //
@@ -1362,7 +1414,18 @@ router.put('/profile',
         // on this statement, and re-numbering the id would silently hand every
         // one of them a bio string where they expect an id. A parameter's
         // number is a name, not a position in the SET list.
-        [name || null, changingEmail ? email : null, phone || null, safeInterests, hashedPassword, req.user.id, bio || null]
+        //
+        // $8/$9 are appended AFTER bio for the same reason bio sits after the
+        // id: a parameter's number is a name here, and re-numbering would hand
+        // every fixture dispatcher that reads params[5] as the user id
+        // something else.
+        [
+          name || null, changingEmail ? email : null, phone || null, safeInterests,
+          hashedPassword, req.user.id, bio || null,
+          changingPhone ? 'phone-changed' : null,
+          changingPhone ? nextPhoneHash : null,
+          changingPhone ? Boolean(user.phone_discoverable) && Boolean(nextPhoneHash) : null,
+        ]
       );
 
       // A password change bumps token_version, which stops the thief's REST
@@ -1385,6 +1448,82 @@ router.put('/profile',
     } catch (err) {
       console.error('Update profile error:', err);
       res.status(500).json({ error: 'Failed to update profile' });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// PUT /api/users/phone-discovery - "let people who have my number find me"
+// ---------------------------------------------------------------------------
+// The consent switch behind POST /api/friends/find-by-phone. Two reasons this
+// is its own route rather than another field on PUT /api/users/profile:
+//
+//   1. That route demands the current password (or a fresh provider session)
+//      for EVERY edit, because it can move the address and the number. This is
+//      a settings toggle. Making a user retype their password to stop being
+//      findable would mean the fastest way out is the one with a hurdle in
+//      front of it, and the direction that needs to be effortless is OFF.
+//
+//   2. Turning this ON is the moment users.phone_hash is written, and turning
+//      it OFF is the moment it is erased. Keeping that in one small statement
+//      is what makes "the database holds a phone digest only for people who
+//      asked to be findable by phone" a fact you can read rather than a claim.
+//
+// NO PROBE BUDGET, deliberately, and the reason is the test from
+// utils/cacheKeyInventory.js: this route reads and writes the CALLER'S OWN row
+// and answers nothing about anybody else, so there is no directory information
+// in it to ration. The general limiter covers the write cost.
+router.put('/phone-discovery',
+  scalarOnly(body('enabled'), 'enabled').isBoolean().withMessage('enabled must be true or false'),
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+      // isBoolean() accepts the strings 'true'/'false' as well as the literals,
+      // so normalise rather than trusting the type that arrived.
+      const enabled = req.body.enabled === true || req.body.enabled === 'true';
+
+      const current = await pool.query('SELECT phone FROM users WHERE id = $1', [req.user.id]);
+      if (current.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+      const phone = current.rows[0].phone;
+
+      if (!enabled) {
+        // OFF erases the digest as well as clearing the flag. Keeping a digest
+        // for somebody who has opted out would leave the one piece of data this
+        // feature exists to use sitting in the row of a person who said no.
+        await pool.query(
+          'UPDATE users SET phone_discoverable = FALSE, phone_hash = NULL, phone_discoverable_at = NULL, updated_at = NOW() WHERE id = $1',
+          [req.user.id]
+        );
+        return res.json({ phone_discoverable: false, phone_on_file: Boolean(phone) });
+      }
+
+      // ON needs a number that resolves to one whole E.164 string. A row with no
+      // phone, or with something in the column that cannot be canonicalised,
+      // gets an explanation rather than a switch that flips and does nothing.
+      const hash = phoneDiscoveryHash(phone);
+      if (!hash) {
+        return res.status(400).json({
+          error: phone
+            ? 'Add your phone number in a form we can read before turning this on.'
+            : 'Add your phone number to your profile before turning this on.',
+          phone_discoverable: false,
+          phone_on_file: Boolean(phone),
+        });
+      }
+
+      await pool.query(
+        `UPDATE users
+            SET phone_discoverable = TRUE, phone_hash = $2, phone_discoverable_at = NOW(), updated_at = NOW()
+          WHERE id = $1`,
+        [req.user.id, hash]
+      );
+      res.json({ phone_discoverable: true, phone_on_file: true });
+    } catch (err) {
+      console.error('Phone discovery toggle error:', err);
+      res.status(500).json({ error: 'Failed to update phone discovery' });
     }
   }
 );

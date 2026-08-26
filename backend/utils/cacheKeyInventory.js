@@ -303,10 +303,20 @@ const INVENTORY = [
     key: "createUserBudget name:'contact-sync' — authenticated user id (3/hr, 10/day)",
     callerControls: 'nothing',
     protects: 'bulk phone-number to identity resolution',
-    denominator: 'sync calls, each after a 200-phone slice',
+    denominator: 'sync calls of TWO OR MORE numbers, each after a 200-phone slice',
     bound: 'probeBudget: 20k, least-consumed-first',
     verdict: 'SAFE',
-    why: 'The tightest budget in the repo, correctly: it is the highest-yield probe per request.',
+    why: 'The tightest budget in the repo, correctly: it is the highest-yield probe per request. Charged AFTER normalisation, so a batch with no resolvable number in it spends nothing, and on hits and misses alike.',
+  },
+  {
+    file: 'routes/friends.js', name: 'phoneLookupBudget', kind: 'counter',
+    key: "createUserBudget name:'phone-lookup' — authenticated user id (20/hr, 60/day)",
+    callerControls: 'nothing',
+    protects: 'single-number identity resolution ("add this person by their number", and a contact picked one at a time)',
+    denominator: 'find-by-phone calls carrying exactly ONE resolvable number',
+    bound: 'probeBudget: 20k, least-consumed-first',
+    verdict: 'SAFE',
+    why: 'Split out of contact-sync because one number is the friend probe question asked with a phone number, and it carries the friend probe limits for that reason. It adds NO capacity to an enumerator: 60 single lookups a day is far under the 2,000 numbers a day the bulk lane already permits, so splitting a list into singles is strictly worse for the attacker than sending it as a list.',
   },
 
   // ── routes/moderation.js ──────────────────────────────────────────────────

@@ -198,16 +198,19 @@ function handle(text, params = []) {
     return { rows: hit ? [{ id: hit.id }] : [], rowCount: hit ? 1 : 0 };
   }
   if (has('UPDATE users')) {
-    // The profile UPDATE keys its row on $6 and carries bio as a trailing $7
-    // (routes/users.js keeps the id at params[5] on purpose); other UPDATEs
-    // in this file still key on their last parameter.
-    const idParam = params.length === 7 ? params[5] : params[params.length - 1];
+    // Recognised by its SET list rather than by parameter count. Counting broke
+    // the moment migration 051 appended the contact-discovery parameters, and a
+    // fixture that stops recognising its own statement writes nothing and reads
+    // as "the edit did not happen". The id stays at params[5] on purpose (see
+    // routes/users.js); other UPDATEs here key on their last parameter.
+    const isProfile = has('SET name = COALESCE');
+    const idParam = isProfile ? params[5] : params[params.length - 1];
     const u = USERS[idParam] || USERS[14];
-    if (params.length === 6 || params.length === 7) {
+    if (isProfile || params.length === 6) {
       if (params[0]) u.name = params[0];
       if (params[1]) u.email = params[1];
       if (params[2]) u.phone = params[2];
-      if (params.length === 7 && params[6]) u.bio = params[6];
+      if (params[6]) u.bio = params[6];
     }
     return { rows: [{ ...u }], rowCount: 1 };
   }
