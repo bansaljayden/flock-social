@@ -99,7 +99,13 @@ function windowFrom(sql) {
   // only because Railway runs UTC. The offset from now is identical either way,
   // which is why the expected math below is unchanged; only the spelling moved,
   // and this helper had pinned the spelling.
-  const NOW_UTC = "(?:NOW\\(\\)|\\(NOW\\(\\) AT TIME ZONE 'UTC'\\))";
+  // The zone NAME is read in either case, and that is not laxity. Postgres
+  // resolves time zone names case-insensitively, services/photoStore.js already
+  // writes AT TIME ZONE 'utc' in lower case, and flockCompletionSweep.test.js
+  // already reads this same literal with the i flag. Pinning the capitals would
+  // fail a correct rewrite on the case of three letters, which is the defect
+  // this pattern was widened to stop making.
+  const NOW_UTC = "(?:NOW\\(\\)|\\(NOW\\(\\) AT TIME ZONE '[Uu][Tt][Cc]'\\))";
   const past = sql.match(new RegExp(`event_time > ${NOW_UTC} - INTERVAL '(\\d+) (hours?|days?)'`));
   const ahead = sql.match(new RegExp(`event_time < ${NOW_UTC} \\+ INTERVAL '(\\d+) (hours?|days?)'`));
   return {
