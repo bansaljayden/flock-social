@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>API_KEY</key><string>fixture-api-key-not-a-real-one-000004</string>
+	<key>GCM_SENDER_ID</key><string>413355901234</string>
+	<key>BUNDLE_ID</key><string>com.flockcorp.flock</string>
+	<key>GOOGLE_APP_ID</key><string>1:413355901234:ios:9a1b2c3d4e5f60718293</string>
+	<key>IS_ANALYTICS_ENABLED</key><false/>
+</dict>
+</plist>

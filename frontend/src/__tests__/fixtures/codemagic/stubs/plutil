@@ -1,0 +1,50 @@
+#!/bin/sh
+# Stand-in for macOS `plutil`, covering the two invocations codemagic.yaml
+# makes and nothing else:
+#
+#   plutil -lint FILE
+#   plutil -convert json -o - FILE
+#
+# What "a valid plist" means here is decided by Python's plistlib, not by a
+# pattern match on the text, so a file this stub accepts is a file a parser
+# accepts. That matters: the whole point of running the step is that the test
+# must not share the step's blind spot, and a stub that answered by grepping
+# for "<plist" would put one straight back.
+set -u
+PY="${FIXTURE_PYTHON:-python3}"
+
+mode=""
+file=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -lint) mode=lint ;;
+    -convert) mode=convert; shift ;;
+    -o) shift ;;
+    -*) ;;
+    *) file="$1" ;;
+  esac
+  shift
+done
+
+if [ -z "$file" ]; then
+  echo "plutil stub: no file in the arguments" >&2
+  exit 1
+fi
+
+case "$mode" in
+  lint)
+    if "$PY" -c 'import plistlib,sys; plistlib.load(open(sys.argv[1],"rb"))' "$file" >/dev/null 2>&1; then
+      echo "$file: OK"
+    else
+      echo "$file: Property List error: unexpected content" >&2
+      exit 1
+    fi
+    ;;
+  convert)
+    "$PY" -c 'import plistlib,json,sys; print(json.dumps(plistlib.load(open(sys.argv[1],"rb")),default=str))' "$file" || exit 1
+    ;;
+  *)
+    echo "plutil stub: unsupported invocation, the step under test changed shape" >&2
+    exit 1
+    ;;
+esac

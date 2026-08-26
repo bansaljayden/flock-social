@@ -1,0 +1,31 @@
+#!/bin/sh
+# Stand-in for `security cms -D -i PROFILE -o OUT`.
+#
+# A real .mobileprovision is a CMS envelope wrapped around a plist. The
+# fixtures are that plist behind one marker line, and a file WITHOUT the marker
+# is what a truncated download, a stray file, or anything else in the profiles
+# directory looks like to this step: `security` refuses it, the step's
+# `|| continue` skips it, and it must not be counted as a profile.
+set -u
+
+IN=""
+OUT=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -i) IN="${2:-}"; shift ;;
+    -o) OUT="${2:-}"; shift ;;
+  esac
+  shift
+done
+
+if [ -z "$IN" ] || [ ! -f "$IN" ] || [ -z "$OUT" ]; then
+  echo "security: cms: no input" >&2
+  exit 1
+fi
+
+if ! head -n 1 "$IN" | grep -q '^-----FIXTURE CMS ENVELOPE-----$'; then
+  echo "security: cms: Unknown format in import." >&2
+  exit 1
+fi
+
+tail -n +2 "$IN" > "$OUT"

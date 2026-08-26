@@ -1,0 +1,60 @@
+#!/bin/sh
+# Stand-in for /usr/libexec/PlistBuddy, covering `-c "Print :A:B" FILE`.
+#
+# WHICH STREAM IT COMPLAINS ON IS A PARAMETER OF THIS STUB, NOT A GUESS.
+# The real binary answers a missing key with a non-zero exit status AND a
+# printed line, "Print: Entry, ":API_KEY", Does Not Exist". Whether that line
+# goes to stdout or stderr is reported both ways and cannot be checked from a
+# machine that is not a Mac, and a build script that is only correct on one of
+# the two answers is a build script whose correctness nobody has established.
+# So FIXTURE_PLISTBUDDY_ERR picks the stream and the test drives every case
+# through both. If the step ever goes back to `$(... || echo "")`, the stdout
+# run is what goes red, because that is the run in which the complaint becomes
+# the value.
+set -u
+PY="${FIXTURE_PYTHON:-python3}"
+
+CMD=""
+FILE=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -c) CMD="${2:-}"; shift ;;
+    *) FILE="$1" ;;
+  esac
+  shift
+done
+
+KEYPATH=$(printf '%s' "$CMD" | sed 's/^[Pp]rint[[:space:]]*//')
+
+if OUT=$("$PY" -c '
+import plistlib, sys
+path, keypath = sys.argv[1], sys.argv[2]
+try:
+    value = plistlib.load(open(path, "rb"))
+except Exception:
+    sys.exit(1)
+for part in [p for p in keypath.split(":") if p != ""]:
+    if isinstance(value, dict) and part in value:
+        value = value[part]
+    else:
+        sys.exit(1)
+if isinstance(value, bool):
+    print("true" if value else "false")
+elif isinstance(value, list):
+    print("Array {")
+elif isinstance(value, dict):
+    print("Dict {")
+else:
+    print(value)
+' "$FILE" "$KEYPATH" 2>/dev/null); then
+  printf '%s\n' "$OUT"
+  exit 0
+fi
+
+COMPLAINT="Print: Entry, \"$KEYPATH\", Does Not Exist"
+if [ "${FIXTURE_PLISTBUDDY_ERR:-stdout}" = "stderr" ]; then
+  echo "$COMPLAINT" >&2
+else
+  echo "$COMPLAINT"
+fi
+exit 1
