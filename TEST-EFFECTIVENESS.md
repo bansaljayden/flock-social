@@ -3,6 +3,14 @@
 2026-08-26. Every other audit in this repo asks whether the code is right. This one
 asks whether the tests would go red if it were not.
 
+> **On the number 4,676.** It is used below for both "tests" and "assertions" and
+> those are not the same thing: a static count of the backend suite finds roughly
+> 4,300 test declarations across 230 files and about 15,000 `assert.*` calls, so
+> the figure is an overcount on one reading and a large undercount on the other.
+> It is kept because it is what the runs were scored against and every ratio in
+> this file is built on it. Do not carry it into any other document as the size
+> of the suite.
+
 **Method.** 42 hand written defects were introduced one at a time into backend
 source, the suite that claims to cover each one was re-run, and the edit was
 reverted. 4 further edits were pure renames and comment rewordings, applied as

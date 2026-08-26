@@ -124,9 +124,11 @@ the per-city breakdown and what the gate refused along the way.
 - Venues the model doesn't know yet (no baseline, no popular-times signal)
   are answered by the rule engine in `crowdEngine.js` instead of guessing.
 
-> **The trained model is not in this repository.** `crowd_model.onnx` (11.4 MB)
-> and `model_metadata.json` are Flock's own artifacts, built from Flock's own
-> collected data, and they are not published. Everything that produced them is
+> **The trained model is not distributed with this source.** `crowd_model.onnx`
+> (11.4 MB) and `model_metadata.json` are Flock's own artifacts, built from
+> Flock's own collected data, and they are not published. If you are reading
+> this in a checkout that has them, you are in the private repository Railway
+> builds from; nothing changes about the sentence for anyone else. Everything that produced them is
 > here: the collection scripts in `backend/scripts/ml/`, the training pipeline
 > in `backend/scripts/ml/train/`, and the runbook in
 > `backend/scripts/ml/RETRAIN.md`. See `backend/scripts/ml/models/README.md` for
@@ -273,8 +275,11 @@ a substitute for the migrations: it has not moved since the bootstrap was cut,
 so everything 001 onward adds is missing from it.
 
 Migrations are numbered from 000 upward in `backend/migrations/`. **There is
-no 010**; the number was skipped, not lost. Every migration the code needs is
-tracked, so a deploy from HEAD is complete.
+no 010 and no 029**; both numbers were skipped, not lost, so a gap in the
+listing is not a missing file. Every migration the code needs is tracked, so a
+deploy from HEAD is complete. Two files can also share a number, because
+`schema_migrations` is keyed on the filename rather than the number, so count
+the directory rather than reading the highest number you can see.
 
 Backend tests: `cd backend && node --test` · local E2E: `npm run e2e`. Neither
 needs a database you provide: the migration suites and the E2E script each start

@@ -4,6 +4,14 @@ Measured 2026-08-26 against `9221f0a` + tonight's screen extractions. Every othe
 frontend audit asked whether the code was right. This one asks whether 1,666
 passing assertions across 65 suites would go red if it were not.
 
+> **The counts in this file are a measurement, not a live number.** 65 suites and
+> 1,666 assertions is what the suite was at the moment the mutation runs were
+> made, and it kept growing the same night: 68 suites exist as of the end of
+> 2026-08-26, and the "46 non-test `.js` files" figure further down is 44 now
+> that the unused UI block was deleted. Do not quote either as the current size
+> of the suite; count them. The findings below are about shape, and shape does
+> not move with the count.
+
 The method was to break the code on purpose. 100 mutation runs, 59 distinct
 hand-written defects introduced into frontend source one at a time, each run
 against **all 1,666 assertions** (the whole suite takes 16 seconds, so there was
@@ -199,8 +207,9 @@ every check was scoped to about eight pinned regions (`handleSendFlockInvites`,
 the pay sheet, the two error boundaries, a settings row), and an em dash
 anywhere outside them passed.
 
-`copyEmDashSweep.test.js` now walks all 46 non-test `.js` files under
-`frontend/src`, parses each with `@babel/parser`, and reads **StringLiteral,
+`copyEmDashSweep.test.js` now walks every non-test `.js` file under three roots,
+`frontend/src`, `frontend/api` and `frontend/public`, parses each with
+`@babel/parser`, and reads **StringLiteral,
 TemplateElement and JSXText and nothing else**. That is what tells copy from a
 comment: a comment is not any of those node types, so it is excluded by
 construction rather than by a pattern somebody has to keep correct. A regex over

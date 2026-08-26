@@ -479,14 +479,18 @@ Things that are still open, so nobody has to rediscover them.
    but wrong numbers for one venue", not arbitrary data. Closing this properly
    needs hardware-backed keys (a TPM or a secure element), which is a hardware
    decision, not a code one.
-4. **`noise_db` is uncalibrated** (see Calibration) but is stored in a column
-   called `noise_db` and **printed to users as a decibel figure.** The Live
-   Occupancy card in `App.js` renders `· {noiseDb.toFixed(0)} dB` next to the
-   word Quiet/Moderate/Lively/Loud. Nobody has ever held a sound level meter
-   next to one of these microphones, so that number is a relative index wearing
-   a unit it has not earned, and it is on a screen users see. The word is the
-   honest half; the figure is the half to drop until someone calibrates a unit.
-   This device's own display already says "level", not "dB".
+4. **`noise_db` is uncalibrated** (see Calibration) and is still stored in a
+   column called `noise_db`, ~~and printed to users as a decibel figure~~.
+   **The user-facing half of this is closed as of 2026-08-26** and the entry
+   stays because the column name still lies. The Live Occupancy card used to
+   render `· {noiseDb.toFixed(0)} dB` beside the word
+   Quiet/Moderate/Lively/Loud; the figure is gone and the word remains, which
+   was exactly the fix this gap asked for. No `dB` string is rendered anywhere
+   in the app now. The number still drives which of the four words is chosen,
+   so a calibration pass would still change what users read, and nobody has yet
+   held a sound level meter next to one of these microphones. Do not put the
+   figure back until someone has. This device's own display already says
+   "level", not "dB".
 5. **`ir_beam_count` is crossings, not entries**, but the backend's history
    endpoint sums it as "entries per hour" and `RETRAIN.md` lists it as high
    quality ground truth.
