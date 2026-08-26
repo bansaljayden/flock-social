@@ -183,7 +183,20 @@ function getLocalTime(timezone, at) {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: timezone,
     year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hour12: false,
+    // hourCycle h23 rather than hour12 false, and the difference is not
+    // cosmetic. Under Node 20's ICU, `hour12: false` renders local MIDNIGHT as
+    // the string "24"; Node 25 renders "00". Hour 24 fails the
+    // ml_training_data_hour_check constraint, so collectRealtime wrote ZERO
+    // rows for every venue whose local hour was midnight and then aborted the
+    // run. It survived months of green local runs because the laptop is on a
+    // newer Node, and it only surfaced when CI ran the suite at 00:22 Austin
+    // time on Node 20. `engines` allows >=18, so production can hit this
+    // nightly. h23 is 00 to 23 on every version by definition.
+    //
+    // The rest of this file's siblings already guard the same class with % 24
+    // (routes/feedback.js, ownerReportContext.js, venueDigest.js,
+    // advisorFacts.js). This was the one unguarded caller.
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
     weekday: 'short',
   }).formatToParts(now);
 
