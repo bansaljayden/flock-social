@@ -20,6 +20,19 @@
 # runs, reports, and does not fail the build. The backend is at zero and can
 # afford to be strict, but a split rule invites the same habit, so both report.
 # Revisit if the frontend advisories ever become fixable.
+#
+# NODE 20, AND WHY THE GAP TO THE DEVELOPER MACHINE IS THE POINT. The first run
+# of this workflow failed 52 backend checks on a commit whose suite was green
+# locally. None of it was a regression. Node 21 and later keep a referenced
+# handle alive for the duration of a running test, so a test awaiting a promise
+# that only an unref()'d timer can settle completes; Node 20 drains the loop and
+# node:test cancels the rest of the FILE. Three suites had been passing on that
+# property of the runtime alone. `hour12: false` also renders local midnight as
+# "24" here and as "00" on newer builds, which is how a collector that writes no
+# rows at midnight survived months of green runs. Both are real defects that
+# only a second environment could see. If a future job goes red, do not close
+# the gap by matching this version to the laptop: that hides the class again.
+# `engines` allows >=18, so 20 is inside what production may run.
 name: Tests
 
 on:
