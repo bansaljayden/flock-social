@@ -172,8 +172,19 @@ test('the photo response carries nosniff', () => {
   const fs = require('fs');
   const path = require('path');
   const src = fs.readFileSync(path.join(__dirname, '..', 'routes/venueSearch.js'), 'utf8');
-  const body = src.slice(src.indexOf('function sendPhoto'));
-  const fn = body.slice(0, body.indexOf('\n}'));
+  // Accept either spelling of the declaration. The marker used to be the bare
+  // literal 'function sendPhoto', and indexOf answers -1 for a miss, so
+  // rewriting it as `const sendPhoto = (...) =>` (a behaviour-preserving
+  // change) made src.slice(-1) one character, the two regexes below both fail
+  // to match it, and the suite reported "sendPhoto does not set nosniff" about
+  // a handler that sets it perfectly well. A misleading red is worse than a
+  // clean one: it sends the next reader to the wrong file.
+  const decl = /(?:function\s+sendPhoto\b|(?:const|let|var)\s+sendPhoto\s*=)/.exec(src);
+  assert.ok(decl, 'sendPhoto is no longer declared in routes/venueSearch.js under any spelling');
+  const body = src.slice(decl.index);
+  const endsAt = body.indexOf('\n}');
+  assert.ok(endsAt > 0, 'sendPhoto has no column-zero closing brace; this parser needs updating rather than the route');
+  const fn = body.slice(0, endsAt);
   assert.ok(/X-Content-Type-Options.*nosniff/.test(fn), 'sendPhoto does not set nosniff');
   assert.ok(/photoContentType\(contentType\)/.test(fn), 'sendPhoto echoes the upstream type');
 });
