@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTheme } from '../context/ThemeContext';
 import { isPurchasesAvailable, getProOffering, purchase, restore } from '../services/purchases';
 
@@ -103,6 +103,37 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
     return () => { cancelled = true; };
   }, [open]);
 
+  // Dialog behavior. This sheet had none of it: no role, no label, no focus
+  // move, no Escape, and no close control of any kind. The only way out was a
+  // tap on the backdrop, which is a div, so on a keyboard or with VoiceOver
+  // there was no way out at all. It is also `position: absolute; inset: 0` over
+  // the app, so a screen reader landing behind it read the screen underneath a
+  // sheet the user could not see and could not leave.
+  //
+  // Third copy of this block in components/. ModerationSheet.js and
+  // safety/EmergencySheet.js carry the same one for the same stated reason:
+  // App.js's DialogBehavior is defined inside App.js and is not exported.
+  // stopImmediatePropagation matches those two, so Escape here does not also
+  // dismiss whatever opened this.
+  const sheetRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKeyDown = (e) => {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      // Never mid-purchase: closing the sheet under a running transaction is
+      // how someone ends up charged with no confirmation on screen.
+      if (!busy && !restoring) onClose?.();
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    const t = setTimeout(() => {
+      const first = sheetRef.current?.querySelector('button');
+      try { first?.focus({ preventScroll: true }); } catch { /* detached */ }
+    }, 0);
+    return () => { document.removeEventListener('keydown', onKeyDown, true); clearTimeout(t); };
+  }, [open, busy, restoring, onClose]);
+
   if (!open) return null;
 
   const yearlyPkg = pickPackage(packages, 'yearly');
@@ -188,10 +219,29 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger }) => {
       style={{ position: 'absolute', inset: 0, zIndex: 200, backgroundColor: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
     >
       <div
+        ref={sheetRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Flock Pro"
         onClick={(e) => e.stopPropagation()}
-        style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderTopLeftRadius: '20px', borderTopRightRadius: '20px', overflow: 'hidden', boxShadow: '0 -8px 30px rgba(0,0,0,0.25)', animation: 'fadeInUp 0.25s ease-out', fontFamily: FONT }}
+        style={{ position: 'relative', width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderTopLeftRadius: '20px', borderTopRightRadius: '20px', overflow: 'hidden', boxShadow: '0 -8px 30px rgba(0,0,0,0.25)', animation: 'fadeInUp 0.25s ease-out', fontFamily: FONT }}
       >
-        <div style={{ width: '38px', height: '4px', borderRadius: '2px', backgroundColor: 'var(--border-default)', margin: '10px auto 4px' }} />
+        <div aria-hidden="true" style={{ width: '38px', height: '4px', borderRadius: '2px', backgroundColor: 'var(--border-default)', margin: '10px auto 4px' }} />
+        {/* A real exit. The drag handle above is paint: it looks like a way out
+            and it is not focusable, not labelled and has no handler. This is
+            the only control that can dismiss the sheet without a pointer. */}
+        <button
+          type="button"
+          className="hit44"
+          onClick={onClose}
+          disabled={busy || restoring}
+          aria-label="Close"
+          style={{ position: 'absolute', top: '10px', right: '12px', width: '30px', height: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '15px', border: 'none', background: 'none', color: 'var(--text-secondary)', cursor: busy || restoring ? 'default' : 'pointer', padding: 0 }}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+            <path d="M18 6 6 18M6 6l12 12" />
+          </svg>
+        </button>
 
         <div style={{ padding: '6px 20px 20px' }}>
           <p style={{ fontSize: '12px', fontWeight: '700', color: accent, letterSpacing: '0.4px', textTransform: 'uppercase', margin: '4px 0 4px' }}>Flock Pro</p>

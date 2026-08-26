@@ -263,6 +263,14 @@ export function BirdieStill({ size = 96, bird = BIRDIE, style, eager = false }) 
 //
 // `title`/`body` are plain strings styled off the app tokens; `action` is a
 // ready ReactNode (usually the Try again button the call site already had).
+//
+// `role` is opt-in and defaults to nothing, because the two states this
+// component serves need opposite things. An EMPTY state is already on screen
+// when the screen arrives, so a screen reader reads it in normal order and a
+// live region would only make it interrupt. An ERROR state replaces a
+// skeleton some seconds after a request loses, with no keypress behind it, so
+// nothing announces it and the user is left listening to a list that never
+// arrives. Error call sites pass role="alert"; empty ones pass nothing.
 // ---------------------------------------------------------------------------
 export function BirdNote({
   bird = BIRDIE,
@@ -272,6 +280,7 @@ export function BirdNote({
   body,
   action,
   eager = false,
+  role,
   style,
 }) {
   const words = (
@@ -287,14 +296,14 @@ export function BirdNote({
   );
   if (layout === 'row') {
     return (
-      <div style={{ display: 'flex', alignItems: 'flex-end', gap: '12px', ...style }}>
+      <div role={role} style={{ display: 'flex', alignItems: 'flex-end', gap: '12px', ...style }}>
         <BirdieStill bird={bird} size={Math.max(48, size)} eager={eager} style={{ flexShrink: 0 }} />
         <div style={{ flex: 1, minWidth: 0, paddingBottom: '2px' }}>{words}</div>
       </div>
     );
   }
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '14px 0 6px', ...style }}>
+    <div role={role} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '14px 0 6px', ...style }}>
       <BirdieStill bird={bird} size={size} eager={eager} />
       <div style={{ marginTop: '10px', maxWidth: '300px' }}>{words}</div>
     </div>
