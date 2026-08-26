@@ -1,5 +1,23 @@
-import { initializeApp } from 'firebase/app';
-import { getMessaging, getToken, onMessage, deleteToken } from 'firebase/messaging';
+// THE FIREBASE JS SDK IS NOT IMPORTED HERE, AND MUST NOT BE.
+//
+// App.js imports this module at the top level, so a static
+// `import ... from 'firebase/messaging'` put the whole SDK in the chunk group
+// the app loads before it paints. Every user paid for it on every launch,
+// including everyone who has never granted notification permission and
+// everyone who never will, which on the audience this app is for (teenagers on
+// mid-range Android phones) is most of them. Nothing the SDK does can happen
+// before the OS has already said yes or the user has just tapped an Enable
+// button, so none of it belongs in first paint.
+//
+// It is also dead weight on the platform Flock actually launches on. Native
+// iOS and Android go through @capacitor-firebase/messaging, which bridges APNs
+// to FCM in native code and is dynamically imported already. Every reference
+// to the JS SDK below is on the web branch, guarded by isNativeApp().
+//
+// __tests__/pushSdkIsLazy.test.js fails if either specifier becomes a static
+// import again. That regression is invisible: the app would behave identically
+// and only the size report would move.
+//
 // getToken, not a localStorage read of our own: api.js owns where the auth
 // token lives and what it is called. This file used to restate the key as
 // `const AUTH_TOKEN_KEY = 'flockToken'`, a THIRD copy of that contract after
@@ -42,8 +60,22 @@ let swRegistration = null;
 // unregister exactly this device instead of every device on the account.
 let currentPushToken = null;
 
+// Web foreground listeners that are waiting for this device to have push at
+// all. See onForegroundMessage for why they wait.
+const pendingForegroundAttaches = new Set();
+
+function flushForegroundAttaches() {
+  for (const attach of [...pendingForegroundAttaches]) {
+    pendingForegroundAttaches.delete(attach);
+    attach();
+  }
+}
+
 function rememberPushToken(token) {
   currentPushToken = token;
+  // A token exists, so this device has permission and a foreground listener
+  // can finally do something. Anything that was holding off attaches now.
+  if (token) flushForegroundAttaches();
   try {
     if (token) localStorage.setItem(PUSH_TOKEN_KEY, token);
     else localStorage.removeItem(PUSH_TOKEN_KEY);
@@ -59,15 +91,47 @@ function knownPushToken() {
   try { return localStorage.getItem(PUSH_TOKEN_KEY); } catch (err) { return null; }
 }
 
-function getFirebaseMessaging() {
+// Whether there is a Firebase project to register a token with at all. This is
+// the synchronous half of what getFirebaseMessaging used to answer, split out
+// because two callers need the answer BEFORE they are willing to wait on a
+// chunk download, and one of them cannot wait at all (see the prompt below).
+function hasFirebaseConfig() {
+  return Boolean(firebaseConfig.apiKey && firebaseConfig.projectId);
+}
+
+// One in-flight download, shared by every caller.
+let sdkPromise = null;
+
+function loadMessagingSdk() {
+  if (!sdkPromise) {
+    sdkPromise = Promise.all([
+      import('firebase/app'),
+      import('firebase/messaging'),
+    ]).catch((err) => {
+      // A failed chunk fetch must not poison the module for the rest of the
+      // page load. The session watcher re-arms on focus and on 'online', and a
+      // rejected promise cached here would hand every one of those retries the
+      // same old failure instead of a fresh attempt.
+      sdkPromise = null;
+      throw err;
+    });
+  }
+  return sdkPromise;
+}
+
+// Now async, where it used to be synchronous. Every caller was already inside
+// an async function or a promise chain except onForegroundMessage, which keeps
+// its synchronous signature; see the note there.
+async function getFirebaseMessaging() {
   if (messaging) return messaging;
 
   // Don't initialize if config is missing
-  if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
+  if (!hasFirebaseConfig()) {
     return null;
   }
 
   try {
+    const [{ initializeApp }, { getMessaging }] = await loadMessagingSdk();
     const app = initializeApp(firebaseConfig);
     messaging = getMessaging(app);
     return messaging;
@@ -231,6 +295,9 @@ async function completeWebRegistration(m) {
   const tokenOptions = { vapidKey };
   if (sw) tokenOptions.serviceWorkerRegistration = sw;
 
+  // Free: `m` only exists because getFirebaseMessaging awaited this same
+  // promise, so it is already resolved by the time anything reaches here.
+  const [, { getToken }] = await loadMessagingSdk();
   const token = await getToken(m, tokenOptions);
   if (token) {
     await registerDeviceToken(token, 'web', deviceTimezone());
@@ -254,19 +321,43 @@ export async function requestNotificationPermission() {
   try {
     if (isNativeApp()) return await requestNativePermission();
 
-    const m = getFirebaseMessaging();
-    if (!m) return null;
+    // The synchronous half of the old `const m = getFirebaseMessaging()` that
+    // stood here. With no Firebase project there is nothing to register a
+    // token with, so asking would spend the one prompt for nothing.
+    if (!hasFirebaseConfig()) return null;
 
-    // Check if already denied — don't ask again
+    // Check if already denied. Don't ask again.
     if (Notification.permission === 'denied') {
       return null;
     }
+
+    // START the SDK download and ask in the SAME synchronous turn. Do not
+    // await it first.
+    //
+    // Notification.requestPermission() has to be called from the user gesture
+    // that reached this function. Safari refuses outright once the call is
+    // separated from the tap, and Chrome's transient activation runs out. So
+    // awaiting a chunk fetch on the line above the prompt would, on a slow
+    // phone on a bad connection, be the whole ask silently not happening. The
+    // fetch is kicked off here, the answer is collected, and only then is the
+    // download waited on, by which point it has been running the whole time
+    // the OS dialog was on screen.
+    //
+    // One deliberate difference from the old order: a Firebase project that is
+    // configured but fails to initialize now fails after the prompt rather
+    // than before it. That trade is worth it. A broken initializeApp on a
+    // present config is a build misconfiguration nobody has hit, and a prompt
+    // that never draws is a permanent loss on iOS.
+    const loading = getFirebaseMessaging();
 
     const permission = await Notification.requestPermission();
     if (permission !== 'granted') {
       localStorage.setItem('flock_notif_denied', 'true');
       return null;
     }
+
+    const m = await loading;
+    if (!m) return null;
 
     return await completeWebRegistration(m);
   } catch (err) {
@@ -284,9 +375,17 @@ export async function requestNotificationPermission() {
 export async function syncPushRegistration() {
   try {
     if (isNativeApp()) return await syncNativeRegistration();
-    const m = getFirebaseMessaging();
-    if (!m) return null;
+    // Permission first, config second, SDK last. The order matters now that
+    // the last of those is a download: this runs on a 2s tick for every signed
+    // in web user, and the overwhelming majority of them have never granted
+    // notification permission. Checking the cheap synchronous answers first
+    // means those users never fetch a byte of the Firebase SDK. Both guards
+    // returned null before and return null now, so nothing about the outcome
+    // changed, only what it costs to reach it.
     if (getNotificationStatus() !== 'granted') return null;
+    if (!hasFirebaseConfig()) return null;
+    const m = await getFirebaseMessaging();
+    if (!m) return null;
     return await completeWebRegistration(m);
   } catch (err) {
     console.warn('[Firebase] Token registration failed:', err.message);
@@ -480,8 +579,22 @@ export function unregisterPushToken() {
         await FirebaseMessaging.deleteToken();
         return;
       }
-      const m = getFirebaseMessaging();
-      if (m) await deleteToken(m);
+      // Only if this page load actually reached for the SDK, which means this
+      // device registered, or is registering, during this session and has a
+      // token in the SDK's IndexedDB to drop. Without that condition a logout
+      // would download the whole SDK to delete a token that cannot exist, on a
+      // device whose user never turned notifications on. The server side row
+      // is removed by the request above either way, and that is the half that
+      // stops the pushes.
+      //
+      // sdkPromise rather than `messaging` alone, so a logout that lands while
+      // the boot registration is still in flight still deletes the token it is
+      // about to be handed.
+      if (!sdkPromise) return;
+      const m = await getFirebaseMessaging();
+      if (!m) return;
+      const [, { deleteToken }] = await loadMessagingSdk();
+      await deleteToken(m);
     } catch (err) { /* the server-side row is already gone */ }
   });
 
@@ -511,16 +624,52 @@ export function onForegroundMessage(callback) {
     return () => { cancelled = true; remove(); };
   }
 
-  const m = getFirebaseMessaging();
-  if (!m) return () => {};
+  // The web branch now has the same shape as the native one above, and for the
+  // same reason: React calls this from an effect and uses what it returns as
+  // the cleanup, so the signature has to stay synchronous even though the SDK
+  // behind it arrives later. Cleanup that runs before the import resolves has
+  // to remove the listener the moment it exists, or a fast unmount and remount
+  // leaves the old one attached and every foreground push draws two toasts.
+  let cancelled = false;
+  let remove = () => {};
 
-  return onMessage(m, (payload) => {
-    callback({
-      title: payload.notification?.title || '',
-      body: payload.notification?.body || '',
-      data: payload.data || {},
-    });
-  });
+  const attach = () => {
+    (async () => {
+      const m = await getFirebaseMessaging();
+      if (!m || cancelled) return;
+      const [, { onMessage }] = await loadMessagingSdk();
+      const stop = onMessage(m, (payload) => {
+        callback({
+          title: payload.notification?.title || '',
+          body: payload.notification?.body || '',
+          data: payload.data || {},
+        });
+      });
+      if (cancelled) { stop(); return; }
+      remove = stop;
+    })().catch(() => {});
+  };
+
+  // App.js calls this from a mount effect for EVERY signed in user, so an
+  // unconditional attach here would fetch the SDK on every launch and undo the
+  // whole point of loading it lazily. onMessage only ever fires for a device
+  // that holds an FCM token, and holding one requires granted permission, so
+  // waiting costs nothing: a browser that has not granted cannot receive a
+  // foreground push to miss.
+  //
+  // The wait is not a refusal. The mount effect has an empty dependency list,
+  // so it never runs again, and somebody who taps Turn on inside a flock chat
+  // an hour into the session would otherwise get no foreground toast until the
+  // next reload. rememberPushToken is the one place a token appears, whichever
+  // path produced it, so it releases the listener the moment there is one.
+  if (knownPushToken() || getNotificationStatus() === 'granted') attach();
+  else pendingForegroundAttaches.add(attach);
+
+  return () => {
+    cancelled = true;
+    pendingForegroundAttaches.delete(attach);
+    remove();
+  };
 }
 
 // Check current notification permission status
