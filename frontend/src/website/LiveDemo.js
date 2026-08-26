@@ -105,7 +105,34 @@ function httpError(status, data) {
   return demoError('The demo hit a snag on our side. Try again in a minute.');
 }
 
+// One retry, and only for our own clock running out.
+//
+// MEASURED against production on 2026-08-26, from a cold service:
+//   /api/public/demo/venues, first call after idle   23.1 s
+//   same call, a location the response cache had not seen    8.0 s
+//   same call again, warm                                    0.15 s
+// REQUEST_TIMEOUT_MS is 15 s, so the FIRST request after the backend has been
+// sitting idle aborts and the demo tells the visitor it took too long. That is
+// the exact moment this section is being shown to someone: the site is opened
+// in front of a judge or a bar owner, minutes after nobody has touched it, and
+// the one thing on the page that proves the model is real fails at its only
+// chance. Warming up is a one-shot condition that fixes itself, so the second
+// attempt lands in a fraction of a second.
+//
+// Narrow on purpose. A retry only happens when OUR timer fired: a caller that
+// aborted (the component moved on, the visitor picked another pin), an offline
+// device, a 429 and a 404 all still fail on the first answer, because none of
+// them gets better by being asked twice.
 async function fetchDemo(url, signal) {
+  try {
+    return await fetchOnce(url, signal);
+  } catch (e) {
+    if (!e || !e.timedOut || signal?.aborted) throw e;
+    return fetchOnce(url, signal);
+  }
+}
+
+async function fetchOnce(url, signal) {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) {
     throw demoError(OFFLINE_MSG);
   }
@@ -127,7 +154,11 @@ async function fetchDemo(url, signal) {
     } catch (e) {
       if (signal?.aborted) throw e; // the component moved on; nothing to show
       if (typeof navigator !== 'undefined' && navigator.onLine === false) throw demoError(OFFLINE_MSG);
-      if (e && e.name === 'AbortError') throw demoError('That took longer than it should have. Try again.');
+      if (e && e.name === 'AbortError') {
+        const timeout = demoError('That took longer than it should have. Try again.');
+        timeout.timedOut = true;
+        throw timeout;
+      }
       throw demoError('Could not reach the demo. Check your connection and try again.');
     }
     // A rate limiter, a proxy or a cold container can answer with HTML. Reading
