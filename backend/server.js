@@ -1541,6 +1541,50 @@ app.use((err, req, res, next) => {
     return res.status(403).json({ error: 'Not allowed by CORS' });
   }
 
+  // ANYTHING ELSE THAT NAMES A 4xx IS A CLIENT FAULT TOO, AND THIS HANDLER WAS
+  // STILL ANSWERING THOSE 500 WITH A STACK.
+  //
+  // The branch above fixed one error that was being reported as a crash. It is
+  // not the only one, and the next one along needs no new code anywhere to be
+  // reachable: EXPRESS ITSELF raises it. A `:id` route with a malformed
+  // percent-escape in the parameter — `GET /api/flocks/%ZZ`, three characters,
+  // no account, any router in this app — makes Express's own decode_param throw
+  // a URIError carrying `status = statusCode = 400`. Measured against this file
+  // on 2026-08-26, before this branch existed:
+  //
+  //     HTTP/1.1 500 Internal Server Error
+  //     [unhandled-error] GET /api/users/%ZZ user=anon: URIError: Failed to
+  //         decode param '%ZZ' ... plus the rest of the stack
+  //
+  // Sentry does not capture it (its rule reads the 400 and leaves it alone, so
+  // the alert storm stays closed), which is precisely why it survived the last
+  // pass: the half that was measured was the Sentry half. The other two halves
+  // were still wrong. The caller is told the server broke when the caller's own
+  // URL was malformed, and every one of those writes a full stack trace into
+  // the production log, from an anonymous request, at whatever rate the
+  // backstop allows.
+  //
+  // An error that sets `status` is DECLARING what it is, and the block above
+  // already trusts that declaration for body-parser. There is no reason to
+  // trust it there and guess here. Only 4xx is honoured: a 5xx declaration is a
+  // server fault and belongs in the branch below with its stack, and anything
+  // outside 400-499 is not a claim this handler recognises.
+  //
+  // The body stays the same opaque sentence the body-parser branch uses,
+  // because a client error's message is written for us and not for the caller,
+  // and one sentence is better than a second one that says the same thing. The
+  // log line is clamped and carries no stack, for the reason the cors line
+  // above gives.
+  const declaredStatus = Number(err && (err.status ?? err.statusCode));
+  if (Number.isInteger(declaredStatus) && declaredStatus >= 400 && declaredStatus < 500) {
+    console.warn(
+      `[client-error] ${req.method} ${String(req.originalUrl).slice(0, 200)} `
+      + `user=${req.user?.id ?? 'anon'}: ${declaredStatus} `
+      + `${String((err && err.message) || '').replace(/[\r\n]+/g, ' ').slice(0, 200)}`
+    );
+    return res.status(declaredStatus).json({ error: 'That request could not be read.' });
+  }
+
   // Everything below is a genuine server fault, and this line is where a 3am
   // debug starts: which verb, which URL, which account — then the stack.
   // req.originalUrl rather than req.path because by the time an error reaches

@@ -296,7 +296,10 @@ test('the global error handler answers the refusal itself instead of falling thr
   // headersSent guard. This is what pins the real file to the same shape.
   const handler = serverSrc.slice(serverSrc.indexOf('const BODY_PARSER_CLIENT_ERRORS'));
   const corsBranch = handler.indexOf('err.type === CORS_REFUSED');
-  const faultBranch = handler.indexOf('[unhandled-error]');
+  // Anchored on the LOG CALL, not on the tag. The tag now appears in a comment
+  // above the 4xx branch too (it quotes the measured output), and an anchor that
+  // matches a comment is an ordering assertion that stops measuring the code.
+  const faultBranch = handler.indexOf('`[unhandled-error] ${req.method}');
   assert.ok(corsBranch > 0, 'the global error handler no longer has a branch for a refused origin');
   assert.ok(faultBranch > 0, 'the unhandled-error branch has been renamed');
   assert.ok(corsBranch < faultBranch,
@@ -305,4 +308,147 @@ test('the global error handler answers the refusal itself instead of falling thr
   assert.match(serverSrc, /const CORS_REFUSED = 'cors\.origin\.refused';/,
     'CORS_REFUSED is the one spelling shared by the throw site and the handler, and two spellings is '
     + 'how the branch stops matching');
+});
+
+// ---------------------------------------------------------------------------
+// AND NEITHER IS ANYTHING ELSE THAT NAMES A 4xx (2026-08-26).
+// ---------------------------------------------------------------------------
+// Adversarial pass over ce3b14c, which is the commit directly above. That
+// change was right and it stopped one line short. It fixed ONE error that this
+// handler was reporting as a crash, and the argument it made ("an origin that
+// is not on the allowlist is exactly the case this allowlist exists to answer")
+// is not specific to CORS: any error carrying a 4xx status has already declared
+// itself a client fault, and the handler fell through all of them into the
+// branch that writes a stack and answers 500.
+//
+// The next one along needs no new code anywhere to be reachable, because
+// EXPRESS ITSELF raises it. Every router in this app mounts `:id` routes, and a
+// malformed percent-escape in one of those parameters makes Express's own
+// decode_param throw a URIError carrying status = statusCode = 400. Measured
+// against the real handler, before the branch this test pins existed:
+//
+//     GET /api/users/%ZZ  ->  HTTP/1.1 500 Internal Server Error
+//     [unhandled-error] GET /api/users/%ZZ user=anon: URIError: Failed to
+//         decode param '%ZZ' ... plus the rest of the stack
+//
+// Three characters, from any address, with no account. Sentry does NOT capture
+// it, because its rule reads the 400 and leaves it alone, and that is exactly
+// why it survived the previous pass: the half that got measured was the Sentry
+// half. The other two halves were still wrong. The caller is told the server
+// broke when the caller's own URL was malformed, and every one of these writes
+// a full stack into the production log.
+//
+// Driven END TO END through real Express rather than by calling the handler
+// with a hand-built error, because the point of the case is that Express is the
+// thing raising it. A synthetic `err.status = 400` would prove the branch
+// matches and would not prove the branch is REACHED.
+test('an error that declares a 4xx is answered as one, with one line and no stack', async () => {
+  const express = require('express');
+  const http = require('node:http');
+
+  const start = serverSrc.indexOf('const BODY_PARSER_CLIENT_ERRORS');
+  assert.ok(start > 0, 'server.js must still classify body-parser failures');
+  const tail = "return res.status(500).json({ error: 'Internal server error' });";
+  const at = serverSrc.indexOf(tail, start);
+  assert.ok(at > start, 'the global error handler must still fall through to a 500');
+  const end = serverSrc.indexOf('\n});', at + tail.length) + '\n});'.length;
+  const marker = /const CORS_REFUSED = '([^']+)';/.exec(serverSrc);
+  assert.ok(marker, 'server.js no longer declares CORS_REFUSED');
+
+  const logged = [];
+  const con = {
+    error: (...a) => logged.push(['error', a.map(String).join(' ')]),
+    warn: (...a) => logged.push(['warn', a.map(String).join(' ')]),
+    log: () => {},
+  };
+  let handler = null;
+  // eslint-disable-next-line no-new-func
+  new Function('app', 'console', 'CORS_REFUSED', serverSrc.slice(start, end))(
+    { use: (fn) => { handler = fn; } }, con, marker[1]
+  );
+  assert.equal(typeof handler, 'function');
+
+  const app = express();
+  // The route SHAPE every router in this app uses. Nothing in the handler is
+  // route-specific; this is here so that EXPRESS raises the error rather than
+  // the test.
+  app.get('/api/users/:id', (req, res) => res.json({ id: req.params.id }));
+  app.get('/boom', (_req, _res, next) => next(new Error('a genuine fault')));
+  app.get('/refused-5xx', (_req, _res, next) => {
+    // A 502 is a SERVER fault that happens to carry a status, and it must keep
+    // its stack. Honouring every declared status rather than only 4xx would
+    // quietly take the debugging line off the errors that need it most.
+    const e = new Error('upstream said no');
+    e.status = 502;
+    next(e);
+  });
+  app.use((_req, res) => res.status(404).json({ error: 'Route not found' }));
+  app.use(handler);
+
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    for (const [what, url] of [
+      ['a malformed percent-escape in a :param', '/api/users/%ZZ'],
+      ['a truncated multi-byte escape in a :param', '/api/users/%E0%A4'],
+    ]) {
+      logged.length = 0;
+      const res = await fetch(base + url);
+      assert.equal(res.status, 400,
+        `${what} answered ${res.status}. Express raised a URIError that already says status 400, and this `
+        + 'handler overrode it with a 500, telling the caller the server broke when their own URL was '
+        + 'malformed. Same class as the CORS refusal above, one branch further down.');
+      const body = await res.json();
+      assert.ok(body.error && !/Internal server error/.test(body.error),
+        'the body still calls a client mistake a server fault');
+      assert.equal(logged.filter(([lvl]) => lvl === 'error').length, 0,
+        `${what} still writes a console.error. That is the stack-per-request half of the same problem: `
+        + 'anonymous, unauthenticated, and as fast as the backstop allows.');
+      const warns = logged.filter(([lvl]) => lvl === 'warn');
+      assert.equal(warns.length, 1, `${what} must log exactly one line`);
+      assert.ok(!/\n/.test(warns[0][1]), 'the one line must be one line');
+      assert.ok(warns[0][1].length < 600, 'the line must be clamped, not a stack in disguise');
+      assert.match(warns[0][1], /GET/, 'a log line with no verb and no URL is not worth writing');
+    }
+
+    // THE TWO CONTROLS. Without them this test would pass equally well against
+    // a handler that had stopped writing stacks for anything at all.
+    logged.length = 0;
+    const fault = await fetch(`${base}/boom`);
+    assert.equal(fault.status, 500, 'an error with NO status is still a server fault');
+    assert.equal(logged.filter(([lvl]) => lvl === 'error').length, 1,
+      'a genuine fault must still log its stack; that line is where a 3am debug starts');
+
+    logged.length = 0;
+    const upstream = await fetch(`${base}/refused-5xx`);
+    assert.equal(upstream.status, 500, 'a 5xx declaration is a server fault, not a client one');
+    assert.equal(logged.filter(([lvl]) => lvl === 'error').length, 1,
+      'a 502 must keep its stack: honouring every declared status, rather than only 4xx, would strip the '
+      + 'debugging line off exactly the errors that need it');
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
+
+test('the 4xx branch sits below the two that name their own status, and above the 500 fallback', () => {
+  // Order is the whole behaviour here. The body-parser table and the cors
+  // marker each answer with a SENTENCE of their own, and a general 4xx branch
+  // above either of them would swallow both and replace their wording with the
+  // generic one.
+  const handler = serverSrc.slice(serverSrc.indexOf('const BODY_PARSER_CLIENT_ERRORS'));
+  const bodyParser = handler.indexOf('BODY_PARSER_CLIENT_ERRORS.has(err.type)');
+  const corsBranch = handler.indexOf('err.type === CORS_REFUSED');
+  const declared = handler.indexOf('const declaredStatus');
+  // Anchored on the LOG CALL, not on the tag. The tag now appears in a comment
+  // above the 4xx branch too (it quotes the measured output), and an anchor that
+  // matches a comment is an ordering assertion that stops measuring the code.
+  const faultBranch = handler.indexOf('`[unhandled-error] ${req.method}');
+  assert.ok(declared > 0, 'the global error handler no longer honours a declared 4xx status');
+  assert.ok(bodyParser > 0 && corsBranch > 0 && faultBranch > 0);
+  assert.ok(bodyParser < declared && corsBranch < declared,
+    'the general 4xx branch has moved above a branch with its own wording, which it would now swallow');
+  assert.ok(declared < faultBranch,
+    'the general 4xx branch is below the unhandled-error branch, so every one of them logs a stack and '
+    + 'answers 500 again');
 });
