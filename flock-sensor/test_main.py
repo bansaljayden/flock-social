@@ -134,7 +134,9 @@ class Snapshots(unittest.TestCase):
         with main._lock:
             main._state['ir_count'] = 7
             main._state['thermal'] = 3
+            main._state['thermal_at'] = time.monotonic()
             main._state['noise_db'] = 64.4
+            main._state['noise_at'] = time.monotonic()
 
     def test_crossings_are_handed_to_exactly_one_payload(self):
         # The counter resets at snapshot, not on a successful POST. Resetting on
@@ -178,6 +180,76 @@ class Snapshots(unittest.TestCase):
         item = {'recorded_at': '2026-01-01T00:00:00.000Z', '_mono': time.monotonic()}
         resolved = main._resolve_timestamp(dict(item))
         self.assertEqual(resolved['recorded_at'], '2026-01-01T00:00:00.000Z')
+
+
+class SensorFreshness(unittest.TestCase):
+    """A sensor that stops answering must stop being reported.
+
+    `thermal` and `noise_db` are latched values, so before this the last number
+    a failing sensor managed to read was posted every 30 seconds forever. A bus
+    that locks up at 11pm is ordinary hardware behaviour, and it showed on the
+    venue card as a packed room at 4am, with nothing downstream able to tell the
+    difference because the rows kept arriving with fresh timestamps.
+    """
+
+    def setUp(self):
+        main._throttle.clear()
+        with main._lock:
+            main._state['ir_count'] = 0
+            main._state['thermal'] = 12
+            main._state['thermal_at'] = time.monotonic()
+            main._state['noise_db'] = 71.5
+            main._state['noise_at'] = time.monotonic()
+
+    def test_a_reading_taken_just_now_is_sent_as_it_is(self):
+        payload = main.snapshot()
+        self.assertEqual(payload['thermal_headcount'], 12)
+        self.assertEqual(payload['noise_db'], 71.5)
+
+    def test_a_thermal_camera_that_stopped_answering_reports_zero_not_its_last_headcount(self):
+        with main._lock:
+            main._state['thermal_at'] = time.monotonic() - main.THERMAL_STALE_AFTER - 1
+        payload = main.snapshot()
+        self.assertEqual(payload['thermal_headcount'], 0)
+        self.assertEqual(payload['noise_db'], 71.5, 'one dead sensor must not zero the others')
+
+    def test_a_mic_that_stopped_answering_reports_zero_not_its_last_level(self):
+        with main._lock:
+            main._state['noise_at'] = time.monotonic() - main.NOISE_STALE_AFTER - 1
+        payload = main.snapshot()
+        self.assertEqual(payload['noise_db'], 0.0)
+        self.assertEqual(payload['thermal_headcount'], 12)
+
+    def test_a_few_failed_reads_do_not_zero_a_working_sensor(self):
+        # thermal_loop reads every 2s and noise_loop every 5s. A sensor that
+        # missed a handful of reads is still a working sensor, and zeroing it
+        # would invent an empty room in the middle of a busy night.
+        with main._lock:
+            main._state['thermal_at'] = time.monotonic() - 10
+            main._state['noise_at'] = time.monotonic() - 20
+        payload = main.snapshot()
+        self.assertEqual(payload['thermal_headcount'], 12)
+        self.assertEqual(payload['noise_db'], 71.5)
+
+    def test_a_sensor_that_never_initialized_reports_zero_rather_than_a_stale_default(self):
+        with main._lock:
+            main._state['thermal'] = 0
+            main._state['thermal_at'] = None
+            main._state['noise_db'] = 0.0
+            main._state['noise_at'] = None
+        payload = main.snapshot()
+        self.assertEqual(payload['thermal_headcount'], 0)
+        self.assertEqual(payload['noise_db'], 0.0)
+
+    def test_the_crossing_count_is_never_suppressed_by_a_staleness_rule(self):
+        # The IR counter resets into every payload, so a dead beam already
+        # reports 0 by construction. Applying a freshness rule to it would
+        # discard real crossings.
+        with main._lock:
+            main._state['ir_count'] = 9
+            main._state['thermal_at'] = time.monotonic() - 10_000
+            main._state['noise_at'] = time.monotonic() - 10_000
+        self.assertEqual(main.snapshot()['ir_beam_count'], 9)
 
 
 class Buffering(unittest.TestCase):
@@ -413,6 +485,93 @@ class Delivery(unittest.TestCase):
         pusher.flush()
         self.assertEqual(pusher.failures, 0)
         self.assertEqual(pusher.next_attempt, 0.0)
+
+    def test_being_told_to_slow_down_is_a_short_pause_not_a_fifteen_minute_outage(self):
+        # 429 used to fall into the generic retryable branch and buy the network
+        # backoff. The backend rate-limits rows inside its 15-minute live window
+        # to one every MIN_LIVE_GAP_SECONDS, so a device draining a buffer hit
+        # one within seconds and then slept for minutes while still taking two
+        # new readings a minute. Past a backlog of about fifteen minutes it took
+        # in more than it delivered, drifted to the 240-entry cap, and started
+        # dropping readings, and the venue's live figure never came back.
+        self.stub(lambda p, n: (429, '{"error":"too fast","retry_after_seconds":2}'))
+        self.queue(5)
+        pusher = main.Pusher()
+        pusher.flush()
+        delay = pusher.next_attempt - time.monotonic()
+        self.assertGreater(delay, 0)
+        self.assertLessEqual(delay, main.PUSH_INTERVAL * 1.2,
+                             'a slow-down must never cost more than one normal cadence')
+        self.assertEqual(len(main._pending), 5, 'nothing is thrown away')
+        self.assertEqual(pusher.failures, 0, 'a 429 is not evidence the backend is down')
+
+    def test_a_slow_down_that_keeps_coming_still_backs_off_but_never_past_one_cadence(self):
+        pusher = main.Pusher()
+        for _ in range(50):
+            pusher._schedule_rate_limit_retry(2)
+        delay = pusher.next_attempt - time.monotonic()
+        self.assertGreaterEqual(delay, main.RATE_LIMIT_RETRY_MIN * 0.8)
+        self.assertLessEqual(delay, main.PUSH_INTERVAL * 1.2)
+
+    def test_a_retry_after_the_backend_did_not_send_falls_back_to_the_floor(self):
+        self.assertIsNone(main._retry_after_seconds('not json at all'))
+        self.assertIsNone(main._retry_after_seconds('{"error":"too fast"}'))
+        self.assertIsNone(main._retry_after_seconds('{"retry_after_seconds":"soon"}'))
+        self.assertIsNone(main._retry_after_seconds('{"retry_after_seconds":-4}'))
+        self.assertIsNone(main._retry_after_seconds('{"retry_after_seconds":99999}'),
+                          'a hostile or broken value must not park the device for a day')
+        self.assertEqual(main._retry_after_seconds('{"retry_after_seconds":5}'), 5.0)
+
+    def test_a_cycle_that_delivered_readings_does_not_escalate_the_backoff(self):
+        # The exponent measures how long the backend has been unreachable. A
+        # cycle that delivered eleven readings and failed on the twelfth is not
+        # evidence of that, and counting it as such is the other half of why a
+        # device draining a buffer never caught up: the delay climbed on every
+        # cycle however much work the cycle had done.
+        self.stub(lambda p, n: (201, '') if n <= 3 else (503, 'upstream down'))
+        self.queue(10)
+        pusher = main.Pusher()
+        pusher.failures = 6
+        pusher.flush()
+        self.assertEqual(len(main._pending), 7, 'three went out')
+        self.assertEqual(pusher.failures, 1, 'progress resets the exponent')
+        self.assertLessEqual(pusher.next_attempt - time.monotonic(), main.PUSH_INTERVAL * 2 * 1.2)
+
+    def test_a_buffer_drain_that_is_throttled_at_the_live_window_still_finishes(self):
+        # The whole failure, end to end: everything older than the live window
+        # is accepted, the newest rows are throttled. The queue has to empty.
+        live_window = 15
+        state = {'accepted': 0}
+
+        def responder(payload, n):
+            # Stand in for the backend: the last few readings are the ones
+            # inside the window it rate-limits, and it lets one through per
+            # attempt.
+            remaining = len(main._pending)
+            if remaining <= live_window and state['accepted'] % 2 == 1:
+                state['accepted'] += 1
+                return 429, '{"retry_after_seconds":2}'
+            state['accepted'] += 1
+            return 201, ''
+
+        self.stub(responder)
+        self.queue(60)
+        pusher = main.Pusher()
+        scheduled_wait = 0.0
+        for _ in range(200):
+            if not main._pending:
+                break
+            pusher.flush()
+            scheduled_wait += max(0.0, pusher.next_attempt - time.monotonic())
+            pusher.next_attempt = 0  # stand in for that wait elapsing
+
+        self.assertEqual(main._pending, [], 'the queue must drain, not stall short of the end')
+        # The delay each throttled row costs is what decides whether a device
+        # catches up or falls further behind. Every 429 used to buy a network
+        # backoff that doubled to fifteen minutes, so this total ran to hours
+        # while the device kept taking two readings a minute.
+        self.assertLess(scheduled_wait, 15 * main.PUSH_INTERVAL,
+                        'a throttled drain must cost minutes, not hours')
 
     def test_an_outage_longer_than_the_buffer_drops_the_oldest_readings_not_the_newest(self):
         self.stub(lambda p, n: (503, 'down'))
