@@ -40,7 +40,12 @@ const DASHBOARD_FILE = path.join(__dirname, '..', 'routes', 'venueDashboard.js')
 // guard that passes or fails on \r\n is a guard nobody can trust.
 const read = (f) => fs.readFileSync(f, 'utf8').replace(/\r\n/g, '\n');
 
-const appSrc = read(APP_FILE);
+// The venue owner dashboard left App.js on 2026-08-26: it is its own lazily
+// loaded chunk now (screens/VenueDashboard.js), and every promotion and event
+// surface this file scans went with it. Nothing asserted below changed. The app
+// source is simply in two files, so both are read, in the order they used to be
+// one.
+const appSrc = read(APP_FILE) + read(path.join(FRONTEND, 'screens', 'VenueDashboard.js'));
 const firebaseSrc = read(FIREBASE_FILE);
 const dashboardSrc = read(DASHBOARD_FILE);
 

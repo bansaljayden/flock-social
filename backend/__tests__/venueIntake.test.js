@@ -515,7 +515,14 @@ test('the profile a client receives carries the answer and the sentence', async 
 // 7. The form and the server agree, and the form is reachable twice
 // ═══════════════════════════════════════════════════════════════════════════
 
-const APP_JS = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'src', 'App.js'), 'utf8');
+// The venue owner dashboard left App.js on 2026-08-26: it is its own lazily
+// loaded chunk now (screens/VenueDashboard.js), and the venue settings card
+// this section reads went with it. Nothing asserted below changed. The app
+// source is simply in two files, so both are read, in the order they used to
+// be one.
+const CLIENT_SRC = path.join(__dirname, '..', '..', 'frontend', 'src');
+const APP_JS = fs.readFileSync(path.join(CLIENT_SRC, 'App.js'), 'utf8')
+  + fs.readFileSync(path.join(CLIENT_SRC, 'screens', 'VenueDashboard.js'), 'utf8');
 
 // A dropdown offering a value the server refuses is a form that 400s on submit.
 function optionValues(constName) {

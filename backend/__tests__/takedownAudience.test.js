@@ -311,9 +311,12 @@ test('the story decision is tied to the absence of a story reader in the client'
   // the fan-out is cheap at a moderator's click rate, but the launch client has
   // no story UI at all, so there is nobody to tell. That is the whole reason,
   // and it is checkable.
-  const appSrc = fs.readFileSync(
-    path.join(__dirname, '..', '..', 'frontend', 'src', 'App.js'), 'utf8'
-  );
+  // Both halves of the client, because the venue owner dashboard left App.js on
+  // 2026-08-26 (screens/VenueDashboard.js). This is a NEGATIVE assertion, so
+  // reading one file after a split is the shape that passes by looking away.
+  const CLIENT_SRC = path.join(__dirname, '..', '..', 'frontend', 'src');
+  const appSrc = fs.readFileSync(path.join(CLIENT_SRC, 'App.js'), 'utf8')
+    + fs.readFileSync(path.join(CLIENT_SRC, 'screens', 'VenueDashboard.js'), 'utf8');
   assert.ok(!/\bgetStories\b/.test(appSrc),
     'App.js reads stories now. Widening the story takedown is owed by the same commit: ' +
     'build the audience with storyVisibilitySql and fan out to the personal rooms.');
