@@ -118,7 +118,13 @@ const readSource = (...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8').repl
 // loaded chunk now (screens/VenueDashboard.js), and about 2,000 lines of what
 // this file scans went with it. Nothing asserted below changed. The app source
 // is simply in two files, so both are read, in the order they used to be one.
+// The flock chat screen left App.js in the same sweep, on the same day
+// (screens/ChatDetail.js), and the message list, the composer, the reaction
+// row and the report entry went with it. Same treatment: nothing asserted
+// below changed, the app source is simply in three files now, and all three
+// are read in the order they used to be one.
 const appSource = readSource('frontend', 'src', 'App.js')
+  + readSource('frontend', 'src', 'screens', 'ChatDetail.js')
   + readSource('frontend', 'src', 'screens', 'VenueDashboard.js');
 const pushNavSource = readSource('frontend', 'src', 'services', 'pushNavigation.js');
 const billingSource = readSource('backend', 'routes', 'billing.js');

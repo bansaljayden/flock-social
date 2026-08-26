@@ -31,7 +31,12 @@ const SRC = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(SRC, ...p), 'utf8');
 
 const FIREBASE = read('services', 'firebase.js');
-const APP = read('App.js');
+// The flock chat screen left App.js on 2026-08-26: it lives in
+// screens/ChatDetail.js now, and the message list, the composer, the reaction
+// row and the report entry went with it. Nothing asserted below changed. The
+// app source is simply in two files, so both are read, in the order they used
+// to be one.
+const APP = read('App.js') + read('screens', 'ChatDetail.js');
 
 describe('startup registers, and never asks', () => {
   it('the session watcher calls the non-prompting path', () => {
