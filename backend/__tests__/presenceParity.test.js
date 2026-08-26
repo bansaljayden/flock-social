@@ -277,7 +277,13 @@ test('the windows are still deliberately different, and in the documented direct
   // unchanged; only the spelling of "now" moved, and these patterns had pinned
   // the spelling. venueDashboardClockBounds.test.js is what fails if a bare
   // NOW() comes back against event_time, so widening here loses no guard.
-  const NOW_UTC = "(?:NOW\\(\\)|\\(NOW\\(\\) AT TIME ZONE 'UTC'\\))";
+  // The zone NAME is read in either case, and that is not laxity. Postgres
+  // resolves time zone names case-insensitively, services/photoStore.js already
+  // writes AT TIME ZONE 'utc' in lower case, and flockCompletionSweep.test.js
+  // already reads this same literal with the i flag. Pinning the capitals would
+  // fail a correct rewrite on the case of three letters, which is the defect
+  // this pattern was widened to stop making.
+  const NOW_UTC = "(?:NOW\\(\\)|\\(NOW\\(\\) AT TIME ZONE '[Uu][Tt][Cc]'\\))";
   assert.match(sql, new RegExp(`created_at > ${NOW_UTC} - INTERVAL '30 days'`), 'the check-in window is no longer the review window');
   assert.match(sql, new RegExp(`f\\.event_time BETWEEN ${NOW_UTC} - INTERVAL '30 days'`), 'the flock window is no longer the review window');
   // ...and reviewing while you are still there works: feedback's 12-hour lead
