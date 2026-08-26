@@ -152,9 +152,22 @@ const scrubEventStrings = (val, depth = 0) => {
 // config is a documented no-op; posthog.com/tutorials/web-redact-properties
 // says $ip cannot be redacted client-side). The fix is the project-level
 // "Discard client IP data" toggle in the PostHog dashboard, which is a
-// human-hands step. $geoip_disable below asks ingestion not to derive
-// city/region from that IP in the meantime (the property server SDKs set via
+// human-hands step. IT HAS BEEN DONE: project 555076 reports
+// anonymize_ips true, read off the project settings on 2026-08-26. That is a
+// statement about one date and about a switch in somebody else's dashboard,
+// so re-check it rather than assuming it, and treat $geoip_disable below as
+// the thing this code can actually guarantee. It asks ingestion not to derive
+// city or region from that IP either way (the property server SDKs set via
 // their disableGeoip option).
+//
+// A SECOND THING THAT DASHBOARD SAYS, and it is the reason the pinned config
+// below is load-bearing rather than tidy. The project settings currently have
+// heatmaps_opt_in true and capture_dead_clicks true, both switched on. The
+// only reason neither is collected is that this object refuses them in code.
+// The refusal is visible in the data: $dead_click stopped arriving on
+// 2026-08-17 and $dead_swipe on 2026-08-14, which is when these lines
+// shipped. Delete a line here and collection widens the same day, with no
+// dashboard change to review. That is what analyticsPrivacy.test.js is for.
 //
 // The privacy policy (website/PrivacyPolicy.js) says PostHog keeps its
 // identifier in local storage rather than in a cookie, which is what
