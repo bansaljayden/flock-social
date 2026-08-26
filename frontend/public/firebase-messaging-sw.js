@@ -45,11 +45,30 @@ function configFromUrl() {
 // The backend puts the destination in `data.link` (see services/firebaseService
 // .js). The type map is the fallback for anything sent before that shipped.
 // ---------------------------------------------------------------------------
+// KEEP THIS SET IN STEP with FLOCK_SCOPED_TYPES in
+// backend/services/firebaseService.js and FLOCK_TYPES in
+// src/services/pushNavigation.js. It went one type out of step
+// (`flock_cancelled` was added to both of those and not to this), which is only
+// survivable because `data.link` above wins whenever it is present and the
+// backend now always sets it. This list is what a notification sent before
+// deep links existed falls back to, so a type missing from it is a tap that
+// lands on the home screen instead of on the thing it is about.
 var FLOCK_TYPES = [
   'flock_invite', 'flock_message', 'flock_rsvp', 'flock_confirmed', 'flock_updated',
+  'flock_cancelled',
   'budget_reminder', 'budget_ready', 'bill_created', 'bill_settled',
   'crowd_alert', 'guest_rsvp', 'attendance_marked',
 ];
+
+// The types whose destination is a tab rather than a flock. Same map as
+// deepLinkPath in backend/services/firebaseService.js.
+var TAB_TYPES = {
+  friend_request: '/?tab=you',
+  friend_accepted: '/?tab=you',
+  attendance_marked: '/?tab=you',
+  availability_pulse: '/?tab=home',
+  moderation_report: '/?admin=true',
+};
 
 function targetUrl(data) {
   var d = data || {};
@@ -59,10 +78,18 @@ function targetUrl(data) {
     raw = d.link;
   } else if (d.type === 'dm_message' && d.senderId) {
     raw = '/?dm=' + encodeURIComponent(d.senderId);
-  } else if (d.type === 'friend_request') {
-    raw = '/?tab=you';
+  } else if (TAB_TYPES[d.type]) {
+    raw = TAB_TYPES[d.type];
+  } else if (d.type === 'flock_invite' && d.flockId) {
+    // An invited flock is not in the accepted list the chat screen reads, so a
+    // chat link for one can only ever miss. Its own parameter, its own landing.
+    raw = '/?invite=' + encodeURIComponent(d.flockId);
   } else if (FLOCK_TYPES.indexOf(d.type) !== -1 && d.flockId) {
     raw = '/?flock=' + encodeURIComponent(d.flockId);
+  } else if (d.type === 'flock_cancelled') {
+    // A cancellation whose flock has already been deleted carries no id,
+    // because there is no row left and no screen to open.
+    raw = '/?tab=chat';
   } else {
     raw = '/';
   }
