@@ -4154,8 +4154,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [showSearchResults, setShowSearchResults] = useState(false);
   const [searchResultsSort, setSearchResultsSort] = useState('rating');
   const searchTimerRef = useRef(null);
-  const [featuredEvents, setFeaturedEvents] = useState([]);
+  // Null until a read lands, so the events screen can tell "nothing is on near
+  // you" apart from "we could not ask". See fetchFeaturedEvents.
+  const [featuredEvents, setFeaturedEvents] = useState(null);
   const [featuredEventsLoading, setFeaturedEventsLoading] = useState(false);
+  const [featuredEventsError, setFeaturedEventsError] = useState('');
   const featuredEventsFetchedRef = useRef(false);
   const [showEventsView, setShowEventsView] = useState(false);
   const [eventsSearchQuery, setEventsSearchQuery] = useState('');
@@ -5428,9 +5431,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
   }, [rerunningFlockId, authUser, needsEmailVerification, showToast]);
 
-  // Load trusted contacts on mount (for SOS modal)
+  // Load trusted contacts on mount (for SOS modal). A failure here is the one
+  // that matters most in the file: these are the people an emergency alert
+  // goes to, and a silent catch left the Safety screen saying the user had
+  // none. See loadTrustedContacts for the retry.
   useEffect(() => {
-    getTrustedContacts().then(d => setTrustedContacts(d.contacts || [])).catch(() => {});
+    getTrustedContacts()
+      .then((d) => { setTrustedContacts(d.contacts || []); setTrustedContactsLoaded(true); setTrustedContactsError(''); })
+      .catch((err) => setTrustedContactsError(err?.message || "Your trusted contacts couldn't be loaded."));
   }, []);
 
   // Load real user stats on mount (streak, friends)
@@ -5579,7 +5587,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [categoryExpanded, setCategoryExpanded] = useState(false);
   const [activeVenue, setActiveVenue] = useState(null);
   const [venueDetailModal, setVenueDetailModal] = useState(null); // full venue details for modal
-  const [venueDetailReviews, setVenueDetailReviews] = useState([]);
+  // Null until a read lands, so "No reviews yet. Be the first!" is only ever
+  // said about a venue the server actually answered for. It used to be said
+  // about every venue opened on a bad connection, which is an invitation to
+  // write a review built on a fetch that failed.
+  const [venueDetailReviews, setVenueDetailReviews] = useState(null);
+  const [venueDetailReviewsError, setVenueDetailReviewsError] = useState('');
   const [showReviewForm, setShowReviewForm] = useState(false);
   const [reviewRating, setReviewRating] = useState(0);
   const [reviewText, setReviewText] = useState('');
@@ -5757,13 +5770,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // — see the note in services/socket.js for why those two sets of people are
   // different in both directions. Both rooms on one venue at once is normal and
   // the server keeps them in separate Sets so they cannot evict each other.
+  // Named so the card's own retry can call the same read the effect does.
+  const loadVenueDetailReviews = useCallback((placeId) => {
+    if (!placeId) return;
+    setVenueDetailReviewsError('');
+    getPublicReviews(placeId)
+      .then(d => setVenueDetailReviews(d.reviews || []))
+      .catch(err => setVenueDetailReviewsError(err?.message || "Reviews aren't loading right now."));
+  }, []);
+
   useEffect(() => {
-    if (!venueDetailPlaceId) { setVenueDetailReviews([]); setVenueDetailPromos([]); setShowReviewForm(false); return undefined; }
-    getPublicReviews(venueDetailPlaceId).then(d => setVenueDetailReviews(d.reviews || [])).catch(() => {});
+    if (!venueDetailPlaceId) { setVenueDetailReviews(null); setVenueDetailReviewsError(''); setVenueDetailPromos([]); setShowReviewForm(false); return undefined; }
+    loadVenueDetailReviews(venueDetailPlaceId);
+    // Promotions are LEFT silent on purpose. The section renders only when
+    // there is at least one promotion, so a failed read hides a heading and
+    // states nothing: there is no sentence here claiming the venue has no
+    // deals, and inventing an error card for a section the user was never
+    // shown would be noise about something they did not ask for.
     getPublicPromotions(venueDetailPlaceId).then(d => setVenueDetailPromos(d.promotions || [])).catch(() => {});
     joinVenueContentRoom(venueDetailPlaceId);
     return () => leaveVenueContentRoom(venueDetailPlaceId);
-  }, [venueDetailPlaceId]);
+  }, [venueDetailPlaceId, loadVenueDetailReviews]);
 
   const [showConnectPanel, setShowConnectPanel] = useState(false);
   const [discoverNavOpen, setDiscoverNavOpen] = useState(false);
@@ -6088,6 +6115,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [showDmReactionPicker, setShowDmReactionPicker] = useState(null);
   const [showDmVotePanel, setShowDmVotePanel] = useState(false);
   const [dmVenueVotes, setDmVenueVotes] = useState([]);
+  // Set when the read for this conversation failed. Without it the panel says
+  // "No votes yet" about a chat where the other person may well have voted,
+  // which is a claim about somebody else's decision made out of a dropped
+  // request.
+  const [dmVenueVotesError, setDmVenueVotesError] = useState('');
   const [showDmVenueSearch, setShowDmVenueSearch] = useState(false);
   const [dmPendingImage, setDmPendingImage] = useState(null);
   const [showDmImagePreview, setShowDmImagePreview] = useState(false);
@@ -6131,7 +6163,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return url;
   });
   const [showPicModal, setShowPicModal] = useState(false);
+  // Stays an array, because every consumer counts it and the SOS sheet is
+  // handed the count. What is null-until-loaded here is the KNOWLEDGE: an
+  // empty list and a list nobody could read are the same zero, and on a safety
+  // screen those two are not the same thing at all. trustedContactsLoaded
+  // turns true only when a read actually lands, so "No trusted contacts yet"
+  // can never be drawn by a failed one. Same rule as pastFlocks.
   const [trustedContacts, setTrustedContacts] = useState([]);
+  const [trustedContactsLoaded, setTrustedContactsLoaded] = useState(false);
+  const [trustedContactsError, setTrustedContactsError] = useState('');
   // The safety toggle used to live only in memory behind a "Save" button that
   // fired no request at all. It now writes on the flip: locally for this
   // device, and up to the account's synced settings.
@@ -6347,6 +6387,32 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [newInterest, setNewInterest] = useState('');
   const suggestedInterests = ['Sports', 'Food', 'Dancing', 'Karaoke', 'Comedy', 'Art', 'Wine', 'Beer', 'Trivia', 'Pool', 'Darts', 'Gaming'];
 
+  // ONE READ FOR THE EVENTS SCREEN, INSTEAD OF FOUR COPIES OF IT.
+  //
+  // Featured events were fetched from four places (first location fix, the
+  // Events button, the search box, the clear-search button) and every one of
+  // them ended in a console line or an empty catch. The screen has one empty
+  // state, "No events found nearby", so a Ticketmaster outage, a dead key and
+  // a quiet week all looked identical, and the screen told the user to go
+  // searching for something the app had not managed to ask about. Loading,
+  // loaded and failed are now three separate answers, and the caller picks
+  // between the featured list and a search by passing a query or not.
+  const fetchFeaturedEvents = useCallback((locStr, query) => {
+    if (!locStr) return;
+    setFeaturedEventsLoading(true);
+    setFeaturedEventsError('');
+    const trimmed = (query || '').trim();
+    const request = trimmed ? searchEvents(locStr, trimmed) : getFeaturedEvents(locStr, userInterests);
+    request
+      .then(data => setFeaturedEvents(data.events || []))
+      .catch((err) => {
+        console.error('[Events] Fetch failed:', err);
+        setFeaturedEvents(null);
+        setFeaturedEventsError(err?.message || "Events aren't loading right now.");
+      })
+      .finally(() => setFeaturedEventsLoading(false));
+  }, [userInterests]);
+
   // pullSettings() broadcasts the account's stored settings once it has them.
   // Adopt the two this screen owns so a second device agrees with the first.
   useEffect(() => {
@@ -6551,11 +6617,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // Fetch featured events (non-blocking)
     if (!featuredEventsFetchedRef.current) {
       featuredEventsFetchedRef.current = true;
-      setFeaturedEventsLoading(true);
-      getFeaturedEvents(locStr, userInterests)
-        .then(data => setFeaturedEvents(data.events || []))
-        .catch(err => console.error('[Events] Featured fetch failed:', err))
-        .finally(() => setFeaturedEventsLoading(false));
+      fetchFeaturedEvents(locStr);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [venuesToMapPins, requestCrowdScores]);
@@ -6720,15 +6782,28 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     [calendarEvents, flockCalendarEvents],
   );
 
+  // Optimistic local add; the server assigns the real id and is what makes the
+  // event survive a relaunch.
+  //
+  // The old catch kept the optimistic row and said nothing, under a comment
+  // calling it "offline: keep the optimistic local copy for this session".
+  // That is the lie in one line: the event sat on the calendar looking saved,
+  // the user closed the app trusting it, and it was gone. A calendar entry
+  // nobody can see tomorrow is worse than one that was never accepted, so a
+  // refused write takes its row back off the screen and says so.
   const addEventToCalendar = useCallback((title, venue, date, time, color) => {
     const dateStr = typeof date === 'string' ? date : formatDateStr(date);
     const tempId = `tmp-${Date.now()}`;
-    // Optimistic local add; server assigns the real id and persists across refreshes
     setCalendarEvents(prev => [...prev, { id: tempId, title, venue, date: dateStr, time, color: color || colors.navy, members: 1 }]);
     createCalendarEvent({ title, date: dateStr, venue, time, color: color || colors.navy })
       .then(saved => setCalendarEvents(prev => prev.map(e => e.id === tempId ? saved : e)))
-      .catch(() => {}); // offline: keep the optimistic local copy for this session
-  }, [colors.navy]);
+      .catch((err) => {
+        setCalendarEvents(prev => prev.filter(e => e.id !== tempId));
+        if (err?.sessionExpired) return;
+        const lead = "That didn't get added to your calendar.";
+        showToast(err?.message ? `${lead} ${err.message}` : `${lead} Try again.`, 'error');
+      });
+  }, [colors.navy, showToast]);
 
   // `f.messages || []`, not `f.messages`: every writer of a flock object today
   // seeds it with an empty array, but this is now reachable for a flock the user
@@ -6751,8 +6826,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       .catch(() => {});
   }, []);
 
+  // A vote is a claim about a person: the tile puts "You" under a venue and
+  // everyone else in the flock plans around it.
+  //
+  // This used to end in `.catch(() => {})`. A vote tapped with no signal
+  // flipped the tile, never left the browser, was never put back and was
+  // silently gone on the next load, so the user believed they had voted and
+  // the group believed they had not. Same rollback shape as updateFlockVenue
+  // below, for the same reason: hold what was on screen, put it back when the
+  // write is refused, and say which action did not happen.
   const updateFlockVotes = useCallback((flockId, newVotes) => {
     const optimistic = Array.isArray(newVotes) ? newVotes : [];
+    // Captured before the optimistic write, so a refusal restores the tallies
+    // the user was actually looking at.
+    const before = flocksRef.current.find(f => f.id === flockId) || null;
+    const previousVotes = before ? (before.votes || []) : null;
     setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, votes: optimistic } : f));
     if (typeof flockId !== 'number') return;
     // One vote per person per flock. Posting a new pick replaces the old row
@@ -6766,8 +6854,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       .then((data) => setFlocks(prev => prev.map(f => (
         f.id === flockId ? { ...f, votes: normalizeVotes(data?.votes, meRef.current, f.votes) } : f
       ))))
-      .catch(() => {});
-  }, []);
+      .catch((err) => {
+        if (previousVotes) setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, votes: previousVotes } : f));
+        // The tile has just moved back on its own, so the sentence has to name
+        // the action that did not happen or the movement reads as a bug.
+        // api.js words the offline and blocked-network cases; that sentence is
+        // kept after ours rather than replaced by it.
+        if (err?.sessionExpired) return;
+        const lead = myVote ? "Your vote didn't save." : "Clearing your vote didn't save.";
+        showToast(err?.message ? `${lead} ${err.message}` : `${lead} Try again.`, 'error');
+      });
+  }, [showToast]);
 
   // Assign or change venue on a flock. Optimistic locally, then reconciled
   // against what the server actually stored.
@@ -8848,14 +8945,28 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const loadTrustedContacts = useCallback(async () => {
     try {
       setSafetyLoading(true);
+      setTrustedContactsError('');
       const data = await getTrustedContacts();
       setTrustedContacts(data.contacts || []);
+      setTrustedContactsLoaded(true);
     } catch (err) {
+      // A console warning is not a user interface. The screen now says the
+      // read failed and offers the retry, and the list already on screen (if
+      // any) is left alone rather than deleted by a failed refresh.
       console.warn('Failed to load trusted contacts:', err);
+      setTrustedContactsError(err?.message || "Your trusted contacts couldn't be loaded.");
     } finally {
       setSafetyLoading(false);
     }
   }, []);
+
+  // Opening the emergency sheet re-reads the list when the last read never
+  // landed. The sheet counts contacts to decide what it can offer, so the
+  // moment it is opened is the moment that count has to be true. Nothing
+  // happens on a list that loaded fine.
+  useEffect(() => {
+    if (showSOS && !trustedContactsLoaded && !safetyLoading) loadTrustedContacts();
+  }, [showSOS, trustedContactsLoaded, safetyLoading, loadTrustedContacts]);
 
   const handleEditContact = useCallback((contact) => {
     setEditingContact(contact);
@@ -8943,6 +9054,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   const handleEmergencyAlert = useCallback(async () => {
     if (trustedContacts.length === 0) {
+      // Two different zeros, and in an emergency the difference is the whole
+      // message: nobody added, or nobody could be read. Telling somebody to go
+      // add contacts they already have is the worst sentence this screen could
+      // say, so a failed load says so and retries instead.
+      if (!trustedContactsLoaded) {
+        showToast("Your trusted contacts couldn't be loaded, so nobody has been alerted. Call 911 if you need help now.", 'error');
+        loadTrustedContacts();
+        return;
+      }
       showToast('Add trusted contacts in Safety settings first', 'error');
       return;
     }
@@ -8975,10 +9095,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     } finally {
       setSosAlertSending(false);
     }
-  }, [trustedContacts, showToast, startSosLocationFollowUp, cancelSosLocationFollowUp]);
+  }, [trustedContacts, trustedContactsLoaded, loadTrustedContacts, showToast, startSosLocationFollowUp, cancelSosLocationFollowUp]);
 
   const handleShareLocationWithContacts = useCallback(async () => {
     if (trustedContacts.length === 0) {
+      if (!trustedContactsLoaded) {
+        showToast("Your trusted contacts couldn't be loaded, so your location has not been shared.", 'error');
+        loadTrustedContacts();
+        return;
+      }
       showToast('Add trusted contacts in Safety settings first', 'error');
       return;
     }
@@ -9012,7 +9137,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     } finally {
       setSosAlertSending(false);
     }
-  }, [trustedContacts, showToast]);
+  }, [trustedContacts, trustedContactsLoaded, loadTrustedContacts, showToast]);
 
   // Safety Button — draggable left/right, docked above the tab bar.
   // Not on the You tab: that screen is a list of settings rows the button would
@@ -9408,8 +9533,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     if (existingDm) {
       setSelectedDmId(existingDm.userId);
     } else {
-      // Auto-send friend request when starting a new DM
-      sendFriendRequest(user.id).catch(() => {});
+      // Auto-send friend request when starting a new DM.
+      //
+      // "Already friends" and "already sent" both come back as 200s from
+      // routes/friends.js, so anything that lands here is a real refusal:
+      // offline, blocked, or an unverified address. It used to be swallowed,
+      // which left the user in a new chat believing they had added the person
+      // while no request existed anywhere. The chat itself is fine, so the
+      // sentence says which half missed and where to finish it.
+      sendFriendRequest(user.id).catch((err) => {
+        if (err?.sessionExpired) return;
+        const lead = "Your message is here, but the friend request didn't send.";
+        showToast(err?.message ? `${lead} ${err.message}` : `${lead} You can add them from their profile.`, 'error');
+      });
       // Un-delete if previously deleted
       if (deletedDmUserIds.includes(user.id)) {
         const updated = deletedDmUserIds.filter(id => id !== user.id);
@@ -9431,7 +9567,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     setDmSearchText('');
     setDmModalResults([]);
     setCurrentScreen('dmDetail');
-  }, [directMessages, deletedDmUserIds]);
+  }, [directMessages, deletedDmUserIds, showToast]);
 
   const NewDmModal = () => {
     const usersToShow = dmSearchText.trim() ? dmModalResults : suggestedUsers;
@@ -9517,19 +9653,34 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       .finally(() => setDmsLoading(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Named so the vote panel's retry runs the same read the screen does.
+  const loadDmVenueVotes = useCallback((dmId) => {
+    if (!dmId) return;
+    setDmVenueVotesError('');
+    getDmVenueVotes(dmId)
+      .then(data => { setDmVenueVotes(data.votes || []); })
+      .catch((err) => {
+        // Cleared rather than left standing: what is in state belongs to
+        // whichever conversation was open last, and showing one chat's votes
+        // inside another is a worse lie than showing none.
+        setDmVenueVotes([]);
+        setDmVenueVotesError(err?.message || "The votes in this chat aren't loading right now.");
+      });
+  }, []);
+
   // Load messages when opening a DM conversation
   useEffect(() => {
     if (currentScreen === 'dmDetail' && selectedDmId) {
       loadDmMessages(selectedDmId, { showSkeleton: true });
       // Load venue votes for this conversation
-      getDmVenueVotes(selectedDmId).then(data => setDmVenueVotes(data.votes || [])).catch(() => {});
+      loadDmVenueVotes(selectedDmId);
       // Load pinned venue for this conversation
       getDmPinnedVenue(selectedDmId).then(data => {
         if (data.venue) setDmPinnedVenue({ name: data.venue.venue_name, addr: data.venue.venue_address, place_id: data.venue.venue_id, rating: data.venue.venue_rating, photo_url: resolveVenuePhoto(data.venue.venue_photo_url) });
         else setDmPinnedVenue(null);
       }).catch(() => {});
     }
-  }, [currentScreen, selectedDmId, loadDmMessages]);
+  }, [currentScreen, selectedDmId, loadDmMessages, loadDmVenueVotes]);
 
   // Socket-sent DMs waiting for their own echo back from the server, keyed by
   // the optimistic bubble's temp id. Same job as pendingEchoRef in flock chat:
@@ -9876,7 +10027,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   useEffect(() => {
     const unsub = onDmNewVote((data) => {
       if (!isOpenDm(data.withUserId)) return;
+      // A live tally is the server's own full list, so it also answers the
+      // question a failed read left open.
       setDmVenueVotes(data.votes || []);
+      setDmVenueVotesError('');
     });
     return unsub;
   }, [isOpenDm]);
@@ -10221,10 +10375,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <div>
                   <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.vote(colors.navy, 20)} Vote for a Venue</h2>
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` • You voted for ${myVote}` : ''}</p>
+                  {/* The tally is a count of other people, so it is only
+                      printed when the read that produced it landed. */}
+                  {!dmVenueVotesError && (
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` • You voted for ${myVote}` : ''}</p>
+                  )}
                 </div>
                 <button aria-label="Close" className="hit44" onClick={() => setShowDmVotePanel(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
               </div>
+
+              {/* A failed read is said once, above the list, because the list
+                  can be non empty on a failure: the pinned venue is added to
+                  it locally and would otherwise sit there under a tally of
+                  zero that nobody measured. */}
+              {dmVenueVotesError && (
+                <div role="alert" style={{ padding: '14px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px', marginBottom: '12px' }}>
+                  <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 10px', fontWeight: '500' }}>{dmVenueVotesError}</p>
+                  <button className="hit44 glass-btn glass-navy" onClick={() => loadDmVenueVotes(selectedDmId)} style={{ padding: '8px 14px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>
+                </div>
+              )}
 
               {/* Current votes */}
               {sortedVotes.length > 0 ? (
@@ -10262,7 +10431,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     );
                   })}
                 </div>
-              ) : (
+              ) : !dmVenueVotesError && (
+                /* Somebody else may well have voted. Saying nobody has, on the
+                   strength of a request that never came back, is the version
+                   of this panel that changes what the user does next. */
                 <div style={{ padding: '20px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px', marginBottom: '16px' }}>
                   <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>No votes yet. Be the first to suggest a venue!</p>
                 </div>
@@ -11707,17 +11879,50 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         const initialMessages = [];
         if (venueName) {
           const venueCardData = { name: venueName, addr: venueAddr, place_id: venueId, photo_url: venuePhoto, rating: venueRating, stars: venueRating, price: venuePriceLevel ? '$'.repeat(venuePriceLevel) : null, price_level: venuePriceLevel, type: capturedVenue?.type || (capturedVenue?.types?.[0] ? capturedVenue.types[0].replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) : 'Place'), category: capturedVenue?.category || null, crowd: (typeof capturedVenue?.crowd === 'number' ? capturedVenue.crowd : null), lat: venueLat, lng: venueLng };
+          const venueCardTempId = Date.now();
           initialMessages.push({
-            id: Date.now(),
+            id: venueCardTempId,
             sender: 'You',
+            senderId: authUser?.id,
             time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
             text: `Check out ${venueName}!`,
             reactions: [],
             message_type: 'venue_card',
             venue_data: venueCardData,
+            pending: true,
           });
-          // Persist venue card to backend (fire-and-forget)
-          apiSendMessage(f.id, `Check out ${venueName}!`, { message_type: 'venue_card', venue_data: venueCardData }).catch(() => {});
+          // THE CARD THAT STARTS THE PLAN, and it used to be fire and forget.
+          //
+          // This is the first thing everyone invited sees, and the whole
+          // reason it is posted as a message rather than held on the flock
+          // row. The old `.catch(() => {})` meant a refused write left the
+          // card sitting in the creator's chat and nowhere else: they had
+          // shared the venue, nobody else had it, and nothing on either
+          // screen said so. It now rides the same pending / failed contract
+          // as every other chat message, so a miss shows "Didn't send. Tap
+          // to retry" on the card itself and retryFailedMessage resends it.
+          apiSendMessage(f.id, `Check out ${venueName}!`, { message_type: 'venue_card', venue_data: venueCardData })
+            .then((sent) => {
+              // isServerId for the same reason transmitFlockMessage uses it:
+              // adopting anything the server did not issue puts a settled
+              // bubble into mergeHistory's id comparison forever.
+              const savedId = sent?.message?.id;
+              setFlocks(prev => prev.map(fl => (fl.id !== f.id ? fl : {
+                ...fl,
+                messages: (fl.messages || []).map(m => (m.id === venueCardTempId
+                  ? { ...m, ...(isServerId(savedId) ? { id: savedId } : {}), pending: false }
+                  : m)),
+              })));
+            })
+            .catch((err) => {
+              setFlocks(prev => prev.map(fl => (fl.id !== f.id ? fl : {
+                ...fl,
+                messages: (fl.messages || []).map(m => (m.id === venueCardTempId ? { ...m, pending: false, failed: true } : m)),
+              })));
+              if (err?.sessionExpired) return;
+              const lead = "The flock is created, but the venue card didn't reach the chat.";
+              showToast(err?.message ? `${lead} ${err.message}` : `${lead} Tap it to retry.`, 'error');
+            });
         }
         const invitedNames = capturedFriends.map(fr => fr.name);
         const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', creatorId: f.creator_id, members: invitedNames, memberCount: 1 + invitedIds.length, time: formatEventTime(f.event_time || capturedEventTime), eventTime: f.event_time || capturedEventTime, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, venueLat: venueLat, venueLng: venueLng, cashPool: null, budgetEnabled: f.budget_enabled || capturedBudget, budgetContext: f.budget_context || capturedBudgetCtx, budgetLocked: false, budgetCeiling: null, ghostModeEnabled: f.ghost_mode_enabled || capturedGhostMode, votes: [], messages: initialMessages };
@@ -12920,7 +13125,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
           <div style={{ display: 'flex', gap: '4px', overflow: 'hidden', maxWidth: discoverNavOpen ? '124px' : '0px', opacity: discoverNavOpen ? 1 : 0, transition: 'max-width 0.3s ease, opacity 0.25s ease' }}>
             <button aria-label="Recenter the map on me" className="hit44" onClick={() => { setDiscoverNavOpen(false); setMapVenuesLoaded(false); setVenueQuery(''); setVenueResults([]); setShowSearchDropdown(false); setShowSearchResults(false); setActiveVenue(null); requestUserLocation(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', animation: locationLoading ? 'spin 1s linear infinite' : 'none' }}>{Icons.crosshair('var(--text-primary)', 15)}</button>
-            <button aria-label="Events" className="hit44" onClick={() => { setDiscoverNavOpen(false); setShowEventsView(true); setActiveVenue(null); if (userLocation && !featuredEventsLoading) { setFeaturedEventsLoading(true); getFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, userInterests).then(data => setFeaturedEvents(data.events || [])).catch(err => console.error('[Events] Fetch failed:', err)).finally(() => setFeaturedEventsLoading(false)); } }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.zap('var(--text-primary)', 15)}</button>
+            <button aria-label="Events" className="hit44" onClick={() => { setDiscoverNavOpen(false); setShowEventsView(true); setActiveVenue(null); if (userLocation && !featuredEventsLoading) { fetchFeaturedEvents(`${userLocation.lat},${userLocation.lng}`); } }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.zap('var(--text-primary)', 15)}</button>
             <button aria-label="Friends" className="hit44" onClick={() => { setDiscoverNavOpen(false); setShowConnectPanel(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '12px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.users('var(--text-primary)', 15)}</button>
           </div>
           <button aria-label="Features" aria-expanded={discoverNavOpen} className="hit44" onClick={() => setDiscoverNavOpen(!discoverNavOpen)} style={{ height: '42px', minWidth: discoverNavOpen ? '42px' : 'auto', width: discoverNavOpen ? '42px' : 'auto', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: discoverNavOpen ? '0' : '0 14px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-primary)', flexShrink: 0, transition: 'all 0.3s ease' }}>{discoverNavOpen ? Icons.x('var(--text-primary)', 16) : <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', whiteSpace: 'nowrap' }}>Features</span>}</button>
@@ -13192,19 +13397,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     setEventsSearchQuery(e.target.value);
                     if (e.target.value.length >= 2 && userLocation) {
                       clearTimeout(eventsSearchTimerRef.current);
+                      const typed = e.target.value;
                       eventsSearchTimerRef.current = setTimeout(() => {
-                        setFeaturedEventsLoading(true);
-                        searchEvents(`${userLocation.lat},${userLocation.lng}`, e.target.value)
-                          .then(data => setFeaturedEvents(data.events || []))
-                          .catch(err => console.error('[Events] Search failed:', err))
-                          .finally(() => setFeaturedEventsLoading(false));
+                        fetchFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, typed);
                       }, 400);
                     } else if (e.target.value.length === 0 && userLocation) {
-                      setFeaturedEventsLoading(true);
-                      getFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, userInterests)
-                        .then(data => setFeaturedEvents(data.events || []))
-                        .catch(() => {})
-                        .finally(() => setFeaturedEventsLoading(false));
+                      fetchFeaturedEvents(`${userLocation.lat},${userLocation.lng}`);
                     }
                   }}
                   style={{ width: '100%', padding: '10px 14px 10px 36px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', border: `2px solid ${eventsSearchQuery ? '#F59E0B' : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', fontWeight: '500', transition: 'opacity 0.2s' }}
@@ -13214,13 +13412,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {eventsSearchQuery && (
                   <button aria-label="Clear search" className="hit44" onClick={() => {
                     setEventsSearchQuery('');
-                    if (userLocation) {
-                      setFeaturedEventsLoading(true);
-                      getFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, userInterests)
-                        .then(data => setFeaturedEvents(data.events || []))
-                        .catch(() => {})
-                        .finally(() => setFeaturedEventsLoading(false));
-                    }
+                    if (userLocation) fetchFeaturedEvents(`${userLocation.lat},${userLocation.lng}`);
                   }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '2px' }}>{Icons.x(colors.textTertiary, 14)}</button>
                 )}
               </div>
@@ -13243,14 +13435,36 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '10px 0 0', fontWeight: '500' }}>Finding events near you...</p>
               </div>
             )}
-            {!featuredEventsLoading && featuredEvents.length === 0 && (
+            {/* Three answers, never one. A read that failed says so and keeps
+                the retry here rather than sending the user off to search for
+                something the app never managed to ask about. */}
+            {!featuredEventsLoading && featuredEventsError && (
+              <div role="alert" style={{ textAlign: 'center', padding: '48px 20px' }}>
+                {Icons.zap('var(--text-tertiary)', 36)}
+                <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-secondary)', margin: '12px 0 4px' }}>{featuredEventsError}</p>
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 12px' }}>Nothing is wrong with your plans. This is the events list only.</p>
+                {userLocation && (
+                  <button className="hit44 glass-btn glass-navy" onClick={() => fetchFeaturedEvents(`${userLocation.lat},${userLocation.lng}`, eventsSearchQuery)} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>
+                )}
+              </div>
+            )}
+            {/* No read has landed yet and none is running: the screen was
+                opened before there was a location to ask about. */}
+            {!featuredEventsLoading && !featuredEventsError && !featuredEvents && (
+              <div style={{ textAlign: 'center', padding: '48px 20px' }}>
+                {Icons.mapPin('var(--text-tertiary)', 36)}
+                <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-secondary)', margin: '12px 0 4px' }}>Events need your location</p>
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Turn location on for Flock, or search for an event by name.</p>
+              </div>
+            )}
+            {!featuredEventsLoading && !featuredEventsError && featuredEvents && featuredEvents.length === 0 && (
               <div style={{ textAlign: 'center', padding: '48px 20px' }}>
                 {Icons.zap('var(--text-tertiary)', 36)}
                 <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-secondary)', margin: '12px 0 4px' }}>No events found nearby</p>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Try searching for a specific event or artist</p>
               </div>
             )}
-            {!featuredEventsLoading && featuredEvents.map(event => {
+            {!featuredEventsLoading && (featuredEvents || []).map(event => {
               const eventDate = event.date ? new Date(event.date + 'T' + (event.time || '00:00:00')) : null;
               const dateStr = eventDate ? eventDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '';
               const timeStr = event.time ? new Date('2000-01-01T' + event.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
@@ -14817,13 +15031,28 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                 {/* Trusted contacts list */}
                 <div style={styles.card}>
-                  <h2 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 12px' }}>Trusted Contacts ({trustedContacts.length})</h2>
+                  {/* The count is only shown once a read has landed. A "(0)"
+                      over a list nobody could fetch is the same false claim as
+                      the empty state underneath it. */}
+                  <h2 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 12px' }}>Trusted Contacts{trustedContactsLoaded ? ` (${trustedContacts.length})` : ''}</h2>
 
                   {safetyLoading && trustedContacts.length === 0 && (
                     <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', textAlign: 'center', padding: '16px 0' }}>Loading...</p>
                   )}
 
-                  {!safetyLoading && trustedContacts.length === 0 && (
+                  {/* A failed read, said out loud, with the retry beside it.
+                      This is the surface an emergency runs through, so the one
+                      thing it may never do is show a person an empty list and
+                      let them believe it. */}
+                  {!safetyLoading && trustedContactsError && (
+                    <div role="alert" style={{ padding: '14px 0', textAlign: 'center' }}>
+                      <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.redText, margin: '0 0 4px' }}>{trustedContactsError}</p>
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px' }}>Nothing has been lost. Anyone you have added is still on your account.</p>
+                      <button className="hit44 glass-btn glass-navy" onClick={loadTrustedContacts} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>
+                    </div>
+                  )}
+
+                  {!safetyLoading && !trustedContactsError && trustedContactsLoaded && trustedContacts.length === 0 && (
                     <div style={{ textAlign: 'center', padding: '20px 0' }}>
                       <div style={{ marginBottom: '8px' }}>{Icons.user('var(--text-tertiary)', 36)}</div>
                       <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0 }}>No trusted contacts yet</p>
@@ -19803,7 +20032,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {/* Flock Reviews */}
             <div style={{ padding: '0 16px 12px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: 0 }}>{Icons.star(colors.amber, 14)} Flock Reviews ({venueDetailReviews.length})</h4>
+                <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: 0 }}>{Icons.star(colors.amber, 14)} Flock Reviews{venueDetailReviews ? ` (${venueDetailReviews.length})` : ''}</h4>
                 {!showReviewForm && (
                   <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowReviewForm(true); setReviewRating(0); setReviewText(''); }} style={{ padding: '4px 10px', borderRadius: '6px', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
                     Write Review
@@ -19861,7 +20090,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               )}
 
               {/* Review List */}
-              {venueDetailReviews.length > 0 ? venueDetailReviews.slice(0, 5).map(r => (
+              {venueDetailReviews && venueDetailReviews.length > 0 ? venueDetailReviews.slice(0, 5).map(r => (
                 <div key={r.id} style={{ padding: '10px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '8px', marginBottom: '6px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -19893,7 +20122,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     </div>
                   )}
                 </div>
-              )) : !showReviewForm && (
+              )) : venueDetailReviewsError ? (
+                /* A read that failed, never an empty venue. "Be the first!" is
+                   a claim about everyone who has been here, and it is not this
+                   card's to make when the request did not come back. */
+                <div role="alert" style={{ textAlign: 'center', padding: '12px' }}>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>{venueDetailReviewsError}</p>
+                  <button className="hit44 glass-btn glass-secondary" onClick={() => loadVenueDetailReviews(venueDetailPlaceId)} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
+                </div>
+              ) : !venueDetailReviews ? (
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '12px' }}>Loading reviews...</p>
+              ) : !showReviewForm && (
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '12px' }}>No reviews yet. Be the first!</p>
               )}
             </div>
