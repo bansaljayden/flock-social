@@ -6145,18 +6145,45 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return wasDrag;
   }, []);
 
-  // Interests
+  // Interests. The default is nothing, and that is the whole point of it.
+  //
+  // It used to be ['Live Music', 'Cocktails', 'Nightlife']. Because the effect
+  // below runs on mount, every brand new account silently wrote those three to
+  // localStorage AND synced them to the server, and nobody was ever asked:
+  // there is no interests question anywhere in signup or first run. So the
+  // settings row read "3 interests" to a user who had picked none, and
+  // getFeaturedEvents was handed them as the search terms behind that
+  // account's recommendations. The enforced age floor is 13, which means
+  // Cocktails was being recorded as a declared interest of children and used
+  // to pick what events they were shown.
+  //
+  // Cocktails is not a category the rest of the app can even filter on. The
+  // set is All / Food / Nightlife / Live Music / Sports.
+  //
+  // An empty list is already a state the UI handles: the settings row reads
+  // "None yet", and the interests screen offers the suggestion chips below.
   const [userInterests, setUserInterests] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem('flock_interests') || 'null');
       if (Array.isArray(saved)) return saved;
-    } catch { /* malformed — fall through to the defaults */ }
-    return ['Live Music', 'Cocktails', 'Nightlife'];
+    } catch { /* malformed: fall through to no interests */ }
+    return [];
   });
   // Same story as the safety toggle: the interests screen's "Save" never sent
   // anything, so a chip you added was gone on the next launch.
+  //
+  // The mount pass does not sync. Pushing on the first run is how the hardcoded
+  // defaults above reached the server in the first place, and it also let a
+  // stale local copy overwrite the account's real interests before
+  // pullSettings had delivered them. Only a change the user actually makes is
+  // worth sending.
+  const interestsSyncedRef = useRef(false);
   useEffect(() => {
     localStorage.setItem('flock_interests', JSON.stringify(userInterests));
+    if (!interestsSyncedRef.current) {
+      interestsSyncedRef.current = true;
+      return;
+    }
     queueSync({ userInterests });
   }, [userInterests]);
   const [newInterest, setNewInterest] = useState('');
@@ -6455,13 +6482,29 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Load venues on mount — but never against an explicit opt-out (round 3:
   // this fired unconditionally, so on an already-granted device the opt-out
   // silently un-opted itself on every reload).
+  //
+  // AND NEVER ON AN ACCOUNT THAT HAS NOT ANSWERED YET. iOS gives an app one
+  // location prompt per install and a denial is permanent, so this effect was
+  // spending the only ask the app will ever get at the worst available moment:
+  // on the first mount after signup, over an empty home screen, before the user
+  // had seen a map or anything else that says what location is for. Nothing on
+  // the home tab reads a coordinate, so the prompt bought nothing either.
+  //
+  // Every context-ful trigger already exists and is unchanged: tapping the
+  // Explore tab calls requestUserLocation, so does the All category chip, so
+  // does Try again on the location banner, and so does the settings toggle. In
+  // each of those the reason for the prompt is the thing the user just tapped.
+  //
+  // A device that has already answered still loads silently, because the OS
+  // will not draw a second prompt: an explicit opt-in, or a stored coordinate
+  // from a previous grant, both mean this call is free.
   useEffect(() => {
-    if (!venueLoadAttemptedRef.current) {
-      venueLoadAttemptedRef.current = true;
-      if (localStorage.getItem('flock_location_enabled') !== 'false') {
-        requestUserLocation();
-      }
-    }
+    if (venueLoadAttemptedRef.current) return;
+    venueLoadAttemptedRef.current = true;
+    if (localStorage.getItem('flock_location_enabled') === 'false') return;
+    const alreadyAnswered = localStorage.getItem('flock_location_enabled') === 'true'
+      || localStorage.getItem('flock_user_lat') !== null;
+    if (alreadyAnswered) requestUserLocation();
   }, [requestUserLocation]);
 
   // No `|| flocks[0]` fallback, and its absence is the point. A chat screen
@@ -21728,11 +21771,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               })}
 
               {!addFriendsSearch && (
-                <div style={{ textAlign: 'center', padding: '40px 16px' }}>
-                  <div style={{ width: '56px', height: '56px', borderRadius: '28px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>{Icons.search(colors.navy, 24)}</div>
-                  <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Find People</p>
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Search by name to add friends</p>
-                </div>
+                /* This is the default tab of the screen the home empty state
+                   sends a new account to, so it is one of the first things
+                   anybody sees, and it was an icon in a rounded square, which
+                   is the bubble-tile shape SLOP-AUDIT A14 bans and the one
+                   empty state on this screen with no bird on it. */
+                <BirdNote
+                  bird={WARM_BIRD}
+                  size={96}
+                  title="Find people you know"
+                  body="Search by name, or by the email they signed up with."
+                  style={{ padding: '32px 16px 16px' }}
+                />
               )}
             </div>
           )}
@@ -21741,19 +21791,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {activeTab === 'suggestions' && (
             <div>
               {friendSuggestions.length === 0 ? (
-                <div style={{ textAlign: 'center', padding: '40px 16px' }}>
-                  <div style={{ width: '56px', height: '56px', borderRadius: '28px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>{Icons.users(colors.navy, 24)}</div>
-                  <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>No Suggestions Yet</p>
-                  {/* Quick Add is mutual friends only, so it is empty by
-                      construction for a new account, and the sentence telling
-                      you to add more friends had nothing to press. It points
-                      at the tabs that can actually find somebody now. */}
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 14px' }}>Add more friends to see people you may know</p>
-                  <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); setAddFriendsTab(contactsSupported ? 'contacts' : 'username'); }}
-                    style={{ padding: '12px 24px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>
-                    {contactsSupported ? 'Check your contacts' : 'Search for people'}
-                  </button>
-                </div>
+                /* Quick Add is mutual friends only, so it is empty by
+                   construction for a new account. The old copy told that
+                   account to "add more friends to see people you may know",
+                   which is the one thing it cannot do yet and reads as a
+                   reprimand on day one. Say why the tab is empty instead, and
+                   keep the button pointing at the tab that can find somebody
+                   now. Same bubble-tile and missing-bird fix as the state
+                   above it. */
+                <BirdNote
+                  bird={WARM_BIRD}
+                  size={96}
+                  title="No suggestions yet"
+                  body="Quick Add shows people your friends already know, so it starts working once you have a friend or two here."
+                  action={(
+                    <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); setAddFriendsTab(contactsSupported ? 'contacts' : 'username'); }}
+                      style={{ padding: '12px 24px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>
+                      {contactsSupported ? 'Check your contacts' : 'Search for people'}
+                    </button>
+                  )}
+                  style={{ padding: '32px 16px 16px' }}
+                />
               ) : (
                 <>
                   <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.zap(colors.amber, 16)} Quick Add</h2>
