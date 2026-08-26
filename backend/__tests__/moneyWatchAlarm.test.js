@@ -179,6 +179,32 @@ test('a leg with an unreadable status is skipped rather than throwing', () => {
   assert.deepStrictEqual(a.captured, []);
 });
 
+test('a status reader that returns no day still gets its leg heard', () => {
+  // The dedupe is `moneyWatchSaid.get(key) === day`, and before a leg has ever
+  // spoken that get() is undefined. So a reader that came back without a `day`
+  // (a new module, a rename, a status object built in a hurry) compared equal
+  // to "already said this today" on its very FIRST call, and that leg was
+  // silent for the life of the process. Every one of the six readers returns a
+  // day today. The point is what happens to the seventh: the alarm built to
+  // stop money ceilings failing quietly would itself have failed quietly, and
+  // nothing anywhere would have said so.
+  for (const day of [undefined, null, '', 0]) {
+    const a = loadAlarm();
+    a.checkMoneyLeg({ leg: 'new-upstream', day, used: 100, ceiling: 100, noun: 'calls', atCeiling: 'It is off.', atWarn: 'w' });
+    assert.strictEqual(a.captured.length, 1,
+      `a leg whose status reader returned day=${JSON.stringify(day)} said nothing at its ceiling. `
+      + 'A missing day means the reader is broken, which is a reason to talk more rather than less.');
+
+    // And it does not then repeat on every fifteen-minute sweep either, which
+    // is the failure the dedupe exists to prevent. Once the leg has spoken, the
+    // stored value is that same missing day.
+    a.checkMoneyLeg({ leg: 'new-upstream', day, used: 100, ceiling: 100, noun: 'calls', atCeiling: 'It is off.', atWarn: 'w' });
+    assert.strictEqual(a.captured.length, 2,
+      'a leg with no day cannot dedupe on one, so it speaks every sweep. That is the deliberate '
+      + 'trade: noisy beats silent, and the fix is to give the reader a day.');
+  }
+});
+
 test('the watch is registered on a timer and cleared on shutdown', () => {
   assert.match(SRC, /moneyWatchInterval = setInterval\(moneyWatch, MONEY_WATCH_INTERVAL_MS\)/,
     'the money watch is defined but never scheduled, so it never runs');
