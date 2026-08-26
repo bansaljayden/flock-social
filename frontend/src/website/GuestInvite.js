@@ -359,6 +359,16 @@ export default function GuestInvite() {
   // already in the air cannot tell those two apart: it only knows that
   // something newer than itself has answered. See the ordering note on load()
   // below, and the 404s in the two writers.
+  //
+  // "DECIDES THIS PAGE'S STATE" IS WIDER THAN `phase`. The same undo was found
+  // three times: on a 409, then on a 404, then on a vote the server counted,
+  // which changes no phase and simply replaces the tally. The first two are
+  // phase changes and the third is not, so a rule written about phase would
+  // have covered two of the three and read as complete. The rule is about what
+  // the guest can see. Everything that commits `phase` or `data` from outside
+  // load() takes a number: the two 404s and the vote below are the whole list,
+  // and the only setPhase that does not is the token-length refusal in the
+  // mount effect, which runs before any request exists to be stale.
   const stateSeq = useRef(0);
   const claim = useCallback(() => { stateSeq.current += 1; return stateSeq.current; }, []);
 
@@ -733,6 +743,17 @@ export default function GuestInvite() {
       return;
     }
 
+    // CLAIMED, and this is the same rule as the two 404s above read one channel
+    // over. A generation is taken by anything that decides what this page
+    // SHOWS, not only by the things that change `phase`, and a vote that the
+    // server counted changes no phase at all: it replaces the tally in place
+    // with the rows the reply carries. So this commit used to sit outside the
+    // rule entirely, and the quiet refresh the RSVP before it started was still
+    // the newest LOAD. It left before the vote, so it answers with the tally as
+    // it was, and it committed straight over this line: the count under the
+    // venue the guest had just picked went back down by one, under a row still
+    // reading "Your vote", and stayed there.
+    claim();
     if (Array.isArray(body.venues)) {
       setData((d) => ({ ...d, venues: body.venues }));
     }
@@ -740,6 +761,16 @@ export default function GuestInvite() {
     setGuest(next);
     writeStore(storageKey, next);
     say('vote', `Counted. You picked ${venueName}.`);
+    // EVERY successful write starts a quiet refresh. This one did not, and the
+    // exception is what made the claim above cost something: the vote's own
+    // reply carries the venues, so the tally looked handled, but the roster,
+    // the going count and the plan's status arrive only on a load. Dropping the
+    // older refresh and starting nothing in its place would have left the guest
+    // out of "Who is coming" under their own answer until they reloaded the
+    // tab. It runs after the claim and with no await between them, so no reply
+    // can land in the gap. Quiet, so a rate-limited or flaky refresh leaves the
+    // counted vote on screen rather than replacing the plan with an error.
+    load({ quiet: true });
   };
 
   // ---------------------------------------------------------------- states

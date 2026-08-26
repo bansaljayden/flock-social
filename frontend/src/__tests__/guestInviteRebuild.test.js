@@ -665,6 +665,66 @@ describe('GuestInvite: the rebuilt screen', () => {
     expect(screen.queryByRole('button', { name: /bookstore speakeasy/i })).toBeNull();
   });
 
+  test('a vote the server counted is not rolled back by the refresh that left before it', async () => {
+    // The two tests above hold PHASE against a stale load. This one holds the
+    // page's DATA against it, and it is the same defect a third time: the
+    // generation was taken by the things that change `phase`, and a vote the
+    // server counted changes no phase at all. It replaces the tally in place
+    // with the rows the reply carries, which put that commit outside the rule.
+    //
+    //   answer the RSVP        -> refresh #1 leaves and stalls
+    //   tap a venue            -> 200, and the reply carries the new tally
+    //   refresh #1 lands       -> carrying the tally as it was BEFORE the vote
+    //
+    // Nothing here is a failure state, so nothing here is loud. Driven against
+    // the page before the fix, the count under the venue the guest had just
+    // picked went back down by one, under a row still reading "Your vote", and
+    // stayed there: nothing followed a vote, so the page sat on a number the
+    // server had already contradicted until the tab was reloaded.
+    const TWO = { ...PLAN, venues: [{ venue_name: 'The Bookstore Speakeasy', votes: 2 }] };
+    let previews = 0;
+    let landStaleRefresh;
+    const { container } = mount((url, opts) => {
+      if (opts && opts.method === 'POST') {
+        return /\/vote$/.test(url)
+          ? Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () => Promise.resolve({ venues: [{ venue_name: 'The Bookstore Speakeasy', votes: 3 }] }),
+          })
+          : Promise.resolve({ ok: true, status: 201, json: () => Promise.resolve({ guestToken: 'g1' }) });
+      }
+      previews += 1;
+      if (previews === 1) return okWith(TWO)();
+      // The post-RSVP refresh, held open until the assertion below wants it.
+      if (previews === 2) {
+        return new Promise((resolve) => {
+          landStaleRefresh = () => resolve({ ok: true, status: 200, json: () => Promise.resolve(TWO) });
+        });
+      }
+      // The refresh the vote itself starts, on the same bad network: it never
+      // comes back. So the only thing holding the counted tally on screen is
+      // the vote's own reply, which is what the stale refresh has to lose to.
+      return new Promise(() => {});
+    });
+
+    await screen.findByRole('heading', { level: 1, name: /friday night out/i });
+    fireEvent.change(screen.getByLabelText(/your name/i), { target: { value: 'Maya' } });
+    fireEvent.click(screen.getByRole('button', { name: /i'm in/i }));
+    await waitFor(() => expect(previews).toBe(2));
+
+    fireEvent.click(await screen.findByRole('button', { name: /bookstore speakeasy/i }));
+    await waitFor(() => expect(container.textContent).toMatch(/3 votes/));
+
+    await act(async () => {
+      landStaleRefresh();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toMatch(/3 votes/);
+    expect(container.textContent).not.toMatch(/2 votes/);
+  });
+
   test('every request the page makes carries a deadline', () => {
     const src = readSrc('GuestInvite.js');
     // No bare fetch survives: all three endpoints go through the one helper
