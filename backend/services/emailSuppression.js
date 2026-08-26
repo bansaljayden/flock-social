@@ -75,6 +75,19 @@ const VALID_REASONS = new Set(['bounce', 'complaint', 'unsubscribe']);
 // alert inside the last six hours, so it cannot be used to reach a suppressed
 // address with anything a suppressed address did not already receive.
 //
+// THAT LAST CLAUSE IS A CLAIM ABOUT ANOTHER FILE, so it is worth saying which
+// line holds it up. It is not the six-hour window and it is not the
+// delivered-alert requirement, both of which only establish that SOME alarm
+// went out. It is the recipient filter: the stand-down mails the addresses that
+// were on the list when the alert went out, and it reads
+// trusted_contacts.email_set_at to decide that. The obvious column, created_at,
+// is a fact about the ROW, and PUT /api/safety/contacts/:id rewrites an
+// address in place without moving it. Reading created_at there made the
+// sentence above false in one move: add a contact, raise a real SOS, edit that
+// contact to a suppressed address, stand down. Migration 052 is the column and
+// the reasoning. If that filter is ever loosened, this exception is what gets
+// loosened with it.
+//
 // WHAT PAYS FOR THIS. Bypassing the list means the user is the only person who
 // can notice a broken contact address, so the Safety screen has to tell them.
 // GET /api/safety/contacts marks a contact whose address is on this list and
