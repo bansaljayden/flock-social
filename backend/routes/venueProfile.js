@@ -41,6 +41,11 @@ const { rejectIfProfane } = require('../utils/moderation');
 // not be: venue_profiles.tier is a cache of the grant, and a lapsed grant leaves
 // it saying 'premium' (migration 040, services/venueEntitlements.js).
 const { getVenueEntitlement } = require('../services/venueEntitlements');
+// The verification request has to reach a person, not just a column. Held as a
+// module object rather than destructured, the way services/moderationAlerts.js
+// holds it: tests replace the exported function, and a destructured copy would
+// keep calling the original.
+const emailService = require('../services/emailService');
 // Is the claimed place in the corpus the model runs on? Answered at claim time
 // and stored, because the answer decides whether this venue may EVER be shown
 // something model-backed. See services/venueCorpus.js.
@@ -385,6 +390,82 @@ function profileView(row) {
   };
 }
 
+// ─── The operator notification behind a verification request ─────────────────
+//
+// "We confirm ownership by hand" is a promise about a person, and until this
+// existed the whole of it was a timestamp in a column. The admin half of the
+// path is real (GET /api/admin/venues/unverified orders requested claims first,
+// PUT /api/admin/venues/:profileId/verify decides them) but NOTHING IN THE
+// FRONTEND CALLS EITHER ROUTE, so nobody was ever told a venue was waiting.
+//
+// WHERE IT GOES. MODERATION_ALERT_EMAIL is the one operator inbox this codebase
+// has, and services/moderationAlerts.js reads the same variable for the same
+// kind of work: a queue a human decides. It is UNSET in production, so the
+// fallback is what will actually be used, and it is the address emailService
+// already sends from. That is deliberate: "a request reaches a human" should be
+// true out of the box rather than true once somebody remembers a variable.
+//
+// Only the first configured address is used. One claim is one notification, not
+// a page, and fanning it out is how a misconfigured variable turns each claim
+// into ten Resend calls.
+const VERIFICATION_ALERT_FALLBACK = 'hello@flockcorp.com';
+
+function verificationAlertRecipient() {
+  const configured = String(process.env.MODERATION_ALERT_EMAIL || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .find((addr) => emailService.isMailableAddress(addr));
+  return configured || VERIFICATION_ALERT_FALLBACK;
+}
+
+// Two legs, the shape services/moderationAlerts.js uses, and each reports its
+// own outcome by name rather than looking like success.
+//
+//   1. LOG, unconditional and emitted first, so a waiting claim survives a mail
+//      outage and a missing API key both. On Railway that is a stderr line. It
+//      is not a pager and nothing here pretends it is.
+//   2. EMAIL, which needs RESEND_API_KEY. Without it emailService logs a skip
+//      and answers { skipped: true } rather than throwing.
+//
+// Never blocks the owner's response, and never throws.
+async function notifyVerificationRequested(profile) {
+  const name = String(profile.business_name || 'A venue').slice(0, 200);
+  console.log(
+    `[venue-verification] profile #${profile.id} (${name}) requested verification. `
+    + `Place ${profile.google_place_id}, owner ${profile.owner_email}. `
+    + 'Queue: GET /api/admin/venues/unverified. Decide: PUT /api/admin/venues/'
+    + `${profile.id}/verify.`
+  );
+
+  const esc = emailService.escapeHtml;
+  const facts = [
+    ['Business', name],
+    ['Address on file', profile.location || 'not given'],
+    ['Google place id', profile.google_place_id],
+    ['Owner account', profile.owner_email],
+    ['Profile id', String(profile.id)],
+  ];
+  const next = `Check that this account runs the listing, then decide it with PUT /api/admin/venues/${profile.id}/verify. The queue is GET /api/admin/venues/unverified, requested claims first.`;
+
+  const result = await emailService.sendEmail({
+    to: verificationAlertRecipient(),
+    subject: `Venue verification requested: ${name}`,
+    html: `<p>${esc(name)} asked to be verified on Flock.</p>`
+      + `<ul>${facts.map(([k, v]) => `<li><strong>${esc(k)}:</strong> ${esc(String(v))}</li>`).join('')}</ul>`
+      + `<p>${esc(next)}</p>`,
+    text: `${name} asked to be verified on Flock.\n\n`
+      + `${facts.map(([k, v]) => `${k}: ${v}`).join('\n')}\n\n${next}`,
+  });
+  if (!result.sent) {
+    console.error(
+      `[venue-verification] profile #${profile.id}: the operator email did not go out `
+      + `(${result.error || result.reason || 'skipped'}). The log line above is the only `
+      + 'record that this claim is waiting.'
+    );
+  }
+}
+
 // The three owner-typed intake strings, screened together. Returns true when a
 // response has already been sent.
 function screenIntakeText(req, res) {
@@ -601,7 +682,15 @@ router.get('/', async (req, res) => {
 router.post('/request-verification', requireVerified, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      'SELECT id, google_place_id, verified, verification_requested_at FROM venue_profiles WHERE user_id = $1',
+      // business_name / location / the owner's address are here for the
+      // operator notification at the bottom of this handler, not for the
+      // response. One row already had to be read; reading three more columns
+      // off it costs nothing and saves a second round trip.
+      `SELECT p.id, p.google_place_id, p.verified, p.verification_requested_at,
+              p.business_name, p.location, u.email AS owner_email
+         FROM venue_profiles p
+         JOIN users u ON u.id = p.user_id
+        WHERE p.user_id = $1`,
       [req.user.id]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'No venue profile found' });
@@ -642,6 +731,36 @@ router.post('/request-verification', requireVerified, async (req, res) => {
         ? 'Your request is already in. We confirm ownership by hand, and verified features turn on once that clears.'
         : 'Request received. We confirm ownership by hand, and verified features turn on once that clears.',
     });
+
+    // AND NOW THE HALF THAT WAS MISSING: telling a person.
+    //
+    // The owner is answered "we confirm ownership by hand". Before this, the
+    // whole of that promise was a timestamp in a column.
+    // GET /api/admin/venues/unverified orders requested claims first and
+    // PUT /api/admin/venues/:profileId/verify decides them, but NOTHING IN THE
+    // FRONTEND CALLS EITHER ROUTE: the moderation console at
+    // frontend/src/website/ModerationDashboard.js is a reports queue and has no
+    // venue section, so the only way anyone learns a venue asked was to query
+    // the database by hand. A request that reaches no inbox is the same dead
+    // end the button was built to close, moved one step further back where it
+    // is harder to see.
+    //
+    // Two legs, same shape as services/moderationAlerts.js, and each says what
+    // it did. The log is unconditional and needs nothing configured, so it is
+    // the leg that is always true. The email needs RESEND_API_KEY; without it
+    // emailService logs a skip and returns rather than throwing.
+    //
+    // FIRST PRESS ONLY. `already` is the idempotence flag the response above
+    // uses, so an anxious owner re-tapping cannot mail the operator twice, and
+    // the mail describes the moment the claim actually entered the queue.
+    //
+    // Fire and forget, after the response: an operator notification must never
+    // decide whether the owner's request succeeded.
+    if (!already) {
+      notifyVerificationRequested(profile).catch((err) => {
+        console.error('[venue-verification] operator notification failed:', err.message);
+      });
+    }
   } catch (err) {
     console.error('Request venue verification error:', err);
     res.status(500).json({ error: 'Failed to request verification' });
