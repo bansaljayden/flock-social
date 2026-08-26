@@ -205,3 +205,48 @@ describe('bundle weight: components/ui holds only components something imports',
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// html5-qrcode stays off the startup path
+// ---------------------------------------------------------------------------
+// It carries its own barcode decoding engine and was the largest single item on
+// the boot path: measured, the chunk holding it was 169.6 KB gzipped and every
+// user downloaded it on every launch for a screen almost nobody opens. Moving
+// it to a dynamic import() inside startQrScanner took roughly 106 KB gzipped
+// off startup with no change to behaviour.
+//
+// This regression is invisible. A static import would silently pull it back
+// into the boot chunk and nothing about the app would look or behave
+// differently, so nobody would notice until somebody measured again. Hence a
+// test rather than a comment.
+describe('the QR scanner library is loaded on demand', () => {
+  const appSource = fs.readFileSync(path.join(SRC, 'App.js'), 'utf8');
+
+  test('nothing in src/ statically imports html5-qrcode', () => {
+    const offenders = [];
+    // Test files are excluded because they are never bundled, so a static
+    // import in one costs a user nothing. This file in particular quotes the
+    // very import form it is searching for, in the comment below, and would
+    // otherwise report itself.
+    for (const file of ALL_SOURCE.filter((f) => !f.includes('__tests__'))) {
+      const body = fs.readFileSync(file, 'utf8');
+      // `import ... from 'html5-qrcode'`, bare `import 'html5-qrcode'` and
+      // `require('html5-qrcode')`. Deliberately does NOT match `import(` with
+      // a parenthesis, which is the dynamic form this test exists to keep.
+      const staticImport = /(?:^|\n)\s*import\s+(?:[^;'"]*\s+from\s+)?['"]html5-qrcode['"]|require\(\s*['"]html5-qrcode['"]\s*\)/;
+      if (staticImport.test(body)) offenders.push(path.relative(SRC, file));
+    }
+    expect(offenders).toEqual([]);
+  });
+
+  test('App.js loads it with a dynamic import instead', () => {
+    expect(appSource).toMatch(/await\s+import\(\s*['"]html5-qrcode['"]\s*\)/);
+  });
+
+  test('a failed chunk load is reported as a scanner problem, not a camera one', () => {
+    // Telling somebody to check camera permissions when the real failure was
+    // the network sends them to the wrong settings screen entirely.
+    expect(appSource).toMatch(/ChunkLoadError/);
+    expect(appSource).toMatch(/Couldn't load the scanner/);
+  });
+});
