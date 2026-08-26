@@ -5239,6 +5239,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Read, not discarded: every screen that lists flocks branches on this so it
   // does not render an empty state over data that is still in flight.
   const [flocksLoading, setFlocksLoading] = useState(true);
+  // A FAILED LIST READ IS NOT AN EMPTY LIST, and on this list it was.
+  //
+  // The fetch below used to answer a failure with `setFlocks([])`, which is the
+  // same state as an account with no plans in it. So a dropped request on the
+  // Nest tab printed "No flocks yet. Start one and your people land right
+  // here." over somebody's twelve flocks, and the Messages tab printed "No
+  // conversations yet" the same way. It is the worst possible lie on the app's
+  // first screen and the easiest one to tell, which is why the file already
+  // says so at `pastFlocks`, at Blocked accounts and on every list in the venue
+  // dashboard. Those three got it right and this one, the primary list, did not.
+  const [flocksError, setFlocksError] = useState('');
   // Latest signed-in user, for socket handlers that must not resubscribe when
   // the profile object changes identity.
   const meRef = useRef(authUser);
@@ -5261,9 +5272,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // first would drop them in an empty room. redeemPendingInvite never rejects
   // and answers null instantly when there is nothing to redeem, so the ordinary
   // boot pays one resolved promise for this.
-  useEffect(() => {
+  //
+  // Named so the retry on the Nest and Messages error cards runs the same read
+  // the screen ran, rather than a second, slightly different one.
+  const loadFlocks = useCallback(() => {
     setFlocksLoading(true);
-    redeemPendingInvite()
+    setFlocksError('');
+    return redeemPendingInvite()
       .then((invite) => getFlocks().then((data) => ({ data, invite })))
       .then(({ data, invite }) => {
         const mapped = (data.flocks || []).map(f => ({
@@ -5344,9 +5359,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           openJoinedFlock(invite);
         }
       })
-      .catch(() => setFlocks([]))
+      .catch((err) => {
+        // The list on screen is NOT cleared. A failed refresh must not delete
+        // plans the user can already see; the error card says the read missed
+        // and offers the retry, which is the same rule Past flocks and the
+        // venue dashboard lists follow.
+        setFlocksError(err?.message || 'Your flocks are not loading right now.');
+      })
       .finally(() => setFlocksLoading(false));
   }, []);
+
+  // Mount only: loadFlocks holds no reactive value, so its identity never
+  // changes and this cannot become a refetch loop.
+  useEffect(() => { loadFlocks(); }, [loadFlocks]);
 
   // ── Past flocks ────────────────────────────────────────────────────────
   // Completed and cancelled flocks, fetched when the Past screen opens.
@@ -5875,6 +5900,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Direct Messages
   const [directMessages, setDirectMessages] = useState([]);
   const [dmsLoading, setDmsLoading] = useState(true);
+  // Same rule as flocksError: the conversation read failing is not the inbox
+  // being empty, and the Messages tab drew "No conversations yet" for both.
+  const [dmsError, setDmsError] = useState('');
   const [selectedDmId, setSelectedDmId] = useState(null);
   const [showNewDmModal, setShowNewDmModal] = useState(false);
 
@@ -9834,10 +9862,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // DM Detail Screen - Inline JSX to prevent focus loss on input
   const selectedDm = directMessages.find(d => d.userId === selectedDmId);
 
-  // Load DM conversations from backend on mount (filter out deleted ones)
-  useEffect(() => {
+  // Load DM conversations from backend (filter out deleted ones). Named so the
+  // Messages error card retries the read the screen already ran.
+  const loadDmConversations = useCallback(() => {
     setDmsLoading(true);
-    getDMConversations()
+    setDmsError('');
+    return getDMConversations()
       .then(data => {
         const hidden = deletedDmUserIds;
         setDirectMessages((data.conversations || []).filter(c => !hidden.includes(c.userId)).map(c => ({
@@ -9851,9 +9881,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           unread: c.unread,
         })));
       })
-      .catch(() => {})
+      // The list already on screen is left alone, exactly as loadFlocks leaves
+      // its own. The empty state is what has to be suppressed, not the data.
+      .catch((err) => setDmsError(err?.message || 'Your messages are not loading right now.'))
       .finally(() => setDmsLoading(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { loadDmConversations(); }, [loadDmConversations]);
 
   // Named so the vote panel's retry runs the same read the screen does.
   const loadDmVenueVotes = useCallback((dmId) => {
@@ -11804,9 +11838,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </>)}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginBottom: '14px' }}>
           {/* "No flocks yet" is a statement about the user's account, so it
-              waits until the fetch has actually answered. */}
+              waits until the fetch has actually answered, AND until the answer
+              was not a failure. A read that never landed says nothing about
+              whether this account has plans in it, and this is the screen where
+              claiming otherwise costs the most. */}
           {flocksLoading && flocks.length === 0 && <ListSkeleton label="Loading your flocks" />}
-          {!flocksLoading && flocks.length === 0 && (
+          {!flocksLoading && flocksError && (
+            <div style={{ ...styles.card, marginBottom: '10px' }}>
+              <BirdNote
+                layout="row"
+                size={48}
+                bird={WARM_BIRD}
+                role="alert"
+                title={flocksError}
+                body="Nothing has been cancelled. This is the list failing to load, not the list being empty."
+                action={<button className="hit44 glass-btn glass-navy" onClick={loadFlocks} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
+              />
+            </div>
+          )}
+          {!flocksLoading && !flocksError && flocks.length === 0 && (
             <div style={{
               /* Full bleed back out of the feed's 16px gutter, and tall enough
                  to reach the tab bar. This used to be a small dashed card with
@@ -14056,6 +14106,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // Both lists on this screen fetch on mount. Until they answer, the screen
     // shows skeleton rows rather than "No conversations yet".
     const conversationsLoading = (flocksLoading || dmsLoading) && totalConversations === 0;
+    // And if either read FAILED, the screen has not learned that this inbox is
+    // empty, so it may not say so. One card covers both, because a user does
+    // not care which of two fetches missed, and the retry runs whichever did.
+    const conversationsError = flocksError || dmsError;
+    const retryConversations = () => {
+      if (flocksError) loadFlocks();
+      if (dmsError) loadDmConversations();
+    };
 
     // Sort flocks: pinned first, then by custom order, then default
     const sortedFlocks = [...flocks].sort((a, b) => {
@@ -14358,8 +14416,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           {/* Loading */}
           {conversationsLoading && <ListSkeleton label="Loading conversations" />}
 
+          {/* Failed read. Never suppressed by a search box: a search over a
+              list that did not load is not a search that found nothing. */}
+          {!conversationsLoading && conversationsError && (
+            <div style={{ ...styles.card, marginBottom: '10px' }}>
+              <BirdNote
+                layout="row"
+                size={48}
+                bird={WARM_BIRD}
+                role="alert"
+                title={conversationsError}
+                body="Nothing has been deleted. This is the list failing to load."
+                action={<button className="hit44 glass-btn glass-navy" onClick={retryConversations} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
+              />
+            </div>
+          )}
+
           {/* Empty state */}
-          {!conversationsLoading && filteredDms.length === 0 && filteredFlocks.length === 0 && (
+          {!conversationsLoading && !conversationsError && filteredDms.length === 0 && filteredFlocks.length === 0 && (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '8px 20px 24px', minHeight: chatSearch ? '0' : 'calc(100vh - 300px)' }}>
               {/* The mark belongs to the true-empty inbox. A search that found
                   nothing is a different state and gets the small icon. */}
@@ -18833,6 +18907,35 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // RENDER - Call functions directly instead of JSX to prevent component recreation
   const isExploreVisible = currentTab === 'explore' && currentScreen === 'main' && !showModeSelection;
 
+  // THE MAP IS BUILT ON THE FIRST VISIT TO DISCOVER, NOT AT BOOT, AND THAT IS
+  // A PERMISSION DECISION RATHER THAN A PERFORMANCE ONE.
+  //
+  // The map layer below is deliberately never unmounted, so a tab switch is
+  // instant. It was also never MOUNTED late: it rendered on the first commit of
+  // the signed-in shell, hidden behind `visibility: hidden`. A hidden div is
+  // still a mounted component, so MapLibreMapView ran its init effect at boot,
+  // and that effect calls getUserLocation() whenever no initialCenter is given.
+  // The result was the iOS location prompt landing on the Nest tab, seconds
+  // after signup, with no map on screen and nothing saying why.
+  //
+  // That is the exact failure the "Load venues on mount" effect was rewritten
+  // to prevent, and the failure the notification prompt was moved out of. Both
+  // fixes covered their own call site. This one was the other boot path into
+  // the same OS dialog, and it fired first: iOS allows one location prompt per
+  // install and a denial is permanent, so the only ask the app will ever get
+  // was being spent where it could explain itself least. The Info.plist string
+  // and the reviewer script both describe a prompt that arrives when the app
+  // looks up nearby venues, which is only true once this latch exists.
+  //
+  // Latched, not toggled: once Discover has been open the map stays mounted for
+  // the rest of the session exactly as before, so nothing about tab switching,
+  // map state or the venue-picking flows changes. Every route into venue
+  // picking sets currentTab to explore and currentScreen to main, so each one
+  // still mounts the map on the same commit that reveals it.
+  const exploreEverVisibleRef = useRef(false);
+  if (isExploreVisible) exploreEverVisibleRef.current = true;
+  const exploreMounted = exploreEverVisibleRef.current;
+
   const renderScreen = () => {
     // Show welcome screen for mode selection — only for privileged users
     if (showModeSelection) {
@@ -18840,7 +18943,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
     // Show venue onboarding for venue logins
     if (showVenueOnboarding) return VenueOnboardingScreen();
-    // Show onboarding for new users who haven't completed it
+    // There is no consumer onboarding screen. A comment here promised one for
+    // long enough that a reader could go looking; the only onboarding in the
+    // app is VenueOnboardingScreen above, which is for venue logins. A new
+    // account lands straight on the Nest tab and its empty state is the whole
+    // of the first-run teaching.
     if (currentScreen === 'nfcCheckin') return NfcCheckinScreen();
     if (currentScreen === 'addFriends') {
       // Every value the screen reads, named once and in one place. Object
@@ -19393,12 +19500,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <div style={styles.notchInner} />
         </div>
         <div style={styles.content}>
-          {/* Persistent map layer — hidden via CSS, never unmounted */}
-          <div style={{ position: 'absolute', inset: 0, zIndex: isExploreVisible ? 1 : -1, visibility: isExploreVisible ? 'visible' : 'hidden', pointerEvents: isExploreVisible ? 'auto' : 'none' }}>
-            <ErrorBoundary label="screen:explore" resetKey={screenKey} fallback={exploreCrashFallback}>
-              <ScreenSlot render={ExploreScreen} />
-            </ErrorBoundary>
-          </div>
+          {/* Persistent map layer. Mounted on the first visit to Discover and
+              never unmounted after that; see exploreMounted above for why it is
+              no longer mounted at boot. */}
+          {exploreMounted && (
+            <div style={{ position: 'absolute', inset: 0, zIndex: isExploreVisible ? 1 : -1, visibility: isExploreVisible ? 'visible' : 'hidden', pointerEvents: isExploreVisible ? 'auto' : 'none' }}>
+              <ErrorBoundary label="screen:explore" resetKey={screenKey} fallback={exploreCrashFallback}>
+                <ScreenSlot render={ExploreScreen} />
+              </ErrorBoundary>
+            </div>
+          )}
           {/* Landmark: the app had no main/nav/header at all, so "skip to
               content" and landmark navigation had nothing to land on. */}
           <main style={{ display: 'contents' }}>
@@ -20898,6 +21009,61 @@ function sessionEndCopy(reason) {
   return SESSION_END_COPY[reason] || SESSION_END_COPY.session_expired;
 }
 
+// WHAT THE CONFIRMATION LINK IN THE SIGNUP EMAIL COMES BACK WITH.
+//
+// The link points at the API, not at the web app, because only the API can
+// consume the token (backend/services/emailService.js says so at the function
+// that builds it). GET /api/auth/verify-email consumes it and then redirects
+// the browser to PUBLIC_WEB_URL/?email_verified=<outcome>, one of 1, expired,
+// invalid or error. index.js already lists email_verified in APP_INTENT_PARAMS,
+// so that URL boots the app rather than the marketing page.
+//
+// And then nothing read the parameter. Every one of the four outcomes landed in
+// silence. The ordinary path is a link tapped in a mail app on a phone, which
+// opens the phone's browser, where there is no session: so the person who had
+// just confirmed their address was shown a sign-in screen that said nothing
+// about it, went back to a Flock app still asking them to confirm, and had no
+// way to tell a link that had worked from one that had expired. The failures
+// were the worse half. An expired link and a good one produced identical
+// screens, so the one instruction that would have helped, ask for another,
+// never reached the only person who needed it.
+//
+// One sentence per outcome, true whether or not this device holds a session.
+const EMAIL_VERIFIED_COPY = {
+  1: 'Your email is confirmed.',
+  expired: 'That confirmation link has expired. Ask Flock for a new one and try again.',
+  invalid: 'That confirmation link did not work. Ask Flock for a new one and try again.',
+  error: 'We could not confirm your email just now. Open the link again in a minute.',
+};
+
+// Read once, at module evaluation, and taken off the address bar as it is read.
+// Module scope rather than a state initialiser on purpose: stripping the
+// parameter is a side effect, and StrictMode runs an initialiser twice, so the
+// second read would find nothing and the message would depend on which return
+// React kept. Running here also means a refresh, a bookmark or a pasted URL
+// cannot replay a message about a token that was spent the first time.
+function readEmailVerifiedOutcome() {
+  if (typeof window === 'undefined' || !window.location) return null;
+  try {
+    const params = new URLSearchParams(window.location.search || '');
+    const outcome = params.get('email_verified');
+    if (!outcome) return null;
+    params.delete('email_verified');
+    const query = params.toString();
+    if (window.history && typeof window.history.replaceState === 'function') {
+      window.history.replaceState({}, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash || ''}`);
+    }
+    // An outcome this build does not know about is still a failed confirmation,
+    // and saying nothing is the bug being fixed. Fall through to the generic
+    // failure rather than to silence.
+    return Object.prototype.hasOwnProperty.call(EMAIL_VERIFIED_COPY, outcome) ? outcome : 'error';
+  } catch {
+    return null;
+  }
+}
+
+const EMAIL_VERIFIED_OUTCOME = readEmailVerifiedOutcome();
+
 // A boot-time auth rejection, translated. The only 403 GET /api/auth/me can
 // return is the ban; the emailVerificationRequired flag is checked anyway so a
 // future gate on that route cannot turn into a false accusation.
@@ -20920,6 +21086,9 @@ const FlockApp = () => {
   // The line shown on the sign-in screen when the session ended without the
   // user pressing Log out. Empty for a normal logout.
   const [sessionNote, setSessionNote] = useState('');
+  // What the confirmation link in the signup email came back with, if this boot
+  // is the one that followed it. See EMAIL_VERIFIED_COPY.
+  const [linkNote, setLinkNote] = useState(() => EMAIL_VERIFIED_COPY[EMAIL_VERIFIED_OUTCOME] || '');
   // Latched for the life of one session so the teardown runs exactly once.
   const sessionEndedRef = useRef(false);
   // Whether the teardown that latched it was a revoke rather than the user
@@ -21064,6 +21233,43 @@ const FlockApp = () => {
     return stopRetrying;
   }, [beginSession, endSession]);
 
+  // ONE NOTICE BAR, TWO SOURCES, AND IT IS BUILT OUT HERE BECAUSE BOTH HALVES
+  // OF THIS COMPONENT NEED IT.
+  //
+  // `sessionNote` only ever exists with no session, so it used to live inside
+  // the signed-out branch. `linkNote` does not: the confirmation link can be
+  // opened in the browser the user is already signed in to, and that read was
+  // the silent one. It sits above whatever is on screen rather than inside the
+  // auth column, because the three auth screens are owned elsewhere and none of
+  // them takes a notice prop.
+  //
+  // The link is the newer fact when both exist, so it wins.
+  const noticeText = linkNote || sessionNote;
+  const notice = noticeText ? (
+    <div
+      role="status"
+      style={{
+        position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9000,
+        padding: 'calc(var(--safe-top, 0px) + 10px) 14px 12px',
+        backgroundColor: 'rgba(11,18,32,0.97)',
+        borderBottom: '1px solid rgba(244,239,227,0.18)',
+        fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif",
+      }}
+    >
+      <div style={{ maxWidth: '440px', margin: '0 auto', display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
+        <span style={{ flex: 1, minWidth: 0, fontSize: '14px', lineHeight: 1.45, color: '#f1ede0' }}>{noticeText}</span>
+        <button
+          type="button"
+          className="hit44"
+          onClick={() => { setLinkNote(''); setSessionNote(''); }}
+          style={{ flexShrink: 0, background: 'none', border: 'none', padding: '0 2px', color: 'rgba(241,237,224,0.6)', fontSize: '13px', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+  ) : null;
+
   if (authChecking) {
     return (
       <div style={{
@@ -21083,34 +21289,6 @@ const FlockApp = () => {
   }
 
   if (!authUser) {
-    // Why they are looking at a sign-in screen they did not ask for. It sits
-    // above the auth column rather than inside it, because the three auth
-    // screens are owned elsewhere and none of them takes a notice prop.
-    const notice = sessionNote ? (
-      <div
-        role="status"
-        style={{
-          position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9000,
-          padding: 'calc(var(--safe-top, 0px) + 10px) 14px 12px',
-          backgroundColor: 'rgba(11,18,32,0.97)',
-          borderBottom: '1px solid rgba(244,239,227,0.18)',
-          fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif",
-        }}
-      >
-        <div style={{ maxWidth: '440px', margin: '0 auto', display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
-          <span style={{ flex: 1, minWidth: 0, fontSize: '14px', lineHeight: 1.45, color: '#f1ede0' }}>{sessionNote}</span>
-          <button
-            type="button"
-            className="hit44"
-            onClick={() => setSessionNote('')}
-            style={{ flexShrink: 0, background: 'none', border: 'none', padding: '0 2px', color: 'rgba(241,237,224,0.6)', fontSize: '13px', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
-          >
-            Dismiss
-          </button>
-        </div>
-      </div>
-    ) : null;
-
     if (authScreen === 'signup') {
       return (
         <>
@@ -21171,7 +21349,14 @@ const FlockApp = () => {
   // who just deleted their account reads the expired-session copy: the exact
   // screen this commit exists to stop them seeing. A note is only ever passed
   // by a caller that knows why the session ended, so `!!note` is the flag.
-  return <FlockAppInner authUser={authUser} venueLoginFlag={venueLoginFlag} onLogout={(note) => endSession(note || '', { specific: !!note })} />;
+  return (
+    <>
+      {/* Only ever a linkNote here: sessionNote does not survive having a
+          session. See the notice block above. */}
+      {notice}
+      <FlockAppInner authUser={authUser} venueLoginFlag={venueLoginFlag} onLogout={(note) => endSession(note || '', { specific: !!note })} />
+    </>
+  );
 };
 
 // Wrap with Google OAuth provider
