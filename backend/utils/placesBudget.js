@@ -177,6 +177,8 @@
 //   the same way: check the call site, not the comment.
 // ---------------------------------------------------------------------------
 
+const { msUntilUtcMidnight } = require('./retryAfter');
+
 const HOUR_MS = 60 * 60 * 1000;
 
 const PER_USER_HOURLY = 30;
@@ -335,6 +337,74 @@ function allowGlobalPlacesCall(cost = 1) {
 }
 
 /**
+ * WHEN a refused caller may come back, and WHICH ceiling refused them.
+ *
+ * Non-consuming, and it charges nothing. Call it only AFTER allowPlacesSearch()
+ * has already answered false: this is the copy question, not the spending
+ * question, and read-then-act is still not the same as a single synchronous
+ * charge.
+ *
+ * It exists because a boolean cannot carry a window. Every route that gated on
+ * this ledger had to invent an adjective, and the ones they invented described
+ * a per-second rate that does not exist here: PER_USER_HOURLY is a ROLLING 60
+ * minutes and GLOBAL_DAILY is a FIXED UTC day, so "give it a few seconds" was
+ * advice that returned the same refusal five seconds later.
+ *
+ * The legs are checked in the same order allowPlacesSearch() checks them, so
+ * the leg reported is the leg that actually refused.
+ *
+ * @param {number|string} userId
+ * @param {number} [cost=1]
+ * @returns {{leg: 'global-day'|'user-hour'|'identity'|null, ms: number}}
+ *   `ms` is how long until this exact request would be allowed. `leg` is null
+ *   when nothing is refusing, which a caller should treat as "retry now".
+ */
+function placesRetryAfter(userId, cost = 1) {
+  const units = Number.isInteger(cost) && cost >= 1 && cost <= PER_USER_HOURLY ? cost : 1;
+  rollDay();
+
+  if (dayCount + units > GLOBAL_DAILY) {
+    return { leg: 'global-day', ms: msUntilUtcMidnight() };
+  }
+
+  const id = keyOf(userId);
+  // An unidentifiable caller is refused forever rather than throttled, so there
+  // is no honest window to report. The route says so instead of inventing one.
+  if (id === null) return { leg: 'identity', ms: 0 };
+
+  const now = Date.now();
+  const hits = (userHits.get(id) || []).filter((t) => now - t < HOUR_MS);
+  if (hits.length + units > PER_USER_HOURLY) {
+    // `hits` is ascending because charges are pushed in order. This request
+    // needs `over` of them to fall out of the rolling hour, so the wait is
+    // governed by the `over`-th OLDEST, not simply by the oldest. Reporting the
+    // oldest would be short for any request costing more than one unit, and a
+    // wait reported short is the defect this function exists to remove.
+    const over = hits.length + units - PER_USER_HOURLY;
+    const stamp = hits[Math.min(over, hits.length) - 1];
+    return { leg: 'user-hour', ms: Math.max(1, stamp + HOUR_MS - now) };
+  }
+
+  return { leg: null, ms: 0 };
+}
+
+/**
+ * The same question for the doors with no authenticated caller. Both ceilings
+ * allowGlobalPlacesCall() enforces are FIXED UTC days, so the answer is always
+ * the next UTC midnight; what varies is which one to name.
+ *
+ * @param {number} [cost=1]
+ * @returns {{leg: 'global-day'|'unauth-day'|null, ms: number}}
+ */
+function globalPlacesRetryAfter(cost = 1) {
+  const units = Number.isInteger(cost) && cost >= 1 && cost <= PER_USER_HOURLY ? cost : 1;
+  rollDay();
+  if (dayCount + units > GLOBAL_DAILY) return { leg: 'global-day', ms: msUntilUtcMidnight() };
+  if (unauthDayCount + units > UNAUTH_DAILY) return { leg: 'unauth-day', ms: msUntilUtcMidnight() };
+  return { leg: null, ms: 0 };
+}
+
+/**
  * Non-consuming read, for tests and diagnostics. Never gate on this and then
  * call Google — read-then-act is not the same as allowPlacesSearch()'s single
  * synchronous charge.
@@ -375,6 +445,8 @@ function __resetPlacesBudget({ keepUsers = false } = {}) {
 module.exports = {
   allowPlacesSearch,
   allowGlobalPlacesCall,
+  placesRetryAfter,
+  globalPlacesRetryAfter,
   placesBudgetStatus,
   __resetPlacesBudget,
   PER_USER_HOURLY,
