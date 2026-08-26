@@ -73,12 +73,34 @@ function isEnabled() {
 // classified there before it ships: promotional or marketing pushes need
 // explicit opt-in consent UI and their own opt-out, which no type here has or
 // needs.
+//
+// The five types added on 2026-08-25 are transactional on the same terms as
+// their neighbours, and the classification is recorded here because this file
+// owns the table a client routes on:
+//
+//   flock_updated      the time, venue or name of a plan the recipient
+//                      accepted moved. Sent to accepted members only, by the
+//                      creator's own edit, debounced per plan.
+//   flock_cancelled    a plan the recipient accepted was cancelled or deleted.
+//                      Same audience, one send, and the last thing that plan
+//                      will ever say.
+//   bill_settled       somebody paid the recipient back on a bill the
+//                      recipient fronted. One send, to the payer only.
+//   friend_accepted    a friend request the recipient SENT was accepted. One
+//                      send, to the requester only.
+//   availability_pulse a friend said they are free tonight. The only type here
+//                      that is not about a row the recipient already owns, so
+//                      it is the most heavily rationed: see routes/availability.js.
+//
+// None of the five names a price, a plan, a tier, or an offer, and none of them
+// fires without a person doing something first.
 const FLOCK_SCOPED_TYPES = new Set([
   'flock_invite',
   'flock_message',
   'flock_rsvp',
   'flock_confirmed',
   'flock_updated',
+  'flock_cancelled',
   'budget_reminder',
   'budget_ready',
   'bill_created',
@@ -88,14 +110,63 @@ const FLOCK_SCOPED_TYPES = new Set([
   'attendance_marked',
 ]);
 
+// ---------------------------------------------------------------------------
+// WHICH SURFACE, not just which flock (2026-08-25)
+//
+// Every flock-scoped type used to resolve to `/?flock=<id>`, which App.js turns
+// into the flock's CHAT. For eight of them that is right, because the chat is
+// where the thing happened. For five it was one screen away from the subject:
+//
+//   "You owe Ava $12"                  opened a conversation, not the bill
+//   "Budget set"                       opened a conversation, not the budget
+//   "Submit your budget"               opened a conversation, not the form
+//   "Your reliability score updated"   opened a conversation, not the score
+//   "Tonight looks busy at 9"          opened a conversation, not the plan
+//
+// So the link now carries the surface as well as the id. `view` is read by
+// services/pushNavigation.js and maps onto state App.js already has: the cash
+// pool sheet (bill and budget both live in it) and the plan detail screen.
+// A type with no entry here keeps the plain `/?flock=<id>` it always had, so
+// the chat stays the default rather than becoming a special case.
+const FLOCK_VIEW = {
+  bill_created: 'bill',
+  bill_settled: 'bill',
+  budget_ready: 'budget',
+  budget_reminder: 'budget',
+  flock_updated: 'plan',
+  flock_cancelled: 'plan',
+  crowd_alert: 'plan',
+};
+
 function deepLinkPath(data = {}) {
   const type = data.type ? String(data.type) : '';
   const flockId = data.flockId != null ? String(data.flockId) : '';
   const senderId = data.senderId != null ? String(data.senderId) : '';
 
   if (type === 'dm_message' && /^\d+$/.test(senderId)) return `/?dm=${senderId}`;
-  if (type === 'friend_request') return '/?tab=you';
-  if (FLOCK_SCOPED_TYPES.has(type) && /^\d+$/.test(flockId)) return `/?flock=${flockId}`;
+  // A friend request and its answer both land where friend requests are: the
+  // You tab.
+  if (type === 'friend_request' || type === 'friend_accepted') return '/?tab=you';
+  // The score this names is the recipient's own, and it is printed on their
+  // profile. The flock is only the occasion.
+  if (type === 'attendance_marked') return '/?tab=you';
+  // "Free tonight" is answered from the Nest, which is where the Tonight
+  // control and the start-a-plan button are.
+  if (type === 'availability_pulse') return '/?tab=home';
+  // Admin only. This used to resolve to '/', so tapping a report alert did
+  // nothing at all.
+  if (type === 'moderation_report') return '/?admin=true';
+  // An invited flock is NOT in the accepted list the chat screen reads, so a
+  // chat link for one can only ever miss. Its own parameter, its own landing.
+  if (type === 'flock_invite' && /^\d+$/.test(flockId)) return `/?invite=${flockId}`;
+  if (FLOCK_SCOPED_TYPES.has(type) && /^\d+$/.test(flockId)) {
+    const view = FLOCK_VIEW[type];
+    return view ? `/?flock=${flockId}&view=${view}` : `/?flock=${flockId}`;
+  }
+  // A cancellation whose flock has already been DELETED carries no id, because
+  // there is no row left for the visibility gate to check or for a screen to
+  // open. The plans list is the honest destination.
+  if (type === 'flock_cancelled') return '/?tab=chat';
   return '/';
 }
 

@@ -24,9 +24,116 @@ const { emitToFlockExcludingBlocked, emitToFlockMembers } = require('../sockets/
 // suspenders, and it holds regardless of what wrote the row).
 const { bandCeiling } = require('./budget');
 
-const { pushIfOffline } = require('../services/pushHelper');
+const { pushIfOffline, pushIfOfflineDebounced, isPushConfigured } = require('../services/pushHelper');
 
 const router = express.Router();
+
+// ---------------------------------------------------------------------------
+// THE RSVP FAN-OUT, COLLAPSED (2026-08-25)
+//
+// POST /:id/join pushed the host once per joiner with no debounce at all, so a
+// ten-person flock filling up over one evening was NINE separate "X is going!"
+// notifications on the host's lock screen, each one collapsing the last (they
+// share an apns-collapse-id) so that eight of them were destroyed by the ninth
+// on the way past. The host was interrupted nine times to be told one thing.
+//
+// The shape below keeps the first one immediate, because "Bob is going" the
+// moment Bob goes is the whole reward of hosting, and batches everything that
+// arrives behind it:
+//
+//   t=0    Bob joins       -> "Bob is going!"           (sent now)
+//   t=1-59 eight more join -> nothing
+//   t=60                   -> "8 more people are going" (one push)
+//
+// So the worst case is one notification per flock per minute instead of one per
+// person, and a flock that fills at a human pace still reads person by person.
+//
+// ── PER-PROCESS, AND THAT IS A DECISION, NOT AN OVERSIGHT ──────────────────
+//
+// This map lives in one process's heap, so on a second Railway instance the
+// RSVPs split between two windows and the flock costs two digests instead of
+// one. The repo has three of these debounces and made exactly one of them
+// durable: `crowd_alert_sends` (migration 007). The difference is what a MISS
+// costs.
+//
+//   crowd_alert_sends  a miss RE-SENDS an alert every member already has on
+//                      their lock screen. Getting it wrong is louder, and it is
+//                      louder for everybody at once, so it is worth a table.
+//   rsvpWindows        a miss sends ONE extra "X is going" to ONE host. Getting
+//                      it wrong is louder by one, on a notification that host
+//                      wanted anyway, and only while two instances are up.
+//
+// So the durable version would be a Postgres write on every single RSVP to
+// save, at most, one notification per instance per minute. That trade is worth
+// taking if this ever runs at a scale where hosts complain, and the shape to
+// copy is crowd_alert_sends with the flock id as the claim key. It is not worth
+// taking now. Recorded in utils/cacheKeyInventory.js under `rsvpWindows`, which
+// is where the next audit will look.
+//
+// The floor holds either way: nine pushes for nine joiners was the defect, and
+// even two instances turn that into two.
+const RSVP_DIGEST_MS = 60 * 1000;
+const RSVP_WINDOWS_MAX = 5000;
+const rsvpWindows = new Map(); // flockId -> { io, hostId, flockName, count, firstName, timer }
+
+function closeRsvpWindow(key) {
+  const win = rsvpWindows.get(key);
+  if (!win) return null;
+  rsvpWindows.delete(key);
+  if (win.timer) clearTimeout(win.timer);
+  return win;
+}
+
+function openRsvpWindow(key, seed) {
+  // Bounded. Each entry is a live timer, and an unbounded map here would be an
+  // unbounded number of them; the oldest windows are the ones closest to
+  // firing anyway.
+  while (rsvpWindows.size >= RSVP_WINDOWS_MAX) {
+    const oldest = rsvpWindows.keys().next().value;
+    if (oldest === undefined) break;
+    closeRsvpWindow(oldest);
+  }
+  const win = { ...seed, count: 0, firstName: null, timer: null };
+  win.timer = setTimeout(() => { flushRsvpWindow(key).catch(() => {}); }, RSVP_DIGEST_MS);
+  // A pending notification must never be the reason a process stays alive.
+  if (typeof win.timer.unref === 'function') win.timer.unref();
+  rsvpWindows.set(key, win);
+}
+
+async function flushRsvpWindow(key) {
+  const win = closeRsvpWindow(String(key));
+  if (!win) return;
+  if (win.count === 0) return; // nobody joined during the window, so nothing to say
+  // Re-armed rather than left closed, so a steady stream of joins stays at one
+  // notification a minute instead of alternating batched and immediate.
+  openRsvpWindow(String(key), { io: win.io, hostId: win.hostId, flockName: win.flockName });
+  try {
+    await pushIfOffline(win.io, win.hostId,
+      win.count === 1 ? `${win.firstName} is going!` : `${win.count} more people are going`,
+      win.flockName,
+      { type: 'flock_rsvp', flockId: String(key) }
+    );
+  } catch (err) {
+    console.error('RSVP digest push error:', err.message);
+  }
+}
+
+// Returns true when the caller should send its own immediate push (this is the
+// first RSVP in the window), false when the joiner has been folded into the
+// digest that is already scheduled.
+function claimRsvpPush({ io, flockId, hostId, flockName, joinerName }) {
+  const key = String(flockId);
+  const open = rsvpWindows.get(key);
+  if (open) {
+    // Only the first name is kept, because that is all a one-person digest
+    // prints; everything after it is a count.
+    open.count += 1;
+    if (open.firstName == null) open.firstName = joinerName;
+    return false;
+  }
+  openRsvpWindow(key, { io, hostId, flockName });
+  return true;
+}
 
 // SERIAL primary/foreign keys are INT4 (migrations 000/001). express-validator
 // `isInt()` with no bound accepts "9999999999", which then reaches the query and
@@ -1161,6 +1268,70 @@ router.put('/:id',
           console.error('Flock confirmed push error:', pushErr.message);
         }
       }
+
+      // ── A PLAN THAT MOVED, AND A PLAN THAT IS OFF ────────────────────────
+      //
+      // Until now this route pushed on exactly one transition: status becoming
+      // 'confirmed'. Changing the TIME, the VENUE or the NAME emitted a socket
+      // event and stopped there, so a plan moving from 8pm to 10pm reached the
+      // people who happened to be looking at the app and nobody else. The
+      // people it does not reach are the ones who show up at 8.
+      //
+      // WHICH EDITS COUNT. The three fields above and nothing else. A venue
+      // photo, a rating, a lat/lng, a status flip to completed: none of those
+      // change where or when anybody has to be, and pushing on them would make
+      // this the noisiest notification in the app. The check is on what the
+      // request ASKED to change rather than a before/after diff, because the
+      // clients that send these fields send them when the user changes them,
+      // and a diff would cost a second read of a row we already wrote.
+      //
+      // DEBOUNCED, unlike the confirm push. Rescheduling is a fiddly action
+      // (drag the time, look at it, drag it again) and pushIfOfflineDebounced's
+      // window is keyed on recipient + type + flock, so a minute of fiddling is
+      // one notification. `flock_updated` was already a declared type on all
+      // three deep-link tables with nothing that emitted it; this is what it
+      // was reserved for.
+      const cancelled = status === 'cancelled';
+      // A confirm that also carries the final time is ONE announcement, not
+      // two. "It's happening!" below already says the time and the venue, so a
+      // second "Plan updated" behind it would be the same news twice.
+      const moved = !cancelled && status !== 'confirmed'
+        && (event_time !== undefined || venue_name !== undefined || name !== undefined);
+      if ((cancelled || moved) && isPushConfigured()) {
+        try {
+          const membersResult = await pool.query(
+            "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+            [flockId, req.user.id]
+          );
+          const planName = updated.name || 'your plan';
+          let title;
+          let bodyText;
+          if (cancelled) {
+            title = 'Plan cancelled';
+            bodyText = `${planName} is off.`;
+          } else if (event_time !== undefined) {
+            const when = updated.event_time
+              ? new Date(updated.event_time).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' })
+              : '';
+            title = 'Plan updated';
+            bodyText = when ? `${planName} moved to ${when}.` : `${planName} has a new time.`;
+          } else if (venue_name !== undefined) {
+            title = 'Plan updated';
+            bodyText = updated.venue_name ? `${planName} is now at ${updated.venue_name}.` : `${planName} has a new spot.`;
+          } else {
+            title = 'Plan updated';
+            bodyText = `This plan is now called ${planName}.`;
+          }
+          await Promise.allSettled(
+            membersResult.rows.map((m) => pushIfOfflineDebounced(io, m.user_id, title, bodyText, {
+              type: cancelled ? 'flock_cancelled' : 'flock_updated',
+              flockId: String(flockId),
+            }))
+          );
+        } catch (pushErr) {
+          console.error('Flock update push error:', pushErr.message);
+        }
+      }
     } catch (err) {
       console.error('Update flock error:', err);
       // headersSent: everything after res.json above runs post-response, so a
@@ -1191,6 +1362,19 @@ router.delete('/:id', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('
     // Notify members before deleting
     const io = req.app.get('io');
     const nameResult = await pool.query('SELECT name FROM flocks WHERE id = $1', [flockId]);
+    // Read BEFORE the delete, for the same reason the socket fan-out below is
+    // awaited before it: the DELETE cascades flock_members away, and a push
+    // that goes looking for its recipients afterwards finds nobody. Only when
+    // push is actually configured, so a deployment without it pays for no
+    // extra query.
+    let cancelRecipients = [];
+    if (isPushConfigured()) {
+      const members = await pool.query(
+        "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+        [flockId, req.user.id]
+      );
+      cancelRecipients = members.rows.map((m) => m.user_id);
+    }
     if (io) {
       // `deletedBy` is the deleter's NAME, so this needs the same block-aware
       // fan-out as every other actor-naming event. AWAITED, and deliberately
@@ -1211,9 +1395,35 @@ router.delete('/:id', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('
       return res.status(404).json({ error: 'Flock not found' });
     }
     res.json({ message: 'Flock deleted' });
+
+    // A deleted plan was a socket event and nothing else, so the people who
+    // were not in the app when it happened turned up at the bar. This is the
+    // one notification that cannot wait for the next launch.
+    //
+    // NO flockId in the payload, deliberately. The row is gone, so the
+    // visibility gate in pushHelper would find no flock and suppress every
+    // send; there is also no screen left to open. deepLinkPath answers
+    // '/?tab=chat' for an id-less flock_cancelled, which lands on the plans
+    // list. Nobody is named either, so nothing here needs the block gate.
+    // Post-response and in its own try/catch, like every other push in this
+    // file.
+    if (cancelRecipients.length > 0) {
+      try {
+        const flockName = nameResult.rows[0]?.name || 'A plan';
+        await Promise.allSettled(
+          cancelRecipients.map((userId) => pushIfOffline(io, userId,
+            'Plan cancelled',
+            `${flockName} is off.`,
+            { type: 'flock_cancelled' }
+          ))
+        );
+      } catch (pushErr) {
+        console.error('Flock deleted push error:', pushErr.message);
+      }
+    }
   } catch (err) {
     console.error('Delete flock error:', err);
-    res.status(500).json({ error: 'Failed to delete flock' });
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to delete flock' });
   }
 });
 
@@ -1412,11 +1622,24 @@ router.post('/:id/join', requireVerified, param('id').isInt({ min: 1, max: INT4_
         const io = req.app.get('io');
         const flockData = await pool.query('SELECT creator_id, name FROM flocks WHERE id = $1', [flockId]);
         if (flockData.rows.length > 0 && flockData.rows[0].creator_id !== req.user.id) {
-          await pushIfOffline(io, flockData.rows[0].creator_id,
-            `${req.user.name} is going!`,
-            flockData.rows[0].name,
-            { type: 'flock_rsvp', flockId: String(flockId), fromUserId: String(req.user.id) }
-          );
+          // First RSVP in the window goes out now and names the joiner;
+          // everyone behind it is folded into one digest a minute later. See
+          // the block at the top of this file for why nine pushes was worse
+          // than useless.
+          const firstOfWindow = claimRsvpPush({
+            io,
+            flockId,
+            hostId: flockData.rows[0].creator_id,
+            flockName: flockData.rows[0].name,
+            joinerName: req.user.name,
+          });
+          if (firstOfWindow) {
+            await pushIfOffline(io, flockData.rows[0].creator_id,
+              `${req.user.name} is going!`,
+              flockData.rows[0].name,
+              { type: 'flock_rsvp', flockId: String(flockId), fromUserId: String(req.user.id) }
+            );
+          }
         }
       } catch (pushErr) {
         console.error('Join flock push error:', pushErr.message);
@@ -2197,6 +2420,16 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
     const io = req.app.get('io');
 
     if (isCreator) {
+      // Same read-before-delete as DELETE /:id, and the same reason: the
+      // cascade takes the recipient list with it.
+      let cancelRecipients = [];
+      if (isPushConfigured()) {
+        const members = await pool.query(
+          "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+          [flockId, req.user.id]
+        );
+        cancelRecipients = members.rows.map((m) => m.user_id);
+      }
       // Notify all members before deleting. Block-aware (`deletedBy` is a name)
       // and awaited: the fan-out reads flock_members, which the DELETE on the
       // next line cascades away, so the read has to finish first.
@@ -2208,7 +2441,23 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
       // Creator leaving deletes the entire flock (cascade removes members, messages, votes)
       await pool.query('DELETE FROM flocks WHERE id = $1', [flockId]);
       if (io) io.socketsLeave(`flock:${flockId}`); // no ghost listeners on a dead room
-      return res.json({ message: 'Left flock', flock_name: flockName, deleted: true });
+      res.json({ message: 'Left flock', flock_name: flockName, deleted: true });
+      // The host walking away deletes the plan, so everybody else needs the
+      // same notice DELETE /:id sends. Id-less for the same reason.
+      if (cancelRecipients.length > 0) {
+        try {
+          await Promise.allSettled(
+            cancelRecipients.map((userId) => pushIfOffline(io, userId,
+              'Plan cancelled',
+              `${flockName || 'A plan'} is off.`,
+              { type: 'flock_cancelled' }
+            ))
+          );
+        } catch (pushErr) {
+          console.error('Creator-left push error:', pushErr.message);
+        }
+      }
+      return undefined;
     }
 
     // Notify flock that member left (accepted members only — see above).
@@ -2250,9 +2499,35 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
     }
 
     res.json({ message: 'Left flock', flock_name: flockName, deleted });
+
+    // ── WHAT THE HOST IS TOLD, AND WHAT THEY ARE NOT ─────────────────────
+    //
+    // Not this: a push per departure. An emptying plan is the noisiest thing
+    // this app could notify about and the least actionable in the moment. The
+    // host cannot make anyone come back, the roster on the plan screen already
+    // says who is in, and the socket event above updates it live for a host who
+    // is looking. Five people dropping out of a Friday would be five
+    // interruptions carrying one piece of news.
+    //
+    // This instead: the ONE departure that ends the plan. When the last
+    // accepted member leaves, the flock is deleted on the line above and the
+    // host previously learned nothing at all. That is a real event with a real
+    // consequence, it happens at most once per plan, and it is the same
+    // notification a cancellation sends.
+    if (deleted && isPushConfigured()) {
+      try {
+        await pushIfOffline(io, flock.rows[0].creator_id,
+          'Plan cancelled',
+          `Everybody left ${flockName || 'your plan'}, so it is closed.`,
+          { type: 'flock_cancelled' }
+        );
+      } catch (pushErr) {
+        console.error('Empty-flock push error:', pushErr.message);
+      }
+    }
   } catch (err) {
     console.error('Leave flock error:', err);
-    res.status(500).json({ error: 'Failed to leave flock' });
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to leave flock' });
   }
 });
 
@@ -2677,7 +2952,7 @@ module.exports = router;
 // here pins both doors at once, which is the whole reason the window lives in
 // the shared helper rather than at a call site.
 // See __tests__/crowdBatchAmplification.test.js.
-module.exports.__testables = { pushInvitesToOffline };
+module.exports.__testables = { pushInvitesToOffline, claimRsvpPush, flushRsvpWindow };
 
 // Test hook only — the invite budget is process-wide in-memory state, so a test
 // suite needs a way to start each case from a clean allowance.
@@ -2687,4 +2962,7 @@ module.exports.__resetBudgets = () => {
   // reason and needs the same seam, or one test's suppression window leaks into
   // the next test's expectations.
   lastInvitePush.clear();
+  // Same for the RSVP digest windows. Their timers are cleared rather than
+  // dropped: an orphaned one would fire a digest into the next test's push spy.
+  for (const key of Array.from(rsvpWindows.keys())) closeRsvpWindow(key);
 };

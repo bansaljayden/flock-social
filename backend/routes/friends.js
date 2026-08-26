@@ -460,9 +460,30 @@ router.post('/accept',
       }
 
       res.json({ message: 'Friend request accepted' });
+
+      // The ASK pushed and the YES did not, so the person who reached out was
+      // told nothing when it worked. One push, to one person, caused by a
+      // human tapping accept, and it is the end of that exchange rather than
+      // the start of a thread: there is nothing after this to be notified
+      // about. fromUserId is the accepter, whose name is in the body.
+      //
+      // Post-response like every other push, with its own try/catch so a
+      // Firebase failure cannot try to answer a request that is already
+      // answered.
+      try {
+        await pushIfOffline(io, user_id,
+          'You are now friends',
+          `${req.user.name} accepted your friend request.`,
+          { type: 'friend_accepted', fromUserId: String(req.user.id) }
+        );
+      } catch (pushErr) {
+        console.error('Friend accepted push error:', pushErr.message);
+      }
     } catch (err) {
       console.error('Accept friend error:', err);
-      res.status(500).json({ error: 'Failed to accept friend request' });
+      // headersSent: the push above runs post-response, so a failure that
+      // reaches here must not attempt a second write to a finished response.
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to accept friend request' });
     }
   }
 );

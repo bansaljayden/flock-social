@@ -27,9 +27,26 @@
 
 const FLOCK_TYPES = new Set([
   'flock_invite', 'flock_message', 'flock_rsvp', 'flock_confirmed', 'flock_updated',
+  'flock_cancelled',
   'budget_reminder', 'budget_ready', 'bill_created', 'bill_settled',
   'crowd_alert', 'guest_rsvp', 'attendance_marked',
 ]);
+
+// Which surface inside the flock the notification is about. Kept in step with
+// FLOCK_VIEW in backend/services/firebaseService.js, which puts the same word
+// in the link's `view` parameter. The data payload is the authoritative path
+// (it is what a native tap carries), so the map has to exist on both sides
+// rather than the client trusting a query string it may never see.
+const FLOCK_VIEWS = new Set(['bill', 'budget', 'plan']);
+const VIEW_FOR_TYPE = {
+  bill_created: 'bill',
+  bill_settled: 'bill',
+  budget_ready: 'budget',
+  budget_reminder: 'budget',
+  flock_updated: 'plan',
+  flock_cancelled: 'plan',
+  crowd_alert: 'plan',
+};
 
 const listeners = new Set();
 const queue = [];
@@ -50,13 +67,44 @@ export function intentFromData(data) {
     const userId = asId(data.senderId);
     return userId ? { screen: 'dm', userId, type } : null;
   }
-  if (type === 'friend_request') {
-    // 'profile' is the tab id behind the "You" label in App.js.
+  if (type === 'friend_request' || type === 'friend_accepted') {
+    // 'profile' is the tab id behind the "You" label in App.js. Both halves of
+    // a friend request are answered from the same list, so both land there.
     return { screen: 'friends', tab: 'profile', type };
+  }
+  if (type === 'attendance_marked') {
+    // "Your reliability score updated" is about the recipient, not about the
+    // conversation. The number is printed on the profile.
+    return { screen: 'friends', tab: 'profile', type };
+  }
+  if (type === 'availability_pulse') {
+    // A friend is free tonight. The Nest is where the answer is: the Tonight
+    // control and the button that starts a plan.
+    return { screen: 'home', type };
+  }
+  if (type === 'moderation_report') {
+    // Admin only, and previously the one type that resolved to nothing at all.
+    // App.js refuses this for any account without the role.
+    return { screen: 'admin', type };
+  }
+  if (type === 'flock_invite') {
+    // NOT { screen: 'flock' }. An invited flock is not in the accepted list the
+    // chat screen resolves against, so a chat intent for one either opened an
+    // unrelated plan or reported this live invite as deleted. The invite lives
+    // on the plans list, next to the two buttons that answer it.
+    const flockId = asId(data.flockId);
+    return flockId ? { screen: 'flockInvite', flockId, type } : null;
   }
   if (FLOCK_TYPES.has(type)) {
     const flockId = asId(data.flockId);
-    return flockId ? { screen: 'flock', flockId, type } : null;
+    if (flockId) {
+      const view = VIEW_FOR_TYPE[type];
+      return view ? { screen: 'flock', flockId, view, type } : { screen: 'flock', flockId, type };
+    }
+    // A cancelled plan that has already been deleted carries no id on purpose:
+    // there is nothing left to open. The plans list is where it belongs.
+    if (type === 'flock_cancelled') return { screen: 'flocks', type };
+    return null;
   }
 
   // Unknown type but a usable id: still better than dropping the tap.
@@ -85,12 +133,24 @@ export function intentFromUrl(rawUrl) {
   }
 
   const q = url.searchParams;
+  const inviteQ = asId(q.get('invite'));
+  if (inviteQ) return { screen: 'flockInvite', flockId: inviteQ, type: 'link' };
   const flockQ = asId(q.get('flock'));
-  if (flockQ) return { screen: 'flock', flockId: flockQ, type: 'link' };
+  if (flockQ) {
+    // `view` is only attached when the link actually carries one, so the plain
+    // /?flock=12 form keeps the exact shape it has always had.
+    const view = q.get('view');
+    return FLOCK_VIEWS.has(view)
+      ? { screen: 'flock', flockId: flockQ, view, type: 'link' }
+      : { screen: 'flock', flockId: flockQ, type: 'link' };
+  }
   const dmQ = asId(q.get('dm'));
   if (dmQ) return { screen: 'dm', userId: dmQ, type: 'link' };
+  if (q.get('admin') === 'true') return { screen: 'admin', type: 'link' };
   const tab = q.get('tab');
   if (tab === 'you' || tab === 'profile') return { screen: 'friends', tab: 'profile', type: 'link' };
+  if (tab === 'home') return { screen: 'home', type: 'link' };
+  if (tab === 'chat') return { screen: 'flocks', type: 'link' };
 
   // asId, not Number(), for the same reason the query forms above use it: \d+
   // matches "0", and Number('0') is a perfectly well formed id that no row can
