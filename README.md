@@ -196,6 +196,17 @@ was never carried forward with the app after that.
    that column apply the same gate: `GET /api/budget/:id`, the flock list, the
    flock detail, the flock update, and the ghost commit in `routes/billing.js`.
 
+   `skipCount`, the split between "shared an amount" and "skipped", follows the
+   same schedule for the same reason. It is withheld unless it ranges over at
+   least three of the caller's co-members, because in a smaller flock a single
+   reading of it names who declined. That bounds one reading and not a series
+   of them: the change between two readings is a fact about the one answer
+   written between them, and members leave as well as answer, so the number can
+   also move for a reason that has a name attached to it on the roster. So it
+   too is published in exactly one payload, the one that settles the budget, and
+   never on a read. `submissionCount` and `totalMembers` are unaffected, so
+   "3 of 4 answered" still renders.
+
    What this does not do: the ceiling is the minimum of the submitted amounts,
    so participants who compare notes can narrow down what a remaining
    participant submitted. Two people who both submit a deliberately high amount
