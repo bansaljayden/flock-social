@@ -45,7 +45,32 @@ echo "==> pip install python deps"
 # --break-system-packages: this is a single-purpose appliance, and the Adafruit
 # Blinka / RPi.GPIO stack is fiddly inside a venv. Do not reuse this Pi for
 # anything else.
-pip3 install --break-system-packages -r "${SCRIPT_DIR}/requirements.txt"
+#
+# The flag only exists in pip 23.0.1 and later. Raspberry Pi OS Bullseye ships
+# an older pip that does not need it and rejects it outright, and with `set -e`
+# that aborted the whole install after apt had already run. Try it, fall back.
+pip_install() {
+  pip3 install --break-system-packages "$@" 2>/dev/null || pip3 install "$@"
+}
+pip_install -r "${SCRIPT_DIR}/requirements.txt"
+
+# ---------------------------------------------------------------------------
+# GPIO library, which depends on the board.
+#
+# The Pi 5 moved GPIO behind the RP1 southbridge. RPi.GPIO cannot drive it, so
+# on a Pi 5 the doorway counter fails at startup and the unit reports 0
+# crossings for as long as it is deployed. `rpi-lgpio` provides the same module
+# and API on top of lgpio, so main.py needs no change. They cannot coexist.
+# ---------------------------------------------------------------------------
+BOARD="$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || true)"
+echo "==> board: ${BOARD:-unknown}"
+case "${BOARD}" in
+  "Raspberry Pi 5"*)
+    echo "    Pi 5: swapping RPi.GPIO for rpi-lgpio"
+    pip3 uninstall -y RPi.GPIO >/dev/null 2>&1 || true
+    pip_install rpi-lgpio
+    ;;
+esac
 
 echo "==> enable I2C + SPI"
 if command -v raspi-config >/dev/null 2>&1; then
