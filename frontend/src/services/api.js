@@ -32,6 +32,26 @@ function track(event, props) {
    invite, join, RSVP, vote, agree a budget, confirm, go, come back, and each of
    those steps has exactly one event.
 
+   THREE THINGS THAT SENTENCE USED TO LEAVE OUT, all found on 2026-08-26:
+
+     * A step finishing is half a funnel. Every event here recorded a
+       COMPLETION and nothing recorded an arrival, so no step had a
+       denominator and no conversion rate was computable from any of it.
+       screen_viewed is the other half, and it is one effect on App.js's
+       currentScreen rather than a call at each navigation.
+     * Two of the names were on the wrong side of a branch. flock_message_sent
+       and dm_sent lived only in the HTTP fallback below, which App.js reaches
+       only when the websocket is down, so they counted outages and read as
+       message volume. Both transports report now, told apart by `transport`.
+     * Half the funnel happened to people with no account and to venue owners,
+       and neither was recorded. The guest invite page (website/GuestInvite.js)
+       is how this product spreads and went dark after invite_link_opened; the
+       venue and Roost surfaces, which are the whole revenue story, had no
+       instrumentation at all. A guest answering an invite is the SAME step as
+       a member answering one, so it is the same event name with `surface`
+       naming the door, not a second name that would split every answer rate
+       in two.
+
    The property rules are harder than the coverage, and they win where the two
    disagree. The audience floor is 13 (backend/utils/age.js), so a property is
    allowed only if it stays acceptable read as "this named account, at this
@@ -872,11 +892,36 @@ export async function getAdvisorQuestions() {
 // the server 400s any other key on this endpoint BY SHAPE, which is the
 // guarantee that a chip answer is never reachable by typing. Do not add a
 // free-text parameter here; free text has its own door below.
+// Both advisor routes answer with a `mode`, and it is the only field worth
+// recording: 'refusal' means Roost declined, 'template' and 'phrased' mean it
+// answered from this venue's own numbers, 'advice' means it answered from
+// general knowledge instead. A surface whose refusal rate nobody watches is a
+// surface that quietly stops working, and refusals here are the expected
+// outcome for a venue with thin data rather than a bug, so the difference has
+// to be visible.
+//
+// The allowlist is not decoration. The backend's field is `mode`, not `kind`,
+// and its values come from services/advisorPhrasing.js and
+// services/advisorFreeText.js; anything else is a shape this client did not
+// expect and reads as 'unknown' rather than being passed through, because a
+// property whose categories the server can invent is a property nobody can
+// build a chart on.
+const ADVISOR_ANSWER_MODES = ['refusal', 'template', 'phrased', 'advice'];
+function advisorAnswerMode(data) {
+  const mode = data && data.mode;
+  return ADVISOR_ANSWER_MODES.includes(mode) ? mode : 'unknown';
+}
+
 export async function askAdvisor(intentId) {
-  return request('/api/venue/advisor/ask', {
+  const data = await request('/api/venue/advisor/ask', {
     method: 'POST',
     body: JSON.stringify({ intentId }),
   });
+  // Which chip, because the intent id is a fixed key from a registry in this
+  // repo and not anything a person typed. Knowing WHICH question owners press
+  // is the only way to tell a used surface from a decorated one.
+  track('roost_question_asked', { kind: 'chip', intent: String(intentId || 'unknown').slice(0, 64), answer: advisorAnswerMode(data) });
+  return data;
 }
 
 // The typed path. One question, answered as exactly one of three things, and
@@ -887,10 +932,16 @@ export async function askAdvisor(intentId) {
 // asks, because the answer decides whether the field it always draws is live or
 // drawn quiet with the reason under it.
 export async function askAdvisorQuestion(question) {
-  return request('/api/venue/advisor/question', {
+  const data = await request('/api/venue/advisor/question', {
     method: 'POST',
     body: JSON.stringify({ question }),
   });
+  // NOT the question, and not the answer text either. A typed question is an
+  // owner describing their own business in their own words, and the response
+  // echoes it back in `question`, so the only safe thing to read off this body
+  // is the mode.
+  track('roost_question_asked', { kind: 'typed', answer: advisorAnswerMode(data) });
+  return data;
 }
 
 // Shareable guest invite link for a flock (guests RSVP + vote, no account).
@@ -964,8 +1015,29 @@ export async function getEntitlements() {
 }
 
 // Venue profile
+//
+// THE B2B SURFACE HAD NO INSTRUMENTATION AT ALL, and it is the revenue story.
+// The three captures in this section are the smallest set that answers whether
+// it is alive: does an owner who opens onboarding finish a profile, does an
+// owner ever ask to be verified, and does anyone use Roost. None of them
+// carries the venue: the place id and the name stay out for the same reason
+// they stay out of a vote, and the owner is already identified by account id,
+// so an event naming their bar is a record of which real business this person
+// runs sitting in a vendor.
 export async function createVenueProfile(data) {
-  return request('/api/venue-profile', { method: 'POST', body: JSON.stringify(data) });
+  const created = await request('/api/venue-profile', { method: 'POST', body: JSON.stringify(data) });
+  // Whether the claim named a real Google place is the whole difference
+  // between a profile that can ever be verified and a typed-in draft that
+  // cannot, and it is a boolean, not an identifier.
+  //
+  // The request field is `googlePlaceId` (the onboarding state in App.js and
+  // the validator in backend/routes/venueProfile.js both use that spelling);
+  // `google_place_id` is the COLUMN. Reading the column name off the request
+  // body would have made this property false for every owner who did claim a
+  // real place, which is a chart that says the opposite of the truth.
+  const claimed = data && (data.googlePlaceId || data.google_place_id);
+  track('venue_profile_created', { has_place: !!claimed });
+  return created;
 }
 
 export async function getVenueProfile() {
@@ -989,7 +1061,11 @@ export async function updateVenueProfile(data) {
 // message is display copy and is printed verbatim by both surfaces that
 // offer the button.
 export async function requestVenueVerification() {
-  return request('/api/venue-profile/request-verification', { method: 'POST' });
+  const data = await request('/api/venue-profile/request-verification', { method: 'POST' });
+  // The button that did not exist until 2026-08-21. Whether it is ever pressed
+  // is how anyone finds out if the dead end is really closed.
+  track('venue_verification_requested', {});
+  return data;
 }
 
 // Venue dashboard CRUD
@@ -1191,25 +1267,42 @@ export async function leaveFlock(id) {
   return request(`/api/flocks/${id}/leave`, { method: 'POST' });
 }
 
+// Invite happens twice in this product and only one of them was ever counted.
+// createFlock() carries invited_count, which covers the people picked while
+// the flock was being made; this is the OTHER door, adding people to a plan
+// that already exists, and it is the one a host uses when a night grows. With
+// it dark, a flock that started solo and became a group was indistinguishable
+// from a flock that stayed solo, which is the single most important thing to
+// be able to tell apart in a product about groups.
+//
+// A count and nothing else. Who was invited is a social graph.
 export async function inviteToFlock(flockId, userIds) {
-  return request(`/api/flocks/${flockId}/invite`, {
+  const data = await request(`/api/flocks/${flockId}/invite`, {
     method: 'POST',
     body: JSON.stringify({ user_ids: userIds }),
   });
+  track('invite_sent', { count: Array.isArray(userIds) ? userIds.length : 0 });
+  return data;
 }
 
 // Does an invited person ever answer? Five flocks have been created and
 // nothing has ever recorded whether a second person said yes to one, which is
 // the difference between a product with a group in it and a to-do list.
+// `surface` because a guest answering on the invite page and a member
+// answering in the app are THE SAME STEP of the same funnel, and giving them
+// two event names would have made every answer-rate a choice of which half to
+// believe. One name, one property that says which door. The guest half is
+// anonymous by construction: person_profiles is 'identified_only', so a guest
+// who has no account gets no person profile out of it.
 export async function acceptFlockInvite(flockId) {
   const data = await request(`/api/flocks/${flockId}/join`, { method: 'POST' });
-  track('flock_rsvp', { response: 'yes' });
+  track('flock_rsvp', { response: 'yes', surface: 'member' });
   return data;
 }
 
 export async function declineFlockInvite(flockId) {
   const data = await request(`/api/flocks/${flockId}/decline`, { method: 'POST' });
-  track('flock_rsvp', { response: 'no' });
+  track('flock_rsvp', { response: 'no', surface: 'member' });
   return data;
 }
 
@@ -1258,7 +1351,7 @@ export async function voteForVenue(flockId, venueName, venueId) {
     method: 'POST',
     body: JSON.stringify({ venue_name: venueName, venue_id: venueId || undefined }),
   });
-  track('venue_vote_cast', {});
+  track('venue_vote_cast', { surface: 'member' });
   return data;
 }
 
@@ -1291,6 +1384,32 @@ function messageKind(opts) {
   return opts && opts.image_url ? 'image' : 'text';
 }
 
+/* THE CHAT EVENTS USED TO COUNT SOCKET OUTAGES.
+   sendMessage() and sendDM() below are the HTTP FALLBACK. App.js emits over
+   the socket first and only reaches these two when `socket.connected` is false
+   or the emit itself returned false, so a capture that lived only in here
+   fired on the bad-network path and nowhere else. `flock_message_sent` and
+   `dm_sent` therefore read on a dashboard as message volume while measuring
+   how often the websocket was down, which is the one number that moves in the
+   opposite direction from the thing the name promises.
+
+   Both transports call the same event with the same props. The two branches in
+   App.js are mutually exclusive by construction (the HTTP call sits in the
+   `else` of the emit's own return value, which is what stops a double POST),
+   so nothing is counted twice.
+
+   `transport` is the one property added, and it earns its place: it is the
+   only signal in the product that says whether websockets survive a real
+   phone on real mobile data. If it ever reads mostly 'http', chat is limping
+   in the field and no other event would say so. */
+export function trackFlockMessageSent(opts) {
+  track('flock_message_sent', { kind: messageKind(opts), transport: 'socket' });
+}
+
+export function trackDmSent(opts) {
+  track('dm_sent', { kind: messageKind(opts), transport: 'socket' });
+}
+
 export async function sendMessage(flockId, text, opts = {}) {
   const sent = await request(`/api/flocks/${flockId}/messages`, {
     method: 'POST',
@@ -1305,7 +1424,7 @@ export async function sendMessage(flockId, text, opts = {}) {
       image_url: opts.image_url || undefined,
     }),
   });
-  track('flock_message_sent', { kind: messageKind(opts) });
+  track('flock_message_sent', { kind: messageKind(opts), transport: 'http' });
   return sent;
 }
 
@@ -1362,7 +1481,7 @@ export async function sendDM(userId, text, opts = {}) {
       reply_to_id: opts.reply_to_id || undefined,
     }),
   });
-  track('dm_sent', { kind: messageKind(opts) });
+  track('dm_sent', { kind: messageKind(opts), transport: 'http' });
   return sent;
 }
 
@@ -1943,6 +2062,43 @@ function nfcSource(tag) {
   return NFC_SOURCES.includes(tag) ? tag : NFC_UNKNOWN;
 }
 
+/* EVERY FUNNEL STEP MEASURED A COMPLETION AND NOTHING MEASURED AN ATTEMPT.
+   flock_created counts flocks that got made. Nothing counted the people who
+   opened the create screen and backed out, so there was no denominator for a
+   single step in the product and no conversion rate could be computed from
+   any of it. That is not a missing nice-to-have: a funnel is a pair of
+   numbers, and this project had one of each pair.
+
+   The app has no router (index.js reads the URL once and mounts one thing), so
+   posthog's SPA pageview capture sees essentially one $pageview per session and
+   nothing about which screen anyone reached. This is the replacement, and it is
+   one effect on currentScreen rather than a call scattered through the twelve
+   places that navigate.
+
+   AN ALLOWLIST, NOT A PASS-THROUGH, and the reason is specific rather than
+   theoretical. Two of the setCurrentScreen callers pass a variable, and one of
+   them is `msg.navigate.screen` off a BIRDIE reply, which is model output.
+   nfc_tap already learned this lesson the expensive way: its `source` was the
+   ?s= parameter forwarded verbatim, and production holds a category called
+   'standbad' from one tap to prove that a property a stranger can add values to
+   is a property nobody can chart. Everything outside the list is 'unknown'. */
+const APP_SCREENS = [
+  'main',
+  'create',
+  'detail',
+  'chatDetail',
+  'dmDetail',
+  'addFriends',
+  'profile',
+  'pastFlocks',
+  'venueDashboard',
+  'adminRevenue',
+];
+
+export function trackScreenView(screen) {
+  track('screen_viewed', { screen: APP_SCREENS.includes(screen) ? screen : 'unknown' });
+}
+
 export function trackNfcTap(tag) {
   track('nfc_tap', { source: nfcSource(tag) });
 }
@@ -1968,6 +2124,37 @@ export function trackNfcAction(tag, choice) {
    app_opened is how "did anyone come back" gets answered. $pageview cannot do
    it: it fires on the marketing site too, and it cannot say whether the person
    who opened the app was signed in. This one is capped at one per boot. */
+/* THE GUEST PAGE WAS DARK AFTER THE FIRST EVENT.
+   /i/<token> is how this product spreads: a link pasted into a group chat,
+   opened by somebody with no account. trackInviteLinkOpened below fired on
+   the page load and then nothing else did, so the two questions that decide
+   whether invites work at all had no answer anywhere. Does a stranger who
+   opens the link answer it, and does answering it turn into an account.
+
+   website/GuestInvite.js imports none of this module at page load on purpose
+   (it is the most expensive blank screen in the product and api.js must not
+   be in the queue ahead of it), so it reaches these through a dynamic import
+   at the moment of the tap, which is long after first paint.
+
+   Nothing here may touch the token, the guest's typed name, or the venue.
+   The token is a bearer credential, the name is a real person's name, and the
+   venue is where a specific teenager is going tonight. */
+export function trackGuestRsvp(status) {
+  track('flock_rsvp', { response: status === 'in' ? 'yes' : 'no', surface: 'guest' });
+}
+
+export function trackGuestVenueVote() {
+  track('venue_vote_cast', { surface: 'guest' });
+}
+
+// The handoff out of the guest page and into an account, which is the step
+// services/inviteHandoff.js finishes. Pairs with invite_link_joined: this is
+// the tap, that is the redemption, and the gap between them is where a person
+// who wanted in gave up on making an account.
+export function trackInviteHandoffStarted(destination) {
+  track('invite_handoff_started', { destination: destination === '/signup' ? 'signup' : 'app' });
+}
+
 export function trackInviteLinkOpened(complete) {
   track('invite_link_opened', { complete: !!complete });
 }

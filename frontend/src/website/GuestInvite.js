@@ -123,6 +123,28 @@ const clearStore = (key) => {
 // deliberately does not ship (it talks to three endpoints with bare fetch).
 const HANDOFF_KEY = 'flock_pending_invite';
 
+// ANALYTICS, AT THE MOMENT OF THE TAP AND NEVER AT PAGE LOAD.
+//
+// This page deliberately imports nothing from services/api.js at module scope.
+// It is the most expensive blank screen in the product -- a stranger, on a
+// phone, on mobile data, who will close the tab -- and putting the REST client
+// in the queue ahead of the plan they are waiting for is the one cost this
+// file will not pay. index.js makes the same trade for the pageview it owns.
+//
+// So the tracker is fetched lazily, after a tap, and a failure to fetch it is
+// not an error: the page has already done its job and the number is lost. The
+// three functions it calls all live in api.js, because
+// __tests__/analyticsPrivacy.test.js requires every posthog.capture in src/ to
+// live in that one file and the rule is worth more than the indirection.
+//
+// Nothing on this page may be passed to them. Not the invite token (a bearer
+// credential), not the name the guest typed, not the venue they picked.
+const trackGuest = (pick) => {
+  import('../services/api')
+    .then((api) => { try { pick(api); } catch { /* analytics is never load-bearing */ } })
+    .catch(() => { /* same */ });
+};
+
 const stashInvite = (token, flockName) => {
   try {
     window.localStorage.setItem(HANDOFF_KEY, JSON.stringify({
@@ -584,6 +606,16 @@ export default function GuestInvite() {
   // race it.
   const goJoin = (where) => {
     stashInvite(token, flockName);
+    // Best effort, and worth being precise about why it usually works rather
+    // than assuming it does. index.js already dynamic-imports services/api.js
+    // on this page after load, to fire invite_link_opened, and that import
+    // pulls posthog-js in behind it. So by the time anybody taps this, both
+    // modules are in the module cache and the import below resolves in a
+    // microtask; microtasks drain before the browser commits a navigation, so
+    // the capture call itself does run. Whether its request survives the
+    // unload is posthog-js's business, not ours. If it is lost, the number is
+    // lost, which is the correct trade for not delaying the primary CTA.
+    trackGuest((api) => api.trackInviteHandoffStarted(where));
     window.location.assign(where);
   };
 
@@ -683,6 +715,10 @@ export default function GuestInvite() {
       return;
     }
 
+    // Here and not before the fetch: every branch above this line is a refusal
+    // or a torn reply, and counting those as answers would report an invite
+    // working on exactly the nights it did not.
+    trackGuest((api) => api.trackGuestRsvp(status));
     const next = { guestToken: body.guestToken, name: typed, status, vote: guest && guest.vote };
     setGuest(next);
     writeStore(storageKey, next);
@@ -757,6 +793,7 @@ export default function GuestInvite() {
     if (Array.isArray(body.venues)) {
       setData((d) => ({ ...d, venues: body.venues }));
     }
+    trackGuest((api) => api.trackGuestVenueVote());
     const next = { ...guest, vote: venueName };
     setGuest(next);
     writeStore(storageKey, next);
