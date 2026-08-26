@@ -988,9 +988,11 @@ export async function clearVenueVote(flockId) {
   return request(`/api/flocks/${flockId}/vote`, { method: 'DELETE' });
 }
 
-// Messages
-export async function getMessages(flockId) {
-  return request(`/api/flocks/${flockId}/messages`);
+// Messages. `before` is the same message-id cursor the DM read uses; see the
+// note on getDMs.
+export async function getMessages(flockId, { before } = {}) {
+  const q = before ? `?before=${encodeURIComponent(before)}` : '';
+  return request(`/api/flocks/${flockId}/messages${q}`);
 }
 
 // A message carries text, an image, or both. `image_url` was missing here, so
@@ -1028,8 +1030,15 @@ export async function getDMConversations() {
   return request('/api/dm');
 }
 
-export async function getDMs(userId) {
-  return request(`/api/dm/${userId}`);
+// `before` is a message-id cursor: the route answers with the newest rows
+// STRICTLY OLDER than it. It has been implemented, ordered on the cursor column
+// and commented at length in backend/routes/messages.js since the query
+// reliability round, and nothing has ever sent it, so every DM thread in the
+// app was the newest 50 messages with no way back past them, however long the
+// conversation. Same cursor on the flock-message twin below.
+export async function getDMs(userId, { before } = {}) {
+  const q = before ? `?before=${encodeURIComponent(before)}` : '';
+  return request(`/api/dm/${userId}${q}`);
 }
 
 // The DM twin already forwarded `image_url`; the rest of the body is normalised
@@ -1048,6 +1057,16 @@ export async function sendDM(userId, text, opts = {}) {
       reply_to_id: opts.reply_to_id || undefined,
     }),
   });
+}
+
+// PUT /api/dm/:messageId/read has existed and been hardened for rounds with no
+// caller at all, which is why a DM that arrived while its thread was OPEN stayed
+// unread in the database forever: GET /api/dm/:userId marks read as a side
+// effect of fetching history, so it can only ever cover what was already there
+// when the screen opened. The badge came back on the next reload for a message
+// the user had watched land. App.js calls this per arriving message now.
+export async function markDmRead(messageId) {
+  return request(`/api/dm/${messageId}/read`, { method: 'PUT' });
 }
 
 export async function addDmReaction(dmId, emoji) {
