@@ -29,7 +29,11 @@ const path = require('path');
 const REPO = path.resolve(__dirname, '..', '..', '..');
 const read = (...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8');
 
-const app = read('frontend', 'src', 'App.js');
+// The venue owner dashboard left App.js on 2026-08-26: it is its own lazily
+// loaded chunk now (screens/VenueDashboard.js), and about 2,000 lines of what
+// this file scans went with it. Nothing asserted below changed. The app source
+// is simply in two files, so both are read, in the order they used to be one.
+const app = read('frontend', 'src', 'App.js') + read('frontend', 'src', 'screens', 'VenueDashboard.js');
 const billing = read('VENUE-BILLING.md');
 
 // Comments carry reasoning (including quotes of the superseded numbers) and

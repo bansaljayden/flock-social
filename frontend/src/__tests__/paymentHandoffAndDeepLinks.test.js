@@ -114,7 +114,12 @@ const REPO = path.resolve(__dirname, '..', '..', '..');
 // written with \n would pass on one checkout convention and fail on the other.
 const readSource = (...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8').replace(/\r\n/g, '\n');
 
-const appSource = readSource('frontend', 'src', 'App.js');
+// The venue owner dashboard left App.js on 2026-08-26: it is its own lazily
+// loaded chunk now (screens/VenueDashboard.js), and about 2,000 lines of what
+// this file scans went with it. Nothing asserted below changed. The app source
+// is simply in two files, so both are read, in the order they used to be one.
+const appSource = readSource('frontend', 'src', 'App.js')
+  + readSource('frontend', 'src', 'screens', 'VenueDashboard.js');
 const pushNavSource = readSource('frontend', 'src', 'services', 'pushNavigation.js');
 const billingSource = readSource('backend', 'routes', 'billing.js');
 const infoPlist = readSource('frontend', 'ios', 'App', 'App', 'Info.plist');

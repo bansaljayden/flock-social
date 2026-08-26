@@ -25,7 +25,12 @@ const path = require('path');
 const Icons = require('../components/ui/Icons').default;
 const { sw } = require('../components/ui/Icons');
 
-const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+// The venue owner dashboard left App.js on 2026-08-26: it is its own lazily
+// loaded chunk now (screens/VenueDashboard.js), and about 2,000 lines of what
+// this file scans went with it. Nothing asserted below changed. The app source
+// is simply in two files, so both are read, in the order they used to be one.
+const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'VenueDashboard.js'), 'utf8');
 const ICONS_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'components', 'ui', 'Icons.js'),
   'utf8'
