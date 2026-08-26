@@ -394,6 +394,16 @@ const INVENTORY = [
     verdict: 'SAFE',
     why: 'Account-keyed with a refund when no contact was mailable; the oldest-insertion order could evict a heavy sharer early under a 5k-account flood, worth at most one extra share for that user.',
   },
+  {
+    file: 'routes/safety.js', name: 'cancelWrites', kind: 'counter',
+    key: 'req.user.id',
+    callerControls: 'nothing',
+    protects: 'outbound Resend mail to the trusted contacts who already received an alert',
+    denominator: 'stand-down attempts per user per 15 min (3), refunded when none was delivered',
+    bound: '5k keys, expire-then-hard-oldest-insertion-first',
+    verdict: 'SAFE',
+    why: 'Account-keyed, and it cannot reach an address that has not already been mailed an alert: the route refuses unless a delivered alert exists inside the 6h window, and it mails only contacts whose row predates that alert. This is the one meter on the SOS path that is allowed to refuse, because a refused stand-down leaves somebody worried where a refused alert can leave somebody alone.',
+  },
 
   // ── routes/users.js ───────────────────────────────────────────────────────
   {
