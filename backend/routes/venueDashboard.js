@@ -1537,9 +1537,38 @@ const mlPredictor = require('../services/mlPredictor');
 const crowdEngine = require('../services/crowdEngine');
 // Round 9: these Places fetches bypassed the shared paid-call budget that
 // venueSearch and crowd.js are both charged against.
-const { allowPlacesSearch } = require('../utils/placesBudget');
+const {
+  allowPlacesSearch, placesRetryAfter, PER_USER_HOURLY,
+} = require('../utils/placesBudget');
+const { waitPhrase, refusalBody } = require('../utils/retryAfter');
 const GOOGLE_KEY = process.env.GOOGLE_PLACES_API_KEY;
-const BUDGET_MESSAGE = 'Too many venue lookups right now. Try again in a little while.';
+// ---------------------------------------------------------------------------
+// THE OWNER IS NOT WHO SPENT IT, AND "A LITTLE WHILE" IS NOT WHEN IT COMES BACK.
+//
+// "Too many venue lookups right now. Try again in a little while." was the
+// answer to both legs of utils/placesBudget.js on a screen a venue is paying
+// for. Neither half was true of both legs:
+//
+//   * The global leg is 3000 paid Google calls a day shared with the CONSUMER
+//     app. A venue owner who has loaded their dashboard twice can meet it
+//     without having done anything at all, and reading "too many venue lookups"
+//     tells a paying customer they caused an outage they had no part in. It
+//     runs until the next UTC midnight, which is not a little while.
+//   * The per-owner leg is 30 calls over a rolling hour and IS about them, so
+//     it is worth saying plainly and worth saying the hour out loud.
+// ---------------------------------------------------------------------------
+function budgetRefusal(res, userId) {
+  const { leg, ms } = placesRetryAfter(userId);
+  if (leg === 'global-day') {
+    return res.status(429).json(refusalBody(res, ms,
+      `Flock has reached its shared Google Places limit for the day. Your dashboard numbers come back ${waitPhrase(ms)}. Nothing on your account caused this.`));
+  }
+  if (leg === 'identity') {
+    return res.status(429).json({ error: 'Sign in again to load your venue numbers.' });
+  }
+  return res.status(429).json(refusalBody(res, ms,
+    `This account has looked up ${PER_USER_HOURLY} venues in the last hour, which is the limit. Your numbers come back ${waitPhrase(ms)}.`));
+}
 
 // 60-min cache: Google calls cost money and forecasts don't move fast.
 const intelCache = new Map();
@@ -1680,7 +1709,7 @@ router.get('/intelligence', requirePremium, async (req, res) => {
     if (cached) return res.json(cached);
 
     const venue = await fetchVenueBasics(ctx.google_place_id, req.user.id);
-    if (venue === BUDGET_EXCEEDED) return res.status(429).json({ error: BUDGET_MESSAGE });
+    if (venue === BUDGET_EXCEEDED) return budgetRefusal(res, req.user.id);
     // A lookup that did not answer is the one unavailable state here that a
     // second attempt can change, so it says so and the dashboard puts a Try
     // again under it. The two above it (no listing, unverified) are settled,
@@ -1772,13 +1801,13 @@ router.get('/strip', requirePremium, async (req, res) => {
     if (!GOOGLE_KEY) return res.json({ available: false, reason: 'Search unavailable right now' });
 
     const me = await fetchVenueBasics(ctx.google_place_id, req.user.id);
-    if (me === BUDGET_EXCEEDED) return res.status(429).json({ error: BUDGET_MESSAGE });
+    if (me === BUDGET_EXCEEDED) return budgetRefusal(res, req.user.id);
     if (!me?.location) return res.json({ available: false, reason: 'Could not reach your Google listing right now' });
 
     // Same-category venues within walking distance.
     const wanted = ['bar', 'night_club', 'restaurant'].filter((t) => me.types.includes(t));
     // Round 9: searchNearby is a second paid call — charge it separately.
-    if (!allowPlacesSearch(req.user.id)) return res.status(429).json({ error: BUDGET_MESSAGE });
+    if (!allowPlacesSearch(req.user.id)) return budgetRefusal(res, req.user.id);
     const nearbyRes = await fetch('https://places.googleapis.com/v1/places:searchNearby', {
       method: 'POST',
       headers: {

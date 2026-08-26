@@ -417,3 +417,62 @@ test('honesty: a cached /details answer is the same answer, without a second inv
   assert.deepStrictEqual(second.body, first.body);
   assert.strictEqual(second.body.event.timezone, 'America/Denver');
 });
+
+// ---------------------------------------------------------------------------
+// WHAT THE THREE REFUSALS ON THIS ROUTER ARE ALLOWED TO SAY.
+// ---------------------------------------------------------------------------
+// All three said "busy right now. Try again in a bit." Two of the three legs
+// behind that sentence are the CALLER'S OWN allowance, which nobody else's
+// traffic touches, so "busy" named the wrong cause; and the two daily legs run
+// to a boundary hours away, so "in a bit" named a window that does not exist.
+// A user who follows it comes straight back to the same refusal.
+// ---------------------------------------------------------------------------
+
+test('the per-user hourly ceiling says the hour, and does not blame other people', async () => {
+  eventsRouter.__test.reset();
+  tmImpl = () => TM_EMPTY;
+  const hourly = eventsRouter.__test.budgetLimits.hourly;
+  // A distinct query each time so nothing is served from the cache.
+  for (let i = 0; i < hourly; i++) {
+    const ok = await get(`/api/events/search?location=39.7,-105.0&query=q${i}`);
+    assert.strictEqual(ok.status, 200, `search ${i} should have been allowed`);
+  }
+  const refused = await get('/api/events/search?location=39.7,-105.0&query=last');
+  assert.strictEqual(refused.status, 429);
+  assert.match(refused.body.error, /in the last hour/);
+  assert.ok(!/busy/i.test(refused.body.error),
+    'a ceiling on this one account is being reported as the app being busy');
+  assert.ok(!/in a bit/i.test(refused.body.error),
+    '"in a bit" is not a window; it is what the old copy said about an hour');
+  assert.ok(refused.body.retryAfterSeconds > 60 * 50,
+    'the machine-readable window is shorter than the hour it describes');
+  assert.ok(refused.body.resetsAt, 'a refusal must say when it lifts');
+});
+
+test('the shared daily ceiling names the day and is not pinned on the caller', async () => {
+  eventsRouter.__test.reset();
+  tmImpl = () => TM_EMPTY;
+  // The global ledger full, but this account has not spent a thing.
+  eventsRouter.__test.forceGlobalLedger(
+    new Date().toISOString().slice(0, 10), eventsRouter.__test.budgetLimits.globalDaily
+  );
+  const refused = await get('/api/events/search?location=39.7,-105.0&query=anything');
+  assert.strictEqual(refused.status, 429);
+  assert.match(refused.body.error, /for the day/,
+    'a UTC-day ceiling has to say so; it can be most of a day away');
+  assert.ok(!/You have/.test(refused.body.error),
+    'a caller who has spent nothing is being told they looked up too much');
+  // Under a day, because the boundary is the next UTC midnight and not 24h out.
+  assert.ok(refused.body.retryAfterSeconds > 0 && refused.body.retryAfterSeconds <= 86_400);
+});
+
+test('the details route refuses in its own words, on the same real window', async () => {
+  eventsRouter.__test.reset();
+  eventsRouter.__test.forceGlobalLedger(
+    new Date().toISOString().slice(0, 10), eventsRouter.__test.budgetLimits.globalDaily
+  );
+  const refused = await get('/api/events/details?id=G5vYZ9abc');
+  assert.strictEqual(refused.status, 429);
+  assert.match(refused.body.error, /Event pages come back/);
+  assert.ok(!/in a bit/i.test(refused.body.error));
+});

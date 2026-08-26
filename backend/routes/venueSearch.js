@@ -16,8 +16,13 @@ const { isPlaceIdShaped } = require('../utils/places');
 // stops holding. The photo proxy's own sub-ceiling no longer lives in this file
 // at all: it is a dollar budget in services/photoStore.js, kept in Postgres.
 const {
-  allowPlacesSearch, allowGlobalPlacesCall, PER_USER_HOURLY, GLOBAL_DAILY,
+  allowPlacesSearch, allowGlobalPlacesCall, placesRetryAfter, globalPlacesRetryAfter,
+  PER_USER_HOURLY, GLOBAL_DAILY,
 } = require('../utils/placesBudget');
+const {
+  waitPhrase, refusalBody, retryAfterSeconds, resetsAtISO,
+  msUntilUtcMidnight, msUntilUtcMonthStart,
+} = require('../utils/retryAfter');
 // ONE raw Place Details response per venue, shared with routes/crowd.js. This
 // file and that one used to each buy their own copy of the same payload for the
 // same place id in the same tick — see the header of services/placeDetailsCache.js
@@ -86,6 +91,17 @@ function allowPhotoFetch(req) {
   photoIpHits.set(ip, hits);
   if (photoIpHits.size > 5000) prunePhotoIpHits(now, ip);
   return true;
+}
+
+// How long this address waits, in milliseconds. Non-consuming, and only
+// meaningful after allowPhotoFetch has already said no. The window is a ROLLING
+// hour, so the wait is until the OLDEST live hit ages out, which is a number
+// this map already holds and the refusal used to throw away.
+function photoFetchRetryMs(req) {
+  const now = Date.now();
+  const hits = (photoIpHits.get(req.ip || 'unknown') || []).filter((t) => now - t < 3600_000);
+  if (hits.length < PHOTO_MISS_PER_IP_HOURLY) return 0;
+  return Math.max(1, hits[hits.length - PHOTO_MISS_PER_IP_HOURLY] + 3600_000 - now);
 }
 
 // Round 18: this was `if (size > 5000) photoIpHits.clear()` — the exact
@@ -245,6 +261,30 @@ function isPhotoRefShaped(ref) {
   return !segments.includes('..') && !segments.includes('.');
 }
 
+// ---------------------------------------------------------------------------
+// WHAT A SPENT PLACES BUDGET IS ALLOWED TO SAY, in one place for this router.
+//
+// The rule the comment above the /search charge already stated and only that
+// one call site obeyed: THE WINDOW IS AN HOUR, SO THE SENTENCE MAY NOT SAY
+// SECONDS. /details was still answering "Loading venues too fast. Give it a few
+// seconds." about the same ledger, so the same user got two different and
+// mutually exclusive accounts of the same refusal depending on which request
+// happened to be refused first.
+//
+// The daily leg gets its own sentence because it is not the same fact. The
+// hourly leg is about this caller. The daily one is the whole app against a
+// shared ceiling, and telling one person they searched too much when 3000 calls
+// were spent by everybody is both untrue and unactionable.
+// ---------------------------------------------------------------------------
+function placesRefusal(res, userId, copy, cost = 1) {
+  const { leg, ms } = placesRetryAfter(userId, cost);
+  if (leg === 'global-day') return res.status(429).json(refusalBody(res, ms, copy.day(waitPhrase(ms))));
+  // Not a window at all: an unidentifiable caller is refused every time, so
+  // there is nothing honest to say about coming back later.
+  if (leg === 'identity') return res.status(429).json({ error: copy.signedOut });
+  return res.status(429).json(refusalBody(res, ms, copy.hour(waitPhrase(ms))));
+}
+
 // Photo proxy — streams image bytes through our server so the browser
 // never has to follow a cross-origin redirect (avoids CORP / 401 blocks).
 router.get('/photo',
@@ -295,7 +335,20 @@ router.get('/photo',
         flight.then(() => photoInflight.delete(cacheKey));
       }
       const out = await flight;
-      if (out.status !== 200) return res.status(out.status).json({ error: out.error });
+      if (out.status !== 200) {
+        // The header, not only the body. This response is what an <img> tag
+        // receives, and an <img> never reads a JSON body: Retry-After is the
+        // only channel a browser, a CDN or a retry loop can act on.
+        if (out.retryMs) {
+          res.set('Retry-After', String(retryAfterSeconds(out.retryMs)));
+          return res.status(out.status).json({
+            error: out.error,
+            retryAfterSeconds: retryAfterSeconds(out.retryMs),
+            resetsAt: resetsAtISO(out.retryMs),
+          });
+        }
+        return res.status(out.status).json({ error: out.error });
+      }
       sendPhoto(res, out);
     } catch (err) {
       console.error('[Photo Proxy] Error:', err.message, '| ref:', req.query.ref?.slice(0, 60));
@@ -364,7 +417,12 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req) {
     // Step 0a: the abuse gate. Per address, on MISSES only, so one script cannot
     // spend a budget everyone draws on. Nothing about money is decided here.
     if (!allowPhotoFetch(req)) {
-      return { status: 429, error: 'Too many photo requests right now' };
+      const ms = photoFetchRetryMs(req);
+      return {
+        status: 429,
+        retryMs: ms,
+        error: `A lot of new photos have loaded from here in the last hour. New ones come back ${waitPhrase(ms)}. Photos already loaded keep showing.`,
+      };
     }
 
     // Step 0b: the shared paid-Places ledger. This proxy is unauthenticated and
@@ -374,7 +432,14 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req) {
     // pulls bytes from Google's CDN with the returned photoUri. If an invoice
     // ever shows that leg billed too, this is a 2 (see utils/upstream.js).
     if (!allowGlobalPlacesCall(1)) {
-      return { status: 429, error: 'Too many photo requests right now' };
+      // A shared UTC-day ceiling, not this address's doing, so the sentence
+      // does not describe the caller as having done anything.
+      const ms = globalPlacesRetryAfter(1).ms || msUntilUtcMidnight();
+      return {
+        status: 429,
+        retryMs: ms,
+        error: `Flock has reached its venue lookup limit for the day. New photos come back ${waitPhrase(ms)}. Photos already loaded keep showing.`,
+      };
     }
 
     // Step 0c: the money. A real count of billable Google fetches, in Postgres,
@@ -386,7 +451,29 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req) {
     // yet comes up empty.
     const charge = await chargePhotoFetch();
     if (!charge.allowed) {
-      return { status: 429, error: 'Too many photo requests right now' };
+      // THREE DIFFERENT ANSWERS BEHIND ONE SENTENCE, and one of them was not a
+      // rate limit at all. chargePhotoFetch already names which ceiling refused
+      // it and this route was discarding that:
+      //   day-burst          resets at 00:00 UTC, hours away
+      //   month-budget       resets on the 1st, up to a month away
+      //   ledger-unavailable is a Postgres fault, not a limit. It fails closed
+      //                      on purpose, but answering 429 tells the caller
+      //                      they asked too often, which is untrue, and tells
+      //                      them to wait out a window that does not exist.
+      //                      503 with a short Retry-After is what that is.
+      if (charge.reason === 'ledger-unavailable') {
+        return {
+          status: 503,
+          retryMs: 30_000,
+          error: 'Photos are unavailable for a moment. Try again shortly.',
+        };
+      }
+      const ms = charge.reason === 'month-budget' ? msUntilUtcMonthStart() : msUntilUtcMidnight();
+      return {
+        status: 429,
+        retryMs: ms,
+        error: `Flock has reached its photo budget for the ${charge.reason === 'month-budget' ? 'month' : 'day'}. New photos come back ${waitPhrase(ms)}. Photos already loaded keep showing.`,
+      };
     }
 
     // Step 1: ask Google for the actual CDN url (JSON response)
@@ -681,7 +768,14 @@ router.get('/search',
         // NUMBER, in utils/placesBudget.js, which is a money decision; this is
         // only the sentence being true about whatever the number is.
         if (!allowPlacesSearch(req.user.id)) {
-          return res.status(429).json({ error: 'You have searched a lot in the last hour. Give it a few minutes.' });
+          // "Give it a few minutes" was closer than "a few seconds" and still
+          // not the window: 30 charges spent in a burst free their first unit a
+          // full hour later, not a few minutes later. Say the real one.
+          return placesRefusal(res, req.user.id, {
+            hour: (w) => `Flock searches up to ${PER_USER_HOURLY} venues an hour, and this hour is used up. You can search again ${w}.`,
+            day: (w) => `Flock has reached its venue lookup limit for the day. Search comes back ${w}.`,
+            signedOut: 'Sign in again to search venues.',
+          });
         }
         flight = runTextSearch(searchQuery, coarse, cacheKey);
         inflight.set(cacheKey, flight);
@@ -833,7 +927,11 @@ router.get('/details',
       // its flight synchronously; putting anything asynchronous between them
       // turns the charge into a guess.
       if (willCostUpstreamCall(placeId) && !allowPlacesSearch(req.user.id)) {
-        return res.status(429).json({ error: 'Loading venues too fast. Give it a few seconds.' });
+        return placesRefusal(res, req.user.id, {
+          hour: (w) => `Flock opens up to ${PER_USER_HOURLY} venue pages an hour, and this hour is used up. You can open another ${w}.`,
+          day: (w) => `Flock has reached its venue lookup limit for the day. Venue details come back ${w}.`,
+          signedOut: 'Sign in again to open venue details.',
+        });
       }
       const out = shapeDetails(await fetchPlaceDetails(placeId));
       if (out.status !== 200) return res.status(out.status).json({ error: out.error });

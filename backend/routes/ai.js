@@ -44,6 +44,7 @@ const { getPremiumState, paywallEnabled, EntitlementUnavailableError } = require
 const { forecastAccess, confidenceMeasurementFor, feedbackWindow } = require('./crowd');
 const { allowPlacesSearch } = require('../utils/placesBudget');
 const { upstreamSignal } = require('../utils/upstream');
+const { waitPhrase, refusalBody, msUntilUtcMidnight } = require('../utils/retryAfter');
 const {
   checkUserRateLimit,
   nextUtcMidnightISO,
@@ -54,6 +55,7 @@ const {
   // services/birdieUsage.js explains at length why one is not the other.
   estimateGeminiTokens,
   allowGeminiCall,
+  geminiSpendStatus,
   settleGeminiCall,
 } = require('../services/birdieUsage');
 
@@ -203,8 +205,11 @@ function captureAiToolSpan({ userId, traceId, sessionId, name, latencyMs }) {
 // ceiling doing its job, and retrying it would be a second charge attempt for a
 // call we already decided not to make.
 class GeminiBudgetError extends Error {
-  constructor() {
+  constructor(leg = 'global-day') {
     super('Gemini spend ceiling reached');
+    // WHICH ceiling, because the three of them are three different facts and
+    // the sentence Birdie says has to pick one. See birdieRefusal below.
+    this.leg = leg;
     this.name = 'GeminiBudgetError';
     this.geminiBudget = true;
     // 429 is what this condition IS, and saying so out loud is what makes the
@@ -224,6 +229,76 @@ class GeminiBudgetError extends Error {
 // system prompt forbids that voice and the user is reading this sentence, not
 // the model.
 const BIRDIE_BUSY_MESSAGE = 'lot of chatter right now. hit me again in a bit';
+
+// The rolling hour is a full hour wide and the ledger keeps token timestamps
+// rather than a reset instant, so an exact answer would mean reaching into that
+// module's internals for a number that moves with every settle. An hour is the
+// honest UPPER bound and erring long is the safe direction here: a caller told
+// an hour who could have come back in fifty minutes has lost ten minutes, and a
+// caller told ten minutes who needed an hour has been lied to.
+const HOUR_MS = 60 * 60 * 1000;
+
+// ---------------------------------------------------------------------------
+// ONE SENTENCE WAS COVERING THREE DIFFERENT REFUSALS, AND IT BLAMED THE WRONG
+// PEOPLE FOR TWO OF THEM.
+//
+// The spend ledger in services/birdieUsage.js has three legs. Only ONE of them
+// is about other people:
+//
+//   PER_USER_HOURLY_TOKENS  this account, ROLLING 60 minutes
+//   PER_USER_DAILY_TOKENS   this account, FIXED UTC day
+//   GLOBAL_DAILY_TOKENS     everybody, FIXED UTC day
+//
+// "lot of chatter right now" says the app is busy. On the two per-account legs
+// that is untrue: nobody else's traffic is involved and no amount of quiet
+// changes the answer. "hit me again in a bit" is untrue on both of the daily
+// legs, which run to UTC midnight and are hours away, and that is the leg
+// somebody hits after a long session. They come back in a minute, get the same
+// line, and read a coordination app's assistant as broken.
+//
+// allowGeminiCall returns a boolean, so the leg is read back from the
+// non-consuming geminiSpendStatus AFTER the refusal. That read cannot charge
+// anything and cannot change the decision; it only decides what to say.
+//
+// Birdie's register is lowercase and clipped, and the system prompt forbids
+// apologising for being down, so these stay in that voice.
+// ---------------------------------------------------------------------------
+function birdieBudgetLeg(userId, tokens) {
+  const st = geminiSpendStatus(userId);
+  // A single payload larger than the whole hourly ceiling is refused every
+  // time, forever, and no window is true about it. The route's own caps (24
+  // messages of 4,000 characters) put this far out of reach in practice; it is
+  // handled because the alternative is telling somebody to come back tomorrow
+  // for a request that tomorrow will refuse identically.
+  if (tokens > st.limits.perUserHourly) return 'too-large';
+  if (st.globalRemaining < tokens) return 'global-day';
+  // DAY BEFORE HOUR, which is the opposite of the order allowGeminiCall checks
+  // them in, and deliberately so. When both are spent the day is the longer
+  // wait, and reporting the hour would send the caller back before anything
+  // has changed.
+  if (st.userDayRemaining < tokens) return 'user-day';
+  if (st.userHourRemaining < tokens) return 'user-hour';
+  return 'global-day';
+}
+
+function birdieRefusal(res, leg) {
+  if (leg === 'too-large') {
+    // 413, not 429. Waiting is not the fix and never becomes the fix.
+    return res.status(413).json({ error: "that thread's too long for me to read in one go. start a new chat" });
+  }
+  if (leg === 'user-hour') {
+    const ms = HOUR_MS;
+    return res.status(429).json(refusalBody(res, ms,
+      `that's a lot of chat in one hour. hit me again ${waitPhrase(ms)}`));
+  }
+  const ms = msUntilUtcMidnight();
+  if (leg === 'user-day') {
+    return res.status(429).json(refusalBody(res, ms,
+      `you've used up your chat for today. i'm back ${waitPhrase(ms)}`));
+  }
+  return res.status(429).json(refusalBody(res, ms,
+    `lot of chatter right now, and we've hit the day's limit. i'm back ${waitPhrase(ms)}`));
+}
 
 // How many characters a payload puts on the wire. The SDK holds no server-side
 // session, so the WHOLE conversation is re-sent on every call; the caller of
@@ -1321,7 +1396,9 @@ router.post('/chat',
         promptChars += payloadChars(payload);
         const send = async () => {
           const estimate = estimateGeminiTokens(promptChars);
-          if (!allowGeminiCall(userId, estimate)) throw new GeminiBudgetError();
+          if (!allowGeminiCall(userId, estimate)) {
+            throw new GeminiBudgetError(birdieBudgetLeg(userId, estimate));
+          }
           const genStart = Date.now();
           const resp = await chat.sendMessage({
             message: payload,
@@ -1360,12 +1437,13 @@ router.post('/chat',
       // degraded reply, and Gemini is never reached.
       let response;
       let budgetStopped = false;
+      // Which ceiling cut the turn short, so the half-answer below says the
+      // same true thing the outright refusal would have said.
+      let budgetLeg = null;
       try {
         response = await sendWithRetry(userText);
       } catch (e) {
-        if (e?.geminiBudget) {
-          return res.status(429).json({ error: BIRDIE_BUSY_MESSAGE });
-        }
+        if (e?.geminiBudget) return birdieRefusal(res, e.leg);
         throw e;
       }
       let iterations = 0;
@@ -1479,6 +1557,7 @@ router.post('/chat',
           if (e?.geminiBudget) {
             console.warn('[AI] Gemini spend ceiling reached mid-turn; answering without further tool rounds');
             budgetStopped = true;
+            budgetLeg = e.leg || 'global-day';
             break;
           }
           throw e;
@@ -1500,7 +1579,19 @@ router.post('/chat',
       // an instruction that cannot work. They repeat it and it stops again.
       const cutShort = budgetStopped
         || (candidate?.content?.parts || []).some(p => p.functionCall);
-      const fallbackText = cutShort ? BIRDIE_BUSY_MESSAGE : 'say that one more time?';
+      // Same defect, one status code up. This is a 200 carrying a turn we cut
+      // off ourselves, and "hit me again in a bit" sent the user straight back
+      // into a ceiling that does not lift for hours. Where we know the leg, say
+      // its window; where the turn was cut by the round cap or the 45-second
+      // budget instead, "in a bit" is accurate and stays.
+      const budgetCutText = budgetLeg === 'too-large'
+        ? "that thread's too long for me to read in one go. start a new chat"
+        : budgetLeg === 'user-hour'
+          ? `that's a lot of chat in one hour. hit me again ${waitPhrase(HOUR_MS)}`
+          : `that's my limit for today. i'm back ${waitPhrase(msUntilUtcMidnight())}`;
+      const fallbackText = budgetStopped
+        ? budgetCutText
+        : (cutShort ? BIRDIE_BUSY_MESSAGE : 'say that one more time?');
       const responseText = textParts.map(p => p.text).join('') || fallbackText;
 
       // Collect venue data from tool results to send as cards

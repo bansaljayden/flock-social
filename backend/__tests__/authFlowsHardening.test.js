@@ -368,8 +368,25 @@ test('the login throttle answers identically for an address that has no account'
   const ghost = await post('/api/auth/login', { email: 'throttled-ghost@example.com', password: 'WrongPass1' });
   assert.strictEqual(real.status, 429);
   assert.strictEqual(ghost.status, 429);
-  assert.strictEqual(await real.text(), await ghost.text(),
+  // The refusal now says when the lock lifts, which LOGIN_FAIL_WINDOW_MS made
+  // knowable all along and this route used to throw away for "a few minutes".
+  // That window cannot be an oracle: the throttle is keyed on the canonical
+  // ADDRESS and is filled by failed attempts, which both of these had, so the
+  // number is a fact about the attempts and never about the mailbox. What it IS
+  // is clock-sensitive to the millisecond, so the instant is normalised out and
+  // everything a reader can see is compared exactly.
+  const scrub = (t) => t.replace(/"resetsAt":"[^"]+"/, '"resetsAt":"<instant>"')
+    .replace(/"retryAfterSeconds":\d+/, '"retryAfterSeconds":<n>');
+  const realBody = JSON.parse(await real.text());
+  const ghostBody = JSON.parse(await ghost.text());
+  assert.strictEqual(realBody.error, ghostBody.error,
     'a 429 that only real accounts can earn is an existence oracle');
+  assert.ok(Math.abs(realBody.retryAfterSeconds - ghostBody.retryAfterSeconds) <= 2,
+    'the two locks must run out at the same time, or the countdown is the oracle');
+  assert.strictEqual(scrub(JSON.stringify(realBody)), scrub(JSON.stringify(ghostBody)),
+    'nothing else in the refusal may differ');
+  assert.match(realBody.error, /15 minutes/,
+    'the lock is fifteen minutes and the sentence used to say "a few"');
   clearLoginFailures(canonicalEmail('throttled-real@example.com'));
   clearLoginFailures(canonicalEmail('throttled-ghost@example.com'));
 });

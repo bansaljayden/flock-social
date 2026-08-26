@@ -156,9 +156,40 @@ function createUserBudget({ name = 'budget', hourly, daily, maxEntries = 20000 }
     return { hourly: Math.max(0, hourly - hits), daily: Math.max(0, daily - spentToday) };
   }
 
+  // How long until allow() would say yes again, in milliseconds. Non-consuming.
+  //
+  // A budget that answers only true or false forces every caller to invent an
+  // adjective for the wait, and the adjectives invented in this codebase
+  // described windows that did not exist. Both windows here are knowable
+  // exactly: the hourly one from the timestamp that has to fall out of it, the
+  // daily one from `dayResetAt`, which is already stored.
+  //
+  // Returns 0 when nothing is refusing. When BOTH windows are spent the answer
+  // is the later of the two, because a caller freed by the hour and still held
+  // by the day has not been freed.
+  function retryAfterMs(userId) {
+    const id = keyOf(userId);
+    if (id === null) return 0;
+    const e = entries.get(id);
+    if (!e) return 0;
+    const now = Date.now();
+
+    let ms = 0;
+    const hits = e.hits.filter((t) => now - t < HOUR_MS);
+    if (hits.length >= hourly) {
+      // Ascending, because hits are pushed in order. One unit frees when the
+      // (hits.length - hourly + 1)-th oldest leaves the window.
+      const stamp = hits[hits.length - hourly];
+      ms = Math.max(ms, stamp + HOUR_MS - now);
+    }
+    const spentToday = now >= e.dayResetAt ? 0 : e.dayCount;
+    if (spentToday >= daily) ms = Math.max(ms, e.dayResetAt - now);
+    return Math.max(0, ms);
+  }
+
   function reset() { entries.clear(); lastPrune = 0; }
 
-  return { allow, remaining, reset, limits: { hourly, daily }, name };
+  return { allow, remaining, retryAfterMs, reset, limits: { hourly, daily }, name };
 }
 
 module.exports = { createUserBudget };

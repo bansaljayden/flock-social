@@ -158,7 +158,10 @@ async function join(user, over = {}) {
   const text = await res.text();
   let json = null;
   try { json = JSON.parse(text); } catch { /* non-JSON */ }
-  return { status: res.status, body: json, text };
+  // Retry-After is carried out too: it is the half of a throttle answer that a
+  // client can act on without reading English, and the cap answers below assert
+  // its ABSENCE, which is just as load-bearing.
+  return { status: res.status, body: json, text, headers: { 'retry-after': res.headers.get('retry-after') || undefined } };
 }
 
 const guestSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'guest.js'), 'utf8');
@@ -481,8 +484,15 @@ test('a leaked link cannot pack a flock past the member cap', async () => {
   scriptAnnounce();
 
   const res = await join(VIEWER);
-  assert.strictEqual(res.status, 429);
+  // 409, NOT 429. LINK_JOIN_MEMBER_CAP is a ceiling on the PLAN, not a rate on
+  // this account: no amount of waiting frees a seat, so a status that tells the
+  // client to retry later is telling it something untrue. This assertion used
+  // to read 429 and is the reason the code did.
+  assert.strictEqual(res.status, 409);
   assert.match(res.body.error, /full/i);
+  assert.strictEqual(res.body.flockFull, true);
+  assert.strictEqual(res.headers['retry-after'], undefined,
+    'a permanent cap must not carry a Retry-After, which is a promise that waiting works');
   assert.strictEqual(ran(/INSERT INTO flock_members/).length, 0, 'the refused join writes nothing');
   assert.ok(log.some((q) => q.sql === 'ROLLBACK'), 'and the transaction is rolled back');
 });
@@ -504,7 +514,17 @@ test('one account cannot spend the route in a loop', async () => {
   }
   const refused = await join(VIEWER);
   assert.strictEqual(refused.status, 429);
-  assert.match(refused.body.error, /too many/i);
+  // THE WINDOW IS AN HOUR (JOIN_WINDOW_MS), and this refusal used to say "Give
+  // it a minute", which is wrong by a factor of sixty. Somebody who waited the
+  // minute they were told to wait got the same refusal and had no way to tell a
+  // throttle from a dead invite.
+  assert.match(refused.body.error, /hour/i);
+  assert.ok(!/minute/i.test(refused.body.error),
+    'an hourly window is telling the caller to come back in a minute again');
+  assert.ok(refused.body.retryAfterSeconds > 60 * 50,
+    'the machine-readable window is shorter than the limit it describes');
+  assert.strictEqual(refused.headers['retry-after'], String(refused.body.retryAfterSeconds),
+    'the header and the body disagree about the same window');
 });
 
 test('the budget is keyed per user AND per flock, so one abuser cannot lock others out', () => {

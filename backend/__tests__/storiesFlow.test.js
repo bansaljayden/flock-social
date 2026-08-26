@@ -53,6 +53,12 @@ function reset() {
   state = {
     lastHour: 0,        // stories this user posted in the last hour
     active: 0,          // stories this user has live
+    // When each of the two ceilings frees a slot. They are DIFFERENT CLOCKS and
+    // that is the whole point: the hourly one is an hour after the post that
+    // filled it, the active one is whenever the earliest live story expires,
+    // which with a 24-hour format is most of a day away.
+    hourFreesAt: new Date(Date.now() + 55 * 60 * 1000).toISOString(),
+    activeFreesAt: new Date(Date.now() + 9 * 60 * 60 * 1000).toISOString(),
     insertReturns: [STORY],
     feedRows: [],
     openReport: false,  // an unhandled report names the story being deleted
@@ -82,7 +88,15 @@ pool.query = async (text, params = []) => {
     return { rows: state.feedRows, rowCount: state.feedRows.length };
   }
   if (has('COUNT(*) FILTER (WHERE created_at')) {
-    return { rows: [{ last_hour: state.lastHour, active: state.active }], rowCount: 1 };
+    return {
+      rows: [{
+        last_hour: state.lastHour,
+        active: state.active,
+        hour_frees_at: state.hourFreesAt,
+        active_frees_at: state.activeFreesAt,
+      }],
+      rowCount: 1,
+    };
   }
   if (has('INSERT INTO stories')) {
     return { rows: state.insertReturns, rowCount: state.insertReturns.length };
@@ -388,6 +402,16 @@ test('one account cannot flood the feed: the hourly cap answers 429, not 500', a
   state.lastHour = S.STORIES_PER_HOUR;
   const res = await call('POST', '/api/stories', 'alice', { image_url: TINY_IMAGE });
   assert.strictEqual(res.status, 429);
+  const said = await res.json();
+  // The hourly ceiling is a RATE, so it says the hour it runs on. Both ceilings
+  // used to answer "You've posted a lot of stories recently. Try again in a
+  // little while", which described neither of them.
+  assert.match(said.error, /in the last hour/);
+  assert.match(said.error, /in about an hour/);
+  assert.ok(!/delete one/.test(said.error),
+    'deleting a story does not clear the hourly rate, so it must not be offered here');
+  assert.ok(said.retryAfterSeconds > 0 && said.resetsAt,
+    'a rate limit that will not say when it lifts is the defect this test exists for');
   assert.deepStrictEqual(calls, [], 'a rate-limited post must not spend moderation quota');
   noQuery('INSERT INTO stories');
 });
@@ -397,6 +421,14 @@ test('the live-story cap is enforced too', async () => {
   state.active = S.MAX_ACTIVE_STORIES;
   const res = await call('POST', '/api/stories', 'alice', { image_url: TINY_IMAGE });
   assert.strictEqual(res.status, 429);
+  const said = await res.json();
+  // A CAPACITY, not a rate, and on a different clock: nine hours away in this
+  // fixture. It also has an instant fix the hourly one does not, and saying so
+  // is the difference between waiting all evening and posting now.
+  assert.match(said.error, /in about 9 hours/);
+  assert.match(said.error, /delete one to post now/);
+  assert.ok(!/in the last hour, which is the most per hour/.test(said.error),
+    'the capacity cap is answering with the hourly rate\'s sentence');
   noQuery('INSERT INTO stories');
 });
 
