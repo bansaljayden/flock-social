@@ -376,7 +376,20 @@ test.before(async () => {
 test.after(async () => {
   if (roPool) await roPool.end();
   if (pool) await pool.end();
-  if (pg) await pg.stop();
+  // pg.stop() removes the data directory itself, and on Windows the postgres
+  // process can still hold a handle to it for a moment after it reports exit,
+  // so that rmdir raises EBUSY. The rmSync below was already guarded for this;
+  // stop() was not, so the throw came from the line above the guard and failed
+  // a suite whose assertions had all passed. Nothing after this point is a
+  // result: it is a temp directory under os.tmpdir() that the OS will reap.
+  // A cleanup that cannot delete a scratch folder must never be able to fail a
+  // green test, because a red suite that means nothing trains everybody to
+  // ignore a red suite.
+  try {
+    if (pg) await pg.stop();
+  } catch (err) {
+    console.warn(`[mlFeedbackLabels] could not stop postgres cleanly: ${err.message}`);
+  }
   try {
     fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
   } catch (err) {
