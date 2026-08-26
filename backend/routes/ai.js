@@ -278,7 +278,7 @@ function reportedTokens(resp) {
 // is here, in code, and the prompt rule that goes with it is a statement about
 // where venue text comes from rather than a plea.
 //
-// THE THREE PLACES HOSTILE TEXT GETS IN, in order of how much it is worth:
+// WHERE HOSTILE TEXT GETS IN, in order of how much it is worth:
 //
 //   1. `currentContext`, which lands inside the SYSTEM INSTRUCTION. That is the
 //      highest-privilege position in the payload and it is the one an attacker
@@ -298,6 +298,22 @@ function reportedTokens(resp) {
 //      because they look like facts the app went and fetched.
 //   3. The user's own display name, which is only ever their own prompt to
 //      poison. Sanitized on the same pass because it costs nothing.
+//   4. OUR OWN DATABASE, THROUGH THE TOOL RESULTS THAT READ IT. This entry was
+//      missing when the list was three items long, and it is the same text as
+//      item 1 arriving by a different door: get_user_flocks returns the flock
+//      NAME and the flock's venue name, both typed by whoever created the
+//      flock, and get_user_friends returns a friend's display name, typed by
+//      the friend. Item 1 is what the reader is looking at; this is every
+//      flock they are in and every friend they have, ten and fifty rows at a
+//      time, in a conversation they did not have to be looking at anything to
+//      start. The reason item 2 says a tool result "arrives with more
+//      authority because it looks like a fact the app went and fetched"
+//      applies here with the authority actually earned: it IS our row.
+//
+// The rule the four items share, and the one to apply to a fifth: a value is
+// sanitized because of WHO WROTE IT, never because of which door it came in
+// through. If somebody other than the person reading the reply can put
+// characters in it, it goes through promptSafe on its way to the model.
 //
 // WHAT THIS DOES NOT DO, deliberately: it does not look for phrases. There is
 // no list of banned wordings here and there should not be one. "Ignore previous
@@ -780,6 +796,27 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // Round 3: accepted flocks only (an invitee could pump the minimal
       // invite card for full data via Birdie), and member COUNT instead of
       // third parties' names — rosters stay out of the Gemini payload.
+      //
+      // ROUND 23: AND THE ROWS THEMSELVES ARE UNTRUSTED TEXT, WHICH IS THE
+      // WHOLE POINT OF THE HEADER ABOVE promptSafe.
+      //
+      // A flock name is typed by whoever created the flock and utils/sanitize
+      // .js keeps \n, \r and \t, which is the finding that put promptSafe in
+      // this file. buildContextLine closed the door the name walks through
+      // when the reader is LOOKING at the flock; this tool is the door it
+      // walks through when they are not, and it opens on the same conversation
+      // with the same model. The audit that added promptSafe enumerated three
+      // entry points and named tool results as one of them, but only counted
+      // the Google Places ones: every value below comes out of our own
+      // database and every one of them was written by somebody other than the
+      // person reading the answer. The flock name and the flock's venue name
+      // are the flock creator's text, up to 255 characters each, ten flocks at
+      // a time.
+      //
+      // Same function, same bounds, same reason. Sanitizing on the way OUT of
+      // the query rather than on the way in, because these rows are the app's
+      // own display text everywhere else and a value the model reads is not a
+      // value the app should have rewritten in the database.
       const result = await pool.query(
         `SELECT f.id, f.name, f.venue_name, f.event_time, f.status,
                 COUNT(*) FILTER (WHERE fm.status = 'accepted')::int AS member_count
@@ -792,10 +829,26 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
          LIMIT 10`,
         [userId]
       );
-      return { flocks: result.rows };
+      // A flock with no venue chosen yet carries NULL, and null is the honest
+      // answer to "where". promptSafe answers '' for anything that is not a
+      // string, which would tell the model the venue is a place with no name.
+      const orNull = (v, max) => (v == null ? null : promptSafe(v, max));
+      return {
+        flocks: result.rows.map((f) => ({
+          ...f,
+          name: promptSafe(f.name, MAX_CONTEXT_CHARS),
+          venue_name: orNull(f.venue_name, MAX_VENUE_NAME_CHARS),
+        })),
+      };
     }
 
     case 'get_user_friends': {
+      // The same round 23 point as get_user_flocks, one relationship further
+      // out. A friend's display name is that friend's text, not the caller's,
+      // and it lands in the caller's conversation fifty rows at a time. The
+      // promptSafe header calls the caller's own display name "only ever their
+      // own prompt to poison", which is true of theirs and is exactly what is
+      // NOT true of this list.
       const result = await pool.query(
         `SELECT u.id, u.name
          FROM friendships fr
@@ -805,7 +858,9 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
          LIMIT 50`,
         [userId]
       );
-      return { friends: result.rows };
+      return {
+        friends: result.rows.map((f) => ({ ...f, name: promptSafe(f.name, MAX_CONTEXT_CHARS) })),
+      };
     }
 
     case 'get_weather': {
