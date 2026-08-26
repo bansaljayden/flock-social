@@ -213,3 +213,4 @@ flock-walkthrough-*.mp4
 # it. react-scripts loads it automatically on `start`, so a committed copy would
 # silently reroute every developer's dev server at a port that is not running.
 frontend/src/setupProxy.js
+AUDIT-ROTATION.md
