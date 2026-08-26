@@ -63,11 +63,60 @@ const { Client, types } = require('pg');
 // timestamptz is deliberately NOT in this list. Its Date carries an absolute
 // instant, toISOString() writes it with a Z, and the restore reads the Z, so
 // that one already round-trips exactly (proved in dumpLiteralRestore.test.js).
+//
+// ---------------------------------------------------------------------------
+// json AND jsonb ARE HERE FOR A SECOND REASON, FOUND 2026-08-26.
+// ---------------------------------------------------------------------------
+// The timestamp argument above is about the driver reading a value into the
+// WRONG instant. This one is about the driver reading a value into a JavaScript
+// type that lit() then cannot tell apart from anything else. pg parses a
+// json/jsonb column with JSON.parse, and JSON has four top-level forms that are
+// not an object or an array. Every one of them came back out wrong, measured
+// against real Postgres columns:
+//
+//   jsonb '5'        parsed to 5,     written as bare 5     ERROR: column "v" is
+//                                                           of type jsonb but
+//                                                           expression is of
+//                                                           type integer
+//   jsonb 'true'     parsed to true,  written as TRUE       the same error
+//   jsonb '"hello"'  parsed to 'hello', written as 'hello'  ERROR: invalid input
+//                                                           syntax for type json
+//   jsonb 'null'     parsed to null,  written as NULL       NO ERROR AT ALL, and
+//                                                           the column comes
+//                                                           back SQL NULL
+//                                                           instead of JSON null
+//
+// The first three abort the whole restore at whatever table holds them, which
+// is the exact failure the ::jsonb cast caused and this file was rewritten to
+// end. The fourth is worse in kind, because it is the silent one: `SELECT ...
+// WHERE col IS NULL` answers differently before and after a restore and nothing
+// anywhere says so.
+//
+// The last one also cannot be fixed inside lit(), and that is why the fix is
+// here rather than there. By the time lit() sees the value, JSON null and SQL
+// NULL are both the JavaScript `null`; the information that told them apart was
+// destroyed by the parser. Reading the column as the server's own text is what
+// keeps it, and it is the same move, for the same reason, as the timestamps.
+//
+// NOT A LIVE DEFECT TODAY, exactly like the `interval` gap the coverage test
+// names: every jsonb write path in this app is validated to an object or an
+// array first (routes/messages.js and utils/venuePayload.js for venue_data,
+// routes/venueProfile.js for operating_hours and notification_prefs,
+// routes/users.js for user_settings.settings, services/pushHelper.js for
+// push_outbox.data). One route that stores a bare number, string, boolean or
+// JSON null makes the backup unrestorable, and nothing about that route would
+// look wrong. The coverage test could not have caught this: it measures the set
+// of column TYPES that round-trip, jsonb is in that set, and it was the VALUES
+// inside one covered type that did not.
 const TEXT_ONLY_OIDS = new Set([
   1082, // date
   1114, // timestamp without time zone
   1115, // timestamp without time zone[]
   1182, // date[]
+  114,  // json
+  199,  // json[]
+  3802, // jsonb
+  3807, // jsonb[]
 ]);
 const identityParser = (v) => v;
 // Passed per-query rather than through pg.types.setTypeParser, which is global
