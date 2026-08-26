@@ -24,6 +24,7 @@ const pool = require('../config/database');
 
 let devices = [];
 let readings = [];
+let venueProfiles = [];
 let queryLog = [];
 
 function intervalToMs(text) {
@@ -59,6 +60,31 @@ pool.query = (sql, params = []) => {
     }
     device.last_seen_at = Date.now();
     return Promise.resolve({ rows: [{ id: device.id }], rowCount: 1 });
+  }
+
+  // Owner gate on the fleet-health read.
+  if (/SELECT 1 FROM venue_profiles WHERE user_id = \$1 AND google_place_id = \$2/.test(flat)) {
+    const hit = venueProfiles.find((v) => v.user_id === params[0] && v.google_place_id === params[1]);
+    return Promise.resolve({ rows: hit ? [{ '?column?': 1 }] : [], rowCount: hit ? 1 : 0 });
+  }
+
+  // The fleet-health read itself.
+  if (/SELECT device_id, device_name, is_active, last_seen_at, deployed_at/.test(flat)) {
+    const [placeId, windowMinutes] = params;
+    const rows = devices
+      .filter((d) => d.venue_place_id === placeId)
+      .sort((a, b) => a.device_id.localeCompare(b.device_id))
+      .map((d) => ({
+        device_id: d.device_id,
+        device_name: d.device_name || null,
+        is_active: d.is_active,
+        last_seen_at: d.last_seen_at === null ? null : new Date(d.last_seen_at),
+        deployed_at: new Date(0),
+        seconds_since_last_seen:
+          d.last_seen_at === null ? null : Math.floor((Date.now() - d.last_seen_at) / 1000),
+        online: d.last_seen_at !== null && Date.now() - d.last_seen_at < windowMinutes * 60000,
+      }));
+    return Promise.resolve({ rows, rowCount: rows.length });
   }
 
   if (/SELECT recorded_at FROM venue_sensor_data/.test(flat)) {
@@ -129,7 +155,7 @@ function call(path, { apiKey, body, method = 'POST' } = {}) {
       res.on('end', () => {
         let parsed = null;
         try { parsed = JSON.parse(raw); } catch { parsed = raw; }
-        resolve({ status: res.statusCode, body: parsed, raw });
+        resolve({ status: res.statusCode, body: parsed, raw, headers: res.headers });
       });
     });
     req.on('error', reject);
@@ -154,12 +180,16 @@ function reset() {
   emits = [];
   devices = [
     { id: 1, device_id: 'sensor_001', venue_place_id: VENUE, is_active: true,
+      device_name: 'The Fox, front door',
       api_key: digestOf(HASHED_KEY), last_seen_at: null },
     { id: 2, device_id: 'sensor_legacy', venue_place_id: OTHER_VENUE, is_active: true,
       api_key: PLAINTEXT_KEY, last_seen_at: null },
     { id: 3, device_id: 'sensor_dead', venue_place_id: VENUE, is_active: false,
       api_key: digestOf('retired-key'), last_seen_at: null },
   ];
+  // User 1 is the authenticated caller (see the authenticate stub) and owns
+  // VENUE. Nobody owns OTHER_VENUE.
+  venueProfiles = [{ user_id: 1, google_place_id: VENUE }];
 }
 
 const reading = (extra = {}) => ({
@@ -475,6 +505,90 @@ test('draining a buffer after an outage is not mistaken for a flood, or a device
     assert.strictEqual(res.status, 201, `backfilled reading ${i} was refused`);
   }
   assert.strictEqual(readings.length, 5);
+});
+
+test('a 429 says how long to wait, or the device falls back to its outage backoff and never catches up', async () => {
+  // The device has no other way to know. Left to guess, flock-sensor/main.py
+  // used the network backoff, which doubles to fifteen minutes, so a Pi
+  // draining a buffer slept longer than it took to fill and drifted further
+  // behind on every cycle until it hit its 240-entry cap and dropped readings.
+  // MIN_LIVE_GAP_SECONDS is what this endpoint actually enforces, so it is what
+  // this endpoint has to say.
+  reset();
+  await call('/api/sensors/data', { apiKey: HASHED_KEY, body: reading() });
+  const second = await call('/api/sensors/data', { apiKey: HASHED_KEY, body: reading() });
+
+  assert.strictEqual(second.status, 429);
+  assert.strictEqual(second.headers['retry-after'], '2');
+  assert.strictEqual(second.body.retry_after_seconds, 2);
+  // Seconds, and small enough that honouring it is cheaper than backing off.
+  assert.ok(second.body.retry_after_seconds > 0 && second.body.retry_after_seconds <= 10);
+});
+
+// --- Fleet health ---------------------------------------------------------
+
+test('a venue owner can tell whether their sensor is alive, which last_seen_at was recorded for and nothing read', async () => {
+  reset();
+  ageDevice('sensor_001', 20000);
+  const res = await call(`/api/sensors/${VENUE}/status`, { method: 'GET' });
+
+  assert.strictEqual(res.status, 200);
+  const online = res.body.devices.find((d) => d.device_id === 'sensor_001');
+  assert.strictEqual(online.online, true);
+  assert.strictEqual(online.is_active, true);
+  assert.ok(online.seconds_since_last_seen >= 20 && online.seconds_since_last_seen < 40);
+  assert.strictEqual(res.body.online_within_minutes, 15);
+});
+
+test('a unit that died on Friday reads as offline instead of silently vanishing from the dashboard', async () => {
+  // Both sensor cards in App.js render only when /current returns a row, so a
+  // dead unit does not show as broken, the whole section stops existing and the
+  // owner is told nothing.
+  reset();
+  ageDevice('sensor_001', 3 * 24 * 60 * 60 * 1000);
+  const res = await call(`/api/sensors/${VENUE}/status`, { method: 'GET' });
+
+  const dead = res.body.devices.find((d) => d.device_id === 'sensor_001');
+  assert.strictEqual(dead.online, false);
+  assert.ok(dead.seconds_since_last_seen > 200000, 'the age has to be reportable, not just a flag');
+});
+
+test('a device that has never reported is distinguishable from one that has gone quiet', async () => {
+  reset();
+  const res = await call(`/api/sensors/${VENUE}/status`, { method: 'GET' });
+  const fresh = res.body.devices.find((d) => d.device_id === 'sensor_001');
+  assert.strictEqual(fresh.last_seen_at, null);
+  assert.strictEqual(fresh.seconds_since_last_seen, null);
+  assert.strictEqual(fresh.online, false);
+});
+
+test('a deactivated unit is still listed, or revoking a device would make it look like it was never installed', async () => {
+  reset();
+  const res = await call(`/api/sensors/${VENUE}/status`, { method: 'GET' });
+  const retired = res.body.devices.find((d) => d.device_id === 'sensor_dead');
+  assert.ok(retired, 'an is_active=false row must still be visible to its owner');
+  assert.strictEqual(retired.is_active, false);
+});
+
+test('fleet health is owner scoped: a user cannot enumerate hardware at a venue that is not theirs', async () => {
+  reset();
+  const res = await call(`/api/sensors/${OTHER_VENUE}/status`, { method: 'GET' });
+  assert.strictEqual(res.status, 403);
+  assert.strictEqual(res.body.devices, undefined);
+});
+
+test('no API key in either form ever leaves through the status route', async () => {
+  reset();
+  ageDevice('sensor_001', 1000);
+  const res = await call(`/api/sensors/${VENUE}/status`, { method: 'GET' });
+
+  // The stored digest is the verifier for a legacy plaintext row, so handing it
+  // to a browser hands back the ability to post readings for this venue.
+  assert.ok(!/api_key|sha256:/.test(res.raw), res.raw);
+  const selects = queryLog.filter((q) => /FROM sensor_devices/.test(q.sql));
+  for (const q of selects) {
+    if (/^SELECT device_id, device_name/.test(q.sql)) assert.ok(!/api_key/.test(q.sql));
+  }
 });
 
 // --- Live broadcast -------------------------------------------------------

@@ -336,7 +336,18 @@ router.post('/data',
           [device.id, `${MIN_LIVE_GAP_SECONDS} seconds`]
         );
         if (touch.rowCount === 0) {
-          return res.status(429).json({ error: 'Readings are arriving too fast for this device' });
+          // Say HOW LONG, in the header and in the body. Without it the device
+          // had to guess, and it guessed with its network backoff, which
+          // escalates to fifteen minutes. See the RATE_LIMIT_STATUS branch in
+          // flock-sensor/main.py. The note above this constant claims a
+          // throttled drain costs "about a minute of extra drain"; that is only
+          // true if the device waits the gap this endpoint is actually
+          // enforcing, so the endpoint has to tell it.
+          res.set('Retry-After', String(MIN_LIVE_GAP_SECONDS));
+          return res.status(429).json({
+            error: 'Readings are arriving too fast for this device',
+            retry_after_seconds: MIN_LIVE_GAP_SECONDS,
+          });
         }
       }
 
@@ -466,6 +477,68 @@ router.get('/:placeId/history',
     } catch (err) {
       console.error('Get sensor history error:', err);
       res.status(500).json({ error: 'Failed to fetch sensor history' });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// GET /api/sensors/:placeId/status: is the hardware at this venue alive?
+//
+// `sensor_devices.last_seen_at` was written on every ingest and read by nothing.
+// The only way to find out whether a deployed unit was still reporting was to
+// query the production database by hand, and the app made it worse rather than
+// better: both sensor cards render only when /current returns a row, so a unit
+// that died on Friday does not show as offline, it silently stops existing. The
+// venue owner sees an occupancy section one day and no occupancy section the
+// next, with nothing anywhere saying why.
+//
+// Owner-scoped, not public. Whether a venue has hardware and when it last
+// reported is operational detail about our fleet, and the venue's own owner is
+// the person who needs it.
+// ---------------------------------------------------------------------------
+router.get('/:placeId/status',
+  authenticate,
+  param('placeId').isString().isLength({ min: 1, max: 255 }).withMessage('placeId required'),
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+
+      const { placeId } = req.params;
+
+      // venue_profiles.user_id is UNIQUE (migration 001), so this is one row at
+      // most and it is the caller's own claim on this place_id.
+      const owns = await pool.query(
+        'SELECT 1 FROM venue_profiles WHERE user_id = $1 AND google_place_id = $2 LIMIT 1',
+        [req.user.id, placeId]
+      );
+      if (owns.rows.length === 0) {
+        return res.status(403).json({ error: 'This is not your venue' });
+      }
+
+      // api_key is never selected here, in either form. The digest is a
+      // verifier for the legacy plaintext rows, so handing it to a browser
+      // would hand back the ability to post readings for this venue.
+      const devices = await pool.query(
+        `SELECT device_id, device_name, is_active, last_seen_at, deployed_at,
+                FLOOR(EXTRACT(EPOCH FROM (NOW() - last_seen_at)))::int AS seconds_since_last_seen,
+                (last_seen_at IS NOT NULL
+                  AND last_seen_at > NOW() - INTERVAL '1 minute' * $2) AS online
+           FROM sensor_devices
+          WHERE venue_place_id = $1
+          ORDER BY device_id ASC`,
+        [placeId, CURRENT_READING_MAX_AGE_MINUTES]
+      );
+
+      res.json({
+        devices: devices.rows,
+        // The window the app's own occupancy card uses, so a client never has
+        // to hardcode a second copy of it and watch the two drift apart.
+        online_within_minutes: CURRENT_READING_MAX_AGE_MINUTES,
+      });
+    } catch (err) {
+      console.error('Get sensor status error:', err);
+      res.status(500).json({ error: 'Failed to fetch sensor status' });
     }
   }
 );
