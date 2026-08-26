@@ -1005,6 +1005,22 @@ def persist_buffer():
         payload = [_resolve_timestamp(item) for item in payload]
         # A per-caller temp name, so those same two threads cannot land on each
         # other's half-written file.
+        # An INSTALLED device is already covered: the unit declares
+        # StateDirectory=flock-sensor, so systemd creates /var/lib/flock-sensor
+        # with the right owner before this process starts. This line is for
+        # every other way the file gets run, where nothing has made the
+        # directory: a developer laptop, a manual invocation, a device started
+        # outside systemd. Without it the write fails with ENOENT and lands in
+        # the generic handler below, which keeps the queue in memory and writes
+        # one throttled log line, so the buffer looks like it is working right
+        # up until the process restarts. The log path has always done this.
+        try:
+            BUFFER_PATH.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            # Read-only or full disk. The handlers below already treat that as
+            # "keep the queue in memory", so let the write fail and say so there
+            # rather than growing a second copy of that decision here.
+            pass
         tmp = BUFFER_PATH.with_suffix(f'{BUFFER_PATH.suffix}.{os.getpid()}.{threading.get_ident()}.tmp')
         try:
             with open(tmp, 'w') as fh:

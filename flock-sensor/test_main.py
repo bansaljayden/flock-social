@@ -788,5 +788,93 @@ class Privacy(unittest.TestCase):
             self.assertNotIn(tool, source)
 
 
+class ServiceConfinement(unittest.TestCase):
+    """The unit file, which nothing tested.
+
+    This box is the only part of Flock that sits physically in a room full of
+    strangers, on wifi nobody controls, and the one file on it that matters is
+    the config: it holds the venue's device key and the URL the readings are
+    pushed to. It is owned by the service user so the service can read it, which
+    also meant the service could REWRITE it. A process that got a shell here
+    could repoint FLOCK_API_URL at its own collector and hand it the key.
+
+    ProtectSystem=full closes that and costs nothing: it makes /usr, /boot and
+    /etc read-only and does not touch /dev at any level, so every sensor the
+    unit's own comment lists still works. It had been refused along with
+    ProtectSystem=strict, which is a different setting and genuinely would break
+    this service, because strict also makes /var read-only and the buffer and
+    the log both live there.
+    """
+
+    @staticmethod
+    def unit():
+        return Path(__file__).resolve().parent.joinpath('flock-sensor.service').read_text(encoding='utf-8')
+
+    def directives(self):
+        out = {}
+        for line in self.unit().splitlines():
+            line = line.strip()
+            if not line or line.startswith('#') or '=' not in line:
+                continue
+            k, v = line.split('=', 1)
+            out.setdefault(k.strip(), []).append(v.strip())
+        return out
+
+    def test_etc_is_read_only_to_the_service(self):
+        self.assertEqual(self.directives().get('ProtectSystem'), ['full'],
+                         'the config holding the device key is writable by the process that reads it')
+
+    def test_it_does_not_reach_for_strict_which_would_break_the_buffer(self):
+        # /var/lib and /var/log are both written. strict would make them
+        # read-only and the sensor would look healthy while buffering nothing.
+        self.assertNotIn('strict', self.directives().get('ProtectSystem', []))
+
+    def test_systemd_creates_the_two_directories_the_code_writes(self):
+        # setup.sh creates neither directory, so these two directives are the
+        # only reason an installed device can persist its buffer or its log at
+        # all. They also grant write access, which is why no ReadWritePaths is
+        # needed alongside them.
+        #
+        # Pinned because losing them is silent: save_buffer() treats a failed
+        # write as "keep the queue in memory" and logs one throttled line, so a
+        # buffer whose whole job is surviving a wifi drop would stop surviving a
+        # power cut and nothing on the device would say so.
+        d = self.directives()
+        self.assertEqual(d.get('StateDirectory'), ['flock-sensor'],
+                         'nothing creates /var/lib/flock-sensor, so the offline buffer cannot persist')
+        self.assertEqual(d.get('LogsDirectory'), ['flock-sensor'],
+                         'nothing creates /var/log/flock-sensor')
+
+    def test_the_declared_directories_are_the_ones_the_code_actually_uses(self):
+        # systemd derives the paths from the unit's names. If main.py ever moves
+        # its buffer or log somewhere else, the unit would be creating two
+        # directories nobody writes to and the real path would be unwritable.
+        source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
+        self.assertIn('/var/lib/flock-sensor', source,
+                      'StateDirectory=flock-sensor creates /var/lib/flock-sensor and main.py no longer uses it')
+        self.assertIn('/var/log/flock-sensor', source,
+                      'LogsDirectory=flock-sensor creates /var/log/flock-sensor and main.py no longer uses it')
+
+    def test_the_buffer_directory_is_created_outside_systemd_too(self):
+        # An installed device is covered by StateDirectory above. This is for a
+        # developer run, a manual invocation, or a device started outside the
+        # unit, where nothing has made the directory. The log path has always
+        # done this; the buffer path did not.
+        source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
+        self.assertIn('BUFFER_PATH.parent.mkdir(parents=True, exist_ok=True)', source,
+                      'the buffer directory is only created by systemd again, so any other launch loses the buffer')
+
+    def test_the_device_nodes_the_comment_promises_are_still_reachable(self):
+        # ProtectSystem never touches /dev, and PrivateDevices / DevicePolicy
+        # would. Their absence is the thing keeping the sensors readable.
+        d = self.directives()
+        self.assertNotIn('PrivateDevices', d)
+        self.assertNotIn('DevicePolicy', d)
+
+    def test_it_does_not_run_as_root(self):
+        self.assertEqual(self.directives().get('User'), ['pi'])
+        self.assertEqual(self.directives().get('NoNewPrivileges'), ['yes'])
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -41,14 +41,39 @@ LogsDirectory=flock-sensor
 Restart=always
 RestartSec=10
 
-# Modest hardening. Deliberately not ProtectSystem=strict or DevicePolicy=closed:
-# this process needs /dev/video0, /dev/spidev0.0, /dev/gpiomem and possibly
-# /dev/fb0, and a sensor that is beautifully sandboxed but cannot read its
-# sensors is worse than one that can.
+# Hardening, and the distinction this comment used to blur.
+#
+# Still deliberately NOT ProtectSystem=strict or DevicePolicy=closed: this
+# process needs /dev/video0, /dev/spidev0.0, /dev/gpiomem and possibly /dev/fb0,
+# and a sensor that is beautifully sandboxed but cannot read its sensors is
+# worse than one that can. `strict` would also make /var read-only, and the
+# buffer and the log both live there.
+#
+# ProtectSystem=full is a different setting and was being refused along with
+# it. It makes /usr, /boot and /etc read-only and does not touch /dev at any
+# level, so every device above is unaffected. What it stops is the thing this
+# box is actually exposed to: it sits in a venue, on someone else's wifi, in a
+# room full of strangers, and the one file that matters is
+# /etc/flock-sensor/flock_sensor.env — owned by the service user so that the
+# service can read it, which also meant the service could REWRITE it. A process
+# that got a shell here could repoint FLOCK_API_URL at its own collector and
+# hand it the venue's device key, and the unit did nothing to prevent that.
+# Now /etc is read-only to this service and the installer, which runs as root
+# outside the unit, still writes it normally.
+#
+# No ReadWritePaths here, deliberately. StateDirectory and LogsDirectory are
+# already declared further up, and they do the job better: systemd creates
+# /var/lib/flock-sensor and /var/log/flock-sensor with the right owner before
+# the process starts AND grants this unit write access to them. A bare
+# ReadWritePaths would add nothing and would refuse to start the unit on any
+# machine where the paths did not exist yet.
 NoNewPrivileges=yes
 PrivateTmp=yes
+ProtectSystem=full
 ProtectHome=read-only
 ProtectControlGroups=yes
+ProtectKernelModules=yes
+LockPersonality=yes
 RestrictSUIDSGID=yes
 RemoveIPC=yes
 
