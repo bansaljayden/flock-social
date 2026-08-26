@@ -63,7 +63,12 @@ const read = (p) => fs.readFileSync(path.join(SRC, p), 'utf8');
 // loaded chunk now (screens/VenueDashboard.js), and about 2,000 lines of what
 // this file scans went with it. Nothing asserted below changed. The app source
 // is simply in two files, so both are read, in the order they used to be one.
-const app = read('App.js') + read('screens/VenueDashboard.js');
+// The flock chat screen left App.js in the same sweep, on the same day
+// (screens/ChatDetail.js), and the message list, the composer, the reaction
+// row and the report entry went with it. Same treatment: nothing asserted
+// below changed, the app source is simply in three files now, and all three
+// are read in the order they used to be one.
+const app = read('App.js') + read('screens/ChatDetail.js') + read('screens/VenueDashboard.js');
 const css = read('index.css');
 const paywall = read('components/PaywallSheet.js');
 const birdieBird = read('components/ui/BirdieBird.js');

@@ -32,7 +32,13 @@
 const fs = require('fs');
 const path = require('path');
 
-const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+// The flock chat screen left App.js on 2026-08-26: it lives in
+// screens/ChatDetail.js now, and the message list, the composer, the reaction
+// row and the report entry went with it. Nothing asserted below changed. The
+// app source is simply in two files, so both are read, in the order they used
+// to be one.
+const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatDetail.js'), 'utf8');
 
 /** Comment lines dropped, so prose naming a retired pattern cannot fail the
  *  test the fix was written to pass (same exclusion, and same reason, as
