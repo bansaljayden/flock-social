@@ -1,5 +1,5 @@
 #!/bin/bash
-# Flock venue sensor — one-shot installer for Raspberry Pi OS.
+# Flock venue sensor: one-shot installer for Raspberry Pi OS.
 #
 #   sudo ./setup.sh
 #
@@ -20,7 +20,7 @@ CONFIG_FILE="${CONFIG_DIR}/flock_sensor.env"
 # ---------------------------------------------------------------------------
 # Which account runs the service?
 #
-# Raspberry Pi OS stopped shipping a default `pi` user in 2022 — the first-boot
+# Raspberry Pi OS stopped shipping a default `pi` user in 2022, and the first-boot
 # wizard lets the installer choose any name. Hardcoding `pi` meant setup
 # appeared to succeed and the service then failed to start on every current
 # image.
@@ -39,7 +39,10 @@ echo "==> service will run as ${SERVICE_USER}:${SERVICE_GROUP}"
 
 echo "==> apt update + install deps"
 apt-get update
-apt-get install -y python3-pip python3-dev i2c-tools
+# v4l-utils is not a runtime dependency, it is the only way to diagnose a
+# thermal camera that comes up on the wrong node or in the wrong mode, on a
+# box nobody is standing next to. `v4l2-ctl --list-devices` is in the README.
+apt-get install -y python3-pip python3-dev v4l-utils
 
 echo "==> pip install python deps"
 # --break-system-packages: this is a single-purpose appliance, and the Adafruit
@@ -72,13 +75,21 @@ case "${BOARD}" in
     ;;
 esac
 
-echo "==> enable I2C + SPI"
+# SPI only. The thermal camera is on USB now, so I2C is no longer enabled
+# here: turning on a bus nothing uses is one more thing wrong on the box.
+echo "==> enable SPI"
 if command -v raspi-config >/dev/null 2>&1; then
-  raspi-config nonint do_i2c 0
   raspi-config nonint do_spi 0
 else
-  echo "    raspi-config not found — this does not look like Raspberry Pi OS." >&2
-  echo "    Enable I2C and SPI by hand before the thermal camera or mic will work." >&2
+  echo "    raspi-config not found, so this does not look like Raspberry Pi OS." >&2
+  echo "    Enable SPI by hand before the mic will work." >&2
+fi
+
+# The thermal camera needs no bus enabled, but it does need to have enumerated.
+if [ ! -e /dev/video0 ]; then
+  echo "    WARNING: /dev/video0 does not exist. If the Lepton is plugged in," >&2
+  echo "    check the USB cable and run 'v4l2-ctl --list-devices'; set" >&2
+  echo "    THERMAL_DEVICE in the config if it came up on another node." >&2
 fi
 
 echo "==> install source to ${INSTALL_DIR}"
@@ -99,7 +110,7 @@ if [ ! -f "${CONFIG_FILE}" ] && [ -f "${LEGACY_CONFIG}" ]; then
   echo "    migrating ${LEGACY_CONFIG} -> ${CONFIG_FILE}"
   mv "${LEGACY_CONFIG}" "${CONFIG_FILE}"
 elif [ ! -f "${CONFIG_FILE}" ]; then
-  echo "    seeding from the example (EDIT IT — it has no API key yet)"
+  echo "    seeding from the example (EDIT IT, it has no API key yet)"
   cp "${SCRIPT_DIR}/flock_sensor.env.example" "${CONFIG_FILE}"
 fi
 chown "${SERVICE_USER}:${SERVICE_GROUP}" "${CONFIG_FILE}"
@@ -111,7 +122,7 @@ echo "==> install systemd unit"
 # usual reason a sensor that works when run by hand fails under systemd, so add
 # the service user to each surviving one.
 PRESENT_GROUPS=""
-for grp in i2c spi gpio video; do
+for grp in spi gpio video; do
   if getent group "${grp}" >/dev/null 2>&1; then
     PRESENT_GROUPS="${PRESENT_GROUPS}${PRESENT_GROUPS:+ }${grp}"
     adduser "${SERVICE_USER}" "${grp}" >/dev/null 2>&1 || true
@@ -139,7 +150,7 @@ systemctl restart flock-sensor
 echo ""
 if grep -q 'your_api_key_here' "${CONFIG_FILE}" 2>/dev/null || \
    ! grep -qE '^FLOCK_API_KEY=.+' "${CONFIG_FILE}" 2>/dev/null; then
-  echo "SETUP INCOMPLETE — no API key yet."
+  echo "SETUP INCOMPLETE. No API key yet."
   echo "  1. sudo nano ${CONFIG_FILE}      (set FLOCK_API_KEY and SENSOR_DEVICE_ID)"
   echo "  2. sudo systemctl restart flock-sensor"
   echo "  3. sudo -u ${SERVICE_USER} python3 ${INSTALL_DIR}/main.py --selftest"

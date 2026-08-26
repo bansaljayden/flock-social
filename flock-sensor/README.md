@@ -10,7 +10,7 @@ design choice below follows from that.
 
 > ## Status: this has never run on a Raspberry Pi
 >
-> Read this before you trust anything below. As of 2026-08-25, `main.py` has
+> Read this before you trust anything below. As of 2026-08-26, `main.py` has
 > only ever been executed by `test_main.py` on a developer laptop. Nothing in
 > this directory has been on a board. The evidence, so nobody has to re-derive
 > it:
@@ -31,8 +31,31 @@ design choice below follows from that.
 > `display_loop` are unexecuted code. Everything else here is covered by tests
 > and has been reasoned about hard, but the first time this meets a bus, a
 > level and a framebuffer, expect it to be wrong somewhere. Budget a bench day
-> before a venue day, and read "The build plan and this code do not agree"
-> below before ordering anything.
+> before a venue day.
+>
+> **The thermal path is newer than the rest of that.** On 2026-08-26 the sensor
+> was changed from an MLX90640 to the FLIR Lepton the build plan always
+> specified, so `ThermalCamera`, every V4L2 ioctl in it, and the counting
+> thresholds around it were written from datasheets and have never been issued
+> to a board. The two things most likely to be wrong on the bench, both called
+> out where they live in the code:
+>
+> - **The camera may not be radiometric.** Some PureThermal firmware exposes
+>   two video nodes, one raw Y16 and one 8-bit AGC greyscale. The AGC one
+>   opens, streams, and gives numbers that are not temperatures.
+>   `--selftest` now says which one you have instead of counting nonsense out
+>   of it.
+> - **`THERMAL_MIN_CLUSTER` is derived from lens geometry, not measured.** See
+>   Calibration. Until someone stands in front of a unit, the headcount is a
+>   relative signal.
+>
+> One class of mistake there is at least pinned rather than hoped at. V4L2
+> encodes the size of each argument struct into the ioctl request number, so a
+> struct one byte off does not give a subtly wrong frame, it gives `ENOTTY` and
+> a camera that never opens. `test_main.py` asserts the request numbers and
+> both struct sizes against the kernel's documented values, on the developer
+> machine, before anyone plugs anything in. That bug was in the first draft of
+> this code and the test is what found it.
 
 ---
 
@@ -43,15 +66,26 @@ Three numbers, every 30 seconds:
 | Field | What it is | How it is measured |
 |---|---|---|
 | `ir_beam_count` | Doorway crossings since the last reading | An infrared beam across the doorway; each break counts once |
-| `thermal_headcount` | Warm bodies in the camera's field of view | Heat clusters in a 24×32 thermal grid |
+| `thermal_headcount` | Warm bodies in the camera's field of view | Heat clusters in a 160×120 thermal grid |
 | `noise_db` | Ambient loudness | RMS level from a microphone |
 
 **It counts. It cannot identify anyone.**
 
-- The thermal grid is 768 pixels of temperature. It is reduced to a cluster
+- The thermal grid is 19,200 pixels of temperature. It is reduced to a cluster
   count inside `count_thermal_clusters()` and discarded. It is never written to
-  disk and never transmitted. At that resolution a face is a few warm blobs;
-  there is no image to leak.
+  disk and never transmitted.
+
+  **Be careful how you say this one.** The old MLX90640 was 768 pixels, and
+  this section used to argue that a face was "a few warm blobs" at that
+  resolution. That argument does not survive the move to a 160x120 Lepton: a
+  person in one of these frames is a clear human silhouette. What is still
+  exactly true, and is the thing worth saying, is that no frame leaves the
+  function that counts it. There is no image library on the device to encode
+  one with, no file it is written to, and nothing in the payload but three
+  integers. `frontend/src/__tests__/legalPagesMatchCode.test.js` and
+  `test_main.py` both pin that: no capture library, no encoder, no frame
+  reaching a file. If someone adds a heatmap view (see Known gaps), the
+  argument changes and this paragraph has to change with it.
 - The microphone's samples become one RMS number every five seconds and are
   discarded. No audio is recorded, buffered or sent. You cannot recover speech
   from a loudness reading taken every 5 seconds.
@@ -71,10 +105,13 @@ the published privacy policy, "Venue occupancy sensors"
 states that no photo, audio, phone or identity is captured. It is checked
 against this directory on every frontend test run by
 `frontend/src/__tests__/legalPagesMatchCode.test.js`, which reads the push
-interval and the thermal grid dimensions out of `main.py`, reads the stored
-columns out of the ingest route's `INSERT`, and parses `main.py`'s imports to
-confirm no camera, audio or radio library is present. Change what this device
-measures and that test goes red on the same commit.
+interval and the thermal grid dimensions out of `main.py` (`THERMAL_COLS,
+THERMAL_ROWS`), reads the stored columns out of the ingest route's `INSERT`,
+pins the pixel format the device asks V4L2 for as the raw temperature one
+rather than the greyscale one, and parses `main.py`'s imports to confirm no
+camera, audio or radio library is present. Change what this device measures
+and that test goes red on the same commit. It did exactly that when the
+sensor changed, which is what it is for.
 
 The one thing to be careful about: it is written as a promise about a device
 that has never been switched on. Before the first venue install, re-read
@@ -84,13 +121,34 @@ section 3 against the running unit rather than against this file.
 
 ## Hardware
 
+Buy this list. It is the build plan's, and as of 2026-08-26 the code drives it.
+
 | Part | Connects to | Pi pins |
 |---|---|---|
-| IR break-beam receiver | GPIO 17 (falling edge, internal pull-up) | signal → pin 11 |
-| MLX90640 thermal camera | I2C bus 1 | SDA pin 3, SCL pin 5, 3V3 pin 1, GND pin 6 |
+| Raspberry Pi 5, 8GB | | |
+| FLIR Lepton 3.5 (radiometric) on a PureThermal 3 breakout | USB | none. This is the whole point of the USB part |
+| IR break-beam receiver | GPIO 17 (falling edge, internal pull-up) | signal to pin 11 |
 | MCP3008 ADC | SPI bus 0, CE0 | CLK pin 23, DOUT pin 21, DIN pin 19, CS pin 24, VDD+VREF 3V3, AGND+DGND GND |
-| MAX4466 microphone | MCP3008 channel 0 | OUT → MCP3008 pin 1, VCC 3V3, GND |
-| 800×480 display (demo units only) | HDMI / DSI | — |
+| MAX4466 microphone | MCP3008 channel 0 | OUT to MCP3008 pin 1, VCC 3V3, GND |
+| 7 inch 720×1280 DSI panel, mounted portrait (demo units only) | DSI | ribbon, no header pins |
+
+Two things about that list that are decisions, not details.
+
+**The Lepton must be a 3.5, and it must be radiometric.** A Lepton 3.0 is the
+same resolution and does not report absolute temperature, and every threshold
+in `count_thermal_clusters` is a temperature. A non-radiometric camera streams
+happily and counts nothing real; `main.py --selftest` will tell you which one
+you have, and `thermal_loop` reports 0 rather than a made-up number.
+
+**The microphone stays analog, through the ADC.** A USB microphone would be
+one cable instead of five wires and it is the wrong trade: it puts a real audio
+capture device and an audio library on the box, and "no audio recording" in the
+privacy policy is currently backed by the fact that neither exists here. The
+MAX4466 into an MCP3008 is load-bearing for that claim.
+
+**Portrait is an OS setting.** `display_loop` asks the framebuffer for 720x1280
+and draws into whatever it is given. If the panel comes up landscape, rotate it
+in Raspberry Pi OS; the program cannot and does not try to.
 
 > ⚠️ **Confirm with a unit in hand before the first install:** many break-beam
 > receivers are 5V parts. The Pi's GPIO is **not** 5V tolerant. Use a receiver
@@ -108,32 +166,44 @@ provides the same module and API and needs no change to `main.py`. The two
 libraries cannot both be installed. `main.py --selftest` prints the board it is
 running on as its first line.
 
-### The build plan and this code do not agree
+### The pin conflict, which is still open
 
-The hardware demo unit build plan (Jayden's own notes, form factor locked
-2026-05-04) specifies different parts from the ones this code drives. Nothing
-here is wrong on its own, but both cannot be true of one box, and **this is a
-decision only Jayden can make.**
+Moving the thermal camera to USB freed the I2C pins (3 and 5), and that is a
+real reduction. It did not dissolve the problem, and it is worth being precise
+about what is left rather than declaring it solved.
 
-| | Build plan | This code |
-|---|---|---|
-| Board | Pi 5 8GB | any Pi; needs the `rpi-lgpio` swap on a 5 |
-| Thermal | FLIR Lepton 3.5, 160×120, over USB (PureThermal 3) | MLX90640, 24×32, over I2C, grid size hardcoded |
-| Display | 7" 720×1280 DSI, portrait | 800×480 landscape, hardcoded |
-| Thermal heatmap view | step 6 of the pitch: tap the screen, see the heat signature | not built; the display handles no touch input at all |
-| IR receiver, mic, ADC | "still to spec", never ordered | assumed present and wired |
+What this code still needs on the 40-pin header:
 
-The plan's reason for the FLIR is explicit: it wants the heatmap to be a 15 to
-30 second highlight of the pitch, which the MLX90640's 24×32 cannot carry. If
-the FLIR is the decision, `count_thermal_clusters` needs a different grid size,
-`init_thermal` needs a different driver, and the privacy policy's "24 by 32
-grid of temperatures" and "768 temperature readings" both change with it. The
-legal test named above will fail on that commit, which is the point of it.
+- **GPIO 17** (pin 11) for the break-beam, plus 3V3 and a ground.
+- **SPI0 CE0** for the mic's ADC: pins 19, 21, 23, 24.
 
-Also worth resolving before ordering: the plan puts a SIM7600 4G HAT on the
-40-pin header and says "single HAT only". This code needs GPIO 17, I2C on pins
-3 and 5, and SPI on pins 19, 21, 23 and 24 at the same time. Whether the HAT
-passes those through has not been checked.
+What the build plan puts on the same header: a SIM7600 4G HAT, with the note
+"single HAT only". A HAT in that form factor physically covers all forty pins
+whether or not it electrically uses them, so the conflict is now a **mechanical
+one, not a bus one**, and USB did not make it go away.
+
+**Not verified from here:** which pins that specific HAT actually drives. The
+Waveshare SIM7600 boards are usually a UART pair plus a power-key line and can
+alternatively be run over USB, but nobody has read the datasheet for the exact
+board against this pin list, and guessing at it is how a unit gets built twice.
+
+Four ways out, in the order they cost least. **This is Jayden's call, not the
+code's**, and none of them is picked here:
+
+1. **Stacking header.** A 2x20 extra-tall header raises the HAT and leaves the
+   pins reachable underneath. Cheapest, no code change. Only works if the HAT
+   does not itself use GPIO 17 or SPI0, which is the unverified part above.
+2. **Put the modem on USB too.** These HATs generally expose a USB interface
+   and can run as a plain USB modem off a cable instead of on the header. The
+   header is then completely free and the pass-through question disappears.
+   Costs a USB port and its own power; the Pi 5 has four and the Lepton takes
+   one.
+3. **Cellular only on the demo unit.** Venues have wifi, and the modem is a
+   pitch feature rather than a fleet requirement. This confines the problem to
+   one box instead of solving it.
+4. **Drop the SPI microphone.** Listed for completeness and argued against
+   above: the analog mic is what backs the "no audio recording" clause. Do not
+   trade it for a USB mic to free four pins.
 
 ---
 
@@ -211,7 +281,7 @@ sudo systemctl restart flock-sensor
 `setup.sh` is safe to re-run and never overwrites an existing config. It works
 out which account owns the Pi (Raspberry Pi OS has not shipped a default `pi`
 user since 2022), installs the source to `/opt/flock-sensor`, writes the config
-at mode 0600, adds the service user to the `i2c`/`spi`/`gpio` groups, and turns
+at mode 0600, adds the service user to the `video`/`spi`/`gpio` groups, and turns
 on NTP.
 
 ### Verify before you leave the venue
@@ -230,7 +300,7 @@ exactly as it would a real push and stores nothing, so running a self test never
 writes a fake "0 people" reading into the venue's history or the model's
 training data. Stop the service first (`sudo systemctl stop flock-sensor`) if
 you want the hardware lines to be meaningful, since the running service holds
-the I2C, SPI and GPIO devices.
+the camera, SPI and GPIO devices.
 
 Then watch a couple of real pushes:
 
@@ -281,9 +351,43 @@ present the number to users as a decibel measurement.
 
 **Thermal.** The warm-pixel threshold floats above each frame's own median
 (`THERMAL_MARGIN_C`), so a hot room does not turn the whole grid into one giant
-"person" — the failure that used to make a packed bar in August report a
-headcount of 1. If a venue reports too few people, raise `THERMAL_MARGIN_C`; if
-an empty room reports people, raise it further or raise `THERMAL_MIN_CLUSTER`.
+"person", which is the failure that used to make a packed bar in August report
+a headcount of 1. That design carried over from the old sensor unchanged and
+matters more here: a Lepton's absolute accuracy without a calibration target is
+several degrees, so `THERMAL_THRESHOLD_C` is closer to a floor than a real
+decision and the median-relative margin does nearly all the work.
+
+**`THERMAL_MIN_CLUSTER` is derived, not measured, and this is the number to
+check first on a bench.** The arithmetic behind the default of 12, so it can be
+argued with:
+
+- The standard Lepton 3.5 lens is about 57° horizontal, so at distance `d` the
+  frame is roughly `1.09 × d` metres wide, and 160 pixels across it is about
+  `147 / d` pixels per metre.
+- At 3 m that is 49 px/m, so an adult head is very roughly 8 by 11 pixels, call
+  it 80 to 120 raw pixels of bare skin. At 5 m it is 30 px/m and the same head
+  is 30 to 45.
+- Pixels are mean-pooled into `THERMAL_BIN × THERMAL_BIN` cells before counting
+  (default 2), so divide by four: about 20 to 30 cells at 3 m, about 8 at 5 m.
+- The default of 12 cells (48 raw pixels) sits between those. **That is a
+  deliberate bias toward missing a distant person rather than counting sensor
+  noise as a crowd**, because an invented person is a worse number to publish
+  than a missing one.
+
+None of that is a measurement. Nobody has stood in front of one of these. On
+the bench: run `main.py --selftest`, which prints the cluster count it sees
+right now, and walk in and out of frame. If one person reads as two, the
+silhouette is fragmenting and `THERMAL_BIN` should go up before
+`THERMAL_MIN_CLUSTER` does. If an empty room reads as one or more people, raise
+`THERMAL_MARGIN_C` first, then `THERMAL_MIN_CLUSTER`.
+
+**Fragmentation is the failure mode the old sensor did not have.** On a 24x32
+grid a whole person was a handful of pixels and blurred into one blob. At
+160x120 a bare head and a clothed torso can be two separate warm regions with a
+cool band between them, and a naive count reports two people. The code answers
+that with mean-pooling and eight-connectivity (a diagonal touch joins two
+regions), which is enough in the frames the tests construct and has never been
+checked against a real body.
 
 **IR beam.** `ir_beam_count` is **crossings, not entries**: it counts a break in
 either direction, so a doorway used both ways roughly doubles the true entry
@@ -316,12 +420,17 @@ Commit it and have `setup.sh` install from it.
 | `refused (HTTP 403)` + `Device deactivated` | `is_active = false` | Re-activate the row |
 | `no reply` | Venue firewall or captive portal | Outbound HTTPS on 443 must be allowed; captive portals need the Pi's MAC allowlisted by the venue |
 | `certificate is not yet valid` | Clock unset and no NTP | Check internet access; `timedatectl set-ntp true` |
-| Service works by hand, fails under systemd | Missing hardware group membership | `sudo adduser <user> i2c` (also `spi`, `gpio`) then reboot |
-| Headcount stuck at 0 | I2C not enabled or wiring | `i2cdetect -y 1` should show `33` |
+| Service works by hand, fails under systemd | Missing hardware group membership | `sudo adduser <user> video` (also `spi`, `gpio`) then reboot |
+| Headcount stuck at 0, log says the node does not exist | Camera not enumerated | `v4l2-ctl --list-devices`; check the USB cable, then set `THERMAL_DEVICE` if it came up somewhere other than `/dev/video0` |
+| Headcount stuck at 0, log says "not radiometric" | The AGC video node, or a non-radiometric Lepton | `v4l2-ctl -d /dev/videoN --list-formats` and use the node offering `Y16`. A Lepton 3.0 cannot do this at all; it has to be a 3.5 |
+| Headcount stuck at 0, log says "would not give a raw Y16 stream" | Same as above, caught at open time | Same fix |
+| Headcount stuck at 0, no thermal log lines at all | Service user not in the `video` group | `sudo adduser <user> video`, then reboot |
+| One person counted as two or three | Silhouette fragmenting at 160x120 | Raise `THERMAL_BIN` to 3 or 4. See Calibration |
 | Headcount stuck at 1 in a busy room | Ambient too warm | Raise `THERMAL_MARGIN_C` |
+| An empty room reports several people | `THERMAL_MIN_CLUSTER` too low for this mounting distance | Raise it. The default is derived, not measured |
 | Crossings stuck at 0, `--selftest` says the board is a Pi 5 | `RPi.GPIO` cannot drive Pi 5 GPIO | `sudo pip3 uninstall RPi.GPIO && sudo pip3 install --break-system-packages rpi-lgpio`, then restart |
 | Crossings stuck at 0 | Beam misaligned or receiver unpowered | Break the beam by hand and watch the log |
-| `has not read successfully for over 90s` in the log | A sensor answered once and then stopped, usually a locked I2C or SPI bus | The device is reporting 0 for that signal on purpose. Reseat the wiring; a reboot clears a locked bus |
+| `has not read successfully for over 90s` in the log | A sensor answered once and then stopped: a USB camera that dropped off the bus, or a locked SPI bus | The device is reporting 0 for that signal on purpose. Reseat the USB cable or the wiring; a reboot clears a wedged bus |
 
 ---
 
@@ -391,9 +500,18 @@ Things that are still open, so nobody has to rediscover them.
    pitch choreography is "tap the touchscreen, see the heat signature of the
    hand". `display_loop` handles no touch events and has no heatmap view, and
    the frame it would draw is discarded inside `count_thermal_clusters` by
-   design. Building it means keeping a frame in memory for the display only,
-   which is a privacy-relevant change and belongs in the policy discussion in
-   "What it collects" before it belongs in code.
-9. **The build plan and this code specify different hardware.** See "The build
-   plan and this code do not agree". Needs Jayden's decision before anything is
-   ordered.
+   design. The Lepton is what makes that view worth building, and it is also
+   what makes it a bigger decision than it was: holding a 160x120 frame in
+   memory to draw it means holding a recognisable human silhouette, where the
+   old sensor's frame was warm smudges. It is a privacy-relevant change and
+   belongs in the policy discussion in "What it collects" before it belongs in
+   code, and the two tests named there will fail on the commit that tries it,
+   which is correct.
+9. **The pin conflict is unresolved.** Moving thermal to USB freed I2C but a
+   40-pin cellular HAT still covers the pins the break-beam and the mic's ADC
+   need. See "The pin conflict, which is still open". Jayden's decision, and it
+   blocks ordering the modem, not the sensors.
+10. **The Lepton path has never been executed.** Every V4L2 ioctl in
+   `ThermalCamera` was written from documentation. The frame reader, the
+   radiometric check, the shutter check and the cluster thresholds are all
+   first contact on the bench day.

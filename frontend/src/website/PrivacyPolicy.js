@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'August 25, 2026';
+const EFFECTIVE_DATE = 'August 26, 2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // THE OPERATOR NAME IS NOT VERIFIED FROM ANYTHING IN THIS REPO.
@@ -354,13 +354,13 @@ export default function PrivacyPolicy() {
               <p>Every 30 seconds it sends three numbers, and nothing else:</p>
               <ul>
                 <li><strong>Doorway crossings:</strong> how many times an infrared beam across the doorway was broken since the last reading.</li>
-                <li><strong>Warm bodies in view:</strong> a count of heat clusters in a grid of 768 temperature readings. The count is worked out on the device.</li>
+                <li><strong>Warm bodies in view:</strong> a count of heat clusters in a grid of 19,200 temperature readings. The count is worked out on the device.</li>
                 <li><strong>Ambient loudness:</strong> one loudness level, averaged over the last 30 seconds.</li>
               </ul>
 
               <h3>What it does not do</h3>
               <ul>
-                <li><strong>No photo or video.</strong> The thermal part is a 24 by 32 grid of temperatures, not a picture. It is reduced to a count on the device and thrown away. It is never stored and never sent to us.</li>
+                <li><strong>No photo or video.</strong> The thermal part is a 160 by 120 grid of temperatures, not a picture. It is reduced to a count on the device and thrown away. It is never stored and never sent to us.</li>
                 <li><strong>No audio recording.</strong> The microphone's samples become a single loudness figure every five seconds and are discarded on the device. No sound is stored, buffered, or transmitted, and speech cannot be recovered from a loudness level.</li>
                 <li><strong>No phone detection.</strong> No wifi or Bluetooth scanning, no MAC addresses, no beacons. Nothing reads a device in anyone's pocket.</li>
                 <li><strong>No identity.</strong> The sensor counts bodies. It cannot tell one person from another, it cannot tell whether you have a Flock account, and it does not know who you are.</li>
