@@ -242,6 +242,10 @@
 
   "rewrites": [
     {
+      "source": "/.well-known/apple-app-site-association",
+      "destination": "/api/apple-app-site-association"
+    },
+    {
       "source": "/i/:token",
       "has": [{ "type": "query", "key": "open" }],
       "destination": "/index.html"
