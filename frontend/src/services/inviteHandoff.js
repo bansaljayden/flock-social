@@ -119,10 +119,37 @@ export function pendingInvite() {
 }
 
 /**
- * Redeem a stashed invite, if there is one. Resolves to
- * { flockId, flockName, joined } on success and null otherwise. NEVER rejects:
- * this runs on the app's boot path, and a failed join must not be able to stop
- * the flock list from loading.
+ * Redeem a stashed invite, if there is one. NEVER rejects: this runs on the
+ * app's boot path, and a failed join must not be able to stop the flock list
+ * from loading.
+ *
+ * Resolves to one of three things:
+ *
+ *   { flockId, flockName, joined }        the trip finished. Open the chat.
+ *   { needsEmailVerification, flockName } the join was refused because the
+ *                                         account has not confirmed its email.
+ *                                         The stash is KEPT and the next boot
+ *                                         after they click the link finishes
+ *                                         the join by itself.
+ *   null                                  nothing to do, or nothing worth
+ *                                         saying to the person.
+ *
+ * WHY THE SECOND ONE EXISTS, AND WHAT IT IS FOR. It is the reported failure:
+ * "invite-link signup silently fails to join". A password signup writes
+ * users.email_verified FALSE (backend/routes/auth.js), POST /api/guest/:token/
+ * join sits behind requireVerified, and this function used to answer that 403
+ * with a bare null, the same value it returns when there was no invite at all.
+ * So the app could not tell "we tried and they need to confirm their email"
+ * apart from "there is nothing here", and the person who had just made an
+ * account specifically to get into a plan was dropped on an empty home screen
+ * with nothing said. The refusal itself is correct and is not argued with here.
+ * Only the silence is fixed: the caller is now told, and App.js already owns a
+ * sheet for exactly this error (needsEmailVerification / VerifyEmailSheet).
+ *
+ * SAFE FOR A CALLER THAT DOES NOT KNOW ABOUT IT YET. The object carries no
+ * flockId, so openJoinedFlock below returns false and navigates nowhere, which
+ * is precisely what the old null did. A caller that has not been taught the new
+ * shape behaves exactly as it did before.
  *
  * WHAT CLEARS THE STASH, and why each one:
  *   success            the trip is finished.
@@ -153,9 +180,18 @@ export async function redeemPendingInvite() {
     };
   } catch (err) {
     const status = err && err.status;
-    const keep = err?.data?.emailVerificationRequired === true || (err && err.isNetworkError);
+    const unverified = err?.data?.emailVerificationRequired === true;
+    const keep = unverified || (err && err.isNetworkError);
     if (!keep && (status === 404 || status === 409 || status === 429 || status === 400 || status === 403)) {
       forgetInvite();
+    }
+    // The one refusal the person can do something about, so it is the one
+    // refusal that gets reported instead of swallowed. Everything else here is
+    // either already finished (revoked, over, full) or will retry itself on the
+    // next boot (a dropped connection), and neither is worth interrupting
+    // somebody's first thirty seconds in the app to say.
+    if (unverified) {
+      return { needsEmailVerification: true, flockName: saved.flockName || null };
     }
     return null;
   }

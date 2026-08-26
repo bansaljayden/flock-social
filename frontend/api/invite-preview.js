@@ -86,7 +86,7 @@
 //    applied: harden the sink whether or not the source is already clean.
 //    clean() strips C0/C1 controls and clamps by code point before esc() runs,
 //    so a clamp cannot slice an escaped entity in half, and the token is
-//    pinned to ^[A-Za-z0-9]{8,20}$ before it can reach og:url or the href.
+//    pinned to ^[A-Za-z0-9]{8,64}$ before it can reach og:url or the href.
 //
 // 3. Never log the token and never put it in an image URL. og:image is the
 //    static marketing image. (Vercel's own request logs still record the
@@ -101,7 +101,7 @@
 //
 // SERVER CONTRACT (verified against backend/routes/guest.js on 2026-08-14)
 //   GET /api/guest/:token
-//     400  malformed token   (param('token').isLength({ min: 8, max: 20 }))
+//     400  malformed token   (param('token').isLength({ min: 8, max: 64 }))
 //     404  revoked or unknown link
 //     200  { flock: { name, when, chosenVenue, status }, host, going, venues[] }
 //   `host` is already first-name-only server-side. `when` is flocks.event_time
@@ -109,12 +109,21 @@
 //   confirmed / completed / cancelled (CHECK constraint, database/schema.sql).
 // ---------------------------------------------------------------------------
 
-// The server issues 12 characters from a 55-char alphanumeric alphabet
-// (newLinkToken in backend/routes/guest.js) and validates 8 to 20 on read.
-// Matching that range here means a truncated paste never costs a round trip,
-// and the token is proven alphanumeric before it is ever concatenated into a
-// URL or written into an attribute.
-const TOKEN_RE = /^[A-Za-z0-9]{8,20}$/;
+// The bound the server actually enforces, which is LINK_TOKEN_PARAM_MIN 8 to
+// LINK_TOKEN_PARAM_MAX 64 in backend/routes/guest.js. Matching that range here
+// means a truncated paste never costs a round trip, and the token is proven
+// alphanumeric before it is ever concatenated into a URL or written into an
+// attribute.
+//
+// THIS SAID 20, AND 20 WAS A LIVE BUG, the same one src/website/GuestInvite.js
+// carried and fixed. newLinkToken mints LINK_TOKEN_LENGTH = 24 characters, so
+// every invite link created since that widening failed this test, took the
+// generic-tags branch, and previewed in iMessage as "Flock | Plans that
+// actually happen" with no host, no plan and no time. The only links that
+// still previewed properly were the legacy 12-character ones. The comment
+// above it was stale in both numbers, which is why the regex read as correct.
+// Pinned against the server's own bound by a test rather than by a comment.
+const TOKEN_RE = /^[A-Za-z0-9]{8,64}$/;
 
 const CANONICAL_HOST = 'https://www.flockcorp.com';
 
@@ -512,7 +521,7 @@ async function handler(req, res) {
 
     let payload = null;
     try {
-      // The token is proven /^[A-Za-z0-9]{8,20}$/ above, so there is nothing
+      // The token is proven /^[A-Za-z0-9]{8,64}$/ above, so there is nothing
       // here that could alter the path. encodeURIComponent is a no-op on that
       // alphabet and is kept as a second line of defence if the regex is ever
       // widened.
