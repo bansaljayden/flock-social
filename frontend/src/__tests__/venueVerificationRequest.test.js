@@ -30,7 +30,12 @@ const { render, screen, fireEvent, waitFor } = require('@testing-library/react')
 const VenueInsightCards = require('../components/VenueInsightCards').default;
 
 const SRC_DIR = path.resolve(__dirname, '..');
-const APP_SRC = fs.readFileSync(path.join(SRC_DIR, 'App.js'), 'utf8');
+// The venue owner dashboard left App.js on 2026-08-26: it is its own lazily
+// loaded chunk now (screens/VenueDashboard.js), and about 2,000 lines of what
+// this file scans went with it. Nothing asserted below changed. The app source
+// is simply in two files, so both are read, in the order they used to be one.
+const APP_SRC = fs.readFileSync(path.join(SRC_DIR, 'App.js'), 'utf8')
+  + fs.readFileSync(path.join(SRC_DIR, 'screens', 'VenueDashboard.js'), 'utf8');
 const API_SRC = fs.readFileSync(path.join(SRC_DIR, 'services', 'api.js'), 'utf8');
 const CARDS_SRC = fs.readFileSync(path.join(SRC_DIR, 'components', 'VenueInsightCards.js'), 'utf8');
 

@@ -83,6 +83,7 @@ const has = (instance, event, cb) => !!instance.handlers.get(event)?.has(cb);
 // pure reducers are lifted out of it by name and evaluated.
 // ───────────────────────────────────────────────────────────────────────────
 const APP_PATH = path.resolve(__dirname, '../App.js');
+const VENUE_DASHBOARD_PATH = path.resolve(__dirname, '../screens/VenueDashboard.js');
 const SOCKET_PATH = path.resolve(__dirname, '../services/socket.js');
 const ADMIN_PATH = path.resolve(__dirname, '../../../backend/routes/admin.js');
 
@@ -91,7 +92,11 @@ const ADMIN_PATH = path.resolve(__dirname, '../../../backend/routes/admin.js');
 // other, which is a test failure that says nothing about the code.
 const readSource = (p) => fs.readFileSync(p, 'utf8').replace(/\r\n/g, '\n');
 
-const appSource = readSource(APP_PATH);
+// The venue owner dashboard left App.js on 2026-08-26: it is its own lazily
+// loaded chunk now (screens/VenueDashboard.js), and about 2,000 lines of what
+// this file scans went with it. Nothing asserted below changed. The app source
+// is simply in two files, so both are read, in the order they used to be one.
+const appSource = readSource(APP_PATH) + readSource(VENUE_DASHBOARD_PATH);
 const socketSource = readSource(SOCKET_PATH);
 const adminSource = readSource(ADMIN_PATH);
 
