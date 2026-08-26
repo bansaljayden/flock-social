@@ -1682,10 +1682,25 @@ router.get('/search',
       const searchTerm = `%${String(req.query.q).replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
 
       // Mutual invisibility: blocked pairs never rediscover each other here.
+      //
+      // Banned accounts are withheld for the reason find-by-phone states in its
+      // own header: a banned account is not somebody to hand anyone. The ban was
+      // enforced at the door, on sign-in, and nowhere on the surfaces that hand
+      // one account to another, so a removed account kept being offered by name
+      // with a face next to it. A friend request to it is accepted and then
+      // waits forever against an account that can never sign in again. On a
+      // product whose floor is 13, that is the ban failing to reach the one
+      // place a stranger reaches a child.
+      //
+      // It is folded into the same row filter as the block, deliberately, so a
+      // banned account is byte-identical to a name nobody has rather than a
+      // distinguishable refusal. It also still costs a probe unit above, so
+      // withholding cannot be counted for free.
       const result = await pool.query(
         `SELECT id, name, profile_image_url
          FROM users
          WHERE name ILIKE $1 AND id != $2
+           AND COALESCE(is_banned, FALSE) = FALSE
            AND NOT EXISTS (
              SELECT 1 FROM user_blocks b
              WHERE (b.blocker_id = $2 AND b.blocked_id = users.id)
@@ -1712,6 +1727,7 @@ router.get('/suggested', async (req, res) => {
        JOIN flock_members fm2 ON fm2.flock_id = fm1.flock_id AND fm2.user_id != fm1.user_id AND fm2.status = 'accepted'
        JOIN users u ON u.id = fm2.user_id
        WHERE fm1.user_id = $1 AND fm1.status = 'accepted'
+         AND COALESCE(u.is_banned, FALSE) = FALSE
          AND NOT EXISTS (
            SELECT 1 FROM user_blocks b
            WHERE (b.blocker_id = $1 AND b.blocked_id = u.id)
