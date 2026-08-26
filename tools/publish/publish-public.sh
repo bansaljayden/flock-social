@@ -103,6 +103,19 @@ STRIP=(
   --path VENUE-PRICING.md
   --path CONSUMER-VALUE-CASE.md
   --path PRESHIP-SWEEP.md
+  # Jayden's call 2026-08-26: these two are tracked, so without this they would
+  # reach the public mirror. Both state, honestly, how thin the crowd model is
+  # right now (MODEL-METRICS.md carries the +0.04 realtime R2 and the 33.3
+  # within-15; the ONNX weights and metadata JSON are already stripped above,
+  # this is the prose that reads them). Fine internally, a number a venue owner
+  # could quote back during outreach, so out of the public repo.
+  --path backend/scripts/ml/MODEL-METRICS.md
+  # frontend/public/SLOP-AUDIT.md is the design and weakness ledger, and it is
+  # ALSO served live at flockcorp.com/SLOP-AUDIT.md because public/ is deployed.
+  # Stripping it here keeps it out of the public GITHUB repo only. It does NOT
+  # remove it from the live URL, which is a separate action: move it out of
+  # public/ or block the path in vercel.json. See JAYDEN-TODO.md.
+  --path frontend/public/SLOP-AUDIT.md
   --path-glob 'ADVISOR-*.md'
   --path-glob 'SECURITY-AUDIT-*.md'
   --path-glob 'VIDEO-NOTES-*.md'
