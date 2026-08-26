@@ -338,8 +338,98 @@ test('the fan-out runs after the COMMIT and only for plans that have not happene
 
   // Everyone gets the socket event, because it is what takes a dead row out of
   // a list somebody is looking at. Only upcoming plans get a push.
-  assert.match(USERS_ROUTE, /\(f\.status NOT IN \('completed', 'cancelled'\)\) AS upcoming/);
+  //
+  // The status alone is NOT the question, which is what the next test drives.
+  // This pins that a clock is consulted at all and that the window is the
+  // sweep's, not a second copy of it written here.
+  assert.match(USERS_ROUTE, /f\.status NOT IN \('completed', 'cancelled'\)/);
+  assert.match(USERS_ROUTE, /COALESCE\(f\.event_time, f\.created_at \+ INTERVAL '14 days'\)/);
+  assert.match(USERS_ROUTE, /make_interval\(hours => \$2::int\)/);
+  assert.match(USERS_ROUTE, /graceHours: flockGraceHours \} = require\('\.\.\/services\/flockSweep'\)/);
   assert.match(USERS_ROUTE, /cancelledFlocks\.filter\(\(f\) => f\.upcoming\)/);
+});
+
+// The gate above, run against real rows rather than read as a string.
+//
+// WHY THIS EXISTS. The fan-out harness in section 6 hands the route a fixture
+// whose `upcoming` is already a boolean, so it proves what the ROUTE does with
+// the answer and nothing at all about how the answer is reached. The answer was
+// `status NOT IN ('completed', 'cancelled')`, and services/flockSweep.js is the
+// only thing that sets 'completed' without a host pressing something: its WHERE
+// clause is `status = 'confirmed' AND event_time IS NOT NULL`. A plan that never
+// got out of 'planning', the status every flock is born in, is therefore open
+// by status forever, whatever its date, and a delete pushed "Taco night is off"
+// to everyone who was in it about a night last spring. That is the interruption
+// the comment above the query says it prevents.
+//
+// The SQL is lifted out of routes/users.js rather than copied, so this cannot
+// keep passing against a query the route no longer runs.
+const OWNED_FLOCKS_SQL = (() => {
+  const m = USERS_ROUTE.match(/`(SELECT f\.id, f\.name,[\s\S]*?GROUP BY[^`]*)`/);
+  assert.ok(m, 'could not find the owned-flocks read in routes/users.js');
+  return m[1];
+})();
+
+test('a plan whose night has been and gone does not push, whatever its status says', async () => {
+  const { graceHours } = require('../services/flockSweep');
+  const owner = await pool.query(
+    "INSERT INTO users (email, password, name) VALUES ('owner@example.com', 'x', 'Robin') RETURNING id"
+  );
+  const friend = await pool.query(
+    "INSERT INTO users (email, password, name) VALUES ('friend@example.com', 'x', 'Sam') RETURNING id"
+  );
+  const ownerId = owner.rows[0].id;
+  const friendId = friend.rows[0].id;
+
+  // name, status, event_time, created_at, and what the push gate must say.
+  const cases = [
+    ['tonight, confirmed', 'confirmed', "NOW() + INTERVAL '3 hours'", 'NOW()', true],
+    ['tonight, still being planned', 'planning', "NOW() + INTERVAL '3 hours'", 'NOW()', true],
+    // Inside the sweep's grace: the night may not be over yet, and the sweep
+    // has not closed it either. The two agree by construction.
+    ['an hour ago', 'confirmed', "NOW() - INTERVAL '1 hour'", 'NOW()', true],
+    // The one the status test got wrong. Never confirmed, so the sweep never
+    // touched it, so it is 'planning' forever.
+    ['Taco night in March', 'planning', "NOW() - INTERVAL '150 days'", "NOW() - INTERVAL '151 days'", false],
+    // Confirmed with no time on it: the sweep skips it too (event_time IS NOT
+    // NULL), so it is the other family of permanently-open row.
+    ['a timeless plan from last spring', 'confirmed', 'NULL', "NOW() - INTERVAL '200 days'", false],
+    // Migration 028's floor: no date set yet is not the same as finished.
+    ['being arranged, no date yet', 'planning', 'NULL', "NOW() - INTERVAL '2 days'", true],
+    ['already marked done', 'completed', "NOW() + INTERVAL '3 hours'", 'NOW()', false],
+    ['called off', 'cancelled', "NOW() + INTERVAL '3 hours'", 'NOW()', false],
+  ];
+
+  for (const [name, status, eventTime, createdAt] of cases) {
+    const f = await pool.query(
+      `INSERT INTO flocks (name, creator_id, status, event_time, created_at)
+       VALUES ($1, $2, $3, ${eventTime}, ${createdAt}) RETURNING id`,
+      [name, ownerId, status]
+    );
+    await pool.query(
+      "INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, 'accepted')",
+      [f.rows[0].id, friendId]
+    );
+  }
+
+  // The grace window is only bound when the query asks for it. Passing it
+  // unconditionally would make a query that consults no clock fail on arity
+  // instead of on its answer, and a test that reports the wrong failure is
+  // how the wrong thing gets fixed.
+  const params = OWNED_FLOCKS_SQL.includes('$2') ? [ownerId, graceHours()] : [ownerId];
+  const { rows } = await pool.query(OWNED_FLOCKS_SQL, params);
+  const answer = new Map(rows.map((r) => [r.name, r.upcoming]));
+  for (const [name, , , , expected] of cases) {
+    assert.equal(
+      answer.get(name), expected,
+      `"${name}" should ${expected ? '' : 'NOT '}be pushed as a cancelled plan`
+    );
+  }
+  // And the members still come back, so the clock change did not cost the
+  // fan-out its recipients.
+  assert.ok(rows.every((r) => r.member_ids.length === 1 && r.member_ids[0] === friendId));
+
+  await pool.query('DELETE FROM users WHERE id = ANY($1)', [[ownerId, friendId]]);
 });
 
 test('preparing the notification can never block the deletion itself', () => {

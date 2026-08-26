@@ -66,6 +66,11 @@ const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
 // deleteAccount.
 const { emitToFlockMembers } = require('../sockets/handlers');
 const { pushIfOffline, isPushConfigured } = require('../services/pushHelper');
+// "Has this plan already happened?" has one answer in this codebase and it is
+// the sweep's. Importing its window rather than restating it is what stops the
+// push gate and the completion sweep from drifting apart. See the read in
+// deleteAccount.
+const { graceHours: flockGraceHours } = require('../services/flockSweep');
 // The card answers a question about SOMEBODY ELSE by bare sequential id, which
 // is the exact shape utils/probeBudget.js was written for. See cardProbeBudget.
 const { createUserBudget } = require('../utils/probeBudget');
@@ -2720,6 +2725,28 @@ async function deleteAccount(req, res) {
     //     account with a year of history would otherwise interrupt its friends
     //     with "Taco night is off" about a plan from March.
     //
+    // WHAT "HAS NOT ALREADY HAPPENED" MEANS, and why it is not the status.
+    // This asked `status NOT IN ('completed', 'cancelled')` on its own, which
+    // sounds like the same question and is not. services/flockSweep.js is the
+    // ONLY thing that moves a plan to 'completed' without the host pressing
+    // something, and its WHERE clause is `status = 'confirmed' AND event_time
+    // IS NOT NULL`. So two large families of plan are permanently open by
+    // status and permanently past by the calendar: a plan that never got out
+    // of 'planning', which is the status every flock is born in, and a
+    // confirmed plan with no time on it. Taco night in March, never confirmed,
+    // is 'planning' forever, and the status test called it upcoming and pushed
+    // "Taco night is off" to everyone who was in it. That is the exact
+    // interruption the paragraph above says this gate prevents.
+    //
+    // So the clock is asked as well, on the sweep's own terms: the same grace
+    // window, so a plan the sweep would have closed is exactly a plan this
+    // treats as past, and the two can never drift into disagreeing. A plan
+    // with no event_time falls back to migration 028's floor, created_at + 14
+    // days, for the reason 028 gives in writing: event_time is nullable, and
+    // fourteen days is the planning horizon the product assumes, so a plan
+    // still being arranged is never called finished while an untimed plan from
+    // last spring is.
+    //
     // Blocked members are dropped from the socket fan-out because the payload
     // names the person, which is the rule emitToFlockExcludingBlocked applies
     // on the flocks.js path. user_blocks CASCADEs away with the row, so this
@@ -2730,7 +2757,9 @@ async function deleteAccount(req, res) {
     try {
       const owned = await pool.query(
         `SELECT f.id, f.name,
-                (f.status NOT IN ('completed', 'cancelled')) AS upcoming,
+                (f.status NOT IN ('completed', 'cancelled')
+                 AND COALESCE(f.event_time, f.created_at + INTERVAL '14 days')
+                     > NOW() - make_interval(hours => $2::int)) AS upcoming,
                 COALESCE(
                   ARRAY_AGG(fm.user_id) FILTER (
                     WHERE fm.user_id IS NOT NULL AND fm.user_id <> $1 AND fm.status = 'accepted'
@@ -2739,8 +2768,8 @@ async function deleteAccount(req, res) {
            FROM flocks f
            LEFT JOIN flock_members fm ON fm.flock_id = f.id
           WHERE f.creator_id = $1
-          GROUP BY f.id, f.name, f.status`,
-        [req.user.id]
+          GROUP BY f.id, f.name, f.status, f.event_time, f.created_at`,
+        [req.user.id, flockGraceHours()]
       );
       cancelledFlocks = owned.rows.filter((r) => r.member_ids.length > 0);
       if (cancelledFlocks.length > 0) {
