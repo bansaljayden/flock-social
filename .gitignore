@@ -149,7 +149,14 @@ TESTFLIGHT_TEST_INFO.md
 /README
 /.specify/
 /seo-audit/
-flock-sensor/flock_sensor.env.example
+# flock-sensor/flock_sensor.env.example is DELIBERATELY TRACKED, and the rule
+# that used to ignore it is gone. setup.sh copies that file and the README's
+# install flow begins with git clone, so ignoring it meant the documented
+# install failed on every fresh clone with a missing file. It is an example: the
+# only credential in it is the literal placeholder your_api_key_here, which
+# setup.sh detects and refuses to run with. The filled-in copy lives at
+# /etc/flock-sensor/flock_sensor.env on the device, mode 0600, and is never in
+# git. Do not re-add this path here without also fixing setup.sh.
 OSS-READINESS.md
 
 # Abandoned React Native port. The launch path is the Capacitor shell in frontend/ios.

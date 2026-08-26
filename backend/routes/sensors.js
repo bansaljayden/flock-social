@@ -25,7 +25,7 @@ const router = express.Router();
 // (the history endpoint sums these; an unbounded INT32 used to be able to
 // overflow that SUM and 500 the endpoint for a venue permanently).
 const MAX_IR_PER_READING = 10000;
-// MLX90640 sees a doorway, not a stadium.
+// A doorway sensor sees a doorway, not a stadium.
 const MAX_THERMAL = 1000;
 // 140 dB is a jet engine at 30m. The client clamps to the same ceiling.
 const MAX_NOISE_DB = 140;
