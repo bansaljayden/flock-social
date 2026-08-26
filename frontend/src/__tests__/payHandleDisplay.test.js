@@ -70,7 +70,13 @@ const REPO = path.resolve(__dirname, '..', '..', '..');
 const readSource = (...p) =>
   fs.readFileSync(path.join(REPO, ...p), 'utf8').replace(/\r\n/g, '\n');
 
-const APP = readSource('frontend', 'src', 'App.js');
+// The flock chat screen left App.js on 2026-08-26: it lives in
+// screens/ChatDetail.js now, and the message list, the composer, the reaction
+// row and the report entry went with it. Nothing asserted below changed. The
+// app source is simply in two files, so both are read, in the order they used
+// to be one.
+const APP = readSource('frontend', 'src', 'App.js')
+  + readSource('frontend', 'src', 'screens', 'ChatDetail.js');
 const BILLING = readSource('backend', 'routes', 'billing.js');
 
 // ───────────────────────────────────────────────────────────────────────────
