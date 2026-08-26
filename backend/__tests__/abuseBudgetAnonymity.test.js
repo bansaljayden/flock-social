@@ -661,6 +661,33 @@ test('HELD: the split is still published once, by the answer that settles the bu
   assertQueriesUnderstood();
 });
 
+test('ABUSE H4: the settling payload withholds the split in a THREE-member flock too', async () => {
+  // The boundary the floor is actually made of, and until a mutation pass went
+  // looking, the only case that could reach it was never run. The read path
+  // withholds the split unconditionally (round 23), and every published case in
+  // this file is a four-member flock, so `(totalMembers - 1) >= 3` was only ever
+  // evaluated where the answer did not depend on the `- 1`. Changing it to
+  // `totalMembers >= 3` left all 4,676 tests green.
+  //
+  // Three members is the one size where that matters. Three amounts are needed
+  // to settle, so a settling three-member flock always has skipCount 0, and 0
+  // published to a caller who knows their own answer says both of the others
+  // shared an amount. Two co-members is not a crowd, which is the whole reason
+  // SKIP_COUNT_MIN_OTHERS counts co-members rather than members.
+  seedFlock({ creator: 1, members: [1, 2, 3] });
+  as(1); await submit(50);
+  as(2); await submit(60);
+  as(3);
+  const settling = await submit(70);
+
+  assert.strictEqual(settling.body.budgetLocked, true, 'three amounts settle a three-member flock');
+  assert.strictEqual(settling.body.totalMembers, 3, 'two co-members besides the caller');
+  assert.ok('skipCount' in settling.body, 'the field stays on the wire; a withheld number is null');
+  assert.strictEqual(settling.body.skipCount, null,
+    'a published 0 here tells the caller that both of the other two shared an amount');
+  assertQueriesUnderstood();
+});
+
 test('HELD: the socket fan-out withholds the skip count exactly as the response does', async () => {
   const emitted = [];
   app.set('io', { to: (room) => ({ emit: (event, payload) => emitted.push({ room, event, payload }) }) });
