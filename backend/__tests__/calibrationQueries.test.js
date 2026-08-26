@@ -414,7 +414,19 @@ test('the alternatives list looks up reports on the venue\'s clock, not the view
   // here and the two surfaces published different numbers for the same venue.
   const now = new Date();
   // Put the venue at 2 AM whatever the viewer says, and the viewer says 8 PM.
-  const offset = (((2 - now.getUTCHours()) * 60) + 1440) % 1440;
+  //
+  // Folded into the range a real UTC offset can occupy, which is -720 to +840,
+  // and that fold is the whole point of this line rather than tidiness. The
+  // modulo alone yields 0 to 1439, so between roughly 03:00 and 11:00 UTC it
+  // produced an offset above +14:00, the route correctly rejected it as not a
+  // real timezone, venueLocalNow returned null, and the route fell back to the
+  // viewer's hour. The assertion below then read the viewer's bucket and failed
+  // for eight hours out of every twenty four, on a clock nobody was looking at.
+  // The test's arithmetic was wrong, not the route. An offset above +840 has an
+  // equivalent 1440 lower that names the same wall clock and is a timezone that
+  // exists, so subtracting a day keeps 2 AM and makes the input legal.
+  const wrapped = (((2 - now.getUTCHours()) * 60) + 1440) % 1440;
+  const offset = wrapped > 840 ? wrapped - 1440 : wrapped;
   OFFSETS.ALT_ABROAD = offset;
   scriptFeedback([]);
 
