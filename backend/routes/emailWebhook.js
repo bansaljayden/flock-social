@@ -183,5 +183,28 @@ router.post('/', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// SAY IT AT BOOT, NOT ON AN EVENT THAT WILL NEVER ARRIVE.
+// ---------------------------------------------------------------------------
+// Every warning in this file is written on the request path, which assumes a
+// request. The state worth hearing about is the opposite one: the webhook was
+// never created in the Resend dashboard, or the secret was never copied into
+// the deployment. In that state nothing ever POSTs here, no line is ever
+// logged, and the entire bounce and complaint half of the email system is
+// inert. email_suppressions stays empty, dead mailboxes are re-mailed forever,
+// and the only visible consequence arrives months later as everybody else's
+// password reset landing in spam.
+//
+// So the absence is named once, at require time, in production only, where it
+// is a gap rather than the ordinary local state.
+if (process.env.NODE_ENV === 'production' && !webhookSecret()) {
+  console.error(
+    '🛡️ EMAIL: RESEND_WEBHOOK_SECRET is not set, so POST /api/email-events refuses every delivery event. '
+    + 'No hard bounce and no spam complaint will ever be recorded, email_suppressions stays empty, and Flock keeps '
+    + 'mailing addresses that no longer exist. Create the webhook in the Resend dashboard, point it at '
+    + '/api/email-events, subscribe it to email.bounced and email.complained, and copy its whsec_ secret here.'
+  );
+}
+
 module.exports = router;
 module.exports.__testing = { signatureMatches, isPermanentBounce, recipientsOf, timestampFresh, webhookSecret };
