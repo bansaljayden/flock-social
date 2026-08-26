@@ -41,7 +41,7 @@ import EmergencySheet from './components/safety/EmergencySheet';
 import { deliverExport } from './services/dataExport';
 import PaywallSheet from './components/PaywallSheet';
 import { initPurchases } from './services/purchases';
-import { getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock } from './services/api';
+import { trackScreenView, trackFlockMessageSent, trackDmSent, getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock } from './services/api';
 import { motion, AnimatePresence } from 'framer-motion';
 // BirdieStill is the same photographed mascot with the animation machinery
 // left out — the dashboards get the mark, never the rAF loop. WARM_BIRD is
@@ -7350,6 +7350,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     if (currentScreen === 'addFriends') loadAddFriendsData();
   }, [currentScreen, loadSuggestedUsers, loadAddFriendsData]);
 
+  // The denominator. Every analytics event in this product recorded something
+  // FINISHING (a flock created, a vote cast, a budget submitted) and nothing
+  // recorded anyone arriving at the screen where they could finish it, so no
+  // step had a conversion rate. There is no router here, so posthog's own
+  // pageview capture sees one URL per session and never learns which screen
+  // anybody reached.
+  //
+  // One effect rather than a call at each of the twelve navigations, because
+  // the twelfth is the one somebody forgets. api.js clamps the name to a
+  // known list: two callers of setCurrentScreen pass a variable and one of
+  // those is a Birdie reply, which is model output.
+  useEffect(() => {
+    trackScreenView(currentScreen);
+  }, [currentScreen]);
+
   // Fetch messages from API + join socket room when opening a chat
   // Read again: the chat's empty state must not flash while history is still
   // in flight, so it waits on this.
@@ -8287,6 +8302,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     const sentOverSocket = !!sock?.connected
       && socketSendMessage(flockId, text, { message_type: msgType, image_url: image, venue_data: venueData });
     if (sentOverSocket) {
+      // The socket is the normal transport, so this is where the count of
+      // flock messages actually lives. api.js's copy fires only in the `else`
+      // below and the two can never both run for one message.
+      trackFlockMessageSent({ message_type: msgType, image_url: image, venue_data: venueData });
       // A connected socket doesn't prove persistence — rate limits,
       // moderation, or a DB failure drop the message with no echo. If no
       // echo arrives, the message shows as failed with tap-to-retry. An
@@ -10038,6 +10057,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       reply_to_id: payload.reply_to_id || null,
     });
     if (dmSentOverSocket) {
+      // Same reason as the flock branch: the socket is the transport a working
+      // network uses, so counting only the REST fallback counted outages.
+      trackDmSent({ message_type: payload.message_type, image_url: payload.image_url, venue_data: payload.venue_data });
       // No automatic REST retry here: if the insert succeeded and only its echo
       // was lost, a silent retry would post the photo twice. Only the user can
       // decide that, so the bubble offers a retry instead of taking one.
