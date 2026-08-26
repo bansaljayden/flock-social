@@ -511,8 +511,17 @@ test('a Google error body is a 502 and is NOT cached — the next request retrie
 
   const failed = await get(`/api/venues/details?place_id=${placeId}`);
   assert.strictEqual(failed.status, 502, failed.text);
-  assert.match(failed.body.error, /Places API: NOT_FOUND/,
-    'the detail route answered a Google error body with Google\'s own message before the shared cache and must still');
+  // THE STATUS IS THE CONTRACT, THE MESSAGE IS NOT GOOGLE'S TO WRITE. This
+  // assertion used to require the body to carry Google's own text, and that is
+  // what shipped: the detail sheet answered "Places API: NOT_FOUND" for a
+  // retired listing and would have answered "API key not valid. Please pass a
+  // valid API key." for a key problem, because App.js renders the server's
+  // message verbatim rather than dressing a failure as an empty result. So the
+  // pin flipped: Google's status and message go to the log, and the body is one
+  // sentence with nothing about our upstream in it.
+  assert.strictEqual(failed.body.error, 'That venue is not loading right now. Try again in a moment.');
+  assert.ok(!/NOT_FOUND|Places API|googleapis/i.test(failed.text),
+    'Google\'s own error text reached the client');
   assert.strictEqual(detailCalls.length, 1);
 
   // A poisoned cache would serve the 502 again for the whole TTL and never
