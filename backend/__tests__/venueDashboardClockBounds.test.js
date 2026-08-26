@@ -52,8 +52,14 @@ test('every event_time window in the file is anchored to UTC', () => {
   // review presence check. Count the anchored comparisons so a regression that
   // deletes one and leaves the other two cannot slip through the negative test
   // above (which would still pass on two-of-three).
+  // The zone NAME is read in either case, and that is not laxity. Postgres
+  // resolves time zone names case-insensitively, services/photoStore.js already
+  // writes AT TIME ZONE 'utc' in lower case, and flockCompletionSweep.test.js
+  // already reads this same literal with the i flag. Pinning the capitals would
+  // fail a correct rewrite on the case of three letters, which is the defect
+  // this pattern exists to stop making.
   const anchored = SRC.match(
-    /f\.event_time\s*(?:[<>]=?|BETWEEN)\s*\(NOW\(\) AT TIME ZONE 'UTC'\)/g
+    /f\.event_time\s*(?:[<>]=?|BETWEEN)\s*\(NOW\(\) AT TIME ZONE '[Uu][Tt][Cc]'\)/g
   ) || [];
   assert.ok(
     anchored.length >= 4,

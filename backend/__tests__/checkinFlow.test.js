@@ -523,7 +523,13 @@ test('attendance is only ever credited to an accepted member, in the event windo
   // spelling. Pinning the spelling would have failed the correction instead of
   // the defect, which is exactly how presenceParity and incomingFlocksWindow
   // went red earlier.
-  const NOW_UTC = "(?:NOW\\(\\)|\\(NOW\\(\\) AT TIME ZONE 'UTC'\\))";
+  // The zone NAME is read in either case, and that is not laxity. Postgres
+  // resolves time zone names case-insensitively, services/photoStore.js already
+  // writes AT TIME ZONE 'utc' in lower case, and flockCompletionSweep.test.js
+  // already reads this same literal with the i flag. Pinning the capitals would
+  // fail a correct rewrite on the case of three letters, which is the defect
+  // this pattern was widened to stop making.
+  const NOW_UTC = "(?:NOW\\(\\)|\\(NOW\\(\\) AT TIME ZONE '[Uu][Tt][Cc]'\\))";
   assert.match(upd.sql, new RegExp(`${NOW_UTC} BETWEEN event_time - INTERVAL '3 hours' AND event_time \\+ INTERVAL '12 hours'`));
   assert.match(upd.sql, /status NOT IN \('completed', 'cancelled'\)/);
   assert.deepStrictEqual(upd.params, [1, KNOWN]);
