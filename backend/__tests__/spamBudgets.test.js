@@ -121,7 +121,15 @@ pool.query = async (text, params = []) => {
     return { rows: ids.map((id) => ({ id })), rowCount: ids.length };
   }
 
-  // users directory
+  // users directory. routes/friends.js selects `is_banned` in the SAME
+  // statement (a banned target folds into the existing single miss, so it must
+  // not cost a second query); routes/flocks.js still selects the two columns.
+  // Both spellings answer from `userRow`, and nothing here is banned, so these
+  // budget tests measure the budget rather than the ban filter.
+  if (has('SELECT id, name, is_banned FROM users WHERE id = $1')) {
+    const u = userRow(params[0]);
+    return { rows: u ? [{ ...u, is_banned: false }] : [], rowCount: u ? 1 : 0 };
+  }
   if (has('SELECT id, name FROM users WHERE id = $1')) {
     const u = userRow(params[0]);
     return { rows: u ? [u] : [], rowCount: u ? 1 : 0 };
