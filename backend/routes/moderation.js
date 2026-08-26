@@ -537,18 +537,29 @@ router.post('/blocks/:userId', [param('userId').isInt({ min: 1, max: INT4_MAX })
     );
     if (!withinBudget || exists.rows.length === 0) return miss();
 
+    // ONE statement, and that is the point. This was an INSERT followed by a
+    // separate DELETE whose rejection was swallowed by .catch(() => {}), so any
+    // failure of the second half left a block and a friendship coexisting with
+    // nothing logged and nothing to notice it. A friendship is not cosmetic
+    // here: it is what availability fans a name and a free-text note out over,
+    // and what several "people you know" surfaces read.
+    //
+    // A data-modifying CTE makes both halves one statement, so they commit
+    // together or not at all, and a failure now reaches the catch below and
+    // answers 500 instead of reporting a block it only half performed. It also
+    // keeps the work on pool.query rather than a pool.connect() client, which
+    // matters because the DROP/TRUNCATE pool guard only wraps pool.query.
     await pool.query(
-      `INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)
-       ON CONFLICT (blocker_id, blocked_id) DO NOTHING`,
+      `WITH placed AS (
+         INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)
+         ON CONFLICT (blocker_id, blocked_id) DO NOTHING
+         RETURNING 1
+       )
+       DELETE FROM friendships
+        WHERE (requester_id = $1 AND addressee_id = $2)
+           OR (requester_id = $2 AND addressee_id = $1)`,
       [req.user.id, blockedId]
     );
-
-    // Separate them: drop any friendship in either direction.
-    await pool.query(
-      `DELETE FROM friendships
-       WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)`,
-      [req.user.id, blockedId]
-    ).catch(() => {});
 
     // The 30s block cache must not outlive the block itself — live location/
     // typing events check the cached variant (round 5).

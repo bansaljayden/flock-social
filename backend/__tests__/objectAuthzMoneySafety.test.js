@@ -146,7 +146,15 @@ async function dispatch(text, params = []) {
   const sql = String(text).replace(/\s+/g, ' ').trim();
   queries.push({ sql, params });
   const has = (frag) => sql.includes(frag);
-  if (/^(INSERT|UPDATE|DELETE)/i.test(sql)) writes.push({ sql, params });
+  // A write does not have to START with its verb. `WITH placed AS (INSERT INTO
+  // user_blocks ...) DELETE FROM friendships WHERE ...` performs two writes and
+  // begins with WITH, so a leading-verb test records neither of them, and every
+  // noWriteTo() assertion in this file would pass over a statement that wrote.
+  // That is not hypothetical: routes/moderation.js blocks somebody with exactly
+  // that statement, and this recorder reported it as not a write.
+  const modifiesData = /^(INSERT|UPDATE|DELETE)\b/i.test(sql)
+    || (/^WITH\b/i.test(sql) && /\b(INSERT\s+INTO|UPDATE\s+\S|DELETE\s+FROM)\b/i.test(sql));
+  if (modifiesData) writes.push({ sql, params });
 
   // transaction control + advisory locks
   if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(sql)) return { rows: [], rowCount: 0 };
