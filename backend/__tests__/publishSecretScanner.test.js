@@ -228,3 +228,73 @@ test('the allowlist demands a reason and rejects a bare suppression', { skip: py
     rmrf(listDir);
   }
 });
+
+// ---------------------------------------------------------------------------
+// A FINDING THE PIPELINE ALREADY REMOVES MUST NOT READ LIKE AN UNHANDLED LEAK
+// ---------------------------------------------------------------------------
+// The publish gate scans the MIRROR: publish-public.sh passes --repo <mirror>,
+// built after redactions.txt has rewritten every listed literal out of every
+// commit, so a listed literal cannot appear there at all.
+//
+// Running the scanner the obvious way -- bare, from the repo root -- gets the
+// DEFAULT --repo, which is the unredacted source, where those same literals are
+// still in history exactly as expected. That printed a real password under a
+// banner about the history about to be published, with an `allow:` line
+// inviting somebody to suppress it, and no way to tell it was already handled
+// short of going and reading the publish script.
+//
+// In this repository specifically that is a hazard rather than an annoyance. A
+// real reused password did ship publicly for six days here, and the lesson was
+// that nothing caught it. A gate that cries wolf on its most natural
+// invocation is how the next true finding gets waved through.
+//
+// The finding still prints and still exits 1. What changes is that it says
+// which of the two situations it is. These pin both halves of that, because an
+// annotation that is always on would be worse than none.
+test('a literal listed in redactions.txt is reported as already handled, not as unlisted',
+  { skip: py ? false : 'no python on PATH' }, () => {
+    const repo = seedRepo(PLANTED);
+    const redactions = path.join(os.tmpdir(), `flock-redactions-${process.pid}.txt`);
+    fs.writeFileSync(redactions, `${PLANTED}\n`, 'utf8');
+    try {
+      const { code, out } = scan(repo, ['--redactions', redactions]);
+
+      assert.match(out, /ALREADY HANDLED/,
+        'a literal the publish pipeline rewrites out of every commit was reported as an unlisted secret');
+      assert.match(out, /UNREDACTED SOURCE repo/,
+        'the banner did not say which repository was actually scanned');
+
+      // The invitation to suppress must NOT appear for this one: pasting an
+      // allowlist line here would permanently blind the gate to a real password.
+      assert.ok(!/allow:\s+credential_literal/.test(out),
+        'an already-redacted finding still offered an allowlist line, which is the one response that would be wrong');
+
+      // And it still fails. Annotation is not absolution.
+      assert.strictEqual(code, 1,
+        'the scan stopped failing, so a run that finds a credential now looks clean');
+    } finally {
+      fs.rmSync(redactions, { force: true });
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+test('with nothing listed, the same finding reverts to the unlisted wording and its allowlist line',
+  { skip: py ? false : 'no python on PATH' }, () => {
+    // The other direction, and the one that matters most: an annotation that
+    // fires regardless of the file would relabel every genuine finding as
+    // handled, which is strictly worse than the wolf-crying it replaced.
+    const repo = seedRepo(PLANTED);
+    const empty = path.join(os.tmpdir(), `flock-redactions-empty-${process.pid}.txt`);
+    fs.writeFileSync(empty, '# nothing listed\n', 'utf8');
+    try {
+      const { code, out } = scan(repo, ['--redactions', empty]);
+      assert.ok(!/ALREADY HANDLED/.test(out),
+        'a finding nobody has listed was labelled as already handled');
+      assert.match(out, /allow:\s+credential_literal/,
+        'the allowlist line disappeared, so a genuine false positive can no longer be triaged');
+      assert.strictEqual(code, 1);
+    } finally {
+      fs.rmSync(empty, { force: true });
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });

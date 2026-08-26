@@ -1034,6 +1034,40 @@ def load_allowlist(path):
 
 # ---------------------------------------------------------------------------
 
+def redaction_literals(path):
+    """The literals redactions.txt already removes, for ANNOTATION only.
+
+    This never suppresses a finding and never changes an exit code. It exists
+    because of how the two runs differ. The publish pipeline passes
+    --repo <mirror>, and the mirror has already had every one of these literals
+    rewritten out of every commit, so they cannot appear there. A person running
+    this script the obvious way -- bare, from the repo root -- gets the DEFAULT
+    --repo, which is the unredacted source, where those same literals are still
+    sitting in history exactly as expected.
+
+    So the natural invocation reported a real, already-handled password under a
+    banner about refusing to push, and the only way to know it was handled was
+    to go and read the publish script. In a repository where a real password
+    genuinely did ship publicly for six days, a gate that cries wolf on its most
+    natural invocation is not a harmless annoyance: it is how the next true
+    finding gets waved through. The finding still prints and still fails the
+    run. It just says which of the two situations it is.
+    """
+    lits = []
+    try:
+        with open(path, encoding='utf-8') as fh:
+            for line in fh:
+                t = line.strip()
+                if not t or t.startswith('#'):
+                    continue
+                lit = t.split('==>')[0].strip()
+                if lit:
+                    lits.append(lit)
+    except (IOError, OSError):
+        pass
+    return lits
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     here = os.path.dirname(os.path.abspath(__file__))
@@ -1041,6 +1075,11 @@ def main():
     ap.add_argument('--allowlist', default=os.path.join(here, 'scan-allowlist.txt'))
     ap.add_argument('--head-only', action='store_true',
                     help='scan the checked-out tree only, not every commit')
+    ap.add_argument('--redactions', default=os.path.join(here, 'redactions.txt'),
+                    help='literals the publish pipeline already rewrites out of '
+                         'history; findings matching one are reported as already '
+                         'handled rather than as unlisted. Annotation only: it '
+                         'never suppresses a finding or changes the exit code.')
     ap.add_argument('--stats', action='store_true', help='print a timing breakdown')
     args = ap.parse_args()
 
@@ -1052,6 +1091,11 @@ def main():
     except ValueError as exc:
         print('secret scan: %s' % exc, file=sys.stderr)
         return 2
+
+    # Annotation only -- see redaction_literals(). Read from the script's own
+    # directory rather than from `repo`, because the mirror has had this file
+    # stripped by the publish filter and would otherwise annotate nothing.
+    redacted = redaction_literals(args.redactions)
 
     global OWNER_EMAILS, MAIL_TRIGGER_TAIL
     try:
@@ -1132,8 +1176,25 @@ def main():
 
     print('')
     print('=' * 78)
-    print('SECRET SCAN: %d finding(s) in the history about to be published' % len(live))
-    print('=' * 78)
+    # Keyed on whether any finding is one the pipeline already removes, not on
+    # a file inside the scanned repo: the mirror has redactions.txt stripped,
+    # and --redactions can point anywhere.
+    scanning_source = any(
+        any(lit in (f.secret or '') or (f.secret or '') in lit for lit in redacted)
+        for f in live)
+    if scanning_source:
+        print('SECRET SCAN: %d finding(s) in the UNREDACTED SOURCE repo' % len(live))
+        print('=' * 78)
+        print('')
+        print('  This run scanned %s,' % repo)
+        print('  which is the default when --repo is not given. That is NOT what the')
+        print('  publish gate scans. publish-public.sh passes --repo <mirror>, built')
+        print('  after redactions.txt has rewritten every listed literal out of every')
+        print('  commit. Findings marked ALREADY HANDLED below cannot reach the mirror.')
+        print('  Anything NOT so marked is unlisted and would block a publish.')
+    else:
+        print('SECRET SCAN: %d finding(s) in the history about to be published' % len(live))
+        print('=' * 78)
     for f in live:
         print('')
         print('  [%s]  %s:%d' % (f.detector, f.path or '(no path)', f.line))
@@ -1142,7 +1203,16 @@ def main():
         print('    blob:    %s' % f.blob[:12])
         print('    why:     %s' % f.why)
         print('    code:    %s' % f.excerpt)
-        print('    allow:   %s  # reason: ' % f.key)
+        if any(lit in (f.secret or '') or (f.secret or '') in lit for lit in redacted):
+            print('    STATUS:  ALREADY HANDLED. This literal is listed in')
+            print('             tools/publish/redactions.txt, so it is rewritten out of')
+            print('             every commit BEFORE the publish gate runs. You are seeing')
+            print('             it because this run scanned the unredacted source repo,')
+            print('             which is the default when --repo is not given. The publish')
+            print('             pipeline passes --repo <mirror>, where it cannot appear.')
+            print('             Rotate it if that has not been done. Do not re-add it.')
+        else:
+            print('    allow:   %s  # reason: ' % f.key)
     print('')
     print('-' * 78)
     print('  %s' % summary)
