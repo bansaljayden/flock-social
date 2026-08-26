@@ -713,20 +713,52 @@ router.post('/request-verification', requireVerified, async (req, res) => {
       return res.status(409).json({ error: CLAIMED_MSG });
     }
 
-    const upd = await pool.query(
+    // FIRST PRESS, DECIDED BY THE WRITE AND NOT BY THE READ.
+    //
+    // The timestamp was already decided in SQL, and the test that pins it says
+    // why in its own words: "first press wins whatever raced it". The operator
+    // notification at the bottom of this handler was NOT, and that is a
+    // difference that matters now that a press has a side effect outside this
+    // database. It branched on `verification_requested_at` as it stood in the
+    // SELECT at the top, so two presses that arrived together, the same owner
+    // on a phone and on a laptop, both read NULL, both counted themselves the
+    // first, and one claim reached the operator's inbox twice while the column
+    // still recorded a single request.
+    //
+    // The guard is the UPDATE's own WHERE clause instead. Exactly one of two
+    // concurrent statements can match `verification_requested_at IS NULL`: the
+    // second blocks on the row lock the first took, re-evaluates the condition
+    // against the row the first one wrote, and matches nothing. The timestamp
+    // that lands is the one COALESCE used to keep, because the only statement
+    // that writes it is the one that found the column empty, so queue position
+    // still cannot be moved by pressing again.
+    const claimed = await pool.query(
       `UPDATE venue_profiles
-          SET verification_requested_at = COALESCE(verification_requested_at, NOW()),
+          SET verification_requested_at = NOW(),
               updated_at = NOW()
-        WHERE user_id = $1
+        WHERE user_id = $1 AND verification_requested_at IS NULL
         RETURNING verification_requested_at`,
       [req.user.id]
     );
-    if (upd.rows.length === 0) return res.status(404).json({ error: 'No venue profile found' });
+    const already = claimed.rows.length === 0;
+    let requestedAt = already ? null : claimed.rows[0].verification_requested_at;
+    if (already) {
+      // Nothing was written, which is either "the request was already in" or
+      // "the profile stopped existing between the read and now", and only a
+      // re-read separates them. The answer has to carry the ORIGINAL timestamp:
+      // the copy below says the request is already in, and a null beside that
+      // sentence reads as a request that is not.
+      const existing = await pool.query(
+        'SELECT verification_requested_at FROM venue_profiles WHERE user_id = $1',
+        [req.user.id]
+      );
+      if (existing.rows.length === 0) return res.status(404).json({ error: 'No venue profile found' });
+      requestedAt = existing.rows[0].verification_requested_at;
+    }
 
-    const already = !!profile.verification_requested_at;
     res.json({
       verification_status: 'pending',
-      verification_requested_at: upd.rows[0].verification_requested_at,
+      verification_requested_at: requestedAt,
       message: already
         ? 'Your request is already in. We confirm ownership by hand, and verified features turn on once that clears.'
         : 'Request received. We confirm ownership by hand, and verified features turn on once that clears.',
@@ -750,9 +782,10 @@ router.post('/request-verification', requireVerified, async (req, res) => {
     // the leg that is always true. The email needs RESEND_API_KEY; without it
     // emailService logs a skip and returns rather than throwing.
     //
-    // FIRST PRESS ONLY. `already` is the idempotence flag the response above
-    // uses, so an anxious owner re-tapping cannot mail the operator twice, and
-    // the mail describes the moment the claim actually entered the queue.
+    // FIRST PRESS ONLY, and the flag is the one the UPDATE above returned
+    // rather than one read off a row a moment earlier. An anxious owner
+    // re-tapping cannot mail the operator twice, and neither can two devices
+    // pressing at once.
     //
     // Fire and forget, after the response: an operator notification must never
     // decide whether the owner's request succeeded.
@@ -763,7 +796,14 @@ router.post('/request-verification', requireVerified, async (req, res) => {
     }
   } catch (err) {
     console.error('Request venue verification error:', err);
-    res.status(500).json({ error: 'Failed to request verification' });
+    // headersSent, because work now continues AFTER the response: the operator
+    // notification above is dispatched below res.json. Without the guard a
+    // throw out there would try to send a 500 on a response that already told
+    // the owner their request was received, which Express answers with
+    // ERR_HTTP_HEADERS_SENT and an unhandled error rather than a second body.
+    // Same guard, same reason, as the post-response push work in
+    // routes/flocks.js and routes/users.js.
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to request verification' });
   }
 });
 
