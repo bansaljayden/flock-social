@@ -32,9 +32,17 @@ const TERMS_URL = 'https://www.flockcorp.com/terms';
 const PRIVACY_URL = 'https://www.flockcorp.com/privacy';
 const GUIDELINES_URL = 'https://www.flockcorp.com/guidelines';
 
-// MIN_AGE and ageFromDob come from AuthShell, which is where the client-side
-// half of the age gate lives for all three screens that draw this field.
-// backend/utils/age.js is still the only authority on what is allowed.
+// THE SIGNUP HALF OF THIS FORM NAMES NO MINIMUM AGE AND ENFORCES NONE, for the
+// reasons written out at length in SignupScreen.js. It used to cap its picker
+// at exactly thirteen years ago, print "You have to be 13 or older" above the
+// field, and refuse a younger date locally without ever calling the API, which
+// is the arrangement that shows a child which birthday passes rather than
+// keeping them out. The date now goes to the server and the server answers.
+//
+// MIN_AGE is still imported, and it is used for one thing only: the LOGIN
+// half's read-back panel below, which is a different question about an account
+// that already exists. See the comment on dobConfirmed.
+// backend/utils/age.js is the only authority on what is allowed.
 
 const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
   const [isSignup, setIsSignup] = useState(false);
@@ -53,7 +61,8 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
   // an existing row, revoking its live sessions and freezing every later
   // sign-in, with no undo and no screen that can edit the date afterwards. This
   // form is the venue portal, so the account it would end is a customer's. The
-  // signup half keeps its capped field and its hint and is untouched.
+  // signup half asks nothing of this panel: creating an account and freezing
+  // one are not the same act, and only the second is irreversible.
   const [dobConfirmed, setDobConfirmed] = useState('');
   // Signup sends a confirmation link and the account cannot do much until it
   // is clicked. The old venue screen ignored that reply and called
@@ -90,11 +99,18 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
     { label: 'One number', ok: /[0-9]/.test(password) },
   ];
 
-  const maxDob = (() => {
-    const d = new Date();
-    d.setFullYear(d.getFullYear() - MIN_AGE);
-    return d.toISOString().split('T')[0];
-  })();
+  // Present, and a date a living person could have been born on. Neither half
+  // is a statement about age: on the signup path the server is the only thing
+  // that decides that. The second half exists because a date in the FUTURE is
+  // not an age claim, it is a typo, and the server reads any date short of the
+  // minimum as knowledge that a child is signing up and remembers the mailbox
+  // for 24 hours. A mistyped year would cost a venue owner their account for a
+  // day. Refusing a birth date nobody alive can have names no threshold and
+  // turns away no truthful date. Same helper, same wording, as SignupScreen.
+  const dobLooksReal = (value) => {
+    const years = ageFromDob(value);
+    return years !== null && years >= 0;
+  };
 
   // Native iOS runs Google's own SDK, everything else the GIS browser flow;
   // one hook, one backend route, and the needsDob 403 handled the same on both.
@@ -138,12 +154,9 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
       if (!pwChecks.every((c) => c.ok)) {
         return fail('venue-password', 'Your password is missing a requirement listed below it.');
       }
-      const age = ageFromDob(dob);
-      if (age === null) {
+      // Shape only. What the date says about age is the server's call.
+      if (!dobLooksReal(dob)) {
         return fail('venue-dob', 'That date of birth does not look right. Check it and try again.');
-      }
-      if (age < MIN_AGE) {
-        return fail('venue-dob', `You must be at least ${MIN_AGE} to use Flock`);
       }
     }
 
@@ -260,13 +273,16 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
               className="auth-field"
               type="date"
               value={dob}
-              max={isSignup ? maxDob : undefined}
               onChange={(e) => setDob(e.target.value)}
               autoComplete="bday"
               aria-describedby="venue-dob-hint"
               required
             />
-            {isSignup && <p className="auth-hint" id="venue-dob-hint">Yours, not the venue's. You have to be 13 or older to use Flock.</p>}
+            {/* "Yours, not the venue's" stays: an operator filling this in for
+                a bar that opened in 1974 is a real mistake, and saying so names
+                no threshold. What followed it was the threshold, and that is
+                the part that taught a child which birthday to type. */}
+            {isSignup && <p className="auth-hint" id="venue-dob-hint">Yours, not the venue's. We use it to check your age.</p>}
             {!isSignup && (
               <p className="auth-hint" id="venue-dob-hint">
                 This is saved to your account and cannot be changed later, so check the year.
@@ -406,14 +422,16 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
             }
             setError('');
             if (isSignup) {
-              // Age gate the Google path the same way the email path is gated.
-              const age = ageFromDob(dob);
-              if (age === null) {
+              // The server requires a date of birth to create an account on
+              // this path, so the field has to be filled first. What the date
+              // says about age is not decided here, exactly as it is not
+              // decided in handleSubmit.
+              if (!dob) {
                 setError('Add your date of birth above first, then continue with Google.');
                 return;
               }
-              if (age < MIN_AGE) {
-                setError(`You must be at least ${MIN_AGE} to use Flock`);
+              if (!dobLooksReal(dob)) {
+                setError('That date of birth does not look right. Check it and try again.');
                 return;
               }
             }
@@ -433,10 +451,19 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
         onError={(m) => setError(m)}
         dob={dob}
         beforeAuthorize={() => {
-          if (!dobNeedsCheck) return true;
-          setError('Check the date of birth above before you continue.');
-          document.getElementById('venue-dob-check')?.focus();
-          return false;
+          if (dobNeedsCheck) {
+            setError('Check the date of birth above before you continue.');
+            document.getElementById('venue-dob-check')?.focus();
+            return false;
+          }
+          // The impossible date, stopped for the reason on dobLooksReal. An
+          // empty field still goes through: an Apple account that already
+          // exists signs in without one.
+          if (dob && !dobLooksReal(dob)) {
+            setError('That date of birth does not look right. Check it and try again.');
+            return false;
+          }
+          return true;
         }}
       />
 

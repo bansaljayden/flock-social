@@ -178,13 +178,19 @@ export const AuthNotice = ({ children }) => (
 );
 
 /* ---------------------------------------------------------------------------
-   The age gate's client-side half, in ONE place.
+   MIN_AGE IS NOT A GATE, AND NO SCREEN MAY USE IT AS ONE.
 
-   `backend/utils/age.js` is the authority: it recomputes the age from the
-   stored date on every path and nothing here can talk it out of an answer.
-   MIN_AGE below is a copy of the number in that file, and it exists so the
-   two screens that draw a date-of-birth field cannot drift apart on what they
-   SAY. It must never become a second opinion on what is allowed.
+   `backend/utils/age.js` is the only authority: it recomputes the age from the
+   stored date on every path, and no client can talk it out of an answer. The
+   signup doors decide nothing about age at all any more, and neither prints
+   this number. What is left is one job: the SIGN-IN read-back, on LoginScreen
+   and on the venue portal's sign-in half. A date typed there is written to an
+   existing account and freezes it, so those two screens use this number to know
+   when to show the date back and ask "is that right?" before an irreversible
+   refusal. The panel itself names no age.
+
+   If a new use of MIN_AGE appears that is not that panel, it is a gate, and the
+   reasoning against it is written out on the age comment in SignupScreen.js.
    --------------------------------------------------------------------------- */
 export const MIN_AGE = 13;
 
