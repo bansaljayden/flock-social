@@ -26,7 +26,13 @@ import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvaila
 import { joinVenueRoom, leaveVenueRoom, joinVenueContentRoom, leaveVenueContentRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked, onSocketError, onAvailabilityUpdated, onBlockedBy, onContentRemoved, onContentRestored } from './services/socket';
 import { pullSettings, queueSync } from './services/userSettings';
 import { QRCodeSVG } from 'qrcode.react';
-import { Html5Qrcode } from 'html5-qrcode';
+// html5-qrcode is NOT imported here on purpose. It is loaded with a dynamic
+// import() inside startQrScanner, the one place that uses it. See the note
+// there for the measurement; the short version is that it bundles its own
+// barcode decoding engine and it was the largest single thing on the startup
+// path, downloaded by every user on every launch for a screen almost nobody
+// opens. `frontend/src/__tests__/bundleWeightManifest.test.js` fails if a
+// static import of it comes back.
 import LoginScreen from './components/auth/LoginScreen';
 import SignupScreen from './components/auth/SignupScreen';
 import VenueLoginScreen from './components/auth/VenueLoginScreen';
@@ -4708,6 +4714,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // Small delay to let the DOM render the scanner div
     setTimeout(async () => {
       try {
+        // Fetched on the tap, not at launch. This library carries its own
+        // barcode decoding engine, and holding it as a static import put the
+        // whole thing in the startup chunk for every user on every launch,
+        // including the overwhelming majority who never open this screen.
+        //
+        // Safe to await here where it would NOT be safe in front of a
+        // permission prompt: the camera prompt is raised by scanner.start()
+        // below, and that is a getUserMedia call, which does not require the
+        // synchronous user activation that Notification.requestPermission
+        // does. The load is also already behind a 300ms setTimeout that waits
+        // for the scanner div to render, so this adds no gesture boundary that
+        // was not there before.
+        //
+        // A failed load lands in the catch below and is reported as a scanner
+        // failure rather than a camera failure, because telling somebody to
+        // check their camera permissions when the real problem was the network
+        // sends them to the wrong settings screen.
+        const { Html5Qrcode } = await import('html5-qrcode');
         const scanner = new Html5Qrcode(qrScannerDivId);
         qrScannerRef.current = scanner;
         await scanner.start(
@@ -4738,7 +4762,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         );
       } catch (err) {
         console.error('[QR Scanner] Start error:', err);
-        setQrScanError(err.message || 'Could not access camera');
+        // A chunk that fails to load is a network problem, not a camera one.
+        // Naming the camera here would send somebody into their permission
+        // settings to fix something that is not broken.
+        const failedToLoad = err?.name === 'ChunkLoadError'
+          || /Loading chunk|dynamically imported module/i.test(err?.message || '');
+        setQrScanError(
+          failedToLoad
+            ? "Couldn't load the scanner. Check your connection and try again."
+            : (err.message || 'Could not access camera')
+        );
       }
     }, 300);
   }, [showToast]);
