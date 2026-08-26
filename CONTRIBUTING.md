@@ -41,7 +41,9 @@ cd frontend
 CI=true npx react-scripts test --watchAll=false
 ```
 
-Both suites are expected to pass before any change is proposed. Many tests pin repo docs and copy on purpose; if a doc test fails, read the test's comment before editing either side. The test usually says which one is the source of truth.
+Both suites are expected to pass before any change is proposed, and since 2026-08-26 that is enforced rather than trusted: `.github/workflows/tests.yml` runs both on every push. Read its header before assuming a green local run means a green CI run. It pins Node 20 on purpose, and the first time it ran it failed 52 backend checks on a commit that was green on the developer machine, none of them a regression: Node 21 and later keep a referenced handle alive for the duration of a running test, so a test awaiting a promise that only an `unref()`d timer can settle completes, while Node 20 drains the loop and cancels the rest of the file. `npm audit` runs in the same workflow and reports rather than gates; the reason is written out there.
+
+Many tests pin repo docs and copy on purpose; if a doc test fails, read the test's comment before editing either side. The test usually says which one is the source of truth.
 
 ## Design and copy rules
 
