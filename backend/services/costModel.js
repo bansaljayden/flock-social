@@ -814,17 +814,44 @@ const DEPENDENCIES = [
     costsNothingBecause: 'The free tier is 3,000 a month and 100 a day, and the digest is one email per venue per week.',
   },
   {
+    // TWO HALVES, ONE OF WHICH THIS PROCESS CANNOT SEE.
+    //
+    // The product analytics half runs in the browser off REACT_APP_POSTHOG_KEY,
+    // a Vercel build variable. It is live and it is the only half sending
+    // anything. The Birdie token-trace half runs here off POSTHOG_API_KEY, and
+    // that is the name below, so `configured` on this row answers a question
+    // about Birdie observability and says nothing at all about whether the app
+    // is reporting. The row used to describe both halves as running and name
+    // only the server variable, which read as "analytics is off" on a panel
+    // whose whole purpose is to stop a number being asserted without a meter
+    // behind it.
+    //
+    // MEASURED against the PostHog project on 2026-08-25: 4,000-odd events in
+    // the entire history of the project, and not one $ai_generation or
+    // $ai_span among them. routes/ai.js builds no client without
+    // POSTHOG_API_KEY, so the traces this row was written to price have never
+    // existed. The cost consequence is nil either way, well inside the free
+    // tier. The consequence that matters is that Birdie's token count and
+    // latency, the numbers behind the largest variable cost in the product,
+    // are not being recorded anywhere.
     id: 'posthog',
     label: 'PostHog',
-    what: 'Product analytics in the app, and the token traces behind Birdie.',
-    where: 'frontend/src/index.js and backend/routes/ai.js',
+    what: 'Product analytics in the app. The Birdie token traces are written and send nothing.',
+    where: 'frontend/src/services/api.js for the app events, backend/routes/ai.js for the traces',
     group: 'free',
     pricing: { type: 'free', rateGroup: 'posthog' },
     configuredEnv: ['POSTHOG_API_KEY'],
+    configuredNote: 'POSTHOG_API_KEY is the Birdie trace leg only. The app events ride REACT_APP_POSTHOG_KEY, which is set at build time on Vercel and is not visible from this process, so this line can never report on them.',
     observedLineId: null,
-    usageNote: 'Event volume is counted by PostHog and by nothing in this repo.',
+    // This sentence carries the whole correction, because the panel only
+    // prints configuredNote when configuredEnv is null (App.js depConfigured).
+    // With a name to read, the line below will say 'Not configured,
+    // POSTHOG_API_KEY is unset on the server', which is true of the trace leg
+    // and false of the app, and the note that explains the difference is where
+    // it will actually be read.
+    usageNote: 'Event volume is counted by PostHog and by nothing in this repo. The configured line below reads POSTHOG_API_KEY, which is the Birdie trace leg only: the app events ride REACT_APP_POSTHOG_KEY, a Vercel build variable this process cannot see. No $ai_generation event has ever reached the project, so no token trace is in that volume.',
     costsNothingBecause: 'Free below 1,000,000 events a month, and Flock has roughly no users.',
-    unknownAction: 'The event count is on the PostHog billing page if you want to see how much of that allowance is gone.',
+    unknownAction: 'The event count is on the PostHog billing page if you want to see how much of that allowance is gone. Setting POSTHOG_API_KEY on the Railway service is what starts the Birdie token traces; routes/ai.js already sends metrics only, with no conversation content.',
   },
   {
     id: 'sentry',
