@@ -710,11 +710,14 @@ test('stand-down: it reaches the people who got the alert, and no suppression ge
     // The window is bounded, so a cancel cannot resurrect an alert from days ago.
     const lookup = calls.find((c) => c.text.includes('FROM emergency_alerts'));
     assert.strictEqual(lookup.params[1], S.CANCEL_WINDOW_MS);
-    // Only the contacts who existed when the alert went out. A contact added
-    // afterwards never got the alarm, and a stand-down is the wrong first
-    // message to send anybody.
+    // Only the ADDRESSES that were on the list when the alert went out. A
+    // contact added afterwards never got the alarm, and a stand-down is the
+    // wrong first message to send anybody. The column is email_set_at rather
+    // than created_at because created_at is a fact about the row and PUT
+    // /contacts/:id can rewrite the address underneath it; see the exploit
+    // pinned below.
     const who = calls.find((c) => c.text.includes('FROM trusted_contacts'));
-    assert.match(who.text, /created_at <= \$2/);
+    assert.match(who.text, /COALESCE\(email_set_at, created_at\) <= \$2/);
     assert.strictEqual(who.params[1], alertAt);
   } finally { mail.restore(); restore(); }
 });
@@ -781,6 +784,153 @@ test('stand-down: the meter bounds it, and a refused stand-down is the cheap dir
     }
     const refused = await call(safetyRoutes, 'POST', '/api/alert/cancel', {});
     assert.strictEqual(refused.status, 429);
+  } finally { mail.restore(); restore(); S.resetCancels(); }
+});
+
+// ---------------------------------------------------------------------------
+// The stand-down, attacked (round 23). Two findings, both in the gap between
+// what the route's own comments claim and what its code checks.
+// ---------------------------------------------------------------------------
+
+// A trusted_contacts fixture that applies the predicate the SQL actually names,
+// so a test can tell WHICH column the route filtered on rather than trusting
+// that it filtered at all. Anything else here would pass whatever the route did.
+function contactsFixture(rows) {
+  return (sql, params) => {
+    const cutoff = new Date(params[1]).getTime();
+    const useEmailSetAt = /COALESCE\(email_set_at, created_at\)/.test(sql);
+    const keep = rows.filter((c) => {
+      const when = useEmailSetAt ? (c.email_set_at || c.created_at) : c.created_at;
+      return new Date(when).getTime() <= cutoff;
+    });
+    return { rows: keep.map(({ contact_name, contact_email }) => ({ contact_name, contact_email })) };
+  };
+}
+
+test('stand-down: an address swapped in after the alert is not mailed the all clear', async () => {
+  // THE EXPLOIT. The route pinned its recipients with
+  // `trusted_contacts.created_at <= <the alert's created_at>`, and PUT
+  // /api/safety/contacts/:id rewrites contact_email in place without moving
+  // created_at. So:
+  //
+  //     add a contact, raise a real SOS, edit that contact's address, stand down
+  //
+  // mailed "All Clear" to an address that was never on the list when the alert
+  // went out. It goes out under EMERGENCY_CATEGORY, which walks past the
+  // do-not-mail list, and the argument written at that constant for why that is
+  // safe is precisely "the only person who can receive a stand-down already
+  // received the alarm". This is the case where that sentence was false, and
+  // the reason is that created_at identifies the ROW while the obligation is
+  // about the ADDRESS.
+  S.resetCancels();
+  const mail = stubMail();
+  const alertAt = new Date('2026-08-25T02:00:00Z');
+  const { restore } = stubPool(async (sql, params) => {
+    if (sql.includes('FROM emergency_alerts')) {
+      return { rows: [{ created_at: alertAt, contacts_alerted: 1 }], rowCount: 1 };
+    }
+    if (sql.includes('FROM trusted_contacts')) {
+      return contactsFixture([{
+        contact_name: 'Mum',
+        // The address that is on the row NOW, and it is not the one that was
+        // mailed the alarm.
+        contact_email: 'someone-who-unsubscribed@example.com',
+        created_at: new Date('2026-08-24T00:00:00Z'),  // the row is older than the alert
+        email_set_at: new Date('2026-08-25T02:30:00Z'), // the address is newer
+      }])(sql, params);
+    }
+    if (sql.includes('SELECT name FROM users')) return { rows: [{ name: 'Ava' }] };
+    return null;
+  });
+  try {
+    const res = await call(safetyRoutes, 'POST', '/api/alert/cancel', {});
+    assert.strictEqual(mail.mails.length, 0,
+      'an all clear was mailed to an address that never received the alert');
+    // Nobody who got the alarm is reachable here, and the honest answer to that
+    // is the one the route already has: say so and send them to the phone.
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.body.unreachableContacts, true);
+  } finally { mail.restore(); restore(); }
+});
+
+test('stand-down: the address that was actually alerted still gets it', async () => {
+  // The other half, or the fix is just a broken stand-down. An untouched row
+  // has no email_set_at at all before migration 052 backfills it, so the
+  // COALESCE has to fall through to created_at and mail.
+  S.resetCancels();
+  const mail = stubMail();
+  const alertAt = new Date('2026-08-25T02:00:00Z');
+  const { restore } = stubPool(async (sql, params) => {
+    if (sql.includes('FROM emergency_alerts')) {
+      return { rows: [{ created_at: alertAt, contacts_alerted: 1 }], rowCount: 1 };
+    }
+    if (sql.includes('FROM trusted_contacts')) {
+      return contactsFixture([
+        { contact_name: 'Mum', contact_email: 'mum@example.com', created_at: new Date('2026-08-24T00:00:00Z'), email_set_at: null },
+        // Added after the alert. Still excluded, which is the guard that
+        // already worked and must go on working.
+        { contact_name: 'New', contact_email: 'new@example.com', created_at: new Date('2026-08-25T03:00:00Z'), email_set_at: null },
+      ])(sql, params);
+    }
+    if (sql.includes('SELECT name FROM users')) return { rows: [{ name: 'Ava' }] };
+    return null;
+  });
+  try {
+    const res = await call(safetyRoutes, 'POST', '/api/alert/cancel', {});
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.deepStrictEqual(mail.mails.map((m) => m.to), ['mum@example.com']);
+  } finally { mail.restore(); restore(); }
+});
+
+test('contacts: editing an address moves the address date, editing a name does not', async () => {
+  // The write half of the same fix. A stamp that moved on every edit would
+  // silently drop a contact out of the next stand-down because somebody
+  // corrected the spelling of "Mum".
+  const { calls, restore } = stubPool(async (sql) => {
+    if (sql.includes('UPDATE trusted_contacts')) {
+      return { rows: [{ id: 5, contact_name: 'Mum', contact_email: 'mum@example.com' }], rowCount: 1 };
+    }
+    return null;
+  });
+  try {
+    const res = await call(safetyRoutes, 'PUT', '/api/contacts/5', {
+      name: 'Mum', phone: '5550100', email: 'mum@example.com',
+    });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    const update = calls.find((c) => c.text.includes('UPDATE trusted_contacts'));
+    assert.match(update.text, /email_set_at = CASE WHEN contact_email IS DISTINCT FROM \$3 THEN NOW\(\)/,
+      'an edited address keeps the date of the address it replaced');
+  } finally { restore(); }
+});
+
+test('stand-down: an attempt that reaches nobody cannot be repeated without limit', async () => {
+  // The meter refunds its slot when nothing was delivered, and it should: the
+  // person still needs to be able to retry. But the refund was unconditional
+  // and the failure is caller-reachable, so a stand-down whose sends always
+  // fail cost nothing and could be repeated for the whole six-hour window,
+  // fanning out to every contact each time. The comment above allowCancel says
+  // the charge happens before the sends because "an attempt that fanned out and
+  // failed has already put the load on the provider that this number exists to
+  // bound", and then the failure branch handed it straight back.
+  assert.ok(S.MAX_CANCEL_ATTEMPTS_PER_WINDOW > S.MAX_CANCELS_PER_WINDOW,
+    'a genuine retry after a failed send must still be possible');
+  S.resetCancels();
+  const mail = stubMail({ sent: false, error: 'provider refused' });
+  const { restore } = stubPool(async (sql) => {
+    if (sql.includes('FROM emergency_alerts')) return { rows: [{ created_at: new Date(), contacts_alerted: 1 }], rowCount: 1 };
+    if (sql.includes('FROM trusted_contacts')) return { rows: [{ contact_name: 'Mum', contact_email: 'mum@example.com' }] };
+    if (sql.includes('SELECT name FROM users')) return { rows: [{ name: 'Ava' }] };
+    return null;
+  });
+  try {
+    for (let i = 0; i < S.MAX_CANCEL_ATTEMPTS_PER_WINDOW; i++) {
+      const res = await call(safetyRoutes, 'POST', '/api/alert/cancel', {});
+      assert.strictEqual(res.status, 502, `attempt ${i + 1} should have been tried and reported honestly`);
+    }
+    const refused = await call(safetyRoutes, 'POST', '/api/alert/cancel', {});
+    assert.strictEqual(refused.status, 429, 'a failing stand-down was free to repeat forever');
+    assert.strictEqual(mail.mails.length, S.MAX_CANCEL_ATTEMPTS_PER_WINDOW,
+      'the fan-out kept reaching the provider past the ceiling');
   } finally { mail.restore(); restore(); S.resetCancels(); }
 });
 
