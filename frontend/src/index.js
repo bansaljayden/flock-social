@@ -210,7 +210,59 @@ export const POSTHOG_PRIVACY_CONFIG = {
   },
 };
 
-if (process.env.REACT_APP_POSTHOG_KEY) {
+// ---------------------------------------------------------------------------
+// WHERE ANALYTICS IS ALLOWED TO RUN
+//
+// frontend/.env carries a live REACT_APP_POSTHOG_KEY, which means every
+// `npm start` has been reporting into the production project since analytics
+// was switched on. Measured against PostHog on 2026-08-25: of 1,794 pageviews
+// in the whole history of the project, 1,526 came from a localhost origin and
+// 244 from www.flockcorp.com. The headline number a person would read off the
+// dashboard, and every ratio built on it, was mostly a dev server, restarted
+// over and over by whoever was working that day, each restart of a cleared
+// browser profile arriving as another new visitor.
+//
+// The test is on the ORIGIN, not on NODE_ENV, because a production build
+// served locally with `serve -s build` is still not a user, and NODE_ENV is
+// 'production' for exactly that case.
+//
+// TWO ORIGINS MUST NOT BE CAUGHT BY IT, and both of them look local:
+//   * iOS serves the app from capacitor://localhost. Not an http origin, so
+//     the protocol test lets it through.
+//   * ANDROID serves it from https://localhost, which is indistinguishable
+//     from a dev server by hostname and protocol alone. window.Capacitor is
+//     injected by the native bridge before this bundle runs and is absent from
+//     the web build (see detectNativeShell below, which relies on the same
+//     fact), so the bridge is the only thing that separates them.
+//
+// REACT_APP_POSTHOG_ALLOW_LOCAL=true opts a local build back in, for anyone
+// deliberately testing that the pipeline still works end to end.
+//
+// Exported for src/__tests__/analyticsPrivacy.test.js.
+export const isLocalAnalyticsOrigin = (loc, hasNativeBridge) => {
+  try {
+    if (!loc) return false;
+    if (hasNativeBridge) return false;
+    if (loc.protocol !== 'http:' && loc.protocol !== 'https:') return false;
+    const host = String(loc.hostname || '').toLowerCase();
+    return host === 'localhost'
+      || host === '127.0.0.1'
+      || host === '0.0.0.0'
+      || host === '[::1]'
+      || host === '::1'
+      || host.endsWith('.local');
+  } catch {
+    return false;
+  }
+};
+
+const analyticsEnabled = !!process.env.REACT_APP_POSTHOG_KEY && (
+  process.env.REACT_APP_POSTHOG_ALLOW_LOCAL === 'true'
+  || typeof window === 'undefined'
+  || !isLocalAnalyticsOrigin(window.location, !!window.Capacitor)
+);
+
+if (analyticsEnabled) {
   import('posthog-js').then(({ default: posthog }) => {
     posthog.init(process.env.REACT_APP_POSTHOG_KEY, POSTHOG_PRIVACY_CONFIG);
   }).catch(() => { /* analytics is never load-bearing */ });
@@ -810,6 +862,44 @@ if (page) {
       </ErrorBoundary>
     </React.StrictMode>
   );
+}
+
+// ---------------------------------------------------------------------------
+// THE TWO EVENTS THIS FILE OWNS
+//
+// Both go through services/api.js, because __tests__/analyticsPrivacy.test.js
+// requires every posthog.capture in src/ to live in that one file, and that
+// rule is worth more than the two lines it costs here.
+//
+// The import is dynamic AND deferred to after the load event. Dynamic so the
+// REST client does not rejoin the entry chunk, which is the regression the
+// ThemeProvider note above describes. Deferred because the guest invite page
+// does not import api.js at all and is the most expensive blank screen in the
+// product: a stranger, on a phone, on mobile data, who will close the tab. An
+// analytics chunk must never be in the queue ahead of the one they are waiting
+// for.
+//
+// Nothing here is load-bearing. A rejected import, a missing api.js export or
+// a thrown capture all end in the same place: the page renders and the event
+// is lost, which is the correct trade for a number.
+// ---------------------------------------------------------------------------
+function afterLoad(fn) {
+  if (typeof window === 'undefined') return;
+  if (document.readyState === 'complete') { setTimeout(fn, 0); return; }
+  window.addEventListener('load', () => setTimeout(fn, 0), { once: true });
+}
+
+if (analyticsEnabled) {
+  afterLoad(() => {
+    import('./services/api').then((api) => {
+      // A bare "/i" is a link that lost its token on the way through a group
+      // chat. It is a different event from a real invite being opened, and
+      // telling them apart is the only reason this argument exists. The token
+      // itself is not passed, is not read here, and has no property to sit in.
+      if (page && page.id === 'guest-invite') api.trackInviteLinkOpened(path !== '/i');
+      else if (wantsApp) api.trackAppOpened(isNativeShell ? 'native' : 'web');
+    }).catch(() => { /* see above */ });
+  });
 }
 
 reportWebVitals();
