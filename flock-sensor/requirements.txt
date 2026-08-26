@@ -14,8 +14,14 @@
 # The two cannot both be installed. This matters because the hardware demo unit
 # build plan specifies a Pi 5.
 RPi.GPIO
-adafruit-circuitpython-mlx90640      # thermal headcount over I2C
-adafruit-blinka                      # CircuitPython shim the MLX90640 driver needs
+
+# The thermal camera needs NOTHING here. The FLIR Lepton arrives over USB as a
+# V4L2 device and main.py reads it with ioctls from the standard library, on
+# purpose: every Python package that reads a UVC camera brings an image
+# pipeline with it (OpenCV, Pillow, numpy image IO), and an image pipeline on
+# this device is the one thing the published privacy policy says is not here.
+# The MLX90640 I2C driver and the Blinka shim it needed are gone with it.
+
 spidev                               # MCP3008 ADC (noise) over SPI
 requests                             # HTTPS push to the backend
 pygame                               # demo-unit display ONLY; imported lazily, so a

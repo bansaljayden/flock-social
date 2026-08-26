@@ -11,6 +11,8 @@ failure can wedge the device is.
 Each test name is the failure it prevents.
 """
 
+import array
+import ctypes
 import json
 import os
 import sys
@@ -87,25 +89,130 @@ class EndpointSafety(unittest.TestCase):
         self.assertFalse(ok)
 
 
+class V4L2Plumbing(unittest.TestCase):
+    """The ioctl numbers, which are the one part of this that cannot be debugged.
+
+    V4L2 encodes the size of the argument struct into the request number, so a
+    struct that is one byte off does not produce a subtly wrong frame. It
+    produces ENOTTY, a camera that never opens, and a unit that reports 0
+    headcount forever with a log line about an inappropriate ioctl. Nobody has
+    run this on a board, so the sizes are pinned against the kernel's
+    documented ones here instead.
+    """
+
+    def test_the_request_numbers_match_the_kernels(self):
+        for name, expected in (('_VIDIOC_QUERYCAP', 0x80685600),
+                               ('_VIDIOC_S_FMT', 0xC0D05605),
+                               ('_VIDIOC_REQBUFS', 0xC0145608),
+                               ('_VIDIOC_STREAMON', 0x40045612),
+                               ('_VIDIOC_STREAMOFF', 0x40045613)):
+            actual = getattr(main, name) & 0xFFFFFFFF
+            self.assertEqual(actual, expected, f'{name} is {actual:#x}')
+
+    def test_v4l2_format_carries_the_alignment_the_kernel_gives_it(self):
+        # struct v4l2_format holds a union containing struct v4l2_window, which
+        # holds pointers, so the union is pointer-aligned and the struct is 208
+        # bytes on a 64-bit kernel rather than the 204 its visible fields add
+        # up to. Getting this wrong is exactly how VIDIOC_S_FMT returns ENOTTY.
+        expected = 208 if ctypes.sizeof(ctypes.c_void_p) == 8 else 204
+        self.assertEqual(ctypes.sizeof(main._v4l2_format), expected)
+
+    @unittest.skipUnless(ctypes.sizeof(ctypes.c_long) == ctypes.sizeof(ctypes.c_void_p),
+                         'long and pointer differ in width here (Windows LLP64); '
+                         'no Linux target does that, so there is no kernel size '
+                         'to compare against')
+    def test_v4l2_buffer_is_the_size_the_kernel_expects(self):
+        # 88 on a 64-bit Pi OS, 68 on a 32-bit one. Both come from struct
+        # v4l2_buffer holding a struct timeval and a union with a pointer in
+        # it, so the size follows the platform's long and pointer width rather
+        # than the visible fields.
+        expected = 88 if ctypes.sizeof(ctypes.c_long) == 8 else 68
+        self.assertEqual(ctypes.sizeof(main._v4l2_buffer), expected)
+
+    def test_the_pixel_format_asked_for_is_raw_temperatures(self):
+        # 'Y16 ', 16 bits per pixel. The same camera's other node is 8-bit AGC
+        # greyscale, which is a picture, and the privacy policy says this
+        # device does not make pictures.
+        self.assertEqual(main._V4L2_PIX_FMT_Y16,
+                         int.from_bytes(b'Y16 ', 'little'))
+
+
+class ThermalFrames(unittest.TestCase):
+    """The Lepton frame path: raw bytes in, temperatures out, junk rejected."""
+
+    def test_radiometric_centikelvin_becomes_degrees_celsius(self):
+        raw = array.array('H', [29315, 30715, 27315]).tobytes()
+        celsius = main.raw_y16_to_celsius(raw)
+        self.assertEqual(len(celsius), 3)
+        self.assertAlmostEqual(celsius[0], 20.0, places=2)
+        self.assertAlmostEqual(celsius[1], 34.0, places=2)
+        self.assertAlmostEqual(celsius[2], 0.0, places=2)
+
+    def test_the_flat_field_shutter_is_not_mistaken_for_an_empty_room(self):
+        # The Lepton closes an internal shutter every few minutes to recalibrate.
+        # That frame is one uniform surface. Counted, it says nobody is here, and
+        # at a 30s push cadence it can be the reading a push actually sends.
+        self.assertTrue(main.is_shutter_frame([25.0] * 400))
+        self.assertTrue(main.is_shutter_frame([]))
+        self.assertFalse(main.is_shutter_frame([20.0] * 399 + [34.0]))
+
+    def test_a_camera_that_is_not_radiometric_is_refused_rather_than_counted(self):
+        # A Lepton not in TLinear mode still opens, still streams, and still
+        # hands over 19,200 numbers. They are AGC counts. Thresholding them at
+        # 28.0 produces something that looks like a headcount and is not one.
+        self.assertTrue(main.is_plausible_frame([21.0] * 100))
+        self.assertFalse(main.is_plausible_frame([2000.0] * 100))   # raw counts
+        self.assertFalse(main.is_plausible_frame([-273.0] * 100))   # raw zeros
+        self.assertFalse(main.is_plausible_frame([]))
+
+    def test_binning_averages_and_shrinks_the_grid(self):
+        frame = [0.0, 2.0, 10.0, 10.0,
+                 4.0, 6.0, 10.0, 10.0]
+        cells, rows, cols = main.bin_frame(frame, 2, 4, 2)
+        self.assertEqual((rows, cols), (1, 2))
+        self.assertEqual(cells, [3.0, 10.0])
+
+    def test_binning_of_one_leaves_the_frame_alone(self):
+        cells, rows, cols = main.bin_frame([1.0, 2.0, 3.0, 4.0], 2, 2, 1)
+        self.assertEqual((cells, rows, cols), ([1.0, 2.0, 3.0, 4.0], 2, 2))
+
+
 class ThermalCounting(unittest.TestCase):
-    @staticmethod
-    def frame(ambient, blobs=()):
-        grid = [ambient] * 768
+    ROWS, COLS = main.THERMAL_ROWS, main.THERMAL_COLS
+
+    @classmethod
+    def frame(cls, ambient, blobs=()):
+        grid = [ambient] * (cls.ROWS * cls.COLS)
         for (r0, c0, h, w, temp) in blobs:
             for r in range(r0, r0 + h):
                 for c in range(c0, c0 + w):
-                    grid[r * 32 + c] = temp
+                    grid[r * cls.COLS + c] = temp
         return grid
 
+    @staticmethod
+    def person(r0, c0, temp=34.0):
+        """A warm blob the size a person plausibly is on THIS sensor.
+
+        Twenty by sixteen raw pixels, which at the default bin of 2 is 80
+        analysis cells. The 24x32 version of these tests used a 3x3 blob;
+        on a 160x120 grid a 3x3 blob is a speck, and that difference is the
+        whole reason THERMAL_MIN_CLUSTER had to move.
+
+        The size is derived from lens geometry, not measured against a body.
+        See count_thermal_clusters.
+        """
+        return (r0, c0, 20, 16, temp)
+
     def test_two_people_in_a_cool_room_count_as_two(self):
-        f = self.frame(20.0, [(2, 2, 3, 3, 34.0), (12, 20, 3, 3, 34.0)])
+        f = self.frame(20.0, [self.person(10, 10), self.person(70, 100)])
         self.assertEqual(main.count_thermal_clusters(f), 2)
 
     def test_a_packed_bar_in_august_does_not_report_one_person(self):
         # With a fixed 28C threshold, a room at 29C marked every pixel warm, the
         # flood fill joined the whole grid into a single cluster, and the venue
         # reported a headcount of 1 at exactly the moment the number mattered.
-        f = self.frame(29.0, [(2, 2, 3, 3, 35.0), (12, 20, 3, 3, 35.0), (18, 5, 3, 3, 35.0)])
+        f = self.frame(29.0, [self.person(10, 10, 35.0), self.person(70, 100, 35.0),
+                              self.person(70, 10, 35.0)])
         self.assertEqual(main.count_thermal_clusters(f), 3)
 
     def test_an_empty_room_reports_nobody(self):
@@ -113,8 +220,28 @@ class ThermalCounting(unittest.TestCase):
         self.assertEqual(main.count_thermal_clusters(self.frame(31.0)), 0)
 
     def test_a_speck_of_noise_is_not_a_person(self):
-        f = self.frame(20.0, [(5, 5, 1, 2, 40.0)])  # 2 pixels, below min_cluster
+        # One binned cell. On the coarse sensor four warm pixels were a
+        # plausible person; here they are the sensor's own noise floor.
+        f = self.frame(20.0, [(4, 4, 2, 2, 40.0)])
         self.assertEqual(main.count_thermal_clusters(f), 0)
+
+    def test_a_single_hot_pixel_is_averaged_away_before_it_can_be_counted(self):
+        f = self.frame(20.0, [(11, 11, 1, 1, 60.0)])
+        self.assertEqual(main.count_thermal_clusters(f), 0)
+
+    def test_the_minimum_cluster_size_was_moved_off_the_coarse_sensors_value(self):
+        # A 24x32 grid and a 160x120 grid cannot share a minimum blob size. If
+        # this is ever back at 4, the device is counting noise as a crowd.
+        self.assertGreater(main.THERMAL_MIN_CLUSTER, 4)
+
+    def test_two_warm_regions_touching_at_a_corner_are_one_cluster(self):
+        # Eight-connectivity, where the coarse sensor used four. At this
+        # resolution one person can break into pieces that touch diagonally
+        # (bare head, covered torso), and four-connectivity would report them
+        # as two people. UNVERIFIED against a real body: this pins the
+        # algorithm's behaviour, not its accuracy.
+        f = self.frame(20.0, [(10, 10, 20, 16, 34.0), (30, 26, 20, 16, 34.0)])
+        self.assertEqual(main.count_thermal_clusters(f), 1)
 
     def test_a_short_frame_returns_zero_rather_than_raising(self):
         self.assertEqual(main.count_thermal_clusters([25.0] * 10), 0)
@@ -636,13 +763,24 @@ class Privacy(unittest.TestCase):
                 imported.add(node.module.split('.')[0])
 
         banned = {
-            'cv2', 'picamera', 'picamera2', 'PIL',        # images
-            'wave', 'sounddevice', 'pyaudio', 'audioop',  # audio capture
-            'scapy', 'pyshark', 'getmac', 'netifaces',    # network identifiers
-            'bluetooth', 'bleak', 'pybluez',              # BLE identifiers
+            'cv2', 'picamera', 'picamera2', 'PIL', 'imageio',  # images
+            'wave', 'sounddevice', 'pyaudio', 'audioop',       # audio capture
+            'scapy', 'pyshark', 'getmac', 'netifaces',         # network identifiers
+            'bluetooth', 'bleak', 'pybluez',                   # BLE identifiers
         }
         self.assertEqual(imported & banned, set(),
                          'this device counts; it must never be able to identify anyone')
+
+    def test_nothing_can_write_a_thermal_frame_anywhere(self):
+        # This matters more than it used to. A 24x32 frame was a handful of warm
+        # blobs; a 160x120 frame is a recognisable scene, and the privacy policy
+        # promises one is never stored. The frame path reaches V4L2 directly for
+        # exactly this reason: no capture library means no encoder to reach for.
+        source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
+        for primitive in ('.tofile(', 'imwrite', 'imsave', 'fromarray',
+                          'pickle.dump', 'np.save', 'VideoWriter'):
+            self.assertNotIn(primitive, source,
+                             'a thermal frame must never reach a file')
 
     def test_no_shell_out_to_a_tool_that_would_collect_identifiers(self):
         source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')

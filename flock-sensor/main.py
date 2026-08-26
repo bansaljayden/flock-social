@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Flock venue sensor — runs on a Raspberry Pi at a venue entrance.
+Flock venue sensor. Runs on a Raspberry Pi at a venue entrance.
 
 Reads three signals and POSTs them to the backend on a fixed cadence:
-  - IR break-beam count  — doorway crossings since the last snapshot
-  - Thermal headcount    — heat-cluster count from an MLX90640 (a count, never an image)
-  - Ambient noise level  — RMS level from a MAX4466 mic via an MCP3008 ADC
+  - IR break-beam count: doorway crossings since the last snapshot
+  - Thermal headcount: heat-cluster count from a FLIR Lepton (a count, never an image)
+  - Ambient noise level: RMS level from a MAX4466 mic via an MCP3008 ADC
 
 WHAT LEAVES THE DEVICE
     Three integers and a timestamp. Nothing else. The thermal frame is reduced
@@ -14,6 +14,12 @@ WHAT LEAVES THE DEVICE
     Bluetooth or wifi probe, no identifier of any person is captured, stored
     or transmitted. This device counts. It cannot identify anyone, and it must
     never be extended to.
+
+    The thermal camera is a 160x120 Lepton, which is twenty-five times the
+    detail of the 24x32 part this program used to read, so that promise is
+    doing more work than it was. There is no image library on the box: the
+    frames arrive as raw temperatures through V4L2 and nothing here can encode,
+    display or save one.
 
 DESIGN CONSTRAINTS
     This box lives in a bar, on a stranger's wifi, with nobody to reboot it.
@@ -29,12 +35,16 @@ Run `python3 main.py --selftest` to check an installation without waiting.
 """
 
 import argparse
+import array
+import ctypes
 import errno
 import json
 import logging
 import math
+import mmap
 import os
 import random
+import select
 import signal
 import sys
 import threading
@@ -45,7 +55,15 @@ from pathlib import Path
 
 import requests
 
-VERSION = '1.2.0'
+# Linux only, and only the V4L2 thermal path needs them. Imported defensively
+# so the test suite still runs on a developer machine that is not a Pi, which
+# is the only machine any of this has ever run on.
+try:
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None
+
+VERSION = '1.3.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -73,12 +91,24 @@ DEFAULTS = {
     'SENSOR_DEVICE_ID': '',
     'PUSH_INTERVAL_SECONDS': '30',
     'DISPLAY_ENABLED': 'auto',
+    # The V4L2 node the Lepton's USB breakout came up on. /dev/video0 on a Pi
+    # with nothing else plugged in; `v4l2-ctl --list-devices` says for certain.
+    'THERMAL_DEVICE': '/dev/video0',
     # Thermal: a pixel counts as "warm" at this many °C, but see THERMAL_MARGIN_C.
     'THERMAL_THRESHOLD_C': '28.0',
     # ...and always at least this far above the frame's own median, so a hot
     # room in August does not turn the whole grid into one giant "person".
     'THERMAL_MARGIN_C': '3.0',
-    'THERMAL_MIN_CLUSTER': '4',
+    # Pixels are mean-pooled into bin x bin cells before counting, so the two
+    # settings below are coupled: THERMAL_MIN_CLUSTER counts CELLS in that
+    # binned grid, not raw pixels. At the default bin of 2 the grid is 80x60
+    # and one cell is four pixels.
+    'THERMAL_BIN': '2',
+    # DERIVED, NOT MEASURED. See count_thermal_clusters and README.md,
+    # Calibration. A person fills hundreds of this sensor's pixels, not the
+    # nine they filled on the 24x32 part, so the old default of 4 counted
+    # sensor noise as a crowd.
+    'THERMAL_MIN_CLUSTER': '12',
     # Noise calibration. Out of the box these are nominal and the reported
     # figure is a relative loudness index, NOT calibrated dB SPL. See the
     # calibration section of README.md.
@@ -142,14 +172,18 @@ def _cfg_number(key, cast, low, high, fallback):
 
 
 PUSH_INTERVAL = _cfg_number('PUSH_INTERVAL_SECONDS', int, 10, 3600, 30)
+THERMAL_DEVICE = (CONFIG.get('THERMAL_DEVICE') or DEFAULTS['THERMAL_DEVICE']).strip()
 THERMAL_THRESHOLD_C = _cfg_number('THERMAL_THRESHOLD_C', float, 0.0, 100.0, 28.0)
 THERMAL_MARGIN_C = _cfg_number('THERMAL_MARGIN_C', float, 0.0, 50.0, 3.0)
-THERMAL_MIN_CLUSTER = _cfg_number('THERMAL_MIN_CLUSTER', int, 1, 768, 4)
+THERMAL_BIN = _cfg_number('THERMAL_BIN', int, 1, 8, 2)
+THERMAL_MIN_CLUSTER = _cfg_number('THERMAL_MIN_CLUSTER', int, 1, 19200, 12)
 NOISE_REF_COUNTS = _cfg_number('NOISE_REF_COUNTS', float, 1e-6, 1024.0, 1.0)
 NOISE_DB_OFFSET = _cfg_number('NOISE_DB_OFFSET', float, -100.0, 200.0, 50.0)
 
 # Ceilings mirrored from backend/routes/sensors.js. Sending a value the server
-# will reject only wastes a retry, so clamp here too.
+# will reject only wastes a retry, so clamp here too. (That file's comment on
+# MAX_THERMAL still names the MLX90640; the ceiling it sets is right for either
+# sensor and is not this program's to change.)
 MAX_IR_PER_READING = 10000
 MAX_THERMAL = 1000
 MAX_NOISE_DB = 140.0
@@ -272,9 +306,10 @@ def _fresh(value, taken_at, max_age, name):
     """Return a latched reading only while it is still current, else 0.
 
     `thermal` and `noise_db` are the last value their loop managed to read and
-    nothing ever cleared them. A sensor that answered fine at 9pm and whose I2C
-    bus locked up at 11pm therefore went on reporting 11pm's headcount every 30
-    seconds until someone power-cycled the Pi: an ordinary hardware failure,
+    nothing ever cleared them. A sensor that answered fine at 9pm and stopped
+    answering at 11pm (a camera dropping off the USB bus, a wedged SPI bus)
+    therefore went on reporting 11pm's headcount every 30 seconds until someone
+    power-cycled the Pi: an ordinary hardware failure,
     indistinguishable at the backend from a live reading, showing a packed room
     on the venue card hours after the room emptied. Nothing downstream could
     catch it either, because the rows kept arriving with fresh timestamps.
@@ -348,31 +383,318 @@ def init_ir():
 
 
 # ---------------------------------------------------------------------------
-# Thermal — MLX90640 over I2C
-# Connected-component labeling on a 24x32 grid, 4-connectivity.
-# A cluster of >= THERMAL_MIN_CLUSTER warm pixels counts as one person.
+# Thermal: FLIR Lepton 3.5, 160x120, over USB
 #
-# The frame never leaves this function. It is not stored and not transmitted;
-# only the resulting integer is.
+# The Lepton sits on a PureThermal breakout, which presents it to Linux as a
+# USB Video Class device (/dev/video0 on a Pi with nothing else plugged in).
+# In radiometric TLinear mode every pixel is an absolute temperature in
+# centikelvin, so one frame is 19,200 sixteen-bit temperature readings.
+#
+# It is read here through raw V4L2 ioctls. No OpenCV, no PIL, no picamera:
+# there is nothing on this box that can encode, compress, display or save a
+# picture. The bytes become a list of temperatures, the temperatures become
+# one integer, and the frame is dropped. That is a promise the published
+# privacy policy makes on this code's behalf, and it is a bigger promise than
+# it was: 19,200 readings is twenty-five times what the sensor this file used
+# to drive produced, and a frame kept from this one would be recognisably a
+# scene. Nothing here keeps one.
+#
+# THE COUNTING MATHS WAS TUNED FOR THE COARSE SENSOR AND HAS NOT BEEN
+# RE-MEASURED ON THIS ONE. Read the calibration note on
+# count_thermal_clusters before trusting a headcount out of it.
 # ---------------------------------------------------------------------------
 
-_thermal_sensor = None
+# Sensor geometry. These two names are read by
+# frontend/src/__tests__/legalPagesMatchCode.test.js, which pins the privacy
+# policy's "160 by 120 grid" and "19,200 temperature readings" to them, so
+# swapping the sensor turns that test red on the same commit.
+THERMAL_COLS, THERMAL_ROWS = 160, 120
+THERMAL_PIXELS = THERMAL_COLS * THERMAL_ROWS
+
+# Radiometric Y16 is centikelvin.
+_CENTIKELVIN = 0.01
+_KELVIN_ZERO_C = 273.15
+
+# A frame whose entire spread is under this is the shutter, not the room. The
+# Lepton runs a flat field correction every few minutes and closes an internal
+# shutter over the sensor to do it. That frame is one uniform surface, it would
+# count zero people, and at a 30 second push cadence it can easily be the most
+# recent reading when a push happens. Skipped, rather than latched as an empty
+# room.
+FFC_FLAT_SPREAD_C = 0.5
+
+# A radiometric frame of a room lands somewhere in this range. Outside it the
+# camera is almost certainly not in TLinear mode, in which case the pixel
+# values are not temperatures at all and no threshold over them means anything.
+# Reporting 0 and saying why beats reporting a number derived from AGC counts.
+PLAUSIBLE_MEDIAN_C = (-20.0, 60.0)
+
+# --- V4L2, by hand -------------------------------------------------------
+# Deliberately not through a capture library. Every Python package that reads a
+# UVC device brings an image pipeline with it (cv2, PIL, numpy image IO), and
+# an image pipeline on this device is the one thing the privacy policy says is
+# not here. These are the eight ioctls needed to stream Y16 and nothing else.
+
+_V4L2_BUF_TYPE_VIDEO_CAPTURE = 1
+_V4L2_MEMORY_MMAP = 1
+_V4L2_CAP_VIDEO_CAPTURE = 0x00000001
+_V4L2_CAP_STREAMING = 0x04000000
+# 'Y16 ': 16-bit greyscale, which for a radiometric Lepton is a temperature per
+# pixel. Not a colour format and not a compressed one.
+_V4L2_PIX_FMT_Y16 = 0x20363159
+
+_u8 = ctypes.c_uint8
+_u32 = ctypes.c_uint32
+
+
+class _v4l2_capability(ctypes.Structure):
+    _fields_ = [('driver', ctypes.c_char * 16), ('card', ctypes.c_char * 32),
+                ('bus_info', ctypes.c_char * 32), ('version', _u32),
+                ('capabilities', _u32), ('device_caps', _u32),
+                ('reserved', _u32 * 3)]
+
+
+class _v4l2_pix_format(ctypes.Structure):
+    _fields_ = [('width', _u32), ('height', _u32), ('pixelformat', _u32),
+                ('field', _u32), ('bytesperline', _u32), ('sizeimage', _u32),
+                ('colorspace', _u32), ('priv', _u32), ('flags', _u32),
+                ('ycbcr_enc', _u32), ('quantization', _u32), ('xfer_func', _u32)]
+
+
+class _v4l2_format_union(ctypes.Union):
+    # `_align` is not a field the kernel has and it is not decoration. The real
+    # union carries struct v4l2_window, which holds two pointers, so on a
+    # 64-bit kernel the union is 8-byte aligned and sizeof(struct v4l2_format)
+    # is 208 rather than 204. The ioctl request number encodes that size, so
+    # getting it wrong does not produce a subtly wrong frame, it produces
+    # ENOTTY on VIDIOC_S_FMT and a camera that never opens. A pointer member
+    # reproduces the alignment on both 32- and 64-bit, which is why the size
+    # is asserted in test_main.py rather than trusted.
+    _fields_ = [('pix', _v4l2_pix_format), ('raw_data', _u8 * 200),
+                ('_align', ctypes.c_void_p)]
+
+
+class _v4l2_format(ctypes.Structure):
+    _fields_ = [('type', _u32), ('fmt', _v4l2_format_union)]
+
+
+class _v4l2_requestbuffers(ctypes.Structure):
+    _fields_ = [('count', _u32), ('type', _u32), ('memory', _u32),
+                ('capabilities', _u32), ('flags', _u8), ('reserved', _u8 * 3)]
+
+
+class _timeval(ctypes.Structure):
+    _fields_ = [('tv_sec', ctypes.c_long), ('tv_usec', ctypes.c_long)]
+
+
+class _v4l2_timecode(ctypes.Structure):
+    _fields_ = [('type', _u32), ('flags', _u32), ('frames', _u8),
+                ('seconds', _u8), ('minutes', _u8), ('hours', _u8),
+                ('userbits', _u8 * 4)]
+
+
+class _v4l2_buffer_m(ctypes.Union):
+    _fields_ = [('offset', _u32), ('userptr', ctypes.c_ulong),
+                ('planes', ctypes.c_void_p), ('fd', ctypes.c_int32)]
+
+
+class _v4l2_buffer(ctypes.Structure):
+    _fields_ = [('index', _u32), ('type', _u32), ('bytesused', _u32),
+                ('flags', _u32), ('field', _u32), ('timestamp', _timeval),
+                ('timecode', _v4l2_timecode), ('sequence', _u32),
+                ('memory', _u32), ('m', _v4l2_buffer_m), ('length', _u32),
+                ('reserved2', _u32), ('request_fd', ctypes.c_int32)]
+
+
+def _ioc(direction, nr, size):
+    """Encode an ioctl request number the way <asm/ioctl.h> does.
+
+    Returned signed when it does not fit a positive 32-bit int, because
+    fcntl.ioctl wants a C int and every V4L2 read/write ioctl has the top bit
+    set.
+    """
+    op = (direction << 30) | (size << 16) | (ord('V') << 8) | nr
+    return op - (1 << 32) if op >= (1 << 31) else op
+
+
+_VIDIOC_QUERYCAP = _ioc(2, 0, ctypes.sizeof(_v4l2_capability))
+_VIDIOC_S_FMT = _ioc(3, 5, ctypes.sizeof(_v4l2_format))
+_VIDIOC_REQBUFS = _ioc(3, 8, ctypes.sizeof(_v4l2_requestbuffers))
+_VIDIOC_QUERYBUF = _ioc(3, 9, ctypes.sizeof(_v4l2_buffer))
+_VIDIOC_QBUF = _ioc(3, 15, ctypes.sizeof(_v4l2_buffer))
+_VIDIOC_DQBUF = _ioc(3, 17, ctypes.sizeof(_v4l2_buffer))
+_VIDIOC_STREAMON = _ioc(1, 18, ctypes.sizeof(ctypes.c_int))
+_VIDIOC_STREAMOFF = _ioc(1, 19, ctypes.sizeof(ctypes.c_int))
+
+_BUFFER_COUNT = 4
+_FRAME_WAIT_SECONDS = 2.0
+
+
+class ThermalCamera:
+    """Y16 frames off a V4L2 node, as a list of degrees Celsius.
+
+    UNVERIFIED ON HARDWARE. Every ioctl below is written from the V4L2 and
+    Lepton documentation and has never been issued to a real PureThermal
+    board. The thing it is most likely to have wrong is the pixel format: some
+    PureThermal firmware exposes two nodes, one raw Y16 and one 8-bit AGC
+    greyscale, and the AGC one will open, stream, and produce numbers that are
+    not temperatures. is_plausible_frame() is the guard against quietly
+    counting people out of those.
+    """
+
+    def __init__(self, path, cols=THERMAL_COLS, rows=THERMAL_ROWS):
+        self.path = path
+        self.cols = cols
+        self.rows = rows
+        self.fd = None
+        self.buffers = []
+        self.streaming = False
+        self.frame_bytes = cols * rows * 2
+
+    def open(self):
+        if fcntl is None:
+            raise OSError('V4L2 needs Linux; this host has no fcntl')
+        self.fd = os.open(self.path, os.O_RDWR)
+
+        cap = _v4l2_capability()
+        fcntl.ioctl(self.fd, _VIDIOC_QUERYCAP, cap)
+        caps = cap.device_caps or cap.capabilities
+        if not caps & _V4L2_CAP_VIDEO_CAPTURE:
+            raise OSError(f'{self.path} is not a video capture device')
+        if not caps & _V4L2_CAP_STREAMING:
+            raise OSError(f'{self.path} does not support streaming I/O')
+
+        fmt = _v4l2_format()
+        fmt.type = _V4L2_BUF_TYPE_VIDEO_CAPTURE
+        fmt.fmt.pix.width = self.cols
+        fmt.fmt.pix.height = self.rows
+        fmt.fmt.pix.pixelformat = _V4L2_PIX_FMT_Y16
+        fmt.fmt.pix.field = 1  # V4L2_FIELD_NONE
+        fcntl.ioctl(self.fd, _VIDIOC_S_FMT, fmt)
+        # V4L2 is allowed to answer with something other than what was asked
+        # for, and a silent substitution here is how you end up counting heat
+        # clusters in a colour image. Refuse it instead.
+        if fmt.fmt.pix.pixelformat != _V4L2_PIX_FMT_Y16:
+            raise OSError('camera would not give a raw Y16 stream; this node is '
+                          'probably the 8-bit AGC one rather than the radiometric one')
+        self.cols = int(fmt.fmt.pix.width)
+        self.rows = int(fmt.fmt.pix.height)
+        self.frame_bytes = self.cols * self.rows * 2
+
+        req = _v4l2_requestbuffers()
+        req.count = _BUFFER_COUNT
+        req.type = _V4L2_BUF_TYPE_VIDEO_CAPTURE
+        req.memory = _V4L2_MEMORY_MMAP
+        fcntl.ioctl(self.fd, _VIDIOC_REQBUFS, req)
+        if req.count < 1:
+            raise OSError('driver would not allocate any capture buffers')
+
+        for index in range(req.count):
+            buf = _v4l2_buffer()
+            buf.type = _V4L2_BUF_TYPE_VIDEO_CAPTURE
+            buf.memory = _V4L2_MEMORY_MMAP
+            buf.index = index
+            fcntl.ioctl(self.fd, _VIDIOC_QUERYBUF, buf)
+            region = mmap.mmap(self.fd, buf.length, mmap.MAP_SHARED,
+                               mmap.PROT_READ | mmap.PROT_WRITE,
+                               offset=buf.m.offset)
+            self.buffers.append(region)
+            fcntl.ioctl(self.fd, _VIDIOC_QBUF, buf)
+
+        arg = ctypes.c_int(_V4L2_BUF_TYPE_VIDEO_CAPTURE)
+        fcntl.ioctl(self.fd, _VIDIOC_STREAMON, arg)
+        self.streaming = True
+        return self
+
+    def read_frame(self):
+        """Newest available frame as Celsius, or None if none arrived in time.
+
+        Drains to the newest rather than taking the head of the queue. This
+        loop reads once every couple of seconds against a camera producing
+        about nine frames a second, so the oldest queued buffer is always
+        seconds stale, and a stale frame latched as "in view now" is the exact
+        failure _fresh() exists to stop.
+        """
+        newest = None
+        deadline = time.monotonic() + _FRAME_WAIT_SECONDS
+        while True:
+            timeout = 0.0 if newest is not None else max(0.0, deadline - time.monotonic())
+            ready, _, _ = select.select([self.fd], [], [], timeout)
+            if not ready:
+                break
+            buf = _v4l2_buffer()
+            buf.type = _V4L2_BUF_TYPE_VIDEO_CAPTURE
+            buf.memory = _V4L2_MEMORY_MMAP
+            try:
+                fcntl.ioctl(self.fd, _VIDIOC_DQBUF, buf)
+            except OSError as e:
+                if e.errno == errno.EAGAIN:
+                    break
+                raise
+            try:
+                used = int(buf.bytesused) or self.frame_bytes
+                if used >= self.frame_bytes:
+                    newest = bytes(self.buffers[buf.index][:self.frame_bytes])
+            finally:
+                # Always give the buffer back. Leaking one starves the queue and
+                # the camera stops delivering after four reads.
+                fcntl.ioctl(self.fd, _VIDIOC_QBUF, buf)
+        if newest is None:
+            return None
+        return raw_y16_to_celsius(newest)
+
+    def close(self):
+        try:
+            if self.streaming and self.fd is not None:
+                arg = ctypes.c_int(_V4L2_BUF_TYPE_VIDEO_CAPTURE)
+                fcntl.ioctl(self.fd, _VIDIOC_STREAMOFF, arg)
+        except Exception:
+            pass
+        self.streaming = False
+        for region in self.buffers:
+            try:
+                region.close()
+            except Exception:
+                pass
+        self.buffers = []
+        if self.fd is not None:
+            try:
+                os.close(self.fd)
+            except Exception:
+                pass
+            self.fd = None
+
+
+_thermal_camera = None
+
+
+def raw_y16_to_celsius(raw):
+    """Radiometric centikelvin, little endian, to a flat list of Celsius."""
+    values = array.array('H')
+    values.frombytes(raw)
+    if sys.byteorder == 'big':
+        values.byteswap()
+    return [v * _CENTIKELVIN - _KELVIN_ZERO_C for v in values]
 
 
 def init_thermal():
-    global _thermal_sensor
+    global _thermal_camera
     try:
-        import board
-        import busio
-        import adafruit_mlx90640
-        i2c = busio.I2C(board.SCL, board.SDA, frequency=800000)
-        _thermal_sensor = adafruit_mlx90640.MLX90640(i2c)
-        _thermal_sensor.refresh_rate = adafruit_mlx90640.RefreshRate.REFRESH_2_HZ
-        logger.info('MLX90640 thermal sensor initialized')
+        camera = ThermalCamera(THERMAL_DEVICE)
+        camera.open()
+        _thermal_camera = camera
+        logger.info(f'Lepton thermal camera initialized on {THERMAL_DEVICE} '
+                    f'({camera.cols}x{camera.rows}, raw Y16)')
         return True
     except Exception as e:
-        logger.error(f'MLX90640 init failed (will report 0 headcount): {e}')
-        _thermal_sensor = None
+        logger.error(f'Lepton init failed on {THERMAL_DEVICE} '
+                     f'(will report 0 headcount): {e}')
+        if not os.path.exists(THERMAL_DEVICE):
+            logger.error(f'{THERMAL_DEVICE} does not exist. Check the USB cable to the '
+                         'PureThermal board, run `v4l2-ctl --list-devices`, and set '
+                         'THERMAL_DEVICE in the config if the camera came up on a '
+                         'different node.')
+        _thermal_camera = None
         return False
 
 
@@ -387,26 +709,100 @@ def _median(values):
     return (ordered[mid - 1] + ordered[mid]) / 2.0
 
 
-def count_thermal_clusters(frame_768, threshold_c=None, min_cluster=None,
-                           margin_c=None):
-    """Flood-fill on a 24x32 grid (4-connectivity). Returns a cluster count.
+def bin_frame(frame, rows, cols, bin_size):
+    """Mean-pool a frame into (rows//bin) x (cols//bin) cells.
 
-    The threshold floats above the frame's own median. With a fixed 28°C
-    threshold, a bar at 29°C ambient — a packed bar in summer, exactly when
-    the number matters most — marked every pixel warm and collapsed the whole
-    room into a single cluster, reporting "1 person".
+    Two reasons, neither cosmetic. The Lepton's per-pixel noise is visible at
+    this resolution, and one noisy pixel beside a warm body either bridges two
+    people into one cluster or splits one into two. And a flood fill over
+    19,200 cells in Python is twenty-five times the work it was over 768, on a
+    loop that also has to stay responsive.
     """
-    rows, cols = 24, 32
-    if len(frame_768) < rows * cols:
+    if bin_size <= 1:
+        return list(frame[:rows * cols]), rows, cols
+    out_rows = rows // bin_size
+    out_cols = cols // bin_size
+    divisor = float(bin_size * bin_size)
+    cells = []
+    for r in range(out_rows):
+        base = r * bin_size
+        for c in range(out_cols):
+            start = c * bin_size
+            total = 0.0
+            for dr in range(bin_size):
+                row_offset = (base + dr) * cols + start
+                for dc in range(bin_size):
+                    total += frame[row_offset + dc]
+            cells.append(total / divisor)
+    return cells, out_rows, out_cols
+
+
+def is_shutter_frame(frame, spread_c=FFC_FLAT_SPREAD_C):
+    """True when the frame is one flat surface, i.e. the FFC shutter."""
+    if not frame:
+        return True
+    return (max(frame) - min(frame)) < spread_c
+
+
+def is_plausible_frame(frame):
+    """True when these numbers can be room temperatures at all.
+
+    A Lepton that is not in radiometric TLinear mode still opens, still
+    streams, and still hands over 19,200 sixteen-bit numbers. They are AGC
+    counts, and thresholding them at 28.0 produces something that looks like a
+    headcount and means nothing.
+    """
+    if not frame:
+        return False
+    low, high = PLAUSIBLE_MEDIAN_C
+    return low <= _median(frame) <= high
+
+
+def count_thermal_clusters(frame, threshold_c=None, min_cluster=None,
+                           margin_c=None, rows=None, cols=None, bin_size=None):
+    """Flood fill over a binned thermal frame. Returns a cluster count.
+
+    The threshold floats above the frame's own median. With a fixed 28C
+    threshold, a bar at 29C ambient, which is a packed bar in summer and
+    exactly when the number matters most, marked every pixel warm and
+    collapsed the whole room
+    into a single cluster, reporting "1 person". That reasoning is unchanged
+    from the coarse sensor and matters more here, not less: a Lepton's absolute
+    accuracy without a calibration target is several degrees, so the
+    median-relative margin does nearly all the work and THERMAL_THRESHOLD_C is
+    closer to a floor than a real decision.
+
+    THIS IS NOT CALIBRATED. THERMAL_MIN_CLUSTER's default is derived, not
+    measured: a person at doorway range fills a few hundred of this sensor's
+    19,200 pixels rather than the nine or so they filled on a 24x32 grid, so
+    the old default of 4 would count sensor noise as a crowd. The derivation is
+    written out in README.md under Calibration. Two things it cannot predict,
+    and only a bench day can:
+
+      - a person whose torso is covered and whose head is bare can fragment
+        into two or three clusters at this resolution, where the coarse grid
+        blurred them into one. Eight-connectivity and the binning above reduce
+        that. Neither has been measured against a real body.
+      - the right minimum depends on how far the camera is from the doorway and
+        on which lens is on it, and nobody has put one on a wall yet.
+
+    Until a unit is calibrated in a real room, anything built on this number is
+    a relative activity signal.
+    """
+    rows = THERMAL_ROWS if rows is None else rows
+    cols = THERMAL_COLS if cols is None else cols
+    if len(frame) < rows * cols:
         return 0
     threshold_c = THERMAL_THRESHOLD_C if threshold_c is None else threshold_c
     min_cluster = THERMAL_MIN_CLUSTER if min_cluster is None else min_cluster
     margin_c = THERMAL_MARGIN_C if margin_c is None else margin_c
+    bin_size = THERMAL_BIN if bin_size is None else bin_size
 
-    ambient = _median(frame_768[:rows * cols])
+    cells, rows, cols = bin_frame(frame, rows, cols, max(1, int(bin_size)))
+    ambient = _median(cells)
     cutoff = max(threshold_c, ambient + margin_c)
 
-    grid = [[frame_768[r * cols + c] >= cutoff for c in range(cols)] for r in range(rows)]
+    grid = [[cells[r * cols + c] >= cutoff for c in range(cols)] for r in range(rows)]
     visited = [[False] * cols for _ in range(rows)]
     count = 0
     for r0 in range(rows):
@@ -421,8 +817,14 @@ def count_thermal_clusters(frame_768, threshold_c=None, min_cluster=None,
                     continue
                 visited[r][c] = True
                 size += 1
-                stack.append((r + 1, c)); stack.append((r - 1, c))
-                stack.append((r, c + 1)); stack.append((r, c - 1))
+                # Eight-connectivity, where the coarse sensor used four. At
+                # 24x32 a diagonal gap between two warm pixels was almost
+                # always two people. At this resolution it is almost always one
+                # person with a cooler patch across them.
+                for dr in (-1, 0, 1):
+                    for dc in (-1, 0, 1):
+                        if dr or dc:
+                            stack.append((r + dr, c + dc))
             if size >= min_cluster:
                 count += 1
                 if count >= MAX_THERMAL:
@@ -431,21 +833,36 @@ def count_thermal_clusters(frame_768, threshold_c=None, min_cluster=None,
 
 
 def thermal_loop():
-    frame = [0.0] * 768
     while not _stop.is_set():
         try:
-            _thermal_sensor.getFrame(frame)
-            n = count_thermal_clusters(frame)
-            with _lock:
-                _state['thermal'] = max(0, min(MAX_THERMAL, int(n)))
-                _state['thermal_at'] = time.monotonic()
+            frame = _thermal_camera.read_frame()
+            if frame is None:
+                log_throttled('thermal_timeout', logging.WARNING,
+                              'Thermal camera delivered no frame within '
+                              f'{_FRAME_WAIT_SECONDS}s')
+            elif is_shutter_frame(frame):
+                # Flat field correction. Not a reading, and not a failure
+                # either, so the freshness clock is left alone: an FFC lasts
+                # well under a second and this loop comes back around in two.
+                pass
+            elif not is_plausible_frame(frame):
+                log_throttled('thermal_not_radiometric', logging.ERROR,
+                              'Thermal frames are not room temperatures (median '
+                              f'{_median(frame):.1f}C). The camera is probably not in '
+                              'radiometric TLinear mode, so no headcount can be read '
+                              'from it. Reporting 0. See README.md, Troubleshooting.')
+            else:
+                n = count_thermal_clusters(frame)
+                with _lock:
+                    _state['thermal'] = max(0, min(MAX_THERMAL, int(n)))
+                    _state['thermal_at'] = time.monotonic()
         except Exception as e:
             log_throttled('thermal_read', logging.WARNING, f'Thermal read error: {e}')
         _stop.wait(2)
 
 
 # ---------------------------------------------------------------------------
-# Noise — MAX4466 mic via MCP3008 ADC channel 0 over SPI
+# Noise: MAX4466 mic via MCP3008 ADC channel 0 over SPI
 #
 # 100ms of samples are reduced to one RMS figure and thrown away. No audio is
 # recorded, buffered to disk, or transmitted; speech cannot be recovered from
@@ -645,7 +1062,7 @@ def url_is_acceptable(url):
     if url.startswith('http://') and allow:
         return True, 'FLOCK_API_URL is plaintext http and ALLOW_INSECURE_URL is set'
     if url.startswith('http://'):
-        return False, ('FLOCK_API_URL is plaintext http — the API key would travel in the '
+        return False, ('FLOCK_API_URL is plaintext http. The API key would travel in the '
                        'clear over the venue wifi. Use https, or set ALLOW_INSECURE_URL=true '
                        'if this is a local test backend.')
     return False, f'FLOCK_API_URL must start with https:// (got {url[:40]!r})'
@@ -715,7 +1132,7 @@ def snapshot():
 
     The counter resets here, not on a successful POST, so a payload waiting in
     the buffer can never have its crossings counted a second time by the next
-    snapshot — the backend sums ir_beam_count across payloads.
+    snapshot, because the backend sums ir_beam_count across payloads.
 
     The other two signals are latched values, so each is checked for freshness
     before it is sent. See _fresh().
@@ -950,18 +1367,35 @@ def push_loop():
 
 # ---------------------------------------------------------------------------
 # Display loop (optional, demo unit only)
+#
+# The panel is the 7 inch 720x1280 DSI screen the build plan specifies, mounted
+# in PORTRAIT. That is the long axis vertical, so the three readings stack down
+# the screen instead of sitting in three columns as they did on the 800x480
+# landscape panel this used to assume.
+#
+# Portrait is a Raspberry Pi OS display setting, not something this program can
+# impose: it asks the framebuffer for 720x1280 and draws into whatever it gets.
+# If the panel comes up landscape, rotate it in the OS. UNVERIFIED: no panel
+# has been attached to this code.
 # ---------------------------------------------------------------------------
+
+DISPLAY_W, DISPLAY_H = 720, 1280
+
 
 def display_loop():
     try:
         os.environ.setdefault('SDL_VIDEODRIVER', 'fbcon' if os.path.exists('/dev/fb0') else 'dummy')
         import pygame
         pygame.init()
-        screen = pygame.display.set_mode((800, 480), pygame.FULLSCREEN if os.path.exists('/dev/fb0') else 0)
+        screen = pygame.display.set_mode(
+            (DISPLAY_W, DISPLAY_H),
+            pygame.FULLSCREEN if os.path.exists('/dev/fb0') else 0)
         pygame.mouse.set_visible(False)
-        font_big = pygame.font.Font(None, 96)
-        font_med = pygame.font.Font(None, 48)
-        font_sm = pygame.font.Font(None, 28)
+        # Sized for a 7 inch panel read from across a room, not for a desktop.
+        font_big = pygame.font.Font(None, 150)
+        font_med = pygame.font.Font(None, 84)
+        font_sm = pygame.font.Font(None, 40)
+        font_xs = pygame.font.Font(None, 32)
 
         NAVY = (30, 41, 59)
         CREAM = (241, 237, 224)
@@ -969,6 +1403,15 @@ def display_loop():
         AMBER = (245, 158, 11)
         ORANGE = (249, 115, 22)
         RED = (239, 68, 68)
+        MUTED = (160, 170, 180)
+        FAINT = (110, 120, 130)
+        RULE = (54, 66, 84)
+
+        PAD = 36
+        HEADER_H = 84
+        # Three stacked panels, then the chart takes the rest.
+        BLOCK_H = 268
+        BLOCK_TOP = HEADER_H + 24
 
         while not _stop.is_set():
             with _lock:
@@ -987,45 +1430,64 @@ def display_loop():
             noise_live = noise_at is not None and now_mono - noise_at <= NOISE_STALE_AFTER
 
             screen.fill(NAVY)
-            top = pygame.Surface((800, 50)); top.fill((20, 28, 40)); screen.blit(top, (0, 0))
-            screen.blit(font_sm.render('FLOCK VENUE SENSOR', True, CREAM), (20, 14))
+            top = pygame.Surface((DISPLAY_W, HEADER_H))
+            top.fill((20, 28, 40))
+            screen.blit(top, (0, 0))
+            screen.blit(font_sm.render('FLOCK VENUE SENSOR', True, CREAM), (PAD, 24))
 
-            col_w = 800 // 3
-            # Beam breaks since the last snapshot — crossings in either
-            # direction, over at most one push interval. It was labelled
-            # "Entered Today", which this number has never been.
-            screen.blit(font_sm.render('Doorway crossings', True, (160, 170, 180)), (20, 80))
-            screen.blit(font_big.render(str(ir), True, CREAM), (20, 120))
-            screen.blit(font_sm.render('since last update', True, (110, 120, 130)), (20, 205))
+            def rule(y):
+                pygame.draw.line(screen, RULE, (PAD, y), (DISPLAY_W - PAD, y), 1)
 
-            screen.blit(font_sm.render('In view now', True, (160, 170, 180)), (col_w + 20, 80))
+            # Panel 1. Beam breaks since the last snapshot: crossings in either
+            # direction, over at most one push interval. This was once labelled
+            # "Entered Today", which the number has never been.
+            y = BLOCK_TOP
+            screen.blit(font_sm.render('Doorway crossings', True, MUTED), (PAD, y))
+            screen.blit(font_big.render(str(ir), True, CREAM), (PAD, y + 52))
+            screen.blit(font_xs.render('since last update', True, FAINT), (PAD, y + 200))
+            rule(y + BLOCK_H - 24)
+
+            # Panel 2.
+            y = BLOCK_TOP + BLOCK_H
+            screen.blit(font_sm.render('In view now', True, MUTED), (PAD, y))
             screen.blit(font_big.render(f'~{therm}' if therm_live else '--', True, CREAM),
-                        (col_w + 20, 120))
-            if not therm_live:
-                screen.blit(font_sm.render('thermal offline', True, RED), (col_w + 20, 205))
+                        (PAD, y + 52))
+            if therm_live:
+                screen.blit(font_xs.render('warm bodies, counted on the device', True, FAINT),
+                            (PAD, y + 200))
+            else:
+                screen.blit(font_xs.render('thermal offline', True, RED), (PAD, y + 200))
+            rule(y + BLOCK_H - 24)
 
-            screen.blit(font_sm.render('Noise', True, (160, 170, 180)), (col_w * 2 + 20, 80))
+            # Panel 3.
+            y = BLOCK_TOP + BLOCK_H * 2
+            screen.blit(font_sm.render('Noise', True, MUTED), (PAD, y))
             if noise_live:
                 label = 'Quiet' if db < 50 else 'Moderate' if db < 70 else 'Lively' if db < 85 else 'Loud'
                 color = GREEN if db < 50 else AMBER if db < 70 else ORANGE if db < 85 else RED
                 # "level", never "dB": nobody has calibrated this against a sound
                 # level meter, so it is a relative loudness index. See README.
-                screen.blit(font_med.render(label, True, color), (col_w * 2 + 20, 120))
-                screen.blit(font_sm.render(f'level {int(db)}', True, (160, 170, 180)), (col_w * 2 + 20, 175))
+                screen.blit(font_med.render(label, True, color), (PAD, y + 60))
+                screen.blit(font_xs.render(f'level {int(db)}', True, FAINT), (PAD, y + 160))
             else:
-                screen.blit(font_med.render('--', True, CREAM), (col_w * 2 + 20, 120))
-                screen.blit(font_sm.render('mic offline', True, RED), (col_w * 2 + 20, 175))
+                screen.blit(font_med.render('--', True, CREAM), (PAD, y + 60))
+                screen.blit(font_xs.render('mic offline', True, RED), (PAD, y + 160))
+            rule(y + BLOCK_H - 24)
 
+            # Chart of recent pushed headcounts, along the bottom.
             if history:
-                base_y = 460
+                chart_bottom = DISPLAY_H - PAD - 40
                 chart_h = 200
-                bar_w = 60
-                gap = 6
-                chart_x = (800 - (bar_w + gap) * len(history)) // 2
+                screen.blit(font_xs.render('Last few readings', True, FAINT),
+                            (PAD, chart_bottom + 12))
+                usable = DISPLAY_W - PAD * 2
+                slot = usable // max(len(history), 1)
+                bar_w = max(8, slot - 8)
                 max_h = max(history) or 1
                 for i, v in enumerate(history):
                     h = int((v / max_h) * chart_h) if max_h else 0
-                    pygame.draw.rect(screen, CREAM, (chart_x + i * (bar_w + gap), base_y - h, bar_w, h))
+                    pygame.draw.rect(screen, CREAM,
+                                     (PAD + i * slot, chart_bottom - h, bar_w, h))
 
             pygame.display.flip()
             for event in pygame.event.get():
@@ -1079,11 +1541,29 @@ def selftest():
                         '(`timedatectl` shows whether time sync is on.)')
 
     print('\n  hardware:')
-    print('    (if the service is running, it already holds the I2C/SPI/GPIO')
-    print('     devices and these may read as NOT DETECTED. Stop it first with')
-    print('     `sudo systemctl stop flock-sensor` for a true hardware check.)')
+    print('    (if the service is running, it already holds the camera, SPI and')
+    print('     GPIO devices and these may read as NOT DETECTED. Stop it first')
+    print('     with `sudo systemctl stop flock-sensor` for a true check.)')
     print(f'    IR break-beam  : {"ok" if init_ir() else "NOT DETECTED (reports 0)"}')
-    print(f'    thermal camera : {"ok" if init_thermal() else "NOT DETECTED (reports 0)"}')
+    thermal_ok = init_thermal()
+    print(f'    thermal camera : {"ok" if thermal_ok else "NOT DETECTED (reports 0)"}'
+          f'  [{THERMAL_DEVICE}]')
+    if thermal_ok:
+        # Opening the node proves a camera is there. It does not prove the
+        # numbers are temperatures, and a Lepton that is not in radiometric
+        # TLinear mode streams happily and counts nonsense. Say which it is.
+        frame = _thermal_camera.read_frame()
+        if frame is None:
+            print('                     opened, but delivered no frame')
+        elif not is_plausible_frame(frame):
+            print(f'                     NOT RADIOMETRIC: median reads '
+                  f'{_median(frame):.1f}C, which is not a room. Headcount will '
+                  f'be 0. See README.md, Troubleshooting.')
+        else:
+            print(f'                     radiometric, room median '
+                  f'{_median(frame):.1f}C, {count_thermal_clusters(frame)} '
+                  f'cluster(s) in view')
+        _thermal_camera.close()
     print(f'    noise mic      : {"ok" if init_noise() else "NOT DETECTED (reports 0)"}')
 
     if problems:
@@ -1156,7 +1636,7 @@ def main():
     logger.info(f'Display: {"on" if DISPLAY_ON else "headless"}')
     # Never log the key itself, only whether one exists.
     if not CONFIG.get('FLOCK_API_KEY'):
-        logger.error('FLOCK_API_KEY is empty — every push will be refused. '
+        logger.error('FLOCK_API_KEY is empty. Every push will be refused. '
                      'Set it in the config file and restart. Run `main.py --selftest` to check.')
 
     ok, note = url_is_acceptable(api_url())
@@ -1196,7 +1676,7 @@ def main():
 
     if DISPLAY_ON:
         # pygame wants the main thread. If it stops, fall through to the
-        # keep-alive below rather than returning — main() returning exits 0,
+        # keep-alive below rather than returning, because main() exits 0,
         # and systemd does not restart a clean exit, so a pygame crash used to
         # silently take the whole sensor offline until someone visited.
         display_loop()

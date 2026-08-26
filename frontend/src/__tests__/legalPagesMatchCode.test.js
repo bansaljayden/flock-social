@@ -72,12 +72,29 @@ describe('venue occupancy sensors are disclosed for as long as the sensor exists
     expect(interval).not.toBeNull();
     expect(privacy).toContain(`Every ${interval[1]} seconds`);
 
-    const grid = main.match(/rows,\s*cols\s*=\s*(\d+),\s*(\d+)/);
+    // The sensor's own geometry constants, not a number typed twice. The
+    // device moved from a 24x32 MLX90640 to a 160x120 FLIR Lepton, which is
+    // twenty-five times as many readings, and the policy sentence that says
+    // what the thermal part IS has to move with it or it describes a device
+    // that no longer exists.
+    const grid = main.match(/THERMAL_COLS,\s*THERMAL_ROWS\s*=\s*(\d+),\s*(\d+)/);
     expect(grid).not.toBeNull();
-    const rows = Number(grid[1]);
-    const cols = Number(grid[2]);
-    expect(privacy).toContain(`${rows} by ${cols} grid`);
-    expect(privacy).toContain(`${rows * cols} temperature readings`);
+    const cols = Number(grid[1]);
+    const rows = Number(grid[2]);
+    expect(privacy).toContain(`${cols} by ${rows} grid`);
+    expect(privacy).toContain(`${(cols * rows).toLocaleString('en-US')} temperature readings`);
+  });
+
+  test('the thermal stream is a raw temperature format, not a picture format', () => {
+    // The policy calls the thermal part "a grid of temperatures, not a
+    // picture". On a USB thermal camera that is a claim about the pixel
+    // format the device asks V4L2 for: Y16 raw is 16 bits of temperature per
+    // pixel, and the same camera's other node is 8-bit AGC greyscale, which
+    // is an image. Pinned because the difference is invisible in a diff.
+    const main = read('flock-sensor', 'main.py');
+    expect(main).toMatch(/_V4L2_PIX_FMT_Y16\s*=\s*0x20363159/);
+    expect(main).toMatch(/pixelformat\s*=\s*_V4L2_PIX_FMT_Y16/);
+    expect(privacy).toMatch(/not a picture/);
   });
 
   test('the "cannot identify anyone" claim holds: no camera, audio, or radio capture on the device', () => {
@@ -93,9 +110,13 @@ describe('venue occupancy sensors are disclosed for as long as the sensor exists
       .join('\n');
     // Every way this device could start identifying people arrives as one of
     // these. While none of them is imported or shelled out to, the page is true.
-    expect(code).not.toMatch(/^\s*(import|from)\s+(cv2|picamera\w*|PIL|pyaudio|sounddevice|bluetooth|bluepy|scapy)\b/m);
-    expect(code).not.toMatch(/VideoCapture|imwrite|wave\.open|\.wav\b/i);
+    expect(code).not.toMatch(/^\s*(import|from)\s+(cv2|picamera\w*|PIL|imageio|pyaudio|sounddevice|bluetooth|bluepy|scapy)\b/m);
+    expect(code).not.toMatch(/VideoCapture|VideoWriter|imwrite|imsave|fromarray|wave\.open|\.wav\b/i);
     expect(code).not.toMatch(/iwlist|iw dev|hcitool|bluetoothctl|airodump|tcpdump|arp -a/i);
+    // A 24x32 frame was a few warm blobs. A 160x120 frame is a scene, so the
+    // "never stored" half of the claim needs pinning too: nothing on the
+    // device may write one anywhere.
+    expect(code).not.toMatch(/\.tofile\(|pickle\.dump|np\.save/);
     expect(privacy).toMatch(/No phone detection/);
     expect(privacy).toMatch(/No audio recording/);
   });
