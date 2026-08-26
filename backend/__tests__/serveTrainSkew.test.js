@@ -308,3 +308,119 @@ test('skew (d): out-of-vocab category fills with the global mean, refined falls 
     meta.refined_baselines = savedRef;
   }
 });
+
+// ---------------------------------------------------------------------------
+// (e) THE CLIMATE ANOMALY OUTSIDE THE ARTIFACT'S CLIMATOLOGY (2026-08-26).
+//
+// prepare_features.add_climate_anomaly builds temp_norms by grouping the TRAIN
+// SPLIT on (5-degree latitude band, month), so a key exists exactly when
+// training rows exist for it. v2.6.0-starling's corpus is one spring, its last
+// row is 2026-05-18, and all four season one-hots are declared constant slots.
+// The table therefore holds months 3, 4 and 5 and nothing else.
+//
+// climateNorm's miss fell through to the mean of the whole table, 66.01F on
+// this artifact, which is a spring average taken across every latitude from
+// -35 to 55. Subtracting it from a live reading gave a "seasonal anomaly" of
+// +16.0 on a normal August evening in the Lehigh Valley and -25.0, the clip
+// floor, on a normal December one, and pinned is_warm_anomaly_evening at 1 for
+// the whole summer. Measured against the shipped graph, 72 venue-hours per
+// month over bar/cafe/restaurant: worth 0.035 points inside the corpus months,
+// 0.260 in August and 2.049 (max 7.069) in December.
+//
+// The fix is monthClimateNorm: with no norm for the month there is no anomaly
+// to state, so the slot carries 0, the centre of the trained distribution and
+// the value an imputed temperature already produced. Mirroring the Python
+// fillna would not have been parity, because that fill never described one
+// training row.
+// ---------------------------------------------------------------------------
+
+const CORPUS_MONTHS = [3, 4, 5];
+
+test('skew (e): the shipped artifact carries climatology for the corpus spring only', async () => {
+  assert.equal(await mlPredictor.init(), true);
+  const norms = I.getMetadata().temp_norms || {};
+  const keys = Object.keys(norms);
+  assert.ok(keys.length > 0, 'the artifact must carry temp_norms at all');
+  const months = [...new Set(keys.map((k) => Number(k.split('_')[1])))].sort((a, b) => a - b);
+  assert.deepEqual(months, CORPUS_MONTHS,
+    'if a retrain widens the corpus past spring this test is the notice, and the '
+    + 'null branch in monthClimateNorm stops firing on its own');
+});
+
+test('skew (e): monthClimateNorm answers only for a month the artifact has, climateNorm still imputes', async () => {
+  assert.equal(await mlPredictor.init(), true);
+  const norms = I.getMetadata().temp_norms || {};
+  const LAT = 40.6; // Lehigh Valley, band 40
+
+  const may = I.monthClimateNorm(LAT, 5);
+  assert.equal(may, Number(norms['40_5']), 'an in-corpus month reads its own band/month cell');
+
+  assert.equal(I.monthClimateNorm(LAT, 8), null, 'August has no cell, so there is no normal to state');
+  assert.equal(I.monthClimateNorm(LAT, 12), null);
+
+  // tempForFeature's job is different and its fallback is untouched: with no
+  // reading it still needs an in-range temperature to impute, and the
+  // alternative is dropping the venue to the rule engine.
+  const global = I.climateNorm(LAT, 8);
+  assert.ok(Number.isFinite(global), 'climateNorm must still answer with the table mean');
+  assert.equal(I.tempForFeature({}, LAT, 8), global);
+  assert.equal(I.climateNorm(LAT, 5), may, 'an in-corpus month is the same number through both doors');
+});
+
+test('skew (e): outside the corpus months the vector claims no anomaly, and a normal December is not 25 degrees cold', async () => {
+  assert.equal(await mlPredictor.init(), true);
+  const venue = {
+    place_id: 'skew-anomaly-test',
+    types: ['bar', 'restaurant', 'food'],
+    rating: 4.4, price_level: 2, user_ratings_total: 900,
+    location: { latitude: 40.6, longitude: -75.37 },
+  };
+  const noEv = { hasEvent: false, nearestAttendance: 0, totalEvents: 0, totalAttendance: 0, nearestType: null, nearestDistance: 0 };
+  const noFb = { avgCrowd: 0, count: 0, avgErrorMapped: 0, avgErrorLegacy: 0 };
+  const nb = { count: 0, mean: 0 };
+  const at = (monthIndex, day, hour, temp) => I.buildFeatureMap(
+    venue, { ...CLEAR_WEATHER, temp }, new Date(2026, monthIndex, day, hour, 0, 0), noEv, noFb, 55, nb,
+  );
+
+  // August, a warm evening. Before the fix this read +15.99 and 1.
+  const aug = at(7, 15, 20, 82);
+  assert.equal(aug.temp_anomaly, 0);
+  assert.equal(aug.is_warm_anomaly_evening, 0,
+    'a normal summer evening is not a warm ANOMALY, and this slot sat at 1 all summer');
+
+  // December, a normal cold evening. Before the fix this sat on the clip floor.
+  const dec = at(11, 15, 20, 34);
+  assert.equal(dec.temp_anomaly, 0);
+  assert.notEqual(dec.temp_anomaly, -25, 'the -25 clip is an extreme, not an ordinary December');
+
+  // Inside the corpus months nothing changed: the real deviation still ships,
+  // and it still drives the evening flag.
+  const norm5 = I.monthClimateNorm(40.6, 5);
+  const may = at(4, 15, 20, 82);
+  assert.equal(may.temp_anomaly, Math.max(-25, Math.min(25, 82 - norm5)));
+  assert.ok(may.temp_anomaly > 5);
+  assert.equal(may.is_warm_anomaly_evening, 1);
+
+  // The flag is an EVENING flag on both sides of the change.
+  assert.equal(at(4, 15, 11, 82).is_warm_anomaly_evening, 0, 'hour 11 is not the evening');
+});
+
+test('skew (e): an imputed temperature still lands on anomaly 0, in and out of the corpus months', async () => {
+  assert.equal(await mlPredictor.init(), true);
+  const venue = {
+    place_id: 'skew-anomaly-impute',
+    types: ['cafe', 'coffee_shop', 'food'],
+    rating: 4.2, price_level: 1, user_ratings_total: 300,
+    location: { latitude: 40.6, longitude: -75.37 },
+  };
+  const noEv = { hasEvent: false, nearestAttendance: 0, totalEvents: 0, totalAttendance: 0, nearestType: null, nearestDistance: 0 };
+  const noFb = { avgCrowd: 0, count: 0, avgErrorMapped: 0, avgErrorLegacy: 0 };
+  // No temperature anywhere in the reading: tempForFeature imputes.
+  const noTemp = { humidity: 50, windSpeed: 5, isRaining: false, conditionId: 800 };
+  for (const monthIndex of [4, 7, 11]) {
+    const f = I.buildFeatureMap(venue, noTemp, new Date(2026, monthIndex, 15, 20, 0, 0), noEv, noFb, 55, { count: 0, mean: 0 });
+    assert.equal(f.temp_anomaly, 0, `month index ${monthIndex}: an imputed reading claims no anomaly`);
+    assert.equal(f.is_warm_anomaly_evening, 0);
+    assert.ok(Number.isFinite(f.temperature), 'the temperature slot itself is still filled, not zeroed');
+  }
+});

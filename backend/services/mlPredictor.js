@@ -258,6 +258,68 @@ function allowEventFetch(userId, opts) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// HOW OFTEN DOES THE TRAINED MODEL ACTUALLY ANSWER. Added 2026-08-26, because
+// nothing in this repo had ever counted it, and the crowd number is the one
+// differentiated claim the product makes.
+//
+// predictBusyness has five exits and only one of them is the model. The other
+// four are honest refusals that return crowdEngine's category curve, and the
+// most common of them by a wide margin is `rule_engine_no_baseline`: a delta
+// model reconstructs score = baseline + clamp(delta), so a venue with no row in
+// ml_venue_baselines cannot be scored by it at all.
+//
+// WHY THAT SET CANNOT GROW ON ITS OWN TODAY. There are exactly two ways a venue
+// acquires a baseline row. One is the BestTime collector, which is finished by
+// Jayden's decision (key dead, zero rows since 2026-05-18). The other is
+// storeGoogleBaselines, which predictBusyness calls only when the venue it was
+// handed carries `popular_times` -- and no route in this repo puts that field on
+// a venue (routes/crowd.js says so at its batch whitelist, and the Places field
+// masks in that file do not request it, because the Places API does not sell
+// popular times). So baselineFromPopularTimes, storeGoogleBaselines and
+// GOOGLE_BASELINE_REFRESH_DAYS are unreachable from every request path, the
+// corpus is frozen at the venues collection already reached, and every venue
+// outside it takes the rule engine forever.
+//
+// That is a product decision to make, not a bug to patch here. What was missing
+// is the number to make it on: the split is invisible in the payload (a client
+// sees one card either way), invisible in the logs (no line is written per
+// prediction), and invisible in the database (nothing is stored). These counters
+// are the cheapest thing that makes it visible.
+//
+// IN MEMORY AND PER PROCESS, deliberately, exactly like eventBudgetStatus above.
+// A counter that needed a table would need a migration, a write on the hottest
+// path in the API, and a retention policy, to answer a question a restart-scoped
+// tally already answers. Read it, do not gate on it.
+const predictionMethodCounts = Object.create(null);
+let predictionCountsSince = Date.now();
+
+function countPrediction(method) {
+  const key = typeof method === 'string' && method ? method : 'unknown';
+  predictionMethodCounts[key] = (predictionMethodCounts[key] || 0) + 1;
+}
+
+// Non-consuming read, for routes/admin.js. `modelShare` is the fraction of
+// predictions this process answered with the trained model, null while nothing
+// has been scored yet rather than 0, because "no data" and "the model never
+// answers" are the two readings this panel exists to tell apart.
+function predictionCoverage() {
+  const byMethod = { ...predictionMethodCounts };
+  const total = Object.values(byMethod).reduce((a, b) => a + b, 0);
+  const ml = byMethod.ml || 0;
+  return {
+    since: predictionCountsSince,
+    total,
+    ml,
+    ruleEngine: total - ml,
+    modelShare: total > 0 ? ml / total : null,
+    byMethod,
+    modelVersion: (metadata && metadata.model_version) || null,
+    modelLoaded: useML,
+    inMemory: true,
+  };
+}
+
 // Non-consuming read, for routes/admin.js's cost panel. This ledger is the
 // THIRD Ticketmaster counter in the repo (routes/events.js has one at 2000/day
 // and services/nightContext.js one at 200/day) and it was the only one with no
@@ -1884,11 +1946,79 @@ function categoryGlobalMean(meta) {
 // as prepare_features.add_climate_anomaly, same global-mean fallback. Units are
 // whatever the training rows were in, which is °F.
 function climateNorm(lat, month) {
+  const exact = monthClimateNorm(lat, month);
+  if (exact != null) return exact;
+  return globalTempNorm();
+}
+
+// ---------------------------------------------------------------------------
+// THE SEASONAL NORMAL FOR THIS MONTH, OR NOTHING. Split out of climateNorm
+// 2026-08-26, because its two consumers need different answers and sharing one
+// pinned temp_anomaly at its clip for most of the year.
+//
+// WHAT THE TABLE ACTUALLY CONTAINS. prepare_features.add_climate_anomaly builds
+// temp_norms by grouping the TRAIN SPLIT on (5-degree latitude band, month) and
+// taking mean temperature, so a key exists exactly when training rows exist for
+// that band and month. The shipped v2.6.0-starling artifact carries thirty keys
+// and every one of them is month 3, 4 or 5: the corpus is one spring, its last
+// row is 2026-05-18, and all four season one-hots are declared constant slots
+// in corpus_contract.dead_slots.
+//
+// WHAT THAT DID TO SERVING. climateNorm's miss fell through to globalTempNorm(),
+// the mean of the whole table, which on this artifact is 66.01F. That number is
+// a spring average taken across every latitude from -35 to 55, so outside March
+// through May it is not a climatology at all, and it was the norm subtracted on
+// EVERY prediction for nine months of the year:
+//
+//   band 40 (Lehigh), August, an 82F evening    anomaly +16.0, warm_evening 1
+//   band 40 (Lehigh), December, a 34F evening   anomaly -25.0 (the clip floor)
+//
+// A normal December evening is not twenty-five degrees colder than normal, and
+// a normal August evening is not sixteen degrees warmer than normal. The
+// feature is DEFINED as the deviation from the seasonal norm, so with no norm
+// for the season there is no deviation to state, and is_warm_anomaly_evening
+// (anomaly > 5 AND hour >= 17) was stuck at 1 on every summer evening, which is
+// the exact opposite of the patio signal it was added in v2.4 to carry.
+//
+// MEASURED on the shipped artifact, 72 venue-hours per month across bar, cafe
+// and restaurant, comparing the served vector against the same vector with
+// these two slots zeroed:
+//
+//   May (inside the corpus)   mean |delta| 0.035 pts, max 0.236
+//   August                    mean |delta| 0.260 pts, max 0.755
+//   December                  mean |delta| 2.049 pts, max 7.069
+//
+// So the feature is worth almost nothing when it is in distribution and up to
+// seven points of pure fabrication when it is not.
+//
+// WHY ZERO IS THE RIGHT NO-INFORMATION VALUE, and why mirroring the training
+// fill was not. The obvious objection is that prepare_features fills a missing
+// norm with global_mean and serving must match it. It does not apply here: the
+// norms table is BUILT from the train split, so the merge cannot miss on a
+// training row and `fillna(global_mean)` never described a single one. It is a
+// serve-time-only construct. Zero, by contrast, is the centre of the trained
+// temp_anomaly distribution and is already what this file produces for an
+// imputed temperature (see the block in buildFeatureMap), so it is a value the
+// model has seen hundreds of thousands of times. Copying a Python line that
+// never ran is not parity; landing in the distribution the weights were fit on
+// is. Same lesson cold_outdoor's unit bug taught two rounds ago: check the
+// values, not the source.
+//
+// WHAT REOPENS THIS. A retrain on a corpus that spans the year fills the table
+// in and this branch stops firing on its own, with no code change. Nothing here
+// invents a climatology, and nothing here should: the honest answer to "what is
+// normal for a Lehigh Valley December" is that this artifact has never seen one.
+// Pinned by __tests__/serveTrainSkew.test.js (e).
+//
+// Returns null rather than a number when the artifact has no norm for this
+// (band, month). tempForFeature still goes through climateNorm above, because
+// there the global mean is doing a different job: it is the only in-range
+// temperature available to impute, and the alternative is the rule engine.
+function monthClimateNorm(lat, month) {
   const norms = (metadata && metadata.temp_norms) || {};
   const band = Math.round((Number(lat) || 0) / 5) * 5;
   const exact = Number(norms[`${band}_${month}`]);
-  if (Number.isFinite(exact)) return exact;
-  return globalTempNorm();
+  return Number.isFinite(exact) ? exact : null;
 }
 
 // The temperature to hand the model: the real reading, else the climatology.
@@ -2131,12 +2261,24 @@ function buildFeatureMap(venue, weather, timestamp, eventData, feedback, baselin
     ...astronomyFeatures(lat, month, hour),
     ...(() => {
       // prepare_features.add_climate_anomaly: temp_norm is the latitude-band x
-      // month mean, filled with the mean of the whole norms table where that
-      // band/month was never seen, and temp_anomaly is (temperature, itself
-      // filled with temp_norm when missing) minus temp_norm, clipped to +/-25.
-      // climateNorm() is that same number, which is why an imputed temperature
-      // comes out at anomaly 0 here without a second special case.
-      const norm = climateNorm(lat, month);
+      // month mean and temp_anomaly is (temperature, itself filled with
+      // temp_norm when missing) minus temp_norm, clipped to +/-25.
+      //
+      // monthClimateNorm, NOT climateNorm, and the difference is nine months of
+      // the year. The long version sits above monthClimateNorm; the short one is
+      // that this artifact's norms table covers months 3, 4 and 5 only, so
+      // climateNorm's global-mean fallback was subtracting a spring average of
+      // every latitude on earth from a live August or December reading and
+      // publishing the difference as a seasonal anomaly. Null means the artifact
+      // has no normal for this month, and with no normal there is no anomaly to
+      // claim, so the slot carries 0: the centre of the trained distribution and
+      // the same value an imputed temperature produces.
+      //
+      // THE IMPUTED-TEMPERATURE CASE STILL LANDS ON 0 EITHER WAY, which is why
+      // no second special case appeared here. Inside the corpus months `temp`
+      // falls back to this same (band, month) norm and the subtraction cancels.
+      // Outside them `norm` is null and the branch below answers 0 directly.
+      const norm = monthClimateNorm(lat, month);
       const anomaly = Number.isFinite(norm) && Number.isFinite(temp)
         ? Math.max(-25, Math.min(25, temp - norm))
         : 0;
@@ -2462,6 +2604,7 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
     // to remove.
     result.eventsObserved = false;
     result.eventsUnavailableReason = 'not_attempted';
+    countPrediction(result.predictionMethod);
     return result;
   }
 
@@ -2508,6 +2651,17 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
     // Best-available baseline: stored table first, else read it directly off
     // the venue's Google popular_times payload so even the FIRST request for
     // a venue runs through the ML model instead of the fallback.
+    //
+    // THAT SECOND BRANCH IS UNREACHABLE FROM EVERY REQUEST PATH TODAY, and this
+    // comment used to describe it as if it were live. No route in this repo puts
+    // `popular_times` on a venue: routes/crowd.js says so at its batch whitelist,
+    // and the Places field masks in that file do not ask for it, because the
+    // Places API does not sell popular times. So the stored table is the only
+    // source of a baseline, and a venue with no row in it takes the no-baseline
+    // exit below every time, forever. The branch is kept because it is correct
+    // and because the day a popular-times source exists it is what uses it. The
+    // consequence for coverage, and the counter added to make it visible, are in
+    // the note above predictionCoverage.
     let baseline = storedBaseline;
     // How old the number under this score is. Captured HERE, where the branch
     // that chose the baseline is still visible, because the two branches have
@@ -2542,6 +2696,7 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       result.modelVersion = null;
       result.eventsObserved = eventsSeen;
       result.eventsUnavailableReason = eventsReason;
+      countPrediction(result.predictionMethod);
       return result;
     }
 
@@ -2560,6 +2715,7 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       result.modelVersion = null;
       result.eventsObserved = eventsSeen;
       result.eventsUnavailableReason = eventsReason;
+      countPrediction(result.predictionMethod);
       return result;
     }
 
@@ -2766,6 +2922,10 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       };
     }
 
+    // Counted HERE and not at the top of the try, because everything above can
+    // still divert to the rule engine and the tally has to record the exit that
+    // was actually taken.
+    countPrediction(response.predictionMethod);
     return response;
   } catch (err) {
     console.error('[MLPredictor] Prediction error, falling back:', err.message);
@@ -2778,6 +2938,7 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
     // was the shape that asserts the most.
     result.eventsObserved = eventsSeen;
     result.eventsUnavailableReason = eventsReason;
+    countPrediction(result.predictionMethod);
     return result;
   }
 }
@@ -2958,6 +3119,10 @@ module.exports = {
   // meters for the other two and none for this one, so both the observed count
   // and the worst-case ceiling it published were short by a whole ledger.
   eventBudgetStatus,
+  // What share of predictions the trained model actually produced. Same shape
+  // and same contract as eventBudgetStatus: a non-consuming read for
+  // routes/admin.js, never a gate. See the note above predictionCoverage.
+  predictionCoverage,
   estimateCapacity,
   estimateWait,
   findBestTime,
@@ -3004,6 +3169,7 @@ module.exports = {
     categoryGlobalMean,
     hasTempReading,
     climateNorm,
+    monthClimateNorm,
     tempForFeature,
     estimateTmAttendance,
     getNearbyEvents,
