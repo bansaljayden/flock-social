@@ -385,6 +385,113 @@ describe('privacy claims that depend on how the code behaves', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// CONTACT DISCOVERY. The page used to say that adding a phone number was what
+// let friends who already had it find you. That was true of the old lookup,
+// which matched the last ten digits of every stored number and asked nobody,
+// and it is not true of this one. What follows pins the promises the new
+// wording makes, each against the file that decides the behaviour, so that a
+// change to backend/utils/phone.js or to the gate in backend/routes/friends.js
+// fails here instead of quietly turning the policy into a false statement.
+// ---------------------------------------------------------------------------
+describe('contact discovery is opt-in, keyed, and erasable', () => {
+  const friends = read('backend', 'routes', 'friends.js');
+  const phone = read('backend', 'utils', 'phone.js');
+  const users = read('backend', 'routes', 'users.js');
+  const discoveryMigration = read('backend', 'migrations', '051_phone_discovery_optin.sql');
+
+  // The endpoint's own body, bounded by the route that follows it, so an
+  // assertion about what this handler does cannot be satisfied by a line
+  // somewhere else in the file.
+  function findByPhoneHandler() {
+    const start = friends.indexOf("router.post('/find-by-phone'");
+    if (start < 0) throw new Error('POST /api/friends/find-by-phone is gone from routes/friends.js');
+    const end = friends.indexOf("router.get('/status/:userId'", start);
+    if (end < 0) throw new Error('cannot find the end of the find-by-phone handler');
+    return friends.slice(start, end);
+  }
+
+  test('the lookup is gated on a consent column that defaults to off', () => {
+    // FALSE is what makes "off until you turn it on" true for every account
+    // that already existed when the feature shipped. A default of TRUE, or the
+    // column being dropped, makes the page a lie about consent.
+    expect(discoveryMigration).toMatch(
+      /ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_discoverable BOOLEAN NOT NULL DEFAULT FALSE;/
+    );
+    // And the gate is inside the query the endpoint runs, not in a caller that
+    // a later refactor can route around.
+    expect(findByPhoneHandler()).toMatch(
+      /WHERE phone_hash = ANY\(\$2::text\[\]\)\s*AND phone_discoverable\b/
+    );
+    expect(privacy).toMatch(/which is off until you turn it on/);
+    // The sentence the old behaviour justified and this one does not.
+    expect(privacy).not.toMatch(/so friends who already have your number can find you/);
+  });
+
+  test('matching is a keyed digest, with no unkeyed fallback', () => {
+    // "One-way keyed code" is a claim about the key. A phone number holds
+    // roughly 30 bits, so a bare digest of one is reversible by anybody with a
+    // laptop and would make the word "one-way" false.
+    expect(phone).toMatch(/crypto\.createHmac\('sha256', key\)/);
+    expect(phone).not.toMatch(/createHash\(/);
+    // No key configured means no digest, so discovery stops instead of
+    // degrading to something reversible.
+    expect(phone).toMatch(/function discoveryDigest\(e164\) \{[\s\S]{0,200}if \(!key[\s\S]{0,120}return null;/);
+    expect(privacy).toMatch(/one-way keyed code/);
+  });
+
+  test('nothing about an uploaded number is written, so a non-user leaves nothing behind', () => {
+    const handler = findByPhoneHandler();
+    expect(handler).not.toMatch(/INSERT INTO|UPDATE\s+\w+\s+SET/i);
+    // Digests are what reach the query. The numbers themselves exist on the
+    // request and are gone with it.
+    expect(handler).toMatch(/discoveryDigest\(n\)/);
+    expect(privacy).toMatch(/a number belonging to someone who is not on Flock leaves nothing behind/);
+  });
+
+  test('turning discovery off erases the stored code, and deleting the account takes it too', () => {
+    expect(users).toMatch(/SET phone_discoverable = FALSE, phone_hash = NULL/);
+    expect(users).toMatch(/SET phone_discoverable = TRUE, phone_hash = \$2/);
+    // The digest is a column on the account row, which is why deleting the
+    // account removes it without anything extra having to run.
+    expect(discoveryMigration).toMatch(/ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_hash TEXT;/);
+    expect(privacy).toMatch(/turning discovery off erases the code we match against/);
+    expect(privacy).toMatch(/deleted the moment you switch discovery off or delete your account/);
+  });
+
+  test('only phone numbers leave the device, which is what the page promises', () => {
+    const contacts = read('frontend', 'src', 'services', 'contacts.js');
+    // The projection is the request. Asking for phones and nothing else means
+    // a name cannot arrive by accident and then be described away in prose.
+    expect(contacts).toMatch(/projection:\s*\{\s*phones:\s*true\s*\}/);
+    expect(contacts).toMatch(/navigator\.contacts\.select\(\['tel'\]/);
+    expect(contacts).not.toMatch(/projection:\s*\{[^}]*\b(name|emails|image|postalAddresses)\b/);
+    expect(privacy).toMatch(/only phone numbers are sent, never names or anything else on a contact card/);
+  });
+
+  test('every phone digest the database holds is disclosed, not just the ban tombstone', () => {
+    // Derived from the migrations rather than restated: whichever tables carry
+    // a one-way code of a phone number, the policy owes the reader a line
+    // about each. A third one appearing fails here until it is written up.
+    const tables = new Set();
+    const files = fs
+      .readdirSync(path.join(REPO, 'backend', 'migrations'))
+      .filter((f) => f.endsWith('.sql'));
+    for (const file of files) {
+      const sql = read('backend', 'migrations', file).replace(/--.*$/gm, '');
+      for (const [, table] of sql.matchAll(/ALTER TABLE (\w+) ADD COLUMN IF NOT EXISTS phone_hash\b/g)) {
+        tables.add(table);
+      }
+      for (const [, table, body] of sql.matchAll(/CREATE TABLE IF NOT EXISTS (\w+)\s*\(([\s\S]*?)\n\);/g)) {
+        if (/\bphone_hash\b/.test(body)) tables.add(table);
+      }
+    }
+    expect([...tables].sort()).toEqual(['banned_identities', 'users']);
+    expect(privacy).toMatch(/<strong>Banned accounts:<\/strong>/);
+    expect(privacy).toMatch(/<strong>A phone matching code,<\/strong>/);
+  });
+});
+
 describe('house copy rules', () => {
   test.each(Object.keys(PAGES))('%s contains no em dash', (name) => {
     // SLOP-AUDIT A2/H18. The legal pages are the easiest place for one to creep
