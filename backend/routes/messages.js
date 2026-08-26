@@ -7,7 +7,7 @@ const { rejectIfProfane, moderateImage, imageRejectionMessage } = require('../ut
 const { sanitizeVenueData, safeVenuePhotoUrl } = require('../utils/venuePayload');
 const VENUE_REJECTED_MESSAGE = "That venue card couldn't be shared.";
 const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
-const { hasDmRelationship, NOT_CONNECTED_MESSAGE } = require('../utils/relationships');
+const { hasDmRelationship, invalidateDmRelationshipCache, NOT_CONNECTED_MESSAGE } = require('../utils/relationships');
 // CHAT_IMAGE_MAX_BYTES is the ONE ceiling on a chat photo's data: URL, defined
 // in sockets/handlers.js and imported (never re-declared) by everything that has
 // to agree with it: server.js sizes the JSON body limit from it, the socket
@@ -366,11 +366,29 @@ router.post('/flocks/:id/messages',
           await Promise.allSettled(
             members.rows
               .filter((m) => !invisible.has(m.user_id))
-              .map((m) => pushIfOfflineDebounced(io, m.user_id,
-                `${req.user.name} in ${flockName}`,
-                preview,
-                { type: 'flock_message', flockId: String(flockId) }
-              ))
+              .map((m) => {
+                // LIVE DELIVERY, not just the push. This route is the socket
+                // client's fallback when ITS connection is down, and it used to
+                // persist the row and then notify only members who were
+                // OFFLINE. A member sitting in the chat with a working socket is
+                // by definition not offline, so they were told nothing at all:
+                // no bubble, no notification, nothing until they backgrounded
+                // the app or their reconnect catch-up fired. One person on a
+                // weak signal and the whole room went quiet for everybody else.
+                //
+                // Same room and same event name as sockets/handlers.js
+                // send_message (`user:{id}`, never the flock room, so a member
+                // who has not opened this chat still receives it), the same
+                // per-member block filter, and the same row shape. The client
+                // dedupes on message id, so a sender whose socket comes back
+                // mid-request cannot end up with two bubbles.
+                io.to(`user:${m.user_id}`).emit('new_message', message);
+                return pushIfOfflineDebounced(io, m.user_id,
+                  `${req.user.name} in ${flockName}`,
+                  preview,
+                  { type: 'flock_message', flockId: String(flockId) }
+                );
+              })
           );
         }
       } catch (pushErr) {
@@ -852,6 +870,33 @@ router.post('/dm/:userId',
       const message = result.rows[0];
       message.sender_name = req.user.name;
       message.reactions = [];
+      // The quoted row the recipient's bubble reads, same shape as the socket
+      // twin's `msg.reply_to`. Without it a reply delivered over this transport
+      // quoted a blank line under a blank name on the recipient's screen. The
+      // id is already scope-checked above, so this only fetches the two display
+      // fields, and a failure here drops the quote rather than the message: the
+      // row is stored and reply_to_id is on it either way, and a decoration on
+      // the payload must never be able to turn a saved DM into a 500.
+      if (safeReplyId) {
+        try {
+          const quoted = await pool.query(
+            `SELECT dm.id, dm.message_text, u.name AS sender_name
+             FROM direct_messages dm JOIN users u ON u.id = dm.sender_id
+             WHERE dm.id = $1`,
+            [safeReplyId]
+          );
+          if (quoted.rows[0]) message.reply_to = quoted.rows[0];
+        } catch (quoteErr) {
+          console.error('DM reply hydrate error:', quoteErr.message);
+        }
+      }
+
+      // This row IS the relationship (utils/relationships.js counts one stored
+      // DM), so the cached "not connected" from a moment ago is now wrong. The
+      // socket twin invalidates here and this one did not, so a first DM sent
+      // over the fallback transport left typing dots and live location refused
+      // for the rest of the 30s TTL.
+      invalidateDmRelationshipCache(req.user.id, receiverId);
 
       res.status(201).json({ message });
 
@@ -867,6 +912,15 @@ router.post('/dm/:userId',
         if (io) {
           // Empty for an image-only DM, and normalizeBody() answers that with
           // "Sent you something" — see the note on the flock twin above.
+          // LIVE DELIVERY, not just the push. Same gap as the flock twin
+          // above. This route runs when the SENDER's socket is down, which says
+          // nothing about the recipient's: someone sitting in the thread with a
+          // working connection is not offline, so pushIfOfflineDebounced told
+          // them nothing and no `new_dm` was ever emitted either. The message
+          // simply did not arrive until they left the screen and came back.
+          // Same room and event name as sockets/handlers.js send_dm; the client
+          // dedupes on message id.
+          io.to(`user:${receiverId}`).emit('new_dm', message);
           const preview = (message_text || '').substring(0, 100);
           await pushIfOfflineDebounced(io, receiverId,
             req.user.name,
