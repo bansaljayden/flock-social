@@ -512,7 +512,19 @@ test('attendance is only ever credited to an accepted member, in the event windo
   assert.match(upd.sql, /user_id = \$1/, 'scoped to the caller');
   assert.match(upd.sql, /status = 'accepted'/, 'membership must be accepted, not merely invited');
   assert.match(upd.sql, /venue_id = \$2/, 'and the flock must be AT this venue');
-  assert.match(upd.sql, /NOW\(\) BETWEEN event_time - INTERVAL '3 hours' AND event_time \+ INTERVAL '12 hours'/);
+  // NOW_UTC accepts both the bare NOW() this clause carries today and the
+  // (NOW() AT TIME ZONE 'UTC') it will carry once routes/checkin.js gets the
+  // same correction services/flockSweep.js, services/crowdAlerts.js and
+  // routes/venueDashboard.js already got. That rewrite is a real fix and not a
+  // rename: flocks.event_time is TIMESTAMP WITHOUT TIME ZONE holding a UTC wall
+  // clock, so a bare NOW() casts the naive side at the database session zone
+  // and this window is right only because Railway runs UTC. The WINDOW LENGTHS
+  // are what this assertion is about, and they are the same under either
+  // spelling. Pinning the spelling would have failed the correction instead of
+  // the defect, which is exactly how presenceParity and incomingFlocksWindow
+  // went red earlier.
+  const NOW_UTC = "(?:NOW\\(\\)|\\(NOW\\(\\) AT TIME ZONE 'UTC'\\))";
+  assert.match(upd.sql, new RegExp(`${NOW_UTC} BETWEEN event_time - INTERVAL '3 hours' AND event_time \\+ INTERVAL '12 hours'`));
   assert.match(upd.sql, /status NOT IN \('completed', 'cancelled'\)/);
   assert.deepStrictEqual(upd.params, [1, KNOWN]);
 });
