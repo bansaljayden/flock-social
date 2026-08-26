@@ -226,7 +226,10 @@ export function clearLocalSession() {
  *     dies settles in seconds instead of whenever the OS gives up. Callers'
  *     finally blocks and spinners always run. The deadline is rearmed on
  *     every chunk received, so a slow download is never punished for being
- *     slow; what ends a request is silence. See fetchWithTimeout.
+ *     slow; what ends a request is silence. Under that sits an absolute
+ *     ceiling that is never rearmed, because a deadline a trickle can keep
+ *     pushing back is not a bound on how long a request can take. See
+ *     fetchWithTimeout and MAX_REQUEST_MS.
  *  2. Reads retry, writes never do. GETs get two automatic retries with
  *     backoff on network failures and 502/503/504, because a blip while
  *     loading a feed should be invisible. Anything non-GET is sent exactly
@@ -242,6 +245,32 @@ export function clearLocalSession() {
 const DEFAULT_TIMEOUT_MS = 15000;
 const UPLOAD_TIMEOUT_MS = 90000; // uploads on weak signal are slow, not stuck
 const AI_TIMEOUT_MS = 60000; // Birdie can legitimately think for a while
+// AND A REARMED DEADLINE HAS NO "FOREVER" IN IT, WHICH RULE 1 ABOVE DOES.
+//
+// The windows above are idle windows: each one is rearmed by every chunk that
+// arrives, which is what stops a slow download being mistaken for a dead one.
+// A deadline that is rearmed on progress is not a bound on anything, though. A
+// reply that trickles one byte just inside the window, forever, is progress by
+// this rule and it holds the request open for as long as it keeps trickling.
+// The spinner never ends, the caller's promise never settles, and readBodyText
+// concatenates every byte of it, so the tab's memory goes the same way. That is
+// the failure this file was just rewritten to make impossible, arrived at from
+// the other side.
+//
+// So there are two deadlines and the request dies on whichever comes first: no
+// gap between two chunks may exceed the idle window, AND no single request may
+// run longer than this no matter how busy the wire looks. Five minutes is far
+// past any honest exchange the app makes. The longest leash in the file is a
+// photo upload at ninety seconds of silence, and a megabytes-large chat history
+// on 2G is tens of seconds; anything still running at five minutes is not slow,
+// it is stuck in a way the idle window cannot see.
+//
+// Not a byte cap, deliberately. A hostile server can exhaust a tab in fifteen
+// seconds at full speed, so a size limit would have to be smaller than any
+// honest reply to help, and our own API's replies are the only thing this
+// client talks to. What was actually broken here is that a request could run
+// without end, and this is the end.
+const MAX_REQUEST_MS = 5 * 60 * 1000;
 const RETRYABLE_STATUSES = [502, 503, 504];
 const RETRY_DELAYS_MS = [800, 2000];
 
@@ -383,9 +412,19 @@ async function parseBody(res, onProgress) {
 async function fetchWithTimeout(url, options, timeoutMs) {
   const controller = new AbortController();
   let timer = null;
+  // The absolute deadline is fixed when the request starts and is never
+  // rearmed. Every rearm below is clamped to what is left of it, so the idle
+  // window can shorten the wait and can no longer extend it past this point.
+  // See MAX_REQUEST_MS.
+  const hardDeadline = Date.now() + Math.max(timeoutMs, MAX_REQUEST_MS);
   const arm = () => {
     if (timer) clearTimeout(timer);
-    timer = setTimeout(() => controller.abort(), timeoutMs);
+    const remaining = Math.min(timeoutMs, hardDeadline - Date.now());
+    if (remaining <= 0) {
+      controller.abort();
+      return;
+    }
+    timer = setTimeout(() => controller.abort(), remaining);
   };
   arm();
   try {
