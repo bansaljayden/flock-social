@@ -17,6 +17,16 @@ const {
 
 const ALERT_TYPE = 'crowd';
 
+// The most flocks one sweep will process. Each one costs an ml_venues read, a
+// scoring pass, a member query and a fan of pushes, plus a weather reading that
+// is usually a cache hit (services/weatherService.js holds one for 30 minutes
+// per coordinate bucket and charges a capped daily budget for a miss). Call it
+// a third of a second each on a bad day: 500 is under three minutes of a
+// fifteen-minute window, which leaves the sweep no way to run into its own next
+// start. Anything over the limit is not dropped, it is served by the next sweep
+// while still inside the three hours before its event.
+const MAX_FLOCKS_PER_SWEEP = 500;
+
 // Minutes to ADD to UTC to reach local time in an IANA zone at instant `at`
 // (e.g. -420 for America/Los_Angeles in summer) — the same sign convention
 // Google's utcOffsetMinutes uses, so venueLocalNow consumes it unchanged. This
@@ -226,15 +236,53 @@ async function checkCrowdAlerts() {
     // FCM has already expired, and trims the delivery ledger to 30 days.
     await sweepPushMaintenance().catch((e) => console.warn('[CrowdAlerts] push maintenance failed:', e.message));
 
-    // Find confirmed flocks with event_time in the next 3 hours that have a venue set
+    // Find confirmed flocks with event_time in the next 3 hours that have a
+    // venue set, are not already alerted, and are the soonest ones outstanding.
+    //
+    // TWO THINGS THIS QUERY HAS TO DO THAT IT DID NOT.
+    //
+    // 1. THE CLOCK. `flocks.event_time` is TIMESTAMP WITHOUT TIME ZONE and
+    //    holds a UTC wall clock, because every writer in App.js sends
+    //    `.toISOString()` and Postgres drops the Z when it parses that into a
+    //    naive column. Comparing it against NOW(), a timestamptz, makes
+    //    Postgres cast the naive side at the DATABASE SESSION's TimeZone, so
+    //    the three-hour window was measured on the Postgres server's zone
+    //    rather than on UTC. That is UTC on Railway, so the window landed in
+    //    the right place by coincidence; on a database configured for
+    //    America/New_York the window would have sat four hours off and this
+    //    sweep would have alerted nobody, every night, silently. `NOW() AT TIME
+    //    ZONE 'UTC'` makes both sides naive UTC and takes the session setting
+    //    out of it. Same reasoning, same fix, as services/flockSweep.js.
+    //
+    // 2. THE BOUND. Nothing capped this. It selected every confirmed flock in
+    //    the next three hours and the caller walked them one at a time, so the
+    //    length of a sweep was set by how busy a Friday is. Once a sweep takes
+    //    longer than the fifteen minutes between sweeps, setInterval starts the
+    //    next one on top of it, and they compound: the claim row keeps the
+    //    overlap from double-pushing anybody, but nothing keeps the pool from
+    //    filling with sweeps.
+    //    NOT EXISTS is what makes a LIMIT safe here. Ordering by event_time
+    //    with no such clause would let flocks that were alerted hours ago
+    //    occupy every slot and starve the ones that still need alerting, since
+    //    a flock stays inside its own three-hour window for twelve consecutive
+    //    sweeps after it is served. Filtering them out in SQL means the limit
+    //    counts only outstanding work, the soonest events are always served
+    //    first, and anything past the limit is picked up fifteen minutes later
+    //    while still comfortably inside its window.
     const { rows: flocks } = await pool.query(`
       SELECT f.id, f.name, f.venue_id, f.venue_name, f.venue_latitude, f.venue_longitude, f.event_time
       FROM flocks f
       WHERE f.status = 'confirmed'
         AND f.venue_id IS NOT NULL
-        AND f.event_time > NOW()
-        AND f.event_time < NOW() + INTERVAL '3 hours'
-    `);
+        AND f.event_time > (NOW() AT TIME ZONE 'UTC')
+        AND f.event_time < (NOW() AT TIME ZONE 'UTC') + INTERVAL '3 hours'
+        AND NOT EXISTS (
+          SELECT 1 FROM crowd_alert_sends s
+           WHERE s.flock_id = f.id AND s.alert_type = $1
+        )
+      ORDER BY f.event_time
+      LIMIT $2
+    `, [ALERT_TYPE, MAX_FLOCKS_PER_SWEEP]);
 
     if (!flocks.length) return;
 
@@ -251,6 +299,13 @@ async function processFlockAlert(flock) {
     // Cheap pre-check so a flock that was already alerted costs one indexed
     // read instead of a weather call plus a scoring pass. The authoritative
     // claim happens below, right before the pushes go out.
+    //
+    // The scan now excludes alerted flocks in SQL, so this catches the narrower
+    // case the scan cannot: a marker written AFTER the scan read its snapshot
+    // and BEFORE this row came up in the loop. The loop is walked one flock at
+    // a time and can run for minutes, so that window is real, and the reason to
+    // spend a read on it is that the alternative is a weather reading and a
+    // scoring pass for a push that the claim below is going to refuse anyway.
     //
     // Inside the try: this read used to sit outside it, so a single failure
     // here rejected out of processFlockAlert, and the caller's `for` loop is
