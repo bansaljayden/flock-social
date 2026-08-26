@@ -1285,6 +1285,16 @@ export async function addReaction(messageId, emoji) {
   });
 }
 
+// The other half. POST is add-only (ON CONFLICT DO NOTHING server side), so
+// without this a reaction on a flock message could never be taken back: tap a
+// heart by accident and it was permanent. DMs have had both halves since they
+// shipped, so the same gesture behaved two different ways in the same app.
+export async function removeReaction(messageId, emoji) {
+  return request(`/api/messages/${messageId}/react/${encodeURIComponent(emoji)}`, {
+    method: 'DELETE',
+  });
+}
+
 // DMs
 export async function getDMConversations() {
   return request('/api/dm');
