@@ -211,3 +211,50 @@ describe('every type the app declares has somewhere to go', () => {
     }
   });
 });
+
+// ───────────────────────────────────────────────────────────────────────────
+// 5. The same list, in three files
+//
+// The set of flock-scoped push types is written out three times: the backend
+// builds the link from it, pushNavigation.js parses a native tap with it, and
+// the service worker falls back to it when a notification carries no `link`.
+// They went one type out of step (`flock_cancelled` reached two of the three),
+// and the only reason that was survivable is that `data.link` wins whenever it
+// is present and the backend now always sets it. A type missing from the third
+// copy is a tap that lands on the home screen instead of on the thing it names,
+// and nothing failed when it happened.
+// ───────────────────────────────────────────────────────────────────────────
+describe('the flock-scoped type list does not drift between its three copies', () => {
+  const PUSH_NAV = readSource('frontend', 'src', 'services', 'pushNavigation.js');
+  const SW = readSource('frontend', 'public', 'firebase-messaging-sw.js');
+
+  // Slice between the declaration and the first `]`, and then REFUSE a slice
+  // that is not list-shaped. An anchor that moves hands back most of the file,
+  // and every assertion below would pass on text from somewhere else.
+  const typeList = (source, declaration) => {
+    const start = source.indexOf(declaration);
+    expect(start).toBeGreaterThan(-1);
+    const open = source.indexOf('[', start);
+    const close = source.indexOf(']', open);
+    expect(open).toBeGreaterThan(start);
+    expect(close).toBeGreaterThan(open);
+    const slice = source.slice(open + 1, close);
+    expect(slice.length).toBeGreaterThan(80);
+    expect(slice.length).toBeLessThan(700);
+    // A comment inside the literal is prose, not a type name.
+    const names = (slice.replace(/\/\/[^\n]*/g, '').match(/'[a-z_]+'/g) || [])
+      .map((s) => s.slice(1, -1));
+    expect(names.length).toBeGreaterThan(8);
+    return names.slice().sort();
+  };
+
+  const backend = typeList(FIREBASE_SERVICE, 'const FLOCK_SCOPED_TYPES = new Set(');
+
+  test('pushNavigation.js carries exactly the backend list', () => {
+    expect(typeList(PUSH_NAV, 'const FLOCK_TYPES = new Set(')).toEqual(backend);
+  });
+
+  test('the service worker fallback carries exactly the backend list', () => {
+    expect(typeList(SW, 'var FLOCK_TYPES = [')).toEqual(backend);
+  });
+});
