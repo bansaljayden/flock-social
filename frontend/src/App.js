@@ -7683,8 +7683,38 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           // 'no_show') and is what tells the host whether the done step still
           // owes an answer for a night that is already over.
           const members = (data.members || []).filter(m => !blockedIdsRef.current.has(String(m.id))).map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null, status: m.status, attendance: m.attendance || 'unmarked' }));
+          // ── GUESTS, AND THE HEADCOUNT THIS SCREEN USED TO EAT ────────────
+          //
+          // Two things were missing here and both come from the same place:
+          // this loader was written against `members` alone, and a guest has no
+          // membership row.
+          //
+          // The roster below renders `flock.guests`, so without this line
+          // opening a plan directly from the Plans tab (rather than through the
+          // chat, which calls refreshFlockRoster) drew a roster with the
+          // link-RSVPs missing from it.
+          //
+          // Worse, `memberCount` was `members.filter(accepted).length`, which is
+          // ACCOUNTS ONLY. That is the same number the flock list card renders
+          // beside the people icon, and the list is loaded with `going_count`,
+          // which is accounts PLUS guests. So a plan with two accounts and three
+          // link-RSVPs showed 5 on the home card, and opening its detail screen
+          // once silently rewrote that 5 to a 2 for the rest of the session. The
+          // guest count existing at all is the fix for guests being "invisible
+          // in every count the host saw" (routes/flocks.js); this screen put
+          // them back to invisible.
+          //
+          // Counted exactly as refreshFlockRoster counts it, from the same two
+          // server fields, so the two loaders cannot answer differently:
+          // momentum.accepted is members-plus-guests, and a member hidden by a
+          // block comes off it because their face is not on the roster either.
+          const guests = (data.guests || []).map(g => ({
+            id: g.id, guestId: guestRsvpId(g), name: g.name, status: g.status, isGuest: true,
+          }));
+          const acceptedCount = (data.members || []).filter(m => m.status === 'accepted').length;
+          const hiddenAccepted = acceptedCount - members.filter(m => m.status === 'accepted').length;
           const eventTime = data.flock?.event_time || null;
-          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, memberCount: members.filter(m => m.status === 'accepted').length, momentum: data.momentum || null, eventTime: eventTime || f.eventTime || null } : f));
+          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, guests, memberCount: Math.max(0, (data.momentum?.accepted ?? acceptedCount) - hiddenAccepted), momentum: data.momentum || null, eventTime: eventTime || f.eventTime || null } : f));
         })
         .catch(() => {});
       loadFlockVotes(selectedFlockId);
@@ -14934,9 +14964,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 const myVote = flock.votes.find(vt => vt.voters.includes('You'))?.venue || null;
                 const isMyVote = myVote === v.venue;
                 const count = voteTotal(v);
+                // THE ROW SAID IT WAS A TOGGLE AND ONLY EVER TOGGLED ON.
+                // `aria-pressed` promises a two-way control, and the old handler
+                // kept 'You' where it already was, so tapping the venue you had
+                // voted for rebuilt an identical list, re-POSTed the same vote,
+                // and the server answered "unchanged". Nothing moved, nothing
+                // was said, and the one screen a host reads the tally on had no
+                // way to take a vote back. The chat's vote panel has always had
+                // one, which is why this went unnoticed: the same person, the
+                // same flock, two screens, two behaviours.
+                //
+                // Same three lines as handleUnvote in ChatDetail.js, on purpose.
+                // Stripping the last voter drops the row because a venue with no
+                // votes and no guests is not in the server's tally either, so
+                // leaving it would be a row that vanishes on the next load.
                 return (
                   <button key={v.venue} className="hit44 glass-btn" aria-pressed={isMyVote} onClick={() => {
-                    const newVotes = flock.votes.map(vt => ({ ...vt, voters: vt.venue === v.venue ? (vt.voters.includes('You') ? vt.voters : [...vt.voters, 'You']) : vt.voters.filter(x => x !== 'You') }));
+                    const newVotes = isMyVote
+                      ? flock.votes
+                        .map(vt => ({ ...vt, voters: vt.voters.filter(x => x !== 'You') }))
+                        .filter(vt => vt.voters.length > 0 || (vt.guestCount || 0) > 0)
+                      : flock.votes.map(vt => ({ ...vt, voters: vt.venue === v.venue ? [...vt.voters, 'You'] : vt.voters.filter(x => x !== 'You') }));
                     updateFlockVotes(selectedFlockId, newVotes);
                   }} style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', borderBottom: vi < flock.votes.length - 1 ? '1px solid var(--border-subtle)' : 'none', padding: '10px 0', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
                     <span style={{ flex: 1, minWidth: 0 }}>
