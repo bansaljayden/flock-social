@@ -12,17 +12,31 @@
 // Intents that arrive before the UI has subscribed are queued, because a cold
 // start from a notification tap always arrives first.
 //
-// WHAT IS ACTUALLY DELIVERED TODAY (checked 2026-08-14). The service worker and
-// notificationActionPerformed paths are live. The appUrlOpen path is NOT: iOS
-// hands this app no URL at all, because Info.plist declares no CFBundleURLTypes
-// and App.entitlements no associated domains, and both of those are decisions
-// recorded at length in Info.plist rather than oversights. `intentFromUrl` is
-// still exercised on every platform by the query form the backend emits
-// (/?flock=12), which is why it is not dead code; the PATH form (/f/12, /dm/45)
-// is only reachable by typing the URL until associated domains are enabled.
+// WHAT IS ACTUALLY DELIVERED TODAY (re-checked 2026-08-26, and both halves of
+// the previous answer had gone stale). The service worker and
+// notificationActionPerformed paths are live.
+//
+// appUrlOpen is live too, and it used to say here that it was not. Info.plist
+// declares CFBundleURLTypes now: Google's reversed iOS client id, which the
+// GoogleSignIn SDK redirects to at the end of every native sign-in. iOS hands
+// that URL to the app, Capacitor fires appUrlOpen, and the listener below runs
+// on it. `intentFromUrl` answers null for it, correctly, because it carries no
+// invite/flock/dm/admin/tab parameter and its pathname is /oauth2redirect. So
+// this function is now reached by a real URL on every native login. Do not
+// narrow it on the assumption that nothing calls it.
+//
+// Universal links are still not delivered, for a different reason than before.
+// App.entitlements DOES declare associated domains for flockcorp.com and
+// www.flockcorp.com as of 9fab8a9, but frontend/api/apple-app-site-association.js
+// excludes every path, so iOS finds nothing claimed and keeps sending
+// flockcorp.com links to Safari. The PATH forms below (/f/12, /dm/45) therefore
+// remain unreachable on device, and the query form the backend emits
+// (/?flock=12) is what exercises this function everywhere else.
+//
 // It does not parse /i/<token>, the invite link that is the actual growth path,
-// and there is no screen in App.js that redeems an invite token either. Both of
-// those have to land with the capability, not after it.
+// and there is no screen in App.js that redeems an invite token either. Those
+// two are what the association file is waiting for; claiming /i/* first would
+// open the app on whatever screen it was already showing.
 // ---------------------------------------------------------------------------
 
 const FLOCK_TYPES = new Set([
