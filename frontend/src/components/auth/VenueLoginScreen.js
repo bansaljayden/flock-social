@@ -3,8 +3,9 @@ import { login, signup, resendVerificationEmail } from '../../services/api';
 import useGoogleAuth, { isGoogleSignInAvailable } from './useGoogleAuth';
 import AppleSignInButton from './AppleSignInButton';
 import AuthShell, {
-  ageFromDob, AUTH, AuthError, AuthRule, formatDob, GoogleG, MIN_AGE, PasswordEye,
+  ageFromDob, AUTH, AuthError, AuthLabelRow, AuthRule, formatDob, GoogleG, MIN_AGE, PasswordEye,
 } from './AuthShell';
+import { ForgotPasswordScreen } from './PasswordReset';
 import Icons from '../ui/Icons';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -45,6 +46,18 @@ const GUIDELINES_URL = 'https://www.flockcorp.com/guidelines';
 // backend/utils/age.js is the only authority on what is allowed.
 
 const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
+  // AUDIT 2026-08-26. This screen had no way back into a forgotten account.
+  // LoginScreen has carried "Forgot password?" since the reset flow shipped;
+  // the venue portal, which is the front door of the thing Flock charges for,
+  // did not, and the venue account is the one an owner signs into rarely
+  // enough to forget. The only exits were guessing and writing to us.
+  //
+  // Only the REQUEST half hangs off this screen. The emailed link lands on
+  // /reset-password, which index.js routes into the app, which renders
+  // LoginScreen for anyone with no session, and LoginScreen already answers
+  // that path. A second copy of the consume step here would be a second thing
+  // to keep correct for no gain.
+  const [view, setView] = useState('form');
   const [isSignup, setIsSignup] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -212,6 +225,15 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
     </>
   );
 
+  if (view === 'forgot') {
+    return (
+      <ForgotPasswordScreen
+        initialEmail={email}
+        onBack={() => setView('form')}
+      />
+    );
+  }
+
   if (awaitingVerification) {
     return (
       <AuthShell hero={(
@@ -339,7 +361,22 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
         </div>
 
         <div className="auth-field-row" style={{ marginBottom: '24px' }}>
-          <label className="auth-label" htmlFor="venue-password">Password</label>
+          {/* Beside the password label, which is where people look for it, and
+              only on the sign-in half: an account being created has no
+              password to have forgotten. It carries whatever is already in the
+              email field so the next screen does not ask for it twice. */}
+          <AuthLabelRow>
+            <label className="auth-label" htmlFor="venue-password">Password</label>
+            {!isSignup && (
+              <button
+                type="button"
+                className="auth-link hit44"
+                onClick={() => { setError(''); setView('forgot'); }}
+              >
+                Forgot password?
+              </button>
+            )}
+          </AuthLabelRow>
           <div className="auth-pw-wrap">
             <input
               id="venue-password"

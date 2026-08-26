@@ -409,3 +409,55 @@ describe('targets, focus visibility, zoom floor (2.5.5 / 2.4.7 / source-level: j
     expect(container.querySelector('video').getAttribute('tabindex')).toBe('-1');
   });
 });
+
+// ---------------------------------------------------------------------------
+// The venue portal is an auth screen too, and it went a round without one.
+//
+// AUDIT 2026-08-26. LoginScreen has carried "Forgot password?" since the reset
+// flow shipped. VenueLoginScreen, the front door of the product Flock charges
+// for, had no route back into a forgotten account at all: the exits were
+// guessing the password or writing to us. A venue account is signed into
+// rarely, which is the kind people forget, and the person locked out is a
+// paying customer.
+//
+// Only the REQUEST half belongs here. The emailed link lands on
+// /reset-password, which the app routes to LoginScreen for anyone with no
+// session, and that screen already consumes it.
+// ---------------------------------------------------------------------------
+const VenueLoginScreen = require('../components/auth/VenueLoginScreen').default;
+
+describe('the venue portal has a way out of a forgotten password', () => {
+  const mountVenue = () => render(
+    React.createElement(VenueLoginScreen, {
+      onLoginSuccess: () => {}, onSwitchToUserLogin: () => {},
+    })
+  );
+
+  it('offers it beside the password label on the sign-in half', () => {
+    const { getByRole } = mountVenue();
+    expect(getByRole('button', { name: 'Forgot password?' }).className).toMatch(/\bhit44\b/);
+  });
+
+  // This file stubs PasswordReset to null (see the mock at the top), so what is
+  // asserted is that the press LEAVES the sign-in form for the reset flow. The
+  // request screen's own copy rule, that it never confirms whether an address
+  // has an account, is tested where that screen is real.
+  it('pressing it leaves the sign-in form for the reset flow', () => {
+    const { getByRole, queryByRole, queryByLabelText } = mountVenue();
+    fireEvent.click(getByRole('button', { name: 'Forgot password?' }));
+    expect(queryByRole('button', { name: 'Forgot password?' })).toBeNull();
+    expect(queryByLabelText('Email')).toBeNull();
+  });
+
+  it('it is the shared reset screen, not a second copy of the flow', () => {
+    const venueSrc = src('VenueLoginScreen.js');
+    expect(venueSrc).toContain("import { ForgotPasswordScreen } from './PasswordReset'");
+    expect(venueSrc).toContain('<ForgotPasswordScreen');
+  });
+
+  it('the signup half does not offer it, because a new account has no password to forget', () => {
+    const { getByRole, queryByRole } = mountVenue();
+    fireEvent.click(getByRole('button', { name: 'Create an account' }));
+    expect(queryByRole('button', { name: 'Forgot password?' })).toBeNull();
+  });
+});
