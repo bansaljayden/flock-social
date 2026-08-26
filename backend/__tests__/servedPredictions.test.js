@@ -275,7 +275,16 @@ test('a detail card scored on the venue clock is stamped detail, with that clock
   };
   try {
     const place = pid('Stamped1');
-    const r = await call('GET', `/api/crowd/${place}?localHour=4&localDay=2`);
+    // The caller's hour has to be one the venue clock cannot also be, and this
+    // test pins the venue to UTC (utcOffsetMinutes: 0) above, so a hardcoded
+    // hour makes the assertion depend on when the suite is run. It was 4, and
+    // for the sixty minutes a day that UTC is in hour 4 the venue clock landed
+    // on 4 as well, the substitution became invisible, and the final assertion
+    // failed on a correct route. Twelve hours away from the current UTC hour is
+    // a different hour at every hour, so the caller's clock and the venue's are
+    // guaranteed to disagree and the substitution is always observable.
+    const callerHour = (new Date().getUTCHours() + 12) % 24;
+    const r = await call('GET', `/api/crowd/${place}?localHour=${callerHour}&localDay=2`);
     assert.equal(r.status, 200, r.text);
 
     const w = servedWrites[0];
@@ -286,7 +295,7 @@ test('a detail card scored on the venue clock is stamped detail, with that clock
     // overwrites the caller's hour before it scores anything.
     assert.deepEqual(columnValues(w, 'local_hour'), [r.body.venueClock.hour]);
     assert.deepEqual(columnValues(w, 'local_day'), [r.body.venueClock.day]);
-    assert.notEqual(r.body.venueClock.hour, 4, 'the venue clock replaced the caller-supplied hour');
+    assert.notEqual(r.body.venueClock.hour, callerHour, 'the venue clock replaced the caller-supplied hour');
   } finally {
     global.fetch = realJson;
   }
