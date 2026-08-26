@@ -504,6 +504,20 @@ function setCache(key, data) {
 }
 
 // Build photo URL — proxied through our backend so the API key stays server-side
+//
+// THE `maxWidth` ARGUMENT IS A REQUEST, NOT A SIZE, AND THAT IS LOAD-BEARING ON
+// THE PHOTO BILL. GET /photo snaps whatever arrives to exactly two values
+// (`requested <= 200 ? 160 : 400`), so shapeDetails' `photoUrl(photo.name, 600)`
+// and the search results' default 400 both resolve to 400 and therefore to the
+// SAME sha256(`${photoRef}|${maxWidth}`) cache key. A venue card and that same
+// venue's detail sheet are one purchase, in L1 and in places_photo_cache alike.
+//
+// So the fix for "the detail sheet asked for 600 and got 400" is NOT to add 600
+// to the snap set. That would give every venue a second cache key, a second
+// row, and a second billable Google fetch, for a photo already bought. The
+// photo proxy is the largest single line in this project's real spend (see
+// services/photoStore.js). If a bigger detail image is ever genuinely wanted,
+// change the 400 rather than adding a size next to it.
 function photoUrl(photoName, maxWidth = 400) {
   return `/api/venues/photo?ref=${encodeURIComponent(photoName)}&maxwidth=${maxWidth}`;
 }
@@ -570,7 +584,16 @@ function priceLevelToNum(priceLevel) {
 // GET /api/venues/search?query=restaurants+wildwood&location=lat,lng
 router.get('/search',
   [
-    query('query').trim().isLength({ min: 1, max: 80 }).withMessage('Search query is required'),
+    // TWO BOUNDS, TWO SENTENCES. One `.withMessage` covering both ends of an
+    // isLength meant an 81-character query was answered "Search query is
+    // required", about a query the user had visibly just typed. That string is
+    // display copy: frontend/src/App.js doVenueSearch puts the server's own
+    // message straight into the search dropdown, deliberately, so that a
+    // failure is never dressed as "no venues found". A message that contradicts
+    // what the user can see on screen is worse than a generic one.
+    query('query').trim()
+      .isLength({ min: 1 }).withMessage('Search query is required')
+      .isLength({ max: 80 }).withMessage('That search is too long. Try just the name of the place.'),
     query('location').optional().trim(),
   ],
   async (req, res) => {
@@ -644,8 +667,21 @@ router.get('/search',
         // general API limiter alone let one account burn it with unique
         // queries. Only the leader charges — one Google call is one unit,
         // however many concurrent requests share its answer.
+        // THE WINDOW IS AN HOUR, SO THE SENTENCE MAY NOT SAY SECONDS.
+        // allowPlacesSearch is PER_USER_HOURLY (30) over a ROLLING 60 minutes,
+        // not a per-second rate. "Give it a few seconds" was advice that could
+        // not work: a user who spent their allowance in a burst waits most of
+        // an hour, retries after five seconds on the strength of this line,
+        // gets the same refusal, and concludes search is broken rather than
+        // rationed. The copy has to describe the limit that actually exists.
+        //
+        // It is reachable without abuse. Every uncached search is one unit and
+        // a pause mid-word fires its own request, so an evening of planning
+        // spends them. If real sessions start landing here the answer is the
+        // NUMBER, in utils/placesBudget.js, which is a money decision; this is
+        // only the sentence being true about whatever the number is.
         if (!allowPlacesSearch(req.user.id)) {
-          return res.status(429).json({ error: 'Searching too fast. Give it a few seconds.' });
+          return res.status(429).json({ error: 'You have searched a lot in the last hour. Give it a few minutes.' });
         }
         flight = runTextSearch(searchQuery, coarse, cacheKey);
         inflight.set(cacheKey, flight);
@@ -688,9 +724,27 @@ async function runTextSearch(searchQuery, coarse, cacheKey) {
 
     const data = await response.json();
 
+    // ---------------------------------------------------------------------
+    // GOOGLE'S ERROR TEXT IS A LOG LINE, NOT A SENTENCE FOR A 17-YEAR-OLD.
+    // ---------------------------------------------------------------------
+    // This used to answer `Places API: ${data.error.message}`, and
+    // frontend/src/App.js doVenueSearch renders the server's message verbatim
+    // in the search dropdown, deliberately, so a failure is never dressed as
+    // "no venues found". That contract makes every string returned here
+    // display copy, and Google's strings are not: the real ones read "API key
+    // not valid. Please pass a valid API key.", "Requests to this API ... are
+    // blocked.", "Quota exceeded for quota metric 'Requests'". Two things
+    // wrong with each. It tells a user typing the name of a bar something they
+    // cannot act on, and it narrates our billing and key state to anybody with
+    // the app installed.
+    //
+    // So: the status AND the message go to the log, where an operator can act
+    // on them, and the caller gets one plain sentence. The STATUS CODE is
+    // unchanged (502, and still uncached, so the next request retries), which
+    // is what any client keying off err.status still keys off.
     if (data.error) {
       console.error('Places API error:', data.error.status, data.error.message);
-      return { status: 502, error: `Places API: ${data.error.message}` };
+      return { status: 502, error: 'Venue search is not answering right now. Try again in a moment.' };
     }
 
     // Map results to clean venue objects
@@ -805,7 +859,15 @@ router.get('/details',
 // of picking one of the two behaviours for both callers.
 function shapeDetails(out) {
   if (!out.ok) {
-    if (out.kind === 'api') return { status: 502, error: `Places API: ${out.message}` };
+    // Same rule as runTextSearch above: Google's own message is logged, never
+    // returned. It used to be the body of this 502, so a venue whose listing
+    // Google had retired answered the detail sheet with "Places API: NOT_FOUND"
+    // and a key problem answered it with the key problem. The 502 and the
+    // "not cached, so the next request retries" behaviour are unchanged.
+    if (out.kind === 'api') {
+      console.error('Places API error (details):', out.message);
+      return { status: 502, error: 'That venue is not loading right now. Try again in a moment.' };
+    }
     console.error('Venue details error:', out.message);
     return { status: 500, error: 'Failed to get venue details' };
   }
