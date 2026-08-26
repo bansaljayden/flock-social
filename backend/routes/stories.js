@@ -41,6 +41,7 @@ const moderation = require('../utils/moderation');
 // stripper, defined in sockets/handlers.js and shared with both chat
 // transports; never re-implement either here.
 const { sanitizeStoredImage } = require('../sockets/handlers');
+const { waitPhrase, refusalBody } = require('../utils/retryAfter');
 
 const router = express.Router();
 
@@ -106,6 +107,65 @@ const IMAGE_TOO_LARGE_MESSAGE =
 // instance.
 const STORIES_PER_HOUR = 5;
 const MAX_ACTIVE_STORIES = 10;
+
+// ---------------------------------------------------------------------------
+// TWO DIFFERENT CEILINGS SHARED ONE SENTENCE, AND ONE OF THEM WAS NOT A RATE.
+//
+// "You've posted a lot of stories recently. Try again in a little while." was
+// the answer to both. STORIES_PER_HOUR is a rate and frees a slot an hour after
+// the post that filled it. MAX_ACTIVE_STORIES is a CAPACITY on how many of your
+// stories are live at once, and it frees a slot only when a story EXPIRES,
+// which with a 24-hour format is most of a day away. Somebody holding ten live
+// stories who is told "a little while" comes back all evening to the same
+// refusal, having been told the wrong thing about a limit they could have
+// cleared instantly by deleting one.
+//
+// So: name which one, say when, and on the capacity one say the thing the
+// person can actually do about it.
+// ---------------------------------------------------------------------------
+// The counts AND the two instants, in one statement, used by both refusal
+// sites so they cannot drift apart.
+//
+// The hourly leg is done with an OFFSET rather than a MIN. MIN is only correct
+// when the count sits exactly on the ceiling; the guarded INSERT below can lose
+// a race by one under READ COMMITTED, and in that case MIN + 1 hour is a slot
+// short and sends the person back to the same refusal. The offset is how many
+// posts have to age out before there is room.
+const STORY_LIMIT_STATE_SQL = `
+  SELECT
+    COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '1 hour')::int AS last_hour,
+    COUNT(*) FILTER (WHERE expires_at > NOW())::int AS active,
+    (SELECT created_at FROM stories
+       WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour'
+       ORDER BY created_at ASC
+       OFFSET GREATEST(
+         (SELECT COUNT(*)::int FROM stories
+           WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour') - $2::int, 0)
+       LIMIT 1) + INTERVAL '1 hour' AS hour_frees_at,
+    -- A different clock entirely: this leg frees when the earliest LIVE story
+    -- expires, which with a 24-hour format can be most of a day away.
+    (SELECT MIN(expires_at) FROM stories
+      WHERE user_id = $1 AND expires_at > NOW()) AS active_frees_at
+  FROM stories WHERE user_id = $1`;
+
+function storyLimitRefusal(res, row, overHour, overActive) {
+  const at = (value) => (value ? new Date(value).getTime() - Date.now() : 0);
+  // When both hold, the wait is the later of the two: clearing one leaves the
+  // other still refusing.
+  if (overActive && overHour) {
+    const ms = Math.max(at(row.active_frees_at), at(row.hour_frees_at));
+    return refusalBody(res, ms,
+      `You have ${MAX_ACTIVE_STORIES} stories live and you have posted ${STORIES_PER_HOUR} in the last hour. The next slot opens ${waitPhrase(ms)}, or delete one to post now.`);
+  }
+  if (overActive) {
+    const ms = at(row.active_frees_at);
+    return refusalBody(res, ms,
+      `You have ${MAX_ACTIVE_STORIES} stories live, which is the most at once. The oldest expires ${waitPhrase(ms)}, or delete one to post now.`);
+  }
+  const ms = at(row.hour_frees_at);
+  return refusalBody(res, ms,
+    `You have posted ${STORIES_PER_HOUR} stories in the last hour, which is the most per hour. You can post again ${waitPhrase(ms)}.`);
+}
 
 // Strict, whole-string: prefix-only matching (`/^data:image\/png;base64,/`)
 // accepts arbitrary trailing junk after the payload, which is a place to park
@@ -397,15 +457,13 @@ router.post('/',
       // (and the bill) on images it was never going to be allowed to post. The
       // authoritative check is the guarded INSERT below; this one only spares
       // the expensive call.
-      const recent = await pool.query(
-        `SELECT
-           COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '1 hour')::int AS last_hour,
-           COUNT(*) FILTER (WHERE expires_at > NOW())::int AS active
-         FROM stories WHERE user_id = $1`,
-        [req.user.id]
-      );
-      if (recent.rows[0].last_hour >= STORIES_PER_HOUR || recent.rows[0].active >= MAX_ACTIVE_STORIES) {
-        return res.status(429).json({ error: "You've posted a lot of stories recently. Try again in a little while." });
+      // Same two counts this check has always made, plus the two instants the
+      // refusal needs, in the same round trip.
+      const recent = await pool.query(STORY_LIMIT_STATE_SQL, [req.user.id, STORIES_PER_HOUR]);
+      const overHour = recent.rows[0].last_hour >= STORIES_PER_HOUR;
+      const overActive = recent.rows[0].active >= MAX_ACTIVE_STORIES;
+      if (overHour || overActive) {
+        return res.status(429).json(storyLimitRefusal(res, recent.rows[0], overHour, overActive));
       }
 
       // Image screen — FAIL CLOSED. moderateImage already answers a provider
@@ -490,7 +548,15 @@ router.post('/',
       );
 
       if (result.rows.length === 0) {
-        return res.status(429).json({ error: "You've posted a lot of stories recently. Try again in a little while." });
+        // The guarded INSERT is the authoritative check and it answers with a
+        // row count, not with a reason, so re-read which of the two ceilings
+        // holds. Without this the race that only this statement can catch would
+        // be the one case still told "in a little while".
+        const state = await pool.query(STORY_LIMIT_STATE_SQL, [req.user.id, STORIES_PER_HOUR]);
+        const row = state.rows[0] || {};
+        return res.status(429).json(storyLimitRefusal(
+          res, row, row.last_hour >= STORIES_PER_HOUR, row.active >= MAX_ACTIVE_STORIES
+        ));
       }
 
       res.status(201).json({ story: result.rows[0] });

@@ -321,7 +321,35 @@ function setCache(key, data) {
 }
 
 // Paid-call budget shared with venueSearch (round 8: these fetches bypassed it)
-const { allowPlacesSearch } = require('../utils/placesBudget');
+const { allowPlacesSearch, placesRetryAfter, PER_USER_HOURLY } = require('../utils/placesBudget');
+const { waitPhrase, refusalBody } = require('../utils/retryAfter');
+
+// ---------------------------------------------------------------------------
+// WHAT A SPENT PLACES BUDGET IS ALLOWED TO SAY.
+//
+// Both sites below used to answer "Loading venues too fast. Give it a few
+// seconds." That sentence described a per-second rate, and no per-second rate
+// exists here. allowPlacesSearch charges PER_USER_HOURLY (30) over a ROLLING 60
+// minutes and GLOBAL_DAILY (3000) over a FIXED UTC day, so somebody who spent
+// their allowance in a burst waits most of an hour. They wait five seconds on
+// the strength of that line, get refused again, and conclude the venue card is
+// broken rather than rationed.
+//
+// The two legs are different facts about different people and must not share a
+// sentence. The hourly one is about this caller and their own last hour. The
+// daily one is about the whole app and is not this caller's doing, so it does
+// not describe them as having done anything.
+// ---------------------------------------------------------------------------
+function placesRefusal(res, userId, cost = 1) {
+  const { leg, ms } = placesRetryAfter(userId, cost);
+  if (leg === 'global-day') {
+    return res.status(429).json(refusalBody(res, ms, `Flock has reached its venue lookup limit for the day. Crowd levels come back ${waitPhrase(ms)}.`));
+  }
+  // Not a window at all: an unidentifiable caller is refused every time, so
+  // there is nothing honest to say about coming back later.
+  if (leg === 'identity') return res.status(429).json({ error: 'Sign in again to load crowd levels.' });
+  return res.status(429).json(refusalBody(res, ms, `Flock loads up to ${PER_USER_HOURLY} venues an hour, and this hour is used up. You can load more ${waitPhrase(ms)}.`));
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -655,7 +683,7 @@ router.get('/:placeId',
       // flight synchronously. Same rule routes/venueSearch.js has always followed
       // between its cache read and its flight registration.
       if (willCostUpstreamCall(placeId) && !allowPlacesSearch(req.user.id)) {
-        return res.status(429).json({ error: 'Loading venues too fast. Give it a few seconds.' });
+        return placesRefusal(res, req.user.id);
       }
 
       // Fetch venue from Google Places
@@ -1530,7 +1558,11 @@ router.get('/:placeId/alternatives',
       // nobody made.
       const cost = willCostUpstreamCall(placeId) ? 2 : 1;
       if (!allowPlacesSearch(req.user.id, cost)) {
-        return res.status(429).json({ error: 'Loading venues too fast. Give it a few seconds.' });
+        // The SAME cost the charge asked for. This request needs two units when
+        // the Place Details half is cold, so the wait is until the second
+        // oldest charge ages out, not the first. Passing 1 here would report a
+        // window that is over before the request would actually be allowed.
+        return placesRefusal(res, req.user.id, cost);
       }
 
       // Fetch target venue

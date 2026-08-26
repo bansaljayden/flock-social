@@ -11,6 +11,7 @@ const { upstreamSignal } = require('../utils/upstream');
 // a second thing to keep in step with the first.
 const { isPlaceIdShaped } = require('../utils/places');
 const { allowGlobalPlacesCall, GLOBAL_DAILY } = require('../utils/placesBudget');
+const { setRetryAfter, msUntilUtcMidnight } = require('../utils/retryAfter');
 const { weekdayOffset } = require('../services/crowdEngine');
 
 const router = express.Router();
@@ -164,6 +165,19 @@ function evictBadgeIpHits(now) {
 // True when this address may pay for one badge MISS. A refusal consumes
 // nothing, so a throttled address recovers on the window rather than being
 // pushed further out by its own retries.
+// How long this address, or the whole process, waits. Non-consuming, and only
+// meaningful once allowBadgeMiss has already refused. Both legs are knowable
+// exactly: BADGE_DAILY rolls at UTC midnight, and the per-address window is a
+// rolling hour whose oldest live hit is already in the map.
+function badgeRetryMs(req) {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today === badgeDayKey && badgeDayCount >= BADGE_DAILY) return msUntilUtcMidnight();
+  const now = Date.now();
+  const hits = (badgeIpHits.get(req.ip || 'unknown') || []).filter((t) => now - t < BADGE_IP_WINDOW_MS);
+  if (hits.length < BADGE_IP_HOURLY) return 0;
+  return Math.max(1, hits[hits.length - BADGE_IP_HOURLY] + BADGE_IP_WINDOW_MS - now);
+}
+
 function allowBadgeMiss(req) {
   const today = new Date().toISOString().slice(0, 10);
   if (today !== badgeDayKey) { badgeDayKey = today; badgeDayCount = 0; }
@@ -290,7 +304,25 @@ router.get('/:placeId.svg',
 
       // Everything past this line costs: one Postgres round trip, and on a
       // verified venue a paid Place Details call. Meter the MISS, per address.
-      if (!allowBadgeMiss(req)) return res.status(429).send('');
+      //
+      // THIS WAS THE ONLY 429 IN THE CODEBASE WITH NO BODY AT ALL. What the
+      // venue saw was a broken image on their own homepage and nothing to
+      // search for: no sentence, no status text they would ever read, and no
+      // header telling their browser or their CDN when to come back. The person
+      // best placed to notice was the one told least.
+      //
+      // So it answers with a real SVG saying so, and with Retry-After, which is
+      // the one channel an <img> tag can act on. The status stays 429 because
+      // that is what this is; browsers paint an image body regardless, and a
+      // venue owner who opens the URL directly now reads a sentence.
+      if (!allowBadgeMiss(req)) {
+        const ms = badgeRetryMs(req);
+        setRetryAfter(res, ms);
+        res.set('Content-Type', 'image/svg+xml');
+        // Never cache a refusal for the 15 minutes a real badge is cached for.
+        res.set('Cache-Control', 'no-store');
+        return res.status(429).send(svgBadge('Live status paused', '#98937f'));
+      }
 
       // Claimed AND verified venues only — the badge burns Google quota and
       // speaks with Flock's name; unverified claims get neither.
@@ -309,7 +341,14 @@ router.get('/:placeId.svg',
       // One unit: one Place Details call per cache miss.
       if (!allowGlobalPlacesCall(1)) {
         console.warn('[Badge] Global Places budget spent; serving no badge for', placeId);
-        return res.status(503).send('');
+        // Same empty-body defect one status code along, and this leg lasts
+        // until UTC midnight rather than an hour, so a badge that says nothing
+        // here is a badge that says nothing all evening.
+        const ms = msUntilUtcMidnight();
+        setRetryAfter(res, ms);
+        res.set('Content-Type', 'image/svg+xml');
+        res.set('Cache-Control', 'no-store');
+        return res.status(503).send(svgBadge('Live status paused', '#98937f'));
       }
 
       const r = await fetch(`https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}`, {

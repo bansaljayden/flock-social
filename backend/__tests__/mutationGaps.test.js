@@ -400,10 +400,18 @@ test('the throttled reset answers the same shape as the allowed one, minus the s
     const res = await call('POST', '/api/auth/forgot-password', { email: 'real@example.com' });
     await flushResetMail();
     assert.strictEqual(res.status, 429);
-    bodies.push(res.text);
+    // The refusal now carries when it lifts, and `resetsAt` is an instant: two
+    // calls a millisecond apart differ in it for reasons that have nothing to
+    // do with the mailbox. Everything else must be byte-identical, so the
+    // timestamp is normalised out rather than the comparison being weakened.
+    // The window itself is safe to compare: it is read from a budget keyed on
+    // the ADDRESS HASH, which counts the same for an address with no account.
+    bodies.push(res.text.replace(/"resetsAt":"[^"]+"/, '"resetsAt":"<instant>"'));
     assert.strictEqual(ran('INSERT INTO password_resets').length, 0, 'nothing is minted for a throttled request');
   }
   assert.strictEqual(bodies[0], bodies[1], 'the refusal must not depend on whether the account exists');
+  assert.match(bodies[0], /"retryAfterSeconds":/,
+    'a refusal on the account-recovery path must say when it lifts');
 });
 
 // ---------------------------------------------------------------------------

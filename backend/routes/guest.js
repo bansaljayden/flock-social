@@ -17,6 +17,10 @@ const { authenticate, requireVerified } = require('../middleware/auth');
 // announced through it rather than emitted from here.
 const { broadcastGuestVote } = require('./venues');
 const { pushIfOffline } = require('../services/pushHelper');
+// Every refusal in this file is read by a stranger with no account, no app and
+// no way to ask anyone what happened, so the window it names has to be the real
+// one. See utils/retryAfter.js.
+const { waitPhrase, refusalBody } = require('../utils/retryAfter');
 
 const router = express.Router();
 
@@ -89,7 +93,7 @@ const newLinkToken = () => {
 //     deliberately still count toward that cap (a takedown must not hand the
 //     abuser a fresh slot). The consequence nobody costed: filling all 50 slots
 //     with junk is a PERMANENT denial of service on that invite link that no
-//     moderator action can reverse — real guests get 429 until the host revokes
+//     moderator action can reverse — real guests get 409 until the host revokes
 //     the link and re-shares a new one.
 //
 // The general limiter (300/15min per IP) is nowhere near tight enough: 50
@@ -169,7 +173,19 @@ function createGuestCounter({ name, limit, windowMs, maxKeys }) {
     return true;
   }
 
-  return { name, allow, entries, limit, windowMs, maxKeys };
+  // When this key's window ends, in milliseconds. Non-consuming. These are
+  // FIXED windows with the reset instant already stored on the entry, so the
+  // exact answer was always available and every refusal in this file was
+  // guessing at it instead. Returns 0 when nothing is refusing.
+  function retryAfterMs(key) {
+    const entry = entries.get(String(key));
+    if (!entry) return 0;
+    const now = Date.now();
+    if (now > entry.resetAt || entry.count < limit) return 0;
+    return Math.max(1, entry.resetAt - now);
+  }
+
+  return { name, allow, retryAfterMs, entries, limit, windowMs, maxKeys };
 }
 
 const NEW_GUESTS_PER_IP_PER_FLOCK = 3;
@@ -188,6 +204,10 @@ const newGuestLog = newGuestCounter.entries; // "ip|flockId" -> { count, resetAt
 
 function allowNewGuest(ip, flockId) {
   return newGuestCounter.allow(`${ip}|${flockId}`);
+}
+
+function newGuestRetryMs(ip, flockId) {
+  return newGuestCounter.retryAfterMs(`${ip}|${flockId}`);
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +259,10 @@ const guestActionLog = guestActionCounter.entries;
 
 function allowGuestAction(guestRowId) {
   return guestActionCounter.allow(guestRowId);
+}
+
+function guestActionRetryMs(guestRowId) {
+  return guestActionCounter.retryAfterMs(guestRowId);
 }
 
 // ---------------------------------------------------------------------------
@@ -631,7 +655,12 @@ router.post('/:token/rsvp',
           // Only now — the row is confirmed, so the budget's key space is
           // bounded by rows that exist rather than by tokens a caller invented.
           if (!allowGuestAction(existing.rows[0].id)) {
-            return res.status(429).json({ error: 'Too many changes. Try again later.' });
+            // GUEST_ACTIONS_PER_HOUR over a fixed hour. "Try again later" left
+            // the guest to guess how much later, and the honest answer is
+            // already sitting on the counter entry.
+            const ms = guestActionRetryMs(existing.rows[0].id);
+            return res.status(429).json(refusalBody(res, ms,
+              `You have changed this RSVP a lot in the last hour. You can change it again ${waitPhrase(ms)}.`));
           }
           if (await nameIsTakenDown((q, p) => pool.query(q, p), link.flock_id, name)) {
             return res.status(403).json({ error: 'That name cannot be used on this flock. Try a different one.' });
@@ -664,7 +693,11 @@ router.post('/:token/rsvp',
       // for why that is the expensive operation on this route and the edit path
       // is not.
       if (!allowNewGuest(req.ip, link.flock_id)) {
-        return res.status(429).json({ error: 'Too many RSVPs from here. Try again later.' });
+        // NEW_GUEST_WINDOW_MS is an hour, and "later" was doing the work of
+        // saying so. Nobody guesses an hour from "later".
+        const ms = newGuestRetryMs(req.ip, link.flock_id);
+        return res.status(429).json(refusalBody(res, ms,
+          `${NEW_GUESTS_PER_IP_PER_FLOCK} people have already RSVPed to this plan from this connection in the last hour. You can add another name ${waitPhrase(ms)}.`));
       }
 
       // Cap guests per flock so a leaked link can't flood a plan. Hidden rows
@@ -685,7 +718,16 @@ router.post('/:token/rsvp',
         const count = await client.query('SELECT COUNT(*)::int AS n FROM guest_rsvps WHERE flock_id = $1', [link.flock_id]);
         if (count.rows[0].n >= 50) {
           await client.query('ROLLBACK');
-          return res.status(429).json({ error: 'This flock has too many guest RSVPs' });
+          // 409, NOT 429. This is a capacity cap on the plan, not a rate on the
+          // caller: hidden rows count toward it deliberately, nothing ages out
+          // of it, and the header of this file says so in terms ("a PERMANENT
+          // denial of service on that invite link that no moderator action can
+          // reverse"). A 429 tells the guest to wait, and waiting never helps.
+          // It is the host who has to act, so the sentence says which host.
+          return res.status(409).json({
+            error: 'This plan already has as many guests as it can take. Ask whoever sent the link to add you in the app.',
+            guestCapReached: true,
+          });
         }
 
         // Round 15 — make a takedown STICK.
@@ -780,7 +822,9 @@ router.post('/:token/vote',
       // tally and the per-member fan-out are the expensive part of this route,
       // and this is an UNAUTHENTICATED caller.
       if (!allowGuestAction(guestId)) {
-        return res.status(429).json({ error: 'Too many votes. Try again later.' });
+        const ms = guestActionRetryMs(guestId);
+        return res.status(429).json(refusalBody(res, ms,
+          `You have voted a lot in the last hour. You can vote again ${waitPhrase(ms)}.`));
       }
 
       // Guests vote on venues the group is already considering — they can't
@@ -920,7 +964,10 @@ router.post('/:token/vote',
 //   403  somebody already on this plan's accepted roster is in a block with
 //        the caller, in either direction. Names nobody: see the gate itself.
 //   409  the plan is cancelled or completed
-//   429  this link has already pulled in too many accounts
+//   409  this link has already pulled in as many accounts as the plan holds.
+//        A CAP, not a rate: waiting frees nothing, so it is not a 429. The
+//        per-account tap throttle on the same route IS a 429, and it names
+//        the hour it actually runs on.
 //
 // ALREADY A MEMBER is a 200, not an error. Someone who is already in the flock
 // and taps their own invite link wants the chat, not a lecture; they get sent
@@ -967,7 +1014,13 @@ router.post('/:token/join',
       }
 
       if (!joinCounter.allow(`${req.user.id}|${link.flock_id}`)) {
-        return res.status(429).json({ error: 'Too many tries. Give it a minute.' });
+        // "Give it a minute" was wrong by a factor of sixty: JOIN_WINDOW_MS is
+        // an hour. Somebody who tapped the link too many times waited a minute
+        // on the strength of that line, was refused again, and had no way to
+        // tell a throttle from a dead invite.
+        const ms = joinCounter.retryAfterMs(`${req.user.id}|${link.flock_id}`);
+        return res.status(429).json(refusalBody(res, ms,
+          `You have opened this invite a lot in the last hour. You can try again ${waitPhrase(ms)}.`));
       }
 
       // Already in? Answer before touching anything, so the common re-tap costs
@@ -1093,8 +1146,13 @@ router.post('/:token/join',
       }
 
       if (overCap) {
-        return res.status(429).json({
+        // 409 for the same reason the guest cap above is one: LINK_JOIN_MEMBER_CAP
+        // is a ceiling on the plan, not a rate on this account. No amount of
+        // waiting frees a seat, and the sentence already told the caller that
+        // while the status code was telling their client the opposite.
+        return res.status(409).json({
           error: 'This plan is full. Ask them to add you in the app.',
+          flockFull: true,
         });
       }
 

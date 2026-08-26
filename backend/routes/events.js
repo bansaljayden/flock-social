@@ -7,6 +7,7 @@ const { scalarOnly } = require('../validators/shape');
 // The per-user budget, from the one module that implements it. See below for
 // what the hand-rolled version in this file used to do.
 const { createUserBudget } = require('../utils/probeBudget');
+const { waitPhrase, refusalBody, msUntilUtcMidnight } = require('../utils/retryAfter');
 
 const router = express.Router();
 
@@ -191,6 +192,47 @@ function chargeGlobal(cost) {
 // The per-user unit is taken only once the global budget has agreed to pay, so
 // a caller refused by the global ceiling does not also lose one of their own
 // twenty — they were never going to get the call either way.
+// ---------------------------------------------------------------------------
+// WHICH CEILING REFUSED, AND WHEN IT LIFTS.
+//
+// All three refusals on this router said "busy right now. Try again in a bit."
+// Two things were wrong with that. "Busy" attributes the refusal to load, and
+// two of the three legs are the CALLER'S OWN allowance, which no amount of
+// other people's traffic affects. And "in a bit" describes seconds or minutes,
+// while the global leg runs until the next UTC midnight and the per-user daily
+// leg until 24 hours after that account's first event search of the day.
+//
+// Non-consuming, and only meaningful after allowUpstream has already refused.
+// The legs are read in the order allowUpstream checks them.
+// ---------------------------------------------------------------------------
+function upstreamRetry(userId, cost = 1) {
+  rollGlobalDay();
+  if (tmDayCount + cost > TM_GLOBAL_DAILY) {
+    return { leg: 'global-day', ms: msUntilUtcMidnight() };
+  }
+  const ms = tmUserBudget.retryAfterMs(userId);
+  const left = tmUserBudget.remaining(userId);
+  return { leg: left.daily <= 0 ? 'user-day' : 'user-hour', ms };
+}
+
+// The sentence, per leg. Only the SHARED-day leg names what the caller was
+// after, because that is the one where the subject is the thing that came back
+// rather than the person who asked. The two per-account legs are about the
+// account, and read identically wherever they fire.
+function upstreamRefusal(res, userId, subject, cost = 1) {
+  const { leg, ms } = upstreamRetry(userId, cost);
+  if (leg === 'global-day') {
+    return res.status(429).json(refusalBody(res, ms,
+      `Flock has reached its event limit for the day. ${subject.plural} ${waitPhrase(ms)}.`));
+  }
+  if (leg === 'user-day') {
+    return res.status(429).json(refusalBody(res, ms,
+      `You have looked up a lot of events today. You can try again ${waitPhrase(ms)}.`));
+  }
+  return res.status(429).json(refusalBody(res, ms,
+    `You have looked up a lot of events in the last hour. You can try again ${waitPhrase(ms)}.`));
+}
+
 function allowUpstream(userId, cost = 1) {
   rollGlobalDay();
   if (tmDayCount + cost > TM_GLOBAL_DAILY) return false;
@@ -444,7 +486,8 @@ router.get('/search',
         // charges: one paid call is one budget unit, however many concurrent
         // requests share its answer.
         if (!allowUpstream(req.user.id, searchQuery ? 2 : 1)) {
-          return res.status(429).json({ error: 'Event search is busy right now. Try again in a bit.' });
+          return upstreamRefusal(res, req.user.id,
+            { plural: 'Event search comes back' }, searchQuery ? 2 : 1);
         }
         flight = runSearch({ lat, lng, searchQuery, radiusMiles, categoryFilter, cacheKey });
         inflight.set(cacheKey, flight);
@@ -611,7 +654,7 @@ router.get('/featured',
         if (upstreamIsDown()) return res.status(503).json(UPSTREAM_DOWN);
 
         if (!allowUpstream(req.user.id)) {
-          return res.status(429).json({ error: 'Event search is busy right now. Try again in a bit.' });
+          return upstreamRefusal(res, req.user.id, { plural: 'Events come back' });
         }
         // The leader's id rides into the flight so the optional top-up inside it
         // charges the same account that paid for the first call. Joiners are
@@ -783,7 +826,7 @@ router.get('/details',
         if (upstreamIsDown()) return res.status(503).json(UPSTREAM_DOWN);
 
         if (!allowUpstream(req.user.id)) {
-          return res.status(429).json({ error: 'Event lookups are busy right now. Try again in a bit.' });
+          return upstreamRefusal(res, req.user.id, { plural: 'Event pages come back' });
         }
         flight = runDetails(eventId, cacheKey);
         inflight.set(cacheKey, flight);

@@ -48,6 +48,7 @@ const { OAuth2Client } = require('google-auth-library');
 const pool = require('../config/database');
 // signUserToken is the ONLY way tokens are minted (round 13): it stamps the
 // user's token_version into the JWT so a bump revokes every outstanding token.
+const { waitPhrase, refusalBody } = require('../utils/retryAfter');
 const { authenticate, signUserToken, revokeUserSessions } = require('../middleware/auth');
 const {
   sendVerificationEmail, verificationLink, baseWebUrl,
@@ -392,6 +393,78 @@ async function sendVerification(user, ip) {
     console.log(`[auth] verification link for ${user.email}: ${link}`);
   }
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// WHEN A MAIL BUDGET FREES ITS NEXT SLOT.
+//
+// Both budgets in this file are counted in SQL over ROLLING windows, one an
+// hour long and one a DAY long, plus a fixed minimum gap between sends. Their
+// refusals both said "try again in a few minutes", which is true of the gap and
+// of nothing else: somebody who asked for five verification links inside an
+// hour waits an hour, and somebody who asked for ten inside a day waits until
+// the oldest of those ten is a day old. The daily leg is the one that matters
+// most, because the two things it locks a person out of are confirming their
+// email and recovering their password.
+//
+// The exact instant is knowable from the same table the counts came from: the
+// row that has to age out of the window is the (count - limit + 1)-th oldest
+// one inside it. That is what the OFFSET below selects. Only the legs that are
+// actually exhausted are consulted, and the answer is the LATEST of them,
+// because a caller freed by the hour and still held by the day is not free.
+//
+// Run only on the refusal path. It is one extra indexed read on a request that
+// is already being turned away, and it is never on the path of a send.
+// ---------------------------------------------------------------------------
+// EVERY BOUND PARAMETER MUST BE REFERENCED. Postgres infers a parameter's type
+// from where it is used, so a statement that binds $1 and never mentions it
+// fails outright with "could not determine data type of parameter $1". Only the
+// EXHAUSTED legs appear in this query, so which parameters exist depends on the
+// refusal, and a fixed [key, ip, ...] list would have been unreferenced roughly
+// half the time. Binding on demand keeps the two in step by construction;
+// __tests__/rateLimitHonesty.test.js pins it.
+//
+// The interval strings are literals from the caller's own array, never anything
+// off a request, which is why they can be interpolated. Every value that came
+// from outside is a parameter.
+function buildMailBudgetQuery(table, keyColumn, key, ip, legs) {
+  const params = [];
+  const bind = (value) => { params.push(value); return `$${params.length}`; };
+  const parts = [];
+  for (const leg of legs) {
+    if (!leg.exhausted) continue;
+    const column = leg.scope === 'ip' ? 'request_ip' : keyColumn;
+    const match = bind(leg.scope === 'ip' ? (ip || null) : key);
+    // How many rows have to age out before a slot exists. Zero when the count
+    // sits exactly on the limit, which is the ordinary case.
+    const offset = bind(Math.max(0, leg.count - leg.limit));
+    parts.push(
+      `(SELECT created_at FROM ${table}
+         WHERE ${column} = ${match} AND created_at > NOW() - INTERVAL '${leg.interval}'
+         ORDER BY created_at ASC OFFSET ${offset}::int LIMIT 1) + INTERVAL '${leg.interval}'`
+    );
+  }
+  if (parts.length === 0) return null;
+  // GREATEST ignores NULLs and answers NULL only when every argument is NULL,
+  // so a leg with no matching row simply does not vote.
+  return { sql: `SELECT GREATEST(${parts.join(', ')}) AS frees_at`, params };
+}
+
+async function mailBudgetRetryMs(table, keyColumn, key, ip, legs) {
+  const q = buildMailBudgetQuery(table, keyColumn, key, ip, legs);
+  if (!q) return 0;
+  try {
+    const { rows } = await pool.query(q.sql, q.params);
+    const freesAt = rows[0] && rows[0].frees_at ? new Date(rows[0].frees_at).getTime() : 0;
+    return Math.max(0, freesAt - Date.now());
+  } catch (err) {
+    // A refusal must not become a 500 because the follow-up read failed. Say
+    // nothing about the window rather than say something invented: waitPhrase(0)
+    // is "in a moment", which over-promises by seconds where the alternative
+    // over-promises by a day.
+    console.warn('[auth] could not read the mail budget reset time:', err.message);
+    return 0;
+  }
 }
 
 async function verificationSendBudget(userId, ip) {
@@ -2173,14 +2246,29 @@ router.post('/resend-verification', authenticate, async (req, res) => {
 
     const budget = await verificationSendBudget(user.id, req.ip);
     const tooSoon = budget.accountLast && Date.now() - budget.accountLast < RESEND_MIN_GAP_MS;
-    if (
-      tooSoon
-      || budget.accountHour >= RESEND_MAX_PER_HOUR_ACCOUNT
-      || budget.accountDay >= RESEND_MAX_PER_DAY_ACCOUNT
-      || budget.ipHour >= RESEND_MAX_PER_HOUR_IP
-    ) {
+    const legs = [
+      { scope: 'account', interval: '1 hour', count: budget.accountHour, limit: RESEND_MAX_PER_HOUR_ACCOUNT,
+        exhausted: budget.accountHour >= RESEND_MAX_PER_HOUR_ACCOUNT },
+      { scope: 'account', interval: '1 day', count: budget.accountDay, limit: RESEND_MAX_PER_DAY_ACCOUNT,
+        exhausted: budget.accountDay >= RESEND_MAX_PER_DAY_ACCOUNT },
+      { scope: 'ip', interval: '1 hour', count: budget.ipHour, limit: RESEND_MAX_PER_HOUR_IP,
+        exhausted: budget.ipHour >= RESEND_MAX_PER_HOUR_IP },
+    ];
+    const capped = legs.some((l) => l.exhausted);
+    if (tooSoon || capped) {
       console.warn(`[auth] verification resend throttled for user ${user.id} from ${req.ip}`);
-      return res.status(429).json({ error: 'We just sent one. Check your inbox, then try again in a few minutes.' });
+      // "We just sent one" is only true of the sixty-second gap. The other
+      // three legs are hours and a whole day long, and the person reading this
+      // cannot confirm their email until one of them clears, so the sentence
+      // has to distinguish them.
+      const gapMs = tooSoon ? Math.max(1, budget.accountLast + RESEND_MIN_GAP_MS - Date.now()) : 0;
+      const cappedMs = capped
+        ? await mailBudgetRetryMs('email_verifications', 'user_id', user.id, req.ip, legs)
+        : 0;
+      const ms = Math.max(gapMs, cappedMs);
+      return res.status(429).json(refusalBody(res, ms, capped
+        ? `That is several confirmation links already. You can ask for another ${waitPhrase(ms)}. The last link we sent still works.`
+        : `We just sent one. Check your inbox, then try again ${waitPhrase(ms)}.`));
     }
 
     const sendResult = await sendVerification(user, req.ip);
@@ -2240,7 +2328,34 @@ router.post('/forgot-password', [
     const budget = await resetRequestBudget(emailKey, req.ip);
     if (resetBudgetExhausted(budget)) {
       console.warn(`[auth] password reset throttled from ${req.ip}`);
-      return res.status(429).json({ error: 'That is a few reset emails already. Try again in a few minutes.' });
+      // Three per hour, six per DAY, twenty per hour per address. "A few
+      // minutes" described none of those, and this is account recovery: a
+      // person locked out of their password who is told to come back in a few
+      // minutes comes back, is refused, and has no remaining way in.
+      //
+      // Every sentence here stays neutral about whether an account exists, for
+      // the reason the route header gives. It can: the budget is keyed on the
+      // address hash and counts identically for addresses with no account, so
+      // the window is a fact about the requests, never about the mailbox.
+      const legs = [
+        { scope: 'email', interval: '1 hour', count: budget.emailHour, limit: RESET_MAX_PER_HOUR_EMAIL,
+          exhausted: budget.emailHour >= RESET_MAX_PER_HOUR_EMAIL },
+        { scope: 'email', interval: '1 day', count: budget.emailDay, limit: RESET_MAX_PER_DAY_EMAIL,
+          exhausted: budget.emailDay >= RESET_MAX_PER_DAY_EMAIL },
+        { scope: 'ip', interval: '1 hour', count: budget.ipHour, limit: RESET_MAX_PER_HOUR_IP,
+          exhausted: budget.ipHour >= RESET_MAX_PER_HOUR_IP },
+      ];
+      const capped = legs.some((l) => l.exhausted);
+      const gapMs = budget.emailLast && Date.now() - budget.emailLast < RESET_MIN_GAP_MS
+        ? Math.max(1, budget.emailLast + RESET_MIN_GAP_MS - Date.now())
+        : 0;
+      const cappedMs = capped
+        ? await mailBudgetRetryMs('password_reset_requests', 'email_key', emailKey, req.ip, legs)
+        : 0;
+      const ms = Math.max(gapMs, cappedMs);
+      return res.status(429).json(refusalBody(res, ms, capped
+        ? `That is several reset requests for this address already. You can ask for another ${waitPhrase(ms)}. Any link already sent still works.`
+        : `A reset link was requested for this address a moment ago. Check your inbox and your spam folder, then try again ${waitPhrase(ms)}.`));
     }
     await recordResetRequest(emailKey, req.ip);
     maybePurgeResetRequests();
@@ -2373,9 +2488,17 @@ router.post('/login', loginValidation, async (req, res) => {
     // Per-account throttle (round 15) — checked BEFORE the lookup so a locked
     // account costs an attacker a database round trip of nothing.
     const throttleKey = canonicalEmail(email);
-    if (loginLockedFor(throttleKey) > 0) {
+    const lockedMs = loginLockedFor(throttleKey);
+    if (lockedMs > 0) {
       console.warn(`Login throttled for ${throttleKey} from ${req.ip} at ${new Date().toISOString()}`);
-      return res.status(429).json({ error: 'Too many failed sign-in attempts. Try again in a few minutes.' });
+      // loginLockedFor has always RETURNED the milliseconds left and this line
+      // threw them away for "a few minutes", against a LOGIN_FAIL_WINDOW_MS of
+      // fifteen. Somebody locked out of their own account read that, came back
+      // at three minutes, failed again, and the failure does not extend the
+      // lock, so the only thing the wrong number bought was a second lockout
+      // they could not explain.
+      return res.status(429).json(refusalBody(res, lockedMs,
+        `Too many failed sign-in attempts. You can try again ${waitPhrase(lockedMs)}.`));
     }
 
     const result = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [email]);
@@ -3395,6 +3518,10 @@ module.exports.EMAIL_CANONICAL_SQL = EMAIL_CANONICAL_SQL;
 module.exports.__testing = {
   canonicalEmail,
   EMAIL_MATCH_SQL,
+  // The parameter-binding invariant above is the one thing in this file that a
+  // real Postgres would catch and a stubbed pool would not, so it is pinned
+  // directly rather than through a route.
+  buildMailBudgetQuery,
   loginLockedFor,
   recordLoginFailure,
   clearLoginFailures,
