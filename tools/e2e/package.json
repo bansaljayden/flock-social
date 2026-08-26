@@ -1,0 +1,14 @@
+{
+  "name": "flock-e2e",
+  "private": true,
+  "version": "1.0.0",
+  "description": "End to end suite that drives the real Flock UI against a throwaway local stack.",
+  "scripts": {
+    "build": "node build.js",
+    "stack": "node stack.js",
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
+  }
+}
