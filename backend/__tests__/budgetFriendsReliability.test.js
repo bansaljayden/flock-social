@@ -50,6 +50,9 @@ delete process.env.FIREBASE_SERVICE_ACCOUNT; // push stays a no-op (no DB work)
 
 const pool = require('../config/database');
 const { signUserToken } = require('../middleware/auth');
+// The same digest the route computes, so the fixture directory is keyed the way
+// production is instead of by a second, drifting definition of "same number".
+const { phoneDiscoveryHash } = require('../utils/phone');
 
 // ── Fixture state ───────────────────────────────────────────────────────────
 const AUTHED = {
@@ -68,6 +71,7 @@ let budgets;        // Map "userId" -> { amount, skipped }
 let flock;          // the one flock row
 let members;        // accepted member ids
 let phones;         // Map userId -> phone digits (find-by-phone directory)
+let discoverable;   // Set of userIds whose users.phone_discoverable is TRUE
 let emitted;        // every io emit: { room, event, payload }
 let queries;        // every non-auth statement: { sql, params }
 let unknown;        // statements the fixture did not recognise
@@ -87,6 +91,7 @@ function reset() {
   };
   members = [1, 2, 3, 4];
   phones = new Map();
+  discoverable = new Set();
   emitted = [];
   queries = [];
   unknown = [];
@@ -190,13 +195,22 @@ async function dispatch(text, params = [], ctx = null) {
     return { rows: u ? [{ id: u.id, name: u.name }] : [], rowCount: u ? 1 : 0 };
   }
 
-  // find-by-phone: the directory scan, then the ONE batched friendship read.
-  if (has('FROM users WHERE id != $1 AND phone IS NOT NULL')) {
+  // find-by-phone: the digest lookup, then the ONE batched friendship read.
+  //
+  // Migration 051 turned this from a suffix scan over users.phone into an
+  // equality lookup on users.phone_hash gated by users.phone_discoverable, so
+  // the fixture hashes its own directory exactly the way the route hashes the
+  // uploaded list. Numbers are therefore matched as WHOLE canonical numbers: a
+  // fixture entry that does not canonicalise matches nothing now, which is the
+  // behaviour under test rather than a fixture quirk.
+  if (has('WHERE phone_hash = ANY($2::text[])')) {
     const me = Number(params[0]);
-    const wanted = String(params[1]).split('|');
+    const wanted = new Set(params[1]);
     const rows = [...phones.entries()]
-      .filter(([id, digits]) => id !== me && wanted.some((w) => digits.endsWith(w)))
-      .map(([id, digits]) => ({ id, name: `User${id}`, profile_image_url: null, phone: digits }));
+      .filter(([id]) => id !== me && discoverable.has(id))
+      .filter(([, digits]) => wanted.has(phoneDiscoveryHash(digits)))
+      .map(([id]) => ({ id, name: `User${id}`, profile_image_url: null }))
+      .sort((a, b) => a.id - b.id);
     return { rows, rowCount: rows.length };
   }
   if (has('= ANY($2::int[])') && has('FROM friendships')) {
@@ -917,6 +931,9 @@ test('friends: contact sync asks for N friendship statuses with ONE query, not N
   phones.set(2, '2025550101');
   phones.set(3, '2025550102');
   phones.set(4, '2025550103');
+  // All three opted in. Without that they are not in the index at all, which is
+  // the point of migration 051 and is covered on its own in contactDiscovery.
+  discoverable.add(2); discoverable.add(3); discoverable.add(4);
   friendships.push({ id: 5, requester_id: 1, addressee_id: 2, status: 'accepted' });
   friendships.push({ id: 6, requester_id: 3, addressee_id: 1, status: 'pending' });
 
@@ -936,8 +953,8 @@ test('friends: contact sync asks for N friendship statuses with ONE query, not N
   assert.strictEqual(friendshipReads.length, 1,
     `expected 1 batched friendship read, saw ${friendshipReads.length}`);
   assert.ok(friendshipReads[0].sql.includes('ANY($2::int[])'));
-  // And no per-user phone probes either: one directory scan.
-  const directoryReads = queries.filter((q) => q.sql.includes('phone IS NOT NULL'));
+  // And no per-user phone probes either: one directory lookup.
+  const directoryReads = queries.filter((q) => q.sql.includes('phone_hash = ANY'));
   assert.strictEqual(directoryReads.length, 1);
   assertQueriesUnderstood();
 });

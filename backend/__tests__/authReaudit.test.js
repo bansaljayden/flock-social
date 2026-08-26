@@ -216,6 +216,12 @@ function evalAtom(atom, row, params) {
 function blankUser(overrides = {}) {
   return {
     id: null, email: null, name: null, phone: null, password: null,
+    // Contact discovery (migration 051). phone_hash is the keyed digest
+    // POST /api/friends/find-by-phone matches on, and PUT /profile has to
+    // move it with the number; phone_discoverable is the consent flag it is
+    // gated by. Both are here so the statement that maintains them is
+    // exercised rather than skipped.
+    phone_hash: null, phone_discoverable: false, phone_discoverable_at: null,
     interests: [], role: 'user', profile_image_url: null, bio: null,
     oauth_provider: null, oauth_id: null, apple_refresh_token: null,
     is_banned: false, banned_at: null, token_version: 0,

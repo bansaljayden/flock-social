@@ -6,6 +6,10 @@ const { authenticate } = require('../middleware/auth');
 const { pushIfOffline } = require('../services/pushHelper');
 const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
 const { createUserBudget } = require('../utils/probeBudget');
+// One canonical form for a phone number, and a keyed digest to match it by.
+// See the long note above find-by-phone, and utils/phone.js for why the old
+// last-10-digits suffix comparison had to go.
+const { normalizePhoneList, discoveryDigest } = require('../utils/phone');
 // Shape before content — see validators/shape.js.
 const { scalarOnly } = require('../validators/shape');
 
@@ -820,26 +824,75 @@ router.post('/add-by-code',
   }
 );
 
-// Contact-discovery budget (round 9). find-by-phone answers "does this phone
-// number belong to a Flock user, and who?", so an unbudgeted caller could walk
-// a number range and harvest id/name/photo for the whole user base. Contact
-// sync is something a real user does a handful of times, not hundreds, so it
-// keeps its hard per-user budget of 3/hour and 10/day.
+// ---------------------------------------------------------------------------
+// CONTACT DISCOVERY (round 9 budget, rebuilt 2026-08-25 for the contacts feature)
 //
-// The hand-rolled counter this used to carry is now utils/probeBudget.js — the
-// same code was about to exist a third time for the friend-probe budget, and
-// the old version could be flushed wholesale (`contactSyncHits.clear()` on
-// overflow handed everyone a fresh allowance).
+// This endpoint answers "does this phone number belong to a Flock user, and who
+// is it?" It is the highest-yield probe in the API, and it is the one place the
+// product asks a user to hand over OTHER people's personal data. Four things
+// hold it together, and none of them is optional:
 //
-// Unlike the friend-probe budget, an exhausted sync answers 429: this endpoint
-// takes a caller-supplied list and returns matches, so "no matches" and "you
-// are throttled" are not confusable states an attacker can exploit — and a
-// silent empty result would look like "none of your contacts use Flock", which
-// is a lie the UI would show to a real user.
+//   1. OPT-IN. A user is findable by number only while users.phone_discoverable
+//      is TRUE (migration 051). Giving Flock a number so an account can be
+//      recovered is not agreeing to be found by everyone who has it. The column
+//      defaults FALSE, so nobody became discoverable by this code shipping.
+//
+//   2. KEYED DIGEST, NOT DIGITS. Uploaded numbers are normalised to E.164 and
+//      HMAC'd (utils/phone.js) before they touch a query. Nothing raw is
+//      compared, indexed or written, and a number belonging to a non-user
+//      leaves no trace at all: it exists as a string on this request and is
+//      gone when the request ends. The previous version compared the last 10
+//      digits with a suffix regex over a full scan of `users`, so a 7-digit
+//      fragment matched every number ending in those digits across a thousand
+//      area codes.
+//
+//   3. THE RESPONSE IS NOT A MAP. Matches come back sorted by user id, with no
+//      echo of which uploaded number produced which person. A batch of 200 that
+//      returns 3 people does not say which 3 of the 200 they are. That does not
+//      make targeted identification impossible (split the batch and look again)
+//      but it prices it: narrowing one number out of 200 costs about 8 of the
+//      caller's 10 daily syncs instead of being free.
+//
+//   4. BUDGETS, CHARGED ON HITS AND MISSES ALIKE, AFTER NORMALISATION.
+//      Charging before normalising was the round-O defect: an address book with
+//      nothing usable in it spent the whole allowance on lookups that never
+//      happened, and the attempt where the user had finally granted the right
+//      permission was refused. A budget denominated in directory reads may only
+//      be charged for a directory read.
+//
+// TWO BUDGETS, because there are two genuinely different gestures behind this
+// one route and one budget cannot serve both:
+//
+//   BULK (more than one number): the address-book sync. 3/hour and 10/day, the
+//   tightest budget in the repo, correctly, because one call is up to 200
+//   directory reads.
+//
+//   SINGLE (exactly one number): "add this person by their number", which is
+//   what both the typed-number field and a contact picked one at a time
+//   produce. Under the bulk budget a user could do that three times an hour,
+//   which is not a feature. It is metered at the friend probe's own limits
+//   because it is the friend probe's question asked with a number instead of an
+//   id, and its yield is the same: one person.
+//
+//   Splitting a list into singles is not a way around the bulk budget. 60
+//   single lookups a day is far under the 2,000 numbers a day the bulk lane
+//   already allows, so the small lane adds no capacity to an enumerator. It
+//   exists so the small gesture is not priced like the large one.
+//
+// AN EXHAUSTED BUDGET ANSWERS 429, and that is deliberately NOT the pattern
+// moderation.js's block probe uses. There the refusal had to be shaped like a
+// miss, because a miss was an answer about ONE named id and a distinguishable
+// refusal would have leaked whether that id existed. Here the caller already
+// knows every number they sent, and the refusal covers the whole request rather
+// than any one number, so it carries no information about anybody. Given that,
+// a silent empty result would be a plain lie to a real user: it reads as
+// "nobody in your contacts uses Flock", which is the one sentence this screen
+// must never say when it does not know.
 const MAX_SYNC_PHONES = 200;
 const contactSyncBudget = createUserBudget({ name: 'contact-sync', hourly: 3, daily: 10 });
+const phoneLookupBudget = createUserBudget({ name: 'phone-lookup', hourly: 20, daily: 60 });
 
-// POST /api/friends/find-by-phone - Find users by phone numbers (for contacts sync)
+// POST /api/friends/find-by-phone - resolve phone numbers to Flock accounts
 router.post('/find-by-phone',
   body('phones').isArray({ min: 1 }).withMessage('Phone numbers array required'),
   async (req, res) => {
@@ -850,47 +903,56 @@ router.post('/find-by-phone',
       }
 
       const { phones } = req.body;
-      // Bounded + type-safe: the normalized values are joined into ONE SQL
-      // regex, so an unbounded array is an expensive scan and a non-string
-      // element throws (round 6). Round 9 lowered the ceiling from 500 — a
-      // phone book slice that large is a lookup oracle, not a contact sync.
+      // Bounded before anything else: the list is walked, normalised and
+      // hashed, so an unbounded array is CPU on the only thread. Round 9
+      // lowered the ceiling from 500, because a phone book slice that large is
+      // a lookup oracle rather than a contact sync.
       if (!Array.isArray(phones) || phones.length > MAX_SYNC_PHONES) {
         return res.status(400).json({ error: `Sync up to ${MAX_SYNC_PHONES} contacts at a time` });
       }
 
-      // NORMALISE FIRST, THEN CHARGE (§O round: "does nothing").
-      //
-      // The budget is 3/hour because a real person syncs contacts a handful of
-      // times, and it was charged BEFORE the numbers were parsed. So a batch
-      // with nothing usable in it — an address book of email-only contacts, a
-      // first run where the client hands over whatever the OS gave it, a
-      // permission prompt that returned placeholders — spent the user's whole
-      // allowance on lookups that never happened, and their fourth attempt,
-      // the one where they had finally granted the right permission, was
-      // refused for an hour. A budget denominated in directory reads must only
-      // be charged for a directory read.
-      const normalized = phones
-        .filter((p) => typeof p === 'string')
-        .map((p) => p.replace(/\D/g, '').slice(-10))
-        .filter((p) => p.length >= 7)
-        .slice(0, MAX_SYNC_PHONES);
-      if (normalized.length === 0) return res.json({ users: [] });
+      // NORMALISE FIRST, THEN CHARGE. See point 4 above. normalizePhoneList
+      // drops everything that cannot be resolved to one whole number without
+      // guessing (a 7-digit local fragment, a name typed into a phone field, an
+      // address book entry that carries only an email), de-duplicates, and caps.
+      const numbers = normalizePhoneList(phones, MAX_SYNC_PHONES);
+      if (numbers.length === 0) return res.json({ users: [], checked: 0 });
 
-      if (!contactSyncBudget.allow(req.user.id)) {
-        return res.status(429).json({ error: 'You have synced your contacts a few times already. Try again later.' });
+      const budget = numbers.length === 1 ? phoneLookupBudget : contactSyncBudget;
+      if (!budget.allow(req.user.id)) {
+        return res.status(429).json({
+          error: numbers.length === 1
+            ? 'You have looked up several numbers already. Try again later.'
+            : 'You have synced your contacts a few times already. Try again later.',
+        });
       }
 
-      // Find users whose phone matches (last 10 digits comparison).
-      // Blocked pairs never rediscover each other via contact sync (round 5).
+      // A null digest means the server holds no key at all, which disables the
+      // feature rather than degrading it to something reversible.
+      const digests = numbers.map((n) => discoveryDigest(n)).filter(Boolean);
+      if (digests.length === 0) {
+        console.error('Find by phone: no discovery key configured (CONTACT_DISCOVERY_SECRET / JWT_SECRET)');
+        return res.json({ users: [], checked: numbers.length });
+      }
+
+      // Equality on an indexed digest, gated on consent. Blocked pairs never
+      // rediscover each other through this path (round 5), and a banned account
+      // is not somebody to hand anyone. ORDER BY id, never input order, so the
+      // response cannot be lined up against the list that produced it.
       const result = await pool.query(
-        `SELECT id, name, profile_image_url, phone FROM users
-         WHERE id != $1 AND phone IS NOT NULL
-         AND REGEXP_REPLACE(phone, '\\D', '', 'g') SIMILAR TO '%(' || $2 || ')'
-         AND NOT EXISTS (
-           SELECT 1 FROM user_blocks
-           WHERE (blocker_id = $1 AND blocked_id = users.id) OR (blocker_id = users.id AND blocked_id = $1)
-         )`,
-        [req.user.id, normalized.join('|')]
+        `SELECT id, name, profile_image_url FROM users
+          WHERE phone_hash = ANY($2::text[])
+            AND phone_discoverable
+            AND id != $1
+            AND COALESCE(is_banned, FALSE) = FALSE
+            AND NOT EXISTS (
+              SELECT 1 FROM user_blocks
+               WHERE (blocker_id = $1 AND blocked_id = users.id)
+                  OR (blocker_id = users.id AND blocked_id = $1)
+            )
+          ORDER BY id
+          LIMIT ${MAX_SYNC_PHONES}`,
+        [req.user.id, digests]
       );
 
       // Get friendship statuses
@@ -916,7 +978,11 @@ router.post('/find-by-phone',
         friendship_status: friendshipMap[u.id] || null,
       }));
 
-      res.json({ users });
+      // `checked` is how many numbers were actually looked up, which is what
+      // lets the client say "we checked 143 of your contacts" instead of
+      // guessing from the length of what it sent. It is the caller's own data,
+      // so it reveals nothing.
+      res.json({ users, checked: numbers.length });
     } catch (err) {
       console.error('Find by phone error:', err);
       res.status(500).json({ error: 'Failed to search contacts' });
@@ -957,4 +1023,15 @@ module.exports = router;
 module.exports.__resetBudgets = () => {
   friendProbeBudget.reset();
   contactSyncBudget.reset();
+  phoneLookupBudget.reset();
 };
+
+// Test hook only. The relationship between the two contact-discovery lanes is
+// an argument about arithmetic ("splitting a list into singles buys you less"),
+// so the numbers are readable rather than restated in a test where they could
+// drift out of step with these.
+module.exports.__budgetLimits = () => ({
+  friendProbe: friendProbeBudget.limits,
+  contactSync: contactSyncBudget.limits,
+  phoneLookup: phoneLookupBudget.limits,
+});
