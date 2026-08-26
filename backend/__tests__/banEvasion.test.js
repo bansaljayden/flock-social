@@ -189,6 +189,12 @@ function handle(text, params = []) {
     return { rows: [], rowCount: before - tombstones.length };
   }
 
+  // The flocks this deletion cancels, read BEFORE the transaction so the
+  // members can be told (see the cancellation fan-out in deleteAccount). This
+  // fixture is about tombstones, so it models the query and owns no flocks;
+  // __tests__/accountDeletionSurface.test.js is where the fan-out is driven.
+  if (has('FROM flocks f') && has('WHERE f.creator_id = $1')) return { rows: [], rowCount: 0 };
+
   // deletion transaction
   if (has('BEGIN') || has('COMMIT') || has('ROLLBACK')) return { rows: [], rowCount: 0 };
   if (has('UPDATE content_reports') || has('UPDATE moderation_actions')) return { rows: [], rowCount: 0 };

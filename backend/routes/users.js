@@ -56,7 +56,16 @@ const { scalarOnly, freeText } = require('../validators/shape');
 // The card route serves a fact about ANOTHER user, so it asks the block
 // question the way every cross-user surface does — through the single source
 // of truth, both directions at once.
-const { isBlockedBetween } = require('../utils/blocks');
+const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
+// Deleting an account CASCADEs away every flock the account created, which is
+// somebody else's plan for tonight. DELETE /api/flocks/:id has always told the
+// members; this route never did. Same two helpers it uses, for the same reason
+// its comments give: the members have to be captured before the delete and
+// handed to the emit, and the people who are not in the app are exactly the
+// ones who would otherwise turn up at the bar. See the fan-out in
+// deleteAccount.
+const { emitToFlockMembers } = require('../sockets/handlers');
+const { pushIfOffline, isPushConfigured } = require('../services/pushHelper');
 // The card answers a question about SOMEBODY ELSE by bare sequential id, which
 // is the exact shape utils/probeBudget.js was written for. See cardProbeBudget.
 const { createUserBudget } = require('../utils/probeBudget');
@@ -2690,6 +2699,62 @@ async function deleteAccount(req, res) {
     // stronger control, but it trades against the 5.1.1(v) deletion
     // requirement this route exists for and needs a product/legal decision,
     // not a drive-by edit here.
+
+    // WHOSE PLANS THIS CANCELS, read before anything is deleted.
+    //
+    // flocks.creator_id is ON DELETE CASCADE, so deleting this account deletes
+    // every flock it created and, with them, the chat, the RSVPs and the votes
+    // of everyone else who was going. DELETE /api/flocks/:id has emitted
+    // flock_deleted and pushed "Plan cancelled" since the day its own comment
+    // was written ("the people who were not in the app when it happened turned
+    // up at the bar"). This route cancelled the same plans and said nothing at
+    // all, so a member sitting in the flock chat kept a screen for a plan that
+    // no longer existed, and a member who was not in the app found out by
+    // arriving.
+    //
+    // Two audiences, deliberately different:
+    //   - the SOCKET event goes to the members of every flock that is being
+    //     deleted, whatever its state, because it is a state reconciliation:
+    //     it is what takes the row out of a list somebody is looking at.
+    //   - the PUSH goes only to flocks that have not already happened. An
+    //     account with a year of history would otherwise interrupt its friends
+    //     with "Taco night is off" about a plan from March.
+    //
+    // Blocked members are dropped from the socket fan-out because the payload
+    // names the person, which is the rule emitToFlockExcludingBlocked applies
+    // on the flocks.js path. user_blocks CASCADEs away with the row, so this
+    // has to be read now as well.
+    const deleterName = req.user.name;
+    let cancelledFlocks = [];
+    let invisibleToDeleter = new Set();
+    try {
+      const owned = await pool.query(
+        `SELECT f.id, f.name,
+                (f.status NOT IN ('completed', 'cancelled')) AS upcoming,
+                COALESCE(
+                  ARRAY_AGG(fm.user_id) FILTER (
+                    WHERE fm.user_id IS NOT NULL AND fm.user_id <> $1 AND fm.status = 'accepted'
+                  ), '{}'
+                ) AS member_ids
+           FROM flocks f
+           LEFT JOIN flock_members fm ON fm.flock_id = f.id
+          WHERE f.creator_id = $1
+          GROUP BY f.id, f.name, f.status`,
+        [req.user.id]
+      );
+      cancelledFlocks = owned.rows.filter((r) => r.member_ids.length > 0);
+      if (cancelledFlocks.length > 0) {
+        invisibleToDeleter = new Set(await getInvisibleUserIds(req.user.id));
+      }
+    } catch (readErr) {
+      // A notification that could not be prepared must never stop a deletion
+      // Apple 5.1.1(v) requires to stay reachable. The plans still go; the
+      // people in them are told nothing, which is what happened before this
+      // block existed, and the log line is what makes that visible.
+      console.error('Delete account: could not read the flocks this cancels:', readErr.message);
+      cancelledFlocks = [];
+    }
+
     const client = await pool.connect();
     let deleted;
     let tombstoned = false;
@@ -2768,7 +2833,22 @@ async function deleteAccount(req, res) {
     // the ACCOUNT did not. A missing io is a documented no-op, so this can never
     // turn a completed deletion into an error — and it deliberately runs AFTER
     // the COMMIT, so a rolled-back deletion never disconnects anyone.
-    revokeUserSessions(req.app.get('io'), req.user.id);
+    const io = req.app.get('io');
+    revokeUserSessions(io, req.user.id);
+
+    // The socket half of the cancellation fan-out read above. After the COMMIT,
+    // so a rolled-back deletion never tells anybody their plan is off, and with
+    // the recipients passed in, because flock_members is already gone and the
+    // helper's own comment says that is exactly what the argument is for.
+    if (io && cancelledFlocks.length > 0) {
+      for (const f of cancelledFlocks) {
+        const recipients = f.member_ids.filter((id) => !invisibleToDeleter.has(id));
+        if (recipients.length === 0) continue;
+        await emitToFlockMembers(io, f.id, 'flock_deleted', {
+          flockId: f.id, flockName: f.name, deletedBy: deleterName,
+        }, recipients).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
+      }
+    }
 
     // Says what actually happened: recordBannedIdentity can decline to write
     // (no usable identifier), and an audit line that claims a tombstone exists
@@ -2781,9 +2861,38 @@ async function deleteAccount(req, res) {
     if (wasBanned) maybePurgeExpired();
 
     res.json({ message: 'Account deleted' });
+
+    // The push half. Post-response and in its own try/catch, like every push in
+    // routes/flocks.js, and only for plans that have not already happened.
+    //
+    // NO flockId in the payload, for the reason the flocks.js cancellation push
+    // records: the row is gone, so pushHelper's visibility gate would find no
+    // flock and suppress every send, and there is no screen left to open.
+    // Nobody is named either, so this needs no block gate.
+    if (isPushConfigured()) {
+      const upcoming = cancelledFlocks.filter((f) => f.upcoming);
+      if (upcoming.length > 0) {
+        try {
+          await Promise.allSettled(upcoming.flatMap((f) =>
+            f.member_ids.map((userId) => pushIfOffline(io, userId,
+              'Plan cancelled',
+              `${f.name || 'A plan'} is off.`,
+              { type: 'flock_cancelled' }
+            ))
+          ));
+        } catch (pushErr) {
+          console.error('Delete account cancellation push error:', pushErr.message);
+        }
+      }
+    }
   } catch (err) {
     console.error('Delete account error:', err);
-    res.status(500).json({ error: 'Failed to delete account' });
+    // headersSent, because work now continues AFTER the 200: the cancellation
+    // push below res.json. Without the guard a throw out there would try to
+    // send a 500 on a response that already said "Account deleted", which
+    // Express answers with ERR_HTTP_HEADERS_SENT and an unhandled error, not
+    // with a second body. Same guard, same reason, as routes/flocks.js.
+    if (!res.headersSent) res.status(500).json({ error: 'Failed to delete account' });
   }
 }
 
