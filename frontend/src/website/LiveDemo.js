@@ -1,5 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import 'maplibre-gl/dist/maplibre-gl.css';
 import { BASE_URL } from '../services/api';
 // The rating used to be a bare "*" character. Emoji and stray Unicode glyphs
 // standing in for icons are a named tell (SLOP-AUDIT.md H14); this is the
@@ -15,6 +14,13 @@ import Icons from '../components/ui/Icons';
 // the library is code-split and only fetched when the section approaches the
 // viewport. Nothing about the demo runs while a visitor is still reading the
 // hero.
+//
+// That was true of the engine and not of its stylesheet, which was a static
+// import at the top of this file. 69,505 bytes of `.maplibregl-` selectors
+// therefore sat in this module's chunk group, so a visitor who scrolled far
+// enough to load the demo waited on the whole sheet before the section could
+// draw even its ruled-list fallback. It is fetched beside the engine in
+// initMap now, which is the only place a map can exist.
 // ---------------------------------------------------------------------------
 
 const MAPTILER_KEY = process.env.REACT_APP_MAPTILER_KEY;
@@ -538,6 +544,11 @@ export default function LiveDemo() {
     if (mapRef.current) return;
     setMapState('booting');
     let ml;
+    // Engine and stylesheet requested together, awaited before the map is
+    // constructed so the controls are never painted bare. The sheet's own
+    // failure is swallowed: unstyled controls beat the ruled-list fallback,
+    // and the attribution is legible either way.
+    const styleSheetReady = import('maplibre-gl/dist/maplibre-gl.css').catch(() => {});
     try {
       const mod = await import('maplibre-gl');
       ml = mod.default || mod;
@@ -545,6 +556,7 @@ export default function LiveDemo() {
       setMapState('failed');
       return;
     }
+    await styleSheetReady;
     // The chunk can land after the visitor has navigated away. Building a WebGL
     // map into a detached container leaks the context for the life of the tab.
     if (!aliveRef.current) return;
