@@ -16,7 +16,7 @@ import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onGuestRsvp } from './services/socket';
-import { requestNotificationPermission, onForegroundMessage, getNotificationStatus, onPushNavigate, unregisterPushToken } from './services/firebase';
+import { requestNotificationPermission, syncPushRegistration, readNotificationPermission, onForegroundMessage, getNotificationStatus, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
 // carrying when they made an account, then open the flock they were invited to.
@@ -5960,6 +5960,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // Profile
   const [notifStatus, setNotifStatus] = useState(typeof Notification !== 'undefined' ? Notification.permission : 'default');
+  // The line above is the best a synchronous initialiser can do, and inside the
+  // iOS shell it is wrong: there is no Notification object in the WKWebView, so
+  // every native user starts as 'default' whatever the OS actually thinks. Ask
+  // the plugin once. It reports, it does not request, so this draws no prompt.
+  useEffect(() => {
+    let live = true;
+    readNotificationPermission()
+      .then((status) => { if (live) setNotifStatus(status); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, []);
+  // "Not now" on the notifications row in a flock chat. Remembered on the
+  // device, because an ask that comes back on the next screen is not an ask.
+  const [notifAskDismissed, setNotifAskDismissed] = useState(() => {
+    try { return localStorage.getItem('flock_notif_ask_dismissed') === 'true'; } catch { return false; }
+  });
   const [profileScreen, setProfileScreen] = useState('main');
   const [profileName, setProfileName] = useState(authUser?.name || '');
   const [profileHandle, setProfileHandle] = useState(authUser?.email?.split('@')[0] || '');
@@ -7009,6 +7025,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [dmMessagesLoading, setDmMessagesLoading] = useState(false);
   const prevFlockIdRef = useRef(null);
   const newlyCreatedFlockRef = useRef(null);
+
+  // Shared by the X and by the Turn on button on the notifications row in a
+  // flock chat. Turn on dismisses too: whatever the OS answers, the question
+  // has been put, and a row that comes back after you answered it is nagging.
+  const dismissNotifAsk = useCallback(() => {
+    setNotifAskDismissed(true);
+    try { localStorage.setItem('flock_notif_ask_dismissed', 'true'); } catch (err) { /* private mode */ }
+  }, []);
   const sharingLocationRef = useRef(sharingLocationForFlock);
   sharingLocationRef.current = sharingLocationForFlock;
   // One flock's roster, guests and momentum, refetched. Pulled out of the effect
@@ -13960,6 +13984,59 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   as a person's name. */}
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0' }}>{flock.host && flock.host !== 'Unknown' ? `${flock.host} picks the spot. Vote to say where you want to go.` : 'The host picks the spot. Vote to say where you want to go.'}</p>
             </div>
+          </div>
+        )}
+
+        {/* THE NOTIFICATION ASK, and the only one in the app besides the Enable
+            button in Settings.
+
+            It is here because this is the first screen in Flock where a
+            notification has an obvious referent. The plan exists, other people
+            are on it, and the thing you are waiting for is one of them saying
+            yes or picking a bar. That sentence is on screen while the ask is
+            made, which is exactly what the prompt fired at cold start did not
+            have. iOS gives one prompt per install and a denial is permanent,
+            so the OS is only reached from the button below: a "not now" here
+            costs nothing and can be asked again, a "no" at the OS cannot.
+
+            Conditions, in order: somebody else is on this plan (a flock of one
+            has nothing to notify about), the OS has not already answered, and
+            this row has not been dismissed before.
+
+            The copy names only pushes this build actually sends to every
+            member of a flock: flock_message from routes/messages.js and
+            sockets/handlers.js, and flock_updated / flock_confirmed from
+            routes/flocks.js. It does NOT say "when someone RSVPs", because
+            flock_rsvp goes to the creator alone and most readers of this row
+            are not the creator. */}
+        {(flock.memberCount || 1) > 1 && notifStatus !== 'granted' && notifStatus !== 'denied'
+          && notifStatus !== 'unsupported' && !notifAskDismissed && (
+          <div style={{ padding: '10px 14px', background: 'var(--bg-primary)', borderBottom: `1px solid ${colors.creamDark}`, flexShrink: 0, display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              {Icons.bell(colors.navy, 18)}
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>Know when they answer</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0' }}>Flock can tell you when someone replies here, or this plan changes.</p>
+            </div>
+            <button
+              className="hit44 glass-btn glass-navy"
+              onClick={(e) => {
+                confirmClick(e);
+                dismissNotifAsk();
+                requestNotificationPermission().then((token) => {
+                  if (token) { setNotifStatus('granted'); showToast('Notifications are on.'); }
+                  else {
+                    setNotifStatus(getNotificationStatus());
+                    showToast("Notifications aren't on. Check your device settings.", 'error');
+                  }
+                }).catch(() => showToast("Notifications aren't on. Check your device settings.", 'error'));
+              }}
+              style={{ padding: '8px 14px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0, position: 'relative', overflow: 'hidden' }}
+            >
+              Turn on
+            </button>
+            <button aria-label="Not now" className="hit44" onClick={dismissNotifAsk} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', flexShrink: 0 }}>{Icons.x(colors.textSecondary, 14)}</button>
           </div>
         )}
 
@@ -23930,9 +24007,15 @@ const FlockApp = () => {
     Promise.all([getCurrentUser(), pullSettings()])
       .then(([data]) => {
         beginSession(data.user || data);
-        // Request push notification permission after login
+        // Register this device for push IF the OS has already granted it.
+        // This used to call requestNotificationPermission, which on a device
+        // that had never been asked drew the prompt seconds after signup over
+        // an empty home screen. iOS allows one prompt per install and a denial
+        // is permanent, so that spent the only ask the app will ever get at
+        // the moment it could explain itself least. The ask now lives where
+        // its reason is on screen; this line only carries the token.
         if (localStorage.getItem('flock_notif_denied') !== 'true') {
-          requestNotificationPermission().catch(() => {});
+          syncPushRegistration().catch(() => {});
         }
       })
       .catch((err) => {

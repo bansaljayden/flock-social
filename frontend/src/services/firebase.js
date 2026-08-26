@@ -156,6 +156,36 @@ function deviceTimezone() {
 // Requires (documented in PUSH-SETUP.md): GoogleService-Info.plist in the iOS
 // app, Push Notifications capability on the App ID, APNs key uploaded to
 // Firebase. Fails soft until those land.
+//
+// ASKING AND REGISTERING ARE TWO DIFFERENT THINGS, and this file used to treat
+// them as one. Everything below the permission answer is the registering half:
+// get the token, send it to the backend, keep it fresh when Firebase rotates
+// it. It runs for a device that said yes just now and for a device that said
+// yes weeks ago, and only the first of those involves a prompt.
+async function completeNativeRegistration(FirebaseMessaging) {
+  const { token } = await FirebaseMessaging.getToken();
+  if (!token) return null;
+  const platform = window.Capacitor.getPlatform() === 'android' ? 'android' : 'ios';
+  await registerDeviceToken(token, platform, deviceTimezone());
+  rememberPushToken(token);
+  markSessionRegistered();
+  // Firebase rotates tokens while the app stays installed; without this
+  // subscription the backend keeps the stale token and push silently dies
+  // until the next login (round 4).
+  if (!tokenRotationSubscribed) {
+    tokenRotationSubscribed = true;
+    FirebaseMessaging.addListener('tokenReceived', (event) => {
+      if (event?.token) {
+        rememberPushToken(event.token);
+        registerDeviceToken(event.token, platform, deviceTimezone()).catch(() => {});
+      }
+    }).catch(() => { tokenRotationSubscribed = false; });
+  }
+  localStorage.removeItem('flock_notif_denied');
+  return token;
+}
+
+// The asking half. Only ever reached from something the user just tapped.
 async function requestNativePermission() {
   try {
     const { FirebaseMessaging } = await import('@capacitor-firebase/messaging');
@@ -164,34 +194,62 @@ async function requestNativePermission() {
       localStorage.setItem('flock_notif_denied', 'true');
       return null;
     }
-    const { token } = await FirebaseMessaging.getToken();
-    if (!token) return null;
-    const platform = window.Capacitor.getPlatform() === 'android' ? 'android' : 'ios';
-    await registerDeviceToken(token, platform, deviceTimezone());
-    rememberPushToken(token);
-    markSessionRegistered();
-    // Firebase rotates tokens while the app stays installed; without this
-    // subscription the backend keeps the stale token and push silently dies
-    // until the next login (round 4).
-    if (!tokenRotationSubscribed) {
-      tokenRotationSubscribed = true;
-      FirebaseMessaging.addListener('tokenReceived', (event) => {
-        if (event?.token) {
-          rememberPushToken(event.token);
-          registerDeviceToken(event.token, platform, deviceTimezone()).catch(() => {});
-        }
-      }).catch(() => { tokenRotationSubscribed = false; });
-    }
-    localStorage.removeItem('flock_notif_denied');
-    return token;
+    return await completeNativeRegistration(FirebaseMessaging);
   } catch (err) {
     console.warn('[Push] Native registration failed:', err.message);
     return null;
   }
 }
+
+// checkPermissions, never requestPermissions: this reports what the OS already
+// decided and draws nothing. A device that has not been asked answers 'prompt'
+// and gets left alone.
+async function syncNativeRegistration() {
+  try {
+    const { FirebaseMessaging } = await import('@capacitor-firebase/messaging');
+    const perm = await FirebaseMessaging.checkPermissions();
+    if (perm?.receive !== 'granted') return null;
+    return await completeNativeRegistration(FirebaseMessaging);
+  } catch (err) {
+    console.warn('[Push] Native re-registration failed:', err.message);
+    return null;
+  }
+}
 let tokenRotationSubscribed = false;
 
-// Request notification permission and register the FCM token
+// The registering half on web, for a browser that has already granted.
+async function completeWebRegistration(m) {
+  const vapidKey = process.env.REACT_APP_FIREBASE_VAPID_KEY;
+  if (!vapidKey) {
+    console.warn('[Firebase] VAPID key not set');
+    return null;
+  }
+
+  // Register service worker for background notifications
+  const sw = await registerServiceWorker();
+
+  const tokenOptions = { vapidKey };
+  if (sw) tokenOptions.serviceWorkerRegistration = sw;
+
+  const token = await getToken(m, tokenOptions);
+  if (token) {
+    await registerDeviceToken(token, 'web', deviceTimezone());
+    rememberPushToken(token);
+    markSessionRegistered();
+    localStorage.removeItem('flock_notif_denied');
+    return token;
+  }
+  return null;
+}
+
+// THE ONLY FUNCTION IN THIS FILE THAT MAY DRAW A PERMISSION PROMPT.
+//
+// iOS gives an app one notification prompt per install and a denial is
+// permanent, so every caller of this has to be something the user just tapped,
+// with the reason for it on the screen they are looking at. There are exactly
+// two: the Enable button in Settings, and the row in a flock chat that says
+// what a notification from that flock would be. Nothing on a startup path may
+// call it. Startup calls syncPushRegistration below.
 export async function requestNotificationPermission() {
   try {
     if (isNativeApp()) return await requestNativePermission();
@@ -210,31 +268,56 @@ export async function requestNotificationPermission() {
       return null;
     }
 
-    const vapidKey = process.env.REACT_APP_FIREBASE_VAPID_KEY;
-    if (!vapidKey) {
-      console.warn('[Firebase] VAPID key not set');
-      return null;
-    }
-
-    // Register service worker for background notifications
-    const sw = await registerServiceWorker();
-
-    const tokenOptions = { vapidKey };
-    if (sw) tokenOptions.serviceWorkerRegistration = sw;
-
-    const token = await getToken(m, tokenOptions);
-    if (token) {
-      await registerDeviceToken(token, 'web', deviceTimezone());
-      rememberPushToken(token);
-      markSessionRegistered();
-      localStorage.removeItem('flock_notif_denied');
-      return token;
-    }
-
-    return null;
+    return await completeWebRegistration(m);
   } catch (err) {
     console.warn('[Firebase] Token registration failed:', err.message);
     return null;
+  }
+}
+
+// Register this device IF the OS has already said yes, and never ask if it has
+// not. This is what startup runs. It is the same treatment 70df506 gave the
+// location prompt, for the same reason and with the same shape: the effect
+// that needed the permission was spending the one ask the app will ever get at
+// the moment it could explain itself least, so it now runs only where the
+// answer is already in and the OS draws nothing.
+export async function syncPushRegistration() {
+  try {
+    if (isNativeApp()) return await syncNativeRegistration();
+    const m = getFirebaseMessaging();
+    if (!m) return null;
+    if (getNotificationStatus() !== 'granted') return null;
+    return await completeWebRegistration(m);
+  } catch (err) {
+    console.warn('[Firebase] Token registration failed:', err.message);
+    return null;
+  }
+}
+
+// What the OS actually thinks, asked without asking the user. getNotification-
+// Status below is synchronous and therefore cannot reach the native plugin, so
+// on iOS it can only report our own denial marker, and that marker is only
+// ever written by a refusal this build saw. A device that granted permission
+// on an earlier run, or whose marker was swept by a sign-out, reads back as
+// 'default' there. A screen deciding whether to OFFER the ask needs the truth,
+// or it offers it to somebody who already said yes.
+export async function readNotificationPermission() {
+  if (!isNativeApp()) return getNotificationStatus();
+  try {
+    const { FirebaseMessaging } = await import('@capacitor-firebase/messaging');
+    const perm = await FirebaseMessaging.checkPermissions();
+    if (perm?.receive === 'granted') {
+      // Keeps the synchronous reader honest for the rest of the page load.
+      localStorage.removeItem('flock_notif_denied');
+      return 'granted';
+    }
+    if (perm?.receive === 'denied') {
+      localStorage.setItem('flock_notif_denied', 'true');
+      return 'denied';
+    }
+    return 'default';
+  } catch (err) {
+    return getNotificationStatus();
   }
 }
 
@@ -253,6 +336,18 @@ export async function requestNotificationPermission() {
 // keys off the stored auth token: a new token means a new session (fresh
 // login, signup, or account switch), and every new session registers this
 // device exactly once.
+//
+// IT REGISTERS. IT DOES NOT ASK. Round 8: the tick below called
+// requestNotificationPermission, so on the first session it ever saw it drew
+// the OS notification prompt about two seconds after the account was created,
+// over an empty home screen, before the user had seen a single thing that
+// says what a Flock notification is. iOS gives an app one prompt per install
+// and a denial is permanent, so that was the only ask this app will ever get,
+// spent at the moment it could explain itself least and could not be spent
+// again. It now registers a device whose OS has already granted permission,
+// where nothing is drawn, and the ask itself lives where the reason for it is
+// on the screen: the Enable button in Settings, and the row inside a flock
+// chat that names what that flock would notify you about.
 // ---------------------------------------------------------------------------
 let handledAuthToken = null;
 let attempts = 0;
@@ -286,17 +381,24 @@ async function syncPushForSession() {
 
   syncInFlight = true;
   try {
-    const token = await requestNotificationPermission();
+    // syncPushRegistration, NOT requestNotificationPermission. This line ran
+    // about two seconds after signup, over an empty home screen, and drew the
+    // OS notification prompt there. See the header above startPushSession-
+    // Watcher for the whole argument.
+    const token = await syncPushRegistration();
     if (token) {
       handledAuthToken = authToken;
       attempts = 0;
       return;
     }
-    // No token. If the answer is settled, stop asking; if it merely failed
-    // (offline, backend hiccup), let the next tick try again.
-    const status = getNotificationStatus();
+    // No token, for one of two very different reasons. Either the device has
+    // no permission to register with, in which case there is nothing here to
+    // retry and the session is settled until somebody taps the ask; or the
+    // permission is there and the registration itself failed (offline, backend
+    // hiccup), which is worth another tick.
+    const status = await readNotificationPermission();
     attempts += 1;
-    if (status === 'denied' || status === 'unsupported' || attempts >= MAX_ATTEMPTS) {
+    if (status !== 'granted' || attempts >= MAX_ATTEMPTS) {
       handledAuthToken = authToken;
     }
   } catch (err) {
@@ -315,7 +417,11 @@ function rearmIfUnresolved() {
   if (currentPushToken) return;
   const status = getNotificationStatus();
   if (status === 'denied' || status === 'unsupported') return;
-  if (!isNativeApp() && status !== 'granted') return;
+  // The web-only "granted" condition that used to be here was guarding against
+  // a re-arm turning into a second prompt. The path it re-arms cannot prompt
+  // any more, so the worst a re-arm can now do is one no-op, and the case it
+  // was blocking is the one that matters: permission granted from the ask in a
+  // flock chat, on a session the watcher had already given up on.
   handledAuthToken = null;
   attempts = 0;
 }
