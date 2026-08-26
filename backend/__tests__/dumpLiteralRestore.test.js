@@ -29,11 +29,19 @@
 //
 // This does not test that the literals LOOK right. String-shape assertions are
 // how you convince yourself a serializer is correct while it is not. Every case
-// below is round-tripped through a real Postgres column of the real type: the
-// literal is written into `text[]`, `jsonb`, `json`, `bytea`, `inet`,
-// `timestamptz` and friends exactly as an INSERT in a dump would write it, then
-// read back and compared to the value that went in. That is the only claim
-// worth making, because it is the claim a restore makes.
+// below is round-tripped through a real Postgres column of the real type,
+// exactly as an INSERT in a dump would write it, then read back and compared to
+// the value that went in. That is the only claim worth making, because it is
+// the claim a restore makes.
+//
+// AND THE LIST OF TYPES IS BUILT, NOT REMEMBERED. The 2026-08-26 version of
+// this file listed the types it covered in this paragraph, named `inet` among
+// them (this schema has no inet column, and nothing here touched one), and did
+// not cover `timestamp without time zone` at all, of which the schema has
+// twenty, including flocks.event_time. Every one of them was moving by the
+// dumping machine's UTC offset on restore. The last test in the file now builds
+// the schema from the migration chain and fails on any column type nothing here
+// round-trips, so the paragraph cannot go stale again.
 //
 // The nasty array cases are not decoration either. pgArrayBody has to survive
 // commas, double quotes, backslashes, braces, empty strings, a real SQL NULL
@@ -72,7 +80,7 @@ process.env.DATABASE_URL = `postgresql://postgres:postgres@127.0.0.1:${PG_PORT}/
 // suite does not depend on either of these winning.
 process.env.PGSSLMODE = 'disable';
 
-const { lit } = require('../scripts/dump-db');
+const { lit, DUMP_TYPES } = require('../scripts/dump-db');
 
 let pg;
 let client;
@@ -140,8 +148,52 @@ async function roundTrip(sqlType, value) {
 
   const literal = lit(value, typname);
   await client.query(`INSERT INTO ${table} (v) VALUES (${literal})`);
-  const { rows } = await client.query(`SELECT v FROM ${table}`);
+  // DUMP_TYPES, because that is what scripts/dump-db.js reads a row with. A
+  // helper that used the default parsers would be measuring a dump nobody
+  // takes, which is how the naive-timestamp shift below survived the first
+  // version of this file.
+  const { rows } = await client.query({ text: `SELECT v FROM ${table}`, types: DUMP_TYPES });
   return { back: rows[0].v, literal, typname };
+}
+
+// ---------------------------------------------------------------------------
+// THE FULL LOOP, THE WAY AN OPERATOR RUNS IT.
+// ---------------------------------------------------------------------------
+// roundTrip above starts from a JavaScript value, which is the right shape for
+// asking "does lit write this correctly". It cannot ask the question that
+// actually decides whether the backup restores, which is: does the row that
+// comes OUT of the restored database equal the row that was IN the live one?
+//
+// Those differ whenever the driver's read is itself lossy. `timestamp without
+// time zone` is exactly that case: pg builds a Date by reading the server's
+// wall clock as LOCAL time, so the JavaScript value is already a different
+// instant from the stored one before lit is ever called, and a test that starts
+// from the JS value can never see it.
+//
+// So this seeds with a SQL literal, reads it the way the dump reads it, writes
+// the literal the dump would write, loads it into a second table of the same
+// type, and compares the SERVER'S OWN text rendering of both. No JavaScript
+// value is trusted anywhere in the comparison.
+async function dumpAndRestore(sqlType, seedSql) {
+  const stamp = Math.random().toString(36).slice(2, 10);
+  const live = `live_${stamp}`;
+  const restored = `restored_${stamp}`;
+  await client.query(`CREATE TABLE ${live} (v ${sqlType})`);
+  await client.query(`CREATE TABLE ${restored} (v ${sqlType})`);
+  await client.query(`INSERT INTO ${live} (v) VALUES (${seedSql})`);
+
+  const { rows: [{ typname }] } = await client.query(
+    `SELECT t.typname FROM pg_attribute a
+       JOIN pg_type t ON t.oid = a.atttypid
+      WHERE a.attrelid = $1::regclass AND a.attname = 'v'`,
+    [live]
+  );
+  const { rows: [read] } = await client.query({ text: `SELECT v FROM ${live}`, types: DUMP_TYPES });
+  const literal = lit(read.v, typname);
+  await client.query(`INSERT INTO ${restored} (v) VALUES (${literal})`);
+
+  const textOf = async (t) => (await client.query(`SELECT v::text AS x FROM ${t}`)).rows[0].x;
+  return { before: await textOf(live), after: await textOf(restored), literal, typname };
 }
 
 test('a text[] column restores every value a person can type into it', async () => {
@@ -242,12 +294,163 @@ test('the scalar types the schema actually holds survive the trip', async () => 
   }
 });
 
-test('a numeric that is not finite becomes NULL rather than invalid SQL', async () => {
-  // NaN and Infinity have no representation an integer column will take, and
-  // `NaN` unquoted is a syntax error that would abort the whole restore at
-  // whatever table happened to contain it. lit turns them into NULL, which
-  // loses a value that was never storable and keeps the other 7.5 million rows.
-  assert.equal(lit(NaN, 'float8'), 'NULL');
-  assert.equal(lit(Infinity, 'float8'), 'NULL');
-  assert.equal(lit(-Infinity, 'float8'), 'NULL');
+test('a naive timestamp comes back as the same wall clock it went in as', async () => {
+  // THE SECOND WAY THIS FILE DID NOT RESTORE, found 2026-08-26 by asking the
+  // question the first version of this suite did not: it round-tripped
+  // `timestamptz` and stopped, and `timestamptz` is the one timestamp type that
+  // already worked. Twenty columns in this schema are `timestamp WITHOUT time
+  // zone`: users.created_at, flocks.event_time, messages.created_at,
+  // stories.expires_at among them, and every one of them moved by the dumping
+  // machine's UTC offset on restore. Four hours, on this box, with no error.
+  //
+  // Each case is a value Postgres stores and a Date cannot carry back:
+  const cases = [
+    [`'2026-08-13 19:44:32.725'`, 'an ordinary row timestamp'],
+    [`'2026-03-08 02:30:00'`, 'the spring-forward gap, an hour that does not exist in local time'],
+    [`'2026-11-01 01:30:00'`, 'the fall-back hour, which happens twice in local time'],
+    [`'2026-12-31 23:59:59.999999'`, 'microseconds, which a JS Date truncates'],
+    [`'1999-01-01 00:00:00'`, 'a date before this machine\'s current DST rule'],
+    [`'infinity'`, 'infinity, which new Date() cannot represent and toISOString() throws on'],
+    [`'-infinity'`, 'negative infinity'],
+  ];
+  for (const [seed, what] of cases) {
+    const r = await dumpAndRestore('timestamp', seed);
+    assert.equal(r.after, r.before,
+      `a naive timestamp did not survive the trip (${what}): the database held ${r.before}, `
+      + `the dump wrote ${r.literal}, and the restore produced ${r.after}. `
+      + 'flocks.event_time is the time a plan is FOR, so this is every plan in the product '
+      + 'moving by the offset of whichever machine took the backup.');
+  }
+});
+
+test('a date column survives the trip whatever side of UTC the dumping machine is on', async () => {
+  // date has the same defect in waiting. It happens to survive at a negative
+  // UTC offset, because local midnight rendered as UTC lands later the same
+  // day; at a POSITIVE offset it lands on the day before. The dump is not
+  // guaranteed to be taken from America/New_York, so this is pinned rather than
+  // left to the machine.
+  for (const seed of [`'2026-08-13'`, `'2026-01-01'`, `'2026-12-31'`]) {
+    const r = await dumpAndRestore('date', seed);
+    assert.equal(r.after, r.before, `a date moved: ${r.before} -> ${r.after} via ${r.literal}`);
+  }
+});
+
+test('a float that is not finite keeps its value, and every other type still refuses to emit invalid SQL', async () => {
+  // This test used to assert the opposite, on the argument that NaN and
+  // Infinity "have no representation an integer column will take". True, and
+  // irrelevant: pg only ever hands back a NaN from a float column, because
+  // float4 and float8 are the only types that can hold one. So the old branch
+  // was not declining to write an impossible value, it was turning a real
+  // stored value into NULL. Silent loss, in a backup, blessed by a test.
+  for (const seed of [`'NaN'`, `'Infinity'`, `'-Infinity'`]) {
+    const r = await dumpAndRestore('float8', seed);
+    assert.equal(r.after, r.before, `float8 ${seed} became ${r.after} via ${r.literal}`);
+  }
+  const r4 = await dumpAndRestore('real', `'NaN'`);
+  assert.equal(r4.after, r4.before, 'float4 NaN');
+
+  // And nowhere else. A quoted 'NaN' in an integer column is an error that
+  // aborts the whole restore at whatever table happens to contain it, so every
+  // other type keeps the NULL, which loses a value that genuinely could not
+  // have been stored there in the first place.
+  for (const t of ['int4', 'int8', 'numeric', 'text', undefined]) {
+    assert.equal(lit(NaN, t), 'NULL', `lit(NaN, ${t})`);
+    assert.equal(lit(Infinity, t), 'NULL', `lit(Infinity, ${t})`);
+  }
+});
+
+test('the remaining column types this schema holds survive the trip', async () => {
+  // The types the sweep below finds that the cases above do not already cover
+  // one at a time. Seeded as SQL and compared as SQL, for the reason
+  // dumpAndRestore's own comment gives.
+  const cases = [
+    ['numeric(10,2)', `'12345678.91'`, 'bill_split_shares.amount, a user-typed money value'],
+    ['numeric', `'NaN'`, 'numeric NaN, which unlike float8 has always round-tripped as a quoted string'],
+    ['int8', `9007199254740993`, 'a bigint past 2^53, where a JS number stops being exact'],
+    ['int2', `-32768`, 'the smallest smallint'],
+    ['uuid', `'0f8fad5b-d9cb-469f-a165-70867728950e'`, 'guest_rsvps.guest_token'],
+    ['varchar(20)', `'a''b\\c'`, 'a varchar holding a quote and a backslash'],
+    ['float8', `-0.0`, 'negative zero'],
+    ['float8', `5e-324`, 'the smallest subnormal double, where a lazy String() loses digits'],
+    ['float8', `1.7976931348623157e308`, 'the largest finite double'],
+    ['bytea', `'\\x0027225c0aff'`, 'bytea carrying a NUL, a quote and a backslash byte'],
+    ['inet', `'203.0.113.9'`, 'inet, which this suite has always claimed to cover and did not'],
+  ];
+  for (const [sqlType, seed, what] of cases) {
+    const r = await dumpAndRestore(sqlType, seed);
+    assert.equal(r.after, r.before, `${what}: ${r.before} -> ${r.after} via ${r.literal}`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// AND THE LIST OF TYPES ITSELF, BUILT RATHER THAN REMEMBERED.
+// ---------------------------------------------------------------------------
+// Every claim above is about "the types this schema holds", and until this test
+// existed that phrase was a person's memory of the schema. It was wrong: the
+// file's own header listed `inet` among the types it round-trips, this database
+// has no inet column at all, and the twenty `timestamp` columns it does have
+// were not tested by anything.
+//
+// So the schema is built here, from the migration chain, and the set of column
+// types it actually contains is compared against the set exercised above. A
+// migration that introduces a type nobody has round-tripped fails this, which
+// is the only way the sentence stays true.
+const ROUND_TRIPPED = new Set([
+  '_text', 'bool', 'bytea', 'date', 'float4', 'float8', 'int2', 'int4', 'int8',
+  'json', 'jsonb', 'numeric', 'text', 'timestamp', 'timestamptz', 'uuid', 'varchar',
+]);
+
+test('every column type the migration chain produces has a case in this file', async () => {
+  const { Pool } = require('pg');
+  const bootstrap = new Client({
+    host: '127.0.0.1', port: PG_PORT, user: 'postgres', password: 'postgres', database: 'postgres', ssl: false,
+  });
+  await bootstrap.connect();
+  await bootstrap.query("CREATE DATABASE flock_dump_schema ENCODING 'UTF8' TEMPLATE template0 LC_COLLATE 'C' LC_CTYPE 'C'");
+  await bootstrap.end();
+
+  const url = `postgresql://postgres:postgres@127.0.0.1:${PG_PORT}/flock_dump_schema`;
+  const pool = new Pool({ connectionString: url, ssl: false });
+  try {
+    // The same entry point BACKUP-AND-VERIFICATION.md's restore procedure runs.
+    // If the chain cannot build the schema on its own, the restore procedure is
+    // false and this suite has nothing to measure against.
+    await require('../db/migrate').migrate(pool);
+
+    const { rows } = await pool.query(`
+      SELECT t.typname, count(*)::int AS n, min(c.relname || '.' || a.attname) AS example
+        FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        JOIN pg_type t ON t.oid = a.atttypid
+       WHERE n.nspname = 'public' AND c.relkind = 'r' AND a.attnum > 0 AND NOT a.attisdropped
+       GROUP BY t.typname
+       ORDER BY t.typname`);
+
+    assert.ok(rows.length >= 10,
+      `the sweep found ${rows.length} column types, which means the chain did not build the schema`);
+
+    const uncovered = rows.filter((r) => !ROUND_TRIPPED.has(r.typname));
+    assert.deepEqual(uncovered.map((r) => `${r.typname} (${r.n} columns, e.g. ${r.example})`), [],
+      'a migration has introduced a column type that nothing in this file round-trips through a real\n'
+      + 'restore. Add a case to the tests above and the type name to ROUND_TRIPPED, or the backup\n'
+      + 'silently starts carrying a type lit() has never been asked about. Two already went wrong this\n'
+      + 'way: text[] (the ::jsonb cast, which made the whole file unrestorable) and timestamp (the\n'
+      + 'four-hour shift), and both were invisible until somebody wrote the case down.\n\n'
+      + 'interval is the one waiting: pg parses it into a plain object, lit falls through to\n'
+      + 'JSON.stringify, and the restore dies on `invalid input syntax for type interval`. There is no\n'
+      + 'interval column today, which is the only reason it is not a live defect.');
+
+    // And the other direction, so the list cannot rot into naming types that
+    // left the schema years ago.
+    const live = new Set(rows.map((r) => r.typname));
+    // float4/json are held deliberately: the schema has no column of either
+    // today, and both are one migration away (a REAL score, a json payload).
+    const stale = [...ROUND_TRIPPED].filter((t) => !live.has(t) && !['float4', 'json'].includes(t));
+    assert.deepEqual(stale, [],
+      'ROUND_TRIPPED names types this schema no longer has. A stale entry lets a real gap hide behind '
+      + 'a list that looks complete.');
+  } finally {
+    await pool.end().catch(() => {});
+  }
 });
