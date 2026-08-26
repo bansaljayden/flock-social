@@ -37,14 +37,24 @@
 //     answer this directly. Vercel serves both from this deployment.
 //   * It must not be behind authentication or a bot wall.
 //
-// WHAT THE PATHS MEAN. `/i/*` is the invite link, which is the whole reason
-// this exists: someone texts an invite and it should open the plan in the app.
-// `/tap` is deliberately EXCLUDED with a NOT pattern, because that page is the
-// NFC card and stand landing page whose entire job is to offer the App Store to
-// somebody who does not have the app yet. Opening the app for a person who
-// already has it would skip the page, but it would also break the measurement
-// the printed cards exist to produce, and the tap page already routes an
-// existing user onward in one tap.
+// WHAT THE PATHS MEAN, AND WHY EVERY ONE OF THEM IS CURRENTLY EXCLUDED.
+//
+// `/i/<token>` is the invite link and is the reason this file exists at all:
+// someone texts an invite and it should open the plan in the app. It is
+// excluded TODAY because the app cannot yet route an invite token, and the
+// reasoning is written out at that entry below. That exclusion is temporary and
+// is the last thing standing between this file and a working deep link.
+//
+// `/tap` is excluded permanently. That page is the NFC card and stand landing
+// page whose entire job is to offer the App Store to somebody who does not have
+// the app yet. Opening the app for a person who already has it would skip the
+// page, and it would also break the measurement the printed cards exist to
+// produce. The tap page already routes an existing user onward in one tap.
+//
+// So while every path is excluded, this file is inert by design rather than
+// broken: iOS fetches it, finds nothing claimed, and every link keeps opening in
+// Safari exactly as it does today. That is the correct state to be in until the
+// app can do something better with a link than the web page already does.
 // ---------------------------------------------------------------------------
 
 const TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/;
@@ -81,7 +91,24 @@ function handler(req, res) {
           components: [
             { '/': '/tap', exclude: true, comment: 'the NFC landing page offers the App Store on purpose' },
             { '/': '/tap*', exclude: true, comment: 'same page with a source parameter' },
-            { '/': '/i/*', comment: 'flock invite links open the plan in the app' },
+            // THE INVITE PATH IS EXCLUDED UNTIL THE APP CAN ROUTE ONE, and that
+            // is the whole point of this entry rather than an oversight.
+            //
+            // `/i/<token>` is the invite link. Claiming it tells iOS to hand
+            // the URL to Flock instead of Safari on any phone that has the app,
+            // and `intentFromUrl` in services/pushNavigation.js currently
+            // returns null for that shape: it understands `?invite=<flockId>`
+            // and `/flock/<id>`, but not an invite TOKEN. So claiming it today
+            // would take a link that works, opening the guest page in Safari,
+            // and replace it with the app opening to nothing. A dead deep link
+            // is worse than no deep link, because the person has no way to get
+            // to the plan at all and no reason to think anything went wrong.
+            //
+            // Two things have to land together before this line becomes a claim
+            // rather than an exclusion: `intentFromUrl` returning an intent that
+            // carries the token, and App.js acting on it. When both exist, drop
+            // the exclude and the association file is finished.
+            { '/': '/i/*', exclude: true, comment: 'until intentFromUrl routes an invite token' },
           ],
         },
       ],
