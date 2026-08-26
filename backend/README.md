@@ -70,7 +70,12 @@ The server starts on `http://localhost:5000`.
    - `JWT_SECRET`
    - `NODE_ENV=production`
    - `FRONTEND_URL` (your deployed frontend URL)
-5. Run `database/schema.sql` against the Railway PostgreSQL instance
+5. **Do not run anything against the database by hand.** This step used to read
+   "Run `database/schema.sql` against the Railway PostgreSQL instance", which
+   contradicted step 3 of this same file and would apply a schema that is 51
+   migrations out of date. `schema.sql` has not moved since the bootstrap was
+   cut, so everything from 001 onward is missing from it. The migration runner
+   applies the whole chain on boot, before the port opens.
 6. Deploy
 
 ## API Endpoints
@@ -161,7 +166,7 @@ const socket = io('http://localhost:5000', {
 | `user_typing` | Someone is typing |
 | `user_stopped_typing` | Someone stopped typing |
 | `member_joined` | User came online in flock |
-| `member_left` | User went offline |
+| `flock_member_left` | Someone left the flock. Emitted from `routes/flocks.js`, not from `sockets/handlers.js`. This row said `member_left` and no such event has ever been emitted under that name; the client listens for `flock_member_left`. |
 | `new_vote` | New venue vote |
 | `venue_selected` | Venue confirmed |
 | `location_update` | Friend location update |
