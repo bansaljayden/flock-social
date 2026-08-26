@@ -22,7 +22,12 @@ const { emitToFlockExcludingBlocked, emitToFlockMembers } = require('../sockets/
 // costs nothing on rows written since 1fdea72 and repairs the ones written
 // before it (migration 027 backfills the column; this is the belt to its
 // suspenders, and it holds regardless of what wrote the row).
-const { bandCeiling } = require('./budget');
+// settledCeiling is the WHEN rule to bandCeiling's WHAT rule: a ceiling is
+// published only once the budget is locked, because a ceiling that moves is a
+// subtraction that names the member with the least money. It is imported from
+// the same owning route for the same reason, and it applies bandCeiling itself,
+// so these three readers get both gates from one call.
+const { settledCeiling } = require('./budget');
 
 const { pushIfOffline, pushIfOfflineDebounced, isPushConfigured } = require('../services/pushHelper');
 
@@ -390,10 +395,15 @@ router.get('/', async (req, res) => {
     const result = await pool.query(
       `SELECT f.*,
               -- PRIVACY: budget_ceiling is MIN(submissions); below the 3-non-skip
-              -- threshold it IS someone's exact budget. This aliased CASE
-              -- overrides the f.* column in the result row (node-postgres keeps
-              -- the last duplicate field), mirroring the budget-status gate.
-              CASE WHEN (SELECT COUNT(*) FROM budget_submissions bs
+              -- threshold it IS someone's exact budget, and before the budget
+              -- is locked it is a running minimum whose every move names the
+              -- member with the least money. Both gates in SQL, and both again
+              -- in JS below (settledCeiling), because this column has twice
+              -- been leaked by a reader that remembered one gate and not the
+              -- other. This aliased CASE overrides the f.* column in the result
+              -- row (node-postgres keeps the last duplicate field).
+              CASE WHEN f.budget_locked = true
+                    AND (SELECT COUNT(*) FROM budget_submissions bs
                          WHERE bs.flock_id = f.id AND bs.skipped = false) >= 3
                    THEN f.budget_ceiling ELSE NULL END AS budget_ceiling,
               -- Blocks: the host's name is a name like any other. Withheld in
@@ -481,11 +491,11 @@ router.get('/', async (req, res) => {
     // still handing invitees f.*, coordinates, and member previews even
     // after the detail route got its minimal DTO)
     const flocks = result.rows.map((f) => {
-      // The CASE in the SQL above withholds the ceiling below three non-skips;
-      // bandCeiling is what stops the value it DOES publish from being one
-      // member's exact figure. Threshold and band are independent gates and
-      // both apply.
-      if (f.member_status === 'accepted') return { ...f, budget_ceiling: bandCeiling(f.budget_ceiling) };
+      // The CASE in the SQL above withholds the ceiling below three non-skips
+      // and before the budget is locked; settledCeiling applies the lock gate
+      // again and bands whatever survives it, so the value that DOES publish is
+      // never one member's exact figure. Three independent gates, all applied.
+      if (f.member_status === 'accepted') return { ...f, budget_ceiling: settledCeiling(f.budget_locked, f.budget_ceiling) };
       return {
         id: f.id,
         name: f.name,
@@ -817,7 +827,8 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
 
     const flockResult = await pool.query(
       `SELECT f.*,
-              CASE WHEN (SELECT COUNT(*) FROM budget_submissions bs
+              CASE WHEN f.budget_locked = true
+                    AND (SELECT COUNT(*) FROM budget_submissions bs
                          WHERE bs.flock_id = f.id AND bs.skipped = false) >= 3
                    THEN f.budget_ceiling ELSE NULL END AS budget_ceiling,
               -- Same host rule as the list route, and applied here so the
@@ -888,9 +899,10 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
 
     // ── Momentum Meter calculation ──
     const flock = flockResult.rows[0];
-    // Same pair of gates as the list route: the SQL withheld this below three
-    // non-skips, and this bands whatever survived that.
-    flock.budget_ceiling = bandCeiling(flock.budget_ceiling);
+    // Same gates as the list route: the SQL withheld this below three non-skips
+    // and before the lock, and this re-applies the lock gate and bands whatever
+    // survived.
+    flock.budget_ceiling = settledCeiling(flock.budget_locked, flock.budget_ceiling);
     const members = membersResult.rows;
     // Counts come from the FULL roster on purpose (see visibleMembers below).
     const counts = combineRsvpCounts(members, guests);
@@ -1210,20 +1222,20 @@ router.put('/:id',
       }
 
       // PRIVACY: RETURNING * carries the raw budget_ceiling — apply the same
-      // 3-submission threshold as every other surface before responding
-      // (review round 3: an innocuous update was a fourth door to the value).
+      // gates as every other surface before responding (review round 3: an
+      // innocuous update was a fourth door to the value).
       const flockResponse = { ...result.rows[0] };
       if (flockResponse.budget_ceiling != null) {
-        const thr = await pool.query(
-          `SELECT COUNT(*)::int AS n FROM budget_submissions WHERE flock_id = $1 AND skipped = false`,
-          [flockId]
-        );
-        if ((thr.rows[0]?.n || 0) < 3) flockResponse.budget_ceiling = null;
-        // Past the threshold the column is served as stored, so it is banded
-        // here for the same reason the list and detail routes band it: this
-        // UPDATE never touches budget_ceiling, so RETURNING * hands back
-        // whatever was cached, including a pre-1fdea72 raw MIN.
-        else flockResponse.budget_ceiling = bandCeiling(flockResponse.budget_ceiling);
+        // The lock gate first, and it costs no query: an unlocked flock has no
+        // published number, so there is nothing to threshold or band.
+        flockResponse.budget_ceiling = settledCeiling(flockResponse.budget_locked, flockResponse.budget_ceiling);
+        if (flockResponse.budget_ceiling != null) {
+          const thr = await pool.query(
+            `SELECT COUNT(*)::int AS n FROM budget_submissions WHERE flock_id = $1 AND skipped = false`,
+            [flockId]
+          );
+          if ((thr.rows[0]?.n || 0) < 3) flockResponse.budget_ceiling = null;
+        }
       }
       res.json({ flock: flockResponse });
 

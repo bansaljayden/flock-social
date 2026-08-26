@@ -124,12 +124,18 @@ const deletes = (table) => log.filter((q) => q.sql.startsWith(`DELETE FROM ${tab
 // response body is proof of a leak.
 const VICTIM_AMOUNT = 37.11;
 
-function scriptBudgetStatus({ nonSkip, skip, ceiling, callerRow }) {
+// `locked` is the settle flag, and it is what decides whether a number is
+// published at all. GET no longer recomputes a live MIN: a ceiling that a
+// polling client can watch change is the differencing leak this route closed in
+// round 22, so flocks.budget_ceiling is written only when the budget settles
+// and this route serves that column or nothing. See settledCeiling in
+// routes/budget.js.
+function scriptBudgetStatus({ nonSkip, skip, ceiling, callerRow, locked = false }) {
   handlers = [
     [/SELECT id FROM flock_members/, isMember],
     [/SELECT budget_enabled, budget_context/, () => ({
       rows: [{
-        budget_enabled: true, budget_context: 'dinner', budget_locked: false,
+        budget_enabled: true, budget_context: 'dinner', budget_locked: locked,
         budget_ceiling: ceiling, ghost_mode_enabled: false,
       }],
     })],
@@ -137,11 +143,6 @@ function scriptBudgetStatus({ nonSkip, skip, ceiling, callerRow }) {
       rows: [{ total_submissions: String(nonSkip + skip), non_skip_count: String(nonSkip), skip_count: String(skip) }],
     })],
     [/COUNT\(\*\) AS total FROM flock_members/, () => ({ rows: [{ total: '4' }] })],
-    // GET recomputes the MIN over submissions from PRESENT members rather than
-    // reading flocks.budget_ceiling, because nothing refreshes that column when
-    // a member leaves and a departed account's amount was still being published
-    // from it (round 18). Same number either way here: `ceiling` is the MIN.
-    [/SELECT MIN\(amount\) AS ceiling FROM budget_submissions/, () => ({ rows: [{ ceiling }] })],
     [/SELECT amount, skipped FROM budget_submissions/, () => ({ rows: callerRow ? [callerRow] : [] })],
   ];
 }
@@ -162,7 +163,7 @@ test('budget status below the anonymity threshold reveals no number at all', asy
 });
 
 test('budget status exposes only the four aggregate fields plus the caller own row', async () => {
-  scriptBudgetStatus({ nonSkip: 3, skip: 1, ceiling: 55, callerRow: { amount: '80.00', skipped: false } });
+  scriptBudgetStatus({ nonSkip: 3, skip: 1, ceiling: 55, callerRow: { amount: '80.00', skipped: false }, locked: true });
 
   const res = await call('GET', '/api/budget/42');
 
@@ -183,6 +184,23 @@ test('budget status exposes only the four aggregate fields plus the caller own r
     'budgetContext', 'budgetEnabled', 'budgetLocked', 'ceiling', 'isReady',
     'skipCount', 'submissionCount', 'totalMembers', 'userAmount', 'userSkipped', 'userSubmitted',
   ]);
+});
+
+test('budget status publishes no number while the budget is still open', async () => {
+  // Four members, three amounts shared, one person yet to answer. Everything
+  // needed for a number exists and the number is still withheld, because the
+  // next answer could move it and a member who watched both would know whose
+  // answer moved it. isReady stays true: it says the group CAN settle, which
+  // is what the creator's Lock button is gated on, not that here is the number.
+  scriptBudgetStatus({ nonSkip: 3, skip: 0, ceiling: 55, callerRow: { amount: '80.00', skipped: false } });
+
+  const res = await call('GET', '/api/budget/42');
+
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.ceiling, null);
+  assert.strictEqual(res.body.isReady, true);
+  assert.strictEqual(res.body.budgetLocked, false);
+  assert.ok(!res.text.includes('55'), `an unsettled ceiling reached the wire: ${res.text}`);
 });
 
 test('a non-member gets 403 from budget status, not a redacted body it can diff', async () => {
@@ -222,7 +240,7 @@ test('the budget lock refuses to publish a ceiling backed by fewer than three pe
     // cannot be used to tell a real flock id from a fake one. The creator is
     // always an accepted member.
     [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, isMember],
-    [/SELECT creator_id, budget_enabled FROM flocks/, () => ({ rows: [{ creator_id: 1, budget_enabled: true }] })],
+    [/SELECT creator_id, budget_enabled, budget_locked FROM flocks/, () => ({ rows: [{ creator_id: 1, budget_enabled: true, budget_locked: false }] })],
     [/COUNT\(\*\)::int AS n FROM budget_submissions/, () => ({ rows: [{ n: 2 }] })],
     [/SELECT MIN\(amount\)/, () => ({ rows: [{ ceiling: String(VICTIM_AMOUNT) }] })],
   ];
@@ -410,7 +428,7 @@ test('ghost commit cannot write a share into a bill that is already finalized', 
   // rows, and unlock /payment-links (which discloses the payer's handles).
   handlers = [
     [/SELECT id FROM flock_members/, isMember],
-    [/SELECT budget_ceiling, status, ghost_mode_enabled/, () => ({ rows: [{ budget_ceiling: '40.00', status: 'confirmed', ghost_mode_enabled: true }] })],
+    [/SELECT budget_ceiling, budget_locked, status, ghost_mode_enabled/, () => ({ rows: [{ budget_ceiling: '40.00', budget_locked: true, status: 'confirmed', ghost_mode_enabled: true }] })],
     [/COUNT\(\*\)::int AS n FROM budget_submissions/, () => ({ rows: [{ n: 3 }] })],
     [/COUNT\(\*\) AS count FROM flock_members/, () => ({ rows: [{ count: '3' }] })],
     [/SELECT id, paid_by FROM bill_splits/, () => ({ rows: [{ id: 7, paid_by: 2 }] })],
@@ -426,7 +444,7 @@ test('ghost commit cannot write a share into a bill that is already finalized', 
 test('ghost commit still works against an unclaimed placeholder bill', async () => {
   handlers = [
     [/SELECT id FROM flock_members/, isMember],
-    [/SELECT budget_ceiling, status, ghost_mode_enabled/, () => ({ rows: [{ budget_ceiling: '40.00', status: 'confirmed', ghost_mode_enabled: true }] })],
+    [/SELECT budget_ceiling, budget_locked, status, ghost_mode_enabled/, () => ({ rows: [{ budget_ceiling: '40.00', budget_locked: true, status: 'confirmed', ghost_mode_enabled: true }] })],
     [/COUNT\(\*\)::int AS n FROM budget_submissions/, () => ({ rows: [{ n: 3 }] })],
     [/COUNT\(\*\) AS count FROM flock_members/, () => ({ rows: [{ count: '3' }] })],
     [/SELECT id, paid_by FROM bill_splits/, () => ({ rows: [{ id: 7, paid_by: null }] })],
@@ -442,7 +460,7 @@ test('ghost commit still works against an unclaimed placeholder bill', async () 
 test('ghost commit stays below the anonymity threshold and inside DECIMAL(8,2)', async () => {
   handlers = [
     [/SELECT id FROM flock_members/, isMember],
-    [/SELECT budget_ceiling, status, ghost_mode_enabled/, () => ({ rows: [{ budget_ceiling: '9999.00', status: 'confirmed', ghost_mode_enabled: true }] })],
+    [/SELECT budget_ceiling, budget_locked, status, ghost_mode_enabled/, () => ({ rows: [{ budget_ceiling: '9999.00', budget_locked: true, status: 'confirmed', ghost_mode_enabled: true }] })],
     [/COUNT\(\*\)::int AS n FROM budget_submissions/, () => ({ rows: [{ n: 2 }] })],
   ];
   const blocked = await call('POST', '/api/billing/42/ghost-commit');
@@ -453,7 +471,7 @@ test('ghost commit stays below the anonymity threshold and inside DECIMAL(8,2)',
   // clamped rather than overflowing the column into a 500.
   handlers = [
     [/SELECT id FROM flock_members/, isMember],
-    [/SELECT budget_ceiling, status, ghost_mode_enabled/, () => ({ rows: [{ budget_ceiling: '9999.00', status: 'confirmed', ghost_mode_enabled: true }] })],
+    [/SELECT budget_ceiling, budget_locked, status, ghost_mode_enabled/, () => ({ rows: [{ budget_ceiling: '9999.00', budget_locked: true, status: 'confirmed', ghost_mode_enabled: true }] })],
     [/COUNT\(\*\)::int AS n FROM budget_submissions/, () => ({ rows: [{ n: 3 }] })],
     [/COUNT\(\*\) AS count FROM flock_members/, () => ({ rows: [{ count: '500' }] })],
     [/SELECT id, paid_by FROM bill_splits/, () => ({ rows: [] })],

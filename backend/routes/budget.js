@@ -132,6 +132,65 @@ function publishableSkipCount(skipCount, totalMembers) {
   return (totalMembers - 1) >= SKIP_COUNT_MIN_OTHERS ? skipCount : null;
 }
 
+// A LIVE CEILING IS A DIFFERENCE, AND THE DIFFERENCE NAMES A PERSON (round 22).
+//
+// Everything above this line is about the VALUE that gets published. This is
+// about WHEN, and the when was the leak. No collusion, no second account, no
+// arithmetic beyond subtraction: you watch the screen.
+//
+// The ceiling was recomputed and broadcast on every submission. It is a MIN, so
+// it only ever moves when a new minimum arrives. Three people submit, the
+// number appears. The fourth person submits and the number DROPS, and every
+// member watching sees the count go 3 to 4 and the ceiling move in the same
+// instant. That pair of observations attributes the new band to exactly one
+// person, and the person it attributes it to is always the one with the least
+// money, because nobody else can move a minimum. The two members who had not
+// even submitted yet learn it too.
+//
+// The feature exists so that nobody has to say "that is too expensive" in front
+// of six people. Publishing a live minimum said it for them, by name.
+//
+// Banding does not fix this. It is a fix for the VALUE (an interval instead of
+// an exact figure) and it was doing that job. It cannot fix a sequence: two
+// banded numbers still differ, and the difference is still attributable.
+//
+// THE FIX IS THAT THERE IS ONLY EVER ONE NUMBER. A ceiling is published when
+// the budget is SETTLED and never before, and once settled it does not move, so
+// there is no before-and-after pair left to subtract:
+//
+//   - Before the budget is locked, every surface publishes aggregate only:
+//     submissionCount, totalMembers, isReady. Never a ceiling. "3 of 4
+//     answered" is coordination and it stays; the number is not.
+//   - The budget settles when the last member has answered (submitted or
+//     skipped) with at least three shared amounts, and /submit locks it in the
+//     same transaction that records that last answer. The creator can also
+//     settle it early with POST /lock once three amounts exist, which is the
+//     same single publication one action sooner.
+//   - After that, budget_locked refuses further submissions (the check at the
+//     top of the submit transaction), so a late amount BELOW the published cap
+//     is turned away rather than silently excluded. Refusing is the honest of
+//     the two options: quietly dropping someone's number would mean the group
+//     is shown a cap that a present member cannot actually afford, which is the
+//     one guarantee the ceiling has to keep. The person is told the budget is
+//     already set, which is true and is a thing they can act on out loud.
+//
+// Two consequences worth stating plainly, because they are costs and not
+// details. Answers close the moment everyone has answered, so "Change" is gone
+// after that, and a member who joins a settled flock cannot submit at all. Both
+// follow from publishing once; a second publication is the leak.
+//
+// flocks.budget_ceiling therefore means THE PUBLISHED NUMBER, not the running
+// minimum. Nothing writes it until the budget settles, so an unlocked flock
+// carries NULL there, and a reader that forgets the gate below still has
+// nothing to leak. That is deliberate: this file has now been the subject of
+// two separate audit findings whose shape was "one of the five readers forgot".
+// (routes/flocks.js drops budget_ceiling from research_analytics for a flock
+// that never settled, which is correct: there was no group number.)
+function settledCeiling(budgetLocked, cachedCeiling) {
+  if (!budgetLocked) return null;
+  return bandCeiling(cachedCeiling);
+}
+
 // MEMBERSHIP IS THE RELATIONSHIP (round 18).
 //
 // budget_submissions carries a flock_id and a user_id and no relationship to
@@ -255,16 +314,18 @@ router.post('/:flockId/submit',
         return res.status(400).json({ error: 'Amount is required when not skipping' });
       }
 
-      // PRIVACY INVARIANT: submission, ceiling recompute, and counting run in
-      // ONE transaction holding the flock row lock. As autocommit queries, a
-      // concurrent skip could slip between this route's checks and /lock's
-      // count, letting the lock emit a ceiling backed by <3 submissions.
-      // Individual amounts never leave the server on any path; the aggregate
-      // that does leave is the BANDED ceiling, see bandCeiling above.
+      // PRIVACY INVARIANT: submission, ceiling recompute, counting, and the
+      // settle decision run in ONE transaction holding the flock row lock. As
+      // autocommit queries, a concurrent skip could slip between this route's
+      // checks and /lock's count, letting the lock emit a ceiling backed by <3
+      // submissions. Individual amounts never leave the server on any path; the
+      // aggregate that can leave is the BANDED ceiling, and it leaves only in
+      // the request that settles the budget (see settledCeiling above).
       const client = await pool.connect();
       let countRow;
       let ceiling;
-      let hadNonSkipBefore = false;
+      let totalMembers = 0;
+      let settledNow = false;
       try {
         await client.query('BEGIN');
 
@@ -284,14 +345,6 @@ router.post('/:flockId/submit',
           await client.query('ROLLBACK');
           return res.status(400).json({ error: 'Budget has been locked' });
         }
-
-        // Prior state of THIS user's row — needed to detect a true threshold
-        // crossing (an edit by one of the original three must not re-push).
-        const priorRow = await client.query(
-          'SELECT skipped FROM budget_submissions WHERE flock_id = $1 AND user_id = $2',
-          [flockId, userId]
-        );
-        hadNonSkipBefore = priorRow.rows.length > 0 && priorRow.rows[0].skipped === false;
 
         // UPSERT budget submission
         await client.query(
@@ -317,24 +370,9 @@ router.post('/:flockId/submit',
         // publish the band rather than one person's exact amount.
         ceiling = bandCeiling(ceilingResult.rows[0].ceiling);
 
-        // Update cached ceiling on flocks table
-        await client.query(
-          'UPDATE flocks SET budget_ceiling = $1, updated_at = NOW() WHERE id = $2',
-          [ceiling, flockId]
-        );
-
-        // Count submissions. One query answers both questions this route has:
-        // the aggregate counts for the response, and (derived below) whether
-        // the ceiling was already public before this submission. This used to
-        // be TWO statements — the second re-counted non-skips excluding this
-        // user — but this submit only ever changes this user's own row, so
-        // "others' non-skips" is exactly non_skip_count minus this user's
-        // contribution, already known. Reliability pass 2026-08-14: dropped the
-        // redundant query (submit transaction: 9 statements -> 8).
-        //
-        // Counted over present members only, same as the MIN above: the
-        // non-skip count IS the privacy threshold, so a row from someone who
-        // left was borrowing anonymity for a flock that does not have it.
+        // Count submissions, over present members only, same as the MIN above:
+        // the non-skip count IS the privacy threshold, so a row from someone
+        // who left was borrowing anonymity for a flock that does not have it.
         const countResult = await client.query(
           `SELECT
              COUNT(*) AS total_submissions,
@@ -344,6 +382,41 @@ router.post('/:flockId/submit',
           [flockId]
         );
         countRow = countResult.rows[0];
+
+        // The roster size is read INSIDE the transaction now, because the
+        // settle decision below is made from it: "everyone has answered" is a
+        // comparison between two counts, and reading one of them from a
+        // different snapshot is how a flock settles on a roster that no longer
+        // exists.
+        const memberResult = await client.query(
+          "SELECT COUNT(*) AS total FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
+          [flockId]
+        );
+        totalMembers = parseInt(memberResult.rows[0].total);
+
+        // SETTLE, ONCE. Every accepted member has answered and at least three
+        // of them shared an amount, so this is the last moment at which a
+        // number can be published without a previous number to subtract it
+        // from. The flock row is held FOR UPDATE, so exactly one submission
+        // wins this branch; anything arriving after it meets budget_locked at
+        // the top of this transaction and is refused.
+        //
+        // Below the three-amount floor nothing settles and nothing is written,
+        // even when everybody has answered: the group can still reach three by
+        // someone turning a skip into an amount, and locking would take that
+        // away for a number we are not allowed to publish anyway.
+        const everyoneAnswered = totalMembers > 0
+          && parseInt(countRow.total_submissions) >= totalMembers;
+        settledNow = everyoneAnswered && parseInt(countRow.non_skip_count) >= 3 && !!ceiling;
+        if (settledNow) {
+          // Same statement as POST /lock, deliberately: settling is settling,
+          // and flocks.budget_ceiling is written by exactly these two places
+          // and holds exactly the number that was published.
+          await client.query(
+            'UPDATE flocks SET budget_locked = true, budget_ceiling = $2, updated_at = NOW() WHERE id = $1',
+            [flockId, ceiling]
+          );
+        }
 
         await client.query('COMMIT');
       } catch (txErr) {
@@ -356,22 +429,17 @@ router.post('/:flockId/submit',
       const submissionCount = parseInt(total_submissions);
       const skipCount = parseInt(skip_count);
       const nonSkipCount = parseInt(non_skip_count);
-      // Other members' non-skip rows, unchanged by this submit: the count above
-      // ran AFTER the upsert inside the same transaction, so it includes this
-      // user's row iff they did not skip — subtract that contribution back out.
-      const othersNonSkipBefore = nonSkipCount - (skipped ? 0 : 1);
 
-      // Total members
-      const memberResult = await pool.query(
-        "SELECT COUNT(*) AS total FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
-        [flockId]
-      );
-      const totalMembers = parseInt(memberResult.rows[0].total);
-
-      // Privacy: ceiling only visible when 3+ non-skip submissions, and even
-      // then it is the band, not the MIN (`ceiling` was banded above).
+      // isReady means "enough amounts have been shared for a number to be
+      // publishable", which is what the creator's Lock button is gated on. It
+      // is NOT "here is the number": below, the ceiling goes out only in the
+      // request that settled the budget. Keeping the two separate is what lets
+      // the screen say "3 of 4 answered" without saying how much.
       const isReady = nonSkipCount >= 3;
-      const visibleCeiling = isReady ? ceiling : null;
+      // ONE PUBLICATION, AND ONLY THE ONE THAT SETTLED IT. Every other
+      // submission answers null, so a member watching the screen has no earlier
+      // number to compare this one against. See settledCeiling above.
+      const visibleCeiling = settledNow ? ceiling : null;
       // And the skip/share split only when it ranges over three co-members or
       // more. See publishableSkipCount.
       const visibleSkipCount = publishableSkipCount(skipCount, totalMembers);
@@ -381,12 +449,15 @@ router.post('/:flockId/submit',
       if (io) {
         // Per-member fan-out, not the `flock:{id}` room, so a member sitting
         // anywhere else in the app still gets the budget-ready signal. Payload
-        // is aggregate-only (visibleCeiling is null below the 3-submission
-        // threshold, and banded above it); no individual amount is ever put on
-        // the wire. This carries the SAME value the REST response below carries,
-        // which matters: a raw MIN reaching the socket while REST published a
-        // band would hand the whole fix back. Guarded so a fan-out failure
-        // cannot 500 a submission that already committed.
+        // is aggregate-only on every submission but the one that settles the
+        // budget, where it carries the banded number once; no individual amount
+        // is ever put on the wire. This carries the SAME value the REST
+        // response below carries, which matters twice over: a raw MIN reaching
+        // the socket while REST published a band would hand back the value
+        // fix, and a live ceiling reaching the socket while REST withheld it
+        // would hand back the sequence fix, which is the one this payload used
+        // to leak on every keystroke. Guarded so a fan-out failure cannot 500 a
+        // submission that already committed.
         await emitToFlockMembers(io, flockId, 'budget_updated', {
           flockId,
           ceiling: visibleCeiling,
@@ -394,12 +465,13 @@ router.post('/:flockId/submit',
           totalMembers,
           isReady,
           skipCount: visibleSkipCount,
+          budgetLocked: settledNow,
         }).catch((e) => console.error('budget_updated fan-out failed:', e.message));
       }
 
-      // Push "Budget set!" only when this submission CROSSED the threshold
-      const wasReadyBefore = (othersNonSkipBefore + (hadNonSkipBefore ? 1 : 0)) >= 3;
-      if (isReady && visibleCeiling && !wasReadyBefore) {
+      // Push "Budget set!" on the settling submission, which happens at most
+      // once per flock because the budget is locked from here on.
+      if (settledNow && visibleCeiling) {
         const flockNameResult = await pool.query('SELECT name FROM flocks WHERE id = $1', [flockId]);
         const flockName = flockNameResult.rows[0]?.name || 'Flock';
         const membersResult = await pool.query(
@@ -422,6 +494,7 @@ router.post('/:flockId/submit',
         totalMembers,
         isReady,
         skipCount: visibleSkipCount,
+        budgetLocked: settledNow,
         userSubmitted: true,
       });
     } catch (err) {
@@ -509,38 +582,25 @@ router.get('/:flockId',
       // under three sharers withholds, like every other reader of it.
       const isReady = nonSkipCount >= 3;
 
-      // RECOMPUTE, DO NOT TRUST THE CACHE (round 18, the other half of the
-      // poison-and-run fix).
+      // THE READ PATH GETS THE SAME RULE AS THE BROADCAST, or the fix moved the
+      // leak instead of closing it: a client that polls this route once per
+      // second reconstructs exactly the sequence the socket stopped emitting.
       //
-      // flocks.budget_ceiling is written by /submit and by /lock and by nothing
-      // else. Leaving a flock writes nothing at all. So teaching the aggregates
-      // to skip a departed account's row only half closed it: the cached column
-      // still HELD that account's number, and this route, which is the screen
-      // every member actually looks at, went on publishing the griefer's cent
-      // until somebody happened to submit again. A stale cache is the same leak
-      // one statement later.
+      // So there is no live recompute here any more. This route used to
+      // recompute MIN(amount) over present members on every unlocked read,
+      // which was the right answer to the round-18 stale-cache finding and the
+      // wrong answer to this one, because it made the running minimum readable on
+      // demand, which is the oracle the whole differencing attack is built on.
+      // The cached column is now written only when the budget settles (see
+      // settledCeiling), so an unlocked flock has nothing cached to go stale
+      // and nothing live to publish, and both findings are closed by the same
+      // line.
       //
-      // Recomputing over present members is the only reading that cannot be
-      // stale, and it runs AFTER the count above for the reason spelled out
-      // there: a crossing mid-request errs to "withhold".
-      //
-      // A LOCKED budget is the deliberate exception. Locking is the group
-      // committing to a number; a member leaving afterwards must not silently
-      // move the figure everyone agreed to. There the cached value IS the
-      // answer, re-banded on the way out so a row cached as a raw MIN before
-      // the M1 fix cannot publish an exact amount.
-      let ceiling;
-      if (flock.budget_locked) {
-        ceiling = bandCeiling(flock.budget_ceiling);
-      } else {
-        const ceilingResult = await pool.query(
-          `SELECT MIN(amount) AS ceiling FROM ${MEMBER_SUBMISSIONS}
-           WHERE bs.flock_id = $1 AND skipped = false`,
-          [flockId]
-        );
-        ceiling = bandCeiling(ceilingResult.rows[0].ceiling);
-      }
-      const visibleCeiling = isReady ? ceiling : null;
+      // Locked is still re-banded on the way out, so a row cached as a raw MIN
+      // before the M1 fix cannot publish an exact amount. A locked flock that
+      // falls back under three sharers still withholds, like every other reader
+      // of it (budgetCeilingReadParity pins that).
+      const visibleCeiling = isReady ? settledCeiling(flock.budget_locked, flock.budget_ceiling) : null;
       // See publishableSkipCount: in a flock with fewer than three co-members
       // this number names who declined to share.
       const visibleSkipCount = publishableSkipCount(skipCount, totalMembers);
@@ -624,7 +684,7 @@ router.post('/:flockId/lock',
         await client.query('BEGIN');
 
         const flockResult = await client.query(
-          'SELECT creator_id, budget_enabled FROM flocks WHERE id = $1 FOR UPDATE',
+          'SELECT creator_id, budget_enabled, budget_locked FROM flocks WHERE id = $1 FOR UPDATE',
           [flockId]
         );
         if (flockResult.rows.length === 0) {
@@ -640,6 +700,17 @@ router.post('/:flockId/lock',
         if (!flockResult.rows[0].budget_enabled) {
           await client.query('ROLLBACK');
           return res.status(400).json({ error: 'Budget matching is not enabled for this flock' });
+        }
+        // LOCKING IS ONCE, AND THIS IS WHAT MAKES IT ONCE. Without this the
+        // route recomputed MIN over whoever is present and rewrote the cached
+        // column, so a creator who locked, watched the member with the lowest
+        // amount leave, and locked again was shown a HIGHER number the second
+        // time: the same before-and-after pair the submit path stopped
+        // publishing, with the departed member named by it. The published
+        // number is now the first one, permanently.
+        if (flockResult.rows[0].budget_locked) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'Budget has been locked' });
         }
 
         const countResult = await client.query(
@@ -817,6 +888,10 @@ module.exports = router;
 // that owns it instead of retyping the thresholds, and so a future reader of
 // flocks.js / billing.js can see where their cached ceiling was banded.
 module.exports.bandCeiling = bandCeiling;
+// Exported for the same reason bandCeiling is: routes/flocks.js and
+// routes/billing.js read the cached column too, and the WHEN rule has to have
+// one implementation for the same reason the banding does. See settledCeiling.
+module.exports.settledCeiling = settledCeiling;
 module.exports.CEILING_BANDS = CEILING_BANDS;
 module.exports.SUB_DOLLAR_CEILING = SUB_DOLLAR_CEILING;
 

@@ -108,7 +108,7 @@ function reset() {
 // 3-non-skip threshold, NULL below it. The threshold gate is SQL-side and is
 // modelled here so the fixture cannot accidentally test the band by testing the
 // threshold instead.
-const gatedCeiling = () => (nonSkipCount >= 3 ? flock.budget_ceiling : null);
+const gatedCeiling = () => ((flock.budget_locked && nonSkipCount >= 3) ? flock.budget_ceiling : null);
 
 // ── The fixture-backed database ─────────────────────────────────────────────
 const realQuery = pool.query;
@@ -170,9 +170,9 @@ async function dispatch(text, params = []) {
   }
 
   // ── routes/billing.js ghost-commit — likewise its own projection ──
-  if (has('SELECT budget_ceiling, status, ghost_mode_enabled FROM flocks WHERE id = $1')) {
-    const { budget_ceiling, status, ghost_mode_enabled } = flock;
-    return { rows: [{ budget_ceiling, status, ghost_mode_enabled }], rowCount: 1 };
+  if (has('SELECT budget_ceiling, budget_locked, status, ghost_mode_enabled FROM flocks WHERE id = $1')) {
+    const { budget_ceiling, budget_locked, status, ghost_mode_enabled } = flock;
+    return { rows: [{ budget_ceiling, budget_locked, status, ghost_mode_enabled }], rowCount: 1 };
   }
 
   // ── PUT /api/flocks/:id — ownership lookup, then the update ──
@@ -435,21 +435,118 @@ test('the rule holds across the bands, not just at $47.13', async () => {
 // One implementation, not two
 // ═══════════════════════════════════════════════════════════════════════════
 
-test('flocks.js and billing.js import bandCeiling rather than reimplementing it', () => {
-  // A second copy of the thresholds is how the two sides drift: one gets a new
-  // band and the other keeps publishing the old one. Source-level, because the
-  // behavioural tests above would pass just as happily against a duplicate.
+test('flocks.js and billing.js import the ceiling rules rather than reimplementing them', () => {
+  // A second copy of either rule is how the two sides drift: one gets a new
+  // band, or a new answer to WHEN a number may be published, and the other
+  // keeps doing what it did. Source-level, because the behavioural tests above
+  // would pass just as happily against a duplicate.
   const fs = require('node:fs');
   const path = require('node:path');
   for (const file of ['flocks.js', 'billing.js']) {
     const src = fs.readFileSync(path.join(__dirname, '..', 'routes', file), 'utf8');
     assert.ok(
       /require\('\.\/budget'\)/.test(src),
-      `routes/${file} no longer imports the banding rule from the route that owns it`
+      `routes/${file} no longer imports the ceiling rules from the route that owns them`
     );
     assert.ok(
-      !/CEILING_BANDS|SUB_DOLLAR_CEILING|function bandCeiling/.test(src),
-      `routes/${file} has grown its own copy of the banding thresholds`
+      /settledCeiling/.test(src),
+      `routes/${file} publishes the cached ceiling without the settle gate`
+    );
+    assert.ok(
+      !/CEILING_BANDS|SUB_DOLLAR_CEILING|function bandCeiling|function settledCeiling/.test(src),
+      `routes/${file} has grown its own copy of a ceiling rule`
     );
   }
+
+  // The list and detail routes withhold in SQL as well, and the fixture above
+  // models that CASE rather than executing it, so the settle gate inside it is
+  // pinned here instead. Two gates on purpose: this column has twice been
+  // published by a reader that remembered one of them.
+  const flocksSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'flocks.js'), 'utf8');
+  const cases = flocksSrc.match(/CASE WHEN[\s\S]*?AS budget_ceiling/g) || [];
+  assert.strictEqual(cases.length, 2, 'expected the list and detail budget_ceiling CASEs');
+  for (const c of cases) {
+    assert.match(c, /f\.budget_locked/, 'a budget_ceiling CASE publishes a ceiling from an open budget');
+    assert.match(c, />= 3/, 'a budget_ceiling CASE dropped the three-amount support gate');
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// The WHEN gate, on all five readers at once (round 22)
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Banding was the answer to "the published number is somebody's exact figure".
+// It is not an answer to "the published number MOVES", which is a fact about
+// two numbers and not about either of them. A ceiling recomputed on every
+// submission dropped the instant the member with the least money answered, and
+// every member watching the count go 3 to 4 could attribute the new band to
+// that one person. So the number is published once, when the budget settles,
+// and flocks.budget_ceiling means THE PUBLISHED NUMBER rather than the running
+// minimum.
+//
+// The same five readers, because the same mistake is available to all of them:
+// serving a live column that happens to be sitting there.
+
+test('an OPEN budget publishes no ceiling on any of the five readers', async () => {
+  // Everything a reveal needs exists except the settle: three shared amounts,
+  // and a cached column holding a number. Every door answers nothing.
+  flock.budget_locked = false;
+  flock.budget_ceiling = '60.00';
+
+  const list = await call('GET', '/api/flocks', 1);
+  const detail = await call('GET', `/api/flocks/${FLOCK_ID}`, 1);
+  const updated = await call('PUT', `/api/flocks/${FLOCK_ID}`, 1, { venue_name: 'The Fig' });
+  const budget = await call('GET', `/api/budget/${FLOCK_ID}`, 1);
+  assertQueriesUnderstood();
+
+  assert.strictEqual(list.body.flocks.find((f) => f.id === FLOCK_ID).budget_ceiling, null);
+  assert.strictEqual(detail.body.flock.budget_ceiling, null);
+  assert.strictEqual(updated.body.flock.budget_ceiling, null);
+  assert.strictEqual(budget.body.ceiling, null);
+  assert.strictEqual(budget.body.isReady, true,
+    'isReady still says the group CAN settle, which is what the lock button is gated on');
+
+  // The ghost commit derives an estimated share from the ceiling and WRITES it
+  // into a bill_split_shares row, so an open budget has to refuse rather than
+  // persist a snapshot of a number that is still moving.
+  const ghost = await call('POST', `/api/billing/${FLOCK_ID}/ghost-commit`, 1);
+  assert.strictEqual(ghost.status, 400, ghost.text);
+  assert.strictEqual(shares.length, 0, 'a ghost commit wrote a share from an unpublished ceiling');
+  for (const res of [list, detail, updated, budget, ghost]) {
+    assert.ok(!res.text.includes('60'), `an open budget put its running minimum on the wire: ${res.text}`);
+  }
+});
+
+test('a polling client cannot difference the five readers either, because the number does not move', async () => {
+  // The read-path form of the attack: poll while the flock answers. The only
+  // transition any reader can show is "nothing" to "the number".
+  flock.budget_locked = false;
+  flock.budget_ceiling = '60.00';
+  const observed = [];
+  const pollAll = async () => {
+    const list = await call('GET', '/api/flocks', 1);
+    const detail = await call('GET', `/api/flocks/${FLOCK_ID}`, 1);
+    const budget = await call('GET', `/api/budget/${FLOCK_ID}`, 1);
+    observed.push(
+      list.body.flocks.find((f) => f.id === FLOCK_ID).budget_ceiling,
+      detail.body.flock.budget_ceiling,
+      budget.body.ceiling,
+    );
+  };
+
+  await pollAll();                       // three amounts in, still open
+  flock.budget_ceiling = '52.00';        // a fourth, lower amount arrives
+  await pollAll();
+  flock.budget_ceiling = '47.13';        // and a fifth, lower again
+  await pollAll();
+  // The last member answers, the budget settles, and THAT is the publication.
+  flock.budget_locked = true;
+  await pollAll();
+  assertQueriesUnderstood();
+
+  const distinct = [...new Set(observed.filter((v) => v !== null))];
+  assert.deepStrictEqual(distinct, [BAND],
+    `a poller saw more than one number: ${JSON.stringify(observed)}`);
+  assert.deepStrictEqual(observed.slice(0, 9), [null, null, null, null, null, null, null, null, null],
+    'a reader published a number while the budget was still open');
 });
