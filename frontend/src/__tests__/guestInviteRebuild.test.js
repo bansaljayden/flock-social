@@ -84,7 +84,12 @@ describe('GuestInvite: the rebuilt screen', () => {
     const { container } = mount(okWith(PLAN));
     await screen.findByRole('heading', { level: 1, name: /friday night out/i });
     expect(container.textContent).not.toMatch(/isn't complete/i);
-    expect(global.fetch).toHaveBeenCalledWith(expect.stringContaining(NEW_TOKEN));
+    // Second argument, because every request this page makes now carries an
+    // abort signal. See the request-clock tests below.
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining(NEW_TOKEN),
+      expect.objectContaining({ signal: expect.anything() }),
+    );
 
     // And the bound the page enforces is the bound the server enforces.
     const src = readSrc('GuestInvite.js');
@@ -389,6 +394,175 @@ describe('GuestInvite: the rebuilt screen', () => {
       flock: { ...PLAN.flock, status: 'confirmed', chosenVenue: 'Good Dog Bar' },
     }));
     await waitFor(() => expect(c2.querySelectorAll('.gi-fact-v')[1].textContent).toBe('Good Dog Bar'));
+  });
+
+  // ── 4. the request clock ────────────────────────────────────────────────
+  //
+  // Every fetch on this page was bare, which on the network this page is most
+  // often opened on meant no deadline at all. The two failures that bought are
+  // the first two tests here, and neither of them showed the visitor anything:
+  // the first was a skeleton that ran until the tab was closed, the second was
+  // every control on the page frozen behind a button reading "Saving".
+  //
+  // The page keeps its own client rather than routing through services/api.js
+  // (a JWT, a session-expiry bus and the PostHog funnel mean nothing to
+  // somebody with no account, and it would drag the whole REST client into
+  // this chunk), so the rails have to be pinned here rather than inherited.
+
+  // A request that accepts the connection and then says nothing, which is the
+  // shape of a venue wifi that has stopped forwarding. It settles only when
+  // the page's own clock aborts it.
+  const silence = () => (url, opts) => new Promise((_, reject) => {
+    const signal = opts && opts.signal;
+    if (!signal) return; // no clock: this promise never settles, which is the bug
+    signal.addEventListener('abort', () => {
+      const err = new Error('aborted');
+      err.name = 'AbortError';
+      reject(err);
+    });
+  });
+
+  const tick = async (ms) => {
+    await act(async () => {
+      jest.advanceTimersByTime(ms);
+      await Promise.resolve();
+    });
+  };
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test('a first load that is answered with silence ends in a screen with a way out, not a skeleton forever', async () => {
+    jest.useFakeTimers();
+    const { container } = mount(silence());
+
+    // Still the skeleton at fourteen seconds: a slow network is not a failure.
+    await tick(14000);
+    expect(container.querySelector('.gi-skel')).toBeTruthy();
+
+    // The clock fires, and the read is retried ONCE, because the first request
+    // a stranger's phone makes to Flock is the one most likely to land on a
+    // cold container. Two full windows, then the page says so.
+    await tick(2000);
+    await tick(16000);
+
+    await waitFor(() => expect(container.textContent).toMatch(/took too long/i));
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole('button', { name: /try again/i })).toBeTruthy();
+    // Never blames the link, which is the one thing that is certainly fine.
+    expect(container.textContent).not.toMatch(/isn't complete/i);
+  });
+
+  test('a stalled answer releases the page instead of freezing every control behind "Saving"', async () => {
+    jest.useFakeTimers();
+    const { container } = mount((url, opts) => (
+      (opts && opts.method === 'POST')
+        ? silence()(url, opts)
+        : okWith(PLAN)()
+    ));
+
+    await waitFor(() => expect(container.textContent).toMatch(/friday night out/i));
+    fireEvent.change(screen.getByLabelText(/your name/i), { target: { value: 'Maya' } });
+    fireEvent.click(screen.getByRole('button', { name: /i'm in/i }));
+    await waitFor(() => expect(screen.getByRole('button', { name: /saving/i })).toBeTruthy());
+
+    await tick(16000);
+
+    // The button is a button again, and the failure is stated where the
+    // control that produced it is, rather than being left as a stuck state.
+    await waitFor(() => expect(screen.getByRole('button', { name: /i'm in/i })).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /saving/i })).toBeNull();
+    // Two live regions are always mounted (one per control group), so the
+    // page is asked for all of them and the complaint is read off the pair.
+    const alerts = screen.getAllByRole('alert').map((n) => n.textContent).join(' ');
+    expect(alerts).toMatch(/took too long/i);
+    // A WRITE is never re-sent. One preview, one RSVP, and nothing repeated.
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  test('a network that answers in Flock\'s place is named as the network, not as a broken invite', async () => {
+    // A captive portal answers 200 with its own sign-in HTML for every URL.
+    // Read as an empty payload this used to become "we couldn't load this
+    // invite. The link is probably fine. Try it again", which loops forever.
+    const { container } = mount(() => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.reject(new SyntaxError('Unexpected token <')),
+    }));
+
+    await waitFor(() => expect(container.textContent).toMatch(/answered instead of Flock/i));
+    expect(container.textContent).toMatch(/sign-in page/i);
+    expect(screen.getByRole('button', { name: /try again/i })).toBeTruthy();
+  });
+
+  test('a gateway answering 502 with an HTML page is our fault, not the wifi\'s', async () => {
+    // The same unreadable body, and the opposite cause. Railway's edge answers
+    // a 502 with HTML, so a page that decided "not JSON, therefore captive
+    // portal" would send a guest off to find a wifi sign-in screen that does
+    // not exist. The status line is authoritative and is read first.
+    const { container } = mount(() => Promise.resolve({
+      ok: false,
+      status: 502,
+      json: () => Promise.reject(new SyntaxError('Unexpected token <')),
+    }));
+
+    await waitFor(() => expect(container.textContent).toMatch(/couldn't load this invite/i));
+    expect(container.textContent).not.toMatch(/answered instead of Flock/i);
+    expect(container.textContent).not.toMatch(/sign-in page/i);
+  });
+
+  test('a plan called off while the page sits open closes the whole page, not one line beside a button', async () => {
+    // The guest loaded a live plan, the host called it off, and the RSVP comes
+    // back 409. Answering with one inline sentence would leave the roster in
+    // the present tense and every other control still offering something the
+    // server now refuses.
+    const cancelled = {
+      ...PLAN,
+      flock: { ...PLAN.flock, status: 'cancelled' },
+    };
+    let previews = 0;
+    const { container } = mount((url, opts) => {
+      if (opts && opts.method === 'POST') {
+        return Promise.resolve({
+          ok: false,
+          status: 409,
+          json: () => Promise.resolve({ error: 'This plan is no longer taking RSVPs' }),
+        });
+      }
+      previews += 1;
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(previews === 1 ? PLAN : cancelled),
+      });
+    });
+
+    await waitFor(() => expect(container.textContent).toMatch(/who is coming/i));
+    fireEvent.change(screen.getByLabelText(/your name/i), { target: { value: 'Maya' } });
+    fireEvent.click(screen.getByRole('button', { name: /i'm in/i }));
+
+    await waitFor(() => expect(container.textContent).toMatch(/was called off/i));
+    // Past tense, and no control that cannot work.
+    expect(container.textContent).toMatch(/who was coming/i);
+    expect(screen.queryByRole('button', { name: /i'm in/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /can't make it/i })).toBeNull();
+  });
+
+  test('every request the page makes carries a deadline', () => {
+    const src = readSrc('GuestInvite.js');
+    // No bare fetch survives: all three endpoints go through the one helper
+    // that owns the AbortController.
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    const fetches = [...code.matchAll(/[^a-zA-Z]fetch\(/g)].length;
+    expect(fetches).toBe(1);
+    expect(src).toMatch(/const REQUEST_TIMEOUT_MS = 15000;/);
+    expect(src).toMatch(/setTimeout\(\(\) => controller\.abort\(\), REQUEST_TIMEOUT_MS\)/);
+    // The clock covers the body read, not just the headers: the timer is
+    // cleared in a finally around BOTH, never after the fetch resolves.
+    expect(src).toMatch(/body = await res\.json\(\);[\s\S]{0,900}?finally \{\s*clearTimeout\(timer\);/);
+    // And the page still ships its own client rather than the app's.
+    expect(src).not.toMatch(/from '\.\.\/services\/api'/);
   });
 
   // ── the look, in the places a source scan can hold it ───────────────────
