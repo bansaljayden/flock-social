@@ -31,19 +31,26 @@ const REPO = path.resolve(__dirname, '..', '..', '..');
 const read = (...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8');
 
 const app = read('frontend', 'src', 'App.js');
+// The Add Friends screen, and with it the whole Contacts tab, left App.js for
+// screens/AddFriends.js. The handlers behind it did not move, so this file now
+// reads two sources: each assertion points at whichever one holds the line it
+// is about, and every negative assertion reads BOTH, so nothing this suite used
+// to forbid became sayable by moving it one file across.
+const screen = read('frontend', 'src', 'screens', 'AddFriends.js');
+const both = `${app}\n${screen}`;
 const api = read('frontend', 'src', 'services', 'api.js');
 const contactsService = read('frontend', 'src', 'services', 'contacts.js');
 const privacy = read('frontend', 'src', 'website', 'PrivacyPolicy.js');
 
 // The Contacts tab, on its own. Several assertions below are about what this
-// screen may not render, and the rest of App.js has legitimate uses of the same
-// words on screens that have nothing to do with the address book.
+// screen may not render, and the rest of the app has legitimate uses of the
+// same words on screens that have nothing to do with the address book.
 const contactsTab = (() => {
-  const start = app.indexOf('{/* TAB: Contacts */}');
-  const end = app.indexOf('{BottomNav()}', start);
+  const start = screen.indexOf('{/* TAB: Contacts */}');
+  const end = screen.indexOf('{BottomNav()}', start);
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
-  return app.slice(start, end);
+  return screen.slice(start, end);
 })();
 
 describe('the address book is reached through one service, on every platform', () => {
@@ -53,9 +60,9 @@ describe('the address book is reached through one service, on every platform', (
     // "no" while the app shipped a contacts purpose string for a feature with
     // no UI. Matched as calls rather than as the bare name, so the comment in
     // App.js that explains this does not fail its own rule.
-    expect(app).not.toMatch(/navigator\.contacts\s*\./);
-    expect(app).not.toMatch(/'contacts' in navigator/);
-    expect(app).not.toMatch(/ContactsManager/);
+    expect(both).not.toMatch(/navigator\.contacts\s*\./);
+    expect(both).not.toMatch(/'contacts' in navigator/);
+    expect(both).not.toMatch(/ContactsManager/);
   });
 
   test('the tab is gated on the service, not on a hand-rolled platform check', () => {
@@ -63,13 +70,13 @@ describe('the address book is reached through one service, on every platform', (
     expect(app).toMatch(/useState\(contactsAvailable\)/);
     // The old helper answered false on native. If it comes back, so does the
     // dead end.
-    expect(app).not.toMatch(/contactSyncAvailable/);
+    expect(both).not.toMatch(/contactSyncAvailable/);
   });
 });
 
 describe('the permission prompt fires only after the screen that explains it', () => {
   test('syncContacts is called from exactly one place in App.js', () => {
-    const calls = app.match(/\bsyncContacts\(/g) || [];
+    const calls = both.match(/\bsyncContacts\(/g) || [];
     expect(calls).toHaveLength(1);
   });
 
@@ -78,8 +85,8 @@ describe('the permission prompt fires only after the screen that explains it', (
     const body = handler.slice(0, handler.indexOf('\n  const handleLookupByNumber'));
     expect(body).toMatch(/await syncContacts\(findFriendsByPhone\)/);
     // Both of these are the shapes a prompt-on-mount would take.
-    expect(app).not.toMatch(/useEffect\([^)]*handleSyncContacts/);
-    expect(app).not.toMatch(/readContactPhoneNumbers/);
+    expect(both).not.toMatch(/useEffect\([^)]*handleSyncContacts/);
+    expect(both).not.toMatch(/readContactPhoneNumbers/);
   });
 
   test('a dismissed picker produces no toast, and a denial is not a toast either', () => {
@@ -102,15 +109,15 @@ describe('the permission prompt fires only after the screen that explains it', (
 
 describe('the four states of the Contacts tab', () => {
   test('the pre-prompt says what leaves the phone before anything does', () => {
-    expect(app).toContain('Find friends from your contacts');
-    expect(app).toContain(
+    expect(screen).toContain('Find friends from your contacts');
+    expect(screen).toContain(
       'Flock sends only phone numbers, checks them against people who chose to be findable, and keeps nothing. Names and everything else stay on your phone.'
     );
-    expect(app).toContain('Check my contacts');
+    expect(screen).toContain('Check my contacts');
   });
 
   test('the denied state points at Settings and does not ask again', () => {
-    expect(app).toContain(
+    expect(screen).toContain(
       'Flock does not have permission to read your contacts. You can turn it on in Settings, under Flock, or add someone by their number below.'
     );
   });
@@ -129,9 +136,9 @@ describe('the four states of the Contacts tab', () => {
   test('an empty result uses the counts and never claims to have checked everything', () => {
     // "No Flock users found" is a claim about every number on the phone, and a
     // throttled run only looked at some of them.
-    expect(app).not.toContain('No Flock users found');
-    expect(app).toContain('numbers we checked are on Flock yet');
-    expect(app).toContain('and none of them are on Flock yet. Try the rest in an hour.');
+    expect(both).not.toContain('No Flock users found');
+    expect(screen).toContain('numbers we checked are on Flock yet');
+    expect(screen).toContain('and none of them are on Flock yet. Try the rest in an hour.');
   });
 });
 
@@ -142,13 +149,13 @@ describe('the half that needs no permission', () => {
   });
 
   test('an empty result does not call somebody who opted out "not on Flock"', () => {
-    expect(app).toContain(
+    expect(screen).toContain(
       'Nobody on Flock has that number, or they have not turned on being found by it.'
     );
   });
 
   test('there is one invite control and it is not per contact', () => {
-    const invites = app.match(/Invite a friend/g) || [];
+    const invites = both.match(/Invite a friend/g) || [];
     expect(invites).toHaveLength(1);
     expect(app).toMatch(/navigator\.share/);
     expect(app).toMatch(/sms:&body=/);
@@ -190,11 +197,11 @@ describe('the sensor cards report a band, not a measurement', () => {
     // No microphone in this project has been calibrated against a sound meter,
     // so the reading is a relative index and a dB suffix is a unit the build
     // cannot support. The word band is what it can honestly say.
-    expect(app).not.toMatch(/noiseDb\.toFixed/);
+    expect(both).not.toMatch(/noiseDb\.toFixed/);
     // Any re-added figure, whatever it is formatted from. The prose above and
     // in App.js quotes the old string, so the unit is matched where it would
     // land in output: straight after an interpolation or a quote.
-    expect(app).not.toMatch(/[}'"]\s*dB\b/);
+    expect(both).not.toMatch(/[}'"]\s*dB\b/);
     // The bands themselves stay.
     expect(app).toContain("{ text: 'Quiet'");
     expect(app).toContain("{ text: 'Loud'");
