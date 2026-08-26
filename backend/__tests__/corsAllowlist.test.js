@@ -158,11 +158,34 @@ test('EXTRA_CORS_ORIGIN accepts a comma-separated list and drops junk entries', 
   assert.strictEqual(multi.isAllowedOrigin(''), false);
 });
 
-test('both the REST callback and the socket handshake use the one predicate', () => {
-  // R2-1 noted the two paths share a constant and said to keep it that way.
+test('every origin decision in server.js goes through the one predicate', () => {
+  // R2-1 noted the paths share a constant and said to keep it that way.
   // Anything less means one of them can be tightened and the other forgotten.
-  const uses = serverSrc.match(/isAllowedOrigin\(origin\)/g) || [];
-  assert.strictEqual(uses.length, 2, 'expected exactly two call sites: REST cors() and the Socket.io handshake');
+  //
+  // This counted call sites and required exactly two, which made it fail the
+  // moment a THIRD place correctly used the predicate: the global backstop
+  // limiter's 429 handler, which echoes the origin so a browser will let the
+  // page read the refusal. That call site is the property this test wants, not
+  // a violation of it, and a count cannot tell those apart. What actually
+  // matters is that nobody re-derives the allowlist, so that is what is
+  // asserted: at least the two original readers still call it, and no second
+  // definition of "is this origin allowed" exists anywhere in the file.
+  const uses = serverSrc.match(/isAllowedOrigin\(/g) || [];
+  assert.ok(uses.length >= 3, `expected the REST callback, the socket handshake and the backstop refusal to call it, saw ${uses.length}`);
+  // A count alone is too weak, and I proved that on this very assertion: with
+  // only the count, replacing the backstop handler's check with a hand-rolled
+  // `origin.endsWith('flockcorp.com')` left the test green, because the skip
+  // predicate above it already supplied a third call. So the handler is pinned
+  // by name. This is the exact failure this file exists to prevent, one path
+  // deciding origins by its own rule while the others share the predicate.
+  const handlerAt = serverSrc.indexOf('handler: (req, res, _next, options)');
+  assert.ok(handlerAt > 0, 'the backstop refusal handler is gone; retarget this test');
+  const handlerBody = serverSrc.slice(handlerAt, handlerAt + 700);
+  assert.match(handlerBody, /isAllowedOrigin\(origin\)/,
+    'the backstop 429 must decide the echoed origin with the shared predicate, never its own comparison');
+  // One definition, and nothing that rebuilds the list beside it.
+  const defs = serverSrc.match(/function isAllowedOrigin|isAllowedOrigin\s*=/g) || [];
+  assert.strictEqual(defs.length, 1, 'isAllowedOrigin must have exactly one definition in server.js');
   assert.ok(
     !/VERCEL_PREVIEW_ORIGIN/.test(serverSrc),
     'the bypassed preview regex is back in server.js'
