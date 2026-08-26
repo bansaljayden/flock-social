@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { login } from '../../services/api';
 import useGoogleAuth, { isGoogleSignInAvailable } from './useGoogleAuth';
 import AppleSignInButton from './AppleSignInButton';
-import AuthShell, { AuthError, AuthLabelRow, AuthNotice, AuthRule, GoogleG, PasswordEye } from './AuthShell';
+import AuthShell, {
+  ageFromDob, AuthError, AuthLabelRow, AuthNotice, AuthRule, formatDob, GoogleG, MIN_AGE, PasswordEye,
+} from './AuthShell';
 import {
   ForgotPasswordScreen, ResetPasswordScreen, isPasswordResetRoute,
 } from './PasswordReset';
@@ -25,6 +27,47 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
   // backend answers 403 {needsDob: true}; we collect a date and retry.
   const [needsDob, setNeedsDob] = useState(false);
   const [dob, setDob] = useState('');
+  // The exact date the user has confirmed is not a typo. Held as the VALUE and
+  // not as a boolean, so editing the field after confirming asks again instead
+  // of carrying an old yes onto a new date.
+  const [dobConfirmed, setDobConfirmed] = useState('');
+
+  // -------------------------------------------------------------------------
+  // WHY A DATE TYPED HERE IS NOT THE SAME AS A DATE TYPED ON SIGNUP
+  //
+  // This field is not a signup question. It appears on an account that already
+  // exists, after a password has been checked or a provider token verified,
+  // and what the server does with an under-13 date on this path is not "refuse
+  // to create an account". It is enforceDobOnLogin in backend/routes/auth.js:
+  // the date is WRITTEN to the row, token_version is bumped, every live
+  // session is revoked, and every later sign-in is refused by the stored-age
+  // freeze at the top of that same function. There is no undo, and no screen
+  // anywhere in the app can edit a date of birth once it is stored.
+  //
+  // So one mistyped year on THIS field ends a real account and every flock in
+  // it. A 16-year-old reaching for 2009 and landing on 2019 was one tap from
+  // that, with nothing said and nothing to confirm.
+  //
+  // The fix is a read-back, not a cap. The signup field carries max={maxDob},
+  // which stops an under-13 date being entered at all, and copying that here
+  // would be the wrong tool twice over: it would put this field outside the
+  // age gate the same way the signup field already is, and it would silently
+  // prevent the app recording the one fact the law says cannot be un-known
+  // once we have it. An appeal line is not the answer either. The server
+  // treats a date asserted on this path as knowledge because the caller has
+  // just proved they hold the account, and there is no staffed channel behind
+  // an "email us" sentence to make a promise of review true.
+  //
+  // What is left is the honest one. Before an irreversible refusal, show the
+  // date back in words and make the person say it is right. The refusal, the
+  // freeze and the server are all unchanged, and an honest 12-year-old reaches
+  // exactly the same outcome one tap later. The panel names no age and no
+  // rule, for the reason set out above the age gate in backend/routes/auth.js:
+  // a refusal that teaches which birthday gets in is not a neutral age screen.
+  // -------------------------------------------------------------------------
+  const dobAge = ageFromDob(dob);
+  const dobUnderMin = dobAge !== null && dobAge < MIN_AGE;
+  const dobNeedsCheck = needsDob && dobUnderMin && dobConfirmed !== dob;
 
   // Custom-styled Google button (the rendered GIS button ignores dark theming
   // when it shows the personalized "Continue as ..." variant). The hook picks
@@ -54,6 +97,13 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
     if (needsDob && !dob) {
       setError('Add your date of birth to continue.');
       document.getElementById('login-dob')?.focus();
+      return;
+    }
+    // Nothing leaves this screen while the date on it is unconfirmed. The
+    // block above the declaration says what sending it would do.
+    if (dobNeedsCheck) {
+      setError('Check the date of birth below before you continue.');
+      document.getElementById('login-dob-check')?.focus();
       return;
     }
     if (!email.trim()) {
@@ -140,8 +190,50 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
               value={dob}
               onChange={(e) => setDob(e.target.value)}
               autoComplete="bday"
+              aria-describedby="login-dob-hint"
               required
             />
+            {/* The warning that costs nothing and arrives before the mistake.
+                It is true of every account: nothing in the app edits a date of
+                birth once it is stored. It names no age, so it tells a child
+                nothing about which date gets in. */}
+            <p className="auth-hint" id="login-dob-hint">
+              This is saved to your account and cannot be changed later, so check the year.
+            </p>
+          </div>
+        )}
+
+        {dobNeedsCheck && (
+          /* role="group", not "alert": nothing has failed and nothing has been
+             sent. tabIndex -1 so the three submit paths can move focus here,
+             which is also what scrolls it into view on a short screen. */
+          <div
+            className="auth-check"
+            role="group"
+            aria-labelledby="login-dob-check-title"
+            id="login-dob-check"
+            tabIndex={-1}
+          >
+            <h2 id="login-dob-check-title">Check this date</h2>
+            <p>You entered {formatDob(dob)}.</p>
+            <p>
+              If that is right, Flock cannot keep an account for you and you will not be able to
+              sign in again. That cannot be undone. If it is a typo, change it now.
+            </p>
+            <div className="auth-check-actions">
+              <button
+                type="button"
+                onClick={() => { setError(''); document.getElementById('login-dob')?.focus(); }}
+              >
+                Change the date
+              </button>
+              <button
+                type="button"
+                onClick={() => { setError(''); setDobConfirmed(dob); }}
+              >
+                That date is right
+              </button>
+            </div>
           </div>
         )}
 
@@ -210,7 +302,15 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
         <button
           type="button"
           className="auth-provider"
-          onClick={() => { setError(''); startGoogle({ dob: needsDob && dob ? dob : undefined }); }}
+          onClick={() => {
+            if (dobNeedsCheck) {
+              setError('Check the date of birth above before you continue.');
+              document.getElementById('login-dob-check')?.focus();
+              return;
+            }
+            setError('');
+            startGoogle({ dob: needsDob && dob ? dob : undefined });
+          }}
           disabled={loading}
         >
           <GoogleG /> Continue with Google
@@ -230,6 +330,16 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
       <AppleSignInButton
         onSuccess={onLoginSuccess}
         dob={needsDob && dob ? dob : undefined}
+        /* Returning false stops the native sheet before it opens. Apple's flow
+           is the one path that cannot be re-entered from a confirmation panel,
+           because the sheet needs this button's own tap, so the guard has to
+           sit in front of it rather than around it. */
+        beforeAuthorize={() => {
+          if (!dobNeedsCheck) return true;
+          setError('Check the date of birth above before you continue.');
+          document.getElementById('login-dob-check')?.focus();
+          return false;
+        }}
         onError={(m, err) => {
           if (err?.data?.needsDob) {
             setNeedsDob(true);

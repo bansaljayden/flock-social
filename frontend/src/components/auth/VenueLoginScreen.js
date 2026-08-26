@@ -2,7 +2,9 @@ import React, { useState } from 'react';
 import { login, signup, resendVerificationEmail } from '../../services/api';
 import useGoogleAuth, { isGoogleSignInAvailable } from './useGoogleAuth';
 import AppleSignInButton from './AppleSignInButton';
-import AuthShell, { AUTH, AuthError, AuthRule, GoogleG, PasswordEye } from './AuthShell';
+import AuthShell, {
+  ageFromDob, AUTH, AuthError, AuthRule, formatDob, GoogleG, MIN_AGE, PasswordEye,
+} from './AuthShell';
 import Icons from '../ui/Icons';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -30,20 +32,9 @@ const TERMS_URL = 'https://www.flockcorp.com/terms';
 const PRIVACY_URL = 'https://www.flockcorp.com/privacy';
 const GUIDELINES_URL = 'https://www.flockcorp.com/guidelines';
 
-// Matches backend/routes/auth.js and the age gate in backend/utils/age.js.
-// Client-side only for the message; the server recomputes and is the truth.
-const MIN_AGE = 13;
-
-const ageFromDob = (value) => {
-  if (!value) return null;
-  const b = new Date(value);
-  if (isNaN(b.getTime())) return null;
-  const now = new Date();
-  let age = now.getFullYear() - b.getFullYear();
-  const m = now.getMonth() - b.getMonth();
-  if (m < 0 || (m === 0 && now.getDate() < b.getDate())) age -= 1;
-  return age;
-};
+// MIN_AGE and ageFromDob come from AuthShell, which is where the client-side
+// half of the age gate lives for all three screens that draw this field.
+// backend/utils/age.js is still the only authority on what is allowed.
 
 const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
   const [isSignup, setIsSignup] = useState(false);
@@ -56,6 +47,14 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
   const [loading, setLoading] = useState(false);
   // Legacy accounts with no DOB on file get 403 {needsDob: true} at login.
   const [needsDob, setNeedsDob] = useState(false);
+  // Same read-back as the consumer sign-in screen, and for the same reason: on
+  // the LOGIN half of this form a date is not a question about whether an
+  // account may be created, it is enforceDobOnLogin writing an under-13 date to
+  // an existing row, revoking its live sessions and freezing every later
+  // sign-in, with no undo and no screen that can edit the date afterwards. This
+  // form is the venue portal, so the account it would end is a customer's. The
+  // signup half keeps its capped field and its hint and is untouched.
+  const [dobConfirmed, setDobConfirmed] = useState('');
   // Signup sends a confirmation link and the account cannot do much until it
   // is clicked. The old venue screen ignored that reply and called
   // onLoginSuccess anyway, dropping the owner into a dashboard that 403s.
@@ -117,6 +116,10 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
     document.getElementById(fieldId)?.focus();
   };
 
+  const venueDobAge = ageFromDob(dob);
+  const dobNeedsCheck = !isSignup && needsDob
+    && venueDobAge !== null && venueDobAge < MIN_AGE && dobConfirmed !== dob;
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -127,6 +130,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
     // that refused to submit and said nothing.
     if (isSignup && !name.trim()) return fail('venue-name', 'Add your name.');
     if (isSignup && !dob) return fail('venue-dob', 'Add your date of birth.');
+    if (dobNeedsCheck) return fail('venue-dob-check', 'Check the date of birth below before you continue.');
     if (!email.trim()) return fail('venue-email', 'Add your email address.');
     if (!password) return fail('venue-password', isSignup ? 'Choose a password.' : 'Add your password.');
 
@@ -259,10 +263,46 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
               max={isSignup ? maxDob : undefined}
               onChange={(e) => setDob(e.target.value)}
               autoComplete="bday"
-              aria-describedby={isSignup ? 'venue-dob-hint' : undefined}
+              aria-describedby="venue-dob-hint"
               required
             />
             {isSignup && <p className="auth-hint" id="venue-dob-hint">Yours, not the venue's. You have to be 13 or older to use Flock.</p>}
+            {!isSignup && (
+              <p className="auth-hint" id="venue-dob-hint">
+                This is saved to your account and cannot be changed later, so check the year.
+              </p>
+            )}
+          </div>
+        )}
+
+        {dobNeedsCheck && (
+          <div
+            className="auth-check"
+            role="group"
+            aria-labelledby="venue-dob-check-title"
+            id="venue-dob-check"
+            tabIndex={-1}
+          >
+            <h2 id="venue-dob-check-title">Check this date</h2>
+            <p>You entered {formatDob(dob)}.</p>
+            <p>
+              If that is right, Flock cannot keep an account for you and you will not be able to
+              sign in again. That cannot be undone. If it is a typo, change it now.
+            </p>
+            <div className="auth-check-actions">
+              <button
+                type="button"
+                onClick={() => { setError(''); document.getElementById('venue-dob')?.focus(); }}
+              >
+                Change the date
+              </button>
+              <button
+                type="button"
+                onClick={() => { setError(''); setDobConfirmed(dob); }}
+              >
+                That date is right
+              </button>
+            </div>
           </div>
         )}
 
@@ -359,6 +399,11 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
           className="auth-provider"
           disabled={loading}
           onClick={() => {
+            if (dobNeedsCheck) {
+              setError('Check the date of birth above before you continue.');
+              document.getElementById('venue-dob-check')?.focus();
+              return;
+            }
             setError('');
             if (isSignup) {
               // Age gate the Google path the same way the email path is gated.
@@ -383,7 +428,17 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
           and offers Google above, so it must offer Sign in with Apple too.
           Renders null on web. Its absence here was a standing 4.8 rejection
           risk that the consumer screens had already fixed. */}
-      <AppleSignInButton onSuccess={onLoginSuccess} onError={(m) => setError(m)} dob={dob} />
+      <AppleSignInButton
+        onSuccess={onLoginSuccess}
+        onError={(m) => setError(m)}
+        dob={dob}
+        beforeAuthorize={() => {
+          if (!dobNeedsCheck) return true;
+          setError('Check the date of birth above before you continue.');
+          document.getElementById('venue-dob-check')?.focus();
+          return false;
+        }}
+      />
 
       {/* The server will not say which addresses belong to Google or Apple
           accounts — answering that turns login into an account enumeration
