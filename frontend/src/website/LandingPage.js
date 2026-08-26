@@ -57,11 +57,24 @@ const NAV_LINKS = [
   { href: '#pricing', label: 'Pricing' },
 ];
 
-/* The Flock mark: the actual logo (same asset as the app icon), not a
-   hand-drawn stand-in. */
+/* The Flock mark: the actual logo (same artwork as the app icon), not a
+   hand-drawn stand-in.
+
+   It is served from a 64px derivative rather than from /logo192.png, which is
+   what this used to point at. The nav mark renders at 32 CSS px and the footer
+   one at 24, so 192 was never needed for either: 64 covers both at 2x. What it
+   cost was 32.5 KB on the wire, fetched in the viewport with default priority,
+   i.e. inside the window the hero's own image and font are competing for. The
+   downscale is 3.5 KB, and that 29 KB is 11% of everything a first visit to
+   this page downloads.
+
+   /logo192.png stays exactly where it is: index.html declares it as the 192px
+   <link rel="icon"> and manifest.json lists it at 192x192, and both of those
+   are real 192px consumers. The favicon fetch is a separate, low-priority
+   request that no longer blocks anything the reader is looking at. */
 const Mark = ({ size = 32, lazy = false }) => (
   <img
-    src="/logo192.png"
+    src="/marks/logo-64.png"
     width={size} height={size}
     alt=""
     aria-hidden="true"
