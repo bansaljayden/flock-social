@@ -354,8 +354,19 @@ test('settling a share tells the person who fronted the money', async () => {
   const paid = pushCalls.filter((p) => p.data.type === 'bill_settled');
   assert.strictEqual(paid.length, 1, 'one push, to one person, not a fan-out to the table');
   assert.strictEqual(paid[0].userId, 2);
-  assert.strictEqual(paid[0].title, 'You got paid back');
-  assert.strictEqual(paid[0].body, 'Ava settled up $12.50 for Dinner.');
+  // FLOCK DID NOT SEE THIS MONEY (honesty pass 2026-08-26). This used to read
+  // "You got paid back" / "Ava settled up $12.50 for Dinner." Both state a
+  // transfer as fact. Nothing in this app processes, holds, guarantees or
+  // observes a payment: the debtor is handed off to Venmo, Cash App or Zelle
+  // and comes back and taps a button, so all the server knows is that somebody
+  // SAID they paid. A payer who reads "You got paid back" and stops checking
+  // their own payment app is out of pocket on Flock's word.
+  assert.strictEqual(paid[0].title, 'Marked as paid back');
+  assert.strictEqual(paid[0].body, 'Ava says they paid you $12.50 for Dinner. Check your payment app.');
+  assert.ok(
+    !/you got paid|we (received|processed)|payment (received|complete)/i.test(`${paid[0].title} ${paid[0].body}`),
+    'settlement is self-reported; no notification may state the transfer as observed fact'
+  );
   // The body names the settler, so the block gate has to be given the settler.
   assert.strictEqual(paid[0].data.fromUserId, '1');
   assert.strictEqual(paid[0].data.flockId, '42');
