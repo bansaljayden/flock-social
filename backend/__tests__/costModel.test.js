@@ -912,6 +912,69 @@ test('GET /costs serves the inventory, the quota caps and the provider status', 
   }
 });
 
+// ---------------------------------------------------------------------------
+// THE METER THAT WAS WIRED IN AND STILL READ NULL (2026-08-26)
+// ---------------------------------------------------------------------------
+// e36c22f added `predictionCoverage` to this response, on the argument that the
+// counter behind it "existed so somebody could see whether the crowd number is
+// coming from the model or the fallback, and nothing read it". It read it
+// through meterOrNull, whose body is `Number.isFinite(v) ? v : null`, and
+// predictionCoverage() returns a BLOCK. No object is finite, so the panel
+// served `"predictionCoverage": null` on every request, to every admin,
+// forever. Nothing threw, nothing logged, the route stayed green and the
+// meter's own unit test stayed green, because nothing measured the two
+// together. The counter had gone from unread to read-and-discarded.
+//
+// This test is that missing measurement. It asserts the VALUE, not the key: an
+// assertion that `'predictionCoverage' in body` would have passed against the
+// broken version, which is the whole trap.
+test('GET /costs serves the prediction coverage block, not a null where the block should be', async () => {
+  handlers = EMPTY_LEDGERS;
+  const res = await get('/api/admin/costs');
+  assert.strictEqual(res.status, 200, res.text);
+  const pc = res.body.predictionCoverage;
+
+  assert.notStrictEqual(pc, null,
+    'the crowd-model coverage block is null again. A meter that returns a shape cannot be read through '
+    + 'meterOrNull, which answers null for anything that is not a finite number, so the panel shows '
+    + 'nothing and says nothing about why.');
+  assert.strictEqual(typeof pc, 'object');
+  for (const key of ['since', 'total', 'ml', 'ruleEngine', 'modelShare', 'byMethod', 'modelLoaded']) {
+    assert.ok(key in pc, `the coverage block no longer carries ${key}`);
+  }
+  assert.strictEqual(typeof pc.total, 'number');
+  assert.strictEqual(typeof pc.ml, 'number');
+  // modelShare is null before anything has been scored rather than 0, because
+  // "nothing measured" and "the model never answers" are the two readings this
+  // number exists to tell apart. A fresh process has scored nothing.
+  assert.ok(pc.modelShare === null || (pc.modelShare >= 0 && pc.modelShare <= 1),
+    `modelShare must be null or a fraction, got ${pc.modelShare}`);
+
+  // AND IT IS DISPLAY ONLY. The panel may never let this number decide
+  // anything: a coverage figure that gates a prediction is a product that turns
+  // its own differentiator off when it is doing badly.
+  assert.strictEqual(res.body.observed.lines.some((l) => l.id === 'prediction-coverage'), false,
+    'coverage has become a priced line. It is not a cost and it is not a gate.');
+});
+
+test('a meter that throws still leaves the panel standing, block-shaped or not', async () => {
+  // The other half of meterOrNull's contract, now that there are two of them.
+  // One unreadable meter is one unmeasured line, never a 500 on the panel an
+  // owner consults DURING the incident that broke the meter.
+  const mlPredictor = require('../services/mlPredictor');
+  const real = mlPredictor.predictionCoverage;
+  mlPredictor.predictionCoverage = () => { throw new Error('onnx session is gone'); };
+  try {
+    handlers = EMPTY_LEDGERS;
+    const res = await get('/api/admin/costs');
+    assert.strictEqual(res.status, 200, res.text);
+    assert.strictEqual(res.body.predictionCoverage, null, 'a throwing meter reads as unmeasured');
+    assert.ok(res.body.fixed.effectiveMonthlyUsd > 0, 'and the rest of the panel is untouched');
+  } finally {
+    mlPredictor.predictionCoverage = real;
+  }
+});
+
 test('the inventory still arrives when every ledger is down', async () => {
   // The whole point of an inventory is that it is a list, not a measurement.
   // Postgres being unreachable costs it its usage numbers and nothing else.
