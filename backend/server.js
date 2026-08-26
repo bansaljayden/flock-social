@@ -273,11 +273,21 @@ const server = http.createServer(app);
 //     jumps straight to the error handlers at the bottom of the file, past
 //     every mount, past this limiter, past everything.
 // The second one is the one that mattered, and it is worse than the unrouted
-// 404 this limiter was written to close: that error has no `status`, so
-// Sentry.setupExpressErrorHandler captures it, and the handler below logs the
-// whole stack. One header on any URL, from any address, with no account, bought
-// an unbounded stream of Sentry events and console stacks. The fix is the mount
-// order: nothing Express sees now decides anything before this.
+// 404 this limiter was written to close: that error carried no `status`, so
+// Sentry.setupExpressErrorHandler captured it and the handler at the bottom of
+// the file logged the whole stack. One header on any URL, from any address,
+// with no account, bought an unbounded stream of Sentry events and console
+// stacks. The mount order is HALF of that fix: nothing Express sees now decides
+// anything before this, so the volume is bounded.
+//
+// THE OTHER HALF IS AT THE THROW SITE, and bounding was the wrong end to fix on
+// its own. 8,500 captured exceptions per key per fifteen minutes is still an
+// alert storm out of one request header, and none of them was ever a fault. The
+// cors callback below now marks its refusal 403, which is what takes it out of
+// Sentry's capture rule and out of the stack-logging branch entirely. Both
+// halves are needed and neither is the other: the status stops the refusal
+// being reported as a crash, the mount order stops any OTHER thing cors decides
+// from skipping the ceiling.
 //
 // The one deliberate exemption is `skip` below: a preflight from an origin that
 // IS on the allowlist. That is the only class of traffic here that a real
@@ -289,6 +299,19 @@ const server = http.createServer(app);
 // constant time without reading a body, which is the NAT failure the account
 // key exists to avoid, reintroduced by the back door. A preflight cors is going
 // to REFUSE is not exempt, because that is the expensive path above.
+//
+// AND THE EXEMPTION IS FORGEABLE, WHICH IS ACCEPTED RATHER THAN OVERLOOKED.
+// Every input the skip reads is a request header. `OPTIONS`, `Origin:
+// http://localhost` and any `Access-Control-Request-Method` is three lines of
+// curl, and it buys an uncounted lane through the only app-wide ceiling there
+// is. Measured 2026-08-26 against the real server: twenty-five such requests
+// moved the backstop's counter by zero. That is allowed to stand because of
+// what the lane actually costs, which is the floor of what any HTTP server
+// does: cors writes 204 and ends the request before helmet, before the body
+// parsers, before routing, with no body read, no query, no upstream call and no
+// database. A caller who wanted to spend our money would take any other path in
+// preference. If a preflight ever stops being that cheap, or if cors is ever
+// configured with preflightContinue, this exemption has to go with it.
 //
 // It does NOT sit ahead of Socket.IO: the engine intercepts /socket.io/ on the
 // raw http.Server before Express is reached. That transport has its own
@@ -396,6 +419,39 @@ for (const extra of EXTRA_CORS_ORIGINS) allowedOrigins.push(extra);
 // came in with the previous fix and is kept deliberately).
 const isAllowedOrigin = (origin) => allowedOrigins.includes(origin);
 
+// A REFUSED ORIGIN IS A CLIENT MISTAKE AND HAS TO BE ANSWERED AS ONE.
+//
+// This used to be a bare `new Error('Not allowed by CORS')`. An Error with no
+// `status` is, to every consumer downstream, a 500:
+//
+//   * Sentry.setupExpressErrorHandler's defaultShouldHandleError reads
+//     `error.status || error.statusCode || error.status_code ||
+//     error.output?.statusCode` and treats a missing one as 500, so it CAPTURED
+//     every refusal as an unhandled server exception.
+//   * The global error handler at the bottom of this file fell through to its
+//     "genuine server fault" branch: `console.error` with the whole stack, and
+//     a 500 body.
+//
+// The mount-order fix above put the backstop in front of this so the volume is
+// bounded, and bounded was the wrong end to fix. 8,500 captured exceptions and
+// 8,500 stack traces per key per fifteen minutes is still an unbounded-looking
+// alert storm out of one request header, and the request that produced them was
+// never a fault: an origin that is not on the allowlist is exactly the case this
+// allowlist exists to answer. Naming the status is what stops it being reported
+// as a crash, and it costs one line.
+//
+// 403 rather than 400 because the request is well formed and the answer is
+// refusal. The BROWSER-visible behaviour does not change either way: a browser
+// blocks the response on the missing Access-Control-Allow-Origin header and
+// never shows the body or the code, so this status is read by our logs, our
+// alerting, and non-browser callers, all three of which were being told the
+// server had broken.
+//
+// The Socket.io handshake callback further down keeps its own bare Error on
+// purpose: it never reaches this express error handler, the engine answers the
+// handshake itself, and giving it a status would suggest it flows through here.
+const CORS_REFUSED = 'cors.origin.refused';
+
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (mobile apps, Postman, etc.)
@@ -403,7 +459,10 @@ app.use(cors({
     if (isAllowedOrigin(origin)) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      const err = new Error('Not allowed by CORS');
+      err.status = 403;
+      err.type = CORS_REFUSED;
+      callback(err);
     }
   },
   credentials: true,
@@ -1465,6 +1524,21 @@ app.use((err, req, res, next) => {
     const status = Number(err.status || err.statusCode);
     return res.status(status >= 400 && status < 500 ? status : 400)
       .json({ error: 'That request could not be read.' });
+  }
+  // The CORS allowlist refusing an origin. One line, no stack: this is the
+  // control doing its job, not a fault, and the caller is anonymous by
+  // construction, so a stack per refusal is 8,500 identical traces per key per
+  // window with nothing in any of them that the one line does not say. See the
+  // block above the cors() mount for why the status is set at the throw site
+  // rather than guessed here.
+  // The header is caller-controlled, so it is JSON.stringify'd (which escapes
+  // the CR and LF that would otherwise forge a second log line) and clamped to
+  // 200 characters. A real Origin is a hostname; anything longer is somebody
+  // writing into our log with the one string this line has to print.
+  if (err && err.type === CORS_REFUSED) {
+    const shown = JSON.stringify(String(req.headers.origin || '').slice(0, 200));
+    console.warn(`[cors] refused origin ${shown} on ${req.method} ${String(req.originalUrl).slice(0, 200)}`);
+    return res.status(403).json({ error: 'Not allowed by CORS' });
   }
 
   // Everything below is a genuine server fault, and this line is where a 3am
