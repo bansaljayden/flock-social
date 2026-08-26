@@ -611,10 +611,18 @@ test('ABUSE H2: withheld in a three-member flock too, where 0 or 2 named both of
   assertQueriesUnderstood();
 });
 
-test('HELD: skipCount is still published once it ranges over three co-members', async () => {
-  // The fix is a floor, not a deletion. A flock big enough for the count to
-  // be a count still gets it, so "2 of 5 shared an amount" keeps working and
-  // nobody's honest submission got harder or more confusing.
+test('ABUSE H3: the split does not move while the flock is answering, whatever its size', async () => {
+  // ROUND 23 SUPERSEDES THE OLD "HELD" CASE HERE, which read the count back
+  // mid-flock in a four-member flock and asserted it was published.
+  //
+  // The floor above is a bound on ONE READ: over three co-members, "one of
+  // them skipped" names nobody. It is not a bound on a SEQUENCE, and the
+  // sequence was published live on both doors. The delta between two
+  // consecutive reads is a fact about the single row written between them, at
+  // any flock size, so a member who reads this route twice around somebody
+  // else's answer learns what that person chose. That is the same shape as the
+  // live ceiling and it is closed the same way: published once, by the answer
+  // that settles the budget, and never on a read.
   seedFlock({ creator: 1, members: [1, 2, 3, 4] });
   as(2); await skip();
   as(3); await submit(60);
@@ -622,13 +630,34 @@ test('HELD: skipCount is still published once it ranges over three co-members', 
   as(1);
   const s = await status();
   assert.strictEqual(s.body.totalMembers, 4, 'three co-members besides the caller');
-  assert.strictEqual(s.body.skipCount, 1);
-  assert.strictEqual(s.body.submissionCount, 2);
+  assert.ok('skipCount' in s.body, 'the field stays on the wire; a withheld number is null');
+  assert.strictEqual(s.body.skipCount, null,
+    'a poller can reconstruct who answered what from two of these');
+  assert.strictEqual(s.body.submissionCount, 2, 'and coordination is untouched');
 
-  // And the submit response and the socket fan-out carry the same rule, so a
-  // member cannot read from one door what the other withholds.
+  // The submit door answers alike, so nothing can be read from one that the
+  // other withholds. This one does not settle: user 4 has not answered.
   const sub = await submit(80);
-  assert.strictEqual(sub.body.skipCount, 1);
+  assert.strictEqual(sub.body.skipCount, null);
+  assert.strictEqual(sub.body.budgetLocked, false);
+  assertQueriesUnderstood();
+});
+
+test('HELD: the split is still published once, by the answer that settles the budget', async () => {
+  // The fix is a floor, not a deletion, and round 23 is a schedule, not a
+  // deletion either. A flock big enough for the count to be a count still gets
+  // it, exactly once, at the moment there is no earlier number to compare it
+  // against.
+  seedFlock({ creator: 1, members: [1, 2, 3, 4] });
+  as(1); await submit(50);
+  as(2); await skip();
+  as(3); await submit(60);
+  as(4);
+  const settling = await submit(80);
+
+  assert.strictEqual(settling.body.budgetLocked, true, 'the last answer settles it');
+  assert.strictEqual(settling.body.totalMembers, 4, 'three co-members besides the caller');
+  assert.strictEqual(settling.body.skipCount, 1);
   assertQueriesUnderstood();
 });
 

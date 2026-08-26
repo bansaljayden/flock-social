@@ -726,7 +726,10 @@ test('budget: banding did not move the threshold or change what a skip means', a
   assert.strictEqual(res.body.isReady, false, 'skips must not count toward the three');
   assert.strictEqual(res.body.ceiling, null, 'a band is still a reveal, and it is still gated');
   assert.strictEqual(res.body.submissionCount, 4, 'submissionCount still counts skips');
-  assert.strictEqual(res.body.skipCount, 2);
+  // Round 23: withheld, because this submission did not settle the budget and
+  // the split is published exactly once. Two of these responses around one
+  // answer used to name what that person chose.
+  assert.strictEqual(res.body.skipCount, null);
   for (const u of emitted.filter((e) => e.event === 'budget_updated')) {
     assert.strictEqual(u.payload.ceiling, null, 'the socket revealed below the threshold');
   }

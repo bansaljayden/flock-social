@@ -175,7 +175,11 @@ test('budget status exposes only the four aggregate fields plus the caller own r
   assert.strictEqual(res.body.ceiling, 50);
   assert.strictEqual(res.body.isReady, true);
   assert.strictEqual(res.body.submissionCount, 4);
-  assert.strictEqual(res.body.skipCount, 1);
+  // Withheld on every read, settled or not (round 23). The skip/share split is
+  // published once, in the payload that settles the budget, for the reason the
+  // ceiling is: read twice around somebody's answer, or around a departure, its
+  // delta is a fact about one named person. See publishableSkipCount.
+  assert.strictEqual(res.body.skipCount, null);
   // Only the CALLER's own amount comes back, and only theirs.
   assert.strictEqual(res.body.userAmount, 80);
 
