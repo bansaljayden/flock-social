@@ -579,6 +579,20 @@ test('R4-A1: neither handler still checks at the top and records at the bottom',
   assert.strictEqual(
     (code.match(/if \(claimedIdentity && !identityClaimCommitted\) releaseOauthIdentityClaim\(claimedIdentity\);/g) || []).length, 2,
     'both handlers must release the claim on every path that is not a completed sign-in');
-  assert.strictEqual((code.match(/\} finally \{/g) || []).length, 2,
-    'the release belongs in a finally — enumerating a dozen refusal branches is how one gets missed');
+  // Tied to the release, not counted across the file. `} finally {` appears
+  // twice in routes/auth.js today and this used to assert that number, which
+  // measured neither half of what its message claims. It did not catch the
+  // defect: moving both releases out of their finally blocks onto the error
+  // path, where every early-returning refusal branch skips them, leaves the
+  // count at 2 and this assertion green, and the four behavioural tests above
+  // are what go red. And it broke on correct code: routes/auth.js is 3,682
+  // lines, so one unrelated try/finally anywhere in it, a timing guard or a
+  // cleanup, is the ONLY thing that fires this, and it fires with a message
+  // saying the release is not in a finally when the release never moved.
+  //
+  // What matters is that each release sits INSIDE its own finally, so match
+  // the two together. A `}` between them means the span left the block.
+  const releaseInFinally = /\} finally \{[^}]*?if \(claimedIdentity && !identityClaimCommitted\) releaseOauthIdentityClaim\(claimedIdentity\);/g;
+  assert.strictEqual((code.match(releaseInFinally) || []).length, 2,
+    'each release must be the body of a finally: enumerating a dozen refusal branches is how one gets missed');
 });
