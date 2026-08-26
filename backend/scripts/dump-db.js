@@ -60,9 +60,49 @@ const { Client, types } = require('pg');
 // may hold 'infinity' and '-infinity', and `new Date('infinity')` is an Invalid
 // Date whose toISOString() THROWS, which would have killed the dump outright.
 //
-// timestamptz is deliberately NOT in this list. Its Date carries an absolute
-// instant, toISOString() writes it with a Z, and the restore reads the Z, so
-// that one already round-trips exactly (proved in dumpLiteralRestore.test.js).
+// ---------------------------------------------------------------------------
+// timestamptz IS IN THIS LIST, AND THE SENTENCE THAT KEPT IT OUT WAS WRONG.
+// ---------------------------------------------------------------------------
+// This paragraph used to read: "timestamptz is deliberately NOT in this list.
+// Its Date carries an absolute instant, toISOString() writes it with a Z, and
+// the restore reads the Z, so that one already round-trips exactly (proved in
+// dumpLiteralRestore.test.js)." The word `exactly` was false, and so was the
+// proof: the test it cited started from a JavaScript Date, which is the one
+// shape that cannot see a loss the DRIVER'S READ has already caused, exactly
+// as the json/jsonb note below says of its own case.
+//
+// Measured 2026-08-26 by seeding in SQL and comparing Postgres's own rendering
+// of both sides:
+//
+//   timestamptz '...19:44:32.725123+00'   read as a Date, written as
+//                                         '2026-08-13T19:44:32.725Z', restored
+//                                         as ...725. THE 123 MICROSECONDS ARE
+//                                         GONE, no error anywhere.
+//   timestamptz 'infinity'                pg parses this to the NUMBER Infinity,
+//   timestamptz '-infinity'               lit() sees a non-finite number in a
+//                                         non-float column and writes NULL. The
+//                                         column comes back SQL NULL, silently.
+//   timestamptz '0001-01-01 BC'           toISOString() writes year 0000, which
+//   timestamptz '12026-08-13'             Postgres refuses, and toISOString()
+//                                         writes a six-digit expanded year for
+//                                         the second, which it also refuses.
+//                                         Both ABORT THE RESTORE.
+//
+// A Date holds milliseconds and Postgres holds microseconds, so the first one
+// is not an edge case at all: this schema has EIGHTY-FIVE timestamptz columns
+// and most of them are `DEFAULT NOW()`, which produces a microsecond value on
+// every row. Every backup ever taken has been truncating all of them.
+//
+// The infinity pair is the same failure IN KIND as the JSON null below, and
+// three lines under a comment that already names infinity as the value a Date
+// cannot carry for the naive type. It was named there and missed here.
+//
+// The fix is the same one, for the same reason: read the server's own text.
+// `2026-08-13 15:44:32.725123-04` carries an explicit offset, so the restore
+// lands on the identical instant whatever TimeZone either session runs under.
+// Verified across five dump/restore zone pairings, including a half-hour and a
+// 30-minute-offset zone, plus both infinities, both out-of-Date-range years,
+// timestamptz[] holding a NULL element beside a value, and an empty array.
 //
 // ---------------------------------------------------------------------------
 // json AND jsonb ARE HERE FOR A SECOND REASON, FOUND 2026-08-26.
@@ -117,6 +157,8 @@ const TEXT_ONLY_OIDS = new Set([
   199,  // json[]
   3802, // jsonb
   3807, // jsonb[]
+  1184, // timestamp with time zone
+  1185, // timestamp with time zone[]
 ]);
 const identityParser = (v) => v;
 // Passed per-query rather than through pg.types.setTypeParser, which is global
@@ -239,7 +281,10 @@ function pgArrayBody(arr) {
     const s = v instanceof Date ? v.toISOString()
       : Buffer.isBuffer(v) ? `\\x${v.toString('hex')}`
         : typeof v === 'object' ? JSON.stringify(v)
-          : String(v);
+          // The signed zero, for the same reason lit() carries it: a float8[]
+          // element that came out of Postgres as `-0` went back in as `0`.
+          : Object.is(v, -0) ? '-0'
+            : String(v);
     return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
   }).join(',') + '}';
 }
@@ -272,7 +317,23 @@ function lit(v, typeName) {
     return `'${pgArrayBody(v).replace(/'/g, "''")}'`;
   }
   if (typeof v === 'number') {
-    if (Number.isFinite(v)) return String(v);
+    // THE SIGNED ZERO, which String() flattens: String(-0) is "0".
+    //
+    // Quoted, and that is not a detail. An UNQUOTED -0 in an INSERT is parsed
+    // by Postgres as an integer constant, which has no signed zero, so it
+    // arrives at a float8 column as +0 and loses exactly what it was written to
+    // keep. Only a quoted literal reaches float8in, which does produce one.
+    // That is the same trap the test covering this case fell into for its whole
+    // life: it seeded an unquoted -0.0 and asserted on a value it never made.
+    //
+    // Gated on the two types that can hold one, exactly like the NaN branch
+    // below and for the same reason: pg only ever hands back a -0 from a float
+    // column. Anything else is a plain 0.
+    // Object.is is the only test that separates them; `v === 0` is true of both.
+    if (Number.isFinite(v)) {
+      if (Object.is(v, -0)) return (typeName === 'float4' || typeName === 'float8') ? `'-0'` : '0';
+      return String(v);
+    }
     // NaN and +/-Infinity ARE storable, in exactly two column types: float4 and
     // float8 accept them as quoted literals and hold them. This used to write
     // NULL for all of them on the argument that they were "never storable",

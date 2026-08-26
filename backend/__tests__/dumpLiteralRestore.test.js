@@ -310,8 +310,19 @@ test('the scalar types the schema actually holds survive the trip', async () => 
   // a Flock dump has to carry.
   const now = new Date('2026-08-13T19:44:32.725Z');
 
+  // timestamptz still starts from a Date here, because a Date is what a CALLER
+  // hands the app and this line is about lit() writing one correctly. It reads
+  // back as TEXT now, not as a Date, because the dump stopped parsing this type
+  // on 2026-08-26: see TEXT_ONLY_OIDS, and see the dedicated test above for the
+  // microseconds, the infinities and the years a Date cannot carry at all.
+  // This assertion is deliberately kept and deliberately NOT trusted as the
+  // proof for this type — believing it was is what let the loss stand.
   const ts = await roundTrip('timestamptz', now);
-  assert.equal(ts.back.toISOString(), now.toISOString(), 'timestamptz');
+  assert.equal(
+    new Date(`${String(ts.back).replace(' ', 'T')}`.replace(/([+-]\d\d)$/, '$1:00')).toISOString(),
+    now.toISOString(),
+    'timestamptz written from a JS Date must still land on the same instant'
+  );
 
   const buf = Buffer.from([0x00, 0xff, 0x27, 0x5c, 0x0a]);
   const by = await roundTrip('bytea', buf);
@@ -358,6 +369,91 @@ test('a naive timestamp comes back as the same wall clock it went in as', async 
       + `the dump wrote ${r.literal}, and the restore produced ${r.after}. `
       + 'flocks.event_time is the time a plan is FOR, so this is every plan in the product '
       + 'moving by the offset of whichever machine took the backup.');
+  }
+});
+
+test('a timestamptz keeps its microseconds, its infinities and its out-of-Date years', async () => {
+  // THE THIRD WAY THIS FILE DID NOT RESTORE, found 2026-08-26 by asking the
+  // question the timestamp fix answered for the naive type and then explicitly
+  // declined to ask for this one. TEXT_ONLY_OIDS said, in so many words:
+  // "timestamptz is deliberately NOT in this list ... that one already
+  // round-trips exactly (proved in dumpLiteralRestore.test.js)". The proof it
+  // cited was `roundTrip('timestamptz', new Date(...))` in the scalar test
+  // above, which starts from a JavaScript Date and therefore cannot see a loss
+  // the DRIVER'S READ has already caused. That is the identical blind spot the
+  // jsonb cases were rewritten to close, on the identical argument, in the
+  // commit immediately before this one.
+  //
+  // A Date holds MILLISECONDS. Postgres holds MICROSECONDS. This schema has 85
+  // timestamptz columns and most of them are `DEFAULT NOW()`, so the value that
+  // did not survive is not an edge case, it is what nearly every row holds.
+  const cases = [
+    [`'2026-08-13 19:44:32.725123+00'`, 'microseconds, which is what NOW() writes into 85 columns of this schema'],
+    [`'2026-08-13 19:44:32.725+00'`, 'milliseconds, the precision a Date happens to survive'],
+    [`'infinity'`, 'infinity, which pg parses to the NUMBER Infinity and lit() turned into a SQL NULL'],
+    [`'-infinity'`, 'negative infinity, the same'],
+    [`'0001-01-01 00:00:00+00 BC'`, 'a BC date, whose toISOString() is year 0000 and ABORTS the restore'],
+    [`'12026-08-13 00:00:00+00'`, 'a year past 9999, whose expanded toISOString() ABORTS the restore'],
+    [`NULL`, 'a real SQL NULL, which must stay one'],
+  ];
+  for (const [seed, what] of cases) {
+    const r = await dumpAndRestore('timestamptz', seed);
+    assert.equal(r.after, r.before,
+      `a timestamptz did not survive the trip (${what}): the database held ${r.before}, the dump wrote `
+      + `${r.literal}, and the restore produced ${r.after}. Every created_at, updated_at, expires_at and `
+      + 'settled_at in this schema is this type.');
+  }
+
+  // AND THE ARRAY FORM, which goes with it for the same reason _timestamp goes
+  // with timestamp. A NULL element beside a value is the case that separates a
+  // correct array writer from one that flattens.
+  for (const [seed, what] of [
+    [`ARRAY['2026-08-13 19:44:32.725123+00'::timestamptz, NULL, 'infinity'::timestamptz]`,
+      'timestamptz[] carrying microseconds, a real NULL element and an infinity'],
+    [`'{}'::timestamptz[]`, 'an EMPTY timestamptz[], which is not NULL'],
+  ]) {
+    const r = await dumpAndRestore('timestamptz[]', seed);
+    assert.equal(r.after, r.before, `timestamptz[] round trip failed for ${what}: literal was ${r.literal}`);
+  }
+
+  // The INSTANT is what a timestamptz means, so the claim has to hold when the
+  // dumping session and the restoring session sit in different zones — which is
+  // the ordinary case, a dump taken against Railway (UTC) and replayed from a
+  // laptop, or the reverse. The server's text form carries an explicit offset,
+  // which is the whole reason this works; a bare wall clock would not, and that
+  // is the difference between this type and the naive one above.
+  const stamp = Math.random().toString(36).slice(2, 10);
+  const live = `tzlive_${stamp}`;
+  const restored = `tzrest_${stamp}`;
+  await client.query(`CREATE TABLE ${live} (v timestamptz)`);
+  await client.query(`CREATE TABLE ${restored} (v timestamptz)`);
+  await client.query(`INSERT INTO ${live} (v) VALUES ('2026-08-13 19:44:32.725123+00')`);
+  try {
+    for (const [dumpTz, restoreTz] of [
+      ['UTC', 'UTC'],
+      ['America/New_York', 'UTC'],
+      ['UTC', 'Asia/Kolkata'],
+      ['America/New_York', 'Asia/Kolkata'],
+      ['Australia/Lord_Howe', 'America/Anchorage'],
+    ]) {
+      await client.query(`SET TIME ZONE '${dumpTz}'`);
+      const { rows: [read] } = await client.query({ text: `SELECT v FROM ${live}`, types: DUMP_TYPES });
+      const literal = lit(read.v, 'timestamptz');
+      await client.query(`SET TIME ZONE '${restoreTz}'`);
+      await client.query(`TRUNCATE ${restored}`);
+      await client.query(`INSERT INTO ${restored} (v) VALUES (${literal})`);
+      await client.query(`SET TIME ZONE 'UTC'`);
+      const before = (await client.query(`SELECT v::text AS x FROM ${live}`)).rows[0].x;
+      const after = (await client.query(`SELECT v::text AS x FROM ${restored}`)).rows[0].x;
+      assert.equal(after, before,
+        `a timestamptz dumped under ${dumpTz} and restored under ${restoreTz} landed on a different instant: `
+        + `${before} -> ${after} via ${literal}`);
+    }
+  } finally {
+    // Every other test in this file reads `v::text`, which for this type is
+    // rendered in the SESSION's zone. Leaving a zone set here would change what
+    // they compare.
+    await client.query(`SET TIME ZONE 'UTC'`);
   }
 });
 
@@ -408,7 +504,17 @@ test('the remaining column types this schema holds survive the trip', async () =
     ['int2', `-32768`, 'the smallest smallint'],
     ['uuid', `'0f8fad5b-d9cb-469f-a165-70867728950e'`, 'guest_rsvps.guest_token'],
     ['varchar(20)', `'a''b\\c'`, 'a varchar holding a quote and a backslash'],
-    ['float8', `-0.0`, 'negative zero'],
+    // QUOTED, and that is the whole case. This line used to seed an UNQUOTED
+    // -0.0 and call itself "negative zero". Postgres parses an unquoted -0.0 as
+    // a NUMERIC, numeric has no signed zero, and the cast to float8 hands over
+    // a POSITIVE zero — `SELECT (-0.0)::float8::text` is "0" — so the assertion
+    // passed against a value the test never created. A quoted literal goes
+    // through float8in, which does produce a negative zero, and the writer then
+    // lost it: String(-0) is "0" in JavaScript. Found 2026-08-26. This schema
+    // has 24 `real` and 8 `double precision` columns.
+    ['float8', `'-0.0'`, 'negative zero, which String() flattens to 0'],
+    ['real', `'-0.0'`, 'float4 negative zero'],
+    ['float8[]', `ARRAY['-0.0'::float8]`, 'a negative zero inside an array, which pgArrayBody flattened too'],
     ['float8', `5e-324`, 'the smallest subnormal double, where a lazy String() loses digits'],
     ['float8', `1.7976931348623157e308`, 'the largest finite double'],
     ['bytea', `'\\x0027225c0aff'`, 'bytea carrying a NUL, a quote and a backslash byte'],
