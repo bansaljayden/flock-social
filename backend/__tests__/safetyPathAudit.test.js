@@ -1228,8 +1228,14 @@ test('sos: one undeliverable contact does not stop the others, and is reported',
       assert.strictEqual(res.body.alerts.length, 3,
         'every contact appears exactly once in the report');
       assert.strictEqual(new Set(res.body.alerts.map((a) => a.contactName)).size, 3);
-      assert.match(res.body.message, /1 email sent/);
-      assert.match(res.body.message, /2 contacts skipped/);
+      // Round 23 changed what this sentence answers. It used to count emails,
+      // which is the machinery's question; it now names who knows, which is
+      // the one the person who pressed the button is asking. The count of
+      // contacts who were NOT reached still has to be in it, because that is
+      // the half they have to act on.
+      assert.match(res.body.message, /Mum has been told/);
+      assert.match(res.body.message, /2 contacts could not be reached/);
+      assert.strictEqual(res.body.contactsAlerted, 1);
       const dad = res.body.alerts.find((a) => a.contactName === 'Dad');
       assert.ok(dad, 'the undeliverable contact must appear in the report');
       assert.strictEqual(dad.sent, false);

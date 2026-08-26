@@ -448,6 +448,343 @@ test('alert email: the subject line cannot carry a newline', () => {
 });
 
 // ===========================================================================
+// B2. ROUND 23 — the SOS end to end, audited as the thing a person presses
+// ===========================================================================
+// Everything below pins a behaviour that was missing rather than wrong: an
+// alert a suspended account could not raise, a location printed to eleven
+// centimetres when the phone said two kilometres, a confirmation that counted
+// SMTP transactions instead of naming who knows, a catastrophic failure that
+// gave the least advice of any path in the file, and an alert that could never
+// be withdrawn.
+const emailService = require('../services/emailService');
+
+// Replace the one function every send in this file goes through. Returns the
+// captured messages, so a test can read the HTML a parent would actually see.
+function stubMail(result = { sent: true, id: 't' }) {
+  const real = emailService.sendEmail;
+  const mails = [];
+  emailService.sendEmail = async (msg) => {
+    mails.push(msg);
+    return typeof result === 'function' ? result(msg) : result;
+  };
+  return { mails, restore: () => { emailService.sendEmail = real; } };
+}
+
+// stubPool answers the caller's users row with ME. This one answers it with
+// whatever the test needs, which is the only way to ask what happens to an
+// account the moderation queue has just banned.
+function stubPoolAs(userRow, handler) {
+  const realQuery = pool.query;
+  const realConnect = pool.connect;
+  const calls = [];
+  const route = async (text, params) => {
+    const sql = String(text);
+    calls.push({ text: sql, params });
+    if (sql.includes('FROM users WHERE id = $1') && sql.includes('token_version')) return { rows: [userRow] };
+    return (await handler(sql, params)) || { rows: [], rowCount: 0 };
+  };
+  pool.query = route;
+  pool.connect = async () => ({
+    query: async (text, params) => {
+      const sql = String(text);
+      if (/^\s*(BEGIN|COMMIT|ROLLBACK)/i.test(sql) || sql.includes('pg_advisory_xact_lock')) {
+        calls.push({ text: sql, params });
+        return { rows: [], rowCount: 0 };
+      }
+      return route(text, params);
+    },
+    release: () => {},
+  });
+  return { calls, restore: () => { pool.query = realQuery; pool.connect = realConnect; } };
+}
+
+const ONE_CONTACT = [{ id: 1, contact_name: 'Mum', contact_email: 'mum@example.com' }];
+
+test('sos: a suspended account can still raise an alert', async () => {
+  // THE BUG THIS PINS. POST /api/safety/alert was mounted on the ordinary
+  // `authenticate`, which answers 403 "This account has been suspended for
+  // violating our community guidelines." to any row with is_banned. That
+  // sentence, returned to a sixteen-year-old who has just pressed SOS, is the
+  // product deciding that a judgement about how somebody behaved in a group
+  // chat is also a judgement about whether their night is safe.
+  //
+  // DELETE /api/users/me already had the answer: authenticateAllowBanned, for
+  // the actions an account keeps after a ban because refusing them causes harm
+  // out of all proportion to the offence.
+  const banned = { ...ME, is_banned: true };
+  const mail = stubMail();
+  const { restore } = stubPoolAs(banned, async (sql) => {
+    if (sql.includes('FROM emergency_alerts')) return { rows: [] };
+    if (sql.includes('FROM trusted_contacts')) return { rows: ONE_CONTACT };
+    if (sql.includes('SELECT name FROM users')) return { rows: [{ name: 'Me' }] };
+    if (sql.includes('INSERT INTO emergency_alerts')) return { rows: [{ id: 991 }] };
+    return null;
+  });
+  try {
+    const res = await call(safetyRoutes, 'POST', '/api/alert', { latitude: 40.7, longitude: -74, includeLocation: true });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(mail.mails.length, 1, 'a ban must not stop the one message that matters');
+  } finally { mail.restore(); restore(); }
+});
+
+test('sos: a suspended account is still refused the surfaces that reach a NEW address', async () => {
+  // The exemption is as narrow as it can be. Adding a trusted contact and
+  // /share-location are the surfaces that turn an account into a mail relay
+  // pointed at somebody who has not heard from Flock before, and a banned
+  // account has no business reaching one. Only raising and standing down an
+  // alert survive a ban.
+  const banned = { ...ME, is_banned: true };
+  const { restore } = stubPoolAs(banned, async () => null);
+  try {
+    const add = await call(safetyRoutes, 'POST', '/api/contacts', { name: 'X', phone: '5550100', email: 'x@example.com' });
+    assert.strictEqual(add.status, 403);
+    const share = await call(safetyRoutes, 'POST', '/api/share-location', { latitude: 40.7, longitude: -74 });
+    assert.strictEqual(share.status, 403);
+  } finally { restore(); }
+});
+
+test('sos: a fix the phone calls approximate is not drawn as a pin', () => {
+  // THE BUG THIS PINS. The alert email printed six decimal places of latitude
+  // (eleven centimetres) and a button reading "View Location on Map", for every
+  // fix, including the cell-tower fix that a phone indoors reports as accurate
+  // to two kilometres. A parent who drives to a pin stops searching when they
+  // arrive. `position.coords.accuracy` settles it and nothing was reading it.
+  assert.strictEqual(S.readAccuracy(25), 25);
+  assert.strictEqual(S.readAccuracy('25'), 25);
+  assert.strictEqual(S.readAccuracy(0), null, 'zero is not a radius');
+  assert.strictEqual(S.readAccuracy(-5), null);
+  assert.strictEqual(S.readAccuracy(NaN), null);
+  assert.strictEqual(S.readAccuracy(undefined), null, 'a client that sends nothing must change nothing');
+  assert.strictEqual(S.readAccuracy(500000), null, 'a broken sensor reads as "we were not told"');
+  // Never more precise than the number deserves.
+  assert.strictEqual(S.accuracyPhrase(1847), 'about 1.8 km');
+  assert.strictEqual(S.accuracyPhrase(12), 'about 10 m');
+  assert.strictEqual(S.accuracyPhrase(3), 'about 5 m');
+  assert.ok(S.COARSE_FIX_METRES >= 500, 'the threshold has to sit above a normal urban GPS fix');
+});
+
+test('sos: the alert email carries the accuracy, and says who else was told', async () => {
+  const mail = stubMail();
+  const { restore } = stubPool(async (sql) => {
+    if (sql.includes('FROM emergency_alerts')) return { rows: [] };
+    if (sql.includes('FROM trusted_contacts')) {
+      return { rows: [
+        { id: 1, contact_name: 'Mum', contact_email: 'mum@example.com' },
+        { id: 2, contact_name: 'Dad', contact_email: 'dad@example.com' },
+      ] };
+    }
+    if (sql.includes('SELECT name FROM users')) return { rows: [{ name: 'Ava' }] };
+    if (sql.includes('INSERT INTO emergency_alerts')) return { rows: [{ id: 992 }] };
+    return null;
+  });
+  try {
+    const res = await call(safetyRoutes, 'POST', '/api/alert', {
+      latitude: 40.7, longitude: -74, includeLocation: true, accuracy: 2400,
+    });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    const html = mail.mails[0].html;
+    assert.match(html, /approximate/i, 'a 2.4 km fix must be labelled as one');
+    assert.match(html, /about 2\.4 km/);
+    assert.match(html, /View Area on Map/, 'and the button must not promise a spot');
+    // A contact who is the only one has to act; one of five has to know four
+    // other people are about to ring the same number.
+    assert.match(html, /You are one of 2 people/);
+    // The confirmation answers the user's question, not the machinery's.
+    assert.match(res.body.message, /Mum and Dad have been told/);
+  } finally { mail.restore(); restore(); }
+});
+
+test('sos: a good fix is not decorated with a warning it has not earned', async () => {
+  const mail = stubMail();
+  const { restore } = stubPool(async (sql) => {
+    if (sql.includes('FROM emergency_alerts')) return { rows: [] };
+    if (sql.includes('FROM trusted_contacts')) return { rows: ONE_CONTACT };
+    if (sql.includes('SELECT name FROM users')) return { rows: [{ name: 'Ava' }] };
+    if (sql.includes('INSERT INTO emergency_alerts')) return { rows: [{ id: 993 }] };
+    return null;
+  });
+  try {
+    await call(safetyRoutes, 'POST', '/api/alert', {
+      latitude: 40.7, longitude: -74, includeLocation: true, accuracy: 18,
+    });
+    const html = mail.mails[0].html;
+    assert.match(html, /Accurate to about 20 m/);
+    assert.match(html, /View Location on Map/);
+    assert.doesNotMatch(html, /approximate/i);
+    assert.match(html, /You are the only contact/);
+  } finally { mail.restore(); restore(); }
+});
+
+test('sos: the catastrophic failure names 911 and says a retry is worth making', async () => {
+  // Every other refusal in this route names 911. The 500 — the one that fires
+  // when the database is unreachable, and the one that means "we do not know
+  // whether your alert went out" — answered "Failed to send alert" and stopped.
+  // The outcome that knows the least told the user the least.
+  const { restore } = stubPool(async (sql) => {
+    if (sql.includes('FROM emergency_alerts')) throw new Error('connection terminated');
+    return null;
+  });
+  try {
+    const res = await call(safetyRoutes, 'POST', '/api/alert', { latitude: 40.7, longitude: -74, includeLocation: true });
+    assert.strictEqual(res.status, 500);
+    assert.match(res.body.error, /911/);
+    assert.strictEqual(res.body.canRetry, true);
+  } finally { restore(); }
+});
+
+test('sos: the in-flight refusal names 911 too', async () => {
+  // This one fires while the outcome of the first alert is still unknown, so
+  // the person reading it has been told less than any other 429 here tells
+  // them. That is the wrong place for this file to be quietest.
+  const { restore } = stubPool(async (sql) => {
+    if (sql.includes('FROM emergency_alerts')) {
+      return { rows: [{ created_at: new Date().toISOString(), latitude: null, longitude: null, contacts_alerted: 0, age_ms: 3000, delivered_in_window: 0, attempts_in_window: 1 }] };
+    }
+    return null;
+  });
+  try {
+    const res = await call(safetyRoutes, 'POST', '/api/alert', { includeLocation: false });
+    assert.strictEqual(res.status, 429);
+    assert.match(res.body.error, /911/);
+  } finally { restore(); }
+});
+
+test('confirmation: the message names who knows, at any list length', () => {
+  assert.strictEqual(S.namePhrase(['Mum']), 'Mum has');
+  assert.strictEqual(S.namePhrase(['Mum', 'Dad']), 'Mum and Dad have');
+  assert.strictEqual(S.namePhrase(['Mum', 'Dad', 'Sam']), 'Mum, Dad and 1 other have');
+  assert.strictEqual(S.namePhrase(['Mum', 'Dad', 'Sam', 'Jo']), 'Mum, Dad and 2 others have');
+  assert.strictEqual(S.namePhrase([]), 'They have', 'never an empty sentence');
+});
+
+// ---------------------------------------------------------------------------
+// The stand-down. Until round 23 an SOS was a one-way door.
+// ---------------------------------------------------------------------------
+test('stand-down: with nothing delivered recently there is nothing to withdraw', async () => {
+  // Mailing an all-clear for an alert that never went out would be the first
+  // thing some contacts ever heard from Flock, and it cannot be manufactured
+  // from a claim row that reached nobody.
+  S.resetCancels();
+  const mail = stubMail();
+  const { restore } = stubPool(async (sql) => {
+    if (sql.includes('FROM emergency_alerts')) return { rows: [], rowCount: 0 };
+    return null;
+  });
+  try {
+    const res = await call(safetyRoutes, 'POST', '/api/alert/cancel', {});
+    assert.strictEqual(res.status, 400);
+    assert.strictEqual(res.body.nothingToCancel, true);
+    assert.strictEqual(mail.mails.length, 0);
+  } finally { mail.restore(); restore(); }
+});
+
+test('stand-down: it reaches the people who got the alert, and no suppression gets a vote', async () => {
+  S.resetCancels();
+  const mail = stubMail();
+  const alertAt = new Date('2026-08-25T02:00:00Z');
+  const { calls, restore } = stubPool(async (sql) => {
+    if (sql.includes('FROM emergency_alerts')) {
+      return { rows: [{ created_at: alertAt, contacts_alerted: 2 }], rowCount: 1 };
+    }
+    if (sql.includes('FROM trusted_contacts')) {
+      return { rows: [
+        { contact_name: 'Mum', contact_email: 'mum@example.com' },
+        { contact_name: 'Dad', contact_email: 'dad@example.com' },
+      ] };
+    }
+    if (sql.includes('SELECT name FROM users')) return { rows: [{ name: 'Ava' }] };
+    return null;
+  });
+  try {
+    const res = await call(safetyRoutes, 'POST', '/api/alert/cancel', { timezone: 'America/New_York' });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(mail.mails.length, 2);
+    // The only person who can receive a stand-down is somebody who already
+    // received the alarm. A hard bounce swallowing this one leaves a parent
+    // holding "your child needs help" and nothing else, forever.
+    assert.ok(mail.mails.every((m) => m.category === 'emergency'),
+      'the withdrawal of an emergency is part of the emergency');
+    assert.match(mail.mails[0].html, /All Clear/);
+    assert.doesNotMatch(mail.mails[0].html, /maps\.google\.com/, 'a stand-down carries no location');
+    assert.match(res.body.message, /Mum and Dad have been told you are OK/);
+    // The window is bounded, so a cancel cannot resurrect an alert from days ago.
+    const lookup = calls.find((c) => c.text.includes('FROM emergency_alerts'));
+    assert.strictEqual(lookup.params[1], S.CANCEL_WINDOW_MS);
+    // Only the contacts who existed when the alert went out. A contact added
+    // afterwards never got the alarm, and a stand-down is the wrong first
+    // message to send anybody.
+    const who = calls.find((c) => c.text.includes('FROM trusted_contacts'));
+    assert.match(who.text, /created_at <= \$2/);
+    assert.strictEqual(who.params[1], alertAt);
+  } finally { mail.restore(); restore(); }
+});
+
+test('stand-down: it writes no row, because a row would block the next real SOS', async () => {
+  // emergency_alerts is the alert log, and the cooldown reads its most recent
+  // row. A stand-down inserted there reads as a delivered alert and refuses the
+  // next genuine press for five minutes. That is the one thing this route is
+  // absolutely not allowed to do.
+  S.resetCancels();
+  const mail = stubMail();
+  const { calls, restore } = stubPool(async (sql) => {
+    if (sql.includes('FROM emergency_alerts')) return { rows: [{ created_at: new Date(), contacts_alerted: 1 }], rowCount: 1 };
+    if (sql.includes('FROM trusted_contacts')) return { rows: [{ contact_name: 'Mum', contact_email: 'mum@example.com' }] };
+    if (sql.includes('SELECT name FROM users')) return { rows: [{ name: 'Ava' }] };
+    return null;
+  });
+  try {
+    await call(safetyRoutes, 'POST', '/api/alert/cancel', {});
+    assert.ok(!wrote(calls, 'INSERT INTO emergency_alerts'));
+    assert.ok(!wrote(calls, 'UPDATE emergency_alerts'));
+  } finally { mail.restore(); restore(); }
+});
+
+test('stand-down: a total failure is reported honestly and the retry stays open', async () => {
+  // Same rule as the alert: never report a delivery that did not happen. The
+  // contacts are still holding the alarm, so the copy has to say so and send
+  // the user to the phone.
+  S.resetCancels();
+  const mail = stubMail({ sent: false, error: 'provider down' });
+  const { restore } = stubPool(async (sql) => {
+    if (sql.includes('FROM emergency_alerts')) return { rows: [{ created_at: new Date(), contacts_alerted: 1 }], rowCount: 1 };
+    if (sql.includes('FROM trusted_contacts')) return { rows: [{ contact_name: 'Mum', contact_email: 'mum@example.com' }] };
+    if (sql.includes('SELECT name FROM users')) return { rows: [{ name: 'Ava' }] };
+    return null;
+  });
+  try {
+    const res = await call(safetyRoutes, 'POST', '/api/alert/cancel', {});
+    assert.strictEqual(res.status, 502);
+    assert.strictEqual(res.body.success, false);
+    assert.match(res.body.error, /still have your alert/i);
+    assert.strictEqual(res.body.canRetry, true);
+  } finally { mail.restore(); restore(); }
+});
+
+test('stand-down: the meter bounds it, and a refused stand-down is the cheap direction', async () => {
+  // This route may be limited where /alert may not. A refused SOS can leave
+  // somebody alone; a refused stand-down leaves somebody worried. Different
+  // harms, so different rules — and the ceiling still sits past any real
+  // sequence of taps.
+  assert.ok(S.MAX_CANCELS_PER_WINDOW >= 2 && S.MAX_CANCELS_PER_WINDOW <= 10);
+  S.resetCancels();
+  const mail = stubMail();
+  const { restore } = stubPool(async (sql) => {
+    if (sql.includes('FROM emergency_alerts')) return { rows: [{ created_at: new Date(), contacts_alerted: 1 }], rowCount: 1 };
+    if (sql.includes('FROM trusted_contacts')) return { rows: [{ contact_name: 'Mum', contact_email: 'mum@example.com' }] };
+    if (sql.includes('SELECT name FROM users')) return { rows: [{ name: 'Ava' }] };
+    return null;
+  });
+  try {
+    for (let i = 0; i < S.MAX_CANCELS_PER_WINDOW; i++) {
+      const ok = await call(safetyRoutes, 'POST', '/api/alert/cancel', {});
+      assert.strictEqual(ok.status, 200, `stand-down ${i + 1} must be allowed`);
+    }
+    const refused = await call(safetyRoutes, 'POST', '/api/alert/cancel', {});
+    assert.strictEqual(refused.status, 429);
+  } finally { mail.restore(); restore(); S.resetCancels(); }
+});
+
+// ===========================================================================
 // C. BLOCK — the control Apple 1.2 actually tests
 // ===========================================================================
 test('block: blocking separates the two accounts, not just the message surface', async () => {
