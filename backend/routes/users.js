@@ -2163,13 +2163,71 @@ router.patch('/settings', async (req, res) => {
 // exports per account — nobody ports their data out five times an hour, and the
 // cap bounds both the DB cost and how fast a fresh account-takeover can drain
 // data before the owner notices.
+// ---------------------------------------------------------------------------
+// HANDOFF (frontend owner): THIS ROUTE HAS NO CLIENT. Nobody can call it.
+// ---------------------------------------------------------------------------
+// Audited 2026-08-26. GET /api/users/export is complete, capped, proof-gated
+// and covered by two suites, and there is no caller anywhere in
+// `frontend/src` or `mobile/`: no wrapper in services/api.js, no button in
+// App.js, no `X-Export-Password` header sent from anything.
+//
+// That is not dead code somebody forgot, it is a feature that cannot be
+// reached, and the proof requirement is what makes it unreachable by anyone
+// else too: a password account must send its own password in a header and an
+// OAuth account must hold a token minted in the last five minutes, so the
+// account OWNER is the only party who can ever satisfy it. Nobody can run an
+// export on a user's behalf through this route. PrivacyPolicy.js tells people
+// to email social@flockcorp.com for a copy of their data, and today the only
+// way to answer that mail is to write the SQL by hand.
+//
+// What it needs, in the two files this router may not touch:
+//
+//   services/api.js:
+//     export async function exportMyData(password) {
+//       // GET, so the proof travels as a header: a GET carries no body from a
+//       // browser and a query parameter lands in access logs.
+//       // Send X-Export-Password only when there IS one; an OAuth account
+//       // proves itself with a fresh token instead.
+//       // Read the response as a Blob and save it as flock-data-export.json.
+//       // Handle 401 reauthRequired ('password' | 'reauth') and 429 the same
+//       // way the delete flow already does.
+//     }
+//
+//   App.js, Profile tab, directly above the Delete account row:
+//     a "Download your data" row that opens the same shaped sheet the delete
+//     modal uses (password field, or the amber sign-in-again panel when the
+//     server answers reauthRequired: 'reauth'), then hands the file to the
+//     user. Inside Capacitor a Blob download does not save, so the native
+//     shell needs Filesystem.writeFile plus Share; on the web an object URL
+//     and a temporary anchor is enough.
+//
+// Two things to say in that UI, because the file says them and the screen
+// should not contradict it: images are not included (EXPORT_IMAGE_OMITTED_NOTE
+// below), and the other half of every DM is not included either.
+//
+// One thing this route cannot do today and a product decision is needed on:
+// a BANNED account cannot export at all. `router.use(authenticate)` refuses a
+// banned caller and only DELETE /api/users/me opts into
+// authenticateAllowBanned, so a suspended user can destroy their account but
+// cannot take a copy of it with them first.
+// ---------------------------------------------------------------------------
 const EXPORT_MESSAGE_ROW_CAP = 5000; // messages, direct_messages
 const EXPORT_ROW_CAP = 2000;         // every other per-row section
 const exportRequests = attemptLimiter({ limit: 5, windowMs: 60 * 60 * 1000 });
 const TOO_MANY_EXPORTS_MESSAGE =
   'You have exported your data several times already. Try again later.';
+// Names WHICH images, because the blanket version was not true. This note said
+// "Inline image data is not included in the export", and the profile photo is
+// inline image data that IS included: users.profile_image_url holds a base64
+// data URL on every account that uploaded a photo rather than pointing at one
+// (that is what MAX_AVATAR_DATA_URL_BYTES above bounds), and the profile
+// section copies it out untouched. Keeping it is the right call, since it is
+// the user's own photo and 600KB is the ceiling on it, so the note is what had
+// to change. exportImage() is the marker, and it is applied to message and
+// story images only.
 const EXPORT_IMAGE_OMITTED_NOTE =
-  'Inline image data is not included in the export. The image is visible in the app.';
+  'Images inside messages and stories are not included in this file. They are visible in ' +
+  'the app. Your profile photo is included.';
 
 // Fetches cap+1 and slices, so "exactly cap rows exist" and "the cap cut rows
 // off" are distinguishable and the payload can say so honestly.
@@ -2195,11 +2253,25 @@ router.get('/export', async (req, res) => {
     const userId = req.user.id;
 
     const u = await pool.query(
+      // phone_discoverable / phone_discoverable_at trail the list because they
+      // arrived last (migration 051) and because the columns before them are
+      // what the export test harness matches this SELECT on. They are here at
+      // all because they are a CONSENT RECORD: a switch the user set and the
+      // moment they set it. The privacy policy names four things this file
+      // leaves out and says so on purpose; a fifth that nobody decided to
+      // leave out is not honesty, it is drift, and the sweep in
+      // __tests__/accountDeletionSurface.test.js now fails when a new users
+      // column is neither exported nor named as a deliberate omission.
+      //
+      // phone_hash is NOT here and must not be. It is a keyed HMAC of the
+      // number under a server secret, so it is not a copy of anything the user
+      // gave us; the number itself is already exported as `phone`.
       `SELECT id, email, name, phone, interests, role, profile_image_url, bio,
               venmo_username, cashapp_cashtag, zelle_identifier, is_premium,
               oauth_provider, email_verified, terms_accepted_at, date_of_birth,
               reliability_score, total_plans_joined, total_plans_attended,
-              created_at, updated_at, password
+              created_at, updated_at, password,
+              phone_discoverable, phone_discoverable_at
          FROM users WHERE id = $1`,
       [userId]
     );
@@ -2441,6 +2513,11 @@ router.get('/export', async (req, res) => {
         reliability_score: account.reliability_score,
         total_plans_joined: account.total_plans_joined,
         total_plans_attended: account.total_plans_attended,
+        // "Let friends find me by my phone number", and when it was switched
+        // on. A consent and its timestamp are the user's own record of what
+        // they agreed to, which is the first thing an export is for.
+        phone_discoverable: account.phone_discoverable ?? false,
+        phone_discoverable_at: account.phone_discoverable_at ?? null,
         created_at: account.created_at,
         updated_at: account.updated_at,
       },
