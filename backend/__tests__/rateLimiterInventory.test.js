@@ -266,8 +266,19 @@ test('the backstop allows at least as much as everything it backs', () => {
   // elsewhere, and mount order decides whether the bare /api catch-alls charge
   // a request before its real mount does — but a backstop derived from a subtle
   // model is a backstop that is wrong the first time somebody reorders a mount.
-  // The plain sum is a strict upper bound on what one caller can push through,
-  // which is the only property a backstop needs.
+  // The plain sum is close enough to an upper bound to be the right number,
+  // and it is worth being exact about how it is NOT one. express-rate-limit's
+  // MemoryStore starts a key's window at that key's FIRST HIT (see resetClient
+  // in the 7.5.1 source), so the ten windows below are not aligned with each
+  // other or with the backstop's. A caller who bursts at the seam of every one
+  // of them can therefore fit sixteen one-minute windows, not fifteen, into a
+  // fifteen-minute backstop window, and two whole apiLimiter windows into one
+  // of these: about 11,800 rather than 8,403. That is a real gap in the claim
+  // 'cannot refuse a caller every per-route limiter would have allowed', and it
+  // is deliberately not fixed by raising the number, because the only caller
+  // who reaches it is one sustaining thirteen requests a second across every
+  // surface of the app at the same time, and the cost of being wrong in that
+  // direction is a 429 telling them to try again.
   const lanes = LIMITERS.filter((l) => l !== backstop);
   const perWindow = (l) => Math.round(l.max * (backstop.windowMs / l.windowMs));
   const sum = lanes.reduce((t, l) => t + perWindow(l), 0);
@@ -308,9 +319,180 @@ test('the backstop runs before the body parsers, and reuses billedImageKey rathe
     + 'their own header is not metered by account at all.');
 });
 
+test('nothing cors answers or refuses gets past the backstop, because the backstop is mounted first', async () => {
+  // WHAT WENT WRONG, 2026-08-26. The backstop landed below `app.use(cors(...))`
+  // and was described as app-wide. It was not, and cors is the reason: it does
+  // not set headers and fall through, it ANSWERS. Two classes never reached the
+  // limiter at all.
+  //
+  //   * A preflight. cors defaults preflightContinue to false, so it writes 204
+  //     and ends the request on its own line.
+  //   * ANY request carrying an Origin the allowlist does not hold. server.js's
+  //     origin callback hands `new Error('Not allowed by CORS')` to next(),
+  //     which jumps to the error handlers at the very bottom of the file, past
+  //     every mount in between.
+  //
+  // The second is strictly worse than the unrouted-404 hole this limiter was
+  // written to close. That Error carries no `status`, so
+  // Sentry.setupExpressErrorHandler captures it and the handler below logs the
+  // stack: one extra request header, on any URL, from any address, with no
+  // account, bought an unbounded stream of Sentry events. "Nothing guarded the
+  // app as a whole" was still true for anything a caller could get cors to
+  // decide.
+  const cors = require('cors');
+  const ALLOWED = 'https://flockcorp.com';
+
+  // server.js's own predicate and callback shape, so this measures the real
+  // arrangement rather than a friendlier one.
+  const corsMw = cors({
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (origin === ALLOWED) return callback(null, true);
+      return callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+  });
+
+  // The exemption server.js declares, restated here only so the two arrangements
+  // below differ in ONE thing: where the counter is mounted.
+  const isPreflightFromAllowedOrigin = (req) => req.method === 'OPTIONS'
+    && typeof req.headers['access-control-request-method'] === 'string'
+    && req.headers.origin === ALLOWED;
+
+  async function measure(backstopFirst) {
+    const app = express();
+    let counted = 0;
+    const backstop = (req, _res, next) => {
+      if (!isPreflightFromAllowedOrigin(req)) counted++;
+      next();
+    };
+    if (backstopFirst) app.use(backstop);
+    app.use(corsMw);
+    if (!backstopFirst) app.use(backstop);
+    app.use((_req, res) => res.status(404).json({ error: 'Route not found' }));
+    // Stands in for Sentry.setupExpressErrorHandler + the handler below it.
+    let captured = 0;
+    app.use((err, _req, res, _next) => { captured++; res.status(500).json({ error: String(err.message) }); });
+
+    const server = http.createServer(app);
+    await new Promise((r) => server.listen(0, r));
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const seen = {};
+    try {
+      for (const [label, path, init] of [
+        ['plain GET, no Origin at all', '/api/nothing-here', {}],
+        ['GET from the real web origin', '/api/nothing-here', { headers: { origin: ALLOWED } }],
+        ['GET carrying an Origin the allowlist refuses', '/api/nothing-here',
+          { headers: { origin: 'https://evil.example' } }],
+        ['a preflight from the real web origin', '/api/anything',
+          { method: 'OPTIONS', headers: { origin: ALLOWED, 'access-control-request-method': 'POST' } }],
+        ['a preflight from an origin the allowlist refuses', '/api/anything',
+          { method: 'OPTIONS', headers: { origin: 'https://evil.example', 'access-control-request-method': 'POST' } }],
+        ['a bare OPTIONS that is not a preflight', '/api/anything', { method: 'OPTIONS' }],
+      ]) {
+        counted = 0;
+        await fetch(base + path, init);
+        seen[label] = counted;
+      }
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
+    return { seen, captured };
+  }
+
+  const after = await measure(false);   // where it was
+  const before = await measure(true);   // where it is now
+
+  // The bug, stated as a measurement rather than an argument.
+  assert.equal(after.seen['GET carrying an Origin the allowlist refuses'], 0,
+    'this assertion documents the OLD arrangement; if it no longer holds, cors has stopped '
+    + 'short-circuiting and the rest of this test needs rewriting rather than trusting.');
+  assert.ok(after.captured > 0,
+    'a refused origin is supposed to reach the error handler, which is what made it expensive');
+
+  // And what the mount order buys.
+  for (const label of [
+    'plain GET, no Origin at all',
+    'GET from the real web origin',
+    'GET carrying an Origin the allowlist refuses',
+    'a preflight from an origin the allowlist refuses',
+    'a bare OPTIONS that is not a preflight',
+  ]) {
+    assert.equal(before.seen[label], 1,
+      `"${label}" was not counted by the backstop. Everything Express sees has to pass it, or the `
+      + 'ceiling is a ceiling over the paths somebody remembered.');
+  }
+  assert.equal(before.seen['a preflight from the real web origin'], 0,
+    'an allowed-origin preflight is the one deliberate exemption: it carries no Authorization '
+    + 'header, so it keys to addr:, and a bar full of Capacitor clients would then share one '
+    + '8,500 bucket for a request cors answers in constant time without reading a body.');
+
+  // Finally, the source order that makes it true in the real file.
+  const backstopAt = SRC.indexOf('app.use(globalBackstopLimiter);');
+  const corsAt = SRC.indexOf('app.use(cors({');
+  assert.ok(backstopAt > 0 && corsAt > 0, 'the backstop or the cors mount has been renamed');
+  assert.ok(backstopAt < corsAt,
+    'globalBackstopLimiter is mounted AFTER cors again. cors answers preflights itself and turns a '
+    + 'disallowed Origin into next(err), so everything it decides skips the limiter entirely, '
+    + 'including the Sentry capture, which is the expensive half.');
+
+  const decl = /const globalBackstopLimiter = [\s\S]*?\n\}\);/.exec(SRC);
+  assert.match(decl[0], /skip: \(req\) => req\.method === 'OPTIONS'[\s\S]*?isAllowedOrigin\(req\.headers\.origin\)/,
+    'the backstop no longer exempts the allowed-origin preflight, or exempts something wider. '
+    + 'Wider than that and a caller picks their own exemption with a request header.');
+});
+
+test('the backstop key function answers every hostile Authorization header without throwing', () => {
+  // A limiter whose keyGenerator throws is a 500 on every request, and this one
+  // is now the FIRST middleware in the app, so it would be a 500 on every
+  // request including the health check. billedImageKey is lifted from the file
+  // rather than restated, for the reason its own comment gives.
+  const fn = /function billedImageKey\(req\) \{[\s\S]*?\n\}/.exec(SRC);
+  assert.ok(fn, 'billedImageKey is gone; the backstop has no key to compute');
+  const jwt = require('jsonwebtoken');
+  const billedImageKey = Function('jwt', 'TOKEN_ALGORITHMS',
+    `"use strict"; ${fn[0]}; return billedImageKey;`)(jwt, ['HS256']);
+
+  const previous = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = 'test-secret-for-key-derivation';
+  try {
+    const hostile = [
+      {},
+      { authorization: '' },
+      { authorization: 'Bearer' },
+      { authorization: 'Bearer ' },
+      { authorization: 'Bearer  ' },
+      { authorization: 'Bearer null' },
+      { authorization: 'Bearer ' + 'A'.repeat(200000) },
+      { authorization: 'Bearer a.b.c' },
+      { authorization: 'bearer lowercase' },
+      { authorization: 'Basic ' + Buffer.from('a:b').toString('base64') },
+      // Node joins duplicate Authorization headers with ', '.
+      { authorization: 'Bearer one, Bearer two' },
+      { authorization: 'Bearer  �' },
+      { authorization: 'Bearer ' + jwt.sign({ userId: 'not-an-integer' }, 'test-secret-for-key-derivation') },
+      { authorization: 'Bearer ' + jwt.sign({ userId: 7 }, 'the-wrong-secret') },
+    ];
+    for (const headers of hostile) {
+      for (const ip of ['203.0.113.9', undefined]) {
+        const key = billedImageKey({ headers, ip });
+        assert.equal(typeof key, 'string',
+          `billedImageKey returned ${typeof key} for ${JSON.stringify(headers)}. express-rate-limit `
+          + 'buckets on this value, and a non-string key is a bucket nobody can reason about.');
+      }
+    }
+    // And the one input that must NOT fall through to the address bucket.
+    const good = jwt.sign({ userId: 7 }, 'test-secret-for-key-derivation');
+    assert.equal(billedImageKey({ headers: { authorization: `Bearer ${good}` }, ip: '203.0.113.9' }), 'user:7');
+  } finally {
+    if (previous === undefined) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = previous;
+  }
+});
+
 // ── 5. One request, one unit ────────────────────────────────────────────────
 
-test('one request charges a limiter at most one unit, whatever the mount order', async () => {
+test('one request charges a limiter exactly one unit, whatever the mount order or the spelling', async () => {
   // countOncePerRequest is lifted from server.js rather than restated, for the
   // reason billedImageKey's comment gives: two copies of one rule is how the
   // rule comes to be true in one place only.
@@ -350,19 +532,40 @@ test('one request charges a limiter at most one unit, whatever the mount order',
   await new Promise((r) => server.listen(0, r));
   const port = server.address().port;
 
-  // One representative path per mount, plus the unrouted case, which used to
-  // cost two units for a 404.
-  const probes = [...new Set(mounts.filter((m) => m.verb === 'use').map((m) => `${m.path}/probe`)), '/api/nothing-here'];
+  // One representative path per mount, plus the unrouted case (which used to
+  // cost two units for a 404), plus the spellings a caller picks when they are
+  // trying to make a request cost NOTHING. EXACTLY one, not at most one: a
+  // limiter that charges once per request is worthless if a request can be
+  // spelled so that it charges zero, and "at most one" is equally satisfied by
+  // a hole. Every one of these reaches a handler through a mount that carries
+  // apiLimiter, so every one of them owes it a unit.
+  const probes = [
+    ...new Set(mounts.filter((m) => m.verb === 'use').map((m) => `${m.path}/probe`)),
+    '/api/nothing-here',
+    '/api//users//me',            // doubled separators reach the same handlers
+    '/api/users%2fme',            // an encoded separator
+    '/api/users/',                // a trailing slash
+    '/api/users/../users/me',     // dot segments, normalised by the client
+    '/api/users/me?next=/api/x',  // a query string that looks like a path
+  ];
   try {
     for (const p of probes) {
-      charged = 0;
-      await fetch(`http://127.0.0.1:${port}${p}`);
-      assert.ok(charged <= 1,
-        `${p} charged apiLimiter ${charged} times for ONE request. The bare /api catch-alls match every `
-        + 'path under /api, so a request they have no route for charges on the way through and then '
-        + 'charges again at its real mount. That makes the enforced ceiling depend on mount order, '
-        + 'makes the busiest product routes the most expensive ones, and leaves /api/users as the '
-        + 'cheapest lane in the app — which is where enumeration goes.');
+      for (const method of ['GET', 'HEAD', 'OPTIONS', 'POST']) {
+        charged = 0;
+        await fetch(`http://127.0.0.1:${port}${p}`, { method });
+        assert.strictEqual(charged, 1,
+          `${method} ${p} charged apiLimiter ${charged} times for ONE request.\n`
+          + (charged > 1
+            ? 'The bare /api catch-alls match every path under /api, so a request they have no route '
+              + 'for charges on the way through and then charges again at its real mount. That makes '
+              + 'the enforced ceiling depend on mount order, makes the busiest product routes the most '
+              + 'expensive ones, and leaves /api/users as the cheapest lane in the app, which is '
+              + 'where enumeration goes.'
+            : 'Zero is the worse direction. countOncePerRequest marks the request with a Symbol on the '
+              + 'first pass and skips the limiter on every later one, so a spelling that reaches a '
+              + 'handler while carrying that mark already, or that routes around every apiLimiter '
+              + 'mount and still gets served, is a free lane through the ceiling.'));
+      }
     }
   } finally {
     await new Promise((r) => server.close(r));

@@ -68,7 +68,7 @@ function liftRegion(startAnchor, endAnchor) {
 const LIFT_ANCHORS = [
   'const allowedOrigins = [', 'app.use(cors(',
   'const HTTPS_EXEMPT_PATHS', '// Response trimming',
-  'const SECRET_RESPONSE_FIELDS', '// THE APP-WIDE BACKSTOP',
+  'const SECRET_RESPONSE_FIELDS', '// JSON body limits',
   'app.use(helmet({', '// Force HTTPS',
 ];
 
@@ -81,7 +81,7 @@ const HTTPS_SRC = liftRegion('const HTTPS_EXEMPT_PATHS', '// Response trimming')
 // scope, which is a ReferenceError and not a security finding. The region this
 // file cares about is the response trimmer; the anchor only has to name the
 // first line that is not part of it.
-const TRIM_SRC = liftRegion('const SECRET_RESPONSE_FIELDS', '// THE APP-WIDE BACKSTOP');
+const TRIM_SRC = liftRegion('const SECRET_RESPONSE_FIELDS', '// JSON body limits');
 
 // Build an express app whose middleware IS server.js's own code.
 function appFromServerSource(regions, { nodeEnv = 'production' } = {}) {

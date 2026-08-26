@@ -190,6 +190,149 @@ app.set('trust proxy', 1);
 const server = http.createServer(app);
 
 // ---------------------------------------------------------------------------
+// THE APP-WIDE BACKSTOP — the ceiling that was missing
+// ---------------------------------------------------------------------------
+// Every limiter in this file guards a mount. Nothing guarded the process. Four
+// surfaces had no ceiling of any kind:
+//
+//   /api/revenuecat    signed webhook, mounted with no limiter
+//   /api/email-events  signed webhook, mounted with no limiter
+//   GET /api/health    mounted before any limiter exists
+//   every unmatched path, which falls through to the 404 handler below
+//
+// The last one is the real hole and it is not a mount, which is why reading the
+// mount list never found it. `GET /x` matches no router, so it passes CORS,
+// helmet, the HTTPS gate and the body parsers and is answered 404 — with no
+// counter anywhere having moved. A caller could spend every per-route ceiling
+// in full and then keep going indefinitely against a URL that does not exist.
+//
+// This also answers a question the per-route limiters cannot: a caller who
+// spreads traffic across the routers does more total work than any single
+// limiter permits, because they are separate buckets. apiLimiter is better than
+// it looks here (ONE instance across ~25 mounts, so those genuinely share one
+// bucket) but /api/auth, /api/venues, /api/ai, /api/venue-profile,
+// /api/venue-dashboard, /api/venue/advisor and the two unsubscribe paths each
+// hold their own.
+//
+// THE NUMBER IS DERIVED, NOT CHOSEN. It is the sum of every other limiter's
+// 15-minute-equivalent allowance across the mutually exclusive router mounts:
+//
+//   apiLimiter              3000 / 15 min  = 3000
+//   authLimiter               10 / min     =  150
+//   venueSearchLimiter       120 / min     = 1800
+//   imageSpendLimiter         10 / min     =  150
+//   aiLimiter                 30 / min     =  450
+//   advisorLimiter            20 / min     =  300
+//   advisorQuestionLimiter    10 / hour    =    3
+//   venueDashboardLimiter    120 / min     = 1800
+//   venueProfileLimiter       30 / min     =  450
+//   digestOptOutLimiter       20 / min     =  300
+//                                           -----
+//                                            8403
+//
+// 8500 is that, rounded up to the next hundred. The sum deliberately includes
+// imageSpendLimiter and advisorQuestionLimiter even though both are EXTRA gates
+// on requests already counted elsewhere and add nothing a caller can push
+// through: a sharper model exists, but a backstop derived from a subtle model
+// is a backstop that goes wrong the first time somebody reorders a mount, and
+// the only property this number needs is that it is a strict upper bound.
+//
+// Being derived is the whole point. A backstop chosen by instinct is just a new
+// limit nobody sized, and it would start refusing callers the per-route
+// limiters were built to allow — invisibly, because the 429 would come from a
+// limiter nobody was looking at. __tests__/rateLimiterInventory.test.js
+// recomputes the sum from utils/cacheKeyInventory.js and fails if a new limiter
+// ever pushes it past this constant, so the derivation stays true rather than
+// becoming a story about how the number was picked once.
+//
+// WHAT IT KEYS ON. billedImageKey, the same function the image and Birdie
+// meters use: the account when a bearer token verifies, the address otherwise.
+// That matters in both directions.
+//   * A NAT full of signed-in users gets a bucket each rather than one to fight
+//     over, which is the failure an address key hands a school or a bar.
+//   * An unauthenticated caller lands in `addr:` and is bounded by apiLimiter's
+//     3000/15min long before this, so this can never be the limiter that
+//     refuses them on a routed path. On the FOUR unrouted or unlimited
+//     surfaces above, it is the only one there is.
+//
+// WHERE IT SITS, WHICH IS THE ONE THING NO OTHER LIMITER HERE CAN CLAIM. It is
+// the FIRST middleware on the app, ahead of the body parsers and ahead of cors.
+// The imageSpendLimiter block below explains at length that it cannot save the
+// buffer, because express.json has already read the body by the time any
+// per-route limiter runs. This one runs first, so a refusal genuinely stops the
+// read. It reads only the Authorization header and req.ip, so it needs no
+// parsed body to do it.
+//
+// AHEAD OF cors(), AND THAT IS NOT COSMETIC. When this landed it was mounted
+// below cors, and cors is not a header-setter that falls through: it ANSWERS
+// two whole classes of request and neither reached the backstop.
+//   * A preflight. preflightContinue defaults to false, so cors writes 204 and
+//     ends the request at its own line.
+//   * ANY request carrying an Origin the allowlist does not hold. The origin
+//     callback below hands `new Error('Not allowed by CORS')` to next(), which
+//     jumps straight to the error handlers at the bottom of the file, past
+//     every mount, past this limiter, past everything.
+// The second one is the one that mattered, and it is worse than the unrouted
+// 404 this limiter was written to close: that error has no `status`, so
+// Sentry.setupExpressErrorHandler captures it, and the handler below logs the
+// whole stack. One header on any URL, from any address, with no account, bought
+// an unbounded stream of Sentry events and console stacks. The fix is the mount
+// order: nothing Express sees now decides anything before this.
+//
+// The one deliberate exemption is `skip` below: a preflight from an origin that
+// IS on the allowlist. That is the only class of traffic here that a real
+// client generates in volume and cannot avoid: the Capacitor shell sends
+// `capacitor://localhost` on every cross-origin call, browsers cache a
+// preflight for about five seconds, and a preflight carries no Authorization
+// header, so every one of them keys to `addr:`. Counting them would put a whole
+// bar or a whole school into one 8,500 bucket for requests cors answers in
+// constant time without reading a body, which is the NAT failure the account
+// key exists to avoid, reintroduced by the back door. A preflight cors is going
+// to REFUSE is not exempt, because that is the expensive path above.
+//
+// It does NOT sit ahead of Socket.IO: the engine intercepts /socket.io/ on the
+// raw http.Server before Express is reached. That transport has its own
+// ceiling (socketConnections, 10 handshakes/minute/IP, further down).
+//
+// Same MemoryStore caveat as every other limiter in this file: it resets on
+// deploy and divides by the instance count.
+const GLOBAL_BACKSTOP_WINDOW_MS = 15 * 60 * 1000;
+const GLOBAL_BACKSTOP_MAX = 8500;
+
+// isDev is declared HERE rather than in the rate-limiting section below, which
+// is where it used to live, because this limiter has to be defined before the
+// body parsers and before cors, and that section comes after both. One
+// definition, one strict
+// comparison against one string literal — __tests__/publicDemoAbuse.test.js
+// fails on a second assignment or on a looser test such as `!isProduction`,
+// which would be TRUE on an unset NODE_ENV and would arm the bypass in
+// production.
+const isDev = process.env.NODE_ENV === 'development';
+
+const globalBackstopLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
+  windowMs: GLOBAL_BACKSTOP_WINDOW_MS,
+  max: GLOBAL_BACKSTOP_MAX,
+  // billedImageKey is a hoisted function declaration further down this file;
+  // the wrapper is what makes the forward reference legal, and the key is only
+  // ever computed at request time. Reusing it rather than restating it is the
+  // rule that function's own comment sets out: two derivations of "which
+  // account is this" in one file is how a caller comes to choose their bucket.
+  keyGenerator: (req) => billedImageKey(req),
+  // The allowed-origin preflight, and nothing else. See the block above for why
+  // this one class is exempt and why a preflight cors is about to refuse is
+  // not. Access-Control-Request-Method is what makes an OPTIONS a preflight
+  // rather than a bare OPTIONS, which is not exempt either.
+  skip: (req) => req.method === 'OPTIONS'
+    && typeof req.headers['access-control-request-method'] === 'string'
+    && isAllowedOrigin(req.headers.origin),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later' },
+});
+
+app.use(globalBackstopLimiter);
+
+// ---------------------------------------------------------------------------
 // CORS
 // ---------------------------------------------------------------------------
 const allowedOrigins = [
@@ -493,113 +636,6 @@ app.use((req, res, next) => {
   };
   next();
 });
-
-// ---------------------------------------------------------------------------
-// THE APP-WIDE BACKSTOP — the ceiling that was missing
-// ---------------------------------------------------------------------------
-// Every limiter in this file guards a mount. Nothing guarded the process. Four
-// surfaces had no ceiling of any kind:
-//
-//   /api/revenuecat    signed webhook, mounted with no limiter
-//   /api/email-events  signed webhook, mounted with no limiter
-//   GET /api/health    mounted before any limiter exists
-//   every unmatched path, which falls through to the 404 handler below
-//
-// The last one is the real hole and it is not a mount, which is why reading the
-// mount list never found it. `GET /x` matches no router, so it passes CORS,
-// helmet, the HTTPS gate and the body parsers and is answered 404 — with no
-// counter anywhere having moved. A caller could spend every per-route ceiling
-// in full and then keep going indefinitely against a URL that does not exist.
-//
-// This also answers a question the per-route limiters cannot: a caller who
-// spreads traffic across the routers does more total work than any single
-// limiter permits, because they are separate buckets. apiLimiter is better than
-// it looks here (ONE instance across ~25 mounts, so those genuinely share one
-// bucket) but /api/auth, /api/venues, /api/ai, /api/venue-profile,
-// /api/venue-dashboard, /api/venue/advisor and the two unsubscribe paths each
-// hold their own.
-//
-// THE NUMBER IS DERIVED, NOT CHOSEN. It is the sum of every other limiter's
-// 15-minute-equivalent allowance across the mutually exclusive router mounts:
-//
-//   apiLimiter              3000 / 15 min  = 3000
-//   authLimiter               10 / min     =  150
-//   venueSearchLimiter       120 / min     = 1800
-//   imageSpendLimiter         10 / min     =  150
-//   aiLimiter                 30 / min     =  450
-//   advisorLimiter            20 / min     =  300
-//   advisorQuestionLimiter    10 / hour    =    3
-//   venueDashboardLimiter    120 / min     = 1800
-//   venueProfileLimiter       30 / min     =  450
-//   digestOptOutLimiter       20 / min     =  300
-//                                           -----
-//                                            8403
-//
-// 8500 is that, rounded up to the next hundred. The sum deliberately includes
-// imageSpendLimiter and advisorQuestionLimiter even though both are EXTRA gates
-// on requests already counted elsewhere and add nothing a caller can push
-// through: a sharper model exists, but a backstop derived from a subtle model
-// is a backstop that goes wrong the first time somebody reorders a mount, and
-// the only property this number needs is that it is a strict upper bound.
-//
-// Being derived is the whole point. A backstop chosen by instinct is just a new
-// limit nobody sized, and it would start refusing callers the per-route
-// limiters were built to allow — invisibly, because the 429 would come from a
-// limiter nobody was looking at. __tests__/rateLimiterInventory.test.js
-// recomputes the sum from utils/cacheKeyInventory.js and fails if a new limiter
-// ever pushes it past this constant, so the derivation stays true rather than
-// becoming a story about how the number was picked once.
-//
-// WHAT IT KEYS ON. billedImageKey, the same function the image and Birdie
-// meters use: the account when a bearer token verifies, the address otherwise.
-// That matters in both directions.
-//   * A NAT full of signed-in users gets a bucket each rather than one to fight
-//     over, which is the failure an address key hands a school or a bar.
-//   * An unauthenticated caller lands in `addr:` and is bounded by apiLimiter's
-//     3000/15min long before this, so this can never be the limiter that
-//     refuses them on a routed path. On the FOUR unrouted or unlimited
-//     surfaces above, it is the only one there is.
-//
-// WHERE IT SITS, WHICH IS THE ONE THING NO OTHER LIMITER HERE CAN CLAIM. It is
-// mounted AHEAD of the body parsers. The imageSpendLimiter block below explains
-// at length that it cannot save the buffer, because express.json has already
-// read the body by the time any per-route limiter runs. This one runs first, so
-// a refusal genuinely stops the read. It reads only the Authorization header
-// and req.ip, so it needs no parsed body to do it.
-//
-// It does NOT sit ahead of Socket.IO: the engine intercepts /socket.io/ on the
-// raw http.Server before Express is reached. That transport has its own
-// ceiling (socketConnections, 10 handshakes/minute/IP, further down).
-//
-// Same MemoryStore caveat as every other limiter in this file: it resets on
-// deploy and divides by the instance count.
-const GLOBAL_BACKSTOP_WINDOW_MS = 15 * 60 * 1000;
-const GLOBAL_BACKSTOP_MAX = 8500;
-
-// isDev is declared HERE rather than in the rate-limiting section below, which
-// is where it used to live, because this limiter has to be defined before the
-// body parsers and that section comes after them. One definition, one strict
-// comparison against one string literal — __tests__/publicDemoAbuse.test.js
-// fails on a second assignment or on a looser test such as `!isProduction`,
-// which would be TRUE on an unset NODE_ENV and would arm the bypass in
-// production.
-const isDev = process.env.NODE_ENV === 'development';
-
-const globalBackstopLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
-  windowMs: GLOBAL_BACKSTOP_WINDOW_MS,
-  max: GLOBAL_BACKSTOP_MAX,
-  // billedImageKey is a hoisted function declaration further down this file;
-  // the wrapper is what makes the forward reference legal, and the key is only
-  // ever computed at request time. Reusing it rather than restating it is the
-  // rule that function's own comment sets out: two derivations of "which
-  // account is this" in one file is how a caller comes to choose their bucket.
-  keyGenerator: (req) => billedImageKey(req),
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests, please try again later' },
-});
-
-app.use(globalBackstopLimiter);
 
 // ---------------------------------------------------------------------------
 // JSON body limits
@@ -1704,7 +1740,15 @@ const moneyWatchSaid = new Map();
 
 function sayOnceToday(leg, level, day, message, extra) {
   const key = `${leg}:${level}`;
-  if (moneyWatchSaid.get(key) === day) return;
+  // THE DAY IS ONLY A DEDUPE KEY IF THERE IS ONE. moneyWatchSaid.get(key) is
+  // undefined before a leg has ever spoken, so a status reader that came back
+  // without a `day` compared equal to "already said this today" on its very
+  // first call and that leg went silent forever. All six readers return one
+  // today; the point is that a seventh that does not would turn the alarm into
+  // the thing that fails quietly, which is precisely the failure this watch
+  // exists to end. A missing day means the reader is broken, and a broken
+  // reader is a reason to talk more rather than less.
+  if (typeof day === 'string' && day && moneyWatchSaid.get(key) === day) return;
   moneyWatchSaid.set(key, day);
   // The 'MONEY' token is what utils/visionBudget.js already uses, so one grep
   // over the Railway log finds every spend event whatever raised it.
