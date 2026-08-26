@@ -21,6 +21,14 @@ router.post('/register',
       .withMessage('Token is required'),
     body('deviceType').optional({ values: 'null' }).isIn(['web', 'ios', 'android'])
       .withMessage('Unknown device type'),
+    // The device's own IANA zone name, e.g. 'America/New_York'. Optional: a
+    // client that cannot resolve one must still be able to register for push.
+    // Bounded and character-restricted rather than merely trimmed, because the
+    // value is handed to Intl.DateTimeFormat on the send path and the longest
+    // real zone name is 32 characters.
+    body('timezone').optional({ values: 'falsy' }).isString().trim()
+      .isLength({ min: 1, max: 64 }).matches(/^[A-Za-z0-9_+/-]+$/)
+      .withMessage('Invalid timezone'),
   ],
   async (req, res) => {
     try {
@@ -32,6 +40,19 @@ router.post('/register',
       const token = String(req.body.token).trim();
       const { deviceType } = req.body;
       const safeDeviceType = ['web', 'ios', 'android'].includes(deviceType) ? deviceType : 'web';
+      // WHY A TIMEZONE LIVES ON A PUSH TOKEN. It is the only clock the server
+      // can read for a recipient who is, by definition, not connected. Quiet
+      // hours (services/pushHelper.js) need the local hour where the phone is,
+      // and Railway runs on UTC: evaluating a 02:00 to 08:00 quiet window on
+      // the server's clock would mute 22:00 to 04:00 for a US east coast user,
+      // which is every hour this app exists for.
+      //
+      // Only ever WIDENED, never cleared, by the upsert below. An older client
+      // build that posts no timezone must not wipe the one a newer build on the
+      // same device already stored, or quiet hours would switch themselves off
+      // for anybody with two clients.
+      const rawZone = typeof req.body.timezone === 'string' ? req.body.timezone.trim() : '';
+      const timezone = rawZone ? rawZone.slice(0, 64) : null;
 
       // A device token belongs to exactly ONE account. Round 4: the old
       // delete-then-insert pair wasn't atomic — two concurrent registrations
@@ -39,11 +60,14 @@ router.post('/register',
       // accounts. UNIQUE(token) (migration 002) makes this single upsert a
       // true ownership transfer.
       await pool.query(
-        `INSERT INTO device_tokens (user_id, token, device_type)
-         VALUES ($1, $2, $3)
+        `INSERT INTO device_tokens (user_id, token, device_type, timezone)
+         VALUES ($1, $2, $3, $4)
          ON CONFLICT (token) DO UPDATE
-         SET user_id = EXCLUDED.user_id, device_type = EXCLUDED.device_type, updated_at = NOW()`,
-        [req.user.id, token, safeDeviceType]
+         SET user_id = EXCLUDED.user_id,
+             device_type = EXCLUDED.device_type,
+             timezone = COALESCE(EXCLUDED.timezone, device_tokens.timezone),
+             updated_at = NOW()`,
+        [req.user.id, token, safeDeviceType, timezone]
       );
 
       // Nothing bounded how many tokens one account could accumulate. Every
