@@ -868,6 +868,49 @@ describe('the build stops on the failures that used to ship green', () => {
     expect(codemagic).toMatch(/Print :BUNDLE_ID/);
     expect(codemagic).toMatch(/PLIST_BUNDLE" != "\$BUNDLE_ID/);
   });
+
+  test('the push plist is checked for the Firebase PROJECT, not only the app', () => {
+    // The bundle id says the plist belongs to an app called com.flockcorp.flock.
+    // It does not say which Firebase project that app lives in, and one bundle
+    // id can be registered in several: a staging project beside a production one
+    // is the ordinary reason for two. A plist from the wrong project decodes,
+    // lints and carries the right bundle id, so the check above passes it. The
+    // device then registers its FCM token in that project, APNs accepts it, and
+    // firebaseService.js sends from whichever project FIREBASE_SERVICE_ACCOUNT
+    // belongs to. Nothing is delivered and nothing reports a failure, which is
+    // the same shape as the wrong-app case the bundle check was written for.
+    expect(codemagic).toMatch(/Print :PROJECT_ID/);
+    expect(codemagic).toMatch(/PLIST_PROJECT" != "\$REACT_APP_FIREBASE_PROJECT_ID/);
+    // Only when the web variable is actually set. The REACT_APP_FIREBASE_* six
+    // are optional, and an absent one is not evidence of a mismatch.
+    expect(codemagic).toMatch(/-n "\$\{REACT_APP_FIREBASE_PROJECT_ID:-\}"/);
+  });
+
+  test('the override that skips push cannot be tripped by a loose truthy value', () => {
+    // Exact string, so TRUE, 1, yes and on all leave the stop armed. This is the
+    // one variable in the group whose job is to let a broken build through.
+    expect(codemagic).toMatch(/"\$\{ALLOW_PUSHLESS_BUILD:-\}" != "true"/);
+  });
+
+  test('every installed profile for this bundle id is checked, not the first one found', () => {
+    // Saving a capability invalidates the profile that already existed, and
+    // fetch-signing-files installs what App Store Connect holds, so the case
+    // this whole step exists for is the case that leaves TWO on disk. The loop
+    // used to `break` at the first match, which made the verdict depend on the
+    // sort order of two UUID filenames while `xcode-project use-profiles` picks
+    // by its own rule. Driven against the real script with a good profile
+    // sorting ahead of a stale one, the check passed and the stale profile was
+    // still installed.
+    const step = signingCheck();
+    expect(step).not.toMatch(/MATCH="\$p";\s*break/);
+    // Every match is counted and every match is judged, and the failure names
+    // how many of how many, because "delete the profile named above" is only
+    // actionable when the stale one was actually printed.
+    expect(step).toMatch(/FOUND=\$\(\(FOUND \+ 1\)\)/);
+    expect(step).toMatch(/STALE=\$\(\(STALE \+ 1\)\)/);
+    expect(step).toMatch(/\[ "\$STALE" -gt 0 \]/);
+    expect(step).toMatch(/\[ "\$FOUND" -eq 0 \]/);
+  });
 });
 
 // ---------------------------------------------------------------------------
