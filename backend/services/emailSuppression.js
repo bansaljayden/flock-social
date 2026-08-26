@@ -60,6 +60,21 @@ const VALID_REASONS = new Set(['bounce', 'complaint', 'unsubscribe']);
 // If a second caller ever wants this category, it needs the same argument made
 // about it in writing, here, first.
 //
+// THE SECOND CALLER, and the argument for it. POST /api/safety/alert/cancel,
+// the stand-down, mails an all-clear to exactly the contacts who were sent the
+// alert. It belongs here for a reason narrower than the first one rather than
+// broader: an address that bypassed this list to receive "your child needs
+// help" must not then obey it and be left holding that message with no way to
+// learn it is over. Sending the alarm and swallowing the all-clear is the worst
+// of the three possible behaviours, worse than swallowing both, because it
+// leaves a parent acting on an emergency that has already ended. The bypass is
+// what created that obligation, so the bypass has to cover both halves of it.
+//
+// It generalises no further than the first one did. The stand-down carries no
+// location, writes no row, and can only be sent by the account that sent a real
+// alert inside the last six hours, so it cannot be used to reach a suppressed
+// address with anything a suppressed address did not already receive.
+//
 // WHAT PAYS FOR THIS. Bypassing the list means the user is the only person who
 // can notice a broken contact address, so the Safety screen has to tell them.
 // GET /api/safety/contacts marks a contact whose address is on this list and
