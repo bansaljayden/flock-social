@@ -323,7 +323,43 @@ describe('the permissions that are absent are absent for a reason', () => {
   });
 
   test('no photo-library-add string: nothing writes an image back to the library', () => {
-    expect(app).not.toMatch(/download=|\bsaveAs\b|Media\.savePhoto|savePicture/);
+    // This guard used to read only App.js and only the literal spelling
+    // `download=`. Both halves were holes, and a JSON data export walked
+    // through them without anybody intending to: it lives in
+    // services/dataExport.js, which was not scanned, and it sets the attribute
+    // with setAttribute('download', ...), which the regex could not see. A
+    // photo save written either of those two ways would have kept this green.
+    //
+    // So it scans every source file now and matches both spellings. What it
+    // asserts is not "nothing downloads" — that was never the point. The point
+    // is the Info.plist claim below: nothing writes IMAGE data to the device,
+    // so no NSPhotoLibraryAddUsageDescription is owed.
+    const files = [];
+    (function walk(dir) {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, e.name);
+        if (e.isDirectory()) { if (e.name !== '__tests__' && e.name[0] !== '.') walk(p); }
+        else if (/\.(js|jsx)$/.test(e.name)) files.push(p);
+      }
+    })(path.join(REPO, 'frontend', 'src'));
+
+    const SAVE = /\bdownload\s*=|setAttribute\(\s*['"]download['"]|\bsaveAs\b|Media\.savePhoto|savePicture/;
+    const savers = files.filter((f) => SAVE.test(fs.readFileSync(f, 'utf8')))
+      .map((f) => path.relative(REPO, f).split(path.sep).join('/'));
+
+    // Exactly one file may save anything, and what it saves is asserted below.
+    expect(savers).toEqual(['frontend/src/services/dataExport.js']);
+
+    // The one saver is JSON and only JSON. An image MIME here would mean
+    // picture data reaching the device, which is the thing the missing
+    // Info.plist key promises does not happen.
+    const saver = read('frontend', 'src', 'services', 'dataExport.js');
+    expect(saver).toContain("EXPORT_MIME = 'application/json'");
+    expect(saver).not.toMatch(/image\/(png|jpe?g|gif|webp|heic)/);
+    // And the payload itself must never carry inline image bytes, which is
+    // what keeps the clipboard branch honest as well.
+    expect(saver).toContain('assertNoInlineImages');
+
     expect(hasKey(infoPlist, 'NSPhotoLibraryAddUsageDescription')).toBe(false);
   });
 
