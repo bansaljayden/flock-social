@@ -1,0 +1,92 @@
+# ---------------------------------------------------------------------------
+# THE TEST SUITE, ACTUALLY RUN
+# ---------------------------------------------------------------------------
+# Until this file existed, the only workflows in this repository were gitleaks
+# and the manually-triggered public mirror. Nothing ran a test. The suite is
+# larger than the backend it covers and it only executed when somebody
+# remembered to run it locally, which meant any push could reach main and
+# auto-deploy to Railway with nothing verified.
+#
+# Two deliberate choices, both about keeping this signal worth reading:
+#
+# TIMEOUTS. The backend suite starts embedded PostgreSQL instances per suite.
+# A deadlocked run has hung locally before, and a job that hangs for six hours
+# is worse than one that fails, so both jobs are bounded.
+#
+# NO `npm audit` GATE. The frontend currently carries advisories with no
+# upstream fix available. Wiring those into a required check produces a job
+# that is permanently red through nobody's fault, and a permanently red check
+# is one people learn to scroll past, which costs more than it catches. Audit
+# runs, reports, and does not fail the build. The backend is at zero and can
+# afford to be strict, but a split rule invites the same habit, so both report.
+# Revisit if the frontend advisories ever become fixable.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch makes the first run's answer irrelevant.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install
+        working-directory: backend
+        run: npm ci
+      - name: Test
+        working-directory: backend
+        # `npm test` is `node --test`. It is NOT jest: some suites use
+        # node:test, so running jest here fails every suite with zero tests.
+        run: npm test
+      - name: Audit (report only, see the note at the top of this file)
+        working-directory: backend
+        continue-on-error: true
+        run: npm audit --audit-level=high
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        working-directory: frontend
+        run: npm ci
+      - name: Test
+        working-directory: frontend
+        # CI=true makes react-scripts run once instead of entering watch mode,
+        # which would hang the job until the timeout above.
+        run: npm test -- --watchAll=false
+        env:
+          CI: true
+      - name: Build
+        working-directory: frontend
+        # CI=true also promotes build warnings to errors here, which is the
+        # standard this repository already holds itself to: every commit is
+        # expected to compile with zero warnings.
+        run: npm run build
+        env:
+          CI: true
+      - name: Audit (report only, see the note at the top of this file)
+        working-directory: frontend
+        continue-on-error: true
+        run: npm audit --audit-level=high
