@@ -668,7 +668,21 @@ test('A3 — the banned-user exemption waives the ban check and nothing else', a
     users = [];
     assert.strictEqual((await del('/api/users/me', token)).status, 401);
 
-    // Exactly one route in the app mounts it.
+    // FOUR routes in the app mount it, and every one of them has to be a
+    // capability an account KEEPS after a ban because refusing it causes harm
+    // out of all proportion to the offence. Erasing yourself is the original
+    // one (Apple 5.1.1(v) / GDPR). The three added in round 23 are the SOS
+    // path: raising an alert, standing it down, and reading the contact list
+    // the sheet renders. A ban is a judgement about how somebody behaved in a
+    // group chat, not a finding that their night is safe, and "This account
+    // has been suspended for violating our community guidelines." is not an
+    // answer to a sixteen-year-old pressing an emergency button.
+    //
+    // What is deliberately NOT on this list: adding or editing a trusted
+    // contact, and /share-location. Those are the surfaces that point an
+    // account at an address that has never heard from Flock, and a banned
+    // account has no business reaching one. Anything new arriving in this list
+    // needs the same argument made about it before it lands.
     const fs = require('node:fs');
     const path2 = require('node:path');
     const mounts = [];
@@ -686,7 +700,12 @@ test('A3 — the banned-user exemption waives the ban check and nothing else', a
       }
     };
     walk(path2.join(__dirname, '..', 'routes'));
-    assert.deepStrictEqual(mounts, ["users.js: router.delete('/me', authenticateAllowBanned, deleteAccount);"],
+    assert.deepStrictEqual(mounts, [
+      "safety.js: router.get('/contacts', authenticateAllowBanned, async (req, res) => {",
+      "safety.js: router.post('/alert', authenticateAllowBanned, async (req, res) => {",
+      "safety.js: router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {",
+      "users.js: router.delete('/me', authenticateAllowBanned, deleteAccount);",
+    ],
       `the banned-user exemption is mounted somewhere new: ${mounts.join(' | ')}`);
   } finally {
     await new Promise((r) => srv.close(r));
