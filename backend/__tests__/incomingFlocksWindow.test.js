@@ -92,8 +92,16 @@ const UNIT_MS = { hours: HOUR, hour: HOUR, days: DAY, day: DAY };
 // when a bound is absent, in which case that side is not filtered — which is
 // what a real database would do, and is how the pre-fix query fails this file.
 function windowFrom(sql) {
-  const past = sql.match(/event_time > NOW\(\) - INTERVAL '(\d+) (hours?|days?)'/);
-  const ahead = sql.match(/event_time < NOW\(\) \+ INTERVAL '(\d+) (hours?|days?)'/);
+  // NOW_UTC matches both the bare NOW() this feed used to carry and the
+  // (NOW() AT TIME ZONE 'UTC') it carries now. The rewrite was a real fix:
+  // event_time is TIMESTAMP WITHOUT TIME ZONE holding a UTC wall clock, and a
+  // bare NOW() casts it at the database session zone, so the window was correct
+  // only because Railway runs UTC. The offset from now is identical either way,
+  // which is why the expected math below is unchanged; only the spelling moved,
+  // and this helper had pinned the spelling.
+  const NOW_UTC = "(?:NOW\\(\\)|\\(NOW\\(\\) AT TIME ZONE 'UTC'\\))";
+  const past = sql.match(new RegExp(`event_time > ${NOW_UTC} - INTERVAL '(\\d+) (hours?|days?)'`));
+  const ahead = sql.match(new RegExp(`event_time < ${NOW_UTC} \\+ INTERVAL '(\\d+) (hours?|days?)'`));
   return {
     from: past ? Date.now() - Number(past[1]) * UNIT_MS[past[2]] : null,
     to: ahead ? Date.now() + Number(ahead[1]) * UNIT_MS[ahead[2]] : null,
