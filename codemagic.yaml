@@ -183,8 +183,24 @@ workflows:
           # so ask the two halves whether they agree. Only when the web variable
           # is set: the REACT_APP_FIREBASE_* six are optional (web push only)
           # and an absent one is not evidence of a mismatch.
+          #
+          # WHAT THIS CAN AND CANNOT PROVE, so the next reader does not trust it
+          # further than it goes. It compares two CLIENT halves. The project that
+          # actually decides whether a push arrives is the one the backend's
+          # FIREBASE_SERVICE_ACCOUNT belongs to, and that variable lives on
+          # Railway, not in this group, so no build can read it. Both halves
+          # agreeing on the wrong project still passes here and still delivers
+          # nothing. Agreement is consistency, not correctness.
+          #
+          # And this is a CONDITIONAL check, so it has to say when it did not
+          # run. A skipped check printing the same green line as a passed one is
+          # the invisible failure this whole step exists to end, moved into the
+          # build log: the line at the bottom names the project either way, and
+          # nothing in it used to say whether anything had agreed with it.
           PLIST_PROJECT=$(/usr/libexec/PlistBuddy -c "Print :PROJECT_ID" "$PLIST" 2>/dev/null || echo "")
-          if [ -n "${REACT_APP_FIREBASE_PROJECT_ID:-}" ] && [ "$PLIST_PROJECT" != "$REACT_APP_FIREBASE_PROJECT_ID" ]; then
+          if [ -z "${REACT_APP_FIREBASE_PROJECT_ID:-}" ]; then
+            PROJECT_VERDICT="project '$PLIST_PROJECT', WHICH NOTHING HERE CHECKED: REACT_APP_FIREBASE_PROJECT_ID is not set in this group, so there was nothing to compare it against"
+          elif [ "$PLIST_PROJECT" != "$REACT_APP_FIREBASE_PROJECT_ID" ]; then
             echo "PUSH CHECK FAILED: this plist belongs to Firebase project '$PLIST_PROJECT', but"
             echo "REACT_APP_FIREBASE_PROJECT_ID in the same variable group says '$REACT_APP_FIREBASE_PROJECT_ID'."
             echo "One of the two came from the wrong project. A device would register its token in one"
@@ -193,8 +209,10 @@ workflows:
             echo "FIX: take both from the one Firebase project the backend's FIREBASE_SERVICE_ACCOUNT"
             echo "     belongs to, then re-run this build."
             exit 1
+          else
+            PROJECT_VERDICT="project '$PLIST_PROJECT', which is the project REACT_APP_FIREBASE_PROJECT_ID names too"
           fi
-          echo "GoogleService-Info.plist written and verified for $PLIST_BUNDLE, Firebase project '$PLIST_PROJECT'. PUSH IS ON IN THIS BUILD."
+          echo "GoogleService-Info.plist written and verified for $PLIST_BUNDLE, Firebase $PROJECT_VERDICT. PUSH IS ON IN THIS BUILD."
       - name: Set up code signing (reuse pinned cert + App Store profile)
         script: |
           keychain initialize
@@ -233,6 +251,29 @@ workflows:
           WANTED=$(plutil -convert json -o - ios/App/App/App.entitlements \
             | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin).keys()))')
           echo "App.entitlements declares: $WANTED"
+
+          # AN EMPTY LIST IS NOT A PASS. The loop below asks one question per
+          # entitlement, so with nothing to ask it asks nothing, and every
+          # profile on disk gets printed as carrying every entitlement this app
+          # declares, stale ones included. Measured against this script with an
+          # empty App.entitlements and a stale profile planted next to a good
+          # one: exit 0, and "All 2 installed profiles for com.flockcorp.flock
+          # carry every entitlement this app declares."
+          #
+          # That is the same shape as the bug the loop below was just widened to
+          # fix, one level down: a loop that runs zero times and reports success.
+          # It is also reachable by the exact move the FIX text at the bottom of
+          # this step tells people not to make, and by Capacitor regenerating the
+          # iOS project over the file.
+          if [ -z "$WANTED" ]; then
+            echo "SIGNING CHECK FAILED: ios/App/App/App.entitlements declares no entitlements at all."
+            echo "Nothing below would have been examined and every installed profile would have passed."
+            echo "CAUSE: the file was emptied, or the iOS project was regenerated over it."
+            echo "FIX: restore App.entitlements. It has to declare aps-environment for push,"
+            echo "     com.apple.developer.applesignin for Guideline 4.8, and the associated-domains"
+            echo "     entitlement the invite links open through."
+            exit 1
+          fi
 
           # EVERY installed profile for this bundle id is read, not the first one
           # the glob happens to return.
@@ -289,7 +330,7 @@ workflows:
           fi
 
           if [ "$STALE" -gt 0 ]; then
-            echo "SIGNING CHECK FAILED: $STALE of the $FOUND installed profiles for $BUNDLE_ID is stale."
+            echo "SIGNING CHECK FAILED: $STALE of $FOUND installed profiles for $BUNDLE_ID cannot sign this app."
             echo "The archive would have failed with \"provisioning profile does not match the entitlements file\","
             echo "and it would have failed that way even if a good profile is also installed, because the"
             echo "archive does not choose the profile this check happened to read first."
