@@ -380,6 +380,82 @@ describe('convergence', () => {
     expect(afterDelete).toContain("if (onLogout) onLogout(sessionEndCopy('account_deleted'));");
     expect(afterDelete).not.toContain("showToast('Your account has been deleted')");
   });
+
+  // THE ONE RACE THIS PATH HAS, driven rather than asserted about.
+  //
+  // endSession latches, and its own comment says a session end "almost always
+  // arrives on two of those channels at once". Deleting an account IS that
+  // case, by construction and not by bad luck: DELETE /api/users/me COMMITs the
+  // delete, cuts every socket for the account and only THEN answers, so any
+  // request already in flight on this device comes back 401 while the delete
+  // call is still awaiting. api.js turns that 401 into a
+  // 'flock-session-expired' event, App.js turns that into
+  // endSession(sessionEndCopy('session_expired')) with no opts, and the latch
+  // closes on the generic line before onLogout is ever called.
+  //
+  // The account_deleted line then arrives second and hits the early return,
+  // which replaces a latched note ONLY for a caller that marked its reason
+  // specific. The revoke path passes { specific: true } for exactly this
+  // reason. The delete path did not, so the person who had just typed DELETE
+  // and pressed the red button landed on "Your session expired. Sign in again
+  // to pick up where you left off." That is the same login screen, word for
+  // word, that this whole commit exists to stop them seeing.
+  //
+  // The onLogout expression is lifted out of App.js and RUN, so this cannot
+  // keep passing against a call that no longer marks itself.
+  it('a session-expired latch arriving first does not swallow the account-deleted line', () => {
+    // The three conditions of the early return, verbatim. The model below
+    // mirrors them, and this is what stops the model drifting off the source.
+    expect(APP).toContain('const specific = !!(opts && opts.specific);');
+    expect(APP).toContain('if (specific && note && sessionEndedByRevokeRef.current) setSessionNote(note);');
+    expect(APP).toContain('sessionEndedByRevokeRef.current = !!note;');
+
+    const expired = APP.match(/session_expired: '([^']*)'/)[1];
+    const deleted = APP.match(/account_deleted: '([^']*)'/)[1];
+    expect(expired).toBeTruthy();
+    expect(deleted).toBeTruthy();
+
+    const latch = () => {
+      let ended = false;
+      let byRevoke = false;
+      let note = '';
+      return {
+        endSession(n, opts) {
+          const specific = !!(opts && opts.specific);
+          if (ended) {
+            if (specific && n && byRevoke) note = n;
+            return;
+          }
+          ended = true;
+          byRevoke = !!n;
+          note = n || '';
+        },
+        get note() { return note; },
+      };
+    };
+
+    const expr = APP.match(/onLogout=\{((?:[^{}]|\{[^{}]*\})*)\}/);
+    expect(expr).toBeTruthy();
+
+    const model = latch();
+    // eslint-disable-next-line no-new-func
+    const onLogout = new Function('endSession', `return ${expr[1]};`)(model.endSession);
+
+    // The 401 from a request that was in flight when the row went away.
+    model.endSession(expired);
+    // ...and then the delete call returns and the handler says why.
+    onLogout(deleted);
+
+    expect(model.note).toBe(deleted);
+
+    // The Log out button still leaves the screen silent: a sign-out the user
+    // asked for must not be annotated, and it must not be able to overwrite a
+    // note either.
+    const quiet = latch();
+    // eslint-disable-next-line no-new-func
+    new Function('endSession', `return ${expr[1]};`)(quiet.endSession)();
+    expect(quiet.note).toBe('');
+  });
 });
 
 // ===========================================================================

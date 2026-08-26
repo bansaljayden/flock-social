@@ -20676,7 +20676,20 @@ const FlockApp = () => {
   // copy for this already existed and was already delivered to the account's
   // OTHER devices by the socket revalidation sweep. The device that did the
   // deleting was the only one told nothing.
-  return <FlockAppInner authUser={authUser} venueLoginFlag={venueLoginFlag} onLogout={(note) => endSession(note || '')} />;
+  //
+  // { specific } IS NOT OPTIONAL HERE, and leaving it off put the bug back on
+  // the one device it was fixed for. endSession latches, and its own comment
+  // says a revoke "almost always arrives on two of those channels at once".
+  // Deleting an account is that case by construction: the server COMMITs the
+  // delete, cuts every socket for the account and only then answers, so any
+  // request already in flight on this device comes back 401, api.js dispatches
+  // 'flock-session-expired', and the generic "Your session expired" line
+  // latches BEFORE the delete call returns. Without { specific: true } the
+  // account_deleted line arrives second, hits the early return, and the person
+  // who just deleted their account reads the expired-session copy: the exact
+  // screen this commit exists to stop them seeing. A note is only ever passed
+  // by a caller that knows why the session ended, so `!!note` is the flag.
+  return <FlockAppInner authUser={authUser} venueLoginFlag={venueLoginFlag} onLogout={(note) => endSession(note || '', { specific: !!note })} />;
 };
 
 // Wrap with Google OAuth provider
