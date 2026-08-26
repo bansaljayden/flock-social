@@ -497,16 +497,43 @@ async function announceGuestRsvp(req, link, { guestId, name, status, isNew }) {
     if (isNew && status === 'in') {
       const host = await pool.query('SELECT creator_id, name FROM flocks WHERE id = $1', [link.flock_id]);
       if (host.rows.length) {
-        await pushIfOffline(io, host.rows[0].creator_id,
-          `${name} is in!`,
-          host.rows[0].name,
-          // A guest has no user account, so there is nobody the host could have
-          // blocked; the namespaced guest id (guest:N) is a non-numeric string,
-          // so the block-gate's actor check reads it as "no actor" and correctly
-          // skips the block lookup. Carried for payload consistency with the
-          // authenticated push sites.
-          { type: 'guest_rsvp', flockId: String(link.flock_id), fromUserId: guestEntryId(guestId) }
-        );
+        // ── THE SAME WINDOW AS EVERY OTHER RSVP, not a fourth notification path.
+        //
+        // This pushed directly, one notification per guest, and it is the
+        // likeliest burst in the whole product: "no account needed" is what the
+        // share link is FOR, so a link dropped into a group chat is answered by
+        // several people inside a minute, and every one of those pushes shares
+        // an apns-collapse-id. Eight of nine are destroyed on the lock screen by
+        // the ninth, so the host is interrupted nine times to learn one thing.
+        // That is verbatim the defect routes/flocks.js built the RSVP digest to
+        // stop, and POST /:token/join below was already moved onto it; the guest
+        // half of the same link was left behind.
+        //
+        // Keyed on the flock id, the same key flocks.js uses, so guests and
+        // accounts arriving at one plan share ONE window instead of each
+        // keeping their own.
+        //
+        // joinerId is the namespaced guest id (guest:N) exactly as this push
+        // carried it before. It is a non-numeric string, so the digest's block
+        // gate reads it as "no actor" and skips the block lookup, which is
+        // correct: there is no account behind a guest for anyone to have
+        // blocked.
+        const { claimRsvpPush } = require('./flocks');
+        const firstOfWindow = claimRsvpPush({
+          io,
+          flockId: link.flock_id,
+          hostId: host.rows[0].creator_id,
+          flockName: host.rows[0].name,
+          joinerName: name,
+          joinerId: guestEntryId(guestId),
+        });
+        if (firstOfWindow) {
+          await pushIfOffline(io, host.rows[0].creator_id,
+            `${name} is in!`,
+            host.rows[0].name,
+            { type: 'guest_rsvp', flockId: String(link.flock_id), fromUserId: guestEntryId(guestId) }
+          );
+        }
       }
     }
   } catch (err) {
