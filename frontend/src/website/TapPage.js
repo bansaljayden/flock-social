@@ -116,13 +116,28 @@ const DESCRIPTION = 'Flock is a free app where a group votes on where to go out,
    it arrives from a URL, which means it arrives from anyone. It is bounded
    here before it is ever sent anywhere: lowercased, reduced to the characters
    a tag name can contain, and cut to 32. Anything left over, and anything
-   absent, is reported honestly as 'unknown' rather than guessed at. */
-const TAG_PARAM = 's';
+   absent, is reported honestly as 'unknown' rather than guessed at.
+
+   ?src= is accepted as the same thing, and that is not tidiness. An NFC chip
+   is programmed once and then physically handed to somebody, so a URL that
+   went onto a card is unfixable from here: no deploy reaches a card already
+   sitting in a judge's wallet. The ordering plan for the cards was written
+   with ?src=card, this page was built reading ?s=, and either spelling being
+   silently scored 'unknown' would lose the one measurement the cards exist to
+   produce, with nothing on the screen to show anything was wrong. Reading both
+   costs one line. ?s wins when both are present, because it is the spelling
+   already programmed into the taps PostHog has recorded. */
+const TAG_PARAMS = ['s', 'src'];
 const UNKNOWN_TAG = 'unknown';
 
 function readTag() {
   try {
-    const raw = new URLSearchParams(window.location.search).get(TAG_PARAM);
+    const params = new URLSearchParams(window.location.search);
+    let raw = null;
+    for (const name of TAG_PARAMS) {
+      raw = params.get(name);
+      if (raw) break;
+    }
     if (!raw) return UNKNOWN_TAG;
     const cleaned = raw.toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 32);
     return cleaned || UNKNOWN_TAG;
