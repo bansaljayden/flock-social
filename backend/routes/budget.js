@@ -127,6 +127,39 @@ const SUB_DOLLAR_CEILING = 0.01;
 // "2 of 4 answered" still renders and nobody's honest submission gets harder.
 // The field stays present on the wire in both cases; a null is a withheld
 // number, not a missing key.
+//
+// AND THE SAME THRESHOLD IS A FACT ABOUT ONE NUMBER, WHICH IS NOT WHAT WAS
+// LEAKING (round 23).
+//
+// Everything above bounds the VALUE of a single read: over three or more
+// co-members, "one of them skipped" names nobody. It says nothing about a
+// SEQUENCE of those reads, and the sequence was published live on every
+// surface, on every submission, exactly as the ceiling used to be. Both deltas
+// range over one person rather than three:
+//
+//   * A submission moves submissionCount by one. skipCount moves with it or it
+//     does not, and that bit is the answer the person who just answered gave.
+//     The threshold does not touch it: the delta is over the single row that
+//     was just written no matter how many co-members the total ranges over.
+//   * A DEPARTURE moves both, and a departure is not anonymous. Every aggregate
+//     on this router reads only rows whose author is still an accepted member
+//     (see MEMBER_SUBMISSIONS), and the roster is on the screen, so a member
+//     leaving is an event with a name on it. skipCount falling by one as they
+//     go says they skipped; submissionCount falling while skipCount holds says
+//     they shared an amount. No collusion, no second account, no arithmetic
+//     past one subtraction, and nothing to know out of band: you watch the
+//     screen, which is the sentence the ceiling fix was written for.
+//
+// So the split follows the ceiling's rule rather than its own: it is published
+// in exactly one payload, the one that settles the budget, and never on a read.
+// One number, no earlier number to subtract it from, and a departure after the
+// settle cannot move a number nobody is being shown any more. The threshold
+// above still gates that single publication, because a single read of it in a
+// small flock was a real finding and closing the sequence does not close that.
+//
+// Nothing renders this. It is stored in App.js's budget state and read from
+// there nowhere, so withholding it costs the product nothing at all; what it
+// costs is the one channel on this route that still moved.
 const SKIP_COUNT_MIN_OTHERS = 3;
 function publishableSkipCount(skipCount, totalMembers) {
   return (totalMembers - 1) >= SKIP_COUNT_MIN_OTHERS ? skipCount : null;
@@ -440,9 +473,12 @@ router.post('/:flockId/submit',
       // submission answers null, so a member watching the screen has no earlier
       // number to compare this one against. See settledCeiling above.
       const visibleCeiling = settledNow ? ceiling : null;
-      // And the skip/share split only when it ranges over three co-members or
-      // more. See publishableSkipCount.
-      const visibleSkipCount = publishableSkipCount(skipCount, totalMembers);
+      // And the skip/share split on the same terms as the ceiling: once, in
+      // the payload that settled the budget, and only when it ranges over
+      // three co-members or more. Publishing it on every submission handed out
+      // a difference, and the difference is over the one row that was just
+      // written. See publishableSkipCount.
+      const visibleSkipCount = settledNow ? publishableSkipCount(skipCount, totalMembers) : null;
 
       // Emit socket event to flock room
       const io = req.app.get('io');
@@ -557,7 +593,6 @@ router.get('/:flockId',
       const flock = flockResult.rows[0];
       const submissionCount = parseInt(countResult.rows[0].total_submissions);
       const nonSkipCount = parseInt(countResult.rows[0].non_skip_count);
-      const skipCount = parseInt(countResult.rows[0].skip_count);
 
       // Total members
       const memberResult = await pool.query(
@@ -601,9 +636,16 @@ router.get('/:flockId',
       // falls back under three sharers still withholds, like every other reader
       // of it (budgetCeilingReadParity pins that).
       const visibleCeiling = isReady ? settledCeiling(flock.budget_locked, flock.budget_ceiling) : null;
-      // See publishableSkipCount: in a flock with fewer than three co-members
-      // this number names who declined to share.
-      const visibleSkipCount = publishableSkipCount(skipCount, totalMembers);
+      // THE SKIP/SHARE SPLIT IS NOT READABLE HERE AT ALL. See
+      // publishableSkipCount: a single read of it in a small flock named who
+      // declined, and a SEQUENCE of reads in a flock of any size names one
+      // person per delta, which is what a poller of this route was collecting.
+      // It is published once, by the submission that settles the budget, and
+      // this route is the second door that would have made the sequence
+      // readable on demand, the same way it was the second door to the live
+      // ceiling. A settled flock is not exempt: members leave after a settle,
+      // and a departure moves this number with a name attached to it.
+      const visibleSkipCount = null;
 
       res.json({
         budgetEnabled: flock.budget_enabled,

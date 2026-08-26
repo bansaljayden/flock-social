@@ -430,3 +430,147 @@ test('nothing writes flocks.budget_ceiling until the budget settles', async () =
   assert.strictEqual(world.flock.budget_locked, true);
   assertQueriesUnderstood();
 });
+
+// ═════════════════════════════════════════════════════════════════════════════
+// ROUND 23. THE CEILING WAS NOT THE ONLY NUMBER THAT MOVED.
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// The fix above closes the ceiling by publishing it once. The skip/share split
+// was left publishing live, on both doors, on every submission, and the same
+// sentence applies to it word for word: what leaks is not the value, it is the
+// difference between two of them, and the difference ranges over exactly one
+// person.
+//
+// SKIP_COUNT_MIN_OTHERS bounds a single read. It requires three or more
+// co-members so that "one of them skipped" names nobody, and against a single
+// read that works. It does nothing at all about a sequence, because the delta
+// between two consecutive reads is a fact about the one row written between
+// them however large the flock is.
+//
+// The version that needs nothing at all from the observer is the DEPARTURE.
+// Every aggregate on this router reads only rows whose author is still an
+// accepted member, and a member leaving is an event with a name on it, on the
+// roster, on the screen. Watch the number fall as they go and you know the
+// answer they gave: skipCount down one, they skipped; submissionCount down one
+// while skipCount holds, they shared an amount. No collusion, no second
+// account, nothing known out of band.
+//
+// Five members, so the >= 3 co-members gate is satisfied and the number is
+// publishable at all. Anything the gate withholds proves nothing here.
+const FIVE = [1, 2, 3, 4, 5];
+const skip = () => call('POST', `/api/budget/${FLOCK}/submit`, { amount: 0, skipped: true });
+
+// Every skip count that reached a member on the socket, in order.
+const broadcastSkipCounts = () => emitted
+  .filter((e) => e.event === 'budget_updated')
+  .map((e) => e.payload.skipCount);
+
+async function skipCountEachMemberReads() {
+  const was = CURRENT_USER;
+  const out = [];
+  for (const id of world.members) { as(id); out.push((await status()).body.skipCount); }
+  CURRENT_USER = was;
+  return out;
+}
+
+test('the skip/share split does not move while the flock is answering, on either door', async () => {
+  world.members = [...FIVE];
+  const seenOnSocket = [];
+  const seenOnRead = [];
+
+  // Four answers, two of them skips. Under the old code the split went
+  // 0, 0, 1, 1 on both doors, and every step of that says what the person who
+  // just answered chose.
+  const answers = [[1, 60], [2, 'skip'], [3, 80], [4, 'skip']];
+  for (const [user, amount] of answers) {
+    as(user);
+    const res = amount === 'skip' ? await skip() : await submit(amount);
+    assert.strictEqual(res.status, 200, res.text);
+    seenOnSocket.push(...broadcastSkipCounts());
+    seenOnSocket.push(res.body.skipCount);
+    seenOnRead.push(...(await skipCountEachMemberReads()));
+    emitted.length = 0;
+  }
+
+  assert.deepStrictEqual(distinctNumbers(seenOnSocket), [],
+    'the skip/share split was broadcast while the flock was still answering');
+  assert.deepStrictEqual(distinctNumbers(seenOnRead), [],
+    'a client polling GET /api/budget can still watch the split move');
+  assertQueriesUnderstood();
+});
+
+test('the split is published once, by the answer that settles the budget, and never again', async () => {
+  world.members = [...FIVE];
+  for (const [user, amount] of [[1, 60], [2, 'skip'], [3, 80], [4, 'skip']]) {
+    as(user);
+    if (amount === 'skip') await skip(); else await submit(amount);
+  }
+  emitted.length = 0;
+
+  // The fifth answer is the third shared amount and the last member, so it
+  // settles. Exactly here, one number, once.
+  as(5);
+  const settling = await submit(90);
+  assert.strictEqual(settling.status, 200, settling.text);
+  assert.strictEqual(settling.body.budgetLocked, true);
+  assert.strictEqual(settling.body.skipCount, 2);
+  for (const u of emitted.filter((e) => e.event === 'budget_updated')) {
+    assert.strictEqual(u.payload.skipCount, 2, 'the settling fan-out is the one publication');
+  }
+
+  // And the read door does not serve it back, so there is nothing to poll and
+  // nothing to compare a later read against.
+  assert.deepStrictEqual(distinctNumbers(await skipCountEachMemberReads()), [],
+    'the split is readable on demand after the settle');
+  assertQueriesUnderstood();
+});
+
+test('a member leaving a settled flock does not publish the answer they gave', async () => {
+  world.members = [...FIVE];
+  for (const [user, amount] of [[1, 60], [2, 'skip'], [3, 80], [4, 'skip'], [5, 90]]) {
+    as(user);
+    if (amount === 'skip') await skip(); else await submit(amount);
+  }
+  assert.strictEqual(world.flock.budget_locked, true, 'the fixture did not settle');
+
+  const before = await skipCountEachMemberReads();
+
+  // Member 2 leaves. Their submission row stays and goes inert (it is behind
+  // the membership JOIN), so every aggregate on this router moves, and the
+  // roster says who caused it. Under the old code skipCount went 2 to 1 here,
+  // which is a signed statement that member 2 declined to share a number.
+  world.members = world.members.filter((id) => id !== 2);
+  const after = await skipCountEachMemberReads();
+
+  assert.deepStrictEqual(distinctNumbers(before), []);
+  assert.deepStrictEqual(distinctNumbers(after), [],
+    'the split moved as a named member left, which says what they answered');
+
+  // The ceiling is the same property and still holds: one published number,
+  // and a departure cannot make a second one appear.
+  const ceilings = await ceilingEachMemberReads();
+  assert.strictEqual(distinctNumbers(ceilings).length <= 1, true);
+  assertQueriesUnderstood();
+});
+
+test('withholding the split costs the coordination numbers nothing', async () => {
+  // The whole argument for withholding is that nothing renders this. What DOES
+  // render is "3 of 5 answered", and it must be untouched, or a privacy fix has
+  // been paid for with the feature.
+  world.members = [...FIVE];
+  as(1); await submit(60);
+  as(2); await skip();
+  as(3); const res = await submit(80);
+
+  assert.strictEqual(res.body.submissionCount, 3);
+  assert.strictEqual(res.body.totalMembers, 5);
+  assert.strictEqual(res.body.skipCount, null);
+  assert.ok('skipCount' in res.body, 'a withheld number is null, not a missing key');
+
+  as(4);
+  const read = await status();
+  assert.strictEqual(read.body.submissionCount, 3);
+  assert.strictEqual(read.body.totalMembers, 5);
+  assert.ok('skipCount' in read.body, 'a withheld number is null, not a missing key');
+  assertQueriesUnderstood();
+});
