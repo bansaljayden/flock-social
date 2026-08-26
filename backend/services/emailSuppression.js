@@ -203,10 +203,66 @@ async function suppress(addr, reason, detail) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// THE WAY BACK OFF THE LIST, which did not exist.
+// ---------------------------------------------------------------------------
+// Round 27 audited this whole channel as one system and found that nothing in
+// the codebase could DELETE a row from email_suppressions. Not an admin route,
+// not a script, not a self-service page. Every path into the table is one-way,
+// and the reason stronger only ever wins.
+//
+// That is not a theoretical corner. The two ways an ordinary person lands on
+// this list with a HARD reason are common:
+//
+//   * a bounce that was classified permanent when it was not. A mailbox over
+//     quota, a receiving server misconfigured for an afternoon, a corporate
+//     filter answering 550 for a message it disliked. Resend reports the class
+//     and routes/emailWebhook.js believes it, correctly, because believing it
+//     is the whole point of a suppression list.
+//   * a spam complaint on a message the person asked for. People press the
+//     spam button on verification emails constantly; it is how a lot of
+//     mailboxes are tidied. That single press blocks every future
+//     transactional message to the address.
+//
+// After either one, that person cannot verify their email and cannot reset
+// their password. Their address is their only account identifier, there is no
+// route in this codebase that changes an account's email address, and changing
+// it would require signing in, which is the thing they cannot do. They are
+// locked out permanently, and the only signal anyone gets is a log line, which
+// is why services/emailService.js now raises a named alarm on exactly this.
+//
+// This function is the operator's undo. It is deliberately NOT reachable from
+// any public surface: taking an address off a do-not-mail list is a promise
+// somebody has to make on purpose, and a self-service button would let anybody
+// clear a complaint that a real person filed. The admin route that calls it is
+// the handoff written up alongside this change.
+//
+// Returns true when the address is no longer suppressed, including when it
+// never was. Never throws.
+async function unsuppress(addr) {
+  const key = normalizeAddress(addr);
+  if (!key) return false;
+  try {
+    const r = await pool.query('DELETE FROM email_suppressions WHERE email = $1', [key]);
+    // The cache is what the send path actually reads, and its TTL is five
+    // minutes. Clearing the entry here is what makes the undo take effect on
+    // the next send rather than on the next cache expiry.
+    cache.delete(key);
+    if (r.rowCount > 0) {
+      console.warn(`[emailSuppression] ${key.replace(/^(.).*(@.*)$/, '$1*****$2')} was taken OFF the do-not-mail list. Mail to it resumes now.`);
+    }
+    return true;
+  } catch (err) {
+    console.error('[emailSuppression] could not clear suppression:', err.message);
+    return false;
+  }
+}
+
 module.exports = {
   checkSendAllowed,
   suppressionReason,
   suppress,
+  unsuppress,
   normalizeAddress,
   resetCache,
   HARD_REASONS,
