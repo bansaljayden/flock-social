@@ -705,6 +705,37 @@ export async function deleteAccount(password) {
   return data;
 }
 
+// A copy of everything the account holds, as JSON.
+//
+// The route has existed and been unreachable: nothing in the app called it, so
+// the privacy policy told people to email and ask instead, and answering those
+// by hand is work the server was already able to do in one request.
+//
+// Three things this has to get right, and each is a property of THIS endpoint
+// rather than a house style:
+//
+//   retry: false. It is a GET with a server-side effect — every call spends one
+//   of the owner's export slots (exportRequests.record) — so the automatic
+//   502/503/504 retry would burn three of them on one tap. routes/checkin.js
+//   sets the same flag for the same reason, and the note on canRetry in
+//   request() names exactly this case.
+//
+//   The password rides in a HEADER, not a body. GET has no body, and the
+//   backend reads x-export-password. deleteAccount sends its proof in the body
+//   because DELETE has one; the two are not interchangeable.
+//
+//   A 401 carries reauthRequired ('password' when the caller should be asked
+//   for one, 'reauth' when an OAuth account needs a fresh sign-in) and is a
+//   re-prompt, not a failure. request() already knows not to treat it as an
+//   expired session (see handleSessionExpiry).
+export async function exportMyData(password) {
+  return request('/api/users/export', {
+    retry: false,
+    timeout: 30000,
+    ...(password ? { headers: { 'x-export-password': password } } : {}),
+  });
+}
+
 export async function login(email, password, dateOfBirth) {
   // dateOfBirth: only for legacy accounts created before DOB was required —
   // the backend answers 403 {needsDob: true} and the login screen retries
