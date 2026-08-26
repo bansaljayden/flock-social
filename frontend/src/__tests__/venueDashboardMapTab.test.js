@@ -76,7 +76,17 @@ describe('one venue card for every map surface', () => {
     // appears twice, someone copied the card instead of reusing it.
     const code = codeOnly(APP);
     expect(code.split("says it's at {cd.score}% right now").length - 1).toBe(1);
-    expect(APP).toContain('const renderConsumerVenueCard = ({ venueOwnerView = false } = {}) => {');
+    // The line above is what proves "single definition". This one only has to
+    // prove the definition is the shared one, so it pins the two things that
+    // carry meaning and nothing else: the options object has a default, so
+    // every existing caller can keep calling it with no arguments, and
+    // venueOwnerView defaults to false, so the CONSUMER card is what you get
+    // when nobody asks for the owner variant. It used to be a toContain of the
+    // whole parameter list, which fails the moment a second option is added
+    // beside venueOwnerView. That is a behaviour-preserving change, and it is
+    // exactly how signOutClearsDevice broke tonight: the property survived and
+    // the spelling did not.
+    expect(APP).toMatch(/const renderConsumerVenueCard = \(\{[^}]*\bvenueOwnerView = false\b[^}]*\} = \{\}\) => \{/);
   });
 
   it('Discover renders the card through the shared function', () => {
@@ -186,7 +196,12 @@ describe('slider-to-pin update loop', () => {
   });
 
   it('the slider card is one definition shared by both tabs', () => {
-    expect(APP).toContain('const renderBusyNowCard = () => {');
+    // Same reasoning as the consumer card above: the call count below is the
+    // "one definition, two tabs" property, and pinning an empty parameter list
+    // here would only mean this test fails on the day somebody gives the card
+    // an option. The declaration has to exist; how many arguments it takes is
+    // not what this test is about.
+    expect(APP).toMatch(/const renderBusyNowCard = \([^)]*\) => \{/);
     const calls = codeOnly(APP).split('renderBusyNowCard()').length - 1;
     expect(calls).toBe(2);
   });
