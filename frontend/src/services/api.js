@@ -24,6 +24,42 @@ function withPostHog(fn) {
 function track(event, props) {
   withPostHog((posthog) => posthog.capture(event, props));
 }
+
+/* WHAT IS RECORDED, AND WHAT IS REFUSED
+   Every capture in the app is in this file, and every one of them answers a
+   question about whether the PRODUCT works: whether a group that starts a plan
+   finishes one. The funnel is land, sign up, create a flock, invite, open the
+   invite, join, RSVP, vote, agree a budget, confirm, go, come back, and each of
+   those steps has exactly one event.
+
+   The property rules are harder than the coverage, and they win where the two
+   disagree. The audience floor is 13 (backend/utils/age.js), so a property is
+   allowed only if it stays acceptable read as "this named account, at this
+   minute". That rules out, permanently:
+
+     * a venue name or a place id on a vote, a flock, or a check-in. That is
+       where a specific teenager is going tonight, and an identified event
+       carrying it is a location history with extra steps.
+     * a budget amount. The server does not hand a person's number to their own
+       friends (backend/routes/budget.js); it is not going to a vendor either.
+     * message text, image bytes, a Birdie prompt, a search query. A typed query
+       is a person's name or their neighbourhood about as often as it is a bar.
+     * an invite token. It is a bearer credential. index.js scrubs it out of
+       URLs on the way past and nothing here may put it back.
+     * coordinates, an email, a phone number, a display name, a date of birth.
+     * an SOS, a trusted contact, a report or a block. A count of those is worth
+       less than the harm of a per-person record of a minor in trouble, and the
+       moderation queue already counts them server-side where they belong.
+
+   __tests__/analyticsPrivacy.test.js scans this file, fails the build on a
+   property key that could carry any of it, and pins the event names so a new
+   capture is a decision somebody made rather than a line that arrived with a
+   feature.
+
+   Adding an event: put it next to the API call it belongs to so the two cannot
+   drift, keep the props a literal object (the sweep reads it), and say in a
+   comment which question it answers. If it cannot be recorded without one of
+   the values above, do not record it. */
 function identifyUser(user) {
   if (!user?.id) return;
   withPostHog((posthog) => posthog.identify(String(user.id)));
@@ -440,15 +476,63 @@ export async function resendVerificationEmail() {
   return request('/api/auth/resend-verification', { method: 'POST' });
 }
 
+/* WHY AN AUTH ATTEMPT ENDED
+   'signup' and 'login' fire only on the way out of a successful call, so
+   everything between a person opening the form and holding an account has been
+   invisible: six signups against 244 production pageviews, with no way to tell
+   a hard product bug from nobody wanting one. These two events are the other
+   half of that ratio.
+
+   The reason is a status bucket, never the server's message. Those strings are
+   written for a person, they are rewritten whenever the wording improves, and
+   several of them quote something the user typed. A status code is stable,
+   low-cardinality, and says nothing about who was refused.
+
+   TWO REFUSALS ARE DELIBERATELY NOT RECORDED AT ALL.
+
+   403 on these routes is the age gate (backend/routes/auth.js UNDERAGE_MSG).
+   PostHog merges a device's anonymous history into whoever eventually signs up
+   on that device, so recording it would leave a permanent "claimed to be under
+   13" mark on the profile of a real 13-year-old who mistyped a year, in
+   exchange for a count that is already in the server logs. Renaming the bucket
+   does not help: on the signup path 403 means only that one thing, so any label
+   for it is the same disclosure wearing a different word.
+
+   needsDob is not a failure. The screen collects a date and calls straight
+   back, exactly like the session-expiry exclusion further up this file. */
+const AUTH_FAILURE_BY_STATUS = { 400: 'invalid', 401: 'rejected', 404: 'no_account', 409: 'conflict', 429: 'rate_limited' };
+
+function authFailureIsRecordable(err) {
+  if (!err) return false;
+  if (err.data && err.data.needsDob) return false;
+  return err.status !== 403;
+}
+
+function authFailureReason(err) {
+  if (!err) return 'other';
+  if (err.isOffline) return 'offline';
+  if (err.isTimeout) return 'timeout';
+  if (err.isCaptivePortal) return 'captive_portal';
+  if (err.isNetworkError) return 'network';
+  if (err.status >= 500) return 'server';
+  return AUTH_FAILURE_BY_STATUS[err.status] || 'other';
+}
+
 export async function signup(name, email, password, dateOfBirth) {
   const body = { name, email, password };
   // Send DOB only when provided so the backend's server-side age gate (>= 13)
   // can compute and enforce age. Field name + ISO format match POST /api/auth/signup.
   if (dateOfBirth) body.date_of_birth = dateOfBirth;
-  const data = await request('/api/auth/signup', {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
+  let data;
+  try {
+    data = await request('/api/auth/signup', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    if (authFailureIsRecordable(err)) track('signup_failed', { method: 'email', reason: authFailureReason(err) });
+    throw err;
+  }
   setToken(data.token);
   identifyUser(data.user);
   track('signup', { method: 'email' });
@@ -514,10 +598,16 @@ export async function login(email, password, dateOfBirth) {
   // with the collected date.
   const body = { email, password };
   if (dateOfBirth) body.date_of_birth = dateOfBirth;
-  const data = await request('/api/auth/login', {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
+  let data;
+  try {
+    data = await request('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    if (authFailureIsRecordable(err)) track('login_failed', { method: 'email', reason: authFailureReason(err) });
+    throw err;
+  }
   setToken(data.token);
   identifyUser(data.user);
   track('login', { method: 'email' });
@@ -529,10 +619,16 @@ export async function login(email, password, dateOfBirth) {
 export async function googleLoginWithToken(accessToken, dateOfBirth) {
   const body = { access_token: accessToken };
   if (dateOfBirth) body.date_of_birth = dateOfBirth;
-  const data = await request('/api/auth/google', {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
+  let data;
+  try {
+    data = await request('/api/auth/google', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    if (authFailureIsRecordable(err)) track('login_failed', { method: 'google', reason: authFailureReason(err) });
+    throw err;
+  }
   setToken(data.token);
   identifyUser(data.user);
   track('login', { method: 'google' });
@@ -544,10 +640,16 @@ export async function googleLogin(credential, dateOfBirth) {
   // Pass DOB on consumer sign-up so the backend age gate (>= 13) fires for new
   // OAuth accounts too, matching email signup. Existing-user logins omit it.
   if (dateOfBirth) body.date_of_birth = dateOfBirth;
-  const data = await request('/api/auth/google', {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
+  let data;
+  try {
+    data = await request('/api/auth/google', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    if (authFailureIsRecordable(err)) track('login_failed', { method: 'google', reason: authFailureReason(err) });
+    throw err;
+  }
   setToken(data.token);
   identifyUser(data.user);
   track('login', { method: 'google' });
@@ -563,10 +665,16 @@ export async function appleLogin(identityToken, fullName, authorizationCode, dat
   if (fullName) body.fullName = fullName;
   if (authorizationCode) body.authorizationCode = authorizationCode;
   if (dateOfBirth) body.date_of_birth = dateOfBirth; // required server-side for NEW accounts (age gate)
-  const data = await request('/api/auth/apple', {
-    method: 'POST',
-    body: JSON.stringify(body),
-  });
+  let data;
+  try {
+    data = await request('/api/auth/apple', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+  } catch (err) {
+    if (authFailureIsRecordable(err)) track('login_failed', { method: 'apple', reason: authFailureReason(err) });
+    throw err;
+  }
   setToken(data.token);
   identifyUser(data.user);
   track('login', { method: 'apple' });
@@ -919,14 +1027,20 @@ export async function setFlockEventTime(flockId, eventTime) {
 // exactly; anything else is rejected here rather than spending a round trip.
 const FLOCK_STATUSES = ['planning', 'confirmed', 'completed', 'cancelled'];
 
+// "Plans die in the group chat" is the claim on the landing page, and this is
+// the event that tests it. A flock that never leaves 'planning' died the same
+// death Flock says it prevents. `status` is safe to send because it is one of
+// the four values checked on the line above and can never be anything else.
 export async function setFlockStatus(flockId, status) {
   if (!FLOCK_STATUSES.includes(status)) {
     throw new Error(`Unknown flock status: ${status}`);
   }
-  return request(`/api/flocks/${flockId}`, {
+  const data = await request(`/api/flocks/${flockId}`, {
     method: 'PUT',
     body: JSON.stringify({ status }),
   });
+  track('flock_status_set', { status });
+  return data;
 }
 
 export async function leaveFlock(id) {
@@ -940,19 +1054,33 @@ export async function inviteToFlock(flockId, userIds) {
   });
 }
 
+// Does an invited person ever answer? Five flocks have been created and
+// nothing has ever recorded whether a second person said yes to one, which is
+// the difference between a product with a group in it and a to-do list.
 export async function acceptFlockInvite(flockId) {
-  return request(`/api/flocks/${flockId}/join`, { method: 'POST' });
+  const data = await request(`/api/flocks/${flockId}/join`, { method: 'POST' });
+  track('flock_rsvp', { response: 'yes' });
+  return data;
 }
 
 export async function declineFlockInvite(flockId) {
-  return request(`/api/flocks/${flockId}/decline`, { method: 'POST' });
+  const data = await request(`/api/flocks/${flockId}/decline`, { method: 'POST' });
+  track('flock_rsvp', { response: 'no' });
+  return data;
 }
 
+// Did the night happen, and did the people who said yes turn up? This is the
+// only measurement behind the reliability score, and the whole anti-flake
+// claim rests on it. Two counts, no names: which member was marked a no-show
+// is the creator's business and stays in flock_members.attendance.
 export async function submitAttendance(flockId, attendance) {
-  return request(`/api/flocks/${flockId}/attendance`, {
+  const data = await request(`/api/flocks/${flockId}/attendance`, {
     method: 'POST',
     body: JSON.stringify({ attendance }),
   });
+  const marks = Array.isArray(attendance) ? attendance : [];
+  track('attendance_marked', { party_size: marks.length, attended: marks.filter((m) => m && m.attended).length });
+  return data;
 }
 
 export async function getAdminAnalytics() {
@@ -977,11 +1105,17 @@ export async function getFlockVotes(flockId) {
   return request(`/api/flocks/${flockId}/votes`);
 }
 
+// Does the mechanic the product is named for get used? A count and nothing
+// else: the venue and the place id stay out on purpose, because an identified
+// event naming the bar is a record of where a specific teenager is going
+// tonight. Which venue won is already in the database if anyone needs it.
 export async function voteForVenue(flockId, venueName, venueId) {
-  return request(`/api/flocks/${flockId}/vote`, {
+  const data = await request(`/api/flocks/${flockId}/vote`, {
     method: 'POST',
     body: JSON.stringify({ venue_name: venueName, venue_id: venueId || undefined }),
   });
+  track('venue_vote_cast', {});
+  return data;
 }
 
 export async function clearVenueVote(flockId) {
@@ -1002,8 +1136,19 @@ export async function getMessages(flockId, { before } = {}) {
 // therefore worked only while the socket was up, which is exactly when the
 // fallback is not being used. The field name matches what the flock-message and
 // DM routes read (`image_url`, a data: URL).
+// The three message kinds are a fixed set the UI picks from, so the kind is
+// safe where the text is not. It answers whether a flock is a live
+// conversation or an empty room, and whether the venue card, which exists to
+// move the vote along, is ever actually sent.
+const MESSAGE_KINDS = ['text', 'image', 'venue'];
+function messageKind(opts) {
+  const kind = opts && opts.message_type;
+  if (MESSAGE_KINDS.includes(kind)) return kind;
+  return opts && opts.image_url ? 'image' : 'text';
+}
+
 export async function sendMessage(flockId, text, opts = {}) {
-  return request(`/api/flocks/${flockId}/messages`, {
+  const sent = await request(`/api/flocks/${flockId}/messages`, {
     method: 'POST',
     // A message carrying a photo IS an upload: the image travels in the body as
     // a data: URL. On the 15s default it timed out on exactly the weak signal
@@ -1016,6 +1161,8 @@ export async function sendMessage(flockId, text, opts = {}) {
       image_url: opts.image_url || undefined,
     }),
   });
+  track('flock_message_sent', { kind: messageKind(opts) });
+  return sent;
 }
 
 export async function addReaction(messageId, emoji) {
@@ -1045,8 +1192,12 @@ export async function getDMs(userId, { before } = {}) {
 // to match sendMessage above so the two transports and the two surfaces cannot
 // drift. `message_text` is NOT NULL server-side, so an image-only DM sends '',
 // never null.
+// Same question for the other conversation surface, and the same answer to
+// what may ride along: the recipient is not a property here. Who talks to whom
+// is a social graph, and rebuilding one inside an analytics vendor is not what
+// this instrumentation is for.
 export async function sendDM(userId, text, opts = {}) {
-  return request(`/api/dm/${userId}`, {
+  const sent = await request(`/api/dm/${userId}`, {
     method: 'POST',
     timeout: opts.image_url ? UPLOAD_TIMEOUT_MS : undefined,
     body: JSON.stringify({
@@ -1057,6 +1208,8 @@ export async function sendDM(userId, text, opts = {}) {
       reply_to_id: opts.reply_to_id || undefined,
     }),
   });
+  track('dm_sent', { kind: messageKind(opts) });
+  return sent;
 }
 
 // PUT /api/dm/:messageId/read has existed and been hardened for rounds with no
@@ -1359,11 +1512,17 @@ export async function getWeather(lat, lon) {
 }
 
 // Budget Matching
+// Is anonymous budget matching used, or skipped past? The amount never leaves
+// the device for analytics. What a 16-year-old can afford on a Friday is
+// exactly the figure backend/routes/budget.js refuses to hand back to their
+// own friends, and it is not going to a vendor either.
 export async function submitBudget(flockId, { amount, skipped }) {
-  return request(`/api/budget/${flockId}/submit`, {
+  const data = await request(`/api/budget/${flockId}/submit`, {
     method: 'POST',
     body: JSON.stringify({ amount, skipped }),
   });
+  track('budget_submitted', { skipped: !!skipped });
+  return data;
 }
 
 export async function getBudgetStatus(flockId) {
@@ -1462,12 +1621,19 @@ export async function getActivityFeed() {
 
 // AI Assistant (Birdie). Model responses can honestly take 20s+; the default
 // 15s abort would cut Birdie off mid-thought, so this one gets a longer leash.
+// Is Birdie used at all, and how deep does a conversation go before it stops
+// being useful? Depth is the turn count and nothing else. Not the prompt, not
+// the reply, not the location the request carries: backend/routes/ai.js
+// already refuses to send conversation content to PostHog and says why at
+// length, and this is the same boundary from the other side.
 export async function sendAiChat(messages, location, currentContext) {
-  return request('/api/ai/chat', {
+  const data = await request('/api/ai/chat', {
     method: 'POST',
     timeout: AI_TIMEOUT_MS,
     body: JSON.stringify({ messages, location, currentContext, localHour: new Date().getHours(), localDay: new Date().getDay() }),
   });
+  track('birdie_message', { turn: Array.isArray(messages) ? messages.length : 0 });
+  return data;
 }
 
 // Push Notifications
@@ -1574,17 +1740,58 @@ export async function getFriendsAvailability() {
    may assume it is being called from a signed-in session; it is usually a
    stranger who just tapped a card at a competition.
 
-   `tag` is the ?s= value from the URL (the acrylic table stand sends
-   s=stand, the handout cards send s=card, anything else and anything missing
-   arrives as 'unknown'). TapPage bounds it to 32 lowercase url-safe
-   characters before it gets here. `choice` is one of a short fixed list of
-   button names the page itself defines. Neither is, or can become, a person. */
+   `tag` is the ?s= value from the URL (the acrylic table stand sends s=stand,
+   the handout cards send s=card). `choice` is one of a short fixed list of
+   button names the page itself defines. Neither is, or can become, a person.
+
+   THE TAG IS CLAMPED HERE, and the comment that used to sit in this spot said
+   it already happened. It did not. TapPage lowercases the parameter and cuts
+   it to 32 url-safe characters, which bounds the LENGTH of the string and
+   nothing about its contents, so whatever anyone puts after ?s= became a value
+   of the `source` property. Production has a source called 'standbad' to prove
+   it, from one tap on 2026-08-21. That is the whole measurement the printed
+   cards exist to produce, sitting behind a property that a stranger with the
+   URL can add categories to. An allowlist is the only correct bound: the two
+   things that are printed on physical objects, and 'unknown' for everything
+   else, which is what the old comment promised. */
+const NFC_SOURCES = ['stand', 'card'];
+const NFC_UNKNOWN = 'unknown';
+
+function nfcSource(tag) {
+  return NFC_SOURCES.includes(tag) ? tag : NFC_UNKNOWN;
+}
+
 export function trackNfcTap(tag) {
-  track('nfc_tap', { source: tag });
+  track('nfc_tap', { source: nfcSource(tag) });
 }
 
 export function trackNfcAction(tag, choice) {
-  track('nfc_tap_action', { source: tag, action: choice });
+  track('nfc_tap_action', { source: nfcSource(tag), action: choice });
+}
+
+/* THE TWO EVENTS THAT BELONG TO A ROUTE, NOT TO A REQUEST
+   index.js is the caller, for the same reason TapPage is the caller above:
+   this file is the only place a capture may appear. It reaches them through a
+   dynamic import after the window has loaded, so the REST client stays out of
+   the entry chunk and never competes with the chunk a visitor is waiting on.
+
+   invite_link_opened is the hole in the middle of the funnel. An invite link
+   is the one way Flock reaches somebody who has never heard of it, five have
+   been created, and until now nothing recorded whether a single one was ever
+   opened: created and joined were both instrumented, with the step between
+   them dark. The token is not a property and never can be. `complete` is
+   whether the path had anything after /i/ at all, which separates a link that
+   got truncated in a group chat from a real invite that somebody opened.
+
+   app_opened is how "did anyone come back" gets answered. $pageview cannot do
+   it: it fires on the marketing site too, and it cannot say whether the person
+   who opened the app was signed in. This one is capped at one per boot. */
+export function trackInviteLinkOpened(complete) {
+  track('invite_link_opened', { complete: !!complete });
+}
+
+export function trackAppOpened(shell) {
+  track('app_opened', { shell: shell === 'native' ? 'native' : 'web', signed_in: isLoggedIn() });
 }
 
 export { getToken, BASE_URL };
