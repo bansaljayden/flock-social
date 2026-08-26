@@ -45,7 +45,7 @@ from pathlib import Path
 
 import requests
 
-VERSION = '1.1.0'
+VERSION = '1.2.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -167,6 +167,20 @@ MAX_BACKOFF_SECONDS = 900
 # eventually, so re-provisioning a key never needs a site visit.
 AUTH_BACKOFF_START = 120
 AUTH_BACKOFF_MAX = 1800
+# 429 is not an outage. It means the backend is spacing out rows that would
+# move the venue's live figure (MIN_LIVE_GAP_SECONDS in routes/sensors.js), and
+# the right answer is a short pause, not the network backoff. Answering it with
+# the network backoff is what stopped a device catching up after an outage; the
+# whole story is in Pusher.flush.
+RATE_LIMIT_STATUS = 429
+RATE_LIMIT_RETRY_MIN = 2.0
+
+# A sensor that stops answering must not keep reporting the last number it read.
+# thermal_loop reads every 2s and noise_loop every 5s, so these are generous
+# multiples: a handful of failed reads never zeroes a working signal, but a bus
+# that has locked up stops being reported as a live crowd.
+THERMAL_STALE_AFTER = 90
+NOISE_STALE_AFTER = 60
 
 # Any wall-clock time before this means NTP has not run yet (a Pi has no
 # real-time clock, so it boots somewhere in the past).
@@ -245,11 +259,46 @@ _lock = threading.Lock()
 _state = {
     'ir_count': 0,                          # Doorway crossings since last snapshot
     'thermal': 0,                           # Latest snapshot
+    'thermal_at': None,                     # Monotonic mark of the last GOOD read
     'noise_db': 0.0,                        # Rolling 30s average
+    'noise_at': None,                       # Monotonic mark of the last GOOD read
     'noise_window': deque(maxlen=6),        # 6 samples x 5s = 30s
     'last_push_history': deque(maxlen=12),  # For the optional display chart
 }
 _stop = threading.Event()
+
+
+def _fresh(value, taken_at, max_age, name):
+    """Return a latched reading only while it is still current, else 0.
+
+    `thermal` and `noise_db` are the last value their loop managed to read and
+    nothing ever cleared them. A sensor that answered fine at 9pm and whose I2C
+    bus locked up at 11pm therefore went on reporting 11pm's headcount every 30
+    seconds until someone power-cycled the Pi: an ordinary hardware failure,
+    indistinguishable at the backend from a live reading, showing a packed room
+    on the venue card hours after the room emptied. Nothing downstream could
+    catch it either, because the rows kept arriving with fresh timestamps.
+
+    Reporting 0 is the same honest degradation the device already applies to a
+    sensor that fails at startup ("will report 0 headcount"). The IR beam has
+    never had this problem: its counter resets into every payload, so a dead
+    beam reports 0 by construction.
+    """
+    if taken_at is not None and time.monotonic() - taken_at <= max_age:
+        return value
+    if value:
+        log_throttled(f'stale_{name}', logging.WARNING,
+                      f'{name} has not read successfully for over {max_age}s. '
+                      f'Reporting 0 rather than the last value it returned ({value}).')
+    return 0
+
+
+def pi_model():
+    """The board this is running on, or '' off a Pi. Never raises."""
+    try:
+        return Path('/proc/device-tree/model').read_text().strip('\x00').strip()
+    except Exception:
+        return ''
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +332,18 @@ def init_ir():
         return True
     except Exception as e:
         logger.error(f'IR init failed (will report 0 crossings): {e}')
+        # The Pi 5 moved GPIO behind the RP1 southbridge and the original
+        # RPi.GPIO cannot drive it at all, so on the board this project's own
+        # demo-unit build plan specifies, the doorway counter fails at startup
+        # with a message about a peripheral base address that tells an installer
+        # nothing. Name the fix instead. `rpi-lgpio` provides the same RPi.GPIO
+        # API on top of lgpio and needs no code change here.
+        model = pi_model()
+        if model.startswith('Raspberry Pi 5'):
+            logger.error(f'This is a "{model}". RPi.GPIO does not support Pi 5 GPIO. '
+                         'Install the drop-in replacement instead: '
+                         'sudo pip3 install --break-system-packages rpi-lgpio '
+                         '(uninstall RPi.GPIO first, they cannot both be present).')
         return False
 
 
@@ -377,6 +438,7 @@ def thermal_loop():
             n = count_thermal_clusters(frame)
             with _lock:
                 _state['thermal'] = max(0, min(MAX_THERMAL, int(n)))
+                _state['thermal_at'] = time.monotonic()
         except Exception as e:
             log_throttled('thermal_read', logging.WARNING, f'Thermal read error: {e}')
         _stop.wait(2)
@@ -438,6 +500,7 @@ def noise_loop():
                 with _lock:
                     _state['noise_window'].append(db)
                     _state['noise_db'] = sum(_state['noise_window']) / len(_state['noise_window'])
+                    _state['noise_at'] = time.monotonic()
         except Exception as e:
             log_throttled('noise_read', logging.WARNING, f'Noise read error: {e}')
         _stop.wait(5)
@@ -627,20 +690,53 @@ def _post(payload):
         return 0, str(e)[:200]
 
 
+def _retry_after_seconds(body):
+    """How long the backend asked us to wait, if it said.
+
+    Read out of the JSON body rather than the header so the transport shape
+    here stays a plain (status, body) pair. routes/sensors.js sends both.
+    """
+    try:
+        data = json.loads(body)
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    value = data.get('retry_after_seconds')
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if value <= 0 or value > 3600:
+        return None
+    return float(value)
+
+
 def snapshot():
     """Take a reading and hand its IR crossings to exactly one payload.
 
     The counter resets here, not on a successful POST, so a payload waiting in
     the buffer can never have its crossings counted a second time by the next
     snapshot — the backend sums ir_beam_count across payloads.
+
+    The other two signals are latched values, so each is checked for freshness
+    before it is sent. See _fresh().
     """
     with _lock:
-        payload = {
-            'ir_beam_count': int(_state['ir_count']),
-            'thermal_headcount': int(_state['thermal']),
-            'noise_db': round(float(_state['noise_db']), 2),
-        }
+        ir = int(_state['ir_count'])
+        thermal = int(_state['thermal'])
+        thermal_at = _state['thermal_at']
+        noise = float(_state['noise_db'])
+        noise_at = _state['noise_at']
         _state['ir_count'] = 0
+
+    # Outside the lock: _fresh may write a log line, and the sensor threads
+    # should never be blocked behind a disk write.
+    payload = {
+        'ir_beam_count': ir,
+        'thermal_headcount': int(_fresh(thermal, thermal_at, THERMAL_STALE_AFTER,
+                                        'Thermal headcount')),
+        'noise_db': round(float(_fresh(noise, noise_at, NOISE_STALE_AFTER,
+                                       'Noise level')), 2),
+    }
 
     device_id = CONFIG.get('SENSOR_DEVICE_ID', '').strip()
     if device_id:
@@ -677,7 +773,22 @@ class Pusher:
     def __init__(self):
         self.failures = 0
         self.auth_failures = 0
+        self.rate_limits = 0
         self.next_attempt = 0.0  # monotonic
+
+    def _schedule_rate_limit_retry(self, retry_after=None):
+        """Wait the short interval a 429 actually calls for.
+
+        Bounded at both ends on purpose. The floor is the backend's own spacing
+        rule, so this can never become a hammer. The ceiling is one push
+        interval, so a device being told to slow down never ends up slower than
+        a device that was never told anything.
+        """
+        self.rate_limits = min(self.rate_limits + 1, 20)
+        base = RATE_LIMIT_RETRY_MIN if retry_after is None else max(RATE_LIMIT_RETRY_MIN, retry_after)
+        delay = min(base * (2 ** (self.rate_limits - 1)), float(PUSH_INTERVAL))
+        delay *= random.uniform(0.85, 1.15)
+        self.next_attempt = time.monotonic() + delay
 
     def _schedule_retry(self, auth_error=False):
         # The counters are capped as well as the delay: a device that has been
@@ -699,6 +810,7 @@ class Pusher:
             logger.info('Backend reachable again')
         self.failures = 0
         self.auth_failures = 0
+        self.rate_limits = 0
         self.next_attempt = 0.0
 
     def flush(self):
@@ -739,11 +851,40 @@ class Pusher:
                 handled += 1
                 continue
 
+            if code == RATE_LIMIT_STATUS:
+                # NOT an outage, and treating it as one is what stopped a device
+                # ever catching up after one.
+                #
+                # The backend rate-limits rows that would move the venue's live
+                # figure to one every MIN_LIVE_GAP_SECONDS, and its own note says
+                # this costs "about a minute of extra drain". That arithmetic
+                # assumed the device would wait about two seconds. It did not: a
+                # 429 landed in the generic retryable branch below and bought the
+                # network backoff, which escalates to fifteen minutes. So a Pi
+                # draining a buffer delivered a handful of readings, hit the
+                # first row inside the live window, and slept, while taking two
+                # new readings a minute. Past a backlog of about fifteen minutes
+                # the queue took in more than it could deliver, drifted until it
+                # hit the 240-entry cap, and started dropping readings, and the
+                # venue's Live Occupancy card never came back without someone
+                # power-cycling the Pi. That is the one failure this whole file
+                # is written to make impossible.
+                if delivered:
+                    self._succeed()
+                log_throttled('rate_limited', logging.INFO,
+                              f'Backend asked for slower delivery ({delivered} delivered '
+                              f'this cycle, {len(_pending)} still queued): {body}',
+                              every_seconds=300)
+                self._schedule_rate_limit_retry(_retry_after_seconds(body))
+                return False
+
             if code == REFUSED_LOCALLY or code in CONFIG_ERROR_STATUSES:
                 # The device is misconfigured, not the reading. Keep the queue:
                 # once someone fixes the key or the URL, everything taken in the
                 # meantime still delivers. Back off hard so a wrong key is never
                 # a flood, but keep retrying so a fix never needs a site visit.
+                if delivered:
+                    self._succeed()
                 log_throttled('config_error', logging.ERROR,
                               f'Backend refused this device (status {code}): {body}. '
                               'Check FLOCK_API_KEY / FLOCK_API_URL and that the device is active.',
@@ -751,8 +892,18 @@ class Pusher:
                 self._schedule_retry(auth_error=True)
                 return False
 
-            # 429, 5xx, or no reply at all: retryable. Leave it at the head of
-            # the queue and try again later.
+            # 5xx, or no reply at all: retryable. Leave it at the head of the
+            # queue and try again later.
+            #
+            # Readings that DID go out this cycle reset the backoff first. The
+            # exponent is meant to measure how long the backend has been
+            # unreachable, and a cycle that delivered eleven readings and failed
+            # on the twelfth is not evidence of that. Without this the delay
+            # climbed on every cycle that ended in any failure, however much
+            # work the cycle had done, until a device making steady progress was
+            # waiting the fifteen-minute cap between attempts.
+            if delivered:
+                self._succeed()
             log_throttled('push_fail', logging.ERROR,
                           f'Delivery failed (status {code}): {body}', every_seconds=120)
             self._schedule_retry()
@@ -823,8 +974,17 @@ def display_loop():
             with _lock:
                 ir = int(_state['ir_count'])
                 therm = int(_state['thermal'])
+                therm_at = _state['thermal_at']
                 db = float(_state['noise_db'])
+                noise_at = _state['noise_at']
                 history = list(_state['last_push_history'])
+
+            # Match what is actually being sent. A frozen number on the screen
+            # while the backend is being sent 0 is the worst of both, and on the
+            # demo unit it is a number a judge is looking at.
+            now_mono = time.monotonic()
+            therm_live = therm_at is not None and now_mono - therm_at <= THERMAL_STALE_AFTER
+            noise_live = noise_at is not None and now_mono - noise_at <= NOISE_STALE_AFTER
 
             screen.fill(NAVY)
             top = pygame.Surface((800, 50)); top.fill((20, 28, 40)); screen.blit(top, (0, 0))
@@ -839,13 +999,22 @@ def display_loop():
             screen.blit(font_sm.render('since last update', True, (110, 120, 130)), (20, 205))
 
             screen.blit(font_sm.render('In view now', True, (160, 170, 180)), (col_w + 20, 80))
-            screen.blit(font_big.render(f'~{therm}', True, CREAM), (col_w + 20, 120))
+            screen.blit(font_big.render(f'~{therm}' if therm_live else '--', True, CREAM),
+                        (col_w + 20, 120))
+            if not therm_live:
+                screen.blit(font_sm.render('thermal offline', True, RED), (col_w + 20, 205))
 
             screen.blit(font_sm.render('Noise', True, (160, 170, 180)), (col_w * 2 + 20, 80))
-            label = 'Quiet' if db < 50 else 'Moderate' if db < 70 else 'Lively' if db < 85 else 'Loud'
-            color = GREEN if db < 50 else AMBER if db < 70 else ORANGE if db < 85 else RED
-            screen.blit(font_med.render(label, True, color), (col_w * 2 + 20, 120))
-            screen.blit(font_sm.render(f'level {int(db)}', True, (160, 170, 180)), (col_w * 2 + 20, 175))
+            if noise_live:
+                label = 'Quiet' if db < 50 else 'Moderate' if db < 70 else 'Lively' if db < 85 else 'Loud'
+                color = GREEN if db < 50 else AMBER if db < 70 else ORANGE if db < 85 else RED
+                # "level", never "dB": nobody has calibrated this against a sound
+                # level meter, so it is a relative loudness index. See README.
+                screen.blit(font_med.render(label, True, color), (col_w * 2 + 20, 120))
+                screen.blit(font_sm.render(f'level {int(db)}', True, (160, 170, 180)), (col_w * 2 + 20, 175))
+            else:
+                screen.blit(font_med.render('--', True, CREAM), (col_w * 2 + 20, 120))
+                screen.blit(font_sm.render('mic offline', True, RED), (col_w * 2 + 20, 175))
 
             if history:
                 base_y = 460
@@ -862,7 +1031,12 @@ def display_loop():
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return
-            _stop.wait(2)
+            # A quarter second, not two. The demo unit's one hero moment is a
+            # hand through the IR slot and the counter ticking, and a two-second
+            # redraw put up to two seconds between the hand and the tick, which
+            # in front of judges reads as the thing not working. Redrawing four
+            # times a second costs nothing on a Pi that is otherwise idle.
+            _stop.wait(0.25)
     except Exception as e:
         logger.error(f'Display loop stopped (continuing headless): {e}')
 
@@ -877,6 +1051,7 @@ def selftest():
     Exits 0 only if the device can actually deliver a reading.
     """
     print(f'flock-sensor {VERSION} self test')
+    print(f'  board            : {pi_model() or "not a Raspberry Pi"}')
     print(f'  config file      : {CONFIG_PATH} ({"found" if CONFIG_PATH.exists() else "MISSING"})')
     print(f'  device id        : {CONFIG.get("SENSOR_DEVICE_ID") or "(not set)"}')
     print(f'  api url          : {api_url()}')

@@ -383,7 +383,20 @@ test('source pin: the ingest path touches no user table and no ML table; the onl
   const checkinQuery = source.slice(source.indexOf('SELECT COUNT(DISTINCT user_id)'), source.indexOf('FROM venue_checkins'));
   const inAggregate = (checkinQuery.match(/user_id/g) || []).length
     + (source.match(/WHERE venue_place_id = \$1 AND user_id IS NOT NULL/g) || []).length
-    + (source.match(/\/\/[^\n]*user_id/g) || []).length; // comments explaining the aggregate
+    + (source.match(/\/\/[^\n]*user_id/g) || []).length // comments explaining the aggregate
+    // The owner gate on GET /:placeId/status. This is the one other place a
+    // user may be named in this file, and it is an authorization lookup that
+    // decides whether the CALLER may see fleet health. It reads venue_profiles
+    // and nothing else, it is on the read side, and no part of its result is
+    // stored on a reading or returned with one. The assertion below pins that.
+    + (source.match(/SELECT 1 FROM venue_profiles WHERE user_id = \$1 AND google_place_id = \$2/g) || []).length;
   assert.strictEqual(userIdMentions.length, inAggregate,
-    'user_id appears outside the venue_checkins aggregate and its comment');
+    'user_id appears outside the venue_checkins aggregate, its comment, and the status owner gate');
+
+  // Whatever the read side does with a user, no reading ever carries one. Both
+  // sides of the sensor table are checked, not just the write.
+  for (const statement of source.match(/(INSERT INTO|FROM) venue_sensor_data[\s\S]{0,400}?`/g) || []) {
+    assert.ok(!/user_id|req\.user/.test(statement),
+      `a user reference reached a venue_sensor_data statement: ${statement.slice(0, 120)}`);
+  }
 });
