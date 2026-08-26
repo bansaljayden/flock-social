@@ -1102,7 +1102,22 @@ describe('the admin Research tab never prints an unmeasured zero', () => {
     expect(appSource).toMatch(/setResearchError\(true\);/);
     // And it clears the stale numbers rather than leaving them under a
     // "Live data" label.
-    expect(appSource).toMatch(/setResearchError\(true\);[\s\S]{0,80}|setResearchLiveData\(null\);[\s\S]{0,80}setResearchError\(true\)/);
+    //
+    // This assertion could not fail. Alternation binds at the top level, so the
+    // pattern read as "setResearchError(true); followed by up to 80 characters"
+    // OR the intended clause, and the line above already proves the first half
+    // is in the file. Every run matched on that first alternative and the
+    // property named in the comment was never tested at all: deleting
+    // setResearchLiveData(null) shipped the stale numbers under a "Live data"
+    // label with this test green.
+    //
+    // Both alternatives now name BOTH calls, so neither can be satisfied by one
+    // of them, and the two orderings are accepted because React batches these
+    // and writing the flag first is the same behaviour. What is pinned is the
+    // thing that matters: the clear and the flag travel together.
+    expect(appSource).toMatch(
+      /setResearchLiveData\(null\);[\s\S]{0,160}?setResearchError\(true\)|setResearchError\(true\);[\s\S]{0,160}?setResearchLiveData\(null\)/
+    );
   });
 
   test('nothing renders the cards until something was actually read', () => {
