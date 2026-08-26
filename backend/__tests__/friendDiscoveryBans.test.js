@@ -284,3 +284,33 @@ test('NOT_BANNED_SQL is the one definition, and it reads the column it claims to
   assert.match(SOURCE, /const NOT_BANNED_SQL = 'COALESCE\(u\.is_banned, FALSE\) = FALSE'/,
     'the ban predicate was rewritten or copied; there must be exactly one of it');
 });
+
+// ---------------------------------------------------------------------------
+// 4. routes/users.js is the same door, and it was the one actually wired up
+// ---------------------------------------------------------------------------
+// The search audit closed friends.js and left this open, which is the half that
+// matters more: GET /api/users/search is the endpoint the Add Friends screen,
+// the Connect panel, the new-DM sheet and the Create Flock invite picker all
+// call. friends.js filtering banned rows while the route every people-search
+// box in the product uses did not is the ban reaching the quieter surface and
+// missing the loud one.
+//
+// Asserted against the source for the reason stated above: a fixture that
+// returns rows regardless of the WHERE clause cannot prove the WHERE clause is
+// there, and a test that survives deleting the predicate pins nothing.
+const USERS_SOURCE = fs.readFileSync(path.join(__dirname, '..', 'routes', 'users.js'), 'utf8');
+
+const USER_LISTS = [
+  ['GET /api/users/search, every people-search box in the app', 'WHERE name ILIKE $1 AND id != $2', 'COALESCE(is_banned, FALSE) = FALSE'],
+  ['GET /api/users/suggested, the people-you-may-know row', "WHERE fm1.user_id = $1 AND fm1.status = 'accepted'", 'COALESCE(u.is_banned, FALSE) = FALSE'],
+];
+
+test('the user search routes filter banned accounts too', () => {
+  for (const [what, anchor, predicate] of USER_LISTS) {
+    const at = USERS_SOURCE.indexOf(anchor);
+    assert.notStrictEqual(at, -1, `${what}: the anchor "${anchor}" is gone. Retarget this test`);
+    const window = USERS_SOURCE.slice(at, at + 260);
+    assert.ok(window.includes(predicate),
+      `${what} does not filter banned accounts. A removed account was still being offered by name, with a face, to anyone searching.`);
+  }
+});
