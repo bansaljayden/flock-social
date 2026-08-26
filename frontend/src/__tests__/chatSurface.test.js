@@ -308,3 +308,87 @@ describe('layout', () => {
     expect(conversationStamp('not a date')).toBe('');
   });
 });
+
+// ---------------------------------------------------------------------------
+// The send path itself.
+//
+// Measured 2026-08-26 by hand-mutating App.js one defect at a time and running
+// all 1,666 assertions: making the socket's return value stop picking the
+// transport, never marking a lost echo failed, swallowing a refused send,
+// letting an empty composer send, and adopting any id the reply carried ALL
+// stayed green. That is the most-used control in the product with no test
+// under it at all.
+//
+// These are source pins, and pins are worth less than the executed helpers
+// above: transmitFlockMessage is a useCallback closed over eight refs inside a
+// 20,000-line component, so it cannot be lifted out the way isServerId and
+// prependOlder were, and reaching it for real means rendering the whole app.
+// A pin cannot prove the property. It can refuse the specific edit that
+// removes it, which is what each one below was verified to do.
+// ---------------------------------------------------------------------------
+describe('a message that leaves the composer arrives, fails, or says which', () => {
+  const transmit = (() => {
+    const start = appSource.indexOf('const transmitFlockMessage');
+    expect(start).toBeGreaterThan(-1);
+    const end = appSource.indexOf('const retryFailedMessage', start);
+    expect(end).toBeGreaterThan(start);
+    return appSource.slice(start, end);
+  })();
+
+  test('the socket EMIT decides the transport, not the connected flag beside it', () => {
+    // `connected` and the emit are two reads of the same socket a moment
+    // apart. A drop in between answers false from the emit while `connected`
+    // still says true, and nothing reached the wire. Gating on the flag alone
+    // loses that message silently; gating on the emit's return value is what
+    // lets the HTTP branch pick it up without ever double-posting, because a
+    // true return means the write already happened.
+    expect(transmit).toMatch(
+      /const sentOverSocket = !!sock\?\.connected\s*\r?\n\s*&& socketSendMessage\(/
+    );
+  });
+
+  test('an echo that never arrives turns the bubble failed, on a timer a person will wait out', () => {
+    expect(transmit).toMatch(/pendingEchoRef\.current\.delete\(tempId\);/);
+    expect(transmit).toMatch(/\{ \.\.\.m, pending: false, failed: true \}/);
+    // Eight seconds. Long enough not to fire on a slow echo, short enough that
+    // the retry is still the same thought. A number large enough to outlive
+    // the session is the same defect as no timer at all.
+    const [, ms] = transmit.match(/\}, (\d+)\);\s*\r?\n\s*pendingEchoRef\.current\.set/) || [];
+    expect(Number(ms)).toBeGreaterThan(2000);
+    expect(Number(ms)).toBeLessThanOrEqual(15000);
+  });
+
+  test('the HTTP branch says out loud that a send was refused', () => {
+    // Moderation refusals and network errors both land here. Silence is what
+    // made a rejected photo look like it had gone through.
+    const httpCatch = transmit.slice(transmit.indexOf('} catch (err) {'));
+    expect(httpCatch).toMatch(/showToast\(err\?\.message \|\|/);
+    expect(httpCatch).toMatch(/\{ \.\.\.m, pending: false, failed: true \}/);
+  });
+
+  test('a temp bubble only adopts an id the server could have issued', () => {
+    // tempId is Date.now(), which is above int4, and mergeHistory compares ids
+    // numerically. A string id, a 0, or a malformed body adopted here survives
+    // every reload as a duplicate.
+    expect(transmit).toMatch(/\.\.\.\(isServerId\(savedId\) \? \{ id: savedId \} : \{\}\)/);
+  });
+
+  test('an empty composer sends nothing', () => {
+    const send = appSource.slice(appSource.indexOf('const sendChatMessage = useCallback'));
+    const body = send.slice(0, send.indexOf('const getCategoryColor'));
+    expect(body).toMatch(/if \(currentInput\.trim\(\)\) \{/);
+    // And the typing latch is cleared on the way out, or the NEXT message this
+    // person types shows no typing indicator to anyone in the flock.
+    expect(body).toMatch(/typingActiveRef\.current = false;/);
+  });
+
+  test('a retry carries every attachment the bubble was holding', () => {
+    const retry = appSource.slice(appSource.indexOf('const retryFailedMessage = useCallback'));
+    const body = retry.slice(0, retry.indexOf('}, [transmitFlockMessage])'));
+    // While venue_data was missing from this list, retrying a venue card
+    // re-sent it as a plain sentence with no card under it.
+    expect(body).toMatch(/message_type: failedMsg\.message_type/);
+    expect(body).toMatch(/image_url: failedMsg\.image \|\| null/);
+    expect(body).toMatch(/venue_data: failedMsg\.venue_data \|\| null/);
+  });
+});
