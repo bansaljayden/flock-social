@@ -15,7 +15,7 @@ import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
-import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onGuestRsvp } from './services/socket';
+import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onGuestRsvp, onSafetyAlert } from './services/socket';
 import { requestNotificationPermission, syncPushRegistration, readNotificationPermission, onForegroundMessage, getNotificationStatus, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
@@ -8127,6 +8127,35 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       })));
     });
     return () => { unsubAdd(); unsubRemove(); };
+  }, []);
+
+
+  /* SOMEBODY ON YOUR PLAN PRESSED SOS.
+     This interrupts, and that is the whole point of it. Every other
+     notification in this app is content you can get to later; this one is a
+     person you are physically near asking for help, and burying it in a toast
+     that fades after four seconds would be the wrong call on the one screen
+     where being annoying is correct.
+     Kept in state rather than shown and forgotten, so it survives a tab change
+     and has to be dismissed deliberately. Only the most recent is held: two
+     alerts in one night is not a list to page through. */
+  const [safetyAlert, setSafetyAlert] = useState(null);
+
+  useEffect(() => {
+    const unsub = onSafetyAlert((data) => {
+      if (!data || !data.fromUserId) return;
+      setSafetyAlert({
+        userId: String(data.fromUserId),
+        name: String(data.fromUserName || 'Someone on your plan').slice(0, 80),
+        // Present only when the sender chose to share, which is why this reads
+        // the keys rather than defaulting them: a null coordinate rendered as a
+        // map pin would put somebody at the equator.
+        lat: Number.isFinite(data.latitude) ? data.latitude : null,
+        lng: Number.isFinite(data.longitude) ? data.longitude : null,
+        at: data.at || new Date().toISOString(),
+      });
+    });
+    return unsub;
   }, []);
 
   // Listen for flock deleted
@@ -20771,6 +20800,37 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         );
       })()}
 
+      {/* SOMEBODY ON YOUR PLAN PRESSED SOS.
+          Rendered above the SOS sheet and outside every screen, because it has
+          to arrive wherever the person happens to be standing in the app. It
+          does not auto-dismiss: a toast that fades is the wrong instrument for
+          the one message here that somebody has to act on.
+          It states only what the server actually sent. When no coordinates came
+          through, it says the location was not shared rather than leaving a
+          space where a map would be, because "no map" and "no location" look
+          identical and only one of them is true. */}
+      {safetyAlert && (
+        <div style={{ position: 'absolute', inset: 0, zIndex: 220, backgroundColor: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+          <div role="alertdialog" aria-modal="true" aria-label={`${safetyAlert.name} needs help`} style={{ width: '100%', maxWidth: '340px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.2)', border: '2px solid #b91c1c' }}>
+            <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>{safetyAlert.name} needs help</h2>
+            <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>
+              They pressed SOS on a plan you are both on. Their trusted contacts have already been emailed.
+              {safetyAlert.lat === null ? ' They did not share their location.' : ''}
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <a className="hit44" href="tel:911" style={{ minHeight: '48px', borderRadius: '10px', backgroundColor: '#b91c1c', color: '#ffffff', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', textDecoration: 'none' }}>
+                {Icons.phone('currentColor', 18)} Call 911
+              </a>
+              {safetyAlert.lat !== null && (
+                <a className="hit44" href={`https://maps.google.com/?q=${safetyAlert.lat},${safetyAlert.lng}`} target="_blank" rel="noreferrer" style={{ minHeight: '44px', borderRadius: '10px', border: '1px solid var(--border-mid)', color: 'var(--text-primary)', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', textDecoration: 'none' }}>
+                  {Icons.mapPin('currentColor', 16)} See where they are
+                </a>
+              )}
+              <button className="hit44" onClick={() => setSafetyAlert(null)} style={{ minHeight: '44px', borderRadius: '10px', border: 'none', background: 'none', color: 'var(--text-tertiary)', fontWeight: '600', cursor: 'pointer' }}>Dismiss</button>
+            </div>
+          </div>
+        </div>
+      )}
       {SOSModal()}
       {showAttendanceModal && (
         <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>

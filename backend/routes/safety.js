@@ -54,6 +54,10 @@ const { stripHtml } = require('../utils/sanitize');
 const emailService = require('../services/emailService');
 const { escapeHtml, isMailableAddress, maskAddress } = emailService;
 const { suppressionReason, EMERGENCY_CATEGORY } = require('../services/emailSuppression');
+// The one push this file sends. See alertFlockMembers: pushAlways rather than
+// pushIfOffline, because being in the app is not a reason to stay quiet about
+// somebody pressing SOS on the plan you are both on.
+const { pushAlways } = require('../services/pushHelper');
 
 // Names are capped shorter than a whole subject line because a subject reads
 // "🚨 Emergency Alert from {name}" and the words that matter are at the front.
@@ -799,6 +803,102 @@ function agoPhrase(ms) {
 //    follows it, which is why that UPDATE carries a .catch — it runs after
 //    every email is already out, and its failure is not the user's to hear
 //    about.
+
+// ---------------------------------------------------------------------------
+// TELLING THE PEOPLE YOU ARE ACTUALLY OUT WITH
+// ---------------------------------------------------------------------------
+// Everything above this reaches TRUSTED CONTACTS, who are external people with
+// no Flock account, by email. That is correct for them and it was the whole of
+// what an SOS did. Nobody inside the app learned anything: this route sent no
+// push and emitted nothing over a socket, so the four people standing in the
+// same room as you, on the plan you are both on, found out when you told them.
+//
+// The nearest help is the nearest person. A trusted contact is often a parent
+// in another city reading an email; the flock is who can walk across a bar.
+//
+// WHO GETS IT, AND WHY IT IS THIS NARROW. Accepted members of a CONFIRMED flock
+// whose event_time sits inside a twelve hour window either side of now. Not
+// every flock the person has ever joined, not a plan that is still being voted
+// on, and not next Saturday. "Confirmed and happening around now" is the
+// closest thing the schema has to "the people you are with", and the cost of
+// widening it is somebody's phone going off about a night they are not at.
+//
+// The sender is excluded, and so is anyone in a block relationship with them.
+// The push carries fromUserId so services/pushHelper.js can make that second
+// check itself: canNotify refuses a push whose actor is blocked, and a payload
+// with no actor is not checked at all, which is the defect the batched RSVP
+// notification had.
+//
+// LOCATION IS INCLUDED WHEN THE SENDER SHARED IT, on exactly the same terms the
+// contact email uses. Somebody who pressed this wants to be found, and a
+// notification that says only "Ava needs help" to a person fifteen feet away is
+// a worse outcome than the one it replaced.
+//
+// Never awaited by the response and never able to fail it. The alert has
+// already been recorded and the emails have already gone out; the flock leg is
+// additional reach, and a socket or a push failing must not turn a delivered
+// SOS into a 500 that invites a frightened person to press it again.
+const SOS_FLOCK_WINDOW_HOURS = 12;
+
+async function alertFlockMembers(io, user, coords) {
+  const members = await pool.query(
+    `SELECT DISTINCT fm.user_id
+       FROM flock_members fm
+       JOIN flocks f ON f.id = fm.flock_id
+       JOIN flock_members me
+         ON me.flock_id = f.id AND me.user_id = $1 AND me.status = 'accepted'
+      WHERE fm.status = 'accepted'
+        AND fm.user_id <> $1
+        AND f.status = 'confirmed'
+        AND f.event_time IS NOT NULL
+        AND f.event_time BETWEEN NOW() - ($2::int * INTERVAL '1 hour')
+                            AND NOW() + ($2::int * INTERVAL '1 hour')
+        AND COALESCE((SELECT is_banned FROM users u WHERE u.id = fm.user_id), FALSE) = FALSE
+        AND NOT EXISTS (
+          SELECT 1 FROM user_blocks b
+          WHERE (b.blocker_id = $1 AND b.blocked_id = fm.user_id)
+             OR (b.blocker_id = fm.user_id AND b.blocked_id = $1)
+        )`,
+    [user.id, SOS_FLOCK_WINDOW_HOURS]
+  );
+
+  if (members.rows.length === 0) return { notified: 0 };
+
+  const name = String(user.name || 'Someone you are out with').slice(0, 80);
+  const title = `${name} needs help`;
+  const body = coords
+    ? 'They pressed SOS on Flock and shared their location. Open the app, then call them.'
+    : 'They pressed SOS on Flock. Open the app, then call them.';
+
+  const payload = {
+    type: 'safety_alert',
+    fromUserId: String(user.id),
+    fromUserName: name,
+    // Sent to the app as numbers, so a client can put a pin on a map without
+    // reparsing a sentence. Absent entirely when nothing was shared, rather
+    // than present and null, so a consumer cannot mistake one for the other.
+    ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
+    at: new Date().toISOString(),
+  };
+
+  for (const row of members.rows) {
+    // The socket first: somebody with the app open should see this before a
+    // notification tray can draw it.
+    if (io) io.to(`user:${row.user_id}`).emit('safety_alert', payload);
+  }
+
+  // pushAlways, not pushIfOffline. "Already looking at the app" is not a reason
+  // to stay silent about this one, and 'safety_alert' is in the set
+  // pushHelper rings through quiet hours (RINGS_THROUGH_THE_NIGHT), which was
+  // reserved for a producer that until now did not exist.
+  const results = await Promise.allSettled(
+    members.rows.map((row) => pushAlways(row.user_id, title, body, payload))
+  );
+  const notified = results.filter((r) => r.status === 'fulfilled' && r.value && !r.value.skipped).length;
+  console.log(`[Safety] SOS from user ${user.id} reached ${notified} of ${members.rows.length} flock members in the app.`);
+  return { notified };
+}
+
 router.post('/alert', authenticateAllowBanned, async (req, res) => {
   try {
     const { latitude, longitude, accuracy, includeLocation, timezone } = req.body;
@@ -1163,6 +1263,14 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
       contactsAlerted: emailsSent,
       alerts,
     });
+
+    // The flock leg, after the answer and never able to change it. Trusted
+    // contacts have been emailed above; this is the people in the room. See
+    // alertFlockMembers for who qualifies and why the set is that narrow.
+    alertFlockMembers(req.app.get('io'), req.user, coords).catch((err) => console.error(
+      `[Safety] SOS from user ${req.user.id}: the flock leg failed (${err.message}). `
+      + 'The trusted-contact emails above are unaffected and already sent.'
+    ));
   } catch (err) {
     // Round 23: this answered `500 Failed to send alert` and stopped there. It
     // is the only outcome in this route that tells a person nothing about what
@@ -1542,6 +1650,12 @@ module.exports = router;
 // See the checkin.js note: a property on the router changes nothing about the
 // mount in server.js.
 module.exports.__test = {
+  // The flock leg of an SOS. Exposed because the alternative is asserting it
+  // through a full HTTP round trip that first has to get past the advisory
+  // lock, the sixty second claim window and the email fan-out, none of which
+  // this function is about.
+  alertFlockMembers,
+  SOS_FLOCK_WINDOW_HOURS,
   readCoords,
   EMAIL_RE,
   MAX_TRUSTED_CONTACTS,
