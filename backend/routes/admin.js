@@ -1813,6 +1813,27 @@ router.get('/costs', async (req, res) => {
     () => require('../services/mlPredictor').eventBudgetStatus().globalUsed
   );
 
+  // How many crowd answers came from the MODEL rather than the rule engine.
+  // Not a cost line, and it sits here because this is the only panel that reads
+  // meters at all. The number answers a question nothing else in the product
+  // could: the model is a delta on a stored baseline, so a venue with no row in
+  // ml_venue_baselines takes the rule engine forever, and both ways to acquire
+  // a baseline are currently shut. Coverage is therefore frozen at whatever it
+  // is, and until this was counted, "whatever it is" was unknown. The card
+  // looks the same either way, nothing was logged per prediction and nothing
+  // was stored, so a product whose one differentiated claim is the crowd number
+  // could have been serving it almost entirely from the fallback without
+  // anybody being able to tell.
+  //
+  // Display only, never a gate, same rule as every meter above it. `total`
+  // counts venue-hours rather than cards, because the hourly strip scores up to
+  // 24 slots for one view. modelShare is null rather than 0 before anything has
+  // been scored, so an idle process reads as unmeasured instead of as a
+  // failure.
+  const predictionCoverage = meterOrNull(
+    () => require('../services/mlPredictor').predictionCoverage()
+  );
+
   // -- Durable ledgers --------------------------------------------------------
   // Each read is independent: one unavailable table leaves that line unmeasured
   // rather than emptying the panel.
@@ -1916,6 +1937,7 @@ router.get('/costs', async (req, res) => {
     ticketmasterCallsToday,
     nightContextCallsToday,
     crowdEventCallsToday,
+    predictionCoverage,
     digestEmailsMonth,
   });
 
