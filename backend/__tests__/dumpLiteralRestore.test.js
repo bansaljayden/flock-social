@@ -222,32 +222,70 @@ test('a text[] column restores every value a person can type into it', async () 
 });
 
 test('a jsonb column keeps JSON, and is not confused with an array column', async () => {
-  // THE DISTINCTION THE BUG TURNED ON. pg parses a jsonb column holding a JSON
-  // array into a JavaScript array, identically to how it parses a text[]
-  // column. So the JS value cannot tell you which one you have, and a
+  // THE DISTINCTION THE 2026-08-13 BUG TURNED ON. pg parses a jsonb column
+  // holding a JSON array into a JavaScript array, identically to how it parses
+  // a text[] column. So the JS value cannot tell you which one you have, and a
   // serializer that guesses from it writes Postgres array syntax into a jsonb
   // column or JSON into a text[] column. Only the COLUMN type answers it.
+  //
+  // SEEDED IN SQL AND COMPARED IN SQL, since 2026-08-26. The first version of
+  // this test started from a JavaScript value, and that shape is blind to the
+  // half of the trip that goes wrong first: whether the DRIVER'S READ can carry
+  // the value at all. It cannot, for four of the six top-level JSON forms, and
+  // the four are not exotic. See TEXT_ONLY_OIDS in scripts/dump-db.js for the
+  // measured failures; the short version is that three of them abort the whole
+  // restore and the fourth turns JSON null into SQL NULL with no error, which
+  // is the silent kind this file exists to catch.
   const cases = [
-    [[], 'an empty JSON array'],
-    [['a', 'b'], 'a JSON array of strings, the shape that collides with text[]'],
-    [[1, 2, 3], 'a JSON array of numbers'],
-    [{ tier: 'pro', seats: 4 }, 'a JSON object'],
-    [{ nested: { a: [1, { b: 'c' }] } }, 'nesting'],
-    [{ "quote'd": 'it\'s fine' }, 'single quotes, which must be doubled'],
-    [{ note: 'has "double" quotes' }, 'double quotes inside JSON'],
-    [[], 'an empty array again, after the object cases'],
+    [`'{}'`, 'an empty JSON object'],
+    [`'[]'`, 'an empty JSON array'],
+    [`'["a","b"]'`, 'a JSON array of strings, the shape that collides with text[]'],
+    [`'[1,2,3]'`, 'a JSON array of numbers'],
+    [`'{"tier":"pro","seats":4}'`, 'a JSON object'],
+    [`'{"nested":{"a":[1,{"b":"c"}]}}'`, 'nesting'],
+    [`'{"quote''d":"it''s fine"}'`, 'single quotes, which must be doubled'],
+    [`'{"note":"has \\"double\\" quotes"}'`, 'double quotes inside JSON'],
+    [`'{"a":"café 🕊"}'`, 'non-ASCII inside JSON'],
+    // The four the driver's read used to destroy. A jsonb column accepts every
+    // one of them and this schema's columns are all typed, not shaped.
+    [`'5'`, 'a top-level number, which lit wrote as bare 5 into a jsonb column'],
+    [`'-1.5e3'`, 'a top-level float'],
+    [`'true'`, 'a top-level boolean, which lit wrote as TRUE'],
+    [`'"hello"'`, 'a top-level string, which lit wrote unquoted as JSON'],
+    [`'null'`, 'a top-level JSON null, which lit turned into a SQL NULL SILENTLY'],
   ];
 
-  for (const [value, what] of cases) {
-    const { back } = await roundTrip('jsonb', value);
-    assert.deepEqual(back, value, `jsonb round trip failed for ${what}`);
+  for (const [seed, what] of cases) {
+    const r = await dumpAndRestore('jsonb', seed);
+    assert.equal(r.after, r.before, `jsonb round trip failed for ${what}: literal was ${r.literal}`);
   }
 
-  // json, not jsonb: same reasoning, and it is a distinct type OID.
-  const { back } = await roundTrip('json', { a: [1, 2], b: null });
-  assert.deepEqual(back, { a: [1, 2], b: null });
-});
+  // json, not jsonb: a distinct type OID, a distinct parser registration, and
+  // unlike jsonb it preserves the exact bytes, so a restore that reformats is
+  // visible here and nowhere else.
+  for (const [seed, what] of [
+    [`'{ "a" : [1, 2], "b" : null }'`, 'json keeps its own spacing'],
+    [`'null'`, 'a top-level json null'],
+    [`'5'`, 'a top-level json number'],
+  ]) {
+    const r = await dumpAndRestore('json', seed);
+    assert.equal(r.after, r.before, `json round trip failed for ${what}: literal was ${r.literal}`);
+  }
 
+  // AND JSON NULL IS NOT SQL NULL, stated on its own because it is the case
+  // that fails without raising anything. A dump that flattens the two answers
+  // `WHERE col IS NULL` differently after a restore than before it.
+  const jsonNull = await dumpAndRestore('jsonb', `'null'`);
+  assert.equal(jsonNull.before, 'null', 'the seed must actually be a JSON null, not a SQL NULL');
+  assert.notEqual(jsonNull.literal, 'NULL',
+    'a JSON null is being written as the SQL keyword NULL again. The column comes back SQL NULL, no '
+    + 'error is raised at any point, and nothing downstream can tell the restore changed the row.');
+
+  // An array column and a jsonb column holding the same JavaScript value still
+  // take different literals, which is the original regression in one line.
+  assert.equal(lit(['a', 'b'], '_text'), `'{"a","b"}'`);
+  assert.equal(lit(['a', 'b'], 'jsonb'), `'["a","b"]'`);
+});
 test('no literal asserts a type, because the column already has one', async () => {
   // The regression in one assertion. `::jsonb` on a value destined for a
   // text[] column is what took the 2026-08-13 backup out, and an untyped quoted
@@ -395,6 +433,16 @@ test('the remaining column types this schema holds survive the trip', async () =
 // types it actually contains is compared against the set exercised above. A
 // migration that introduces a type nobody has round-tripped fails this, which
 // is the only way the sentence stays true.
+//
+// WHAT IT STILL CANNOT SEE, and the reason has to be written down because the
+// list below looks complete. This measures TYPES, not VALUES. `jsonb` was in
+// the list from the day it was written, and four of the six top-level JSON
+// forms did not round-trip at all: three aborted the restore and one turned a
+// JSON null into a SQL NULL without raising anything. A type is covered here
+// the moment ONE value of it survives, so a covered type can still hold a value
+// that does not. Nothing automatic closes that; the only defence is that each
+// case above chooses its values by asking what the column can actually hold
+// rather than what a caller happens to write today.
 const ROUND_TRIPPED = new Set([
   '_text', 'bool', 'bytea', 'date', 'float4', 'float8', 'int2', 'int4', 'int8',
   'json', 'jsonb', 'numeric', 'text', 'timestamp', 'timestamptz', 'uuid', 'varchar',
