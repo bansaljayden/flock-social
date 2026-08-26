@@ -221,3 +221,11 @@ flock-walkthrough-*.mp4
 # silently reroute every developer's dev server at a port that is not running.
 frontend/src/setupProxy.js
 AUDIT-ROTATION.md
+
+# Local end to end harness: the throwaway build, its browsers and its results.
+# tools/e2e/*.js and the config ARE tracked; these are not.
+tools/e2e/build/
+tools/e2e/node_modules/
+tools/e2e/test-results/
+tools/e2e/results.json
+tools/e2e/playwright-report/
