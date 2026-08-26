@@ -41,7 +41,12 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
       await resendVerificationEmail();
       setResendNote('Sent. Check your inbox, and your spam folder.');
     } catch (err) {
-      if (err?.status === 429) setResendNote('That is a lot of emails. Try again in a few minutes.');
+      // The server words this refusal with the real window (backend
+      // utils/retryAfter.js: the resend budget's longest leg is a day, not "a
+      // few minutes"), and api.js carries that sentence as err.message. Render
+      // it rather than a hardcoded guess; fall back to generic copy only when
+      // the body carried no sentence.
+      if (err?.status === 429) setResendNote(err?.message || 'That is a lot of emails. Try again later.');
       else setResendNote(err?.message || 'Could not send it just now. Try again shortly.');
     }
   };
