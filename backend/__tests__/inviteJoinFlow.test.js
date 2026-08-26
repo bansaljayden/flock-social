@@ -108,6 +108,13 @@ test.beforeEach(() => {
   guest.newGuestLog.clear();
   guest.guestActionLog.clear();
   guest.joinLog.clear();
+  // A link join now folds into the SAME per-flock RSVP window an invite
+  // acceptance uses (routes/flocks.js claimRsvpPush), so that window is
+  // process-wide state this file shares with routes/flocks.js. Without this
+  // reset the first successful join in the file opens the window and every
+  // later one in the same flock is batched instead of pushed, which is correct
+  // behaviour and would still fail the assertions below for the wrong reason.
+  require('../routes/flocks').__resetBudgets();
 });
 
 function on(re, fn) { handlers.push([re, fn]); }
@@ -412,6 +419,45 @@ test('the flock hears about it exactly the way it hears about an invite acceptan
   assert.strictEqual(pushes[0].userId, 9);
   assert.match(pushes[0].title, /Sam Rivera is going!/);
   assert.strictEqual(pushes[0].data.type, 'flock_rsvp');
+});
+
+// A LINK IS HOW A WHOLE GROUP ARRIVES AT ONCE, which made this the likeliest
+// place in the app to produce the burst routes/flocks.js built the RSVP digest
+// to stop. This route pushed directly, once per joiner, and every one of those
+// notifications shares an apns-collapse-id, so all but the last were destroyed
+// on the host's lock screen. The host was interrupted N times to learn one
+// thing. It now folds into the same per-flock window an invite acceptance uses.
+test('a second person through the same link is batched, not a second interruption', async () => {
+  const scriptJoinable = (user) => {
+    handlers = [];
+    scriptViewer(user);
+    on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
+    on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [] }));
+    on(/SELECT COUNT\(\*\)::int AS n FROM flock_members/, () => ({ rows: [{ n: 4 }] }));
+    on(/INSERT INTO flock_members/, () => ({ rows: [{ id: 501 }], rowCount: 1 }));
+    scriptAnnounce();
+  };
+
+  scriptJoinable({});
+  await join(VIEWER);
+  await new Promise((r) => setTimeout(r, 30));
+  assert.strictEqual(pushes.length, 1, 'the first arrival is still immediate; that is the reward of hosting');
+
+  pushes = [];
+  const second = { ...VIEWER, id: 8, name: 'Jo Kim', email: 'jo@example.com' };
+  scriptJoinable(second);
+  await join(second);
+  await new Promise((r) => setTimeout(r, 30));
+  assert.strictEqual(pushes.length, 0, 'the second arrival waits for the window instead of buzzing the host again');
+
+  // And when the window closes it names the second joiner, WITH their id, so
+  // services/pushHelper.js can run the block and ban gate on the name it is
+  // about to put on a lock screen.
+  await require('../routes/flocks').__testables.flushRsvpWindow('42');
+  assert.strictEqual(pushes.length, 1);
+  assert.strictEqual(pushes[0].userId, 9);
+  assert.strictEqual(pushes[0].title, 'Jo Kim is going!');
+  assert.strictEqual(pushes[0].data.fromUserId, '8');
 });
 
 test('an announcement failure never turns a committed join into a 500', async () => {
