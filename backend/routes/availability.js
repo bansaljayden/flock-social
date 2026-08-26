@@ -156,10 +156,31 @@ router.post('/',
       const io = req.app.get('io');
       let friendIds = [];
       if (io) {
+        // Blocked and banned accounts are excluded HERE, in the query, rather
+        // than trusted to have been removed from friendships already.
+        //
+        // Blocking does delete the friendship (routes/moderation.js), and for a
+        // while that was this route's only protection. A derived invariant is
+        // not an enforced one: that DELETE is a separate statement from the
+        // INSERT that creates the block, so anything that stopped it left a
+        // block and a friendship coexisting, and accepting a friend request
+        // that commits just after a block races to the same place. This payload
+        // carries the sender's NAME and their free-text NOTE, in real time, to
+        // somebody who pressed block. Every comparable list in the app
+        // (users.js search and suggested, the story feed) filters both here, so
+        // this one does too.
         const friends = await pool.query(
-          `SELECT CASE WHEN requester_id = $1 THEN addressee_id ELSE requester_id END AS friend_id
-           FROM friendships
-           WHERE status = 'accepted' AND (requester_id = $1 OR addressee_id = $1)`,
+          `SELECT CASE WHEN f.requester_id = $1 THEN f.addressee_id ELSE f.requester_id END AS friend_id
+           FROM friendships f
+           JOIN users u
+             ON u.id = CASE WHEN f.requester_id = $1 THEN f.addressee_id ELSE f.requester_id END
+           WHERE f.status = 'accepted' AND (f.requester_id = $1 OR f.addressee_id = $1)
+             AND COALESCE(u.is_banned, FALSE) = FALSE
+             AND NOT EXISTS (
+               SELECT 1 FROM user_blocks b
+               WHERE (b.blocker_id = $1 AND b.blocked_id = u.id)
+                  OR (b.blocker_id = u.id AND b.blocked_id = $1)
+             )`,
           [req.user.id]
         );
         friendIds = friends.rows.map((r) => r.friend_id);
@@ -230,10 +251,24 @@ router.delete('/', async (req, res) => {
 
     const io = req.app.get('io');
     if (io) {
+      // Filtered like the other two. This payload carries no name and no note,
+      // only "that user cleared their pulse", so it is the weakest of the three
+      // leaks. It is still a live signal that a person you blocked is using the
+      // app right now, which is a presence fact a block should cut, and leaving
+      // one of three fan-outs unfiltered is how the next reader concludes the
+      // route does not filter at all.
       const friends = await pool.query(
-        `SELECT CASE WHEN requester_id = $1 THEN addressee_id ELSE requester_id END AS friend_id
-         FROM friendships
-         WHERE status = 'accepted' AND (requester_id = $1 OR addressee_id = $1)`,
+        `SELECT CASE WHEN f.requester_id = $1 THEN f.addressee_id ELSE f.requester_id END AS friend_id
+         FROM friendships f
+         JOIN users u
+           ON u.id = CASE WHEN f.requester_id = $1 THEN f.addressee_id ELSE f.requester_id END
+         WHERE f.status = 'accepted' AND (f.requester_id = $1 OR f.addressee_id = $1)
+           AND COALESCE(u.is_banned, FALSE) = FALSE
+           AND NOT EXISTS (
+             SELECT 1 FROM user_blocks b
+             WHERE (b.blocker_id = $1 AND b.blocked_id = u.id)
+                OR (b.blocker_id = u.id AND b.blocked_id = $1)
+           )`,
         [req.user.id]
       );
       for (const r of friends.rows) {
@@ -267,6 +302,11 @@ router.get('/me', async (req, res) => {
 // GET /api/availability/friends — active pulses for my friends
 router.get('/friends', async (req, res) => {
   try {
+    // Same two filters as the fan-out above, and for the same reason: this row
+    // carries a name, a photo and a free-text note written by another person.
+    // Blocking deletes the friendship, so in the ordinary case neither clause
+    // has anything to do; they are here so that a block which coexists with a
+    // friendship still reads as a block rather than as a friend.
     const result = await pool.query(
       `SELECT u.id, u.name, u.profile_image_url,
               ap.status, ap.note, ap.set_at, ap.expires_at
@@ -276,6 +316,12 @@ router.get('/friends', async (req, res) => {
        WHERE f.status = 'accepted'
          AND (f.requester_id = $1 OR f.addressee_id = $1)
          AND ap.expires_at > NOW()
+         AND COALESCE(u.is_banned, FALSE) = FALSE
+         AND NOT EXISTS (
+           SELECT 1 FROM user_blocks b
+           WHERE (b.blocker_id = $1 AND b.blocked_id = u.id)
+              OR (b.blocker_id = u.id AND b.blocked_id = $1)
+         )
        ORDER BY
          CASE ap.status WHEN 'down' THEN 1 WHEN 'maybe' THEN 2 ELSE 3 END,
          ap.set_at DESC`,
