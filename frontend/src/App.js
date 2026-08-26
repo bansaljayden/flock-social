@@ -1844,17 +1844,27 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   const DEFAULT_ZOOM = 12;
 
   // ---------- helpers ----------
+  // Resolves null when we do not know where the user is, and null means null.
+  // Both branches used to resolve a fixed point in Bethlehem, Pennsylvania, so
+  // a phone that declined the permission opened a map centred confidently on a
+  // town it had never been to. An unknown location now opens the wide view
+  // below, and the map re-pans the moment permission is granted.
   const getUserLocation = () => new Promise((resolve) => {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
-        () => resolve({ lat: 40.5798, lng: -75.2932 }),
+        () => resolve(null),
         { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 },
       );
     } else {
-      resolve({ lat: 40.5798, lng: -75.2932 });
+      resolve(null);
     }
   });
+
+  // Where the map opens when nothing knows where the user is: the whole
+  // country, zoomed out far enough that it reads as "pick somewhere" rather
+  // than as a claim about where you are standing.
+  const UNKNOWN_LOCATION_VIEW = { lat: 39.83, lng: -98.58, zoom: 3.2 };
 
   // SVG fallback pin (no photo). Inverted on the dark basemap: a navy pin body
   // on dark tiles was a hole in the map.
@@ -2028,7 +2038,8 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       if (cancelled) return;
       // A caller that already knows where the map should open (the venue
       // dashboard passes the venue itself) skips the geolocation prompt.
-      const userLoc = initialCenter ? { lat: initialCenter.lat, lng: initialCenter.lng } : await getUserLocation();
+      const located = initialCenter ? { lat: initialCenter.lat, lng: initialCenter.lng } : await getUserLocation();
+      const userLoc = located || UNKNOWN_LOCATION_VIEW;
       if (cancelled) return;
       // Same expression as the mapType useState above, and it has to stay the
       // same one: a stored 'hybrid' from a build that HAD a MapTiler key must
@@ -2048,7 +2059,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           container: mapRef.current,
           style: savedMapType === 'roadmap' ? ROADMAP_STYLE() : SATELLITE_STYLE,
           center: [userLoc.lng, userLoc.lat],
-          zoom: DEFAULT_ZOOM,
+          zoom: located ? DEFAULT_ZOOM : UNKNOWN_LOCATION_VIEW.zoom,
           minZoom: 3,
           maxZoom: 18,
           // Attribution added manually below at bottom-left (compact) so it
@@ -3955,6 +3966,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return null;
   });
   const [locationLoading, setLocationLoading] = useState(false);
+  // Why the map has no location, in words the user can act on. Empty means
+  // nothing has gone wrong. Set on a denied or failed geolocation call, which
+  // used to be answered by pretending the user was in Bethlehem, PA.
+  const [locationError, setLocationError] = useState('');
+  // Why the map has no venues. The server's own sentence, not ours: the venue
+  // search failing used to be answered with eight invented venues.
+  const [venueLoadError, setVenueLoadError] = useState('');
 
   const toggleLocation = useCallback((enable) => {
     setLocationEnabled(enable);
@@ -4204,6 +4222,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       const venues = data.venues || [];
       searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
       setVenueResults(venues);
+      setVenueLoadError('');
       if (venues.length > 0) {
         setAllVenues(venuesToMapPins(venues));
         setActiveVenue(null);
@@ -4212,6 +4231,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       }
     } catch (err) {
       console.error('Venue search error:', err);
+      // The dropdown used to render "No venues found. Try a different search."
+      // for this, blaming the user's spelling for a dead API key or a 502. The
+      // backend answers every one of these with a real sentence
+      // (routes/venueSearch.js), and this is where it gets said. The rate-limit
+      // toast stays because it is the one case where the app also wants to
+      // interrupt: it is asking the user to stop typing.
+      setVenueResults([]);
+      setVenueLoadError(err?.message || 'Search is not responding. Try again in a moment.');
       if (err.message && (err.message.includes('429') || err.message.toLowerCase().includes('rate') || err.message.toLowerCase().includes('too many'))) {
         showToast('Slow down! Try again in a few seconds', 'error');
       }
@@ -5012,6 +5039,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [timeEditDay, setTimeEditDay] = useState('Tonight');
   const [timeEditHour, setTimeEditHour] = useState('9 PM');
   const [savingEventTime, setSavingEventTime] = useState(false);
+  // In flight while the host locks a plan in, so the button cannot be tapped
+  // twice into two PUTs.
+  const [confirmingPlan, setConfirmingPlan] = useState(false);
   const [flockDate, setFlockDate] = useState('Tonight');
   const [flockTime, setFlockTime] = useState('9 PM');
   const [flockFriends, setFlockFriends] = useState([]); // Array of { id, name, email, profile_image_url }
@@ -5903,17 +5933,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [allVenues, setAllVenues] = useState([]);
   const [mapVenuesLoaded, setMapVenuesLoaded] = useState(false);
 
-  // Seed venues - shown when API is unavailable (rate limited, no key, offline)
-  const seedVenues = useMemo(() => [
-    { place_id: 'seed_1', name: 'The Bookstore Speakeasy', formatted_address: '336 Adams St, Bethlehem, PA', rating: 4.6, user_ratings_total: 312, price_level: 2, types: ['bar', 'night_club'], location: { latitude: 40.6262, longitude: -75.3775 } },
-    { place_id: 'seed_2', name: 'Molinari\'s', formatted_address: '322 E 3rd St, Bethlehem, PA', rating: 4.5, user_ratings_total: 287, price_level: 2, types: ['restaurant', 'italian_restaurant'], location: { latitude: 40.6178, longitude: -75.3683 } },
-    { place_id: 'seed_3', name: 'Bonn Place Brewing', formatted_address: '302 Brodhead Ave, Bethlehem, PA', rating: 4.7, user_ratings_total: 198, price_level: 2, types: ['bar', 'brewery'], location: { latitude: 40.6130, longitude: -75.3780 } },
-    { place_id: 'seed_4', name: 'Social Still', formatted_address: '530 E 3rd St, Bethlehem, PA', rating: 4.4, user_ratings_total: 245, price_level: 2, types: ['bar', 'restaurant'], location: { latitude: 40.6180, longitude: -75.3650 } },
-    { place_id: 'seed_5', name: 'Twisted Olive', formatted_address: '101 W Broad St, Bethlehem, PA', rating: 4.3, user_ratings_total: 189, price_level: 2, types: ['restaurant', 'mediterranean_restaurant'], location: { latitude: 40.6260, longitude: -75.3810 } },
-    { place_id: 'seed_6', name: 'McCarthy\'s Red Stag', formatted_address: '16 W 3rd St, Bethlehem, PA', rating: 4.2, user_ratings_total: 156, price_level: 1, types: ['bar', 'restaurant'], location: { latitude: 40.6185, longitude: -75.3780 } },
-    { place_id: 'seed_7', name: 'Tapas on Main', formatted_address: '500 Main St, Bethlehem, PA', rating: 4.5, user_ratings_total: 220, price_level: 3, types: ['restaurant', 'spanish_restaurant'], location: { latitude: 40.6258, longitude: -75.3755 } },
-    { place_id: 'seed_8', name: 'ArtsQuest Center', formatted_address: '101 Founders Way, Bethlehem, PA', rating: 4.6, user_ratings_total: 402, price_level: 2, types: ['performing_arts_theater', 'live_music_venue'], location: { latitude: 40.6150, longitude: -75.3770 } },
-  ], []);
+  // There is no seed venue list any more, and its absence is the point. Eight
+  // hardcoded Lehigh Valley bars used to be swapped in whenever the venue
+  // search failed, complete with invented ratings and review counts and
+  // place_ids of 'seed_1'..'seed_8'. Nothing on screen marked them as
+  // fallbacks, so a dead API key, a 502 or an expired quota rendered as a
+  // populated map of real-looking places, in Pennsylvania, to a user anywhere
+  // in the world. A failure now says it failed.
 
   // Ref to track if initial venue load has been attempted (survives re-renders)
   const venueLoadAttemptedRef = useRef(false);
@@ -5939,6 +5965,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // Core venue loading function
   const loadVenuesAtLocation = useCallback((lat, lng) => {
+    setLocationError('');
     setUserLocation({ lat, lng });
     localStorage.setItem('flock_user_lat', String(lat));
     localStorage.setItem('flock_user_lng', String(lng));
@@ -5959,6 +5986,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         searchCacheRef.current[cacheKey] = { data: venues, timestamp: Date.now() };
         setAllVenues(venuesToMapPins(venues));
         setMapVenuesLoaded(true);
+        setVenueLoadError('');
         // This is the very first venue list of a session, and it used to skip
         // crowd scoring entirely — which is why the heatmap was empty until
         // the first manual search. Score it like any other list.
@@ -5966,9 +5994,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       })
       .catch((err) => {
         console.error('[Geo] Nearby venue search failed:', err);
-        setAllVenues(venuesToMapPins(seedVenues));
+        setAllVenues([]);
         setMapVenuesLoaded(true);
-        requestCrowdScores(seedVenues);
+        // The server's own sentence, which is a real answer: a missing Places
+        // key, "Searching too fast. Give it a few seconds.", a 502. It used to
+        // be swallowed and replaced with fabricated pins.
+        setVenueLoadError(err?.message || 'Venues are not loading right now. Try again in a moment.');
       });
 
     // Fetch featured events (non-blocking)
@@ -5981,7 +6012,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         .finally(() => setFeaturedEventsLoading(false));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [venuesToMapPins, seedVenues, requestCrowdScores]);
+  }, [venuesToMapPins, requestCrowdScores]);
 
   // Write freshly landed batch scores back into the pin list. Without this,
   // scores that resolved AFTER venuesToMapPins ran stayed in crowdPredictions
@@ -6020,7 +6051,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
     if (!navigator.geolocation) {
       if (!savedLat) {
-        loadVenuesAtLocation(40.5798, -75.2932);
+        // This used to load venues around a fixed point in Bethlehem,
+        // Pennsylvania and WRITE THOSE COORDINATES to localStorage, so a
+        // browser with no geolocation at all was permanently, silently
+        // relocated: the blue dot, the search bias and every "1.2km away"
+        // label were computed from a town the user had never been to.
+        setLocationError('This browser cannot share a location, so nothing here knows where you are. Search for a place by name instead.');
       }
       return;
     }
@@ -6041,7 +6077,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         if (savedLat && savedLng && !forceRefresh) {
           // Already loaded from saved above
         } else {
-          loadVenuesAtLocation(40.5798, -75.2932);
+          // Same silent relocation as the branch above. Denying the permission
+          // is an answer, not a reason to invent one. PERMISSION_DENIED is
+          // code 1; anything else is a device or timeout failure and deserves
+          // different words, because "turn it on in Settings" is useless
+          // advice to someone who already did.
+          setLocationError(err && err.code === 1
+            ? 'Location is off, so Flock cannot show what is near you. Turn it on in Settings, or search for a place by name.'
+            : 'Could not get your location just now. Try again, or search for a place by name.');
         }
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: forceRefresh ? 0 : 30000 }
@@ -6176,6 +6219,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // no lat/lng or no rating could never save at all. saveFlockVenue() in the
   // api layer strips nullish keys instead of sending them, and routes the call
   // through request(), which owns auth, session expiry and honest error copy.
+  //
+  // Resolves TRUE when the venue is stored and FALSE when it is not. The
+  // caller that confirms a plan needs to know which happened: locking a flock
+  // whose venue write was just refused would announce "It's happening" about a
+  // venue nobody has.
   const updateFlockVenue = useCallback((flockId, venue) => {
     const vName = venue.name;
     const vAddr = venue.addr || venue.formatted_address || '';
@@ -6201,7 +6249,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, venue: vName, venueAddress: vAddr, venueId: vId, venueLat: vLat, venueLng: vLng, venuePhoto: vPhoto, venueRating: vRating, venuePriceLevel: vPriceLevel } : f));
     // A flock that exists only in local state (no numeric id) has nothing to
     // save against; the optimistic write is the whole story.
-    if (typeof flockId !== 'number') return Promise.resolve();
+    if (typeof flockId !== 'number') return Promise.resolve(true);
     return saveFlockVenue(flockId, { name: vName, addr: vAddr, place_id: vId, lat: vLat, lng: vLng, rating: vRating, photo_url: vPhoto })
       .then((data) => {
         // Reconcile against what was actually stored. The server rewrites some
@@ -6230,6 +6278,59 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       });
   }, [showToast]);
 
+  // Lock a plan in: planning -> confirmed. The one control the whole back half
+  // of the product hangs off, and until now nothing in the app called it.
+  //
+  // The button labelled Confirm on the winning venue saved the VENUE and
+  // stopped there, because saveFlockVenue sends venue fields and no status. So
+  // every flock ever created sat at status 'planning' forever, and everything
+  // gated on 'confirmed' was unreachable: the slide-to-complete bar never
+  // rendered, so no flock was ever completed, so attendance was never marked,
+  // so no reliability score was ever written, and GET /api/flocks/history
+  // answered [] for every account in the product. One missing call.
+  //
+  // (The socket event `select_venue` in backend/sockets/handlers.js does write
+  // 'confirmed', and it is the reason this looked wired. Nothing in the
+  // frontend has ever emitted it.)
+  const confirmFlockPlan = useCallback((flockId) => {
+    const before = flocksRef.current.find(f => f.id === flockId) || null;
+    const previousStatus = before ? before.status : null;
+    if (previousStatus === 'confirmed' || previousStatus === 'locked') return Promise.resolve(true);
+    setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, status: 'confirmed' } : f));
+    if (typeof flockId !== 'number') return Promise.resolve(true);
+    return setFlockStatus(flockId, 'confirmed')
+      .then(() => {
+        // The server pushes "It's happening!" to every other accepted member
+        // after it answers, so this only has to speak to the person who tapped.
+        showToast('Locked in. Everyone in the flock has been told.');
+        return true;
+      })
+      .catch((err) => {
+        if (previousStatus) setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, status: previousStatus } : f));
+        if (!err?.sessionExpired) showToast(err?.message || "Couldn't lock this in", 'error');
+        return false;
+      });
+  }, [showToast]);
+
+  // Open the "who showed up" sheet for a flock. Extracted because there are
+  // now two ways into it: the host sliding the bar, and the host opening a
+  // plan the server's own sweep completed while nobody was looking. Without
+  // the second door, an auto-completed night could never have attendance
+  // marked, and attendance is the only thing that writes a reliability score.
+  const openAttendanceSheet = useCallback((flockId) => {
+    const flock = flocksRef.current.find(f => f.id === flockId);
+    if (!flock || String(flock.creatorId) !== String(meRef.current?.id)) return false;
+    const accepted = (flock.members || []).filter(m => m.status === 'accepted');
+    if (accepted.length === 0) return false;
+    setAttendanceFlockId(flockId);
+    setAttendanceMembers(accepted);
+    const checks = {};
+    accepted.forEach(m => { checks[m.id] = true; });
+    setAttendanceChecks(checks);
+    setShowAttendanceModal(true);
+    return true;
+  }, []);
+
   // Mark a flock as completed (post-hangout). The attendance sheet used to live
   // inside the `.then` of a raw fetch with no status check, so on a refusal it
   // simply never opened and the user was told nothing; on a 403 it opened
@@ -6242,26 +6343,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return setFlockStatus(flockId, 'completed')
       .then(() => {
         showToast('Flock marked as done!');
-        // Read the roster fresh: `flocks` in a closure was a stale snapshot and
-        // was also why this callback was rebuilt on every flock state change.
-        const flock = flocksRef.current.find(f => f.id === flockId);
-        if (flock && String(flock.creatorId) === String(meRef.current?.id)) {
-          const accepted = (flock.members || []).filter(m => m.status === 'accepted');
-          if (accepted.length > 0) {
-            setAttendanceFlockId(flockId);
-            setAttendanceMembers(accepted);
-            const checks = {};
-            accepted.forEach(m => { checks[m.id] = true; });
-            setAttendanceChecks(checks);
-            setShowAttendanceModal(true);
-          }
-        }
+        // Reads the roster fresh inside openAttendanceSheet: `flocks` in a
+        // closure was a stale snapshot and was also why this callback was
+        // rebuilt on every flock state change.
+        openAttendanceSheet(flockId);
       })
       .catch((err) => {
         if (previousStatus) setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, status: previousStatus } : f));
         if (!err?.sessionExpired) showToast(err?.message || "Couldn't mark this done", 'error');
       });
-  }, [showToast]);
+  }, [showToast, openAttendanceSheet]);
 
   // Set or change a flock's time. Same generic PUT /api/flocks/:id that
   // saveFlockVenue and setFlockStatus use, and the same rules apply: creator
@@ -6760,7 +6851,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         .then((data) => {
           // Same block filter as refreshFlockRoster, and for the same reason:
           // the server still lists a blocked member here.
-          const members = (data.members || []).filter(m => !blockedIdsRef.current.has(String(m.id))).map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null, status: m.status }));
+          // `attendance` comes down with the roster ('unmarked' | 'attended' |
+          // 'no_show') and is what tells the host whether the done step still
+          // owes an answer for a night that is already over.
+          const members = (data.members || []).filter(m => !blockedIdsRef.current.has(String(m.id))).map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null, status: m.status, attendance: m.attendance || 'unmarked' }));
           const eventTime = data.flock?.event_time || null;
           setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, memberCount: members.filter(m => m.status === 'accepted').length, momentum: data.momentum || null, eventTime: eventTime || f.eventTime || null } : f));
         })
@@ -10685,6 +10779,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       );
     };
 
+    // Exactly one person picked, and that person is a real account. The whole
+    // footer changes shape around this: what the button does, what it says, and
+    // what the read-back line above it claims is about to happen.
+    const dmTarget = flockFriends.length === 1 && flockFriends[0]?.id ? flockFriends[0] : null;
+    const dmFirstName = dmTarget ? String(dmTarget.name || '').split(' ')[0] : '';
+
     const handleCreate = async () => {
       if (!flockName.trim()) {
         setFlockNameError('Give the plan a name so your friends know what they are saying yes to.');
@@ -10694,13 +10794,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         return;
       }
       setFlockNameError('');
-      // If only 1 person invited, redirect to DM instead
+      // ONE PERSON MEANS A DIRECT MESSAGE, AND THE SCREEN SAYS SO FIRST.
+      //
+      // Two people is a conversation, not a plan with a roster, so this path
+      // stays. What it used to do is the defect: it fired silently from a
+      // button labelled Create Flock, under a footer reading "You and 1 more",
+      // and then wiped the name, the venue, the date, the time and the budget
+      // on the way out, with no toast and no undo. The footer and the button
+      // now name the DM and the person before the tap (see dmTarget below), and
+      // NOTHING is cleared here: come back, add a second person, and everything
+      // you typed is still on the screen.
       const invitedFriends = flockFriends.filter(f => f.id);
       if (invitedFriends.length === 1) {
         const friend = invitedFriends[0];
         startNewDmWithUser({ id: friend.id, name: friend.name, profile_image_url: friend.profile_image_url || null });
-        setFlockName(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setFlockCashPool(false); setFlockGhostMode(true); setSelectedVenueForCreate(null);
-               return;
+        return;
       }
       setIsLoading(true);
 
@@ -11028,10 +11136,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </span>
             <span aria-hidden="true" style={{ width: '3px', height: '3px', borderRadius: '2px', backgroundColor: 'var(--text-tertiary)', flexShrink: 0 }} />
             <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
-              {flockFriends.length === 0 ? 'Just you so far' : `You and ${flockFriends.length} more`}
-              {selectedVenueForCreate ? ` at ${selectedVenueForCreate.name}` : ''}
+              {dmTarget ? `Just ${dmTarget.name}` : flockFriends.length === 0 ? 'Just you so far' : `You and ${flockFriends.length} more`}
+              {selectedVenueForCreate && !dmTarget ? ` at ${selectedVenueForCreate.name}` : ''}
             </span>
           </div>
+          {/* Said before the tap, not discovered after it. */}
+          {dmTarget && (
+            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.5 }}>
+              One person is a message, not a flock. This opens a direct message with {dmTarget.name}. A message carries no venue, time or budget, so anything you set here stays on this screen. Add someone else to make it a flock.
+            </p>
+          )}
           <button className="hit44 glass-btn glass-primary" onClick={handleCreate} disabled={isLoading} style={{
             width: '100%', padding: '16px', borderRadius: '16px', border: 'none',
             background: colors.navy,
@@ -11040,7 +11154,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             opacity: isLoading ? 0.6 : 1,
             boxShadow: '0 1px 2px rgba(30,41,59,0.10)',
           }}>
-            {isLoading ? <><span style={{ display: 'inline-flex', animation: 'spin 1s linear infinite' }}>{Icons.activity('white', 16)}</span> Creating...</> : <>{Icons.users('white', 18)} Create Flock</>}
+            {isLoading
+              ? <><span style={{ display: 'inline-flex', animation: 'spin 1s linear infinite' }}>{Icons.activity('white', 16)}</span> Creating...</>
+              : dmTarget
+                ? <>{Icons.chat('white', 18)} Message {dmFirstName || dmTarget.name}</>
+                : <>{Icons.users('white', 18)} Create Flock</>}
           </button>
         </div>
       </div>
@@ -11939,6 +12057,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         </div>
       )}
 
+      {/* Why the map is empty, when it is. Two separate facts, because they
+          have two separate fixes: the app does not know where you are, and the
+          venue search is not answering. Both used to be silent, one covered by
+          a default city and the other by eight invented venues. */}
+      {!locationLoading && (locationError || venueLoadError) && (
+        <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ flexShrink: 0, display: 'flex' }}>{Icons.alertCircle('var(--accent-amber-text)', 16)}</span>
+          <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 0, lineHeight: 1.5 }}>{locationError || venueLoadError}</p>
+          <button className="hit44" onClick={() => { setLocationError(''); setVenueLoadError(''); setMapVenuesLoaded(false); requestUserLocation(true); }} style={{ flexShrink: 0, padding: '7px 12px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
+        </div>
+      )}
+
       {/* Search Results Overlay */}
       {showSearchDropdown && (venueSearching || venueResults.length > 0 || (venueQuery.trim().length >= 2 && !venueSearching && venueResults.length === 0)) && (
         <div style={{ position: 'relative', zIndex: 30, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', maxHeight: '260px', overflowY: 'auto' }}>
@@ -12002,7 +12132,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               ))}
             </div>
           )}
-          {!venueSearching && venueQuery.trim().length >= 2 && venueResults.length === 0 && (
+          {/* A failed search and an empty search are different things and now
+              say different words. This block used to render "Try a different
+              search" for both, so a 500 from a missing Places key read as the
+              user having spelled a bar's name wrong. */}
+          {!venueSearching && venueQuery.trim().length >= 2 && venueResults.length === 0 && venueLoadError && (
+            <div style={{ padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {Icons.alertCircle('var(--accent-amber-text)', 15)}
+              <p role="alert" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{venueLoadError}</p>
+            </div>
+          )}
+          {!venueSearching && venueQuery.trim().length >= 2 && venueResults.length === 0 && !venueLoadError && (
             <div style={{ textAlign: 'center', padding: '16px 0' }}>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>No venues found. Try a different search.</p>
             </div>
@@ -13166,8 +13306,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   <span style={{ color: 'var(--text-secondary)', fontWeight: '500' }}> per person</span>
                 </p>
               ) : (
+                /* "Waiting for budgets, 2 of 2 submitted" told a two-person
+                   flock it was waiting on itself. Three amounts is the floor,
+                   and a flock that cannot reach it is not waiting. */
                 <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', margin: 0 }}>
-                  Waiting for budgets · {budgetStatus.submissionCount || 0} of {budgetStatus.totalMembers || '?'} submitted
+                  {(budgetStatus.totalMembers || 0) > 0 && (budgetStatus.totalMembers || 0) < 3
+                    ? 'No group number in a flock this size'
+                    : `Waiting on amounts · ${budgetStatus.submissionCount || 0} of ${budgetStatus.totalMembers || '?'} answered`}
                 </p>
               )}
             </div>
@@ -13598,9 +13743,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <SearchInputLocal aria-label="Amount" type="number" initialValue={budgetCustom} onCommit={(v) => { setBudgetCustom(v); setBudgetAmount(null); }} placeholder="0" style={{ ...styles.input, paddingLeft: '28px', fontSize: 'var(--t-body)', fontWeight: '600' }} />
                       </div>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '16px' }}>
-                      {Icons.lock(colors.textTertiary, 12)}
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>This is anonymous. No one sees your answer.</p>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: '6px', marginBottom: '16px' }}>
+                      <span style={{ flexShrink: 0, display: 'flex', paddingTop: '2px' }}>{Icons.lock(colors.textTertiary, 12)}</span>
+                      {/* THE THREE-AMOUNT RULE, STATED BEFORE THE TAP. It is a
+                          privacy floor: the group number is built from the
+                          lowest amount, so publishing it over one or two
+                          answers publishes somebody's budget. Until now the
+                          only place in the whole product that said so was a
+                          400 from POST /api/budget/:id/lock, reachable only by
+                          pressing a button that looked ready. */}
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0, lineHeight: 1.5 }}>
+                        This is anonymous. No one sees your answer. A group number only appears once three people have shared an amount, so nobody's figure can be worked out from it.
+                      </p>
                     </div>
                     <button className="hit44 glass-btn glass-primary" disabled={budgetSubmitting} onClick={async () => {
                       const amt = budgetCustom ? parseFloat(budgetCustom) : budgetAmount;
@@ -13643,17 +13797,55 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0' }}>{budgetStatus.submissionCount} of {budgetStatus.totalMembers} submitted</p>
                       </div>
                     ) : (
+                      /* "Waiting for budgets, 2 of 2 submitted" was the single
+                         most confusing line in the product: everybody had
+                         answered and the screen still said it was waiting, with
+                         no way to learn that three amounts are the floor. In a
+                         flock too small to ever reach three, say that outright
+                         rather than leave two people waiting on each other. */
                       <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
-                        <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>Waiting for more responses to set group budget</p>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0' }}>{budgetStatus?.submissionCount || 0} of {budgetStatus?.totalMembers || '?'} submitted</p>
+                        {(budgetStatus?.totalMembers || 0) > 0 && (budgetStatus?.totalMembers || 0) < 3 ? (
+                          <>
+                            <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>No group number for a flock this size</p>
+                            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: 1.5 }}>
+                              It takes three amounts before Flock can show one, because with fewer than that the number would give away what somebody answered. There {budgetStatus.totalMembers === 1 ? 'is' : 'are'} {budgetStatus.totalMembers} of you here. Invite one more person, or just talk about it.
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>Waiting on more amounts</p>
+                            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: 1.5 }}>
+                              {budgetStatus?.submissionCount || 0} of {budgetStatus?.totalMembers || '?'} have answered. Flock shows a group number once three people have shared an amount. Skips do not count towards that.
+                            </p>
+                          </>
+                        )}
                       </div>
                     )}
-                    {!budgetStatus?.budgetLocked && budgetStatus?.userAmount && (
+                    {/* YOUR OWN ANSWER, AND THE WAY BACK TO IT. This rendered
+                        only when userAmount was truthy, and a skip stores null,
+                        so tapping "Skip, any budget works" removed the submit
+                        form (which needs !userSubmitted) AND the Change link in
+                        the same move: there was no way left to enter an amount,
+                        ever. The server was always happy to take one, so this
+                        was a dead end the UI built by itself. */}
+                    {!budgetStatus?.budgetLocked && budgetStatus?.userAmount != null && (
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginBottom: '12px' }}>Your budget: ${budgetStatus.userAmount} · <button className="hit44" onClick={() => { setBudgetAmount(budgetStatus.userAmount); setBudgetCustom(''); setBudgetStatus(prev => ({ ...prev, userSubmitted: false })); }} style={{ background: 'none', border: 'none', color: colors.steel, fontWeight: '600', cursor: 'pointer', padding: 0, fontSize: 'var(--t-meta)' }}>Change</button></p>
                     )}
+                    {!budgetStatus?.budgetLocked && budgetStatus?.userAmount == null && budgetStatus?.userSubmitted && (
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginBottom: '12px' }}>You skipped, so any budget works for you. · <button className="hit44" onClick={() => { setBudgetAmount(null); setBudgetCustom(''); setBudgetStatus(prev => ({ ...prev, userSubmitted: false })); }} style={{ background: 'none', border: 'none', color: colors.steel, fontWeight: '600', cursor: 'pointer', padding: 0, fontSize: 'var(--t-meta)' }}>Set an amount</button></p>
+                    )}
+                    {/* LOCK, ONLY WHEN LOCKING CAN WORK. isReady is exactly the
+                        server's own condition for the lock route (three
+                        non-skipped amounts), so gating on it is the same rule
+                        rather than a second, drifting copy of it. The button
+                        used to be offered whenever the creator was looking,
+                        and answered "Budget locks once 3 people have shared an
+                        amount" from a 400 after the tap. */}
                     {isCreator && !budgetStatus?.budgetLocked && (
                       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-                        <button className="hit44 glass-btn glass-primary" onClick={async () => { try { await lockBudget(selectedFlockId); setBudgetStatus(prev => ({ ...prev, budgetLocked: true })); showToast('Budget locked'); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Lock Budget</button>
+                        {budgetStatus?.isReady && (
+                          <button className="hit44 glass-btn glass-primary" onClick={async () => { try { await lockBudget(selectedFlockId); setBudgetStatus(prev => ({ ...prev, budgetLocked: true })); showToast('Budget locked'); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Lock Budget</button>
+                        )}
                         <button className="hit44 glass-btn glass-secondary" onClick={async () => { try { const d = await sendBudgetReminder(selectedFlockId); showToast(`Reminded ${d.reminded} member${d.reminded !== 1 ? 's' : ''}`); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid var(--border-color)`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Send Reminder</button>
                       </div>
                     )}
@@ -13834,6 +14026,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           const totalVoters = new Set(flockVotes.flatMap(v => v.voters)).size
             + flockVotes.reduce((sum, v) => sum + (v.guestCount || 0), 0);
           const isCreator = flock.creatorId && String(flock.creatorId) === String(authUser?.id);
+          // Already locked in, so there is nothing left to confirm. Before this
+          // existed the Confirm button was hidden on the ASSIGNED row only,
+          // which meant a host who had already picked a venue had no confirm
+          // control anywhere and the plan could never leave planning.
+          const planLocked = flock.status === 'confirmed' || flock.status === 'completed';
 
           const handleQuickVote = (venueName, venueType, venuePlaceId) => {
             const existingVote = flockVotes.find(v => v.venue === venueName);
@@ -13859,9 +14056,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             updateFlockVotes(selectedFlockId, newVotes);
           };
 
+          // Confirm means confirm. This used to save the venue and nothing
+          // else, so a host who tapped the button labelled Confirm got a
+          // venue-assigned flock still reading "Still Planning", and the plan
+          // could never move on. The venue write has to land first: locking a
+          // plan onto a venue the server just refused would tell everyone it
+          // is happening somewhere it is not.
           const handleConfirmVenue = (venueName) => {
             const venueObj = allVenues.find(v => v.name === venueName);
-            updateFlockVenue(selectedFlockId, {
+            setShowVotePanel(false);
+            return updateFlockVenue(selectedFlockId, {
               name: venueName,
               addr: venueObj?.addr || venueObj?.formatted_address || '',
               place_id: venueObj?.place_id || null,
@@ -13869,9 +14073,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               lng: venueObj?.location?.longitude || null,
               photo_url: venueObj?.photo_url || null,
               rating: venueObj?.stars || venueObj?.rating || null,
-            });
-            setShowVotePanel(false);
-                     };
+            }).then((saved) => (saved ? confirmFlockPlan(selectedFlockId) : false));
+          };
 
           // Ensure assigned venue is in votes list
           const assignedVenue = flock.venue && flock.venue !== 'TBD' ? flock.venue : null;
@@ -13942,8 +14145,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
                               {count > 0 && <span style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: isMyVote ? colors.navy : colors.textTertiary }}>{count}</span>}
                               {isMyVote && <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.check('white', 12)}</div>}
-                              {isCreator && !isAssigned && (
-                                <button className="hit44 glass-btn glass-primary" onClick={(e) => { e.stopPropagation(); confirmClick(e); handleConfirmVenue(v.venue); }} style={{ padding: '4px 8px', borderRadius: '8px', border: 'none', background: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Confirm</button>
+                              {isCreator && !planLocked && (
+                                <button className="hit44 glass-btn glass-primary" onClick={(e) => { e.stopPropagation(); confirmClick(e); handleConfirmVenue(v.venue); }} style={{ padding: '4px 8px', borderRadius: '8px', border: 'none', background: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>{isAssigned ? 'Lock it in' : 'Confirm'}</button>
                               )}
                             </div>
                           </div>
@@ -14368,6 +14571,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     const roster = [...acceptedMembers, ...goingGuests];
     const isCompleted = flock.status === 'completed';
     const isConfirmed = flock.status === 'confirmed' || flock.status === 'locked';
+    // A completed flock whose roster still carries an unmarked member. Two
+    // ways to get one: the host skipped the sheet, or the server's own sweep
+    // completed the night hours after it ended and there was no sheet to skip.
+    const attendanceOwed = isCompleted && acceptedMembers.some(m => typeof m === 'object' && (m.attendance || 'unmarked') === 'unmarked');
     const hasVenue = flock.venue && flock.venue !== 'TBD';
     // PUT /api/flocks/:id is creator-only, so only the creator gets the control.
     const isCreator = String(flock.creatorId) === String(authUser?.id);
@@ -14526,6 +14733,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: slideProgress > 30 ? 'rgba(255,255,255,0.9)' : 'var(--text-secondary)', transition: 'color 0.2s ease', letterSpacing: '0.3px' }}>{slideProgress > 85 ? 'Release to complete!' : 'Slide to mark done'}</span>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* The done step, for a night that finished without one. The slide bar
+            above only exists on a CONFIRMED flock, so once a plan is completed
+            (by the host or by the server sweep) there was no route back to
+            attendance, and attendance is the only thing that writes anyone a
+            reliability score. Creator only, same as the sheet itself. */}
+        {attendanceOwed && isCreator && (
+          <div style={{ padding: '10px 16px', flexShrink: 0, borderBottom: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: 0 }}>Who showed up?</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>This is what sets everyone's reliability score for the night.</p>
+            </div>
+            <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); openAttendanceSheet(flock.id); }} style={{ padding: '9px 14px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>Mark it</button>
           </div>
         )}
 
@@ -14830,12 +15052,38 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </button>
               )}
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 0' }}>
+            {/* STATUS, and the control that changes it. The row used to be a
+                read-only label, and the only other confirm control in the app
+                was hidden behind the vote panel and hidden again on the venue
+                that was already assigned. So a host who picked a venue from
+                search rather than from a vote had no way to lock a plan in at
+                all, and every flock stayed in planning forever. Creator only,
+                because PUT /api/flocks/:id is. */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 0', minHeight: '44px', boxSizing: 'border-box' }}>
               <span style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '500', flexShrink: 0 }}>Status</span>
               <span style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: '5px', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600' }}>
-                {isConfirmed ? Icons.check('var(--accent-green-text)', 12) : Icons.clock('var(--accent-amber-text)', 12)} {isConfirmed ? 'Locked In' : 'Still Planning'}
+                {isCompleted ? Icons.check('var(--accent-green-text)', 12) : isConfirmed ? Icons.check('var(--accent-green-text)', 12) : Icons.clock('var(--accent-amber-text)', 12)} {isCompleted ? 'Done' : isConfirmed ? 'Locked In' : 'Still Planning'}
               </span>
+              {isCreator && !isConfirmed && !isCompleted && hasVenue && (
+                <button className="hit44 glass-btn glass-primary" disabled={confirmingPlan} onClick={async (e) => {
+                  confirmClick(e);
+                  setConfirmingPlan(true);
+                  try { await confirmFlockPlan(flock.id); } finally { setConfirmingPlan(false); }
+                }} style={{ padding: '7px 12px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0, opacity: confirmingPlan ? 0.6 : 1 }}>
+                  {confirmingPlan ? 'Locking...' : 'Lock it in'}
+                </button>
+              )}
             </div>
+            {/* Said before the tap, not after it. Locking a plan sends every
+                other member a push, and it is what makes the slide-to-done bar
+                and the attendance step exist at all. */}
+            {isCreator && !isConfirmed && !isCompleted && (
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 4px' }}>
+                {hasVenue
+                  ? 'Locking it in tells everyone the plan is on, and unlocks the done step afterwards.'
+                  : 'Pick a venue and you can lock the plan in.'}
+              </p>
+            )}
           </div>
           </div>
 
@@ -21305,8 +21553,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   {!venueSearching && sorted.length === 0 ? (
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '24px 20px 40px' }}>
                       <EmptyMark name="crowd" />
-                      <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '12px 0 0', letterSpacing: '-0.005em' }}>No venues found</h3>
-                      <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 0', maxWidth: '280px' }}>Try a different search or location.</p>
+                      {/* Same split as the dropdown: a search that failed must
+                          not be reported as a search that found nothing. */}
+                      <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '12px 0 0', letterSpacing: '-0.005em' }}>{venueLoadError ? 'Search is not answering' : 'No venues found'}</h3>
+                      <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 0', maxWidth: '280px' }}>{venueLoadError || 'Try a different search or location.'}</p>
                     </div>
                   ) : !venueSearching && sorted.map((venue) => {
                     const dist = calcDist(venue.location);

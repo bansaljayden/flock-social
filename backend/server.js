@@ -1486,6 +1486,8 @@ let venueDigestInterval = null;
 let venueDigestKickoff = null;
 let photoPruneInterval = null;
 let photoPruneKickoff = null;
+let flockSweepInterval = null;
+let flockSweepKickoff = null;
 
 async function boot() {
   try {
@@ -1546,6 +1548,20 @@ async function boot() {
   const photoPrune = () => prunePhotoStore().catch((e) => console.error('[photoStore] prune failed:', e.message));
   photoPruneInterval = setInterval(photoPrune, 60 * 60 * 1000);
   photoPruneKickoff = setTimeout(photoPrune, 75 * 1000);
+
+  // Finish plans whose night is over. Until this existed, NOTHING in the
+  // product moved a flock through time: a confirmed plan stayed confirmed
+  // forever unless its host slid the done bar by hand, so a plan for a night
+  // three weeks ago was still listed as a live plan, and the Past screen was
+  // empty for everyone. See services/flockSweep.js for why the window is
+  // twelve hours and why a swept flock can still have its attendance marked.
+  const { runFlockCompletionSweep, flockSweepEnabled, FLOCK_SWEEP_INTERVAL_MS } = require('./services/flockSweep');
+  if (flockSweepEnabled()) {
+    flockSweepInterval = setInterval(runFlockCompletionSweep, FLOCK_SWEEP_INTERVAL_MS);
+    // Last in the kickoff stagger (30s, 45s, 60s, 75s), same pool-contention
+    // reason as its neighbours.
+    flockSweepKickoff = setTimeout(runFlockCompletionSweep, 90 * 1000);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1592,6 +1608,8 @@ function shutdown(signal) {
   if (venueDigestKickoff) clearTimeout(venueDigestKickoff);
   if (photoPruneInterval) clearInterval(photoPruneInterval);
   if (photoPruneKickoff) clearTimeout(photoPruneKickoff);
+  if (flockSweepInterval) clearInterval(flockSweepInterval);
+  if (flockSweepKickoff) clearTimeout(flockSweepKickoff);
 
   // Disconnect socket clients FIRST: a live WebSocket is an open connection
   // and server.close() waits on open connections indefinitely. Clients
@@ -1637,13 +1655,14 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 //     container keeps running with nothing in the log except one
 //     [unhandledRejection] line.
 //
-//   * After listen(): the three timer registrations `require()` their services
+//   * After listen(): the timer registrations `require()` their services
 //     at call time, and a require() that throws (a bad env read at module
 //     scope, a syntax error, a missing file) is not caught by anything. The
 //     port is already open, the health check passes, and the server serves
-//     normally — with crowd alerts, night-context snapshots and the Monday
-//     digest all silently never registered. That is the failure that would
-//     have gone unnoticed longest, because everything a user touches works.
+//     normally — with crowd alerts, night-context snapshots, the Monday
+//     digest and the flock completion sweep all silently never registered.
+//     That is the failure that would have gone unnoticed longest, because
+//     everything a user touches works.
 //
 // Boot is the one place where "keep serving" is the wrong answer, so it gets
 // its own terminal handler: say what failed, and exit 1 so the platform
