@@ -476,9 +476,11 @@ test('privileged body fields never reach the UPDATE, together or alone', async (
   assert.ok(!/\brole\s*=/.test(setClause), 'the UPDATE writes role');
   // token_version appears only as the CASE-gated bump, and the gate ($5, the
   // hashed new password) is null because no new_password was sent — the body's
-  // raw `password` field must not have become one. The trailing null is $7,
-  // bio (unsent here); it sits AFTER the id so params[5] stays the user id.
-  assert.deepStrictEqual(update.params, ['New Name', null, null, null, null, 1, null]);
+  // raw `password` field must not have become one. The trailing nulls are $7
+  // (bio, unsent here) and the contact-discovery trio $8/$9/$10, which are
+  // non-null only when the phone actually moved. All four sit AFTER the id so
+  // params[5] stays the user id.
+  assert.deepStrictEqual(update.params, ['New Name', null, null, null, null, 1, null, null, null, null]);
   // And the response reflects the database, not the body.
   assert.strictEqual(res.body.user.role, 'user');
   assert.strictEqual(res.body.user.is_premium, undefined);
@@ -490,7 +492,7 @@ test('privileged body fields never reach the UPDATE, together or alone', async (
     assert.strictEqual(one.status, 200, `${field}: ${one.text}`);
     const u = updates().find((s) => s.text.includes('SET name = COALESCE'));
     assert.ok(u, `${field}: the profile UPDATE never ran`);
-    assert.deepStrictEqual(u.params, [null, null, null, null, null, 1, null],
+    assert.deepStrictEqual(u.params, [null, null, null, null, null, 1, null, null, null, null],
       `${field} altered the UPDATE's parameters`);
   }
 });

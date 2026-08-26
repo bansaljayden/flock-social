@@ -38,6 +38,9 @@ const {
   REAUTH_WINDOW_MS,
   BAN_TOMBSTONE_RETENTION_DAYS,
 } = usersRouter.__testing;
+// The contact-discovery digest, so the tests below compare against the value
+// production would write rather than a second definition of it.
+const { phoneDiscoveryHash } = require('../utils/phone');
 const { isIdentityBanned, rejectIfBannedIdentity } = usersRouter;
 
 // ── Fixture ────────────────────────────────────────────────────────────────
@@ -61,6 +64,9 @@ function reset() {
       id: 1, email: 'alice@example.com', name: 'Alice', role: 'user', email_verified: true, is_banned: false,
       banned_at: null, token_version: 0, password: PASSWORD_HASH, phone: '+12025550101',
       oauth_provider: null, oauth_id: null, apple_refresh_token: null, interests: [],
+      // Opted in to contact discovery (migration 051), so the tests below can
+      // watch the digest move with the number instead of staying on the old one.
+      phone_discoverable: true, phone_hash: null,
     },
     2: { // Google account, no password
       id: 2, email: 'bob@example.com', name: 'Bob', role: 'user', email_verified: true, is_banned: false,
@@ -131,16 +137,29 @@ function handle(text, params = []) {
     return { rows: hit ? [{ id: hit.id }] : [], rowCount: hit ? 1 : 0 };
   }
   if (has('UPDATE users')) {
-    // The profile UPDATE keys its row on $6 and carries bio as a trailing $7
-    // (routes/users.js keeps the id at params[5] on purpose); other UPDATEs
-    // in this file still key on their last parameter.
-    const idParam = params.length === 7 ? params[5] : params[params.length - 1];
+    // The profile UPDATE is recognised by its SET list, not by how many
+    // parameters it carries. It was keyed on `params.length === 7` and that
+    // broke the moment migration 051 added the contact-discovery pair at $8/$9
+    // and the consent value at $10: the fixture stopped recognising its own
+    // statement and silently wrote nothing, which reads in a failure as "the
+    // phone change did not go through". The id stays at params[5] on purpose
+    // (see routes/users.js); other UPDATEs here still key on their last
+    // parameter.
+    const isProfile = has('SET name = COALESCE');
+    const idParam = isProfile ? params[5] : params[params.length - 1];
     const u = USERS[idParam] || USERS[1];
-    if (params.length === 6 || params.length === 7) {
+    if (isProfile || params.length === 6) {
       if (params[0]) u.name = params[0];
       if (params[1]) u.email = params[1];
       if (params[2]) u.phone = params[2];
-      if (params.length === 7 && params[6]) u.bio = params[6];
+      if (params[6]) u.bio = params[6];
+      // $8 marks a real number change, $9 is the new keyed digest and $10 the
+      // consent value that survives it. Modelled so a test can assert that a
+      // number change moves the digest instead of leaving it on the old one.
+      if (params[7]) {
+        u.phone_hash = params[8] ?? null;
+        u.phone_discoverable = params[9] ?? false;
+      }
     }
     return { rows: [{ ...u }], rowCount: 1 };
   }
@@ -779,9 +798,15 @@ test('every new refusal message follows the copy standard', async () => {
   }
 });
 
-test('canonicalPhone matches what find-by-phone actually compares', () => {
-  // If these two ever drift, a tombstone or a uniqueness check silently stops
-  // covering the numbers discovery can still resolve.
+test('canonicalPhone stays LOOSER than the discovery form, on purpose', () => {
+  // These two used to be the same comparison. Since 2026-08-25 they are not:
+  // find-by-phone matches a canonical E.164 string (utils/phone.js), while this
+  // one keeps the last 10 digits from 7 up. Looser is right here. A tombstone
+  // answers "is this the banned person coming back", and that person is trying
+  // to look different, so a form that only matched perfectly written numbers
+  // would be evaded by retyping. Nothing is returned to a caller from this
+  // comparison, so its looseness leaks no directory answer. The DISCOVERY side
+  // must stay strict for the opposite reason, which utils/phone.js pins.
   assert.strictEqual(canonicalPhone('+1 (202) 555-0177'), '2025550177');
   assert.strictEqual(canonicalPhone('2025550177'), '2025550177');
   assert.strictEqual(canonicalPhone('+44 20 7946 0958'), '2079460958');
@@ -789,4 +814,42 @@ test('canonicalPhone matches what find-by-phone actually compares', () => {
   assert.strictEqual(canonicalPhone(''), '');
   assert.strictEqual(canonicalPhone(null), '');
   assert.strictEqual(canonicalPhone({}), '');
+});
+
+test('a number change moves the discovery digest with it', async () => {
+  // THE DEFECT THIS CLOSES. users.phone_hash is what POST
+  // /api/friends/find-by-phone matches on. Leaving it on the OLD number after a
+  // change is two failures at once: the user stays findable by a number they no
+  // longer hold, which the carrier may already have reissued to a stranger, and
+  // is not findable by the one they do hold. Both are silent.
+  USERS[1].phone_hash = phoneDiscoveryHash('+12025550101');
+  const res = await call('PUT', '/api/users/profile', tokenFor(1), {
+    phone: '+12025550122', current_password: PASSWORD,
+  });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(USERS[1].phone_hash, phoneDiscoveryHash('+12025550122'));
+  assert.strictEqual(USERS[1].phone_discoverable, true, 'the consent itself was not the thing that moved');
+});
+
+test('an edit that is not a number change leaves the digest and the consent alone', async () => {
+  USERS[1].phone_hash = phoneDiscoveryHash('+12025550101');
+  const res = await call('PUT', '/api/users/profile', tokenFor(1), {
+    name: 'Alice B', current_password: PASSWORD,
+  });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(USERS[1].phone_hash, phoneDiscoveryHash('+12025550101'));
+  assert.strictEqual(USERS[1].phone_discoverable, true);
+});
+
+test('a number the server cannot canonicalise turns discovery OFF rather than leaving it lying', async () => {
+  // isMobilePhone accepts national formats this server does not resolve to one
+  // whole E.164 string. There is no digest to write for those, so the flag must
+  // not stay TRUE claiming the user is findable when nothing can match them.
+  USERS[1].phone_hash = phoneDiscoveryHash('+12025550101');
+  const res = await call('PUT', '/api/users/profile', tokenFor(1), {
+    phone: '07911123456', current_password: PASSWORD,
+  });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(USERS[1].phone_hash, null);
+  assert.strictEqual(USERS[1].phone_discoverable, false);
 });

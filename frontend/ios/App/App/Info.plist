@@ -81,6 +81,43 @@
 	     deliberately no NSPhotoLibraryAddUsageDescription. -->
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Flock uses your photo library when you pick a photo to send in a flock chat or a direct message or to set as your profile picture.</string>
+	<!-- Contacts, read only, and only phone numbers.
+
+	     WHAT ASKS FOR IT. One thing:
+	     frontend/src/services/contacts.js `readContactPhoneNumbers`, which calls
+	     Contacts.requestPermissions() and then Contacts.getContacts() with the
+	     projection { phones: true } and nothing else. No name, no email, no
+	     image, no note, no postal address leaves the phone. There is no
+	     createContact or deleteContact call anywhere in the client, which is why
+	     this is the read string and there is nothing here about writing.
+
+	     WHEN IT FIRES, and this is the part that is easy to get wrong. iOS asks
+	     for contacts ONCE per install: a denial is permanent until the person
+	     opens Settings, and almost nobody does. So the prompt must never appear
+	     on launch, on sign-up, or on any screen the user did not ask for. The
+	     only call site is behind an explicit tap on the "Find friends from your
+	     contacts" control inside Add friends, after a screen that has already
+	     said in words what will be sent and what will be kept. Anything that
+	     fires this earlier is spending the one prompt this app gets on a moment
+	     when the user has no reason to say yes. (The notification prompt is the
+	     cautionary example: it is spent at cold start.)
+
+	     iOS 18 LIMITED ACCESS is a success, not a fallback. The plugin reports
+	     `limited` when the person chose which contacts to share, getContacts
+	     then returns only those, and the app treats that as a completed sync
+	     rather than nagging for full access. Do not add a "grant full access"
+	     prompt on top of it.
+
+	     WHY NOT THE PICKER INSTEAD. CNContactPickerViewController needs no
+	     authorization at all, which would be better, but the plugin's
+	     pickContact() requests full contacts permission before presenting it
+	     (see isContactsPermissionGranted in
+	     node_modules/@capacitor-community/contacts/ios/Sources/ContactsPlugin/ContactsPlugin.swift)
+	     and returns one contact per call. So it costs the same prompt and
+	     delivers less. If that plugin ever presents the picker without asking,
+	     the picker becomes the better path and this key can go. -->
+	<key>NSContactsUsageDescription</key>
+	<string>Flock checks your contacts against the people already using Flock so you can add the friends you already have. Only phone numbers are sent, they are not stored, and nothing else from a contact card leaves your phone.</string>
 	<!-- Exactly the custom schemes the app can be asked to open, and no more.
 
 	     The bill-split screen is the only place that opens one. The authority is

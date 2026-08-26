@@ -928,23 +928,46 @@ test('friends / NOTHING: a contact sync with nothing to look up costs no allowan
   // and every first run where the client sends what the OS gave it — spent the
   // user's whole allowance on lookups that never happened, and the fourth
   // attempt was refused.
+  //
+  // '12' is in the list on purpose. Under the old last-10-digits rule anything
+  // 7 digits or longer was a lookup key, so a fragment was a wildcard; under
+  // utils/phone.js a number resolves to one whole E.164 string or to nothing,
+  // and neither of these does.
   const limit = 4;
   for (let i = 0; i < limit; i++) {
     const res = await post('/api/friends/find-by-phone', { phones: ['not a number', '12'] });
     assert.strictEqual(res.status, 200, `attempt ${i}: ${res.status} ${res.text}`);
     assert.deepStrictEqual(res.body.users, []);
+    assert.strictEqual(res.body.checked, 0);
   }
-  assert.deepStrictEqual(sqlMatching(/FROM users WHERE id != \$1 AND phone IS NOT NULL/i), [],
+  assert.deepStrictEqual(sqlMatching(/phone_hash = ANY/i), [],
     'an unusable sync reached the directory anyway');
 });
 
-test('friends / NOTHING: a real contact sync is still budgeted', async () => {
-  handlers.push([/FROM users WHERE id != \$1 AND phone IS NOT NULL/i, () => ({ rows: [] })]);
+test('friends / NOTHING: a BULK contact sync is still budgeted at 3 an hour', async () => {
+  handlers.push([/phone_hash = ANY/i, () => ({ rows: [] })]);
+  const book = ['+1 (202) 555-0122', '+1 (202) 555-0133'];
   for (let i = 0; i < 3; i++) {
-    const res = await post('/api/friends/find-by-phone', { phones: ['+1 (202) 555-0122'] });
+    const res = await post('/api/friends/find-by-phone', { phones: book });
     assert.strictEqual(res.status, 200, `sync ${i}: ${res.text}`);
+    assert.strictEqual(res.body.checked, 2);
   }
-  const over = await post('/api/friends/find-by-phone', { phones: ['+1 (202) 555-0122'] });
+  const over = await post('/api/friends/find-by-phone', { phones: book });
+  assert.strictEqual(over.status, 429, over.text);
+});
+
+test('friends / NOTHING: a ONE-number lookup is metered as a probe, not as a sync', async () => {
+  // "Add this person by their number" is the friend probe's question asked with
+  // a phone number, so it carries the friend probe's allowance (20/hour) rather
+  // than the address-book sync's 3. Three single lookups an hour would not be a
+  // feature. This is not a way around the bulk budget either: 60 single lookups
+  // a day is far under the 2,000 numbers a day the bulk lane already allows.
+  handlers.push([/phone_hash = ANY/i, () => ({ rows: [] })]);
+  for (let i = 0; i < 20; i++) {
+    const res = await post('/api/friends/find-by-phone', { phones: ['+1 (202) 555-0144'] });
+    assert.strictEqual(res.status, 200, `lookup ${i}: ${res.text}`);
+  }
+  const over = await post('/api/friends/find-by-phone', { phones: ['+1 (202) 555-0144'] });
   assert.strictEqual(over.status, 429, over.text);
 });
 

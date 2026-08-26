@@ -290,6 +290,10 @@ const PROBED_FIELDS = {
   'routes/users.js': new Set([
     'name', 'email', 'phone', 'interests', 'bio', 'current_password', 'new_password',
     'url', 'venmo_username', 'cashapp_cashtag', 'zelle_identifier', 'q',
+    // PUT /api/users/phone-discovery. Its bound is its TYPE rather than a
+    // length: isBoolean() has no width to overflow, so the probe below sends
+    // the oversized string at it and asserts the 400 comes from the type check.
+    'enabled',
   ]),
   'routes/venueProfile.js': new Set([
     'businessName', 'category', 'location', 'description', 'goals',
@@ -376,6 +380,7 @@ test('no scalar field on these routes accepts an 8000-character value', async ()
     ['PUT', '/api/users/profile', { interests: [OVERSIZED] }],
     ['PUT', '/api/users/profile', { new_password: `A1${OVERSIZED}` }],
     ['PUT', '/api/users/profile', { current_password: OVERSIZED }],
+    ['PUT', '/api/users/phone-discovery', { enabled: OVERSIZED }],
     ['GET', `/api/users/search?q=${OVERSIZED}`, undefined],
     ['PUT', '/api/users/profile-image', { url: `https://api.dicebear.com/7.x/bottts/svg?seed=${OVERSIZED}` }],
     ['PUT', '/api/users/venmo-username', { venmo_username: OVERSIZED }],
