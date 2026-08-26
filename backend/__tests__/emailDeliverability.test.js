@@ -514,3 +514,208 @@ test('unsuppress is not reachable from any router in the app', () => {
     .filter((f) => f !== 'admin.js');
   assert.deepStrictEqual(offenders, [], 'only an admin-only route may clear a suppression');
 });
+
+// ===========================================================================
+// 8. The alarm's own dedupe map, which said it was bounded and was not
+// ===========================================================================
+// Adversarial pass over d9a3567, 2026-08-26. raiseEmailAlarm's own comment read
+// "Bounded, and swept STALE-FIRST rather than cleared", and
+// utils/cacheKeyInventory.js recorded `bound: '2k entries, stale-first sweep'`.
+// Both were describing a sweep that cannot bound anything on its own.
+//
+// The value stored against every key is a UTC DAY STRING, and the sweep deletes
+// only the entries whose day is not today. So on the one day the map actually
+// fills up, nothing in it is stale, the loop frees nothing at all, and the map
+// grows past its ceiling without limit. Two of the five alarm keys carry a
+// recipient address (`locked-out:` and `emergency-loop:`), so the entry count is
+// the number of DISTINCT ADDRESSES the alarm has spoken about since midnight.
+//
+// This is a REAL gap and it is not a reachable one today: filling it needs
+// thousands of distinct addresses on email_suppressions inside one day, and the
+// only writer to that table is the Resend bounce webhook. It is pinned because
+// the claim was written down twice as a fact somebody would rely on, and
+// because a growth bound that only holds on the day AFTER the problem is not a
+// bound.
+test('the alarm dedupe map is bounded on the day it fills, not only the day after', () => {
+  resetWorld();
+  const cap = silence();
+  try {
+    const { alarmKeysMax } = emailService.emailHealthStatus();
+    assert.ok(Number.isInteger(alarmKeysMax) && alarmKeysMax > 0,
+      'emailHealthStatus no longer reports the ceiling, so nothing can measure it');
+
+    // Every one of these is a DIFFERENT address on the SAME day, which is
+    // exactly the shape the stale sweep cannot touch. Driven through the real
+    // send path rather than by poking the map, so this measures the alarm the
+    // product actually raises.
+    const overshoot = alarmKeysMax + 500;
+    for (let i = 0; i < overshoot; i += 1) {
+      emailService.raiseEmailAlarm(`probe:${i}@example.com`, 'a locked-out address', { i });
+    }
+
+    const after = emailService.emailHealthStatus();
+    assert.ok(after.alarmKeys <= alarmKeysMax + 1,
+      `the alarm map holds ${after.alarmKeys} entries against a stated ceiling of ${alarmKeysMax}. `
+      + 'The stale-first sweep deletes only entries from a PREVIOUS day, so on the day the map fills it '
+      + 'frees nothing and grows without limit. Two of the keys carry a recipient address.');
+  } finally { cap.restore(); }
+});
+
+test('an alarm that has already spoken today still stays quiet after the map has been swept', () => {
+  // The other half. Evicting to hold the bound must not evict so eagerly that
+  // the dedupe stops working for the condition that just spoke, because a
+  // repeated alarm is the failure this map exists to prevent.
+  resetWorld();
+  const cap = silence();
+  try {
+    const { alarmKeysMax } = emailService.emailHealthStatus();
+    for (let i = 0; i < alarmKeysMax + 200; i += 1) {
+      emailService.raiseEmailAlarm(`probe:${i}@example.com`, 'a locked-out address');
+    }
+    // The most recent key is the one furthest from eviction, and it must not
+    // speak twice.
+    const again = emailService.raiseEmailAlarm(
+      `probe:${alarmKeysMax + 199}@example.com`, 'a locked-out address'
+    );
+    assert.strictEqual(again, false,
+      'the alarm repeated a condition it had already reported today. The eviction that holds the bound '
+      + 'has taken the dedupe with it.');
+  } finally { cap.restore(); }
+});
+
+test('a broken alarm can never break a send', async () => {
+  // The watchdog rule stated at the top of the alarm block: "IT REPORTS, IT
+  // NEVER REFUSES ... A watchdog that can break the thing it watches is worse
+  // than no watchdog." Measured rather than trusted, by taking away the two
+  // things it writes to.
+  resetWorld();
+  const r = stubResend();
+  const realError = console.error;
+  const realWarn = console.warn;
+  try {
+    await withEnv({ RESEND_API_KEY: 'k', NODE_ENV: 'production' }, async () => {
+      emailService.resetClient();
+      console.error = () => { throw new Error('the log stream is gone'); };
+      console.warn = () => { throw new Error('the log stream is gone'); };
+      const out = await emailService.sendEmail({
+        to: 'watchdog@example.com', subject: 's', html: '<p>x</p>',
+      });
+      assert.strictEqual(out.sent, true,
+        'a throwing console took the send down with it. The alarm is allowed to say nothing; it is not '
+        + 'allowed to stop a password reset.');
+    });
+  } finally {
+    console.error = realError;
+    console.warn = realWarn;
+    r.restore();
+  }
+});
+
+test('the emergency category is never caller data, so an ordinary message cannot present as one', () => {
+  // The emergency category is the one bypass in this file: it skips the
+  // do-not-mail list AND, since round 27, the per-recipient counter. What keeps
+  // that safe is not the string comparison, which is exact and has no trim and
+  // no case fold. It is that no request body ever reaches it.
+  for (const near of ['EMERGENCY', 'Emergency', ' emergency', 'emergency ', 'emergenc', 'emergency ']) {
+    assert.notStrictEqual(near, EMERGENCY,
+      `${JSON.stringify(near)} is being treated as the emergency category`);
+  }
+
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const root = path.join(__dirname, '..');
+  const files = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.js')) files.push(full);
+    }
+  };
+  for (const d of ['routes', 'services', 'sockets', 'utils', 'middleware']) walk(path.join(root, d));
+
+  // Scoped to the SEND call sites. `category:` on its own is far too common to
+  // sweep for: routes/events.js carries a Ticketmaster event genre under that
+  // exact name and it has nothing to do with email.
+  const CALL = /\b(?:emailService\.)?send(?:Email|AlertEmail)\s*\(/g;
+  let sites = 0;
+  for (const file of files) {
+    const src = fs.readFileSync(file, 'utf8');
+    let call;
+    CALL.lastIndex = 0;
+    while ((call = CALL.exec(src))) {
+      sites += 1;
+      // The argument text, bounded. Long enough to reach the category on every
+      // real call site and short enough not to wander into the next statement.
+      const args = src.slice(call.index, call.index + 900);
+      const m = /category:\s*([^,\n}]+)/.exec(args);
+      if (!m) continue;
+      const value = m[1].trim();
+      const ok = /^'[^']*'$/.test(value)
+        || /^"[^"]*"$/.test(value)
+        || value === 'EMERGENCY_CATEGORY';
+      assert.ok(ok,
+        `${path.relative(root, file).replace(/\\/g, '/')} names an email category as ${value}. The `
+        + 'emergency category skips the do-not-mail list and the per-recipient cap, so it may only ever '
+        + 'be a literal in the code or the shared constant, never anything a caller sends.');
+    }
+  }
+  assert.ok(sites >= 6,
+    `this sweep found only ${sites} send call sites, which means it stopped matching them and is no `
+    + 'longer measuring anything');
+
+  // routes/safety.js is the one indirection: sendAlertEmail forwards a
+  // `category` variable down to sendEmail. Its own signature is what decides
+  // what that variable can be, so it is read here rather than assumed.
+  const safety = fs.readFileSync(path.join(root, 'routes', 'safety.js'), 'utf8');
+  assert.match(safety,
+    /async function sendAlertEmail\([^)]*\{\s*category\s*=\s*'transactional'\s*\}\s*=\s*\{\}\s*\)/,
+    'sendAlertEmail no longer defaults its category to a literal, so a caller that omits it decides '
+    + 'nothing and a caller that passes a request value decides everything');
+  const emergencyCallers = safety.match(/category:\s*EMERGENCY_CATEGORY/g) || [];
+  assert.strictEqual(emergencyCallers.length, 2,
+    'the emergency category has gained or lost a caller in routes/safety.js. There are exactly two by '
+    + 'design, the alert and its stand-down, and emailSuppression.js asks that a third make its argument '
+    + 'in writing first.');
+});
+
+test('what one address can absorb in a day, now that the counter is keyed on category', async () => {
+  // NOT A DEFECT, PINNED SO IT STAYS A DECISION. Keying the counter on the
+  // category was the right fix for the right reason: a digest flood must never
+  // be why a password reset is refused. It also multiplies the ceiling. The cap
+  // is per (category, address), so one address absorbs the cap once per capped
+  // category instead of once in total, and the emergency category is uncapped
+  // on top of that. 60 in total became 300 per capped category.
+  //
+  // It stands because of who can aim it. Exactly one path lets a caller name
+  // its own recipient (an unauthenticated waitlist signup), and naming your own
+  // address only spends your own allowance; every other sender resolves the
+  // address from a database row. What this test exists to catch is a THIRD
+  // capped category arriving without anybody noticing the total moved again.
+  resetWorld();
+  const cap = silence();
+  try {
+    await withEnv({ RESEND_API_KEY: undefined }, async () => {
+      const seen = {};
+      for (const category of ['transactional', 'marketing', EMERGENCY]) {
+        let through = 0;
+        const tries = emailService.PER_RECIPIENT_DAILY_CAP + 40;
+        for (let i = 0; i < tries; i += 1) {
+          // No key set, so a message that gets past the counter comes back
+          // `skipped` rather than sent. That is what makes this measure the
+          // COUNTER and nothing downstream of it.
+          const out = await emailService.sendEmail({
+            to: 'one@example.com', subject: 's', html: '<p>x</p>', category,
+          });
+          if (out.skipped) through += 1;
+        }
+        seen[category] = through;
+      }
+      assert.strictEqual(seen.transactional, emailService.PER_RECIPIENT_DAILY_CAP);
+      assert.strictEqual(seen.marketing, emailService.PER_RECIPIENT_DAILY_CAP);
+      assert.strictEqual(seen[EMERGENCY], emailService.PER_RECIPIENT_DAILY_CAP + 40,
+        'the emergency category is capped again. An SOS alert and, worse, the stand-down that tells a '
+        + 'parent it is over, are back to being eatable by a counter built to stop marketing loops.');
+    });
+  } finally { cap.restore(); }
+});
