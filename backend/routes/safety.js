@@ -536,9 +536,22 @@ router.put('/contacts/:id', authenticate, async (req, res) => {
     const fields = readContactFields(req.body);
     if (fields.error) return res.status(400).json({ error: fields.error });
     const { name, phone, email, relationship } = fields;
+    // email_set_at is WHEN THIS ADDRESS JOINED THE LIST, and it moves only when
+    // the address does. POST /alert/cancel mails the all clear to the contacts
+    // who were on the list when the alert went out, and it decided that from
+    // created_at, which this statement does not move: add a contact, raise a
+    // real SOS, edit the address, stand down, and the all clear went to an
+    // address that never received the alarm, past the do-not-mail list, on the
+    // strength of an argument (services/emailSuppression.js, EMERGENCY_CATEGORY)
+    // that is only true of the address that got the alarm. Editing a name or a
+    // relationship is not that, so IS DISTINCT FROM rather than a blanket NOW().
+    // Migration 052 carries the whole reasoning.
     const result = await pool.query(
-      `UPDATE trusted_contacts SET contact_name = $1, contact_phone = $2, contact_email = $3, relationship = $4
-       WHERE id = $5 AND user_id = $6 RETURNING *`,
+      `UPDATE trusted_contacts
+          SET contact_name = $1, contact_phone = $2, contact_email = $3, relationship = $4,
+              email_set_at = CASE WHEN contact_email IS DISTINCT FROM $3 THEN NOW()
+                                  ELSE COALESCE(email_set_at, created_at) END
+        WHERE id = $5 AND user_id = $6 RETURNING *`,
       [name, phone, email, relationship, id, req.user.id]
     );
     if (result.rowCount === 0) {
@@ -1209,7 +1222,24 @@ const CANCEL_WINDOW_MS = 6 * 60 * 60 * 1000;
 const MAX_CANCELS_PER_WINDOW = 3;
 const CANCEL_METER_WINDOW_MS = 15 * 60 * 1000;
 const CANCEL_METER_MAX_KEYS = 5000;
-const cancelWrites = new Map(); // userId -> { count, resetAt }
+// THE REFUND NEEDS A FLOOR UNDER IT, OR IT IS NOT A METER.
+//
+// A stand-down that reached nobody gives its slot back, and it should: nothing
+// was withdrawn, so nothing was spent, and the person still needs to be able to
+// try. But the refund is unconditional and the failure is caller-reachable, so
+// the two together mean a request whose sends ALWAYS fail costs nothing and can
+// be repeated without limit for the whole six-hour window, each attempt fanning
+// out to every contact. That is exactly the load the comment below says the
+// meter exists to bound, and the refund was handing it back.
+//
+// So attempts are counted separately and never refunded. The refundable count
+// is what bounds successful stand-downs, which is a product rule; this bounds
+// requests that reach the mail provider, which is a load rule, and the two
+// numbers are different for the same reason. It sits well above any real
+// sequence of taps: a person retrying a genuinely broken send gets nine more
+// goes inside a quarter of an hour.
+const MAX_CANCEL_ATTEMPTS_PER_WINDOW = 12;
+const cancelWrites = new Map(); // userId -> { count, attempts, resetAt }
 
 // Check-then-charge, and charged BEFORE the sends rather than after. The
 // opposite of the contact form's rule, and for the opposite reason: there the
@@ -1226,11 +1256,15 @@ function allowCancel(userId, now = Date.now()) {
   }
   let entry = cancelWrites.get(userId);
   if (!entry || now >= entry.resetAt) {
-    entry = { count: 0, resetAt: now + CANCEL_METER_WINDOW_MS };
+    entry = { count: 0, attempts: 0, resetAt: now + CANCEL_METER_WINDOW_MS };
     cancelWrites.set(userId, entry);
   }
   if (entry.count >= MAX_CANCELS_PER_WINDOW) return false;
+  // Never refunded. See MAX_CANCEL_ATTEMPTS_PER_WINDOW: this is the one that
+  // stops a stand-down whose sends always fail from being free forever.
+  if ((entry.attempts || 0) >= MAX_CANCEL_ATTEMPTS_PER_WINDOW) return false;
   entry.count += 1;
+  entry.attempts = (entry.attempts || 0) + 1;
   return true;
 }
 
@@ -1264,14 +1298,24 @@ router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
       });
     }
 
-    // Exactly the people who existed when the alert went out. A contact added
-    // afterwards never received the alert, and a stand-down is the wrong first
-    // message to send anybody. A contact removed since is gone from the table
-    // and cannot be reached at all, which is reported rather than hidden.
+    // Exactly the ADDRESSES that were on the list when the alert went out. A
+    // contact added afterwards never received the alert, and a stand-down is
+    // the wrong first message to send anybody. A contact removed since is gone
+    // from the table and cannot be reached at all, which is reported rather
+    // than hidden.
+    //
+    // The column is email_set_at and not created_at, because the obligation is
+    // about the address rather than the row, and PUT /contacts/:id rewrites the
+    // address of an existing row without moving its creation date. Reading
+    // created_at here meant a contact could be added, alerted, edited to a
+    // different address, and stood down, and the all clear went to somebody who
+    // had never heard of us, past the do-not-mail list, on the strength of the
+    // one argument that lets this route past it. COALESCE covers every row
+    // written before migration 052, where the two dates are the same thing.
     const contacts = await pool.query(
       `SELECT contact_name, contact_email
          FROM trusted_contacts
-        WHERE user_id = $1 AND created_at <= $2
+        WHERE user_id = $1 AND COALESCE(email_set_at, created_at) <= $2
         ORDER BY created_at ASC`,
       [req.user.id, last.rows[0].created_at]
     );
@@ -1340,7 +1384,9 @@ router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
     if (told.length === 0) {
       // Same rule as /alert: never report a delivery that did not happen, and
       // say what to do instead. The meter is given back, because an attempt
-      // that reached nobody has not withdrawn anything.
+      // that reached nobody has not withdrawn anything. `attempts` is NOT given
+      // back: the fan-out happened either way, and a refund with nothing under
+      // it is a limit an attacker turns off by making sure the sends fail.
       const entry = cancelWrites.get(req.user.id);
       if (entry && entry.count > 0) entry.count -= 1;
       return res.status(502).json({
@@ -1518,6 +1564,7 @@ module.exports.__test = {
   COARSE_FIX_METRES,
   CANCEL_WINDOW_MS,
   MAX_CANCELS_PER_WINDOW,
+  MAX_CANCEL_ATTEMPTS_PER_WINDOW,
   resetCancels: () => cancelWrites.clear(),
   ALERT_COOLDOWN_MS,
   ALERT_FLOOR_MS,
