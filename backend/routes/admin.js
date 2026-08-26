@@ -1791,6 +1791,31 @@ function meterOrNull(read) {
   }
 }
 
+// THE SAME GUARD FOR A METER THAT READS A BLOCK RATHER THAN ONE COUNT, and it
+// exists because meterOrNull silently ate one.
+//
+// meterOrNull's `Number.isFinite(v) ? v : null` is the line that turns a stuck
+// meter into an unmeasured line, and no object is ever finite. So a meter that
+// returns a shape rather than a number comes back null on every request, for
+// every reader, with nothing thrown and nothing logged. That is exactly what
+// happened to predictionCoverage on 2026-08-26 (e36c22f): the commit added the
+// key to this response to make the model-versus-fallback split visible for the
+// first time, the panel then served `"predictionCoverage": null` on every call
+// forever, and the number the change existed to surface stayed exactly as
+// invisible as it had been the day before. The route was green, the meter's own
+// test was green, and nothing measured the two together.
+//
+// Same contract as meterOrNull in the half that matters: a throw from the meter
+// is one unmeasured line, never a 500 on the panel.
+function meterBlockOrNull(read) {
+  try {
+    const v = read();
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+
 router.get('/costs', async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
 
@@ -1830,7 +1855,10 @@ router.get('/costs', async (req, res) => {
   // 24 slots for one view. modelShare is null rather than 0 before anything has
   // been scored, so an idle process reads as unmeasured instead of as a
   // failure.
-  const predictionCoverage = meterOrNull(
+  // meterBlockOrNull, not meterOrNull: this meter returns a block, and
+  // meterOrNull answers null for anything that is not a finite number. See the
+  // comment on it. Display only, never a gate.
+  const predictionCoverage = meterBlockOrNull(
     () => require('../services/mlPredictor').predictionCoverage()
   );
 
@@ -1937,7 +1965,6 @@ router.get('/costs', async (req, res) => {
     ticketmasterCallsToday,
     nightContextCallsToday,
     crowdEventCallsToday,
-    predictionCoverage,
     digestEmailsMonth,
   });
 
@@ -2016,6 +2043,24 @@ router.get('/costs', async (req, res) => {
     // largest line on the Google bill, and now the only one with a dollar figure
     // attached to it instead of a request count.
     photoBudget: photoSpend,
+    // HOW OFTEN THE TRAINED MODEL ACTUALLY ANSWERS, at the top level, because
+    // it is not a cost.
+    //
+    // e36c22f added this and it never reached this payload. It was passed into
+    // costModel.buildObserved() instead, which takes COUNTS and nothing else —
+    // the separation Part 1 of costModel.test.js exists to protect — so it was
+    // handed to a function that has never heard of it and dropped on the floor.
+    // The commit said the counter had gone from unread to read; it had gone
+    // from unread to read and discarded, and the panel carried no such key at
+    // all. It also went through meterOrNull, which answers null for anything
+    // that is not a finite number, so it would have been null here even if the
+    // routing had been right. Two independent reasons for the same nothing.
+    //
+    // Display only, never a gate: a coverage figure that gates a prediction is
+    // a product that turns its own differentiator off exactly when it is doing
+    // badly. `total` counts venue-HOURS, not cards, because the hourly strip
+    // scores up to 24 slots for one view.
+    predictionCoverage,
     // THE INVENTORY. Every outside thing Flock depends on, including the ones
     // that cost nothing. "What am I paying for" and "what am I using" are
     // different questions and only the first was ever answered on this
