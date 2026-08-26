@@ -48,15 +48,16 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
   // it. A 16-year-old reaching for 2009 and landing on 2019 was one tap from
   // that, with nothing said and nothing to confirm.
   //
-  // The fix is a read-back, not a cap. The signup field carries max={maxDob},
-  // which stops an under-13 date being entered at all, and copying that here
-  // would be the wrong tool twice over: it would put this field outside the
-  // age gate the same way the signup field already is, and it would silently
-  // prevent the app recording the one fact the law says cannot be un-known
-  // once we have it. An appeal line is not the answer either. The server
-  // treats a date asserted on this path as knowledge because the caller has
-  // just proved they hold the account, and there is no staffed channel behind
-  // an "email us" sentence to make a promise of review true.
+  // The fix is a read-back, not a cap. A cap would silently prevent the app
+  // recording the one fact the law says cannot be un-known once we have it,
+  // and the signup screen no longer carries one either: it used to cap its
+  // picker at thirteen years ago and print the threshold above the field,
+  // which is the arrangement that tells a child which birthday to type. Both
+  // screens now take any date and let the server answer. An appeal line is not
+  // the answer either. The server treats a date asserted on this path as
+  // knowledge because the caller has just proved they hold the account, and
+  // there is no staffed channel behind an "email us" sentence to make a
+  // promise of review true.
   //
   // What is left is the honest one. Before an irreversible refusal, show the
   // date back in words and make the person say it is right. The refusal, the

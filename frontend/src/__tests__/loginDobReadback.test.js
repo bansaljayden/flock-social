@@ -16,9 +16,9 @@
  *
  * WHAT THESE TESTS DELIBERATELY DO NOT ASSERT
  *   - That an under-13 date is unenterable. It has to stay enterable. Capping
- *     the field the way the signup field is capped would put this path outside
- *     the age gate exactly as the signup screen already is, and would stop the
- *     app recording the one fact COPPA says cannot be un-known once we have it.
+ *     the field would put this path outside the age gate and would stop the app
+ *     recording the one fact COPPA says cannot be un-known once we have it. The
+ *     signup field used to be capped that way and no longer is.
  *   - Anything about the server's refusal. It is unchanged, and an honest
  *     12-year-old reaches it one tap later than before.
  *
@@ -157,11 +157,11 @@ describe('an under-13 date cannot leave the sign-in screen unread', () => {
 });
 
 describe('the shape of the choice, so it is not undone by accident', () => {
-  it('the field stays uncapped, unlike the signup one', () => {
+  it('the field stays uncapped', () => {
     const field = LOGIN_SRC.slice(LOGIN_SRC.indexOf('id="login-dob"'), LOGIN_SRC.indexOf('login-dob-hint'));
     // A max here would make the server-side under-13 flow unreachable from this
-    // screen too, which is the defect the signup screen already has. The
-    // reasoning is written out above the declaration in LoginScreen.js.
+    // screen, which is the defect the signup screen carried until its cap came
+    // off. The reasoning is written out above the declaration in LoginScreen.js.
     expect(field).not.toMatch(/max=/);
   });
 

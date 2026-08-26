@@ -46,23 +46,35 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
     }
   };
 
-  // Custom-styled Google button; DOB is validated in onClick BEFORE this
-  // launches (the server re-checks age on account creation regardless).
+  // Custom-styled Google button. The date entered above is passed through and
+  // the server decides on it, the same as the form does.
   // The hook routes native iOS through Google's own SDK and everything else
   // through the GIS browser flow; both post to the same /api/auth/google.
   const startGoogle = useGoogleAuth({
     onSuccess: onSignupSuccess,
-    // The DOB is already collected and age-gated above before this can fire,
-    // so a needsDob 403 is not reachable from this screen; the message is
-    // surfaced verbatim either way, exactly as before.
     onError: (msg) => setError(msg || 'Google sign-in failed'),
     setBusy: setLoading,
   });
 
-  // Flock requires users to be at least 13 (matches Terms of Service + the
-  // server-side age gate in backend/utils/age.js). Client check is for UX only;
-  // the backend re-computes age from date_of_birth and is the source of truth.
-  const MIN_AGE = 13;
+  // THIS SCREEN NAMES NO MINIMUM AGE AND ENFORCES NONE. Read this before
+  // putting either back.
+  //
+  // Flock is 13+. That rule lives in the Terms and in the App Store age
+  // rating, and backend/routes/auth.js enforces it on all three
+  // account-creation paths. What this screen used to do was print "You have to
+  // be 13 or older" above a date picker capped at exactly thirteen years ago,
+  // then refuse a younger date locally without ever calling the API. That does
+  // not keep a 12-year-old out. It shows them which birthday passes, they type
+  // one, and the app stores that false date as their real one. The FTC's
+  // amended COPPA rule, compliance date 2026-04-22, codifies the neutral age
+  // screen, and its guidance is explicit that the screen must not encourage a
+  // child to falsify their age.
+  //
+  // So the field takes any date, the date is sent, and the server answers. Its
+  // refusal names no age either, and it remembers the attempt, so going back
+  // and typing an older year gets the same sentence. Nothing changes for
+  // anyone 13 or older: same four fields, same account.
+
   // Live password checklist. Mirrors backend/routes/auth.js EXACTLY (8 chars,
   // 1 uppercase, 1 number) so nobody submits a password the server will bounce
   // for a rule they were never shown. Shown only once the field has content.
@@ -82,12 +94,19 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
     if (m < 0 || (m === 0 && now.getDate() < b.getDate())) age -= 1;
     return age;
   };
-  // Latest date that still satisfies the minimum age — caps the date picker.
-  const maxDob = (() => {
-    const d = new Date();
-    d.setFullYear(d.getFullYear() - MIN_AGE);
-    return d.toISOString().split('T')[0];
-  })();
+  // Present, and a date a living person could have been born on. Neither half
+  // is a statement about age: the server is the only thing on any path that
+  // decides that. The second half exists because a date in the FUTURE is not an
+  // age claim, it is a typo, and it must not be sent as one. The server reads
+  // any date short of the minimum as knowledge that a child is signing up and
+  // remembers the mailbox for 24 hours, so a mistyped year would cost a real
+  // person their account for a day. Refusing a birth date nobody alive can have
+  // costs nothing and teaches nothing: it names no threshold and it turns away
+  // no truthful date.
+  const dobLooksReal = (value) => {
+    const years = ageFromDob(value);
+    return years !== null && years >= 0;
+  };
 
   // Rough shape check only. The server is the authority on what it will accept
   // (express-validator's isEmail on /signup); this exists so an obvious typo is
@@ -103,7 +122,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
     if (!email.trim()) return ['signup-email', 'Add your email address.'];
     if (!EMAIL_SHAPE.test(email.trim())) return ['signup-email', 'That email address does not look right. Check it and try again.'];
     if (!dob) return ['signup-dob', 'Add your date of birth.'];
-    if (ageFromDob(dob) === null) return ['signup-dob', 'That date of birth does not look right. Check it and try again.'];
+    if (!dobLooksReal(dob)) return ['signup-dob', 'That date of birth does not look right. Check it and try again.'];
     if (!password) return ['signup-password', 'Choose a password.'];
     if (!pwChecks.every((c) => c.ok)) return ['signup-password', 'Your password is missing a requirement listed below it.'];
     return null;
@@ -126,13 +145,6 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
       const [fieldId, message] = problem;
       setError(message);
       document.getElementById(fieldId)?.focus();
-      return;
-    }
-
-    const age = ageFromDob(dob);
-    if (age < MIN_AGE) {
-      setError(`You must be at least ${MIN_AGE} to use Flock`);
-      document.getElementById('signup-dob')?.focus();
       return;
     }
 
@@ -193,8 +205,8 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   return (
     <AuthShell hero={hero}>
       {/* noValidate, and this is the most load-bearing attribute on the screen.
-          Every field below carries `required`, and one carries `minLength` and
-          one `max`. On iOS there is no validation bubble: WKWebView refuses the
+          Every field below carries `required`, and one carries `minLength`.
+          On iOS there is no validation bubble: WKWebView refuses the
           submit, focuses nothing the user can see, and draws NOTHING. So an
           incomplete form met a Create account button that did not visibly
           respond, with no way to find out which field was the problem.
@@ -249,13 +261,15 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
             className="auth-field"
             type="date"
             value={dob}
-            max={maxDob}
             onChange={(e) => setDob(e.target.value)}
             autoComplete="bday"
             aria-describedby="signup-dob-hint"
             required
           />
-          <p className="auth-hint" id="signup-dob-hint">You have to be 13 or older to use Flock.</p>
+          {/* Says what the date is for and nothing else. The number this field
+              used to print above itself was the part that taught a child which
+              birthday to type instead. */}
+          <p className="auth-hint" id="signup-dob-hint">We use this to check your age.</p>
         </div>
 
         <div className="auth-field-row" style={{ marginBottom: '24px' }}>
@@ -346,15 +360,16 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
           disabled={loading}
           onClick={() => {
             setError('');
-            // Age gate the Google sign-up path too: DOB must be entered and
-            // >= 13 before we create an account (parity with email signup).
-            const age = ageFromDob(dob);
-            if (age === null) {
+            // The server requires a date of birth to create an account on this
+            // path, so the field has to be filled before Google's sheet is any
+            // use. What the date says about age is not decided here, exactly as
+            // it is not decided in handleSubmit.
+            if (!dob) {
               setError('Add your date of birth above first, then continue with Google.');
               return;
             }
-            if (age < MIN_AGE) {
-              setError(`You must be at least ${MIN_AGE} to use Flock`);
+            if (!dobLooksReal(dob)) {
+              setError('That date of birth does not look right. Check it and try again.');
               return;
             }
             startGoogle({ dob });
@@ -365,10 +380,26 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
       )}
 
       {/* Apple guideline 4.8 parity with the Google button above; native
-          iOS only (returns null on web). Apple accounts don't carry DOB,
-          and Apple requires its account holders to be 13+, so the age
-          gate here matches the Google path's server-side behavior. */}
-      <AppleSignInButton onSuccess={onSignupSuccess} onError={(m) => setError(m)} dob={dob} />
+          iOS only (returns null on web). Apple accounts do not carry a date of
+          birth, so whatever is in the field is passed through and the server
+          decides, the same as the other two paths. An empty field is allowed
+          past on purpose: an Apple account that already exists signs in without
+          one, and a new one gets the server's needsDob answer back. The only
+          thing stopped here is the date no living person can have, for the
+          reason spelled out on dobLooksReal. */}
+      <AppleSignInButton
+        onSuccess={onSignupSuccess}
+        onError={(m) => setError(m)}
+        dob={dob}
+        beforeAuthorize={() => {
+          setError('');
+          if (dob && !dobLooksReal(dob)) {
+            setError('That date of birth does not look right. Check it and try again.');
+            return false;
+          }
+          return true;
+        }}
+      />
 
       <p className="auth-foot">
         Already have an account?
