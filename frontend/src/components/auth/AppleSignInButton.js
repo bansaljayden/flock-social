@@ -20,13 +20,21 @@ const isNativeIos = () =>
 // `dob` (optional): passed through on account CREATION — the server requires a
 // date of birth for new accounts on every auth path (age gate). Existing
 // accounts sign in fine without it.
-const AppleSignInButton = ({ onSuccess, onError, dob }) => {
+//
+// `beforeAuthorize` (optional): called on the tap, before Apple's sheet opens.
+// Return false and nothing happens. It exists because this button is the one
+// sign-in path a screen cannot re-enter on the user's behalf, since the native
+// sheet needs this button's own tap. A screen with something to settle with the
+// user first (the sign-in screen's date-of-birth read-back) therefore has to be
+// able to stop the tap rather than undo what it did.
+const AppleSignInButton = ({ onSuccess, onError, dob, beforeAuthorize }) => {
   const [busy, setBusy] = useState(false);
 
   if (!isNativeIos()) return null;
 
   const handleClick = async () => {
     if (busy) return;
+    if (beforeAuthorize && beforeAuthorize() === false) return;
     setBusy(true);
     try {
       const { SignInWithApple } = await import('@capacitor-community/apple-sign-in');
