@@ -5358,21 +5358,66 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [selectedDmId, setSelectedDmId] = useState(null);
   const [showNewDmModal, setShowNewDmModal] = useState(false);
 
+  // The flock id a notification tap asked us to show the invite for, held until
+  // the invite and flock lists have loaded. See the deferred-resolution note
+  // below and the effect that consumes it further down.
+  const [pushInviteFlockId, setPushInviteFlockId] = useState(null);
+  // The invite card the tap was about, so the list can say which one it means
+  // instead of leaving the user to find it among the others.
+  const [highlightedInviteId, setHighlightedInviteId] = useState(null);
+  // An admin-only tap held until authUser has loaded and can be role-checked.
+  const [pushAdminIntent, setPushAdminIntent] = useState(false);
+
   // A push-notification tap resolves (in services/pushNavigation) into a
   // navigation intent. Consume it here and set the SAME state the in-app
   // navigation uses, so a tap opens the exact thing the notification is about
   // instead of leaving the app on whatever screen it was already on.
-  //   - flock  -> the flock's chat  (ChatListScreen row: selectedFlockId + 'chatDetail')
-  //   - dm     -> the DM thread     (Messages DM row:    selectedDmId + 'dmDetail')
-  //   - friends-> the You/profile tab where friend requests live
+  //   - flock      -> the flock's chat (ChatListScreen row: selectedFlockId + 'chatDetail'),
+  //                   or the cash pool sheet / plan screen when the intent names one
+  //   - flockInvite-> the pending-invite card on the plans list
+  //   - flocks     -> the plans list itself (a plan that no longer exists)
+  //   - dm         -> the DM thread     (Messages DM row:    selectedDmId + 'dmDetail')
+  //   - friends    -> the You/profile tab where friend requests and the score live
+  //   - home       -> the Nest, where the Tonight control is
+  //   - admin      -> the admin dashboard, role permitting
   // Tab 'chat' (not 'chats') is the real Messages tab id — see the tab list and
   // the renderScreen switch — so back from the thread lands on Messages.
+  //
+  // WHY AN INVITE IS NOT A FLOCK INTENT. `flocks` is filtered to
+  // memberStatus === 'accepted', and an invited flock is by definition not in
+  // it — invites live in `pendingFlockInvites` and render on the plans list. A
+  // flock_invite tap that set 'chatDetail' therefore resolved through
+  // getSelectedFlock and found nothing, which is the normal case for an invite
+  // (a first invite arrives when you have no plans at all). The panel it landed
+  // on says the plan was deleted or that you are no longer in it, about a live
+  // invite you have not answered yet. So the invite gets its own intent, and it
+  // lands on the card that carries the Accept and Decline buttons rather than
+  // on a second copy of them built for one notification.
+  //
+  // Resolution is DEFERRED, not done here: a cold start from a notification tap
+  // delivers this intent before GET /api/flocks has answered, so the invite is
+  // in neither list yet. The effect below runs it once the lists are real.
   useEffect(() => onPushNavigate((intent) => {
     if (!intent || !intent.screen) return;
     if (intent.screen === 'flock' && intent.flockId) {
       setSelectedFlockId(intent.flockId);
       setCurrentTab('chat');
-      setCurrentScreen('chatDetail');
+      // 'plan' is the flock detail screen (time, venue, roster, crowd). 'bill'
+      // and 'budget' both live in the cash pool sheet over the chat, which is
+      // the one surface that holds them.
+      if (intent.view === 'plan') {
+        setCurrentScreen('detail');
+      } else {
+        setCurrentScreen('chatDetail');
+        if (intent.view === 'bill' || intent.view === 'budget') setShowChatPool(true);
+      }
+    } else if (intent.screen === 'flockInvite' && intent.flockId) {
+      setCurrentTab('chat');
+      setCurrentScreen('main');
+      setPushInviteFlockId(intent.flockId);
+    } else if (intent.screen === 'flocks') {
+      setCurrentTab('chat');
+      setCurrentScreen('main');
     } else if (intent.screen === 'dm' && intent.userId) {
       setSelectedDmId(intent.userId);
       setCurrentTab('chat');
@@ -5380,8 +5425,63 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     } else if (intent.screen === 'friends') {
       setCurrentTab('profile');
       setCurrentScreen('main');
+    } else if (intent.screen === 'home') {
+      setCurrentTab('home');
+      setCurrentScreen('main');
+    } else if (intent.screen === 'admin') {
+      // The role check is the same one renderScreen and the redirect effect
+      // apply. A non-admin tap is not an error, it just has nowhere to go.
+      setPushAdminIntent(true);
     }
   }), []);
+
+  // ── Where a tapped invite actually lands ────────────────────────────────
+  //
+  // Held until GET /api/flocks has answered, because a cold start from a
+  // notification tap gets here first and both lists are still empty. Three
+  // outcomes, and none of them is the "this plan isn't open anymore" panel:
+  //
+  //   still invited   -> the plans list, with the invite card called out. That
+  //                      card already holds Accept and Decline, the host's name
+  //                      and the plan's name, so it is the whole decision.
+  //   already joined  -> the chat, because that is what the invite became. This
+  //                      is the second device, or a tap on a stale notification.
+  //   gone            -> the plans list and a line saying so. The invite was
+  //                      withdrawn or the plan was deleted, and that is a real
+  //                      answer rather than a wrong screen.
+  useEffect(() => {
+    if (!pushInviteFlockId || flocksLoading) return;
+    const invited = pendingFlockInvites.some(f => f.id === pushInviteFlockId);
+    const joined = flocks.some(f => f.id === pushInviteFlockId);
+    if (invited) {
+      setHighlightedInviteId(pushInviteFlockId);
+    } else if (joined) {
+      setSelectedFlockId(pushInviteFlockId);
+      setCurrentTab('chat');
+      setCurrentScreen('chatDetail');
+    } else {
+      showToast('That invite is no longer open.');
+    }
+    setPushInviteFlockId(null);
+  }, [pushInviteFlockId, flocksLoading, pendingFlockInvites, flocks, showToast]);
+
+  // The call-out fades on its own. It is a "this one" marker, not a state the
+  // user has to dismiss, and leaving it lit forever would make the next invite
+  // look answered.
+  useEffect(() => {
+    if (!highlightedInviteId) return undefined;
+    const t = setTimeout(() => setHighlightedInviteId(null), 6000);
+    return () => clearTimeout(t);
+  }, [highlightedInviteId]);
+
+  // An admin tap, once the account behind it is known. A moderation alert only
+  // ever goes to an admin, but the token is read after boot, so the role check
+  // cannot run at the moment the tap arrives.
+  useEffect(() => {
+    if (!pushAdminIntent || !authUser) return;
+    if (authUser.role === 'admin') setCurrentScreen('adminRevenue');
+    setPushAdminIntent(false);
+  }, [pushAdminIntent, authUser]);
   // UGC moderation (Apple 1.2): null = closed, else { userId, userName, contentType, contentId }
   const [moderationTarget, setModerationTarget] = useState(null);
   // Person card (Apple 1.2 again). Every report/block entry point used to hang
@@ -5960,7 +6060,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
   }, [requestUserLocation]);
 
-  const getSelectedFlock = useCallback(() => flocks.find(f => f.id === selectedFlockId) || flocks[0], [flocks, selectedFlockId]);
+  // No `|| flocks[0]` fallback, and its absence is the point. A chat screen
+  // opened for a flock this list does not hold used to silently render SOMEBODY
+  // ELSE'S plan: their venue, their roster, their messages, with the header
+  // naming that plan and every control on the screen wired to it. The two ways
+  // in were a notification tap for an invited flock (an invite is never in
+  // `flocks`, which is filtered to accepted) and a flock that vanished under an
+  // open screen. Opening the wrong plan is worse than an honest empty state in
+  // both cases, and it is worse the more plans you have, which is exactly
+  // backwards. Every in-app route into 'chatDetail' sets selectedFlockId first,
+  // so nothing legitimate was relying on the fallback.
+  const getSelectedFlock = useCallback(() => flocks.find(f => f.id === selectedFlockId), [flocks, selectedFlockId]);
 
   // Haversine distance between two lat/lng points
   const calcDistance = useCallback((lat1, lng1, lat2, lng2) => {
@@ -12650,8 +12760,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--pill-bg)' }} />
                 <span style={{ width: '18px', height: '18px', borderRadius: '9px', background: '#F59E0B', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{pendingFlockInvites.length}</span>
               </div>
-              {pendingFlockInvites.map((f) => (
-                <div key={`invite-${f.id}`} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', marginBottom: '6px', border: '1.5px solid #FDE68A', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: '0 2px 12px rgba(245,158,11,0.08)' }}>
+              {pendingFlockInvites.map((f) => {
+                // A notification tap for this invite lands on this list, so the
+                // card it meant is called out and scrolled to. Without it the
+                // tap drops you on a list and leaves you to work out which row
+                // the buzz was about.
+                const tapped = highlightedInviteId === f.id;
+                return (
+                <div
+                  key={`invite-${f.id}`}
+                  ref={tapped ? (el) => { if (el && el.scrollIntoView) el.scrollIntoView({ block: 'nearest' }); } : undefined}
+                  style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', marginBottom: '6px', border: tapped ? '2px solid #F59E0B' : '1.5px solid #FDE68A', display: 'flex', alignItems: 'center', gap: '12px', boxShadow: tapped ? '0 0 0 4px rgba(245,158,11,0.18)' : '0 2px 12px rgba(245,158,11,0.08)' }}
+                >
                   <div style={{ width: '46px', height: '46px', borderRadius: '14px', background: '#F59E0B', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 2px 8px rgba(245,158,11,0.2)', flexShrink: 0 }}>
                     {Icons.mail('white', 20)}
                   </div>
@@ -12683,7 +12803,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     </button>
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </>
           )}
 
@@ -14206,20 +14327,32 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // back without it. The detail screen used to render nothing at all, and the
   // chat screen read flock.name straight off undefined and white-screened the
   // whole app. Neither is allowed to be a dead end.
+  //
+  // It also has to tell two different stories. Now that getSelectedFlock has no
+  // `|| flocks[0]` fallback, a plan opened from a notification tap during a cold
+  // start reaches this panel for a second or two while GET /api/flocks is still
+  // in flight, and "it was deleted" is a lie about a plan that is on its way.
+  // While the list is loading it says so instead.
   const MissingFlockPanel = () => (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', alignItems: 'center', justifyContent: 'center', gap: '14px', padding: '32px 24px', backgroundColor: 'var(--bg-primary)', textAlign: 'center' }}>
       <BirdieStill size={104} />
-      <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.005em' }}>This plan isn't open anymore</h2>
-      <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, maxWidth: '26em', lineHeight: 1.5 }}>
-        It was either deleted or you are no longer in it. Your other plans are all still here.
-      </p>
-      <button
-        className="hit44"
-        onClick={() => { setCurrentScreen('main'); setSelectedFlockId(null); }}
-        style={{ marginTop: '4px', padding: '12px 24px', borderRadius: '12px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
-      >
-        Back to your plans
-      </button>
+      {flocksLoading ? (
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.005em' }}>Opening your plan</h2>
+      ) : (
+        <>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.005em' }}>This plan isn't open anymore</h2>
+          <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, maxWidth: '26em', lineHeight: 1.5 }}>
+            It was either deleted or you are no longer in it. Your other plans are all still here.
+          </p>
+          <button
+            className="hit44"
+            onClick={() => { setCurrentScreen('main'); setSelectedFlockId(null); }}
+            style={{ marginTop: '4px', padding: '12px 24px', borderRadius: '12px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
+          >
+            Back to your plans
+          </button>
+        </>
+      )}
     </div>
   );
 

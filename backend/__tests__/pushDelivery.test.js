@@ -83,22 +83,62 @@ const offline = io; // no rooms == nobody connected
 // ---------------------------------------------------------------------------
 test('every notification type resolves to the screen it is about', () => {
   const { deepLinkPath } = firebaseService;
+  // The chat is the default, because most of these ARE the conversation.
   assert.strictEqual(deepLinkPath({ type: 'flock_message', flockId: '12' }), '/?flock=12');
-  assert.strictEqual(deepLinkPath({ type: 'flock_invite', flockId: 12 }), '/?flock=12');
   assert.strictEqual(deepLinkPath({ type: 'flock_confirmed', flockId: '12' }), '/?flock=12');
-  assert.strictEqual(deepLinkPath({ type: 'bill_created', flockId: '12' }), '/?flock=12');
-  assert.strictEqual(deepLinkPath({ type: 'crowd_alert', flockId: '12' }), '/?flock=12');
+  assert.strictEqual(deepLinkPath({ type: 'flock_rsvp', flockId: '12' }), '/?flock=12');
   assert.strictEqual(deepLinkPath({ type: 'guest_rsvp', flockId: '12' }), '/?flock=12');
-  assert.strictEqual(deepLinkPath({ type: 'attendance_marked', flockId: '12' }), '/?flock=12');
   assert.strictEqual(deepLinkPath({ type: 'dm_message', senderId: '4' }), '/?dm=4');
   assert.strictEqual(deepLinkPath({ type: 'friend_request', fromUserId: '4' }), '/?tab=you');
+});
+
+// ---------------------------------------------------------------------------
+// The five that used to land one screen away, and the three that landed nowhere
+//
+// Every flock-scoped type resolved to `/?flock=<id>`, which App.js turns into
+// the flock's CHAT. So "you owe Ava $12" opened a conversation, "your
+// reliability score updated" opened a conversation, and an INVITE opened a
+// conversation for a flock that is not in the accepted list at all — which
+// meant either somebody else's plan or a panel calling the live invite deleted.
+// ---------------------------------------------------------------------------
+test('money, budget and forecast open the surface they name, not the chat next to it', () => {
+  const { deepLinkPath } = firebaseService;
+  assert.strictEqual(deepLinkPath({ type: 'bill_created', flockId: '12' }), '/?flock=12&view=bill');
+  assert.strictEqual(deepLinkPath({ type: 'bill_settled', flockId: '12' }), '/?flock=12&view=bill');
+  assert.strictEqual(deepLinkPath({ type: 'budget_ready', flockId: '12' }), '/?flock=12&view=budget');
+  assert.strictEqual(deepLinkPath({ type: 'budget_reminder', flockId: '12' }), '/?flock=12&view=budget');
+  assert.strictEqual(deepLinkPath({ type: 'crowd_alert', flockId: '12' }), '/?flock=12&view=plan');
+  assert.strictEqual(deepLinkPath({ type: 'flock_updated', flockId: '12' }), '/?flock=12&view=plan');
+  assert.strictEqual(deepLinkPath({ type: 'flock_cancelled', flockId: '12' }), '/?flock=12&view=plan');
+});
+
+test('an invite lands on the invite, and a score lands on the score', () => {
+  const { deepLinkPath } = firebaseService;
+  // NOT /?flock=12. An invited flock is not in the list the chat resolves
+  // against, so a chat link for one can only ever miss.
+  assert.strictEqual(deepLinkPath({ type: 'flock_invite', flockId: 12 }), '/?invite=12');
+  // The reliability score is printed on the profile. The flock is the occasion,
+  // not the subject.
+  assert.strictEqual(deepLinkPath({ type: 'attendance_marked', flockId: '12' }), '/?tab=you');
+});
+
+test('the types that used to resolve to nothing now have a destination', () => {
+  const { deepLinkPath } = firebaseService;
+  // This one did nothing at all when tapped: '/' on the link side and null out
+  // of the client's intent parser.
+  assert.strictEqual(deepLinkPath({ type: 'moderation_report', reportId: '3' }), '/?admin=true');
+  assert.strictEqual(deepLinkPath({ type: 'friend_accepted', fromUserId: '4' }), '/?tab=you');
+  assert.strictEqual(deepLinkPath({ type: 'availability_pulse', fromUserId: '4' }), '/?tab=home');
+  // A cancellation whose flock is already deleted carries no id on purpose:
+  // there is no row for the visibility gate and no screen to open.
+  assert.strictEqual(deepLinkPath({ type: 'flock_cancelled' }), '/?tab=chat');
 });
 
 test('a link is never built from an id the payload cannot vouch for', () => {
   const { deepLinkPath } = firebaseService;
   assert.strictEqual(deepLinkPath({ type: 'flock_message', flockId: '12 OR 1=1' }), '/');
   assert.strictEqual(deepLinkPath({ type: 'dm_message', senderId: '../../admin' }), '/');
-  assert.strictEqual(deepLinkPath({ type: 'moderation_report', reportId: '3' }), '/');
+  assert.strictEqual(deepLinkPath({ type: 'flock_invite', flockId: '../../admin' }), '/');
   assert.strictEqual(deepLinkPath({}), '/');
 });
 

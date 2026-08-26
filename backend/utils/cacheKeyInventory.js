@@ -245,6 +245,16 @@ const INVENTORY = [
     why: 'DB-derived key, claim-before-send, and rolled back when nothing was actually delivered so an undeliverable recipient does not get free suppression.',
   },
   {
+    file: 'routes/flocks.js', name: 'rsvpWindows', kind: 'counter',
+    key: 'String(flockId) — the flock the joiner just joined',
+    callerControls: 'nothing they do not already belong to: the route only reaches this after a membership row transitioned to accepted, so an id the caller cannot join never opens a window',
+    protects: 'push notifications to the HOST of a filling flock',
+    denominator: 'one open window per flock, first RSVP sent immediately and the rest collapsed into one digest 60s later',
+    bound: '5000 windows, oldest closed first (each entry holds a live unrefed timer, so the ceiling bounds timers as well as memory)',
+    verdict: 'SAFE',
+    why: 'DB-derived key, and a miss makes the app QUIETER rather than louder: the failure mode of losing a window is one extra "X is going" push, never an unbounded fan-out. PER-PROCESS ON PURPOSE, and that is the difference from crowd_alert_sends (migration 007), which had to be durable because its miss RE-SENDS an alert every member already has on their lock screen. Here a second Railway instance splits the RSVPs between two windows, so a ten-person flock costs at most two digests instead of one, against nine before this existed; a Postgres claim row would be a write on every RSVP to save a notification that is already collapsed 80% of the way. If the RSVP rate ever justifies it, the durable version is the crowd_alert_sends shape and the key is the same flock id.',
+  },
+  {
     file: 'routes/flocks.js', name: 'inviteBudget', kind: 'counter',
     key: "createUserBudget name:'flock-invite' — authenticated user id (25/hr, 60/day)",
     callerControls: 'nothing',
@@ -253,6 +263,28 @@ const INVENTORY = [
     bound: 'probeBudget: 20k, least-consumed-first',
     verdict: 'SAFE',
     why: 'Charged before existence is consulted, so it is not an existence oracle either.',
+  },
+
+  // ── routes/availability.js ────────────────────────────────────────────────
+  {
+    file: 'routes/availability.js', name: 'lastPulsePushBySender', kind: 'counter',
+    key: 'req.user.id — the authenticated user who just said they are free',
+    callerControls: 'nothing: the key is the token subject, not anything in the body',
+    protects: 'push notifications to every one of that user\'s friends',
+    denominator: 'one "free tonight" push per sender per 6 hours',
+    bound: '20k entries, expire-then-oldest-first',
+    verdict: 'SAFE',
+    why: 'Account-keyed and claimed before the fan-out, so toggling the pulse down/not/down cannot buzz a friends list twice. A miss costs one extra notification per friend, which is why it is per-process and not a Postgres claim row.',
+  },
+  {
+    file: 'routes/availability.js', name: 'lastPulsePushByRecipient', kind: 'counter',
+    key: 'friend_id — DB-derived from accepted friendships, never supplied by the caller',
+    callerControls: 'nothing; a stranger cannot put themselves in a recipient list they are not a friend on',
+    protects: 'the recipient\'s evening, against the fan-IN nobody else bounds',
+    denominator: 'one "free tonight" push per RECIPIENT per hour, from anybody',
+    bound: '20k entries, expire-then-oldest-first',
+    verdict: 'SAFE',
+    why: 'This is the ceiling that actually holds: the sender window bounds one person, this bounds the sum of thirty of them, so the first friend to go free buzzes you and the next nine do not. Claimed inside the filter, before the send, so a burst of simultaneous pulses cannot all pass.',
   },
 
   // ── routes/friends.js ─────────────────────────────────────────────────────

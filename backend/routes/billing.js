@@ -3,7 +3,7 @@ const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 
-const { pushIfOffline } = require('../services/pushHelper');
+const { pushIfOffline, isPushConfigured } = require('../services/pushHelper');
 
 const router = express.Router();
 router.use(authenticate);
@@ -764,9 +764,60 @@ router.post('/:flockId/settle',
       }
 
       res.json({ settled: true });
+
+      // ── THE OTHER HALF OF A BILL ──────────────────────────────────────────
+      //
+      // `bill_created` tells you that you OWE. Nothing told the person who
+      // fronted the money that they had been paid back, so the only party with
+      // an outstanding debt to track was the only party never notified about
+      // it. `bill_settled` has been a declared type on all three deep-link
+      // tables since they were written, with nothing emitting it; this is it.
+      //
+      // ONE push, to ONE person, and only when somebody actually pays. It does
+      // not fan out to the flock: the rest of the table does not need to be
+      // interrupted about a transfer between two other people, and the
+      // `share_settled` socket event above already updates the sheet for
+      // anybody looking at it.
+      //
+      // Post-response, own try/catch, and every query behind it is skipped
+      // outright when push is not configured, so a deployment without delivery
+      // pays nothing for this.
+      if (isPushConfigured()) {
+        try {
+          // Both facts in one round trip, and only on the path that uses them.
+          // The route's own `SELECT id FROM bill_splits` is deliberately left
+          // alone rather than widened: it is the statement several suites match
+          // on to script this route.
+          const payerRow = await pool.query(
+            `SELECT bs.paid_by, f.name AS flock_name
+               FROM bill_splits bs
+               JOIN flocks f ON f.id = bs.flock_id
+              WHERE bs.id = $1`,
+            [billId]
+          );
+          const payerId = payerRow.rows[0]?.paid_by;
+          const amount = Number(updateResult.rows[0]?.amount);
+          // Nobody is told they paid themselves back, and a bill with no
+          // recorded payer has nobody to tell.
+          if (payerId && Number(payerId) !== Number(userId)) {
+            const flockName = payerRow.rows[0]?.flock_name || 'your plan';
+            const money = Number.isFinite(amount) ? ` $${amount.toFixed(2)}` : '';
+            // fromUserId is the SETTLER, because the body names them. Same
+            // reason /create names the payer: the block gate suppresses a push
+            // that carries a blocked person's name.
+            await pushIfOffline(io, payerId,
+              'You got paid back',
+              `${req.user.name} settled up${money} for ${flockName}.`,
+              { type: 'bill_settled', flockId: String(flockId), fromUserId: String(userId) }
+            );
+          }
+        } catch (pushErr) {
+          console.error('Bill settled push error:', pushErr.message);
+        }
+      }
     } catch (err) {
       console.error('Settle error:', err);
-      res.status(500).json({ error: 'Failed to settle share' });
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to settle share' });
     }
   }
 );
