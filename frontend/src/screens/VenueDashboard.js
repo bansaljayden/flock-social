@@ -427,6 +427,58 @@ export default function VenueDashboard({
     // 'verified', 'pending', 'unverified'. This is the middle one, and the only
     // thing the screen does with it is stop asking for what it already has.
     const venueVerificationPending = venueProfile?.verification_status === 'pending';
+    const venueIsVerified = venueProfile?.verification_status === 'verified';
+
+    // THE REQUEST CONTROL, LIFTED OUT OF THE PAID TAB.
+    //
+    // Until now the only "Request verification" button on this screen lived
+    // inside the `venueIntel` card, and that card renders under
+    // `venueTab === 'analytics' && can.analytics`. `can.analytics` is
+    // premium-or-pro. Every venue that signs up holds `free` until an admin
+    // grants otherwise, so the owner who has just claimed a venue, which is
+    // the only owner who has a verification to request, opened Analytics to a
+    // locked panel with the button inside it.
+    //
+    // What that owner did see was the server's own sentence, on the live-number
+    // card above the lock: "Not verified yet. Request verification and we
+    // confirm you own this venue by hand." An instruction with nothing to press
+    // is the TestFlight dead end of 2026-08-21 rebuilt one tier down, and it
+    // was rebuilt for the owners it hurts most, because verification is what
+    // turns on the live number and the forecast in the first place.
+    //
+    // One definition, three call sites, and never two of them on one screen at
+    // once: the Settings tab (which no tier gates), the Map tab's live-number
+    // card (that tab has no intel card to duplicate), and the Analytics
+    // live-number card ONLY when `can.analytics` is false, which is exactly the
+    // condition under which the intel card carrying the other copy is replaced
+    // by the lock. Both reads come from the same `can` object.
+    //
+    // Rendered only where pressing it can change something: never once the
+    // venue is verified, never while a request is already in, and never after a
+    // press has landed in this session, since `verificationRequestNote` then
+    // holds the server's own answer.
+    const canAskForVerification = !venueIsVerified
+      && !venueVerificationPending
+      && !verificationRequestNote;
+    const renderVerificationAsk = () => {
+      if (!canAskForVerification) return null;
+      return (
+        <>
+          <button
+            className="hit44"
+            onClick={handleRequestVerification}
+            disabled={verificationRequestBusy}
+            style={{ marginTop: '10px', padding: '8px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: verificationRequestBusy ? 'default' : 'pointer', opacity: verificationRequestBusy ? 0.55 : 1 }}
+          >
+            Request verification
+          </button>
+          {verificationRequestError && (
+            <p style={{ fontSize: 'var(--t-meta)', color: colors.redText, margin: '8px 0 0', lineHeight: 1.5 }}>{verificationRequestError}</p>
+          )}
+        </>
+      );
+    };
+
     const weekPeak = intelReady && venueIntel.week?.length
       ? venueIntel.week.reduce((a, b) => (b.peakScore > a.peakScore ? b : a))
       : null;
@@ -699,6 +751,13 @@ export default function VenueDashboard({
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How full are you right now?</h3>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{venueBusyNow.reason || 'Your live number is unavailable right now.'}</p>
+              {/* The sentence above is the server's, and when the reason is a
+                  missing verification it names a request. `!can.analytics` is
+                  the condition under which the intel card that carries the
+                  other copy of this button is replaced by the lock, so this is
+                  the one place the control can go without putting two of them
+                  on the same tab. */}
+              {venueBusyNow.unverified && !can.analytics && renderVerificationAsk()}
             </div>
           )}
           {/* MAP TAB. The venue exactly as consumers get it: same public
@@ -719,6 +778,9 @@ export default function VenueDashboard({
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                   <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How full are you right now?</h3>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{venueBusyNow.reason || 'Your live number is unavailable right now.'}</p>
+                  {/* No tier condition here. This tab holds no intel card, so
+                      there is nothing on it to duplicate. */}
+                  {venueBusyNow.unverified && renderVerificationAsk()}
                 </div>
               )}
               {!venueMapState && (
@@ -1581,6 +1643,28 @@ export default function VenueDashboard({
                 )}
               </div>
 
+              {/* WHY THE REPLY BUTTONS ARE NOT THERE.
+                  POST /api/venue-dashboard/reviews/:id/reply refuses an
+                  unverified claim outright, and it has to: a reply rides the
+                  verified badge on the public venue card, so an unverified
+                  claimant writing one would be a stranger speaking as the
+                  business. This tab offered the button on every review anyway,
+                  so the only thing an unverified owner could do with it was
+                  compose a reply, press Send, and get a 403 in a toast. A
+                  control whose every press is refused is the dead button
+                  SLOP-AUDIT H5 names, and it was one per review.
+                  Said once, above the list, instead of failed once per row. */}
+              {reviews.length > 0 && !venueIsVerified && (
+                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                    {venueVerificationPending || verificationRequestNote
+                      ? 'Replies go live once your venue is verified. We confirm ownership by hand, and your request is in.'
+                      : 'Replies go live once your venue is verified. A reply is published as the business, so we confirm you own it first.'}
+                  </p>
+                  {renderVerificationAsk()}
+                </div>
+              )}
+
               {/* Reviews List */}
               {reviews.length > 0 && (
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
@@ -1614,7 +1698,7 @@ export default function VenueDashboard({
                           <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{review.reply}</p>
                         </div>
                       )}
-                      {!review.replied && replyingToReview !== review.id && (
+                      {!review.replied && venueIsVerified && replyingToReview !== review.id && (
                         <button className="hit44 glass-btn glass-secondary" onClick={() => { setReplyingToReview(review.id); setReplyText(''); }} style={{ marginTop: '8px', padding: '6px 10px', borderRadius: '6px', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
                           Reply
                         </button>
@@ -1645,6 +1729,31 @@ export default function VenueDashboard({
           {/* SETTINGS TAB */}
           {venueTab === 'settings' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {/* VERIFICATION, and the reason it lives on this tab.
+                  Verification is a property of the claim, not of the plan, and
+                  no tier gates Settings. It is the one place every owner can
+                  reach on any tier and on any state of the profile, which is
+                  what the Analytics-only button was not. It also answers a
+                  question the dashboard could not answer at all before: an
+                  owner had nowhere to look up whether their venue is verified.
+                  What it says verification turns on is what the server checks
+                  it for, and nothing else: review replies, the live number, and
+                  the venue's own forecast. */}
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+                <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 6px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.shield(colors.navy, 14)} Verification</h3>
+                <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.navy, margin: '0 0 2px' }}>
+                  {venueIsVerified ? 'Verified' : venueVerificationPending ? 'Requested' : 'Not verified yet'}
+                </p>
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                  {venueIsVerified
+                    ? 'Replies to reviews, your live number and your own forecast are on.'
+                    : venueVerificationPending || verificationRequestNote
+                      ? 'We confirm ownership by hand. Replies to reviews, your live number and your own forecast turn on once that clears. Nothing more is needed from you.'
+                      : 'We confirm you own this venue by hand before replies to reviews, your live number and your own forecast turn on.'}
+                </p>
+                {renderVerificationAsk()}
+              </div>
+
               {/* Venue Info */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
@@ -2026,6 +2135,20 @@ export default function VenueDashboard({
                   {venueTier === 'pro' ? <span style={{ display: 'block', textAlign: 'center', fontSize: 'var(--t-meta)', color: 'var(--accent-purple-text)', fontWeight: '500', marginTop: '8px' }}>Current Plan</span> : <button className="hit44" onClick={() => requestTierUpgrade('Pro')} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', marginTop: '8px' }}>Email us about Pro</button>}
                 </div>
 
+                {/* THE OTHER AXIS, said once rather than in three lists.
+                    A plan decides which features a venue is entitled to;
+                    verification decides whether the venue may speak or publish
+                    at all, and several lines above are gated on BOTH. Replies,
+                    the live number and the forecast all check
+                    venue_profiles.verified in routes/venueDashboard.js, so a
+                    venue reading the free list while unverified is reading
+                    three things that are true of its plan and not yet true of
+                    its account. Shown only while that is the case. */}
+                {!venueIsVerified && (
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', textAlign: 'center', lineHeight: 1.5 }}>
+                    Replies to reviews, your live number and your forecast also need a verified venue, on every plan. Settings has the request.
+                  </p>
+                )}
                 {/* Printed as text too, so a device with no mail app still has
                     something it can act on. */}
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', textAlign: 'center', lineHeight: 1.5 }}>

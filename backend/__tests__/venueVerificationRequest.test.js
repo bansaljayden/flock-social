@@ -53,6 +53,14 @@ const authMod = require('../middleware/auth');
 let CURRENT_USER = { id: 1, name: 'Ava', role: 'venue_owner' };
 authMod.authenticate = (req, _res, next) => { req.user = CURRENT_USER; next(); };
 
+// The request route mails an operator. Every test in this file stubs the send:
+// the point under test is which claims produce a notification and what it
+// carries, never Resend. Without the stub the real sender would reach for the
+// suppression table through the scripted pool above and log its way out of it,
+// which is noise in a file about authorization.
+const emailService = require('../services/emailService');
+const realSendEmail = emailService.sendEmail;
+
 const venueProfileRouter = require('../routes/venueProfile');
 const adminRouter = require('../routes/admin');
 const copy = require('../utils/verificationCopy');
@@ -79,7 +87,10 @@ test.beforeEach(() => {
   handlers = [];
   log = [];
   CURRENT_USER = { id: 1, name: 'Ava', role: 'venue_owner' };
+  emailService.sendEmail = async () => ({ sent: true, id: 'stubbed' });
 });
+
+test.after(() => { emailService.sendEmail = realSendEmail; });
 
 async function call(method, path2, body) {
   const res = await fetch(base + path2, {
@@ -95,7 +106,12 @@ async function call(method, path2, body) {
 
 const ran = (re) => log.filter((q) => re.test(q.sql));
 
-const PROFILE_SELECT = /SELECT id, google_place_id, verified, verification_requested_at FROM venue_profiles/;
+// The route reads business_name, location and the owner's address off the same
+// row it already needed, for the operator notification at the end of the
+// handler. Matched on the columns the handler branches on rather than on the
+// whole statement, so adding a column to the notification does not fail a test
+// about authorization.
+const PROFILE_SELECT = /SELECT p\.id, p\.google_place_id, p\.verified, p\.verification_requested_at/;
 const REQUEST_UPDATE = /SET verification_requested_at = COALESCE\(verification_requested_at, NOW\(\)\)/;
 const NO_RIVAL = [/SELECT 1 FROM venue_profiles WHERE google_place_id/, () => ({ rows: [] })];
 const PLACE = 'ChIJexample1234567890abc';
@@ -176,6 +192,82 @@ test('a second press is idempotent: COALESCE keeps the first timestamp, and the 
   const upd = ran(REQUEST_UPDATE)[0];
   assert.ok(upd, 'the update ran');
   assert.match(upd.sql, /COALESCE\(verification_requested_at, NOW\(\)\)/);
+});
+
+// ---------------------------------------------------------------------------
+// 1b. The request has to reach a person
+//
+// The owner is answered "we confirm ownership by hand". That promise was, until
+// this leg existed, entirely a timestamp in a column: the admin queue route is
+// real but nothing in the frontend calls it, so nobody was told a venue was
+// waiting. Pinned here: the first press mails an operator with enough to decide
+// the claim, a re-press mails nobody, and a send that fails changes nothing the
+// owner sees.
+// ---------------------------------------------------------------------------
+
+// The notification is fire and forget, deliberately: it runs after res.json so
+// it can never decide whether the owner's request succeeded. So the assertion
+// waits on the stub rather than on the HTTP response.
+function captureSend() {
+  const calls = [];
+  let resolveFirst;
+  const first = new Promise((r) => { resolveFirst = r; });
+  emailService.sendEmail = async (payload) => {
+    calls.push(payload);
+    resolveFirst(payload);
+    return { sent: true, id: 'test-message-id' };
+  };
+  return { calls, first };
+}
+
+test('the first request mails an operator with what it takes to decide the claim', async () => {
+  const sent = captureSend();
+  handlers = [
+    [PROFILE_SELECT, () => ({ rows: [{ id: 7, google_place_id: PLACE, verified: false, verification_requested_at: null, business_name: 'The Blue Heron', location: '12 Dock St', owner_email: 'ava@example.com' }] })],
+    NO_RIVAL,
+    [REQUEST_UPDATE, () => ({ rows: [{ verification_requested_at: '2026-08-21T18:00:00.000Z' }] })],
+  ];
+  const res = await call('POST', '/api/venue-profile/request-verification');
+  assert.strictEqual(res.status, 200);
+
+  const mail = await sent.first;
+  assert.match(mail.subject, /The Blue Heron/);
+  // Everything a person needs to check the claim without opening a database.
+  for (const fact of [PLACE, 'ava@example.com', '12 Dock St']) {
+    assert.ok(mail.text.includes(fact), `the mail body names ${fact}`);
+  }
+  // And where to act on it. The admin routes exist; no screen calls them.
+  assert.match(mail.text, /PUT \/api\/admin\/venues\/7\/verify/);
+  assert.strictEqual(sent.calls.length, 1, 'one claim is one notification');
+});
+
+test('a re-press mails nobody, so an anxious owner cannot page us twice', async () => {
+  const sent = captureSend();
+  const stamp = '2026-08-20T10:00:00.000Z';
+  handlers = [
+    [PROFILE_SELECT, () => ({ rows: [{ id: 7, google_place_id: PLACE, verified: false, verification_requested_at: stamp, business_name: 'The Blue Heron', owner_email: 'ava@example.com' }] })],
+    NO_RIVAL,
+    [REQUEST_UPDATE, () => ({ rows: [{ verification_requested_at: stamp }] })],
+  ];
+  const res = await call('POST', '/api/venue-profile/request-verification');
+  assert.strictEqual(res.status, 200);
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(sent.calls.length, 0);
+});
+
+test('a failed send does not change the answer the owner gets', async () => {
+  let resolveTried;
+  const tried = new Promise((r) => { resolveTried = r; });
+  emailService.sendEmail = async () => { resolveTried(); throw new Error('resend is down'); };
+  handlers = [
+    [PROFILE_SELECT, () => ({ rows: [{ id: 7, google_place_id: PLACE, verified: false, verification_requested_at: null, business_name: 'The Blue Heron', owner_email: 'ava@example.com' }] })],
+    NO_RIVAL,
+    [REQUEST_UPDATE, () => ({ rows: [{ verification_requested_at: '2026-08-21T18:00:00.000Z' }] })],
+  ];
+  const res = await call('POST', '/api/venue-profile/request-verification');
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.verification_status, 'pending');
+  await tried;
 });
 
 // ---------------------------------------------------------------------------

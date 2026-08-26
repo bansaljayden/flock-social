@@ -136,6 +136,44 @@ describe('The wiring behind the button', () => {
     expect(CARDS_SRC).toContain('onClick={requestVerification}');
   });
 
+  // AUDIT 2026-08-26. The button above shipped inside the `venueIntel` card,
+  // which renders under `venueTab === 'analytics' && can.analytics`, and
+  // `can.analytics` is premium-or-pro. Every venue holds `free` on the day it
+  // claims, which is the only day a verification is worth requesting, so the
+  // owner who needed the button never saw it: they got the server's "Request
+  // verification and we confirm you own this venue by hand" sentence on the
+  // live-number card above a padlock, with nothing to press. That is the
+  // TestFlight dead end this whole file exists about, rebuilt one tier down.
+  // These pin the control to surfaces no tier gates.
+  const DASH_SRC = fs.readFileSync(path.join(SRC_DIR, 'screens', 'VenueDashboard.js'), 'utf8');
+
+  test('one helper renders the ask, and more than one surface calls it', () => {
+    expect(DASH_SRC).toContain('const renderVerificationAsk = ()');
+    const callSites = DASH_SRC.match(/renderVerificationAsk\(\)/g) || [];
+    // The definition is not a call site; three or more real ones means the
+    // control cannot be lost again by locking a single tab.
+    expect(callSites.length).toBeGreaterThanOrEqual(3);
+  });
+
+  test('the settings tab carries it, because no tier gates settings', () => {
+    const settings = DASH_SRC.slice(DASH_SRC.indexOf("venueTab === 'settings'"));
+    expect(settings.slice(0, 3000)).toContain('{renderVerificationAsk()}');
+  });
+
+  test('the analytics copy of it appears only where the intel card is locked away', () => {
+    // Both reads come from the same `can` object, so the two copies of the
+    // button can never be on the tab at once.
+    expect(DASH_SRC).toContain('venueBusyNow.unverified && !can.analytics && renderVerificationAsk()');
+  });
+
+  test('an unverified venue is not offered a reply the server refuses', () => {
+    // POST /api/venue-dashboard/reviews/:id/reply answers 403 for an unverified
+    // claim, because a reply is published as the business. The tab used to
+    // render the button on every review anyway, so the only outcome available
+    // to an unverified owner was composing a reply and being refused.
+    expect(DASH_SRC).toContain('{!review.replied && venueIsVerified && replyingToReview !== review.id && (');
+  });
+
   test('the label is exactly Request verification, and no turnaround time is promised', () => {
     for (const src of [APP_SRC, CARDS_SRC]) {
       // No "within N days" / "in 24 hours" style promise anywhere near the flow.
