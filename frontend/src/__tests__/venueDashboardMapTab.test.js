@@ -234,7 +234,12 @@ describe('dashboard map behavior', () => {
     // geolocation prompt on a dashboard tab would be permission theater.
     expect(APP).toContain('followUser={false}');
     expect(APP).toContain('if (!mapReady || !followUser || !navigator.geolocation) return;');
-    expect(APP).toContain('initialCenter ? { lat: initialCenter.lat, lng: initialCenter.lng } : await getUserLocation()');
+    // The property, not the spelling: initialCenter has to short-circuit the
+    // geolocation call. That expression gained a second skip on 2026-08-26 for
+    // the Settings location switch, and pinning its exact characters made this
+    // read as broken when the dashboard's behaviour had not changed at all.
+    expect(APP).toContain('initialCenter ? { lat: initialCenter.lat, lng: initialCenter.lng }');
+    expect(APP).toMatch(/const located = \(initialCenter \|\|[^)]*\)/);
     expect(APP).toMatch(/\{followUser && \(\s*\n\s*<button aria-label="My Location"/);
   });
 

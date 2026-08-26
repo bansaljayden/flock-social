@@ -2021,7 +2021,7 @@ function declutterMarkers(map, markerEntries) {
   });
 }
 
-const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance, ownerPlaceId = null, initialCenter = null, followUser = true }) => {
+const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance, ownerPlaceId = null, initialCenter = null, followUser = true, locationAllowed = true }) => {
   const mapRef = useRef(null);
   const mapRootRef = useRef(null);   // outermost node — see the attribution note in init
   const mapInstanceRef = useRef(null);
@@ -2247,7 +2247,17 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       if (cancelled) return;
       // A caller that already knows where the map should open (the venue
       // dashboard passes the venue itself) skips the geolocation prompt.
-      const located = initialCenter ? { lat: initialCenter.lat, lng: initialCenter.lng } : await getUserLocation();
+      //
+      // So does a person who turned Location services off in Settings. That
+      // switch used to write a flag, print "Location is turned off" on its own
+      // row, and change nothing: this effect asked anyway, and so did the
+      // Discover tab. A switch that reports a state it does not enforce is
+      // worse than no switch, because the person believes they have already
+      // handled it. UNKNOWN_LOCATION_VIEW is the same fallback a denied prompt
+      // gets, so the map opens rather than sitting blank.
+      const located = (initialCenter || !locationAllowed)
+        ? (initialCenter ? { lat: initialCenter.lat, lng: initialCenter.lng } : null)
+        : await getUserLocation();
       const userLoc = located || UNKNOWN_LOCATION_VIEW;
       if (cancelled) return;
       // Same expression as the mapType useState above, and it has to stay the
@@ -8848,8 +8858,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setProfileScreen('main');
       setActiveVenue(null);
       setShowConnectPanel(false);
-      // Auto-load venues when switching to Discover
-      if (tabId === 'explore' && (!mapVenuesLoaded || !userLocation)) {
+      // Auto-load venues when switching to Discover, unless the person
+      // turned Location services off. The boot effect has always checked that
+      // flag; this door never did, so the switch stopped the prompt at launch
+      // and the first tap on Discover asked anyway.
+      if (tabId === 'explore' && locationEnabled && (!mapVenuesLoaded || !userLocation)) {
         requestUserLocation();
       }
     };
@@ -13426,7 +13439,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           have two separate fixes: the app does not know where you are, and the
           venue search is not answering. Both used to be silent, one covered by
           a default city and the other by eight invented venues. */}
-      {!locationLoading && (locationError || venueLoadError) && (
+      {/* Location services is off, said on the screen the setting governs.
+          Without this the map simply opens somewhere generic with no user pin
+          and nothing explaining why, which reads as a broken map rather than as
+          a setting the person chose. The button turns it back on here rather
+          than sending them to Settings to find the row again. */}
+      {!locationLoading && !locationEnabled && (
+        <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ flexShrink: 0, display: 'flex' }}>{Icons.mapPin('var(--text-tertiary)', 16)}</span>
+          <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 0, lineHeight: 1.5 }}>Location services are off, so venues are not sorted by distance and the map does not show where you are. Search still works.</p>
+          <button className="hit44" onClick={() => { toggleLocation(true); setMapVenuesLoaded(false); }} style={{ flexShrink: 0, padding: '7px 12px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Turn on</button>
+        </div>
+      )}
+
+      {!locationLoading && locationEnabled && (locationError || venueLoadError) && (
         <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span style={{ flexShrink: 0, display: 'flex' }}>{Icons.alertCircle('var(--accent-amber-text)', 16)}</span>
           <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 0, lineHeight: 1.5 }}>{locationError || venueLoadError}</p>
@@ -13533,6 +13559,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           openVenueDetail={openVenueDetail}
           flockMemberLocations={flockMemberLocations}
           calcDistance={calcDistance}
+          locationAllowed={locationEnabled}
         />
 
         {/* Live location sharing indicator on map */}
