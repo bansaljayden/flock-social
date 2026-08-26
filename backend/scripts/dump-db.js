@@ -10,8 +10,16 @@
  * the way a hardcoded list does), writes INSERT statements in an order that
  * respects foreign keys, and resets every sequence at the end. Restore is:
  *
- *     psql "$DATABASE_URL" -f database/schema.sql      # structure, from the repo
- *     psql "$DATABASE_URL" -f <this file's output>     # data
+ *     DATABASE_URL="$TARGET" node db/migrate.js        # structure, from the repo
+ *     psql "$TARGET" -v ON_ERROR_STOP=1 -f <output>    # data
+ *
+ * The migration chain builds the WHOLE schema on its own. This used to say
+ * `psql -f database/schema.sql` instead, which is the thirteen bootstrap tables
+ * and nothing after them, so the data load then died on the first table any
+ * migration added. 000_bootstrap.sql already holds that file's exact content.
+ *
+ * ON_ERROR_STOP=1 is not decoration. Without it psql prints errors, keeps
+ * going, exits 0, and hands back a half-restored database that looks fine.
  *
  * Usage:  node scripts/dump-db.js [outfile]
  */
@@ -193,6 +201,35 @@ async function main() {
   client.on('error', (e) => console.error('pg client error:', e.message));
   await client.connect();
 
+  // ONE SNAPSHOT FOR THE WHOLE DUMP.
+  //
+  // Every table used to be read in its own implicit snapshot, one
+  // `SELECT * FROM t` at a time, against a live database that is still taking
+  // writes. A flock created after `flocks` was read but before `flock_members`
+  // was read produced a member row whose flock is not in the file: a foreign
+  // key that dangles in the backup and nowhere else. The bigger the corpus the
+  // wider the window, and this dump takes minutes.
+  //
+  // What made it worth fixing rather than tolerating is what happens next.
+  // verify-backup.js sweeps every foreign key for orphans and FAILS the dump on
+  // one, which is the correct response to a file it cannot vouch for, so the
+  // outcome of a single unlucky write during a dump is that the backup is
+  // thrown away. Retaking it is another few minutes and another roll of the
+  // same dice.
+  //
+  // REPEATABLE READ takes one snapshot at the first statement and every read
+  // after it sees exactly that instant, so the file is a picture of one moment
+  // rather than a smear across several. It takes no locks and blocks no writer:
+  // the app carries on serving while the dump runs, it simply does not appear
+  // in the file. READ ONLY says out loud that this connection cannot write,
+  // which on a script pointed at production is worth the four extra characters.
+  //
+  // The sequence setvals at the end are read inside this same snapshot, so they
+  // match the rows that were written rather than a later maximum. That
+  // direction was already safe (a setval ahead of the data only wastes ids) and
+  // is now simply correct.
+  await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
 
   // Order tables so that a table is written after everything it references.
@@ -250,7 +287,9 @@ async function main() {
   const write = (s) => new Promise((res) => (out.write(s) ? res() : out.once('drain', res)));
 
   await write(`-- Flock data dump ${new Date().toISOString()}\n`);
-  await write(`-- Restore: create structure from database/schema.sql + migrations, then run this file.\n`);
+  await write(`-- Restore: DATABASE_URL="$TARGET" node db/migrate.js  (builds the whole schema),\n`);
+  await write(`--          then: psql "$TARGET" -v ON_ERROR_STOP=1 -f this-file\n`);
+  await write(`-- Full procedure, including what a restore does NOT bring back: BACKUP-AND-VERIFICATION.md\n`);
   await write(`BEGIN;\nSET session_replication_role = replica;\n\n`);
 
   let grand = 0;
@@ -304,6 +343,14 @@ async function main() {
 
   await write(`SET session_replication_role = DEFAULT;\nCOMMIT;\n`);
   await new Promise((res) => out.end(res));
+  // Close the read-only snapshot opened before the first SELECT. COMMIT rather
+  // than ROLLBACK because nothing was written and a committed read-only
+  // transaction is the ordinary end of one; either would release it, and
+  // client.end() would too, but leaving it to the socket teardown is how a
+  // long-lived snapshot ends up pinning vacuum on a database nobody is looking
+  // at. The COMMIT above this line is text going into the dump FILE, which is
+  // a different thing entirely.
+  await client.query('COMMIT');
   await client.end();
 
   const mb = (fs.statSync(OUT).size / 1048576).toFixed(2);
@@ -341,4 +388,20 @@ async function main() {
   }
 }
 
-main().catch((err) => { console.error('Dump failed:', err.message); process.exit(1); });
+// ---------------------------------------------------------------------------
+// Exported so the literal writers can be tested, and guarded so requiring this
+// file does not take a dump as a side effect.
+//
+// This is not tidiness. `lit()` decides whether the backup restores, and until
+// 2026-08-26 nothing tested it, because nothing COULD: the module ran main() at
+// import and exported nothing, so the only way to exercise it was to dump a
+// real database by hand and read the output. That is why the `::jsonb` bug
+// (round 17, above) shipped, and it is why it then sat undetected inside the
+// only backup that existed. __tests__/dumpLiteralRestore.test.js now replays
+// this function's output into real Postgres columns of every type this schema
+// holds, which is the check that would have caught it on the day.
+module.exports = { lit, pgArrayBody };
+
+if (require.main === module) {
+  main().catch((err) => { console.error('Dump failed:', err.message); process.exit(1); });
+}
