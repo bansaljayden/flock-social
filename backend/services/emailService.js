@@ -21,6 +21,10 @@ const { upstreamSignal } = require('../utils/upstream');
 // reason the abort signal and the recipient gate are: a check every caller has
 // to remember is a check that the fourth caller forgets.
 const suppression = require('./emailSuppression');
+// The one category no do-not-mail list and, as of round 27, no send counter
+// stops. Read from the suppression module rather than spelled again here, so
+// the two files cannot come to disagree about which string means "emergency".
+const EMERGENCY_CATEGORY = suppression.EMERGENCY_CATEGORY;
 // Address-keyed unsubscribe tokens, for the mail that is not keyed on a row
 // somebody owns. See the header of that file for why the waitlist needed one.
 const { mintUnsubscribeToken } = require('./emailUnsubscribe');
@@ -37,6 +41,14 @@ const { mintUnsubscribeToken } = require('./emailUnsubscribe');
 // has one less hop on which a client can drop it.
 const PROD_WEB_URL = 'https://www.flockcorp.com';
 const PROD_API_URL = 'https://flock-app-production.up.railway.app';
+
+// Where a reply lands. The reasoning is at safeReplyTo inside sendEmail; the
+// short version is that several of these messages ask the reader to reply, one
+// of them is sent From an address with no inbound route, and nothing had ever
+// set a Reply-To. This address is the one the product already publishes as the
+// way to reach a person, so if it ever stops being routed in Cloudflare, this
+// constant and routes/users.js change together.
+const DEFAULT_REPLY_TO = 'hello@flockcorp.com';
 
 // True for anything that would produce a dead or downgraded link: a non-https
 // scheme, a loopback / link-local / .local host, or junk that does not parse.
@@ -243,6 +255,134 @@ function safeHeaders(headers) {
 }
 
 // ---------------------------------------------------------------------------
+// THE EMAIL ALARM, and why this module needed one of its own.
+// ---------------------------------------------------------------------------
+// Email is the only channel this product has to somebody who is not currently
+// holding the app. It carries the signup verification link, the password reset
+// link, the SOS alert to a parent, the SOS stand-down, moderation notices, the
+// venue digest and venue verification claims. Every one of those paths was
+// built to FAIL SOFT, which is right on its own terms and adds up to something
+// that is not: a Resend key that expires, a sending domain that lapses, or an
+// account suspension produces `{ sent: false }` at every caller, each caller
+// logs its own polite line, every screen in the product still looks correct,
+// and nobody is told. An account cannot be created, a password cannot be
+// recovered, and a parent is not told their child raised an alarm.
+//
+// The money watch in server.js is the same shape of fix for the paid APIs: a
+// PUSH, once per condition per UTC day, on a greppable token, with a Sentry
+// message for the half that reaches a person who is not reading the log. This
+// is that, for the channel where the failure is silent by construction.
+//
+// It lives HERE and fires ON THE SEND rather than on a fifteen-minute poll,
+// because there is no counter to poll: the fact worth alarming on is the
+// outcome of a message the product just tried to deliver.
+//
+// IT REPORTS, IT NEVER REFUSES. Nothing below changes what is sent, and the
+// whole of it is wrapped so a broken alarm can never break a send. A watchdog
+// that can break the thing it watches is worse than no watchdog.
+// ---------------------------------------------------------------------------
+const CONSECUTIVE_FAILURES_BEFORE_ALARM = 5;
+
+function utcDay(now = Date.now()) {
+  return new Date(now).toISOString().slice(0, 10);
+}
+
+// condition key -> the UTC day it last spoke, so each condition says its piece
+// once a day. Repeating it on every send would train the reader to skip it,
+// which is the same failure as saying nothing.
+const alarmSaid = new Map();
+
+function raiseEmailAlarm(key, message, extra) {
+  try {
+    const day = utcDay();
+    if (alarmSaid.get(key) === day) return false;
+    // Bounded, and swept STALE-FIRST rather than cleared. Two of the keys below
+    // carry a recipient address, so an attacker who could force a clear() would
+    // be forcing the alarm to speak again about something it had already
+    // reported. That is the harmless direction, but the rule in
+    // utils/cacheKeyInventory.js is that a map holding state a caller can
+    // influence never gets emptied wholesale, and there is no reason for this
+    // one to be the exception.
+    if (alarmSaid.size > 2000) {
+      for (const [k, v] of alarmSaid) if (v !== day) alarmSaid.delete(k);
+    }
+    alarmSaid.set(key, day);
+    // One token, so a single grep over the Railway log finds every email
+    // failure whatever raised it, the way 'MONEY' already works for spend.
+    console.error(`🛡️ EMAIL: ${message}`);
+    try {
+      // Lazily required and fully guarded: a build without @sentry/node, and
+      // every test that never loads it, must be unaffected. instrument.js
+      // makes this a no-op while SENTRY_DSN is unset, which it is on the
+      // production service today, so the console line above is the half that
+      // actually lands until that variable is set.
+      // eslint-disable-next-line global-require
+      const Sentry = require('@sentry/node');
+      if (Sentry && typeof Sentry.captureMessage === 'function') {
+        Sentry.captureMessage(`EMAIL: ${message}`, {
+          level: 'error',
+          tags: { email_alarm: key },
+          extra: { day, ...extra },
+        });
+      }
+    } catch (err) {
+      // No Sentry in this build. The console line stands on its own.
+    }
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+// What an ops surface can read to answer "is email working right now". Counts
+// roll at UTC midnight with the alarm, and they are process-local, so a deploy
+// resets them the same way every other in-memory meter in this app resets.
+const health = {
+  day: null,
+  attempted: 0,
+  sent: 0,
+  failed: 0,
+  skipped: 0,
+  suppressed: 0,
+  capped: 0,
+  consecutiveFailures: 0,
+  lastSentAt: null,
+  lastFailureAt: null,
+  lastError: null,
+};
+
+function rollHealthDay() {
+  const day = utcDay();
+  if (health.day === day) return;
+  health.day = day;
+  health.attempted = 0;
+  health.sent = 0;
+  health.failed = 0;
+  health.skipped = 0;
+  health.suppressed = 0;
+  health.capped = 0;
+}
+
+function emailHealthStatus() {
+  return { ...health, keyConfigured: Boolean(process.env.RESEND_API_KEY) };
+}
+
+function resetEmailHealth() {
+  alarmSaid.clear();
+  health.day = null;
+  health.attempted = 0;
+  health.sent = 0;
+  health.failed = 0;
+  health.skipped = 0;
+  health.suppressed = 0;
+  health.capped = 0;
+  health.consecutiveFailures = 0;
+  health.lastSentAt = null;
+  health.lastFailureAt = null;
+  health.lastError = null;
+}
+
+// ---------------------------------------------------------------------------
 // PER-RECIPIENT DAILY CEILING.
 // ---------------------------------------------------------------------------
 // Every caller has its own throttle (the waitlist route's 500/day, the
@@ -253,17 +393,68 @@ function safeHeaders(headers) {
 // the only place they all pass through, counted per RECIPIENT because that is
 // what a runaway loop looks like from the mailbox's side.
 //
-// Set well above anything a real path reaches: the busiest legitimate recipient
-// is a moderation address during a report flood, bounded at 40/hour by
-// moderationAlerts. 60 messages to one address in a day is not a busy day, it
-// is a bug, and it says so in the log at error level rather than dropping the
-// message quietly.
-const PER_RECIPIENT_DAILY_CAP = 60;
+// ROUND 27: THE NUMBER WAS 60, AND THE SENTENCE THAT JUSTIFIED IT WAS WRONG.
+//
+// It read: "the busiest legitimate recipient is a moderation address during a
+// report flood, bounded at 40/hour by moderationAlerts. 60 messages to one
+// address in a day is not a busy day, it is a bug." Forty an HOUR is nine
+// hundred and sixty a DAY. The backstop was sitting an order of magnitude
+// BELOW the ceiling of the loudest caller it was written to back up, so it was
+// not catching loops, it was cutting the operator inbox off at message
+// sixty-one and then dropping everything else that address was owed for the
+// rest of the day.
+//
+// What lands on that one address: every content report alert
+// (services/moderationAlerts.js), every CHILD-SAFETY report alert on the same
+// hourly window, and every venue verification claim
+// (routes/venueProfile.js notifyVerificationRequested). All three resolve
+// their recipient from MODERATION_ALERT_EMAIL, so the day that variable is
+// finally set they are one mailbox sharing one counter, and a venue owner who
+// re-claims a listing in a loop (changing google_place_id clears
+// verification_requested_at, so the claim can be made again) could spend that
+// mailbox's day and silence the child-safety alert channel from an ordinary
+// authenticated account. That is not a cap doing its job.
+//
+// So the counter is now keyed on the CATEGORY as well as the address, and the
+// number is 300 rather than 60.
+//
+// THE KEY IS THE HALF THAT MATTERS. A cap that silently eats a verification
+// link is worse than one that eats a digest, and with a single shared counter
+// the digest and the verification link were spending the same allowance, so
+// whichever arrived first decided which one was dropped. Separate counters mean
+// a flood of marketing to an address can never be the reason a password reset
+// to that same address is refused, whatever order they arrive in.
+//
+// THE NUMBER. 300 is above any day a PERSON's mailbox can legitimately see:
+// their own verification, resets and moderation notices are throttled into
+// single digits by routes/auth.js and routes/safety.js, and the marketing they
+// can receive is one digest a week. It is also above a real operator day, while
+// staying unmistakably a loop if it is ever reached. There is one number rather
+// than one per category because a second magic number is a second thing to be
+// wrong about, and the key already separates what needed separating.
+//
+// EMERGENCY IS NOT CAPPED AT ALL. See below.
+//
+// THE EMERGENCY EXEMPTION IS THE SAME ARGUMENT THE SUPPRESSION LIST ALREADY
+// MAKES, and it was missing here. services/emailSuppression.js lets an SOS
+// past a hard bounce because a deliverability fact is not a refusal of an
+// ambulance. A counter built to stop marketing loops is not a refusal of one
+// either, and it was silently eating both halves of the SOS path: the alert to
+// a parent and, worse, the stand-down that tells them it is over. What bounds
+// the emergency path is not this map, it is routes/safety.js: a five-minute
+// per-user cooldown held in Postgres (emergency_alerts), which unlike this map
+// survives a deploy. A loop is still counted and still says so out loud when
+// it crosses the transactional number, so an emergency loop is visible without
+// being swallowed.
+const PER_RECIPIENT_DAILY_CAP = 300;
 const RECIPIENT_WINDOW_MS = 24 * 60 * 60 * 1000;
-const recipientCounts = new Map(); // lowercased address -> { count, resetAt }
+const recipientCounts = new Map(); // `${category}\n${address}` -> { count, resetAt }
 
-function claimRecipientBudget(recipient) {
-  const key = recipient.toLowerCase();
+// Returns { allowed, count, cap }. `allowed` is false only for a category that
+// is actually capped; the emergency path always goes, and the count comes back
+// so the caller can say so when it is plainly a loop.
+function claimRecipientBudget(recipient, category) {
+  const key = `${category}\n${recipient.toLowerCase()}`;
   const now = Date.now();
   if (recipientCounts.size > 5000) {
     for (const [k, v] of recipientCounts) if (now > v.resetAt) recipientCounts.delete(k);
@@ -273,9 +464,12 @@ function claimRecipientBudget(recipient) {
     entry = { count: 0, resetAt: now + RECIPIENT_WINDOW_MS };
     recipientCounts.set(key, entry);
   }
-  if (entry.count >= PER_RECIPIENT_DAILY_CAP) return false;
+  const cap = PER_RECIPIENT_DAILY_CAP;
+  if (category !== EMERGENCY_CATEGORY && entry.count >= cap) {
+    return { allowed: false, count: entry.count, cap };
+  }
   entry.count += 1;
-  return true;
+  return { allowed: true, count: entry.count, cap };
 }
 
 function resetRecipientBudget() {
@@ -300,12 +494,70 @@ function safeTextBody(text) {
   return clean ? clean : undefined;
 }
 
-async function sendEmail({ to, subject, html, text, from = 'Flock <hello@flockcorp.com>', headers, category = 'transactional' }) {
+// A LAST-RESORT TEXT PART, derived from the HTML when the caller passed none.
+//
+// safeTextBody's comment above says why an HTML-only message is a problem, and
+// then four of this codebase's senders shipped HTML-only anyway, because the
+// text part was left to each caller to remember and each caller is a different
+// file. The ones that forgot are not the cheap ones: the SOS alert to a
+// trusted contact, the SOS stand-down, the share-my-location message and the
+// safety test email (routes/safety.js), plus every content report and
+// child-safety alert (services/moderationAlerts.js). The most important
+// message this product sends was the one most likely to be scored as spam.
+//
+// So the default is derived here, at the one place every message passes
+// through, for the same reason the suppression check and the abort signal live
+// here: a step every caller has to remember is a step the next caller forgets.
+// A caller that passes its own `text` is untouched, and a hand-written part is
+// always better than this one.
+//
+// The rules are deliberately small. Block-level tags become line breaks so the
+// result is not one run-on paragraph, an <a> keeps its href beside the words
+// (a text part whose links have vanished is worse than no text part on a
+// message whose whole purpose is a link), <style> and <script> contents are
+// dropped rather than rendered as CSS, and the five escapes escapeHtml writes
+// are turned back into the characters a person reads.
+const BLOCK_TAGS = 'address|article|aside|blockquote|br|div|dl|dt|dd|fieldset|figure|footer|form|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|table|tbody|td|tfoot|th|thead|tr|ul';
+
+function deriveTextFromHtml(html) {
+  if (typeof html !== 'string' || !html.trim()) return undefined;
+  let s = html;
+  s = s.replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ');
+  s = s.replace(/<!--[\s\S]*?-->/g, ' ');
+  // Keep the destination of a link next to its label. The href is read out of
+  // the tag before the tag is removed, and only an http(s) one is kept: a
+  // mailto or a javascript: URI printed into a plain-text body is noise at
+  // best.
+  s = s.replace(/<a\b[^>]*href\s*=\s*["']?(https?:\/\/[^"'\s>]+)["']?[^>]*>([\s\S]*?)<\/a>/gi,
+    (_m, href, label) => `${label} ( ${href} )`);
+  s = s.replace(new RegExp(`<(?:${BLOCK_TAGS})\\b[^>]*>`, 'gi'), '\n');
+  s = s.replace(new RegExp(`</(?:${BLOCK_TAGS})\\s*>`, 'gi'), '\n');
+  s = s.replace(/<[^>]+>/g, '');
+  s = s.replace(/&nbsp;/gi, ' ')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#0*39;/g, "'")
+    .replace(/&#0*34;/g, '"')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    // Ampersand LAST, so `&amp;lt;` does not become a `<` that was never in the
+    // original. Same ordering rule escapeHtml applies in reverse.
+    .replace(/&amp;/gi, '&');
+  s = s.replace(/[ \t]+/g, ' ')
+    .split('\n')
+    .map((line) => line.trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n');
+  return safeTextBody(s);
+}
+
+async function sendEmail({ to, subject, html, text, replyTo, from = 'Flock <hello@flockcorp.com>', headers, category = 'transactional' }) {
   if (!isMailableAddress(to)) {
     console.error('[email] refusing a recipient that is not one deliverable address:', maskAddress(to));
     return { sent: false, error: 'invalid recipient', refused: true };
   }
   const recipient = to.trim();
+  rollHealthDay();
+  health.attempted += 1;
 
   // The do-not-mail list, consulted HERE rather than in each caller, because a
   // suppression list every sender has to remember to check is a suppression
@@ -317,24 +569,78 @@ async function sendEmail({ to, subject, html, text, from = 'Flock <hello@flockco
   // why this fails open.
   const allowed = await suppression.checkSendAllowed(recipient, category);
   if (allowed.blocked) {
+    health.suppressed += 1;
     console.warn('[email] suppressed, not sending to', maskAddress(recipient), `(${allowed.reason})`);
+    // A MARKETING message stopped by this list is the list working. A
+    // TRANSACTIONAL one stopped by it is a person who cannot confirm their
+    // address and cannot recover their password, on an account whose only
+    // identifier is that address, and nothing in this codebase can take a row
+    // back off email_suppressions. That is a locked-out user, and until this
+    // line it produced a console.warn indistinguishable from a suppressed
+    // digest. It is named, at alarm level, once per address per day, because
+    // an operator has to know WHICH address to act on.
+    if (category !== 'marketing') {
+      raiseEmailAlarm(
+        `locked-out:${recipient.toLowerCase()}`,
+        `${maskAddress(recipient)} is on the do-not-mail list (${allowed.reason}) and a ${category} message was just refused for it. `
+        + 'If that address owns a Flock account, its owner cannot verify their email and cannot reset their password, and there is no self-service way back. '
+        + 'Clearing the row in email_suppressions is the only fix.',
+        { reason: allowed.reason, category }
+      );
+    }
     return { sent: false, suppressed: true, reason: allowed.reason, refused: true };
   }
 
-  if (!claimRecipientBudget(recipient)) {
-    console.error(
-      `[email] REFUSING to send: ${maskAddress(recipient)} has already been mailed ${PER_RECIPIENT_DAILY_CAP} times in 24 hours. ` +
-      'That is a send loop, not a busy day. Nothing further goes to this address until the window rolls.'
-    );
+  const budget = claimRecipientBudget(recipient, category);
+  if (!budget.allowed) {
+    const message = `${maskAddress(recipient)} has already been mailed ${budget.cap} ${category} messages in 24 hours. `
+      + 'That is a send loop, not a busy day. Nothing further in this category goes to this address until the window rolls.';
+    health.capped += 1;
+    console.error(`[email] REFUSING to send: ${message}`);
+    raiseEmailAlarm(`cap:${category}`, message, { category, cap: budget.cap });
     return { sent: false, error: 'per-recipient daily cap', refused: true };
   }
+  // The emergency path is not capped, so a loop on it would otherwise be
+  // invisible. It is still counted, and it still says so once it crosses the
+  // number every other category stops at.
+  if (category === EMERGENCY_CATEGORY && budget.count > PER_RECIPIENT_DAILY_CAP) {
+    raiseEmailAlarm(
+      `emergency-loop:${recipient.toLowerCase()}`,
+      `${maskAddress(recipient)} has been sent ${budget.count} emergency messages in 24 hours. `
+      + 'These are deliberately not capped so an SOS alert and its stand-down can never be swallowed, so this is being reported rather than refused. '
+      + 'Check the alert cooldown in routes/safety.js.',
+      { count: budget.count }
+    );
+  }
   const safeSubject = safeSubjectLine(subject);
-  const safeText = safeTextBody(text);
+  // A caller's own text part wins. Only when there is none does the HTML get
+  // flattened into one, so no message leaves here HTML-only. See
+  // deriveTextFromHtml for which senders that was silently true of.
+  const safeText = safeTextBody(text) || deriveTextFromHtml(html);
   // `to` and `subject` are settled above; `from` is the third header and was
   // the only one still passed through untouched. It is a constant at both call
   // sites today, which is the argument for closing it now rather than after a
   // fourth caller builds one out of something it read.
   const safeFrom = String(from == null ? '' : from).replace(/[\r\n]+/g, ' ').trim();
+  // WHERE A REPLY GOES, which until round 27 was nowhere anybody had checked.
+  //
+  // Three of these messages tell the reader in so many words to reply: the
+  // moderation warning ("reply to this email and a person will read it"), and
+  // both unsubscribe failure pages. And the message with the strongest natural
+  // pull to reply is the one nobody wrote that line into, the SOS alert to a
+  // parent, which routes/safety.js sends From `alerts@flockcorp.com`. Resend
+  // will send From any address on a verified domain whether or not a mailbox
+  // exists behind it, so an address that was never created in Cloudflare Email
+  // Routing sends perfectly well and bounces every reply. A parent replying to
+  // "your child raised an alarm" is the worst place in this product to
+  // discover that.
+  //
+  // So every message carries a Reply-To that a person reads, unless its caller
+  // names a better one. hello@flockcorp.com is the address the product already
+  // publishes as the way to reach a human (routes/users.js) and already sends
+  // most of its mail from. Sanitised exactly like `from` and `subject`,
+  // because it is a header too.
+  const safeReplyTo = String(replyTo == null ? DEFAULT_REPLY_TO : replyTo).replace(/[\r\n]+/g, ' ').trim();
   const extraHeaders = safeHeaders(headers);
   const shown = maskAddress(recipient);
 
@@ -348,10 +654,24 @@ async function sendEmail({ to, subject, html, text, from = 'Flock <hello@flockco
     resend = resendClient();
   } catch (err) {
     console.error('[email] Resend client could not be built:', err.message);
+    noteSendFailure(err.message);
     return { sent: false, error: err.message };
   }
   if (!resend) {
+    health.skipped += 1;
     console.warn('[email] RESEND_API_KEY not set, skipping email to', shown);
+    // In development this is the ordinary state and the warn above is right.
+    // On the production service it means the product has no outbound channel
+    // at all, and every screen still looks correct while it is true.
+    if (process.env.NODE_ENV === 'production') {
+      raiseEmailAlarm(
+        'no-key',
+        'RESEND_API_KEY is not set on this deployment, so NOTHING is being mailed: no signup verification, no password reset, '
+        + 'no SOS alert to a trusted contact and no stand-down. Nothing in the app looks broken while this is true. '
+        + 'Set the variable in the Railway service.',
+        { attempted: health.attempted }
+      );
+    }
     return { sent: false, skipped: true };
   }
   try {
@@ -361,6 +681,7 @@ async function sendEmail({ to, subject, html, text, from = 'Flock <hello@flockco
         to: recipient,
         subject: safeSubject,
         html,
+        ...(safeReplyTo ? { replyTo: safeReplyTo } : {}),
         ...(safeText ? { text: safeText } : {}),
         ...(extraHeaders ? { headers: extraHeaders } : {}),
       },
@@ -375,14 +696,41 @@ async function sendEmail({ to, subject, html, text, from = 'Flock <hello@flockco
     // email twice and Flock gets billed twice.
     if (error) {
       console.error('[email] Resend error for', shown, JSON.stringify(error));
+      noteSendFailure(error.message || 'send failed');
       return { sent: false, error: error.message || 'send failed', refused: true };
     }
     console.log('[email] sent to', shown, 'id:', data?.id);
+    health.sent += 1;
+    health.consecutiveFailures = 0;
+    health.lastSentAt = Date.now();
     return { sent: true, id: data?.id };
   } catch (err) {
     console.error('[email] send failed for', shown, err.message);
+    noteSendFailure(err.message);
     return { sent: false, error: err.message };
   }
+}
+
+// A single failed send is weather: one mailbox refused it, one request timed
+// out. A RUN of them is the channel being down, and the three ways that
+// happens are exactly the three nobody would otherwise hear about. An expired
+// or revoked API key answers 401 on every message. A sending domain that
+// lapsed, or an account suspended for a reputation problem, answers 403 on
+// every message. Both look identical from every caller: fail soft, log a line,
+// carry on with a product that appears to work.
+function noteSendFailure(message) {
+  health.failed += 1;
+  health.consecutiveFailures += 1;
+  health.lastFailureAt = Date.now();
+  health.lastError = typeof message === 'string' ? message.slice(0, 300) : String(message);
+  if (health.consecutiveFailures < CONSECUTIVE_FAILURES_BEFORE_ALARM) return;
+  raiseEmailAlarm(
+    'failing',
+    `the last ${health.consecutiveFailures} outbound emails all failed. Nothing is reaching anybody: not a verification link, not a password reset, `
+    + `not an SOS alert. The provider's last words were "${health.lastError}". `
+    + 'Check the Resend API key, the flockcorp.com sending domain, and whether the Resend account is in good standing.',
+    { consecutiveFailures: health.consecutiveFailures, lastError: health.lastError, sentToday: health.sent }
+  );
 }
 
 function verificationLink(token) {
@@ -696,4 +1044,12 @@ module.exports = {
   PER_RECIPIENT_DAILY_CAP,
   resetRecipientBudget,
   escapeHtml,
+  deriveTextFromHtml,
+  DEFAULT_REPLY_TO,
+  // The alarm and what it counts. emailHealthStatus() is what an ops surface
+  // reads to answer "is email working"; nothing in the app calls it yet, and
+  // the handoff for the admin cost panel says where it goes.
+  emailHealthStatus,
+  resetEmailHealth,
+  CONSECUTIVE_FAILURES_BEFORE_ALARM,
 };
