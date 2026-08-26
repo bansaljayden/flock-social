@@ -312,9 +312,22 @@ function loadErrorHandler(consoleObj) {
   const end = serverSrc.indexOf('\n});', at + tail.length) + '\n});'.length;
   let captured = null;
   // eslint-disable-next-line no-new-func
-  new Function('app', 'console', serverSrc.slice(start, end))({ use: (fn) => { captured = fn; } }, consoleObj);
+  new Function('app', 'console', 'CORS_REFUSED', serverSrc.slice(start, end))(
+    { use: (fn) => { captured = fn; } }, consoleObj, corsRefusedMarker()
+  );
   assert.equal(typeof captured, 'function');
   return captured;
+}
+
+// The handler branches on the marker the cors callback sets, and that marker is
+// declared above the cors mount rather than inside the lifted region. Read out
+// of server.js rather than restated here, for the same reason the region is
+// lifted rather than copied: two spellings of one string is how the branch
+// stops matching without anything failing.
+function corsRefusedMarker() {
+  const m = /const CORS_REFUSED = '([^']+)';/.exec(serverSrc);
+  assert.ok(m, 'server.js no longer declares CORS_REFUSED, which the lifted handler references');
+  return m[1];
 }
 
 test('the 500 log line names the verb, the URL and the account — the three things a 3am debug starts from', () => {

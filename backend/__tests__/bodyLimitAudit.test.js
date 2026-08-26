@@ -115,9 +115,16 @@ function loadErrorHandler() {
   // From PAST the tail line, not from it: the tail itself ends in `});`.
   const end = serverSrc.indexOf('\n});', at + tail.length) + '\n});'.length;
   assert.ok(end > at, 'the global error handler must be closed');
+  // CORS_REFUSED is declared above the cors mount, outside the lifted region,
+  // and the handler branches on it. Read out of server.js rather than restated,
+  // for the same reason the region itself is lifted rather than copied.
+  const marker = /const CORS_REFUSED = '([^']+)';/.exec(serverSrc);
+  assert.ok(marker, 'server.js no longer declares CORS_REFUSED, which the lifted handler references');
   let captured = null;
   // eslint-disable-next-line no-new-func
-  new Function('app', serverSrc.slice(start, end))({ use: (fn) => { captured = fn; } });
+  new Function('app', 'CORS_REFUSED', serverSrc.slice(start, end))(
+    { use: (fn) => { captured = fn; } }, marker[1]
+  );
   assert.equal(typeof captured, 'function', 'the error handler must be an app.use');
   assert.equal(captured.length, 4, 'an Express error handler takes four arguments');
   return captured;
