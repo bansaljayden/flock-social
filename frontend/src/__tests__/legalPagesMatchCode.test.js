@@ -16,6 +16,14 @@ const path = require('path');
 
 const REPO = path.resolve(__dirname, '..', '..', '..');
 const read = (...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8');
+
+// The flock chat screen left App.js on 2026-08-26: it lives in
+// screens/ChatDetail.js now, and the message list, the composer, the reaction
+// row and the report entry went with it. Nothing asserted below changed. The
+// app source is simply in two files, so both are read, in the order they used
+// to be one.
+const APP_SOURCE = read('frontend', 'src', 'App.js')
+  + read('frontend', 'src', 'screens', 'ChatDetail.js');
 const exists = (...p) => fs.existsSync(path.join(REPO, ...p));
 
 const privacy = read('frontend', 'src', 'website', 'PrivacyPolicy.js');
@@ -123,7 +131,7 @@ describe('venue occupancy sensors are disclosed for as long as the sensor exists
 });
 
 describe('stories are not described as something a user can do', () => {
-  const app = read('frontend', 'src', 'App.js');
+  const app = APP_SOURCE;
 
   test('there is still no story surface in the client', () => {
     // If this fails because a story UI shipped, the policy needs the feature
@@ -292,7 +300,7 @@ describe('privacy claims that depend on how the code behaves', () => {
     // The other half of the trade: the user is now the only one who can notice
     // a broken contact address, so the API has to hand them that fact.
     expect(safety).toMatch(/email_deliverable/);
-    const app = read('frontend', 'src', 'App.js');
+    const app = APP_SOURCE;
     expect(app).toMatch(/c\.email_deliverable === false/);
     expect(privacy).toMatch(/the Safety screen marks a trusted contact whose address has been failing/);
   });
@@ -367,7 +375,7 @@ describe('privacy claims that depend on how the code behaves', () => {
   });
 
   test('the routes the pages tell people to walk actually exist in the app', () => {
-    const app = read('frontend', 'src', 'App.js');
+    const app = APP_SOURCE;
     // Blocked accounts and Delete account both hang off the Profile screen.
     // There is no Settings screen between them, so no page may say there is.
     expect(app).toMatch(/\{ l: 'Blocked accounts', s: 'blocked'/);
@@ -384,7 +392,7 @@ describe('privacy claims that depend on how the code behaves', () => {
   });
 
   test('push notifications can only be turned off on the device, and the policy says that', () => {
-    const app = read('frontend', 'src', 'App.js');
+    const app = APP_SOURCE;
     const firebase = read('frontend', 'src', 'services', 'firebase.js');
     // The settings row offers Enable and a status. There is no in-app off
     // switch, so the page must not claim one.
@@ -397,7 +405,7 @@ describe('privacy claims that depend on how the code behaves', () => {
   });
 
   test('the calendar and availability features the policy now discloses are really wired', () => {
-    const app = read('frontend', 'src', 'App.js');
+    const app = APP_SOURCE;
     expect(app).toMatch(/getCalendarEvents\(/);
     expect(app).toMatch(/setAvailability\(/);
     expect(privacy).toMatch(/Your calendar entries/);
