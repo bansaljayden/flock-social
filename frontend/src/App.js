@@ -17829,6 +17829,60 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   );
                 })()}
 
+                {/* THE MODEL VERSUS THE FALLBACK.
+                    routes/admin.js has served this block since 2026-08-26 and
+                    nothing rendered it, which is the same half-finished shape
+                    the push ledger above was in: the number that answers "is
+                    the trained model actually doing the work" was computed,
+                    carried across the wire, pinned by two server tests, and
+                    shown to nobody.
+                    It answers the one question the ONNX model exists to be
+                    judged on. services/crowdEngine.js is the rule-based
+                    fallback and it is used whenever the model files are
+                    missing, the ship gate fails, features mismatch, a venue has
+                    no baseline, or inference throws. Every one of those is
+                    silent. A model that loaded and then served nothing looks
+                    identical, from outside, to a model that is working. */}
+                {d.predictionCoverage && (() => {
+                  const p = d.predictionCoverage;
+                  const total = Number.isFinite(p.total) ? p.total : null;
+                  const ml = Number.isFinite(p.ml) ? p.ml : 0;
+                  const share = Number.isFinite(p.modelShare) ? Math.round(p.modelShare * 100) : null;
+                  return (
+                    <div key="prediction-coverage" style={{ ...card, border: p.modelLoaded === false ? `1px solid ${colors.amber}` : undefined }}>
+                      <h3 style={h3}>Crowd model versus the fallback</h3>
+                      <p style={sub}>
+                        Which engine actually answered. This counter lives in the server's memory, so it starts again from nothing on every deploy and reads the time since the last restart rather than all time. A small number here is not evidence the model is unused.
+                      </p>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                        <div>
+                          <p style={kicker}>Answered by the model</p>
+                          <p style={big}>{share === null ? 'Not measured' : `${share}%`}</p>
+                          <p style={{ ...sub, margin: '3px 0 0' }}>
+                            {total === null
+                              ? 'The meter could not be read, which says nothing either way.'
+                              : total === 0
+                                ? 'Nothing has asked for a forecast since the last deploy, so neither engine has run.'
+                                : `${count(ml)} of ${count(total)} forecast${total === 1 ? '' : 's'}. The rest came from the rule engine.`}
+                          </p>
+                        </div>
+                        <div>
+                          <p style={kicker}>Model file</p>
+                          <p style={big}>{p.modelLoaded ? (p.modelVersion || 'Loaded') : 'Not loaded'}</p>
+                          <p style={{ ...sub, margin: '3px 0 0' }}>
+                            {p.modelLoaded
+                              ? 'The ONNX model is in memory and available to serve.'
+                              : 'Every forecast is coming from the rule engine. That is the designed fallback and the product still works, but the trained model is earning nothing.'}
+                          </p>
+                        </div>
+                      </div>
+                      {p.since && (
+                        <p style={{ ...sub, margin: '10px 0 0' }}>Counting since {new Date(p.since).toLocaleString()}.</p>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {/* 4. ONE VENUE */}
                 <div style={card}>
                   <h3 style={h3}>One venue at {moneyOr(v.priceUsd, 'the list price', 0)} a month</h3>
