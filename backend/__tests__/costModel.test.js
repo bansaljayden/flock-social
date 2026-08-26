@@ -559,6 +559,7 @@ const EMPTY_LEDGERS = [
   [/FROM advisor_venue_spend/, () => ({ rows: [], rowCount: 0 })],
   [/FROM venue_digest_sends/, () => ({ rows: [{ n: 0 }], rowCount: 1 })],
   [/FROM venue_subscriptions/, () => ({ rows: [{ n: 0 }], rowCount: 1 })],
+  [/FROM push_sends/, () => ({ rows: [], rowCount: 0 })],
 ];
 
 test('GET /costs refuses every non-admin, before it touches the database', async () => {
@@ -600,6 +601,42 @@ test('GET /costs serves the three blocks, and an empty ledger reads as empty', a
   // The ceiling block is still populated, which is the whole point of keeping
   // them apart.
   assert.ok(b.worstCase.perMonthUsd > 0);
+});
+
+// PUSH IS THE ONE SUBSYSTEM WHOSE FAILURE IS SILENT, and until this block
+// existed the panel that reads every other meter read none of its rows.
+// Migration 050 created push_sends specifically so "has a notification ever
+// been delivered in production" could be answered, services/pushHelper.js has
+// returned the rollup since, and nothing called it: the table was write-only
+// for its whole life, which is the same amount of evidence as not having built
+// it. This pins the reader, and pins that an empty ledger reads as empty rather
+// than as absent, because those are different answers.
+test('GET /costs serves the push delivery ledger, and an empty one reads as zero rather than as missing', async () => {
+  handlers = EMPTY_LEDGERS;
+  const res = await get('/api/admin/costs');
+  assert.strictEqual(res.status, 200, res.text);
+  const pd = res.body.pushDelivery;
+  assert.ok(pd, 'the block is present, not dropped on the floor between the query and the payload');
+  assert.strictEqual(pd.days, 7);
+  assert.deepStrictEqual(pd.byTypeAndOutcome, []);
+  assert.strictEqual(pd.totals.attempts, 0);
+  assert.strictEqual(pd.totals.delivered, 0);
+  // Separate from the counts on purpose: zero rows on a server with no
+  // FIREBASE_SERVICE_ACCOUNT means push is off, and zero rows on a server that
+  // has one means push is on and nothing went out. The ledger cannot tell those
+  // apart and they are not the same fact.
+  assert.strictEqual(typeof pd.configured, 'boolean');
+});
+
+test('an unreadable push ledger leaves the block absent rather than reporting zero deliveries', async () => {
+  handlers = [
+    ...EMPTY_LEDGERS.filter(([re]) => !re.test('FROM push_sends')),
+    [/FROM push_sends/, () => Promise.reject(new Error('relation does not exist'))],
+  ];
+  const res = await get('/api/admin/costs');
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.pushDelivery, null,
+    'a panel that prints 0 delivered when it could not read the table is reporting an outage as a product failure');
 });
 
 test('the per-venue spend query carries a LIMIT', async () => {
