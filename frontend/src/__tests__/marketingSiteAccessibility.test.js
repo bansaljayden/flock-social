@@ -850,6 +850,69 @@ describe('copy rules (SLOP-AUDIT)', () => {
     }
   });
 
+  // AUDIT 2026-08-26. landingPageClaims.test.js has deleted the venue
+  // monetisation pitch from LandingPage.js five separate times, and every one
+  // of its patterns reads exactly one file. /about, llms.txt and the crawler
+  // document were never in that loop, so the identical claims went on being
+  // published from all three. Confirmed live before this test was written:
+  //
+  //   curl -A GPTBot https://www.flockcorp.com/about
+  //     "...let it put a deal in front of nearby groups, which matters most on
+  //      the slow nights when a couple of extra tables changes the week."
+  //   https://www.flockcorp.com/llms.txt
+  //     "Venues pay to appear in front of groups that are choosing a place."
+  //     "Venues pay for placement in front of nearby groups that are picking a
+  //      place."
+  //
+  // Both name promoted placement in vote lists and the slow-night push offer.
+  // README.md lists both under "Not built yet"; vote rows come from Google
+  // Places in distance order and nothing in the repo reorders them, and no
+  // code pushes anything to a group because a venue is quiet. The present
+  // tense is the other half: there is no `stripe` dependency,
+  // VENUE_BILLING_ENABLED is unset, and the only writer of
+  // venue_profiles.tier is an admin comp route, so no venue has ever paid.
+  //
+  // marketing-page.js's own header says claim truth here is "enforced
+  // transitively" through the claim-audited source pages. It was not, because
+  // the audit covered one page. This is the loop that covers the surface.
+  test('no page or crawler file sells promoted placement, a slow-night offer, or venues that pay', () => {
+    const surfaces = [
+      ...FILES.map((f) => [`website/${f}`, stripComments(readJs(f))]),
+      ['public/llms.txt', fs.readFileSync(path.join(__dirname, '..', '..', 'public', 'llms.txt'), 'utf8')],
+      ['api/marketing-page.js', stripComments(fs.readFileSync(
+        path.join(__dirname, '..', '..', 'api', 'marketing-page.js'), 'utf8'
+      ))],
+    ];
+
+    const BANNED = [
+      // Promoted placement, in every phrasing it has worn.
+      [/show up in venue voting/i, 'promoted placement in vote lists'],
+      [/promoted (placement|listing|spot)/i, 'promoted placement in vote lists'],
+      [/(pay|pays|paying|paid) (for placement|to (show|be|get|appear))/i, 'paying to be surfaced'],
+      [/in front of (nearby |local |)(groups|flocks|people)/i, 'a venue placed in front of groups'],
+      // The slow-night push offer.
+      [/slow night/i, 'slow-night push offers'],
+      [/put an offer up/i, 'slow-night push offers'],
+      // Promotions are pull, not push: GET /public-promotions/:placeId is read
+      // when a user opens that venue. Nothing sends one anywhere.
+      [/to nearby groups/i, "pushing a venue's post to groups"],
+      [/(notify|alert|push) (nearby|local) (groups|users|flocks)/i, "pushing a venue's post to groups"],
+      // Present tense. A heading that frames the business model is fine
+      // ("Why venues pay (and users never do)"); asserting that venues pay FOR
+      // or TO something is a statement about money that has never changed hands.
+      [/venues (pay|are paying) (for|to)/i, 'venues paying, which none does'],
+    ];
+
+    const hits = [];
+    for (const [name, text] of surfaces) {
+      for (const [re, why] of BANNED) {
+        const m = text.match(re);
+        if (m) hits.push(`${name}: "${m[0]}" (${why})`);
+      }
+    }
+    expect(hits).toEqual([]);
+  });
+
   test('the crowd-model numbers on /about match the committed model metadata', () => {
     const meta = JSON.parse(fs.readFileSync(
       path.join(__dirname, '..', '..', '..', 'backend', 'scripts', 'ml', 'models', 'model_metadata.json'),
