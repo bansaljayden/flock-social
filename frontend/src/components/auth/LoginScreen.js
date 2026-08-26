@@ -46,6 +46,27 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+
+    // The form carries noValidate, so these checks are the only thing standing
+    // between an incomplete form and a request. See the comment on the <form>.
+    // Order follows the fields down the screen, and the date of birth is first
+    // only when it is actually on screen, which is where it is rendered.
+    if (needsDob && !dob) {
+      setError('Add your date of birth to continue.');
+      document.getElementById('login-dob')?.focus();
+      return;
+    }
+    if (!email.trim()) {
+      setError('Add the email address you signed up with.');
+      document.getElementById('login-email')?.focus();
+      return;
+    }
+    if (!password) {
+      setError('Add your password.');
+      document.getElementById('login-password')?.focus();
+      return;
+    }
+
     setLoading(true);
     try {
       const data = await login(email, password, needsDob && dob ? dob : undefined);
@@ -96,7 +117,13 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
 
   return (
     <AuthShell hero={hero}>
-      <form onSubmit={handleSubmit}>
+      {/* noValidate, for the reason written out at length on the signup form.
+          iOS draws no validation bubble, so `required` on the fields below
+          turned Sign in into a button that refused the submit and displayed
+          nothing at all. Production PostHog recorded dead clicks on this
+          screen's email and password fields too. handleSubmit is now the only
+          gate and it always renders a message through AuthError. */}
+      <form onSubmit={handleSubmit} noValidate>
         <AuthError>{error}</AuthError>
         <AuthNotice>{notice}</AuthNotice>
 

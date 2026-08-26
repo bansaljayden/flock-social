@@ -112,23 +112,34 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
     setBusy: setLoading,
   });
 
+  const fail = (fieldId, message) => {
+    setError(message);
+    document.getElementById(fieldId)?.focus();
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
+    // The form carries noValidate, so every empty-field case has to be caught
+    // here or the button does nothing at all on iOS. See the <form> comment.
+    // The sign-in half had no checks whatsoever, so an empty form met a button
+    // that refused to submit and said nothing.
+    if (isSignup && !name.trim()) return fail('venue-name', 'Add your name.');
+    if (isSignup && !dob) return fail('venue-dob', 'Add your date of birth.');
+    if (!email.trim()) return fail('venue-email', 'Add your email address.');
+    if (!password) return fail('venue-password', isSignup ? 'Choose a password.' : 'Add your password.');
+
     if (isSignup) {
       if (!pwChecks.every((c) => c.ok)) {
-        setError('Your password is missing a requirement below');
-        return;
+        return fail('venue-password', 'Your password is missing a requirement listed below it.');
       }
       const age = ageFromDob(dob);
       if (age === null) {
-        setError('Please enter your date of birth');
-        return;
+        return fail('venue-dob', 'That date of birth does not look right. Check it and try again.');
       }
       if (age < MIN_AGE) {
-        setError(`You must be at least ${MIN_AGE} to use Flock`);
-        return;
+        return fail('venue-dob', `You must be at least ${MIN_AGE} to use Flock`);
       }
     }
 
@@ -216,7 +227,9 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
 
   return (
     <AuthShell hero={hero}>
-      <form onSubmit={handleSubmit}>
+      {/* noValidate: see the signup screen. iOS shows no validation bubble, so
+          `required` here meant the button silently refused to submit. */}
+      <form onSubmit={handleSubmit} noValidate>
         <AuthError>{error}</AuthError>
 
         {isSignup && (
