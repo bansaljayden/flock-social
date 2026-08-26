@@ -159,6 +159,14 @@ const CASES = [
   [{ blocker_id: B, blocked_id: B }, false, 'nor is a row about B alone'],
   [{ blocker_id: A, blocked_id: STRANGER }, false, 'A blocking a third person says nothing about B'],
   [{ blocker_id: STRANGER, blocked_id: B }, false, 'nor does a third person blocking B'],
+  // The other two orientations of the same shape. Without these the file tested
+  // A-as-blocker and B-as-blocked against a stranger but never B-as-blocker or
+  // A-as-blocked, so an over-blocking predicate that fires on "B blocked anyone"
+  // or "anyone blocked A" passed every case here while treating an unrelated
+  // block as a block between A and B. They catch the over-block that the two
+  // above catch the under-block.
+  [{ blocker_id: B, blocked_id: STRANGER }, false, 'B blocking a third person says nothing about A'],
+  [{ blocker_id: STRANGER, blocked_id: A }, false, 'nor does a third person blocking A'],
   [{ blocker_id: STRANGER, blocked_id: STRANGER + 1 }, false, 'two strangers are two strangers'],
 ];
 
