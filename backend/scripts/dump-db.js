@@ -26,7 +26,59 @@
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
-const { Client } = require('pg');
+const { Client, types } = require('pg');
+
+// ---------------------------------------------------------------------------
+// THE COLUMNS WHOSE TEXT FORM IS THE ONLY FAITHFUL THING TO WRITE DOWN.
+// ---------------------------------------------------------------------------
+// node-pg turns `timestamp without time zone` into a JavaScript Date by reading
+// the wall clock the server sent AS LOCAL TIME on the dumping machine. lit()
+// then wrote that Date with toISOString(), which is UTC. Those two steps do not
+// cancel: a row holding 19:44:32.725 was dumped as '2026-08-13T23:44:32.725Z'
+// and restored, into a column with no time zone, as 23:44:32.725. Every naive
+// timestamp in the file moved by the dumping machine's UTC offset, silently,
+// with no error anywhere, measured on this box (America/New_York, +4h) before
+// this line existed.
+//
+// This schema has twenty such columns and they are not decoration:
+// users.created_at, flocks.created_at/updated_at, flocks.EVENT_TIME (the time
+// the plan is actually FOR), flock_members.joined_at, messages.created_at,
+// direct_messages.created_at, stories.created_at/expires_at,
+// emergency_alerts.created_at, friendships.created_at. A restore shifted every
+// plan four or five hours and gave every story four extra hours of life.
+//
+// The offset is not even constant: it is whatever the DUMPING machine's offset
+// was for that particular instant, so a corpus spanning a DST change came back
+// smeared by two different amounts, and a value inside the spring-forward gap
+// (02:30 on the second Sunday in March, which Postgres stores happily and local
+// time does not have) came back as 07:30 rather than 06:30.
+//
+// The fix is to never build a Date at all for these types. The server's own
+// text form, '2026-08-13 19:44:32.725', is exactly what the column holds and
+// exactly what restores into it, so the round trip is byte-for-byte. It also
+// carries the two values a Date cannot represent at all: a `timestamp` column
+// may hold 'infinity' and '-infinity', and `new Date('infinity')` is an Invalid
+// Date whose toISOString() THROWS, which would have killed the dump outright.
+//
+// timestamptz is deliberately NOT in this list. Its Date carries an absolute
+// instant, toISOString() writes it with a Z, and the restore reads the Z, so
+// that one already round-trips exactly (proved in dumpLiteralRestore.test.js).
+const TEXT_ONLY_OIDS = new Set([
+  1082, // date
+  1114, // timestamp without time zone
+  1115, // timestamp without time zone[]
+  1182, // date[]
+]);
+const identityParser = (v) => v;
+// Passed per-query rather than through pg.types.setTypeParser, which is global
+// to the process: requiring this module must not change how anything else in
+// the same process reads a timestamp. That is the same rule the require.main
+// guard at the bottom of this file exists to keep.
+const DUMP_TYPES = {
+  getTypeParser: (oid, format) => (
+    TEXT_ONLY_OIDS.has(oid) ? identityParser : types.getTypeParser(oid, format)
+  ),
+};
 
 // ---------------------------------------------------------------------------
 // Where the dump is allowed to land.
@@ -170,7 +222,21 @@ function lit(v, typeName) {
   if (Array.isArray(v) && typeof typeName === 'string' && typeName.startsWith('_')) {
     return `'${pgArrayBody(v).replace(/'/g, "''")}'`;
   }
-  if (typeof v === 'number') return Number.isFinite(v) ? String(v) : 'NULL';
+  if (typeof v === 'number') {
+    if (Number.isFinite(v)) return String(v);
+    // NaN and +/-Infinity ARE storable, in exactly two column types: float4 and
+    // float8 accept them as quoted literals and hold them. This used to write
+    // NULL for all of them on the argument that they were "never storable",
+    // which is true of integer and false of the type they actually arrive in:
+    // pg hands NaN back only from a float column, because that is the only kind
+    // that can hold one. So the old branch turned a real stored value into NULL
+    // on restore, silently, which is the one thing a backup may not do.
+    // Everything else still becomes NULL rather than invalid SQL, because
+    // `NaN` in an integer column aborts the whole restore at whatever table
+    // happens to contain it.
+    if (typeName === 'float4' || typeName === 'float8') return `'${String(v)}'`;
+    return 'NULL';
+  }
   if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE';
   if (Array.isArray(v) || typeof v === 'object') {
     return `'${JSON.stringify(v).replace(/'/g, "''")}'`;
@@ -300,7 +366,10 @@ async function main() {
   const credentialColumns = new Set();
   const retentionColumns = new Set();
   for (const table of ordered) {
-    const res = await client.query(`SELECT * FROM "${table}"`);
+    // DUMP_TYPES, not the default parsers: see TEXT_ONLY_OIDS at the top of the
+    // file. Every naive timestamp in this schema was moving by the dumping
+    // machine's UTC offset before this argument was passed.
+    const res = await client.query({ text: `SELECT * FROM "${table}"`, types: DUMP_TYPES });
     const rows = res.rows;
     if (!rows.length) { counts.push([table, 0]); continue; }
     // From res.fields, not Object.keys(rows[0]): the field list carries the
@@ -400,7 +469,11 @@ async function main() {
 // only backup that existed. __tests__/dumpLiteralRestore.test.js now replays
 // this function's output into real Postgres columns of every type this schema
 // holds, which is the check that would have caught it on the day.
-module.exports = { lit, pgArrayBody };
+// DUMP_TYPES is exported for the same reason: the decision to read a naive
+// timestamp as text rather than as a Date is half of whether the file restores,
+// and a test that used the default parsers would be testing a different dump
+// from the one this script takes.
+module.exports = { lit, pgArrayBody, DUMP_TYPES, TEXT_ONLY_OIDS };
 
 if (require.main === module) {
   main().catch((err) => { console.error('Dump failed:', err.message); process.exit(1); });
