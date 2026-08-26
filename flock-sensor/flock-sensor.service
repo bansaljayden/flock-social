@@ -18,14 +18,16 @@ Type=simple
 # exists by default on Raspberry Pi OS images since 2022.
 User=pi
 Group=pi
-# Hardware access: I2C (thermal), SPI (mic ADC), GPIO (break-beam), video (display).
-SupplementaryGroups=i2c spi gpio video
+# Hardware access: video (the USB thermal camera's V4L2 node AND the demo
+# unit's framebuffer), SPI (mic ADC), GPIO (break-beam). The thermal camera
+# moved from I2C to USB, so i2c is no longer in this list.
+SupplementaryGroups=spi gpio video
 
 WorkingDirectory=/opt/flock-sensor
 ExecStart=/usr/bin/python3 /opt/flock-sensor/main.py
 
 # Config lives outside any home directory so the service works whatever the
-# login user is called. Mode 0600, owned by the service user — it holds the
+# login user is called. Mode 0600, owned by the service user, because it holds the
 # device API key.
 Environment=FLOCK_CONFIG=/etc/flock-sensor/flock_sensor.env
 Environment=FLOCK_LOG=/var/log/flock-sensor/flock_sensor.log
@@ -40,7 +42,7 @@ Restart=always
 RestartSec=10
 
 # Modest hardening. Deliberately not ProtectSystem=strict or DevicePolicy=closed:
-# this process needs /dev/i2c-1, /dev/spidev0.0, /dev/gpiomem and possibly
+# this process needs /dev/video0, /dev/spidev0.0, /dev/gpiomem and possibly
 # /dev/fb0, and a sensor that is beautifully sandboxed but cannot read its
 # sensors is worse than one that can.
 NoNewPrivileges=yes
