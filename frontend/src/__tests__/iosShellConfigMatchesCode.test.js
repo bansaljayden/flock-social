@@ -803,6 +803,11 @@ describe('the build stops on the failures that used to ship green', () => {
     return step || '';
   };
 
+  const plistStep = () => {
+    const step = codemagic.split(/^ {6}- name: /m).find((s) => /GoogleService-Info\.plist/.test(s.split('\n')[0]));
+    return step || '';
+  };
+
   test('the archive is not the first thing that reads the fetched profile', () => {
     // Enabling a capability on the App ID invalidates every existing
     // provisioning profile. When the profile the build signs with predates the
@@ -883,7 +888,28 @@ describe('the build stops on the failures that used to ship green', () => {
     expect(codemagic).toMatch(/PLIST_PROJECT" != "\$REACT_APP_FIREBASE_PROJECT_ID/);
     // Only when the web variable is actually set. The REACT_APP_FIREBASE_* six
     // are optional, and an absent one is not evidence of a mismatch.
-    expect(codemagic).toMatch(/-n "\$\{REACT_APP_FIREBASE_PROJECT_ID:-\}"/);
+    expect(codemagic).toMatch(/-z "\$\{REACT_APP_FIREBASE_PROJECT_ID:-\}"/);
+  });
+
+  test('a build where that comparison never ran does not print a line that says it did', () => {
+    // The check above is conditional, and a conditional check has to say when it
+    // did not run. Driven against the real script with the variable unset and a
+    // staging plist installed, the step used to print the identical green line a
+    // passing build prints: "verified for com.flockcorp.flock, Firebase project
+    // 'flock-staging'. PUSH IS ON IN THIS BUILD." Nothing in it said whether
+    // anything had agreed with that name. A skipped check that reads as a passed
+    // one is the same invisible failure the whole step exists to end, moved into
+    // the build log.
+    //
+    // Absent is still not a failure: the six web variables are optional and the
+    // build has to be buildable without them. What changes is the sentence.
+    const step = plistStep();
+    expect(step).toMatch(/PROJECT_VERDICT=/);
+    expect(step).toMatch(/WHICH NOTHING HERE CHECKED/);
+    // Both branches feed the same line, so the closing message can never claim
+    // more than the branch that produced it.
+    expect(step).toMatch(/Firebase \$PROJECT_VERDICT\. PUSH IS ON IN THIS BUILD/);
+    expect(step).not.toMatch(/Firebase project '\$PLIST_PROJECT'\. PUSH IS ON/);
   });
 
   test('the override that skips push cannot be tripped by a loose truthy value', () => {
@@ -910,6 +936,30 @@ describe('the build stops on the failures that used to ship green', () => {
     expect(step).toMatch(/STALE=\$\(\(STALE \+ 1\)\)/);
     expect(step).toMatch(/\[ "\$STALE" -gt 0 \]/);
     expect(step).toMatch(/\[ "\$FOUND" -eq 0 \]/);
+  });
+
+  test('a profile is not called good because the list of entitlements to check was empty', () => {
+    // The same defect as the one above, one level down. The per-profile loop
+    // asks one question per entitlement in App.entitlements, so an EMPTY
+    // entitlements file makes it ask nothing, and a loop that runs zero times
+    // reports success. Driven against the real script with an empty
+    // App.entitlements and a stale profile planted beside a good one: exit 0,
+    // and "All 2 installed profiles for com.flockcorp.flock carry every
+    // entitlement this app declares", which is technically true and worth
+    // nothing.
+    //
+    // Reachable two ways, and the first is the one this step's own failure text
+    // tells people not to do: emptying the file to make the check pass. The
+    // second is the iOS project being regenerated over it.
+    const step = signingCheck();
+    expect(step).toMatch(/\[ -z "\$WANTED" \]/);
+    // And it stops the build rather than warning, because a warning here is the
+    // green build with dead push that this whole block of checks exists to end.
+    const guardAt = step.indexOf('[ -z "$WANTED" ]');
+    const loopAt = step.indexOf('for p in "$PROFILE_DIR"');
+    expect(guardAt).toBeGreaterThan(-1);
+    expect(guardAt).toBeLessThan(loopAt);
+    expect(step.slice(guardAt, loopAt)).toMatch(/exit 1/);
   });
 });
 
