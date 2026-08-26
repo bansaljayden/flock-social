@@ -355,6 +355,24 @@ describe('llms.txt stays true to the shipped model', () => {
     expect(llms).toContain('67,249');
   });
 
+  // AUDIT 2026-08-26. The five figures above were pinned; the sentence that
+  // ATTRIBUTES them was not, and it drifted. llms.txt read "as of the August
+  // 12, 2026 training run (version 2.5.0 \"Starling\")" over numbers that had
+  // all been updated to the 2.6.0 corpus. 2.5.0 is named inside this same
+  // metadata as ship_gate.incumbent_version, i.e. the model the shipping one
+  // beat, so the file was crediting the losing model with the winner's
+  // numbers. A version string is a claim like any other.
+  test('llms.txt credits the model version and training date that actually shipped', () => {
+    const version = meta.model_version.replace(/-starling$/i, '');
+    expect(llms).toContain(`version ${version} "Starling"`);
+
+    const trained = new Date(meta.trained_at);
+    const stamp = trained.toLocaleDateString('en-US', {
+      month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC',
+    });
+    expect(llms).toContain(`as of the ${stamp} training run`);
+  });
+
   test('the holdout cities named are the ones in the metadata, disjoint from training', () => {
     expect(meta.evaluation.holdout_cities.sort()).toEqual(['barcelona', 'miami', 'tokyo']);
     expect(llms).toContain('Barcelona, Miami, and Tokyo');
