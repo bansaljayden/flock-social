@@ -291,6 +291,23 @@ function allowEventFetch(userId, opts) {
 // A counter that needed a table would need a migration, a write on the hottest
 // path in the API, and a retention policy, to answer a question a restart-scoped
 // tally already answers. Read it, do not gate on it.
+//
+// AND IT IS NOT VISIBLE YET, WHICH IS THE HALF THIS FILE CANNOT FINISH.
+// The paragraph above says these counters make the split visible. As of
+// 2026-08-26 they do not: predictionCoverage is exported and read by nothing
+// except __tests__/predictionCoverage.test.js. eventBudgetStatus, which this
+// comment compares itself to, has two call sites in routes/admin.js and one in
+// server.js's money watch, and that difference is the whole difference between
+// a number somebody sees and a number somebody could see. The remaining step is
+// one read in the admin cost panel beside the eventBudgetStatus rows. Said out
+// loud rather than left implied, because a counter with no reader looks exactly
+// like a counter with one from inside this file.
+//
+// NOTE ON WHAT IT COUNTS. predictHourlyForecast calls predictBusyness once per
+// hour of the strip, so `total` is scored VENUE-HOURS, not cards. A single card
+// view of a cold venue contributes up to 24. That is the right denominator for
+// "how often does the trained model answer", and the wrong one for "how many
+// users saw an ML number", so do not read it as the second.
 const predictionMethodCounts = Object.create(null);
 let predictionCountsSince = Date.now();
 
@@ -2014,6 +2031,39 @@ function climateNorm(lat, month) {
 // (band, month). tempForFeature still goes through climateNorm above, because
 // there the global mean is doing a different job: it is the only in-range
 // temperature available to impute, and the alternative is the rule engine.
+//
+// THAT CHOICE HAS A PRICE AND IT IS NOW MEASURED, 2026-08-26. The sentence
+// above was an argument with no number under it, and the number is not small.
+// Outside March through May, climateNorm hands the model 66.01F as this venue's
+// temperature, which is the same spring-average-of-every-latitude the anomaly
+// slot was just stopped from using. Scored on the shipped graph, band 40,
+// 60 venue-hours per month across bar, cafe and restaurant, comparing the
+// served number against the same vector holding a plausible reading for that
+// month (32F in January through 36F in December):
+//
+//   January   mean |delta| 4.57 pts, max 7      December  mean 1.35, max 3
+//   February  mean 3.67 pts, max 6              April     mean 0.00, max 0
+//
+// So a January answer built on an imputed temperature is further from the
+// answer a real reading would have produced than the December anomaly bug ever
+// was (that one measured 2.05 mean, 7.07 max). It is NOT the same defect: this
+// path fires only when the reading is missing entirely, which is a weather
+// outage rather than every request, and unlike the anomaly there is no
+// no-information value for a temperature, so imputing or refusing are the only
+// two moves. But the refusal IS wired and reachable: tempForFeature returning
+// null already lands on rule_engine_no_weather_norm below. Swapping this to
+// monthClimateNorm would route every no-reading prediction for nine months of
+// the year to the rule engine, which is a product decision about degraded mode
+// and not one to make inside a comment. It is left as it is, with the cost
+// written down instead of asserted away.
+//
+// AND THE PRESENCE CHECK IS NOT A CONFIDENCE CHECK. A (band, month) cell is
+// trusted the moment it exists, however few training rows built it, and the
+// artifact carries no counts to tell a cell built from thousands from one built
+// from a handful. The shipped table shows the shape of the problem: months 3
+// and 4 hold 8 and 9 bands, month 5 holds 13, and bands 0, 5, 15 and -25 exist
+// in May and nowhere else. A retrain that emits row counts alongside the norms
+// is what would let this ask the better question.
 function monthClimateNorm(lat, month) {
   const norms = (metadata && metadata.temp_norms) || {};
   const band = Math.round((Number(lat) || 0) / 5) * 5;
