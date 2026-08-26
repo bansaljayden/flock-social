@@ -1,0 +1,14 @@
+#!/bin/sh
+# NOT a stub. A forwarder, and the difference matters.
+#
+# The signing step really does read App.entitlements through `plutil | python3`,
+# and that python3 does real work: it is what turns the plist into the list of
+# entitlement keys the whole check then asks about. Faking it would fake the
+# thing under test. What this file exists for is that "python3" is not always a
+# Python: on Windows it is an install-manager shim that re-resolves an
+# interpreter on every call and PRINTS a download bar to stdout while it does,
+# which arrives inside the step's own output ("STALE, missing: Downloading:
+# ..............."). Pointing the name at one resolved interpreter removes the
+# launcher and changes nothing about what runs.
+set -u
+exec "${FIXTURE_PYTHON:-python3}" "$@"
