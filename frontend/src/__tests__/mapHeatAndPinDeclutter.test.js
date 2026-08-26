@@ -61,9 +61,14 @@ describe('first-load heat', () => {
   const loadCode = codeOnly(loadFn);
 
   it('the initial nearby load scores its venues on every path', () => {
-    // Cache hit, fresh fetch, and the seed fallback all request scores.
+    // Cache hit and fresh fetch, which are now the only two paths that produce
+    // venues at all. There used to be a third: a failed search substituted
+    // eight hardcoded Lehigh Valley bars and this line scored those too. The
+    // fallback was deleted on 2026-08-25 (a failure now says it failed instead
+    // of drawing invented pins), so the number is 2 because there are two ways
+    // to have real venues, not because a path stopped being scored.
     const calls = loadCode.match(/requestCrowdScores\(/g) || [];
-    expect(calls.length).toBe(3);
+    expect(calls.length).toBe(2);
   });
 
   it('search paths go through the same scorer (cache hit included)', () => {
