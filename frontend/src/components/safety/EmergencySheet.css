@@ -180,3 +180,46 @@
     animation: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   THE STAND-DOWN BAND
+   ---------------------------------------------------------------------------
+   Sits between the header and the action list, and is the one control on this
+   sheet that ENDS an alarm rather than raising one. It is green-tinted for
+   exactly that reason: every red control here frightens somebody, and a person
+   trying to withdraw an alert must not be reaching into the same colour they
+   just used to send it.
+
+   It stays quieter than Call 911 in weight and height, because it is not more
+   urgent than an emergency call. The band around it carries the fact (an alert
+   is out) so the button itself does not have to explain the situation.
+--------------------------------------------------------------------------- */
+.es-standdown {
+  margin: 14px 0 0;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-mid);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.es-standdown-line {
+  margin: 0;
+  font-size: var(--t-label);
+  line-height: 1.4;
+  color: var(--text-secondary);
+}
+
+.es-ok {
+  min-height: 48px;
+  background: #14532d;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.es-ok:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

@@ -53,6 +53,13 @@ const EmergencySheet = ({
   onShareLocation,
   onAddContacts,
   onClose,
+  // An alert went out recently and the server will still accept a stand-down
+  // for it. False whenever there is nothing to withdraw, so the band below is
+  // absent rather than disabled: a dead "tell them I am OK" on a safety screen
+  // is worse than no button, because it reads as an offer.
+  alertLive = false,
+  onStandDown,
+  standingDown = false,
 }) => {
   const sheetRef = useRef(null);
   const onCloseRef = useRef(onClose);
@@ -177,6 +184,34 @@ const EmergencySheet = ({
           </div>
         </div>
 
+        {/* THE STAND-DOWN.
+            Placed above the action list and styled as a status band rather
+            than a fourth red button, on purpose. Call 911 is the visual
+            primary on this sheet and must stay it (see the hierarchy note at
+            the top of this file), and "tell them I am OK" is not more critical
+            than an emergency call. What it IS is a fact about the world the
+            person needs before they choose anything else: an alert is out.
+            So it states that, and offers the correction inline.
+
+            It is also deliberately not red. Every red control here sends an
+            alarm; this one ends one, and giving it the alarm colour is how
+            somebody trying to stand down taps something that frightens their
+            contacts a second time. */}
+        {alertLive && (
+          <div className="es-standdown">
+            <p className="es-standdown-line">Your contacts were alerted. They have not been told anything since.</p>
+            <button
+              type="button"
+              className="es-btn es-ok"
+              disabled={sending || standingDown}
+              onClick={onStandDown}
+            >
+              {Icons.check('currentColor', 18)}
+              <span>{standingDown ? 'Telling them...' : "Tell them I'm OK"}</span>
+            </button>
+          </div>
+        )}
+
         <div className="es-actions">
           <a className="es-btn es-call" href="tel:911">
             {Icons.phone('currentColor', 20)}
@@ -197,7 +232,7 @@ const EmergencySheet = ({
           <button
             type="button"
             className={`es-btn es-alert${armed ? ' es-armed' : ''}${noContacts ? ' es-dead' : ''}`}
-            disabled={sending || noContacts}
+            disabled={sending || standingDown || noContacts}
             onClick={() => {
               if (!armed) {
                 onArmedChange(true);
@@ -221,7 +256,7 @@ const EmergencySheet = ({
           <button
             type="button"
             className={`es-btn es-share${noContacts ? ' es-dead' : ''}`}
-            disabled={sending || noContacts}
+            disabled={sending || standingDown || noContacts}
             onClick={() => {
               setPendingAction('share');
               onShareLocation();
