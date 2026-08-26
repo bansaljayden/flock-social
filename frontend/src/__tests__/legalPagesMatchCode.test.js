@@ -253,9 +253,19 @@ describe('privacy claims that depend on how the code behaves', () => {
     const safety = read('backend', 'routes', 'safety.js');
     expect(suppression).toMatch(/const EMERGENCY_CATEGORY = 'emergency';/);
     expect(suppression).toMatch(/if \(category === EMERGENCY_CATEGORY\) return \{ blocked: false/);
-    // One caller, and it is the SOS fan-out. If a second one appears, the
-    // argument in emailSuppression.js has to be made about it first.
-    expect(safety.match(/category: EMERGENCY_CATEGORY/g)).toHaveLength(1);
+    // Two callers, and the count is pinned rather than the floor, so a third
+    // one cannot arrive without this argument being made about it. Both are in
+    // routes/safety.js: the SOS fan-out, and the stand-down that mails an
+    // all-clear to exactly the people the fan-out reached. The second one is
+    // here because bypassing the list for the alarm is what creates the duty to
+    // bypass it for the all-clear: an address that received "your child needs
+    // help" and is then denied the retraction is left acting on an emergency
+    // that has ended. emailSuppression.js carries that argument in writing,
+    // which is the condition the first version of this test set.
+    expect(safety.match(/category: EMERGENCY_CATEGORY/g)).toHaveLength(2);
+    const suppressionSource = read('backend', 'services', 'emailSuppression.js');
+    expect(suppressionSource).toMatch(/THE SECOND CALLER, and the argument for it/);
+    expect(privacy).toMatch(/all-clear/);
     expect(privacy).toMatch(/an SOS alert\s+is sent even to an address that has hard-bounced/);
 
     // The other half of the trade: the user is now the only one who can notice
