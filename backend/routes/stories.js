@@ -131,21 +131,51 @@ const MAX_ACTIVE_STORIES = 10;
 // a race by one under READ COMMITTED, and in that case MIN + 1 hour is a slot
 // short and sends the person back to the same refusal. The offset is how many
 // posts have to age out before there is room.
+//
+// BOTH INSTANTS ARE CAST TO timestamptz, AND THAT CAST IS THE WHOLE ANSWER TO
+// A REFUSAL THAT NAMED THE WRONG TIME.
+//
+// stories.created_at and stories.expires_at are `TIMESTAMP`, timestamp WITHOUT
+// time zone (migrations/000_bootstrap.sql). node-postgres parses that type by
+// building a Date out of the LOCAL calendar fields, because a naive timestamp
+// carries no offset for it to honour. So `new Date(row.hour_frees_at)` in
+// storyLimitRefusal below was not reading the instant the database meant: it
+// was reading those digits as the app process's wall clock. Measured with the
+// driver's own parser, `2026-08-26 14:00:00` comes back as 18:00Z under
+// TZ=America/New_York.
+//
+// Every consequence lands on the user. `waitPhrase` turns a four-hour error
+// into "in about 4 hours" on a limit that lifts in a minute, `Retry-After`
+// carries 14400 seconds, and `resetsAt` is an instant that has not happened.
+// That is exactly the defect utils/retryAfter.js was written to end, a refusal
+// that names a window the caller can follow and still be refused, arriving
+// through the timestamp parser instead of through bad arithmetic.
+//
+// Production runs UTC today, where local and UTC coincide and the bug is
+// invisible; a laptop, a container with TZ set, or a region change is all it
+// takes. The cast makes the question moot rather than leaving it resting on an
+// environment variable: Postgres renders a timestamptz with an offset, the
+// driver parses the offset, and no local calendar is consulted anywhere. The
+// naive column and the cast agree on the instant by construction, because both
+// are read back through the same session TimeZone that NOW() wrote them under.
+//
+// Do not "simplify" either cast away. __tests__/storiesEndToEnd.test.js fails
+// if a bare timestamp reaches the driver on either leg.
 const STORY_LIMIT_STATE_SQL = `
   SELECT
     COUNT(*) FILTER (WHERE created_at > NOW() - INTERVAL '1 hour')::int AS last_hour,
     COUNT(*) FILTER (WHERE expires_at > NOW())::int AS active,
-    (SELECT created_at FROM stories
+    ((SELECT created_at FROM stories
        WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour'
        ORDER BY created_at ASC
        OFFSET GREATEST(
          (SELECT COUNT(*)::int FROM stories
            WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour') - $2::int, 0)
-       LIMIT 1) + INTERVAL '1 hour' AS hour_frees_at,
+       LIMIT 1) + INTERVAL '1 hour')::timestamptz AS hour_frees_at,
     -- A different clock entirely: this leg frees when the earliest LIVE story
     -- expires, which with a 24-hour format can be most of a day away.
     (SELECT MIN(expires_at) FROM stories
-      WHERE user_id = $1 AND expires_at > NOW()) AS active_frees_at
+      WHERE user_id = $1 AND expires_at > NOW())::timestamptz AS active_frees_at
   FROM stories WHERE user_id = $1`;
 
 function storyLimitRefusal(res, row, overHour, overActive) {
@@ -272,11 +302,52 @@ async function purgeExpiredStories(batch = PURGE_BATCH) {
   return result.rowCount || 0;
 }
 
-// There is no scheduler in this app (routes/users.js says the same about ban
+// WHAT TRIGGERS IT, AND WHY THAT LIST CHANGED.
+//
+// This used to hang off ONE thing: somebody reading the feed. The reasoning was
+// "there is no scheduler in this app (routes/users.js says the same about ban
 // tombstones), so the purge hangs off the one thing that reliably happens to
-// stories: somebody reading the feed. Fire-and-forget, at most once an hour per
-// process, so it can never add latency to a read or turn a cleanup failure into
-// a failed request.
+// stories". Both halves of that sentence are now false, and together they left
+// the deletion promise unenforceable in production:
+//
+//   * READING THE FEED IS NOT A THING THAT HAPPENS. The product decision of
+//     2026-08-14 is that stories never get a UI, and it held: `getStories` in
+//     frontend/src/services/api.js has zero callers, App.js holds no story
+//     state, no story screen and no call to it, and routes/admin.js's takedown
+//     map cites that absence as the reason a story takedown tells nobody. So
+//     GET /api/stories is a door the launch client never opens, which made this
+//     purge unreachable code on every deployed instance. POST is not:
+//     routes/users.js's data export says it outright ("No UI can create a story
+//     (server-only by decision), but the API can"), and server.js's
+//     KEEP_DEMO_STORIES refresh writes to this table directly. Rows can exist.
+//     Nothing was ever going to remove them.
+//
+//     That is the whole privacy promise inverted. "Stories last 24 hours" was
+//     true of the VIEW, because every read path filters expires_at in SQL, and
+//     false of the ROW, which is the case the comment above this one says must
+//     not happen: photos, posted by minors, held forever, a `SELECT *` away.
+//
+//   * THERE IS A SCHEDULER. backend/server.js starts six interval sweeps at
+//     boot with staggered kickoffs (two of them env-gated), one of which,
+//     prunePhotoStore, is hourly and the same shape as this: expire cached
+//     bytes because keeping them is not allowed. That one exists for a Google
+//     TERMS obligation. This one is the privacy obligation, and it is the one
+//     that never got a sweep. Recount them before quoting the number.
+//
+// So the purge now hangs off every door that TOUCHES a story, not just the one
+// that reads them: the feed, a successful post, and a delete. POST is the only
+// door in this router that creates a row, so the path that fills the table is
+// now also a path that drains it, and a process serving one story write cleans
+// up after every story write that came before it, including the seeded ones.
+//
+// THIS IS STILL NOT A SCHEDULER, and the difference is worth stating rather
+// than leaving for someone to discover: a table full of expired stories in a
+// process nobody posts to stays full. The durable fix is one more sweep in
+// server.js next to prunePhotoStore, hourly, calling purgeExpiredStories.
+// server.js was outside this change's lane; the handoff says so.
+//
+// Fire-and-forget, at most once an hour per process, so it can never add
+// latency to a request or turn a cleanup failure into a failed one.
 //
 // The clock starts at module load rather than at zero: the first purge waits a
 // full interval after boot, so a crash loop or a rapid series of redeploys
@@ -399,6 +470,17 @@ router.get('/',
         });
       }
 
+      // A story is other people's photograph, it is inline base64 in this
+      // response rather than a URL, and the whole format is a promise that it
+      // stops existing in a day. A cached copy breaks all three at once.
+      //
+      // routes/admin.js already sets exactly this on GET /reports/:id/image,
+      // which serves THE SAME BYTES to one moderator. The feed hands them to
+      // everyone the author is friends with, and did not. The launch client is
+      // a Capacitor web view, so "the cache" is NSURLCache writing an
+      // authenticated JSON body into the app container, where it outlives the
+      // expiry the feed itself enforces in SQL.
+      res.set('Cache-Control', 'no-store, private');
       res.json({ story_groups: [...byUser.values()] });
 
       // Retention, after the response and never able to affect it.
@@ -560,8 +642,18 @@ router.post('/',
       }
 
       res.status(201).json({ story: result.rows[0] });
+
+      // Retention, after the response and never able to affect it. This door is
+      // the one that matters: a story row exists because a POST created it, so
+      // the create path is the only trigger guaranteed to be running in a
+      // process where there is anything to purge. See maybePurgeStories.
+      maybePurgeStories();
     } catch (err) {
       console.error('Create story error:', err);
+      // Same reason the feed guards this: the purge above runs after the
+      // response is on the wire, and writing a second time would turn a request
+      // that succeeded into an ERR_HTTP_HEADERS_SENT crash.
+      if (res.headersSent) return;
       res.status(500).json({ error: 'Failed to post story' });
     }
   }
@@ -606,7 +698,9 @@ router.delete('/:id',
         [storyId, req.user.id]
       );
       if (deleted.rows.length > 0) {
-        return res.json({ message: 'Story removed' });
+        res.json({ message: 'Story removed' });
+        maybePurgeStories();
+        return;
       }
 
       // The delete matched nothing, which means one of: no such story, not the
@@ -626,8 +720,16 @@ router.delete('/:id',
       }
 
       res.json({ message: 'Story removed' });
+
+      // The branch that most needs the purge to be real. Nothing was deleted
+      // here: the row survived because a moderator has an open report on it,
+      // and all the author got was an expiry brought forward. The bytes leave
+      // only when this sweep runs, so the path that reports "Story removed"
+      // without removing anything is the path that drives the sweep.
+      maybePurgeStories();
     } catch (err) {
       console.error('Delete story error:', err);
+      if (res.headersSent) return;
       res.status(500).json({ error: 'Failed to remove story' });
     }
   }
