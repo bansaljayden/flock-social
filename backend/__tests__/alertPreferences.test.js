@@ -568,13 +568,30 @@ for (const rel of ['routes/flocks.js', 'routes/venueProfile.js', 'services/crowd
 // switch: a warning a user can mute is not a warning, and the switches this
 // column stores are about bookings, reviews and weekly reports.
 //
-// The exception is conditional on the file still having exactly one send and on
-// that send still being the warning, so adding a second one to admin.js puts it
-// straight back in the offenders list.
+// The exception is conditional on admin.js's sends being EXACTLY the two named
+// below, so a third one, or a different second one, puts the file straight back
+// in the offenders list.
+//
+// The second send arrived on 2026-08-26 and it broke this guard, which is what
+// the guard is for. It is the venue verification decision: the owner asked to
+// be verified and is told what was decided, because a silent decline is
+// indistinguishable from a queue nobody has read and the owner simply asks
+// again.
+//
+// It is exempt for the same reason the warning is, not for convenience. The
+// three switches this column stores are "New bookings", "New reviews" and
+// "Weekly reports". A verification decision is none of those. It is the answer
+// to a request the owner themselves made, in the same class as a password
+// reset, and putting the answer to your own request behind a preference switch
+// is how somebody waits forever for a reply that was muted. Wiring
+// notification_prefs here would also be wiring a column whose three real
+// features still do not exist, which is the thing the note above refuses to do.
 function exemptSend(file, code) {
   if (file !== 'admin.js') return false;
   const sends = code.match(/sendEmail\s*\(/g) || [];
-  return sends.length === 1 && /subject: WARN_SUBJECT/.test(code);
+  if (sends.length !== 2) return false;
+  return /subject: WARN_SUBJECT/.test(code)
+    && /subject: VERIFY_DECIDED_SUBJECT\(/.test(code);
 }
 
 test('any file that notifies a venue owner must read notification_prefs', () => {

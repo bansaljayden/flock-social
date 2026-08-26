@@ -1421,6 +1421,16 @@ router.get('/venues/unverified', async (req, res) => {
 // Never throws and never blocks the admin's response. The decision is already
 // committed and recorded; this is a courtesy on top of it, and a mail outage
 // must not make a completed action look failed.
+// Named, rather than built inline, because __tests__/alertPreferences.test.js
+// keys its exemption on the SUBJECT of every send in this file. That guard
+// exists to catch a venue-owner notification appearing without honouring
+// venue_profiles.notification_prefs, and naming this one is what lets the
+// guard tell "the second send is the verification decision" apart from "a
+// third send appeared and nobody checked it".
+const VERIFY_DECIDED_SUBJECT = (verified, name) => (verified
+  ? `${name} is verified on Flock`
+  : `About your verification request for ${name}`);
+
 async function notifyVerificationDecided(row) {
   const to = row.owner_email;
   if (!to || !emailService.isMailableAddress(to)) {
@@ -1436,9 +1446,7 @@ async function notifyVerificationDecided(row) {
   const owner = String(row.owner_name || '').slice(0, 120);
   const hello = owner ? `Hi ${owner},` : 'Hi,';
 
-  const subject = row.verified
-    ? `${name} is verified on Flock`
-    : `About your verification request for ${name}`;
+
 
   const body = row.verified
     ? [
@@ -1454,7 +1462,7 @@ async function notifyVerificationDecided(row) {
 
   const result = await emailService.sendEmail({
     to,
-    subject,
+    subject: VERIFY_DECIDED_SUBJECT(row.verified, name),
     html: `<p>${esc(hello)}</p>` + body.map((line) => `<p>${esc(line)}</p>`).join(''),
     text: `${hello}\n\n${body.join('\n\n')}`,
   });
