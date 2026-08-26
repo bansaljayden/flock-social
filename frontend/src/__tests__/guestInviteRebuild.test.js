@@ -549,6 +549,66 @@ describe('GuestInvite: the rebuilt screen', () => {
     expect(screen.queryByRole('button', { name: /can't make it/i })).toBeNull();
   });
 
+  test('a refresh that left before the plan closed cannot reopen it when it lands', async () => {
+    // The test above proves the 409 CLOSES the page. It closes it by taking the
+    // current state, and every successful write starts one of those refreshes
+    // too, so two are in flight together the moment a guest answers and then
+    // taps a venue. The page's own clock allows a request up to thirty seconds
+    // (fifteen, then the one retry), which is long enough for the second reply
+    // to arrive first.
+    //
+    // Order, exactly as a phone on bar wifi produces it:
+    //   answer the RSVP        -> refresh #1 leaves and stalls
+    //   the host calls it off
+    //   tap a venue            -> 409 -> refresh #2 returns `cancelled`, and
+    //                             the page correctly goes to its closed shape
+    //   refresh #1 lands       -> carrying the plan as it was BEFORE
+    //
+    // Whichever reply arrived last used to win. That put the notice, the past
+    // tense, both RSVP buttons, the join band and the live vote rows back on a
+    // plan the server had already started refusing, which is the state this
+    // whole 409 path exists to prevent, reached the long way round.
+    const cancelled = { ...PLAN, flock: { ...PLAN.flock, status: 'cancelled' } };
+    let previews = 0;
+    let landStaleRefresh;
+    const { container } = mount((url, opts) => {
+      if (opts && opts.method === 'POST') {
+        return /\/vote$/.test(url)
+          ? Promise.resolve({ ok: false, status: 409, json: () => Promise.resolve({ error: 'This plan is no longer taking votes' }) })
+          : Promise.resolve({ ok: true, status: 201, json: () => Promise.resolve({ guestToken: 'g1' }) });
+      }
+      previews += 1;
+      if (previews === 1) return okWith(PLAN)();
+      // #2 is the post-RSVP refresh, held open until the assertion below wants it.
+      if (previews === 2) {
+        return new Promise((resolve) => {
+          landStaleRefresh = () => resolve({ ok: true, status: 200, json: () => Promise.resolve(PLAN) });
+        });
+      }
+      return okWith(cancelled)();
+    });
+
+    await screen.findByRole('heading', { level: 1, name: /friday night out/i });
+    fireEvent.change(screen.getByLabelText(/your name/i), { target: { value: 'Maya' } });
+    fireEvent.click(screen.getByRole('button', { name: /i'm in/i }));
+    await waitFor(() => expect(previews).toBe(2));
+
+    const venue = await screen.findByRole('button', { name: /bookstore speakeasy/i });
+    fireEvent.click(venue);
+    await waitFor(() => expect(container.textContent).toMatch(/was called off/i));
+
+    await act(async () => {
+      landStaleRefresh();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toMatch(/was called off/i);
+    expect(container.textContent).toMatch(/who was coming/i);
+    expect(screen.queryByRole('button', { name: /i'm in/i })).toBeNull();
+    expect(screen.queryAllByRole('button', { name: /join/i })).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: /bookstore speakeasy/i })).toBeNull();
+  });
+
   test('every request the page makes carries a deadline', () => {
     const src = readSrc('GuestInvite.js');
     // No bare fetch survives: all three endpoints go through the one helper

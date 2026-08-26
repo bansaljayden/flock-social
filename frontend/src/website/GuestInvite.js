@@ -352,13 +352,38 @@ export default function GuestInvite() {
   // Which phase the last committed render used, so a phase CHANGE can be told
   // apart from the phase this page happened to open on.
   const lastPhase = useRef(null);
+  // Which load is the current one. See the ordering note on load() below.
+  const loadSeq = useRef(0);
 
   // `quiet` is for the refresh that runs AFTER a successful write. Without it a
   // rate-limited or flaky refetch would replace a just-saved RSVP with a
   // full-page error, telling the guest their answer failed when it landed.
+  //
+  // ONLY THE NEWEST LOAD MAY COMMIT, AND THAT IS NOT A TIDINESS RULE. Every
+  // successful write starts a quiet refresh, so two of these are in flight
+  // together the moment somebody answers and then taps a venue, and the clock
+  // above gives one of them up to thirty seconds (fifteen, then the one retry).
+  // Without a generation the LAST REPLY won rather than the newest request,
+  // which undid the one thing the 409 handling below exists to do:
+  //
+  //   answer the RSVP (quiet refresh #1 leaves, on a slow phone) -> tap a venue
+  //   -> the host called the plan off, so the vote comes back 409 -> refresh #2
+  //   returns `cancelled` and the page correctly flips into its closed shape
+  //   -> refresh #1 finally lands carrying the plan as it was BEFORE the
+  //   cancellation, and the notice, the past tense, the RSVP buttons, the join
+  //   band and the vote rows all come back live.
+  //
+  // Measured, not reasoned about: guestInviteRebuild.test.js drives exactly
+  // that order and the page reopened. A stale reply is now dropped instead,
+  // including its failure states, so an old request can no longer put the page
+  // into `gone` or `stalled` either.
   const load = useCallback(async (opts = {}) => {
+    const seq = loadSeq.current + 1;
+    loadSeq.current = seq;
+    const current = () => seq === loadSeq.current;
+
     if (opts.showLoading) setPhase('loading');
-    const fail = (next) => { if (!opts.quiet) setPhase(next); };
+    const fail = (next) => { if (!opts.quiet && current()) setPhase(next); };
     const url = `${API}/api/guest/${encodeURIComponent(token)}`;
 
     let r = await ask(url);
@@ -373,7 +398,9 @@ export default function GuestInvite() {
     // purpose: a read, and only when the timer fired. A 429, a 404 and a dead
     // connection are all worse for being asked twice, and neither write below
     // is retried at all.
-    if (r.status === TOO_SLOW) r = await ask(url);
+    // Superseded while the first attempt was out: do not spend a second
+    // request warming a container for an answer nothing will read.
+    if (r.status === TOO_SLOW && current()) r = await ask(url);
 
     if (r.status === 404) { fail('gone'); return; }
     if (r.status === 400) { fail('badlink'); return; }
@@ -387,6 +414,7 @@ export default function GuestInvite() {
     if (r.torn === 'cut') { fail('stalled'); return; }
     if (r.torn === 'foreign') { fail('blocked'); return; }
     if (!r.body.flock) { fail('error'); return; }
+    if (!current()) return;
     setData(r.body);
     setPhase('ready');
   }, [token]);
