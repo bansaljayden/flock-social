@@ -796,11 +796,25 @@ export function isLoggedIn() {
 // here for the same express-validator reason saveFlockVenue strips nullish:
 // undefined keys fall out of JSON.stringify, so an older backend that has not
 // learned the field yet simply never sees it.
-export async function updateProfile({ name, email, bio, current_password, new_password }) {
+// `phone` rides the same PUT. It is the ONLY way a number reaches the account
+// (signup deliberately does not accept one), and without a number on file the
+// phone-discovery switch has nothing to hash, so this is what makes that switch
+// reachable at all. An untouched field is spelled `undefined` and falls out of
+// JSON.stringify, so it never rewrites the stored value.
+export async function updateProfile({ name, email, phone, bio, current_password, new_password }) {
   return request('/api/users/profile', {
     method: 'PUT',
-    body: JSON.stringify({ name, email, bio, current_password, new_password }),
+    body: JSON.stringify({ name, email, phone, bio, current_password, new_password }),
   });
+}
+
+// The whole profile row, which is where `phone_discoverable` lives.
+// GET /api/auth/me (what `getCurrentUser` reads, and what the app's `authUser`
+// is) does not select that column, so a Settings switch drawn from `authUser`
+// would read Off for somebody who is findable. This is the read that tells the
+// truth about it.
+export async function getUserProfile() {
+  return request('/api/users/profile');
 }
 
 // The person card behind a tap on someone's face: id, name, photo, bio.
@@ -1200,6 +1214,19 @@ export async function findFriendsByPhone(phones) {
   return request('/api/friends/find-by-phone', {
     method: 'POST',
     body: JSON.stringify({ phones }),
+  });
+}
+
+// The consent switch behind find-by-phone. Turning it ON is the moment the
+// server writes the digest it matches against, and turning it OFF is the
+// moment that digest is erased, so this is not a cosmetic preference: nobody
+// can be found by number until their own account has said yes.
+// A 400 comes back when there is no usable number on the account, and the
+// message it carries is the one to show.
+export async function setPhoneDiscovery(enabled) {
+  return request('/api/users/phone-discovery', {
+    method: 'PUT',
+    body: JSON.stringify({ enabled }),
   });
 }
 

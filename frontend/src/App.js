@@ -11,7 +11,10 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, getVenueAdvisorCards, getAdvisorQuestions, askAdvisor, askAdvisorQuestion, requestVenueVerification } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, leaveFlock as apiLeaveFlock, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, submitBudget, getBudgetStatus, lockBudget, sendBudgetReminder, createBillSplit, getBillSplit, settleShare, ghostCommit, updatePaymentMethods, getPaymentLinks, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, createVenuePromotion, updateVenuePromotion, deleteVenuePromotion, getVenueEvents, createVenueEvent, updateVenueEvent, deleteVenueEvent, getIncomingFlocks, getVenueReviews, replyToReview, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, getVenueAdvisorCards, getAdvisorQuestions, askAdvisor, askAdvisorQuestion, requestVenueVerification, getUserProfile, setPhoneDiscovery } from './services/api';
+// The address book lives behind one service, so nothing in this file has to
+// know which platform it is on or which API answers. See services/contacts.js.
+import { contactsAvailable, syncContacts } from './services/contacts';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, dmReact, dmRemoveReact, onDmReactionAdded, onDmReactionRemoved, dmVoteVenue, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onGuestRsvp } from './services/socket';
 import { requestNotificationPermission, onForegroundMessage, getNotificationStatus, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
@@ -1297,17 +1300,6 @@ const toAiWireMessages = (messages) => (Array.isArray(messages) ? messages : [])
     text: text.length > AI_CHAT_MAX_MESSAGE_CHARS ? text.slice(0, AI_CHAT_MAX_MESSAGE_CHARS) : text,
   };
 });
-
-// Contact sync runs on the Contacts Picker API, which does not exist in
-// WKWebView. Inside the iOS app the answer is therefore always "no", and a
-// Contacts tab there could only ever apologise and name the platform it does
-// work on, which is both a dead end and guideline 2.3.10. Checking for native
-// alongside the API keeps the tab out of the iOS build entirely.
-function contactSyncAvailable() {
-  if (typeof navigator === 'undefined' || typeof window === 'undefined') return false;
-  if (window.Capacitor?.isNativePlatform?.()) return false;
-  return 'contacts' in navigator && 'ContactsManager' in window;
-}
 
 // ---------------------------------------------------------------------------
 // Paying somebody back, when the wallet app may not be installed
@@ -3704,6 +3696,9 @@ const PROFILE_SUBSCREEN_TITLES = {
   safety: 'Safety',
   blocked: 'Blocked accounts',
   payment: 'Payment',
+  // Short, because this is a header row beside a back button. The pane's own
+  // heading carries the privacy policy's exact wording; see the pane.
+  phonediscovery: 'Find me by phone',
 };
 
 // blockGlyph lived here: a hand-rolled circle-and-slash with round caps, a
@@ -4379,9 +4374,29 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [friendCodeLoading, setFriendCodeLoading] = useState(false);
   const [contactsUsers, setContactsUsers] = useState([]);
   const [contactsLoading, setContactsLoading] = useState(false);
+  // null until a check has actually run. It is what separates "you have not
+  // looked yet" from "we looked and found nobody", and the second of those is
+  // the common answer at launch, so the screen may never guess at it.
+  // { checked, total, throttled } straight from services/contacts.js.
+  const [contactsResult, setContactsResult] = useState(null);
+  // iOS asks for the address book once per install and a denial is permanent
+  // until the person changes it in Settings. This flag turns the tab into the
+  // one honest thing left to say, and there is no second prompt behind it.
+  const [contactsDenied, setContactsDenied] = useState(false);
+  // The device has no address book to read at all. Never true where the tab is
+  // reachable today, but it is a real answer from the service and rendering it
+  // as an error would be a lie about the device.
+  const [contactsUnavailable, setContactsUnavailable] = useState(false);
+  // The half that needs no permission, no plugin and no address book: type one
+  // number. `phoneLookupUsers` stays null until a lookup has run, for the same
+  // reason contactsResult does.
+  const [phoneLookupInput, setPhoneLookupInput] = useState('');
+  const [phoneLookupLoading, setPhoneLookupLoading] = useState(false);
+  const [phoneLookupUsers, setPhoneLookupUsers] = useState(null);
+  const [phoneLookupError, setPhoneLookupError] = useState('');
   // Computed eagerly (not defaulted to false) so the Contacts tab does not
   // flash into existence for one render before the check runs.
-  const [contactsSupported, setContactsSupported] = useState(contactSyncAvailable);
+  const [contactsSupported, setContactsSupported] = useState(contactsAvailable);
   const [showQrScanner, setShowQrScanner] = useState(false);
   const [qrScanError, setQrScanError] = useState('');
   const qrScannerRef = useRef(null);
@@ -4414,7 +4429,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }, []);
 
   const loadAddFriendsData = useCallback(async () => {
-    setContactsSupported(contactSyncAvailable());
+    setContactsSupported(contactsAvailable());
     // Generate friend code client-side (deterministic from user ID)
     if (authUser?.id) {
       setMyFriendCode('FLOCK-' + authUser.id.toString(36).toUpperCase().padStart(4, '0'));
@@ -4470,29 +4485,77 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
   }, [friendCodeInput, showToast, needsEmailVerification]);
 
+  // Reading the address book, on whichever platform this is. Nothing here
+  // touches navigator.contacts: that is the WEB Contacts Picker, it does not
+  // exist in WKWebView, and testing for it was what made the iOS answer always
+  // "no". services/contacts.js owns the platform question now.
+  //
+  // THE PROMPT FIRES INSIDE THIS FUNCTION AND NOWHERE ELSE. iOS asks for the
+  // address book once per install and a denial stands until the person walks
+  // into Settings, so the only thing allowed to trigger it is a deliberate tap
+  // on a screen that has already explained what leaves the phone. Do not call
+  // this on mount, on tab change, or from an effect.
   const handleSyncContacts = useCallback(async () => {
-    if (!('contacts' in navigator)) {
-      showToast('Contact sync not supported in this browser', 'error');
-      return;
-    }
     setContactsLoading(true);
+    setContactsDenied(false);
+    setContactsUnavailable(false);
     try {
-      const contacts = await navigator.contacts.select(['tel'], { multiple: true });
-      const phones = contacts.flatMap(c => c.tel || []).filter(Boolean);
-      if (phones.length === 0) {
-        showToast('No phone numbers found in selected contacts');
-        setContactsLoading(false);
-        return;
-      }
-      const data = await findFriendsByPhone(phones);
-      setContactsUsers(data.users || []);
-      if ((data.users || []).length === 0) showToast('No Flock users found from your contacts');
+      const data = await syncContacts(findFriendsByPhone);
+      setContactsUsers(data.users);
+      setContactsResult({ checked: data.checked, total: data.total, throttled: data.throttled });
     } catch (err) {
-      if (err.name !== 'TypeError') showToast(err.message || 'Failed to sync contacts', 'error');
+      // Dismissing a picker is not an error and gets no toast at all. The
+      // screen is exactly as it was before the tap, which is the truth.
+      if (err?.code === 'cancelled') return;
+      // Both of these are states the tab renders, not things to announce over
+      // the top of it. A toast that disappears cannot tell somebody where the
+      // Settings switch is.
+      if (err?.code === 'denied') { setContactsDenied(true); return; }
+      if (err?.code === 'unavailable') { setContactsUnavailable(true); return; }
+      // 429 never lands here: syncContacts treats a spent allowance as a
+      // partial result and reports it through `throttled`.
+      if (!needsEmailVerification(err, 'add friends')) showToast(err.message || 'Could not check your contacts', 'error');
     } finally {
       setContactsLoading(false);
     }
-  }, [showToast]);
+  }, [showToast, needsEmailVerification]);
+
+  // One number, typed. No permission, no plugin, no address book, and metered
+  // on the server as the friend probe rather than as a contact sync.
+  const handleLookupByNumber = useCallback(async () => {
+    const value = phoneLookupInput.trim();
+    if (!value) return;
+    setPhoneLookupLoading(true);
+    setPhoneLookupError('');
+    try {
+      const data = await findFriendsByPhone([value]);
+      setPhoneLookupUsers(data.users || []);
+    } catch (err) {
+      setPhoneLookupUsers(null);
+      // The server writes the refusal for a spent allowance, and it says how
+      // long to wait. Show it as it came.
+      if (!needsEmailVerification(err, 'add friends')) setPhoneLookupError(err.message || 'That lookup did not go through. Try again.');
+    } finally {
+      setPhoneLookupLoading(false);
+    }
+  }, [phoneLookupInput, needsEmailVerification]);
+
+  // Inviting somebody who does not have an account yet.
+  //
+  // There is no per-contact invite button, on purpose. Offering one would mean
+  // the server had told this screen which uploaded number produced which
+  // person, and refusing to say that is the whole reason a batch of 200 that
+  // matches 3 people cannot be narrowed for free. So the recipient is chosen
+  // in Messages, by the person sending it, and Flock never learns who.
+  const handleInviteFriend = useCallback(async () => {
+    const text = `Add me on Flock, my code is ${myFriendCode}. https://apps.apple.com/app/id6781442127`;
+    try {
+      if (navigator.share) await navigator.share({ text });
+      else window.location.href = `sms:&body=${encodeURIComponent(text)}`;
+    } catch {
+      // Closing the share sheet rejects. That is a decision, not a failure.
+    }
+  }, [myFriendCode]);
 
   const startQrScanner = useCallback(async () => {
     setShowQrScanner(true);
@@ -8128,6 +8191,55 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       </nav>
     );
   };
+
+  // --- Being findable by phone number ---
+  //
+  // GET /api/auth/me, which is where `authUser` comes from, does not select
+  // phone_discoverable. A switch drawn from `authUser` would therefore read Off
+  // for somebody who is findable, which is the one thing a privacy control may
+  // never do. null means "not read yet" and the settings row shows nothing
+  // rather than a guess.
+  const [phoneDiscoverable, setPhoneDiscoverable] = useState(null);
+  const [phoneDiscoveryBusy, setPhoneDiscoveryBusy] = useState(false);
+  const [phoneDiscoveryError, setPhoneDiscoveryError] = useState('');
+  // Set when the server refuses because there is no usable number on the
+  // account, which is the only failure with somewhere for the user to go.
+  const [phoneDiscoveryNeedsNumber, setPhoneDiscoveryNeedsNumber] = useState(false);
+  // The stored number, mirrored here because `authUser` is a prop that never
+  // refreshes and Edit Profile has to seed its field from something current.
+  const [profilePhone, setProfilePhone] = useState(authUser?.phone || '');
+
+  const loadPhoneDiscovery = useCallback(async () => {
+    try {
+      const data = await getUserProfile();
+      setPhoneDiscoverable(Boolean(data.user?.phone_discoverable));
+      setProfilePhone(data.user?.phone || '');
+    } catch {
+      // Leave it null. A switch that guesses its own state is worse than one
+      // that admits it has not read it yet.
+    }
+  }, []);
+  useEffect(() => { loadPhoneDiscovery(); }, [loadPhoneDiscovery]);
+
+  const handleTogglePhoneDiscovery = useCallback(async () => {
+    const next = !phoneDiscoverable;
+    setPhoneDiscoveryBusy(true);
+    setPhoneDiscoveryError('');
+    setPhoneDiscoveryNeedsNumber(false);
+    try {
+      const data = await setPhoneDiscovery(next);
+      // The server's answer, not `next`: turning it on is refused outright when
+      // there is no number to hash, and the switch must land where the row did.
+      setPhoneDiscoverable(Boolean(data.phone_discoverable));
+    } catch (err) {
+      // 400 is "there is no usable number on this account". The server writes
+      // that sentence and it is the one worth showing.
+      setPhoneDiscoveryNeedsNumber(err?.status === 400);
+      setPhoneDiscoveryError(err.message || 'Could not change that. Try again.');
+    } finally {
+      setPhoneDiscoveryBusy(false);
+    }
+  }, [phoneDiscoverable]);
 
   // --- Blocked accounts ---
   const loadBlockedUsers = useCallback(async () => {
@@ -12027,11 +12139,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>people right now</span>
                     </div>
 
+                    {/* The band, and only the band. The figure that used to sit
+                        beside it read "72 dB", but no microphone in this project
+                        has ever been calibrated against a sound meter, so what
+                        the sensor reports is a relative index and printing it
+                        with a real unit was a measurement the build cannot make
+                        (SLOP-AUDIT rule 5). The word is what the reading can
+                        honestly support, and it is also the only part anybody
+                        was going to act on. The sensor's own display says
+                        "level" for the same reason. */}
                     {noiseLabel && (
                       <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '12px' }}>
                         <div style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: noiseLabel.color }} />
                         <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: noiseLabel.color }}>{noiseLabel.text}</span>
-                        <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>· {noiseDb.toFixed(0)} dB</span>
                       </div>
                     )}
 
@@ -15306,6 +15426,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               const EditProfileForm = () => {
                 const [editName, setEditName] = React.useState(profileName);
                 const [editEmail, setEditEmail] = React.useState(authUser?.email || '');
+                const [editPhone, setEditPhone] = React.useState(profilePhone);
                 const [editHandle, setEditHandle] = React.useState(profileHandle);
                 const [editBio, setEditBio] = React.useState(profileBio);
                 const [currentPw, setCurrentPw] = React.useState('');
@@ -15356,6 +15477,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       bio: trimmedBio,
                       current_password: currentPw,
                     };
+                    // Left out entirely when the field is blank: undefined
+                    // falls out of JSON.stringify, and the server reads an
+                    // absent phone as "leave the column alone". Sending '' on
+                    // every save would do the same thing, but only by accident.
+                    if (editPhone.trim()) payload.phone = editPhone.trim();
                     if (newPw) payload.new_password = newPw;
 
                     const data = await updateProfile(payload);
@@ -15365,6 +15491,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     // backend that has not learned the field yet answers
                     // without it, and the optimistic value stands.
                     if (typeof data.user.bio === 'string') setProfileBio(data.user.bio);
+                    // The row of record, not what was typed, so the switch
+                    // under Safety and privacy reads what actually got stored.
+                    if ('phone' in data.user) setProfilePhone(data.user.phone || '');
                     setEditSuccess('Profile updated successfully!');
                     setCurrentPw('');
                     setNewPw('');
@@ -15409,6 +15538,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <div style={{ marginBottom: '12px' }}>
                       <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }}>Email *</label>
                       <input type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} style={styles.input} autoComplete="off" />
+                    </div>
+                    {/* Signup does not accept a phone number, on purpose, so
+                        this field is the only way one ever reaches an account.
+                        Without it "Let friends find me by my phone number"
+                        could never be turned on by anybody, and every contact
+                        check in the app would answer nobody forever. */}
+                    <div style={{ marginBottom: '12px' }}>
+                      <label htmlFor="profile-phone-input" style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }}>Phone</label>
+                      <input id="profile-phone-input" type="tel" inputMode="tel" value={editPhone} maxLength={20} onChange={(e) => setEditPhone(e.target.value)} placeholder="(555) 555-0123" style={styles.input} autoComplete="tel" />
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0', lineHeight: '1.4' }}>Used only to let friends who already have your number find you, and only while that switch is on under Safety and privacy. Leave it blank and nothing changes.</p>
                     </div>
                     <div style={{ marginBottom: '12px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '4px' }}>
@@ -15678,6 +15817,45 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 )}
               </div>
             )}
+            {profileScreen === 'phonediscovery' && (
+              <div>
+                <div style={styles.card}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                    <div style={{ width: '36px', height: '36px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.phone(colors.navy, 18)}</div>
+                    {/* The privacy policy names this control in exactly these
+                        words. A policy that describes a switch nobody can find
+                        under that name is not one anybody can act on, so the
+                        heading is the policy string verbatim. The settings row
+                        that leads here carries the short label, because the
+                        list layout gives it about half a line. */}
+                    <h2 style={{ flex: 1, minWidth: 0, fontWeight: '700', fontSize: 'var(--t-label)', color: colors.navy, margin: 0, lineHeight: 1.3 }}>Let friends find me by my phone number</h2>
+                    <Toggle label="Let friends find me by my phone number" on={!!phoneDiscoverable} onChange={() => { if (!phoneDiscoveryBusy) handleTogglePhoneDiscovery(); }} />
+                  </div>
+                  {/* Each sentence is something PUT /api/users/phone-discovery
+                      does: the match is gated on this flag, the column defaults
+                      false, and turning it off erases users.phone_hash rather
+                      than only clearing the flag. */}
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.5' }}>People who already have your number in their contacts can find your Flock account. Off until you turn it on. Turning it off erases the code we match against.</p>
+
+                  {phoneDiscoveryError && (
+                    <div role="alert" style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
+                      <p style={{ fontSize: 'var(--t-meta)', color: colors.red, fontWeight: '600', margin: 0, lineHeight: '1.4' }}>{phoneDiscoveryError}</p>
+                    </div>
+                  )}
+
+                  {/* The number is added in Edit Profile and nowhere else, so
+                      this is a real destination rather than a sentence with no
+                      door behind it. Shown before the tap when the account has
+                      no number at all, and after it when the server says so. */}
+                  {(phoneDiscoveryNeedsNumber || (!profilePhone && phoneDiscoverable === false)) && (
+                    <div style={{ marginTop: '12px' }}>
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: '1.4' }}>There is no phone number on your account yet. Add one in Edit Profile and this switch will have something to match against.</p>
+                      <button className="hit44 glass-btn glass-secondary" onClick={() => setProfileScreen('edit')} style={{ padding: '10px 16px', borderRadius: '10px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Go to Edit Profile</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
             {profileScreen === 'interests' && (
               <div>
                 <div style={styles.card}>
@@ -15800,9 +15978,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ width: '36px', height: '36px', borderRadius: '12px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus(colors.navy, 18)}</div>
             <div style={{ flex: 1, textAlign: 'left' }}>
               <span className="shimmer-text" style={{ fontWeight: '600', fontSize: 'var(--t-body)', display: 'block' }}>Add Friends</span>
-              {/* Contact sync is not one of the ways in inside the iOS app, so
-                  this row must not offer it there. */}
-              <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{contactsSupported ? 'Find people, scan a QR code, sync contacts' : 'Find people, scan a QR code'}</span>
+              {/* This used to drop "contacts" inside the iOS app, which was
+                  right while the tab could not exist there and is a lie now
+                  that it can. Contacts is reachable on every platform this
+                  ships to, so the line names all three ways in. */}
+              <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>Find people, scan a QR code, check your contacts</span>
             </div>
             {pendingRequests.length > 0 && <span style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: colors.amber, color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500' }}>{pendingRequests.length}</span>}
             <span style={{ color: 'var(--text-tertiary)' }}>›</span>
@@ -15835,6 +16015,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               rows: [
                 { l: 'Safety', s: 'safety', icon: Icons.shield },
                 { l: 'Blocked accounts', s: 'blocked', icon: Icons.ban, v: blockedError ? null : (blockedUsers.length > 0 ? `${blockedUsers.length} ${blockedUsers.length === 1 ? 'person' : 'people'}` : 'None') },
+                // Nothing in contact discovery can find anybody until this is
+                // on, so it is the switch the feature runs on rather than
+                // polish. Blank, not 'Off', until the read that knows lands.
+                { l: 'Find me by phone', s: 'phonediscovery', icon: Icons.phone, v: phoneDiscoverable === null ? null : (phoneDiscoverable ? 'On' : 'Off') },
               ],
             },
           ].map(group => (
@@ -15842,7 +16026,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-tertiary)', margin: '0 0 6px' }}>{group.g}</h4>
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', boxShadow: 'var(--card-shadow-sm)', overflow: 'hidden' }}>
                 {group.rows.map((m, i) => (
-                  <button key={m.s} className="hit44 glass-btn glass-secondary" onClick={() => { setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'blocked') { setUnblockTarget(null); loadBlockedUsers(); } if (m.s === 'payment') { setVenmoUsername(authUser?.venmo_username || ''); setCashappCashtag(authUser?.cashapp_cashtag || ''); setZelleIdentifier(authUser?.zelle_identifier || ''); } }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: i < group.rows.length - 1 ? '1px solid var(--border-light)' : 'none', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
+                  <button key={m.s} className="hit44 glass-btn glass-secondary" onClick={() => { setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'blocked') { setUnblockTarget(null); loadBlockedUsers(); } if (m.s === 'payment') { setVenmoUsername(authUser?.venmo_username || ''); setCashappCashtag(authUser?.cashapp_cashtag || ''); setZelleIdentifier(authUser?.zelle_identifier || ''); } if (m.s === 'phonediscovery') { setPhoneDiscoveryError(''); setPhoneDiscoveryNeedsNumber(false); loadPhoneDiscovery(); } }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: i < group.rows.length - 1 ? '1px solid var(--border-light)' : 'none', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
                     <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{m.icon(colors.navy, 18)}</div>
                     <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>{m.l}</span>
                     {m.v && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', maxWidth: '45%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.v}</span>}
@@ -17854,9 +18038,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                   <div>
                     <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Noise Level</p>
+                    {/* No dB figure here either, and for the venue owner it
+                        matters more: a number with a unit on an operator's
+                        dashboard is the kind of thing that ends up in a noise
+                        complaint or a licence conversation. See the copy of
+                        this card in the venue sheet. */}
                     {noiseLabel ? (
                       <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: noiseLabel.color, margin: '4px 0 0', lineHeight: 1 }}>
-                        {noiseLabel.text} <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500' }}>{noiseDb.toFixed(0)} dB</span>
+                        {noiseLabel.text}
                       </p>
                     ) : <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>No reading yet</p>}
                   </div>
@@ -20971,8 +21160,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // ADD FRIENDS SCREEN (Snapchat-style)
   const AddFriendsScreen = () => {
-    // Contacts only appears where contact sync can actually run. See
-    // contactSyncAvailable(): never inside the iOS app.
+    // Contacts only appears where an address book can actually be read. See
+    // contactsAvailable() in services/contacts.js, which is true inside the iOS
+    // app and false in a desktop browser without the Contacts Picker.
     const tabs = [
       { id: 'username', label: 'Search', icon: Icons.search },
       { id: 'suggestions', label: 'Quick Add', icon: Icons.users },
@@ -21127,7 +21317,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ textAlign: 'center', padding: '40px 16px' }}>
                   <div style={{ width: '56px', height: '56px', borderRadius: '28px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 12px', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>{Icons.users(colors.navy, 24)}</div>
                   <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>No Suggestions Yet</p>
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Add more friends to see people you may know</p>
+                  {/* Quick Add is mutual friends only, so it is empty by
+                      construction for a new account, and the sentence telling
+                      you to add more friends had nothing to press. It points
+                      at the tabs that can actually find somebody now. */}
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 14px' }}>Add more friends to see people you may know</p>
+                  <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); setAddFriendsTab(contactsSupported ? 'contacts' : 'username'); }}
+                    style={{ padding: '12px 24px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>
+                    {contactsSupported ? 'Check your contacts' : 'Search for people'}
+                  </button>
                 </div>
               ) : (
                 <>
@@ -21227,52 +21425,193 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           )}
 
           {/* TAB: Contacts */}
-          {activeTab === 'contacts' && (
-            <div>
-              {contactsUsers.length > 0 ? (
-                <>
-                  <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 10px' }}>Contacts on Flock</h2>
-                  {contactsUsers.map(user => {
-                    const status = friendStatuses[user.id] || user.friendship_status || 'none';
-                    return (
-                      <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '14px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
-                        <button className="hit44" aria-label={`About ${user.name}`} onClick={() => openUserProfile({ id: user.id, name: user.name, image: user.profile_image_url })} style={{ width: '44px', height: '44px', borderRadius: '22px', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
-                          {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '44px', height: '44px', borderRadius: '22px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
-                        </button>
-                        <div style={{ flex: 1, minWidth: 0 }}>
-                          <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>{user.name}</p>
-                          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>From your contacts</p>
-                        </div>
-                        {status === 'accepted' ? (
-                          <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: 'var(--accent-green-bg)', color: 'var(--accent-green-text)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Friends</span>
-                        ) : status === 'pending' ? (
-                          <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: 'var(--pill-bg)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Pending</span>
-                        ) : (
-                          <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
-                        )}
-                      </div>
-                    );
-                  })}
-                  <button className="hit44 glass-btn glass-secondary" onClick={handleSyncContacts} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', marginTop: '8px' }}>Refresh Contacts</button>
-                </>
-              ) : (
-                /* This tab is only rendered where contact sync works, so the
-                   old "not supported here" state and the apology it carried
-                   are gone with it. */
-                <div style={{ textAlign: 'center', padding: '40px 16px' }}>
-                  <div style={{ width: '64px', height: '64px', borderRadius: '32px', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px', boxShadow: '0 2px 12px rgba(0,0,0,0.08)' }}>{Icons.phone(colors.navy, 28)}</div>
-                  <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 6px' }}>Find Friends in Contacts</p>
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 20px', lineHeight: '1.5' }}>
-                    See which of your contacts are already on Flock
-                  </p>
-                  <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSyncContacts(); }} disabled={contactsLoading}
-                    style={{ padding: '14px 28px', borderRadius: '14px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden', opacity: contactsLoading ? 0.7 : 1 }}>
-                    {contactsLoading ? 'Searching...' : 'Sync Contacts'}
+          {/* ------------------------------------------------------------------
+              This tab has four states and every one of them is load-bearing.
+
+              1. BEFORE THE TAP. This screen IS the pre-prompt. iOS asks for the
+                 address book once per install and a denial stands until the
+                 person walks into Settings, so the explanation has to come
+                 before the system dialog rather than after it. Nothing on this
+                 screen speaks to the contacts service until the button is
+                 pressed.
+              2. DENIED. One sentence saying where the switch is, the typed
+                 number field underneath it, and no second prompt. Asking again
+                 cannot work, so asking again would only be nagging.
+              3. MATCHES. Flock name and photo, nothing else. The server never
+                 says which uploaded number produced which person, and a row
+                 that named the contact would rebuild the enumeration oracle
+                 that refusal exists to prevent.
+              4. NOBODY MATCHED, which is the ordinary answer at launch. It uses
+                 the counts, because "no Flock users found" is a claim about
+                 every number on the phone and a throttled run only looked at
+                 some of them.
+              ------------------------------------------------------------------ */}
+          {activeTab === 'contacts' && (() => {
+            const matched = !!contactsResult && contactsUsers.length > 0;
+            const emptyAfterCheck = !!contactsResult && contactsUsers.length === 0;
+            // True when the phone held more numbers than this run reached, for
+            // either reason: the hourly allowance ran out, or the book is
+            // bigger than one run can cover.
+            const partial = !!contactsResult && (contactsResult.throttled || contactsResult.checked < contactsResult.total);
+
+            const personRow = (user, subtitle) => {
+              const status = friendStatuses[user.id] || user.friendship_status || 'none';
+              return (
+                <div key={user.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px', borderRadius: '14px', backgroundColor: 'var(--bg-card-solid)', marginBottom: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }}>
+                  <button className="hit44" aria-label={`About ${user.name}`} onClick={() => openUserProfile({ id: user.id, name: user.name, image: user.profile_image_url })} style={{ width: '44px', height: '44px', borderRadius: '22px', backgroundColor: colors.navyMidBg, border: 'none', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, cursor: 'pointer' }}>
+                    {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '44px', height: '44px', borderRadius: '22px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
+                  </button>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>{user.name}</p>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{subtitle}</p>
+                  </div>
+                  {status === 'accepted' ? (
+                    <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: 'var(--accent-green-bg)', color: 'var(--accent-green-text)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Friends</span>
+                  ) : status === 'pending' ? (
+                    <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: 'var(--pill-bg)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Pending</span>
+                  ) : (
+                    <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSendFriendRequest(user); }} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
+                  )}
+                </div>
+              );
+            };
+
+            const checkAgainButton = (
+              <button className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleSyncContacts(); }} disabled={contactsLoading} style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', marginTop: '8px', position: 'relative', overflow: 'hidden' }}>Check again</button>
+            );
+
+            return (
+              <div>
+                {/* The list is feed-shaped, so the wait draws the layout it is
+                    about to fill rather than a spinner (SLOP-AUDIT rule 10). */}
+                {contactsLoading && (
+                  <ListSkeleton count={3} thumb={44} thumbRadius={22} label="Checking your contacts" />
+                )}
+
+                {!contactsLoading && contactsDenied && (
+                  <div style={styles.card}>
+                    <BirdNote
+                      layout="row"
+                      size={48}
+                      bird={WARM_BIRD}
+                      title="Contacts are turned off for Flock"
+                      body="Flock does not have permission to read your contacts. You can turn it on in Settings, under Flock, or add someone by their number below."
+                    />
+                  </div>
+                )}
+
+                {!contactsLoading && !contactsDenied && contactsUnavailable && (
+                  <div style={styles.card}>
+                    <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: '0 0 4px' }}>This device has no address book Flock can read</p>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.5' }}>Add someone by their number below instead.</p>
+                  </div>
+                )}
+
+                {/* STATE 1: before the tap. Nothing above this line has spoken
+                    to the contacts service, so the system prompt has not fired
+                    and cannot fire until the button below is pressed. */}
+                {!contactsLoading && !contactsDenied && !contactsUnavailable && !contactsResult && (
+                  <div style={styles.card}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '10px' }}>
+                      <div style={{ width: '40px', height: '40px', borderRadius: '12px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.phone(colors.navy, 20)}</div>
+                      <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>Find friends from your contacts</h2>
+                    </div>
+                    {/* Every clause here is something services/contacts.js and
+                        backend/routes/friends.js actually do: the projection is
+                        phones only, matching is gated on the other person's own
+                        opt-in, and a number belonging to a non-user is never
+                        written down. */}
+                    <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 14px', lineHeight: '1.5' }}>Flock sends only phone numbers, checks them against people who chose to be findable, and keeps nothing. Names and everything else stay on your phone.</p>
+                    <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSyncContacts(); }} disabled={contactsLoading}
+                      style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>
+                      Check my contacts
+                    </button>
+                  </div>
+                )}
+
+                {/* STATE 3: matches. Flock name and photo only. */}
+                {!contactsLoading && !contactsDenied && matched && (
+                  <>
+                    <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>Contacts on Flock</h2>
+                    {partial ? (
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px' }}>We checked {contactsResult.checked} of your {contactsResult.total} numbers. Try the rest in an hour.</p>
+                    ) : (
+                      <div style={{ height: '6px' }} />
+                    )}
+                    {contactsUsers.map(user => personRow(user, 'From your contacts'))}
+                    {checkAgainButton}
+                  </>
+                )}
+
+                {/* STATE 4: nobody matched. The counts, not a claim about the
+                    whole address book. */}
+                {!contactsLoading && !contactsDenied && emptyAfterCheck && (
+                  <div style={{ ...styles.card, textAlign: 'center', padding: '24px 20px' }}>
+                    <BirdieStill bird={WARM_BIRD} size={84} style={{ margin: '0 auto 10px' }} />
+                    <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 4px', lineHeight: '1.5' }}>
+                      {partial
+                        ? `We checked ${contactsResult.checked} of your ${contactsResult.total} numbers and none of them are on Flock yet. Try the rest in an hour.`
+                        : `None of the ${contactsResult.checked} numbers we checked are on Flock yet. Invite someone below and they will show up here.`}
+                    </p>
+                    {checkAgainButton}
+                  </div>
+                )}
+
+                {/* BY NUMBER. The half that needs no permission and no plugin,
+                    so it works on every platform and in every one of the states
+                    above, including the one where the address book is closed
+                    for good. */}
+                <div style={styles.card}>
+                  <h3 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>By number</h3>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 10px' }}>Add one person with the number you already have for them</p>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <input aria-label="Phone number" type="tel" inputMode="tel" autoComplete="tel" value={phoneLookupInput}
+                      onChange={(e) => { setPhoneLookupInput(e.target.value); setPhoneLookupError(''); setPhoneLookupUsers(null); }}
+                      onKeyDown={(e) => { if (e.key === 'Enter' && !phoneLookupLoading) handleLookupByNumber(); }}
+                      placeholder="(555) 555-0123" maxLength={20}
+                      style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `1.5px solid ${phoneLookupInput ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-body)', fontWeight: '600', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)' }}
+                    />
+                    <button className="hit44 glass-btn glass-navy" onClick={(e) => { if (!phoneLookupLoading && phoneLookupInput.trim()) { confirmClick(e); handleLookupByNumber(); } }} disabled={phoneLookupLoading || !phoneLookupInput.trim()}
+                      style={{ padding: '12px 20px', borderRadius: '12px', border: 'none', background: phoneLookupInput.trim() ? colors.navyBg : 'var(--pill-bg)', color: phoneLookupInput.trim() ? 'white' : 'var(--text-tertiary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: phoneLookupInput.trim() ? 'pointer' : 'default', position: 'relative', overflow: 'hidden', opacity: phoneLookupLoading ? 0.7 : 1 }}>
+                      {phoneLookupLoading ? '...' : 'Look up'}
+                    </button>
+                  </div>
+
+                  {phoneLookupError && (
+                    <p role="alert" style={{ fontSize: 'var(--t-meta)', color: colors.red, fontWeight: '600', margin: '10px 0 0', lineHeight: '1.4' }}>{phoneLookupError}</p>
+                  )}
+
+                  {!phoneLookupError && phoneLookupUsers && phoneLookupUsers.length > 0 && (
+                    <div style={{ marginTop: '10px' }}>
+                      {phoneLookupUsers.map(user => personRow(user, 'Matches the number you typed'))}
+                    </div>
+                  )}
+
+                  {/* "Not on Flock" would be a false statement about somebody
+                      who has an account and simply has not opted in to being
+                      found by their number. The server cannot tell those two
+                      apart on purpose, so neither may this line. */}
+                  {!phoneLookupError && phoneLookupUsers && phoneLookupUsers.length === 0 && (
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '10px 0 0', lineHeight: '1.4' }}>Nobody on Flock has that number, or they have not turned on being found by it.</p>
+                  )}
+                </div>
+
+                {/* INVITE. One button, never one per contact: a per-contact
+                    invite would need the server to say which number produced
+                    which person, which is the one thing find-by-phone refuses
+                    to answer. Messages picks the recipient, and Flock never
+                    learns who it was. */}
+                <div style={styles.card}>
+                  <h3 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Nobody there yet?</h3>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 10px' }}>Send someone your code and they can add you the moment they sign up</p>
+                  <button className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); handleInviteFriend(); }} disabled={!myFriendCode}
+                    style={{ width: '100%', padding: '12px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: myFriendCode ? 'pointer' : 'default', opacity: myFriendCode ? 1 : 0.6, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', position: 'relative', overflow: 'hidden' }}>
+                    {Icons.share(colors.navy, 16)} Invite a friend
                   </button>
                 </div>
-              )}
-            </div>
-          )}
+              </div>
+            );
+          })()}
         </div>
 
         {BottomNav()}
