@@ -78,7 +78,60 @@ test('the sweep moves confirmed flocks to completed and touches nothing else', a
   // close a plan that is not over.
   assert.match(sql, /WHERE status = 'confirmed'/i);
   assert.match(sql, /event_time IS NOT NULL/i);
-  assert.match(sql, /event_time < NOW\(\) - make_interval\(hours => \$1::int\)/i);
+  // NOT bare NOW(). event_time is TIMESTAMP WITHOUT TIME ZONE holding a UTC
+  // wall clock (the writers in App.js all send .toISOString(), and Postgres
+  // drops the Z on the way into a naive column). Compared against NOW(), which
+  // is a timestamptz, Postgres casts the naive side at the DATABASE SESSION's
+  // TimeZone, so the grace window was being measured on whatever zone the
+  // Postgres server is configured for. It is UTC on Railway, so the arithmetic
+  // came out right by coincidence; on a server set to America/New_York every
+  // plan in the product would have closed four hours late, uniformly and
+  // invisibly. Both sides must be naive UTC.
+  assert.match(sql, /event_time < \(NOW\(\) AT TIME ZONE 'UTC'\) - make_interval\(hours => \$1::int\)/i,
+    'the comparison must not depend on the Postgres session TimeZone');
+});
+
+test('one pass is a bounded loop of bounded statements, not one unbounded UPDATE', async () => {
+  reset();
+  // config/database.js caps every pooled statement at 15 seconds. An UPDATE
+  // over a backlog too big to write inside that is killed with NOTHING
+  // committed, and the next pass thirty minutes later inherits exactly the same
+  // backlog and fails exactly the same way, forever. The first pass on a
+  // database that has been running without this sweep is precisely that
+  // backlog, and so is a restored backup.
+  db.rowCount = sweep.SWEEP_BATCH_SIZE;
+  const moved = await runFlockCompletionSweep();
+  assert.match(db.log[0].sql, /LIMIT \$2::int/i, 'the statement must carry a row limit');
+  assert.equal(db.log[0].params[1], sweep.SWEEP_BATCH_SIZE);
+  assert.equal(db.log.length, sweep.SWEEP_MAX_BATCHES,
+    'a full batch means more may remain, so the pass keeps going until it is capped');
+  assert.equal(moved, sweep.SWEEP_BATCH_SIZE * sweep.SWEEP_MAX_BATCHES);
+});
+
+test('a short batch ends the pass, so the steady state is still one statement', async () => {
+  reset();
+  db.rowCount = 2;
+  const moved = await runFlockCompletionSweep();
+  assert.equal(moved, 2);
+  assert.equal(db.log.length, 1, 'only a FULL batch can have left anything behind');
+});
+
+test('a failure part way through reports the batches that did commit', async () => {
+  reset();
+  // Each batch is its own statement and commits on its own, so a timeout costs
+  // the batch it was in and not the 9,500 rows already written. Reporting zero
+  // would say the pass achieved nothing.
+  db.rowCount = sweep.SWEEP_BATCH_SIZE;
+  let calls = 0;
+  const real = pool.query;
+  pool.query = (sql, params) => {
+    calls += 1;
+    if (calls > 2) return Promise.reject(new Error('canceling statement due to statement timeout'));
+    return real(sql, params);
+  };
+  const moved = await runFlockCompletionSweep();
+  pool.query = real;
+  assert.equal(moved, sweep.SWEEP_BATCH_SIZE * 2);
 });
 
 test('a planning flock is never swept, however old it is', async () => {
@@ -137,14 +190,14 @@ test('the default window is twelve hours, so a 9 PM plan closes the next morning
   assert.equal(DEFAULT_GRACE_HOURS, 12);
   assert.equal(graceHours(), 12);
   await runFlockCompletionSweep();
-  assert.deepEqual(db.log[0].params, [12]);
+  assert.deepEqual(db.log[0].params, [12, sweep.SWEEP_BATCH_SIZE]);
 });
 
 test('FLOCK_COMPLETE_AFTER_HOURS moves the window without a deploy', async () => {
   reset();
   process.env.FLOCK_COMPLETE_AFTER_HOURS = '6';
   await runFlockCompletionSweep();
-  assert.deepEqual(db.log[0].params, [6]);
+  assert.deepEqual(db.log[0].params, [6, sweep.SWEEP_BATCH_SIZE]);
 });
 
 test('an unreadable or out-of-range window falls back to the default', () => {

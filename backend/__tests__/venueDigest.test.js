@@ -34,6 +34,8 @@ const pool = require('../config/database');
 let venueRows;        // what the sweep's venue query returns
 let digestClaims;     // INSERT INTO venue_digest_sends rows, with params
 let claimConflict;    // when true, the claim reports rowCount 0 (lost the race)
+let markersOnRecord;  // week markers already in venue_digest_sends: `${vpId}|${weekStart}`
+let markerReads;      // the pre-check SELECT, one per venue that reached it
 let markerDeletes;    // DELETE FROM venue_digest_sends (per-venue release only)
 let prefUpdates;      // UPDATE venue_profiles ... notification_prefs
 let prefReads;        // SELECT notification_prefs (the GET page's only query)
@@ -46,12 +48,20 @@ pool.query = (sql, params) => {
   if (/FROM venue_profiles vp JOIN users u/.test(flat)) {
     return Promise.resolve({ rows: venueRows, rowCount: venueRows.length });
   }
+  if (/SELECT 1 FROM venue_digest_sends/.test(flat)) {
+    markerReads.push({ sql: flat, params });
+    const held = markersOnRecord.has(`${params[0]}|${params[1]}`);
+    return Promise.resolve({ rows: held ? [{ '?column?': 1 }] : [], rowCount: held ? 1 : 0 });
+  }
   if (/INSERT INTO venue_digest_sends/.test(flat)) {
     digestClaims.push({ sql: flat, params });
-    return Promise.resolve({ rows: [], rowCount: claimConflict ? 0 : 1 });
+    if (claimConflict) return Promise.resolve({ rows: [], rowCount: 0 });
+    markersOnRecord.add(`${params[0]}|${params[1]}`);
+    return Promise.resolve({ rows: [], rowCount: 1 });
   }
   if (/DELETE FROM venue_digest_sends WHERE venue_profile_id/.test(flat)) {
     markerDeletes.push({ sql: flat, params });
+    markersOnRecord.delete(`${params[0]}|${params[1]}`);
     return Promise.resolve({ rows: [], rowCount: 1 });
   }
   if (/DELETE FROM venue_digest_sends WHERE sent_at/.test(flat)) {
@@ -93,6 +103,8 @@ function resetWorld() {
   sentEmails = [];
   sendResult = { sent: true, id: 'test-send' };
   claimConflict = false;
+  markersOnRecord = new Set();
+  markerReads = [];
   delete process.env.DIGEST_ENABLED;
   delete process.env.VENUE_BILLING_ENABLED;
   digest._setCardLoaderForTests(async () => FIXTURE_CARDS);
@@ -344,7 +356,7 @@ test('DIGEST_ENABLED unset: the sweep runs no queries and sends nothing', async 
   resetWorld();
   venueRows = [eligibleVenueRow()];
   const tally = await digest.runVenueDigestSweep(MONDAY_9AM_ET);
-  assert.deepStrictEqual(tally, { considered: 0, sent: 0, skipped: 0, failed: 0 });
+  assert.deepStrictEqual(tally, { considered: 0, due: 0, alreadySent: 0, sent: 0, skipped: 0, failed: 0 });
   assert.strictEqual(queriesRan.length, 0, 'an OFF digest must not even read the database');
   assert.strictEqual(sentEmails.length, 0);
 });
@@ -451,6 +463,109 @@ test('an ambiguous failure keeps its marker, so an aborted-but-accepted send can
   const tally = await digest.runVenueDigestSweep(MONDAY_9AM_ET);
   assert.strictEqual(tally.failed, 1);
   assert.strictEqual(markerDeletes.length, 0, 'the marker must survive an outcome nobody can prove was not sent');
+});
+
+// ============================================================================
+// THE SEND WINDOW IS FIVE HOURS WIDE AND THE SWEEP IS HOURLY, SO A MAILED
+// VENUE IS WALKED FOUR MORE TIMES.
+//
+// Building the card stack is not cheap and it is not local: buildAroundYou
+// probes Ticketmaster once per day of the week through mlPredictor's shared
+// event cache and daily budget, buildWeekAhead runs a seven-day model forecast,
+// and the verdict and readings cards each aggregate the venue's own history.
+// Doing all of that and THEN losing the claim, four times per venue, turns
+// Monday breakfast into the heaviest hour of the product's week on work that by
+// construction cannot produce an email.
+// ============================================================================
+test('a venue already mailed this Monday does not rebuild its advisor cards on the next hourly sweep', async () => {
+  resetWorld();
+  process.env.DIGEST_ENABLED = 'true';
+  let builds = 0;
+  digest._setCardLoaderForTests(async () => { builds += 1; return FIXTURE_CARDS; });
+  venueRows = [eligibleVenueRow()];
+
+  const first = await digest.runVenueDigestSweep(MONDAY_9AM_ET);
+  assert.strictEqual(first.sent, 1);
+  assert.strictEqual(builds, 1);
+
+  // 10 AM, same venue, same local Monday, marker already on record.
+  const second = await digest.runVenueDigestSweep(new Date('2026-08-24T14:00:00Z'));
+  assert.strictEqual(second.sent, 0);
+  assert.strictEqual(second.alreadySent, 1);
+  assert.strictEqual(sentEmails.length, 1, 'and still exactly one email');
+  assert.strictEqual(builds, 1,
+    'the second pass must ask the marker table before it asks the fact engine');
+  assert.strictEqual(digestClaims.length, 1,
+    'and must not spend an INSERT on a row it already owns');
+});
+
+test('the pre-check never stands in for the claim: a venue with no marker still builds and sends', async () => {
+  resetWorld();
+  process.env.DIGEST_ENABLED = 'true';
+  venueRows = [eligibleVenueRow()];
+  const tally = await digest.runVenueDigestSweep(MONDAY_9AM_ET);
+  assert.strictEqual(markerReads.length, 1, 'one indexed read per due venue');
+  assert.deepStrictEqual(markerReads[0].params, [7, '2026-08-24']);
+  assert.strictEqual(tally.sent, 1);
+});
+
+test('a released marker is retried, so a refused send still gets its next hour', async () => {
+  resetWorld();
+  process.env.DIGEST_ENABLED = 'true';
+  sendResult = { sent: false, error: 'provider blip', refused: true };
+  venueRows = [eligibleVenueRow()];
+  await digest.runVenueDigestSweep(MONDAY_9AM_ET);
+  assert.strictEqual(markerDeletes.length, 1);
+  // The pre-check must read the release, not a cached idea of it, or a venue
+  // whose 7 AM send failed would never be mailed at 8 AM.
+  sendResult = { sent: true, id: 'test-send' };
+  const second = await digest.runVenueDigestSweep(new Date('2026-08-24T14:00:00Z'));
+  assert.strictEqual(second.sent, 1);
+  assert.strictEqual(second.alreadySent, 0);
+});
+
+// ============================================================================
+// A SCHEDULED JOB THAT STOPS DOING ITS JOB LOOKS EXACTLY LIKE ONE WITH NOTHING
+// TO DO. The sweep used to print a line only when something was sent or failed,
+// so a Monday on which it mailed nobody was byte-identical in the log to a
+// Tuesday, to a sweep whose venue query threw, and to a process where the timer
+// was never registered at all.
+// ============================================================================
+test('a Monday sweep says how many venues were due even when it mails none of them', async () => {
+  resetWorld();
+  process.env.DIGEST_ENABLED = 'true';
+  venueRows = [eligibleVenueRow(), eligibleVenueRow({ id: 8, user_id: 43 })];
+  const lines = [];
+  const realLog = console.log;
+  console.log = (...a) => lines.push(a.join(' '));
+  try {
+    await digest.runVenueDigestSweep(MONDAY_9AM_ET);         // both mailed
+    lines.length = 0;
+    await digest.runVenueDigestSweep(new Date('2026-08-24T14:00:00Z')); // both already mailed
+  } finally {
+    console.log = realLog;
+  }
+  const line = lines.find((l) => l.includes('[venueDigest] sweep:'));
+  assert.ok(line, 'an hour with venues due has to leave evidence that it ran');
+  assert.match(line, /2 due/);
+  assert.match(line, /2 already mailed/);
+});
+
+test('a sweep with nothing due stays quiet, so the heartbeat means something', async () => {
+  resetWorld();
+  process.env.DIGEST_ENABLED = 'true';
+  venueRows = [eligibleVenueRow()];
+  const lines = [];
+  const realLog = console.log;
+  console.log = (...a) => lines.push(a.join(' '));
+  try {
+    const tally = await digest.runVenueDigestSweep(TUESDAY_9AM_ET);
+    assert.strictEqual(tally.due, 0);
+  } finally {
+    console.log = realLog;
+  }
+  assert.strictEqual(lines.filter((l) => l.includes('[venueDigest] sweep:')).length, 0,
+    'a line printed 168 times a week is a line nobody reads on the one hour it matters');
 });
 
 test('the digest is sent as marketing and carries a plain-text alternative part', async () => {
