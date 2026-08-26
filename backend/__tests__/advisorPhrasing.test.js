@@ -604,3 +604,109 @@ test('a venue outside the corpus is offered only the questions that can answer, 
   assert.ok(served.length < Object.keys(advisorPhrasing.ADVISOR_INTENTS).length,
     'the offer is a subset, not the whole registry');
 });
+
+// ---------------------------------------------------------------------------
+// THE RELEASE, WHICH IS WHOSE BUDGET PAYS FOR SOMEBODY ELSE'S WALL
+// ---------------------------------------------------------------------------
+// Two ceilings guard a phrased answer and they are claimed in order: the
+// VENUE's daily allowance first, then the GLOBAL money wall. When the global
+// one refuses, no request has left the process, so the venue must get its
+// reservation back. advisorPhrasing calls releaseVenueReservation for exactly
+// that, and the comment on the fallback-model branch records that the release
+// was once MISSING there.
+//
+// Nothing tested it. The suite covered that the wall refuses before the call
+// and that a dead database refuses too, which are both about the global side.
+// The venue side of the same moment, the half that decides whose quota is
+// spent, had no coverage at all.
+//
+// What a regression costs is not an error anybody sees. A venue on a busy day
+// burns its own daily answers against a wall that another venue's traffic
+// reached, gets template answers, and has no way to tell those apart from
+// having simply used its allowance up. On the B2B surface that is a paying
+// customer quietly losing what they paid for.
+//
+// THE HARNESS COULD NOT SEE A RELEASE. installVenueLedger's UPDATE handler
+// destructures [delta, id], which is the SETTLE shape. A release sends
+// [tokens, questions, answers, id], so params[1] (questions, 0) was read as the
+// venue id, venueLedger.get(0) missed, and the release silently did nothing. A
+// test written against that harness would have passed whether or not the code
+// released anything, so the handler below models the real statement.
+function installReleaseAwareVenueLedger() {
+  handlers.unshift([/UPDATE advisor_venue_spend[\s\S]*tokens\s*=\s*GREATEST\(0, tokens - /, (params) => {
+    const [tokens, questions, answers, id] = params;
+    const row = venueLedger.get(id);
+    if (!row) return { rows: [], rowCount: 0 };
+    row.tokens = Math.max(0, row.tokens - Number(tokens));
+    row.answers = Math.max(0, row.answers - Number(answers));
+    row.questions = Math.max(0, (row.questions || 0) - Number(questions));
+    return { rows: [], rowCount: 1 };
+  }]);
+}
+
+test('when the global wall refuses, the venue gets its reservation back', async () => {
+  resetAll({ flag: true });
+  installReleaseAwareVenueLedger();
+  handlers.push([/INSERT INTO advisor_spend/, () => ({ rows: [], rowCount: 0 })]);
+  nextModelReply = 'Your peak lands at {{fact:peak_hour}}.';
+
+  const out = await advisorPhrasing.phrase(PEAK_BLOCK(), { venueUserId: 7 });
+  assert.strictEqual(out.mode, 'template');
+  assert.strictEqual(modelCalls.length, 0, 'no request left the process, so nothing was spent upstream');
+
+  const released = queryLog.filter((q) => /UPDATE advisor_venue_spend/.test(q.sql) && /tokens - \$1/.test(q.sql));
+  assert.strictEqual(released.length, 1,
+    'the venue was charged for a call that never happened, because the global wall refused and nothing gave the reservation back');
+  assert.strictEqual(Number(released[0].params[2]), 1, 'the answer slot was not returned, only the tokens');
+  assert.strictEqual(Number(released[0].params[3]), 7, 'the release was aimed at the wrong venue');
+
+  const row = venueLedger.get(7);
+  assert.strictEqual(row.answers, 0, "the venue's answer count did not come back to zero");
+  assert.strictEqual(row.tokens, 0, "the venue's token count did not come back to zero");
+});
+
+test('a venue that keeps hitting the global wall still has its full allowance afterwards', async () => {
+  // The consequence, stated as behaviour rather than as a ledger figure: a day
+  // of refusals must not quietly consume what the venue paid for.
+  resetAll({ flag: true });
+  installReleaseAwareVenueLedger();
+  let globalOpen = false;
+  handlers.push([/INSERT INTO advisor_spend/, () => (
+    globalOpen ? { rows: [{ tokens: 1 }], rowCount: 1 } : { rows: [], rowCount: 0 }
+  )]);
+  nextModelReply = 'Your peak lands at {{fact:peak_hour}}.';
+
+  for (let i = 0; i < advisorPhrasing.PER_VENUE_DAILY_ANSWERS + 3; i += 1) {
+    const out = await advisorPhrasing.phrase(PEAK_BLOCK(), { venueUserId: 7 });
+    assert.strictEqual(out.mode, 'template');
+  }
+  assert.strictEqual(modelCalls.length, 0);
+
+  // The wall lifts. The venue must still be able to get a phrased answer.
+  globalOpen = true;
+  const after = await advisorPhrasing.phrase(PEAK_BLOCK(), { venueUserId: 7 });
+  assert.strictEqual(after.mode, 'phrased',
+    'the venue spent its whole daily allowance on refusals it never received an answer for');
+});
+
+test('the fallback-model retry releases its second reservation too', async () => {
+  // The branch whose own comment says the release was missing here once.
+  resetAll({ flag: true });
+  installReleaseAwareVenueLedger();
+  let globalCalls = 0;
+  handlers.push([/INSERT INTO advisor_spend/, () => {
+    globalCalls += 1;
+    // First claim succeeds so the model is called; the retry's claim hits the wall.
+    return globalCalls === 1 ? { rows: [{ tokens: 1 }], rowCount: 1 } : { rows: [], rowCount: 0 };
+  }]);
+  const notFound = Object.assign(new Error('model not found'), { status: 404 });
+  nextModelReply = () => { throw notFound; };
+
+  const out = await advisorPhrasing.phrase(PEAK_BLOCK(), { venueUserId: 7 });
+  assert.strictEqual(out.mode, 'template');
+  assert.strictEqual(globalCalls, 2, 'the retry did not attempt its own global claim');
+
+  const released = queryLog.filter((q) => /UPDATE advisor_venue_spend/.test(q.sql) && /tokens - \$1/.test(q.sql));
+  assert.strictEqual(released.length, 1,
+    'the second reservation was never released, so the venue paid twice for a call that never left the process');
+});
