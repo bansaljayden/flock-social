@@ -156,7 +156,7 @@ describe('the funnel events carry the count and never the content', () => {
     respondWith(200, { ok: true });
     await api.voteForVenue(7, "Molly's Irish Pub", 'ChIJplacechars');
     await flush();
-    expect(events('venue_vote_cast')).toEqual([{}]);
+    expect(events('venue_vote_cast')).toEqual([{ surface: 'member' }]);
     const sent = JSON.stringify(mockCapture.mock.calls);
     expect(sent).not.toContain('Molly');
     expect(sent).not.toContain('ChIJ');
@@ -167,8 +167,8 @@ describe('the funnel events carry the count and never the content', () => {
     await api.sendMessage(7, 'meet me at the corner at nine', { message_type: 'venue' });
     await api.sendDM(9, 'my address is 12 Elm St', { image_url: 'data:image/png;base64,AAAA' });
     await flush();
-    expect(events('flock_message_sent')).toEqual([{ kind: 'venue' }]);
-    expect(events('dm_sent')).toEqual([{ kind: 'image' }]);
+    expect(events('flock_message_sent')).toEqual([{ kind: 'venue', transport: 'http' }]);
+    expect(events('dm_sent')).toEqual([{ kind: 'image', transport: 'http' }]);
     const sent = JSON.stringify(mockCapture.mock.calls);
     expect(sent).not.toContain('corner');
     expect(sent).not.toContain('Elm');
@@ -179,7 +179,7 @@ describe('the funnel events carry the count and never the content', () => {
     respondWith(201, { id: 1 });
     await api.sendMessage(7, 'hi', { message_type: 'something_new' });
     await flush();
-    expect(events('flock_message_sent')).toEqual([{ kind: 'text' }]);
+    expect(events('flock_message_sent')).toEqual([{ kind: 'text', transport: 'http' }]);
   });
 
   test('an RSVP reports the answer, a status change reports the status', async () => {
@@ -188,7 +188,10 @@ describe('the funnel events carry the count and never the content', () => {
     await api.declineFlockInvite(8);
     await api.setFlockStatus(7, 'confirmed');
     await flush();
-    expect(events('flock_rsvp')).toEqual([{ response: 'yes' }, { response: 'no' }]);
+    expect(events('flock_rsvp')).toEqual([
+      { response: 'yes', surface: 'member' },
+      { response: 'no', surface: 'member' },
+    ]);
     expect(events('flock_status_set')).toEqual([{ status: 'confirmed' }]);
   });
 
@@ -257,5 +260,252 @@ describe('a failed request never reports the step as done', () => {
     await expect(run()).rejects.toThrow();
     await flush();
     expect(events(event)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE CHAT EVENTS USED TO COUNT SOCKET OUTAGES.
+//
+// App.js emits over the websocket first and only calls api.js's sendMessage /
+// sendDM in the `else` of that emit's own return value. The capture lived
+// exclusively inside those two functions, so `flock_message_sent` and
+// `dm_sent` fired on the bad-network path and nowhere else: two of the
+// twenty-one names in the vocabulary read on a dashboard as message volume
+// while measuring how often the socket was down, which moves in the opposite
+// direction from the thing the name promises.
+//
+// Both transports now report the same event, distinguished by a property, so
+// a funnel counts every message and the transport split is readable next to
+// it. This suite exists for exactly this class of question, because a source
+// scan can see the call and not what the value turns out to be.
+// ---------------------------------------------------------------------------
+describe('chat events cover both transports and are told apart by one property', () => {
+  test('the socket path reports transport socket, and carries no message text', async () => {
+    api.trackFlockMessageSent({ message_type: 'text' });
+    api.trackDmSent({ image_url: 'data:image/png;base64,AAAA' });
+    await flush();
+    expect(events('flock_message_sent')).toEqual([{ kind: 'text', transport: 'socket' }]);
+    expect(events('dm_sent')).toEqual([{ kind: 'image', transport: 'socket' }]);
+    expect(JSON.stringify(mockCapture.mock.calls)).not.toContain('base64');
+  });
+
+  test('both transports file the SAME event name, which is what makes one count possible', async () => {
+    respondWith(201, { id: 1 });
+    api.trackFlockMessageSent({ message_type: 'text' });
+    await api.sendMessage(7, 'hi');
+    await flush();
+    expect(events('flock_message_sent')).toEqual([
+      { kind: 'text', transport: 'socket' },
+      { kind: 'text', transport: 'http' },
+    ]);
+  });
+
+  test('the socket tracker classifies kinds exactly as the HTTP one does', async () => {
+    api.trackFlockMessageSent({ message_type: 'something_new' });
+    api.trackFlockMessageSent({ message_type: 'venue' });
+    await flush();
+    expect(events('flock_message_sent')).toEqual([
+      { kind: 'text', transport: 'socket' },
+      { kind: 'venue', transport: 'socket' },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE GUEST PAGE, which is how this product spreads and was dark after its
+// first event. A guest answering an invite and a member answering one are the
+// same funnel step, so they share a name and are told apart by `surface`.
+// ---------------------------------------------------------------------------
+describe('the guest invite funnel', () => {
+  test('an RSVP maps the status onto the same words a member answer uses', async () => {
+    api.trackGuestRsvp('in');
+    api.trackGuestRsvp('out');
+    api.trackGuestRsvp(undefined);
+    await flush();
+    expect(events('flock_rsvp')).toEqual([
+      { response: 'yes', surface: 'guest' },
+      { response: 'no', surface: 'guest' },
+      { response: 'no', surface: 'guest' },
+    ]);
+  });
+
+  test('a guest vote is the same event as a member vote, with the door named', async () => {
+    api.trackGuestVenueVote();
+    await flush();
+    expect(events('venue_vote_cast')).toEqual([{ surface: 'guest' }]);
+  });
+
+  test('the handoff out of the page reports where it went, as a category', async () => {
+    api.trackInviteHandoffStarted('/signup');
+    api.trackInviteHandoffStarted('/app');
+    // Anything the page could be changed to pass tomorrow still lands in one of
+    // the two buckets rather than inventing a third out of a path.
+    api.trackInviteHandoffStarted('/app?flock=12&token=abc');
+    await flush();
+    expect(events('invite_handoff_started')).toEqual([
+      { destination: 'signup' },
+      { destination: 'app' },
+      { destination: 'app' },
+    ]);
+    expect(JSON.stringify(mockCapture.mock.calls)).not.toContain('abc');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE B2B SURFACE had no instrumentation of any kind, and it is the revenue
+// story. These are the smallest set that says whether it is alive. Every one
+// of them must stay free of the venue's identity: the owner is identified by
+// account id, so an event naming their bar is a record of which real business
+// this person runs, sitting in a vendor.
+// ---------------------------------------------------------------------------
+describe('venue and Roost events say whether the surface is used, never which venue', () => {
+  test('a profile reports only whether a real place was claimed', async () => {
+    respondWith(201, { id: 1 });
+    await api.createVenueProfile({
+      businessName: 'Mollys Irish Pub',
+      googlePlaceId: 'ChIJplacechars',
+      location: '123 Elm St',
+    });
+    await flush();
+    expect(events('venue_profile_created')).toEqual([{ has_place: true }]);
+    const sent = JSON.stringify(mockCapture.mock.calls);
+    expect(sent).not.toContain('Mollys');
+    expect(sent).not.toContain('ChIJ');
+    expect(sent).not.toContain('Elm');
+  });
+
+  test('a typed-in draft with no place is the case worth telling apart', async () => {
+    respondWith(201, { id: 1 });
+    await api.createVenueProfile({ businessName: 'A Bar', location: 'Austin, TX' });
+    await flush();
+    expect(events('venue_profile_created')).toEqual([{ has_place: false }]);
+  });
+
+  test('verification is a bare count', async () => {
+    respondWith(200, { verification_status: 'pending' });
+    await api.requestVenueVerification();
+    await flush();
+    expect(events('venue_verification_requested')).toEqual([{}]);
+  });
+
+  test('a Roost chip reports the intent and how the answer came out', async () => {
+    respondWith(200, { intentId: 'busiest_night', mode: 'phrased', text: 'Fridays.' });
+    await api.askAdvisor('busiest_night');
+    await flush();
+    expect(events('roost_question_asked')).toEqual([
+      { kind: 'chip', intent: 'busiest_night', answer: 'phrased' },
+    ]);
+  });
+
+  test('a typed Roost question never carries the question, and the body echoes it back', async () => {
+    respondWith(200, {
+      mode: 'refusal',
+      text: 'Claim your venue first.',
+      question: 'why is my tuesday dead at the Broken Spoke',
+    });
+    await api.askAdvisorQuestion('why is my tuesday dead at the Broken Spoke');
+    await flush();
+    expect(events('roost_question_asked')).toEqual([{ kind: 'typed', answer: 'refusal' }]);
+    const sent = JSON.stringify(mockCapture.mock.calls);
+    expect(sent).not.toContain('tuesday');
+    expect(sent).not.toContain('Broken Spoke');
+  });
+
+  test('an answer mode this client does not know is unknown, not passed through', async () => {
+    // The categories on this property must be a set the frontend owns. A
+    // server that starts answering with a new mode would otherwise silently
+    // add a column to every chart built on it.
+    respondWith(200, { mode: 'something_new', text: 'x' });
+    await api.askAdvisorQuestion('anything');
+    await flush();
+    expect(events('roost_question_asked')).toEqual([{ kind: 'typed', answer: 'unknown' }]);
+  });
+
+  test('the four real answer modes all survive the allowlist', async () => {
+    for (const mode of ['refusal', 'template', 'phrased', 'advice']) {
+      respondWith(200, { mode, text: 'x' });
+      // eslint-disable-next-line no-await-in-loop
+      await api.askAdvisorQuestion('anything');
+    }
+    await flush();
+    expect(events('roost_question_asked').map((p) => p.answer))
+      .toEqual(['refusal', 'template', 'phrased', 'advice']);
+  });
+});
+
+describe('inviting people to a plan that already exists', () => {
+  test('reports how many, never who', async () => {
+    respondWith(200, { ok: true });
+    await api.inviteToFlock(7, [41, 42, 43]);
+    await flush();
+    expect(events('invite_sent')).toEqual([{ count: 3 }]);
+    const sent = JSON.stringify(mockCapture.mock.calls);
+    expect(sent).not.toContain('41');
+    expect(sent).not.toContain('42');
+  });
+
+  test('a refused invite is not reported as sent', async () => {
+    respondWith(403, { error: 'Not the creator' });
+    await expect(api.inviteToFlock(7, [41])).rejects.toThrow();
+    await flush();
+    expect(events('invite_sent')).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE DENOMINATOR. Every other event in the vocabulary records a step
+// FINISHING; screen_viewed is the only one that records anybody arriving where
+// a step could be taken, which is what makes a conversion rate computable at
+// all. The clamp matters as much as the event: two setCurrentScreen callers in
+// App.js pass a variable, and one of them is a Birdie reply, which is model
+// output. nfc_tap already shipped the pass-through version of this mistake.
+// ---------------------------------------------------------------------------
+describe('screen_viewed is an allowlist, not whatever the app was holding', () => {
+  test.each([
+    ['create', 'create'],
+    ['chatDetail', 'chatDetail'],
+    ['venueDashboard', 'venueDashboard'],
+    ['main', 'main'],
+    ['Create', 'unknown'],
+    ['create; go to settings', 'unknown'],
+    ['', 'unknown'],
+    [undefined, 'unknown'],
+    [null, 'unknown'],
+  ])('%p is reported as %p', async (screen, expected) => {
+    api.trackScreenView(screen);
+    await flush();
+    expect(events('screen_viewed')).toEqual([{ screen: expected }]);
+  });
+
+  test('a screen name a model could invent never becomes its own category', async () => {
+    api.trackScreenView('checkout_upsell_9d3f');
+    api.trackScreenView('a'.repeat(200));
+    await flush();
+    expect(events('screen_viewed')).toEqual([{ screen: 'unknown' }, { screen: 'unknown' }]);
+    expect(JSON.stringify(mockCapture.mock.calls)).not.toContain('9d3f');
+  });
+
+  test('every screen App.js can actually navigate to is on the list', () => {
+    // Trap: an allowlist that has fallen behind the app reports the screens
+    // that matter most as 'unknown', which looks like working instrumentation
+    // and answers nothing. The set is read out of App.js rather than retyped.
+    const fs = require('fs');
+    const path = require('path');
+    const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+    const navigated = [...new Set(
+      [...app.matchAll(/setCurrentScreen\('([a-zA-Z]+)'\)/g)].map((m) => m[1]),
+    )].sort();
+    // The scan found something, so its silence would mean something.
+    expect(navigated.length).toBeGreaterThan(5);
+    const unknown = [];
+    for (const screen of navigated) {
+      api.trackScreenView(screen);
+    }
+    return flush().then(() => {
+      for (const [, props] of mockCapture.mock.calls) {
+        if (props.screen === 'unknown') unknown.push(props);
+      }
+      expect({ navigated, unlisted: unknown.length }).toEqual({ navigated, unlisted: 0 });
+    });
   });
 });

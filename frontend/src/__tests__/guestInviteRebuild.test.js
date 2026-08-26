@@ -127,9 +127,40 @@ describe('GuestInvite: the rebuilt screen', () => {
     const src = readSrc('GuestInvite.js');
     // One function does both, and the write is unconditionally first: a plain
     // <a href> would race the storage write, which is why this is a button.
-    expect(src).toMatch(
-      /const goJoin = \(where\) => \{\s*stashInvite\(token, flockName\);\s*window\.location\.assign\(where\);/
-    );
+    //
+    // The pin used to require the two lines to be ADJACENT, which made it a
+    // pin on the body of the function rather than on the rule the comment
+    // above states. An analytics capture landed between them (the handoff out
+    // of this page is the step that turns a stranger into an account, and it
+    // has to be recorded before assign() tears the page down) and this went red
+    // over a line that changes nothing about the race. What matters is the
+    // ORDER and that the stash is unconditional, so that is what is asserted:
+    // the stash first, the navigation last, and no branch anywhere in the four
+    // lines between. Comments are stripped so a stray `// if (` in a note
+    // cannot fail it either.
+    const goJoinBody = (() => {
+      const code = src
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .split('\n')
+        .filter((line) => !/^\s*\/\//.test(line))
+        .join('\n');
+      const m = code.match(/const goJoin = \(where\) => \{([\s\S]*?)\n {2}\};/);
+      // Trap: an unmatched anchor would leave every assertion below reading
+      // undefined or the whole file, so the match is checked before it is used.
+      expect(m).not.toBeNull();
+      return m[1];
+    })();
+    expect(goJoinBody.length).toBeLessThan(1200);
+    const stashAt = goJoinBody.indexOf('stashInvite(token, flockName);');
+    const assignAt = goJoinBody.indexOf('window.location.assign(where);');
+    expect(stashAt).toBeGreaterThanOrEqual(0);
+    expect(assignAt).toBeGreaterThan(stashAt);
+    // UNCONDITIONALLY, which is the half an order check alone does not cover:
+    // `if (token) stashInvite(...)` keeps the order and still loses the invite
+    // on the case worth protecting. The WHOLE body is checked, not the gap
+    // between the two calls, because a guard placed BEFORE the stash is
+    // exactly as bad and sits outside any gap.
+    expect(goJoinBody).not.toMatch(/\bif\b|\breturn\b|\bawait\b|\btry\b|\bcatch\b/);
     // index.js routes /signup into App.js on the create-account screen, and
     // /app is the canonical web entry for a session that already exists.
     expect(src).toContain("goJoin('/signup')");

@@ -140,9 +140,36 @@ function getGenAI() {
 //      publishes fake $ai_generation events into production project 555076 and
 //      quietly corrupts the Birdie cost numbers this instrumentation exists to
 //      produce.
+//
+// AND `npm run dev` IS THE SAME BUG WITH A DIFFERENT NODE_ENV. Refusing only
+// under `test` left every local Birdie turn reporting into that same live
+// project, which is precisely the failure the FRONTEND already measured and
+// closed: 1,526 of 1,794 pageviews in the whole history of the project came
+// from a dev server (see isLocalAnalyticsOrigin in frontend/src/index.js). The
+// backend had no equivalent, so the one number nobody could sanity-check by
+// eye, the per-turn Gemini token cost, was the one still taking dev traffic.
+//
+// The allowlist is positive: report ONLY from production. That is safe to
+// assert here rather than merely hoped for, because server.js refuses to boot
+// at all when NODE_ENV is not 'production' and the database host is a Railway
+// host, so any process talking to the production database has already proved
+// NODE_ENV === 'production'. Nothing can silently stop reporting in prod
+// without also having stopped reaching the prod database.
+//
+// POSTHOG_ALLOW_LOCAL=true opts a local run back in, for anyone deliberately
+// checking the pipeline end to end. It mirrors REACT_APP_POSTHOG_ALLOW_LOCAL
+// on the frontend, name and meaning, so there is one idea to remember.
+//
+// Exported through __testables so the rule is tested as a rule and not as a
+// paragraph: a source scan cannot tell this comment from the code under it.
+function analyticsEnvAllowed(env = process.env) {
+  if (env.NODE_ENV === 'test') return false;
+  return env.NODE_ENV === 'production' || env.POSTHOG_ALLOW_LOCAL === 'true';
+}
+
 let posthogClient = null;
 function getPostHog() {
-  if (process.env.NODE_ENV === 'test') return null;
+  if (!analyticsEnvAllowed()) return null;
   if (!posthogClient && process.env.POSTHOG_API_KEY) {
     posthogClient = new PostHog(process.env.POSTHOG_API_KEY, {
       host: process.env.POSTHOG_HOST || 'https://us.i.posthog.com',
@@ -1658,4 +1685,9 @@ module.exports = router;
 // systemInstruction` makes a copy test cost a database and a fake Gemini. The
 // age brackets in particular have four branches, and three of them carry a
 // safety instruction, so they have to be readable one at a time.
-module.exports.__testables = { executeTool, buildSystemPrompt };
+//
+// analyticsEnvAllowed is exposed for backend/__tests__/analyticsEnv.test.js.
+// It decides whether $ai_generation leaves this process at all, and the whole
+// point of it is that a dev machine holding the live POSTHOG_API_KEY stops
+// filing its turns as product data.
+module.exports.__testables = { executeTool, buildSystemPrompt, analyticsEnvAllowed };
