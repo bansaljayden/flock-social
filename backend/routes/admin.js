@@ -17,6 +17,17 @@ const emailService = require('../services/emailService');
 // The age gate's own arithmetic, so "is this person a minor" means the same
 // thing on the moderation queue as it does at signup.
 const { ageFromDob } = require('../utils/age');
+// THE PUSH LEDGER'S ONLY READER.
+//
+// Migration 050 created push_sends so it would be possible to answer "has a
+// single push ever been delivered in production", and services/pushHelper.js
+// has returned that rollup since the day it landed. Nothing asked. The table
+// was write-only for as long as it existed, which is the same amount of
+// evidence as not having built it, plus a table. Every silent failure mode
+// push has (a recipient who looked online, a debounce, a quiet-hours hold, an
+// account with no registered device, a dead token) is recorded there and was
+// visible nowhere. This is where it becomes visible.
+const { pushDeliveryStats, isPushConfigured } = require('../services/pushHelper');
 
 const router = express.Router();
 router.use(authenticate);
@@ -1919,6 +1930,19 @@ router.get('/costs', async (req, res) => {
     return Number(r.rows[0] && r.rows[0].n) || 0;
   });
 
+  // Seven days of push_sends, grouped by type and outcome. Not a cost line and
+  // it sits here for the reason the prediction coverage counter does: this is
+  // the only admin surface that reads meters at all, and a number nobody can
+  // reach is a number nobody has. `configured` is separate from the counts
+  // because they answer different questions: zero rows on a server with no
+  // FIREBASE_SERVICE_ACCOUNT means push is switched off, and zero rows on a
+  // server that has one means it is on and nothing went out. Those two look
+  // identical in the ledger and are not the same fact at all.
+  const pushDelivery = await safe(async () => {
+    const stats = await pushDeliveryStats(7);
+    return { ...stats, configured: isPushConfigured() };
+  });
+
   const payingVenues = await safe(async () => {
     const r = await pool.query(
       `SELECT COUNT(*)::int AS n FROM venue_subscriptions
@@ -2086,6 +2110,13 @@ router.get('/costs', async (req, res) => {
     // says Vision billed nothing, without saying whether Vision answers, is
     // reporting the least useful true thing available.
     visionProvider,
+    // DID ANY NOTIFICATION LAND THIS WEEK. Same argument as the Vision probe
+    // above: push is the one subsystem in this product whose failure is
+    // completely silent. A flock invite that never leaves the building and one
+    // that lands on a lock screen look identical from every screen in the app,
+    // and every user-visible symptom ("nobody replied") is indistinguishable
+    // from the product simply being quiet.
+    pushDelivery,
     venues: {
       paying: payingVenues,
       priceUsd: VENUE_PRICE_USD,
