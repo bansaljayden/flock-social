@@ -151,7 +151,12 @@ test('the uncaught monitor logs a tagged line with the stack, and never prevents
 function loadHealthBlock(queryImpl) {
   const start = serverSrc.indexOf('const HEALTH_DB_TIMEOUT_MS');
   assert.ok(start > 0, 'server.js must declare HEALTH_DB_TIMEOUT_MS');
-  const end = serverSrc.indexOf("const isDev = process.env.NODE_ENV === 'development';");
+  // The end anchor used to be the `const isDev` line, and that broke when isDev
+  // moved ABOVE the body parsers to serve the app-wide backstop limiter, which
+  // has to be defined before them. The section header is the durable marker:
+  // what this needs is "everything from the health constants to the start of the
+  // rate limiters", and the header says that where a single declaration did not.
+  const end = serverSrc.indexOf('// Rate limiting (disabled in development)');
   assert.ok(end > start, 'the health block must sit before the rate limiters');
   const body = serverSrc.slice(start, end);
 

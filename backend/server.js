@@ -495,6 +495,113 @@ app.use((req, res, next) => {
 });
 
 // ---------------------------------------------------------------------------
+// THE APP-WIDE BACKSTOP — the ceiling that was missing
+// ---------------------------------------------------------------------------
+// Every limiter in this file guards a mount. Nothing guarded the process. Four
+// surfaces had no ceiling of any kind:
+//
+//   /api/revenuecat    signed webhook, mounted with no limiter
+//   /api/email-events  signed webhook, mounted with no limiter
+//   GET /api/health    mounted before any limiter exists
+//   every unmatched path, which falls through to the 404 handler below
+//
+// The last one is the real hole and it is not a mount, which is why reading the
+// mount list never found it. `GET /x` matches no router, so it passes CORS,
+// helmet, the HTTPS gate and the body parsers and is answered 404 — with no
+// counter anywhere having moved. A caller could spend every per-route ceiling
+// in full and then keep going indefinitely against a URL that does not exist.
+//
+// This also answers a question the per-route limiters cannot: a caller who
+// spreads traffic across the routers does more total work than any single
+// limiter permits, because they are separate buckets. apiLimiter is better than
+// it looks here (ONE instance across ~25 mounts, so those genuinely share one
+// bucket) but /api/auth, /api/venues, /api/ai, /api/venue-profile,
+// /api/venue-dashboard, /api/venue/advisor and the two unsubscribe paths each
+// hold their own.
+//
+// THE NUMBER IS DERIVED, NOT CHOSEN. It is the sum of every other limiter's
+// 15-minute-equivalent allowance across the mutually exclusive router mounts:
+//
+//   apiLimiter              3000 / 15 min  = 3000
+//   authLimiter               10 / min     =  150
+//   venueSearchLimiter       120 / min     = 1800
+//   imageSpendLimiter         10 / min     =  150
+//   aiLimiter                 30 / min     =  450
+//   advisorLimiter            20 / min     =  300
+//   advisorQuestionLimiter    10 / hour    =    3
+//   venueDashboardLimiter    120 / min     = 1800
+//   venueProfileLimiter       30 / min     =  450
+//   digestOptOutLimiter       20 / min     =  300
+//                                           -----
+//                                            8403
+//
+// 8500 is that, rounded up to the next hundred. The sum deliberately includes
+// imageSpendLimiter and advisorQuestionLimiter even though both are EXTRA gates
+// on requests already counted elsewhere and add nothing a caller can push
+// through: a sharper model exists, but a backstop derived from a subtle model
+// is a backstop that goes wrong the first time somebody reorders a mount, and
+// the only property this number needs is that it is a strict upper bound.
+//
+// Being derived is the whole point. A backstop chosen by instinct is just a new
+// limit nobody sized, and it would start refusing callers the per-route
+// limiters were built to allow — invisibly, because the 429 would come from a
+// limiter nobody was looking at. __tests__/rateLimiterInventory.test.js
+// recomputes the sum from utils/cacheKeyInventory.js and fails if a new limiter
+// ever pushes it past this constant, so the derivation stays true rather than
+// becoming a story about how the number was picked once.
+//
+// WHAT IT KEYS ON. billedImageKey, the same function the image and Birdie
+// meters use: the account when a bearer token verifies, the address otherwise.
+// That matters in both directions.
+//   * A NAT full of signed-in users gets a bucket each rather than one to fight
+//     over, which is the failure an address key hands a school or a bar.
+//   * An unauthenticated caller lands in `addr:` and is bounded by apiLimiter's
+//     3000/15min long before this, so this can never be the limiter that
+//     refuses them on a routed path. On the FOUR unrouted or unlimited
+//     surfaces above, it is the only one there is.
+//
+// WHERE IT SITS, WHICH IS THE ONE THING NO OTHER LIMITER HERE CAN CLAIM. It is
+// mounted AHEAD of the body parsers. The imageSpendLimiter block below explains
+// at length that it cannot save the buffer, because express.json has already
+// read the body by the time any per-route limiter runs. This one runs first, so
+// a refusal genuinely stops the read. It reads only the Authorization header
+// and req.ip, so it needs no parsed body to do it.
+//
+// It does NOT sit ahead of Socket.IO: the engine intercepts /socket.io/ on the
+// raw http.Server before Express is reached. That transport has its own
+// ceiling (socketConnections, 10 handshakes/minute/IP, further down).
+//
+// Same MemoryStore caveat as every other limiter in this file: it resets on
+// deploy and divides by the instance count.
+const GLOBAL_BACKSTOP_WINDOW_MS = 15 * 60 * 1000;
+const GLOBAL_BACKSTOP_MAX = 8500;
+
+// isDev is declared HERE rather than in the rate-limiting section below, which
+// is where it used to live, because this limiter has to be defined before the
+// body parsers and that section comes after them. One definition, one strict
+// comparison against one string literal — __tests__/publicDemoAbuse.test.js
+// fails on a second assignment or on a looser test such as `!isProduction`,
+// which would be TRUE on an unset NODE_ENV and would arm the bypass in
+// production.
+const isDev = process.env.NODE_ENV === 'development';
+
+const globalBackstopLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
+  windowMs: GLOBAL_BACKSTOP_WINDOW_MS,
+  max: GLOBAL_BACKSTOP_MAX,
+  // billedImageKey is a hoisted function declaration further down this file;
+  // the wrapper is what makes the forward reference legal, and the key is only
+  // ever computed at request time. Reusing it rather than restating it is the
+  // rule that function's own comment sets out: two derivations of "which
+  // account is this" in one file is how a caller comes to choose their bucket.
+  keyGenerator: (req) => billedImageKey(req),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later' },
+});
+
+app.use(globalBackstopLimiter);
+
+// ---------------------------------------------------------------------------
 // JSON body limits
 // ---------------------------------------------------------------------------
 // Chat photos travel INSIDE the message body as a base64 data: URL, on
@@ -509,10 +616,13 @@ app.use((req, res, next) => {
 // comment acknowledging this cap for a while.
 //
 // This is NOT fixed by raising the limit globally, and the blast radius is the
-// reason. express.json() is mounted ahead of every route AND ahead of every
-// rate limiter (apiLimiter/authLimiter are mounted per-router further down), so
-// the body is fully buffered into memory before any limiter can refuse the
-// request. Raising it globally would hand an UNAUTHENTICATED client a bigger
+// reason. express.json() is mounted ahead of every route and ahead of every
+// PER-ROUTE limiter (apiLimiter/authLimiter are mounted per-router further
+// down), so for those the body is fully buffered into memory before any
+// limiter can refuse the request. The one exception is globalBackstopLimiter
+// directly above, which is why it is up there: it reads only the
+// Authorization header and req.ip, so it can run before the parsers and a
+// refusal from it genuinely stops the read. Raising it globally would hand an UNAUTHENTICATED client a bigger
 // free buffer on /api/auth/login, /api/waitlist and /api/public — none of which
 // carry an image — on a single Railway instance that also runs ONNX inference.
 // The endpoints that legitimately carry an image are three authenticated POSTs,
@@ -839,15 +949,73 @@ app.get('/api/health', async (req, res) => {
 // ---------------------------------------------------------------------------
 // Rate limiting (disabled in development)
 // ---------------------------------------------------------------------------
-const isDev = process.env.NODE_ENV === 'development';
+// isDev is declared further up, beside globalBackstopLimiter, which needs it
+// before the body parsers. There is exactly one definition of it in this file.
 
-const apiLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
+// ONE REQUEST MUST COST ONE UNIT, AND UNTIL THIS EXISTED IT COST ONE TO FOUR.
+//
+// A limiter created by rateLimit() is a single middleware over a single store,
+// so mounting the SAME instance on twenty-five routers gives those routers one
+// shared bucket rather than twenty-five. That part was intended and is what
+// makes apiLimiter a meaningful ceiling at all.
+//
+// What was not intended is that a request can pass through that one instance
+// several times on its way to a handler. Two of the mounts below are the bare
+// `/api` catch-alls (moderationRoutes and messageRoutes), and `app.use('/api')`
+// matches EVERY path under /api, not just the ones its router defines. An
+// authenticated request that those routers have no route for runs their
+// `router.use(authenticate)`, matches nothing, and falls through to the next
+// mount — having already charged apiLimiter on the way in. Measured against
+// this file's real mount order with stub routers:
+//
+//   GET /api/users/me              1 unit   (mounted before the catch-alls)
+//   GET /api/reports               1 unit
+//   GET /api/venue-dashboard/...   2 units
+//   GET /api/crowd/:placeId        3 units
+//   POST /api/flocks/:id/vote      4 units  (/api/flocks is mounted twice)
+//   GET /api/anything-unrouted     2 units  (a 404 is not free)
+//
+// So the documented ceiling of 3000 per 15 minutes was really 750 for the vote
+// path and 1000 for the crowd card, and 3000 only for the handful of routes
+// mounted above the catch-alls. Three things are wrong with that, in order of
+// how much they matter:
+//
+//   1. THE COST IS BACKWARDS. The routes a real user hits constantly — open a
+//      venue card, vote on a plan — are the expensive ones, and the cheapest
+//      lane in the app is /api/users, which is where an enumeration attempt
+//      goes. The limiter was strictly harder on the product than on the abuse
+//      it exists to stop, and reading the mount order was all it took to find
+//      the cheap lane.
+//   2. THE NUMBER WAS NOT THE NUMBER. Nothing anywhere said 750, so every
+//      argument written about this ceiling — in this file, in
+//      utils/probeBudget.js, in routes/users.js, in services/mlPredictor.js —
+//      reasoned from 3000 and was wrong by up to 4x.
+//   3. IT DEPENDED ON MOUNT ORDER. Moving a router one line changes its
+//      ceiling, silently, with no test able to notice.
+//
+// The fix is to charge once per request per limiter instance, which is what
+// every one of those arguments already assumed. It is deliberately generic
+// rather than a special case for the two catch-alls: a third bare `/api` mount
+// would reintroduce this, and this way it cannot.
+//
+// __tests__/rateLimiterInventory.test.js replays the real mount order and fails
+// if any route charges more than one unit.
+function countOncePerRequest(limiter, label) {
+  const charged = Symbol(`rateLimitCharged:${label}`);
+  return function countedLimiter(req, res, next) {
+    if (req[charged]) return next();
+    req[charged] = true;
+    return limiter(req, res, next);
+  };
+}
+
+const apiLimiter = countOncePerRequest(isDev ? (_req, _res, next) => next() : rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 3000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later' },
-});
+}), 'apiLimiter');
 
 const authLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
   windowMs: 60 * 1000,
@@ -1475,6 +1643,196 @@ const PORT = process.env.PORT || 5000;
 // immediately, so migrating inside its callback let traffic hit a half-applied
 // schema (and kept serving briefly even after a failed migration).
 
+// ---------------------------------------------------------------------------
+// THE MONEY WATCH — the alarm the spend ceilings never had
+// ---------------------------------------------------------------------------
+// Every upstream in this app that costs money or burns a vendor quota has a
+// global daily ceiling, and each one is read here: Google Places
+// (utils/placesBudget.js), Google Cloud Vision (utils/visionBudget.js), Gemini
+// tokens (services/birdieUsage.js), the Places photo dollar budget
+// (services/photoStore.js), Ticketmaster (services/mlPredictor.js) and the
+// night-context sweep's own Ticketmaster slice (services/nightContext.js).
+// __tests__/moneyWatchAlarm.test.js sweeps for a seventh and fails if one
+// exists without a line here.
+//
+// WHAT WAS ACTUALLY WRONG. Five of the six hit their ceiling in complete
+// silence. placesBudget has no console call anywhere in the file: it just
+// starts returning false, every venue card and every search answers 429, and
+// nothing anywhere records that it happened. birdieUsage is the same — Birdie
+// simply stops answering. photoStore logs one line per hour to stdout.
+// visionBudget is the only one that talks properly, and its own inventory row
+// says what is still missing in the same breath:
+//
+//     "STILL OPEN, and what is missing is still not a different policy but an
+//      alarm. Fix: emit a real alert (Sentry, or the moderation alert channel)
+//      when the global leg crosses 80%, rather than a throttled console.error
+//      nobody reads."
+//
+// This is that fix, applied to all four rather than to the one that reported
+// it — the class, not the instance, which is the rule utils/cacheKeyInventory.js
+// opens with.
+//
+// THE ADMIN COST PANEL IS NOT THIS. routes/admin.js already reads several
+// statuses, and that is genuinely useful, but it is a PULL: it answers the
+// question on the day somebody thinks to ask it. A ceiling that is reached at
+// 3pm and never mentioned is discovered from the invoice, or from a user saying
+// the app stopped loading venues. This is the push half.
+//
+// WHY 80% AND 100% AND NOTHING ELSE. 80% is the last moment a decision is still
+// available (raise the number, or find out who is spending). 100% is the point
+// at which the product has started refusing people, and on Vision that refusal
+// is fail-closed by design, so every image upload in the app is off until
+// 00:00 UTC. Those are the two facts worth waking somebody for; anything
+// between them is the admin panel's job.
+//
+// ONCE PER LEG PER UTC DAY. The counters themselves roll at UTC midnight, so
+// the alarm rolls with them. Repeating it every fifteen minutes would train the
+// reader to ignore it, which is the failure mode a silent counter and a noisy
+// one share.
+//
+// IT REPORTS, IT NEVER REFUSES. Nothing here calls an allow() function or moves
+// a counter — every read is the module's own non-consuming status reader, and
+// the whole body is wrapped so a thrown read can never take down the process it
+// is watching. A watchdog that can break the thing it watches is worse than no
+// watchdog.
+const MONEY_WATCH_INTERVAL_MS = 15 * 60 * 1000;
+const MONEY_WARN_FRACTION = 0.8;
+
+// leg name -> the UTC day it last spoke about, so each leg speaks at most once
+// per day per level.
+const moneyWatchSaid = new Map();
+
+function sayOnceToday(leg, level, day, message, extra) {
+  const key = `${leg}:${level}`;
+  if (moneyWatchSaid.get(key) === day) return;
+  moneyWatchSaid.set(key, day);
+  // The 'MONEY' token is what utils/visionBudget.js already uses, so one grep
+  // over the Railway log finds every spend event whatever raised it.
+  console.error(`🛡️ MONEY: ${message}`);
+  // Sentry is the half that reaches a person who is not reading the log.
+  // instrument.js makes this a no-op when SENTRY_DSN is unset, so it is safe
+  // in every environment.
+  Sentry.captureMessage(`MONEY: ${message}`, {
+    level: level === 'exhausted' ? 'error' : 'warning',
+    tags: { money_leg: leg, money_level: level },
+    extra: { day, ...extra },
+  });
+}
+
+// One leg: used against its ceiling, plus the sentence to say. `noun` is what
+// the numbers are denominated in, because "2000/2000" means nothing on its own
+// and the four legs count four different things (calls, calls, tokens, fetches).
+function checkMoneyLeg({ leg, day, used, ceiling, noun, atCeiling, atWarn }) {
+  if (!Number.isFinite(used) || !Number.isFinite(ceiling) || ceiling <= 0) return;
+  const pct = Math.round((used / ceiling) * 100);
+  const numbers = `${used}/${ceiling} ${noun} (${pct}%) on ${day}`;
+  if (used >= ceiling) {
+    sayOnceToday(leg, 'exhausted', day, `${atCeiling} ${numbers}`, { used, ceiling, pct });
+    return;
+  }
+  if (used >= ceiling * MONEY_WARN_FRACTION) {
+    sayOnceToday(leg, 'warn', day, `${atWarn} ${numbers}`, { used, ceiling, pct });
+  }
+}
+
+async function runMoneyWatch() {
+  // Places. The one with no voice of its own at all.
+  try {
+    const s = require('./utils/placesBudget').placesBudgetStatus(null);
+    checkMoneyLeg({
+      leg: 'places-global', day: s.day, used: s.globalUsed, ceiling: s.limits.globalDaily,
+      noun: 'paid Google Places calls',
+      atCeiling: 'Google Places DAILY CEILING REACHED. Venue search, the crowd card, the owner dashboard and Birdie venue lookups all answer 429 until 00:00 UTC.',
+      atWarn: 'Google Places daily budget is nearly spent.',
+    });
+    // The unauthenticated share is a separate decision (M5-1) and reaching it
+    // means the badge, the photo proxy and the marketing demo are done for the
+    // day while the signed-in product is untouched. Worth its own line, because
+    // the two have completely different answers.
+    checkMoneyLeg({
+      leg: 'places-unauth', day: s.day, used: s.unauthUsed, ceiling: s.limits.unauthDaily,
+      noun: 'paid Places calls from doors with no account',
+      atCeiling: 'The UNAUTHENTICATED Places share is spent. Venue badges, the photo proxy and the public demo are refusing until 00:00 UTC; the signed-in product still has its reserve.',
+      atWarn: 'The unauthenticated Places share is nearly spent.',
+    });
+  } catch (e) { console.error('[moneyWatch] places read failed:', e && e.message); }
+
+  // Vision. It already logs at its own thresholds; this adds the Sentry half
+  // its inventory row asks for, and says out loud what exhaustion costs.
+  try {
+    const s = require('./utils/visionBudget').visionBudgetStatus(null);
+    checkMoneyLeg({
+      leg: 'vision-global', day: s.day, used: s.globalUsed, ceiling: s.limits.globalDaily,
+      noun: 'billed Cloud Vision screens',
+      atCeiling: 'Cloud Vision DAILY CEILING REACHED. Image screening fails CLOSED by design, so EVERY photo upload in the app (chat, DM, story, avatar) is refused until 00:00 UTC.',
+      atWarn: 'Cloud Vision daily budget is nearly spent; photo uploads stop entirely when it runs out.',
+    });
+  } catch (e) { console.error('[moneyWatch] vision read failed:', e && e.message); }
+
+  // Gemini, denominated in tokens rather than requests, which is the whole
+  // reason aiLimiter is not this number.
+  try {
+    const s = require('./services/birdieUsage').geminiSpendStatus(null);
+    checkMoneyLeg({
+      leg: 'gemini-global', day: s.day, used: s.globalUsed, ceiling: s.limits.globalDaily,
+      noun: 'Gemini tokens',
+      atCeiling: 'Gemini DAILY TOKEN CEILING REACHED. Birdie and the Roost advisor answer 429 until 00:00 UTC.',
+      atWarn: 'The Gemini daily token budget is nearly spent.',
+    });
+  } catch (e) { console.error('[moneyWatch] gemini read failed:', e && e.message); }
+
+  // Ticketmaster. Not billed per call, but a hard daily quota all the same, and
+  // reaching it is a user-visible outage: event search and the advisor's event
+  // facts both answer "busy right now" for the rest of the UTC day. Silent until
+  // now, exactly like the Places one.
+  try {
+    const s = require('./services/mlPredictor').eventBudgetStatus();
+    checkMoneyLeg({
+      leg: 'events-global', day: s.day, used: s.globalUsed, ceiling: s.limits.globalDaily,
+      noun: 'Ticketmaster lookups',
+      atCeiling: 'The Ticketmaster DAILY BUDGET is spent. Event search and the advisor\'s event facts answer 429 until 00:00 UTC.',
+      atWarn: 'The Ticketmaster daily budget is nearly spent.',
+    });
+    checkMoneyLeg({
+      leg: 'events-unauth', day: s.day, used: s.unauthUsed, ceiling: s.limits.unauthDaily,
+      noun: 'Ticketmaster lookups from doors with no account',
+      atCeiling: 'The UNAUTHENTICATED Ticketmaster share is spent; the signed-in product still has its reserve.',
+      atWarn: 'The unauthenticated Ticketmaster share is nearly spent.',
+    });
+  } catch (e) { console.error('[moneyWatch] events read failed:', e && e.message); }
+
+  // The night-context sweep's own Ticketmaster slice. It is a background job, so
+  // nobody sees a 429 when it runs dry — the symptom is a differencing report
+  // that quietly has no events for last night, weeks later.
+  try {
+    const s = require('./services/nightContext').nightContextBudgetStatus();
+    checkMoneyLeg({
+      leg: 'nightcontext-global', day: s.day, used: s.globalUsed, ceiling: s.limits.globalDaily,
+      noun: 'night-context Ticketmaster lookups',
+      atCeiling: 'The night-context sweep has spent its Ticketmaster budget. Tonight\'s listings will not be snapshotted, and the advisor cannot answer about this night later.',
+      atWarn: 'The night-context Ticketmaster budget is nearly spent.',
+    });
+  } catch (e) { console.error('[moneyWatch] nightContext read failed:', e && e.message); }
+
+  // The photo budget is the one ledger of the four that lives in Postgres, so
+  // it is the only one a deploy does not reset — and the only one whose ceiling
+  // is a calendar MONTH. Its exhaustion sentence has to say so, because "try
+  // again later" on a month budget can mean the 1st.
+  try {
+    const s = await require('./services/photoStore').photoSpendStatus();
+    checkMoneyLeg({
+      // Keyed on the MONTH, not the day, because the ceiling is a month: a
+      // budget exhausted on the 9th stays exhausted until the 1st, and a daily
+      // reminder of a three-week condition is noise.
+      leg: 'photo-month', day: new Date().toISOString().slice(0, 7),
+      used: s.monthUsed, ceiling: s.limits.fetchesPerMonth,
+      noun: 'Places photo fetches this month',
+      atCeiling: 'The Places photo MONTH budget is spent. Cached photos keep serving; a venue nobody has viewed this month has no picture until the 1st.',
+      atWarn: 'The Places photo month budget is nearly spent.',
+    });
+  } catch (e) { console.error('[moneyWatch] photo read failed:', e && e.message); }
+}
+
 // Handles for the background timers, held so shutdown() can clear them —
 // a crowd-alert sweep firing into a closing pool would be one last error on
 // the way out of every deploy.
@@ -1488,6 +1846,8 @@ let photoPruneInterval = null;
 let photoPruneKickoff = null;
 let flockSweepInterval = null;
 let flockSweepKickoff = null;
+let moneyWatchInterval = null;
+let moneyWatchKickoff = null;
 
 async function boot() {
   try {
@@ -1562,6 +1922,15 @@ async function boot() {
     // reason as its neighbours.
     flockSweepKickoff = setTimeout(runFlockCompletionSweep, 90 * 1000);
   }
+
+  // The money watch. Registered LAST because it reads what the others spend,
+  // and every read is non-consuming. See its block above for why it exists.
+  const moneyWatch = () => runMoneyWatch().catch((e) => console.error('[moneyWatch] sweep failed:', e && e.message));
+  moneyWatchInterval = setInterval(moneyWatch, MONEY_WATCH_INTERVAL_MS);
+  // Behind every other kickoff (30s, 45s, 60s, 75s, 90s): a budget cannot be
+  // near its ceiling in the first two minutes of a process whose counters
+  // started at zero, so there is nothing for this to find until later anyway.
+  moneyWatchKickoff = setTimeout(moneyWatch, 120 * 1000);
 }
 
 // ---------------------------------------------------------------------------
@@ -1610,6 +1979,8 @@ function shutdown(signal) {
   if (photoPruneKickoff) clearTimeout(photoPruneKickoff);
   if (flockSweepInterval) clearInterval(flockSweepInterval);
   if (flockSweepKickoff) clearTimeout(flockSweepKickoff);
+  if (moneyWatchInterval) clearInterval(moneyWatchInterval);
+  if (moneyWatchKickoff) clearTimeout(moneyWatchKickoff);
 
   // Disconnect socket clients FIRST: a live WebSocket is an open connection
   // and server.close() waits on open connections indefinitely. Clients
