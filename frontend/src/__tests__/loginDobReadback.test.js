@@ -59,32 +59,6 @@ const AUTH_DIR = path.join(__dirname, '..', 'components', 'auth');
 const LOGIN_SRC = fs.readFileSync(path.join(AUTH_DIR, 'LoginScreen.js'), 'utf8');
 const APPLE_SRC = fs.readFileSync(path.join(AUTH_DIR, 'AppleSignInButton.js'), 'utf8');
 
-// Lift a span of source between two markers, and REFUSE to hand back a span
-// that was not actually found.
-//
-// The two assertions below this are negative: they say a region does NOT
-// contain a max attribute, and does NOT name an age. A negative assertion over
-// a slice is only worth what the slice is worth, and `indexOf` answers -1 for a
-// marker that moved. `slice(-1, -1)` is the empty string, and the empty string
-// contains no max attribute and names no age, so BOTH of these child-safety
-// guards passed on nothing the moment somebody renamed an element id. Renaming
-// an id is a behaviour-preserving thing to do, and nothing in this file would
-// have said a word. That is the same silent-vacuity shape that let a
-// one-directional block clause survive the whole suite.
-function region(src, startMarker, endMarker, what) {
-  const start = src.indexOf(startMarker);
-  const end = start === -1 ? -1 : src.indexOf(endMarker, start);
-  if (start === -1 || end === -1) {
-    throw new Error(
-      `${what}: could not lift this region out of LoginScreen.js. `
-      + `${start === -1 ? JSON.stringify(startMarker) : JSON.stringify(endMarker)} is no longer in the file. `
-      + 'Repoint the marker rather than deleting the assertion under it: that assertion '
-      + 'is a negative one and would pass on the empty string this used to return.'
-    );
-  }
-  return src.slice(start, end);
-}
-
 // The screen only shows the date field after the server has asked for one, so
 // every test starts by getting the 403 that reveals it.
 const renderWithDobAsked = async () => {
@@ -183,20 +157,48 @@ describe('an under-13 date cannot leave the sign-in screen unread', () => {
 });
 
 describe('the shape of the choice, so it is not undone by accident', () => {
-  it('the field stays uncapped', () => {
-    const field = region(LOGIN_SRC, 'id="login-dob"', 'login-dob-hint', 'the date field');
+  it('the field stays uncapped', async () => {
     // A max here would make the server-side under-13 flow unreachable from this
     // screen, which is the defect the signup screen carried until its cap came
     // off. The reasoning is written out above the declaration in LoginScreen.js.
-    expect(field).not.toMatch(/max=/);
+    //
+    // Asked of the RENDERED input rather than of a span of source. The span
+    // this used to read ran from id="login-dob" to the first later mention of
+    // login-dob-hint, and that mention is the input's own aria-describedby, so
+    // it stopped INSIDE the attribute list with two attributes still to go. A
+    // max written at the end of that list, which is where anybody adding an
+    // attribute would put one, capped the field with all ten tests green.
+    // getByLabelText cannot go vacuous either: it throws when the field is not
+    // on screen, where an empty span quietly contained no max.
+    const { getByLabelText } = await renderWithDobAsked();
+    expect(getByLabelText(/date of birth/i).hasAttribute('max')).toBe(false);
   });
 
-  it('the panel names no age and no rule', () => {
-    const panel = region(LOGIN_SRC, 'id="login-dob-check-title"', 'auth-check-actions', 'the read-back panel');
+  it('the screen names no age and no rule, with the panel up', async () => {
     // A refusal that teaches which birthday gets in is not a neutral age
     // screen (16 CFR 312, and the note above the age gate in routes/auth.js).
-    expect(panel).not.toMatch(/\b13\b/);
-    expect(panel).not.toMatch(/older|age|minimum/i);
+    //
+    // Asked of the WHOLE rendered screen, because a rule does not become
+    // neutral by being printed somewhere other than the panel. The span this
+    // used to read ran from the panel heading's id to the actions div, so it
+    // covered neither the hint paragraph above the field, whose own source
+    // comment claims it names no age, nor anything written below the two
+    // buttons. Both are on screen and both were unguarded.
+    const { getByLabelText, container } = await renderWithDobAsked();
+    fireEvent.change(getByLabelText(/date of birth/i), { target: { value: '2015-03-04' } });
+
+    // The stylesheet is not something a person reads, and it is inside the
+    // container: a hex colour or a 13px rule would fail these negatives on a
+    // screen that says nothing about an age. Strip it and read what is left.
+    const visible = container.cloneNode(true);
+    visible.querySelectorAll('style, script').forEach((el) => el.remove());
+    const onScreen = visible.textContent;
+    // The panel is up. Without this the two negatives below would pass on a
+    // screen that had stopped reading the date back at all, which is the same
+    // vacuity as the empty span.
+    expect(onScreen).toContain('You entered March 4, 2015.');
+    expect(onScreen).not.toMatch(/\b13\b/);
+    expect(onScreen).not.toMatch(/\b(older|younger|age|ages|minimum)\b/i);
   });
 
   it('Apple is stopped before its sheet opens, not after', () => {
