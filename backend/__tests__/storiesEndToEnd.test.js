@@ -456,6 +456,76 @@ test('neither refusal instant reaches the driver as a naive timestamp', () => {
   }
 });
 
+// The test above pins TWO legs by name. That was the whole guard, and it is why
+// the same bug was still in this file: when the naive-timestamp problem was
+// found, the two refusal legs were cast, a test was written that named those
+// two legs, and the feed and the post response went on handing the driver a
+// bare `timestamp` for weeks. The guard proved the fix, not the property.
+//
+// So this one asks the question by property instead of by name: take every SQL
+// literal in the module, look at what each one SELECTs or RETURNS, and require
+// that no naive timestamp column is in that output list without a cast. A leg
+// added tomorrow is covered without anyone remembering to come back here.
+//
+// Parenthesised groups are removed first, which is what keeps this honest
+// rather than noisy: `COUNT(*) FILTER (WHERE created_at > NOW())::int` and
+// `(SELECT MIN(expires_at) ...)::timestamptz` both MENTION a naive column, and
+// neither one hands it to the driver. Only the top level does that.
+test('no SELECT or RETURNING in this module hands the driver a naive timestamp', () => {
+
+  const stripParens = (text) => {
+    let out = '', depth = 0;
+    for (const ch of text) {
+      if (ch === '(') { depth += 1; continue; }
+      if (ch === ')') { depth = Math.max(0, depth - 1); continue; }
+      if (depth === 0) out += ch;
+    }
+    return out;
+  };
+
+  const literals = ROUTE_SRC.match(/`[^`]*`/g) || [];
+  const outputLists = [];
+  for (const lit of literals) {
+    const body = lit.slice(1, -1);
+    if (!/\bSELECT\b|\bRETURNING\b/i.test(body)) continue;
+    for (const m of body.matchAll(/\bSELECT\b([\s\S]*?)\bFROM\b/gi)) outputLists.push(m[1]);
+    for (const m of body.matchAll(/\bRETURNING\b([\s\S]*)$/gi)) outputLists.push(m[1]);
+  }
+  assert.ok(outputLists.length >= 3,
+    `expected to find the module's SELECT/RETURNING lists; found ${outputLists.length}, so this guard is scanning nothing`);
+
+  // A regex LITERAL, deliberately, and not `new RegExp` over a template string.
+  // The first version of this guard built its pattern with new RegExp and a
+  // template literal, and a template literal eats its own backslashes: the \b
+  // became a backspace character, \s and \w became plain s and w, and the
+  // pattern matched nothing at all. The test passed on every input, including
+  // the two bare columns it had been written that same minute to catch. An
+  // inert guard is worse than no guard, because it reads like coverage.
+  const COLUMN = /(AS\s+)?(?:\w+\.)?\b(created_at|expires_at)\b(::timestamptz)?/g;
+
+  // The pattern must be known to fire on a string that IS an offender, or an
+  // empty offender list below proves nothing. This is exactly the check the
+  // broken version would have failed on immediately.
+  const canary = [...' s.expires_at, u.name '.matchAll(COLUMN)];
+  assert.strictEqual(canary.length, 1,
+    'the column pattern no longer matches a bare column, so an empty offender list means nothing');
+  assert.strictEqual(canary[0][3], undefined,
+    'the column pattern reports a bare column as already cast');
+
+  const offenders = [];
+  for (const list of outputLists) {
+    const top = stripParens(list);
+    for (const m of top.matchAll(COLUMN)) {
+      if (m[1]) continue;            // an output alias, not a column read
+      if (m[3]) continue;            // cast, which is the whole point
+      offenders.push(`${m[2]} in: ${top.trim().replace(/\s+/g, ' ').slice(0, 90)}`);
+    }
+  }
+
+  assert.deepStrictEqual(offenders, [],
+    'these output lists hand a naive TIMESTAMP to node-postgres, which reads its calendar fields in the PROCESS time zone; production runs UTC so it looks fine until it is not:\n  ' + offenders.join('\n  '));
+});
+
 test('the wait a rate-limited poster is told is the wait the database meant', async () => {
   // Both legs, both refusal sentences, and the header and body fields with
   // them. utils/retryAfter.js exists because a refusal that names a window the
@@ -725,5 +795,93 @@ test('no user-visible string on this door carries an em dash', () => {
   }
   for (const message of [S.IMAGE_TOO_LARGE_MESSAGE]) {
     assert.ok(!message.includes('—'), message);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// THE PURGE HAS A TIMER OF ITS OWN, AND KEEPS IT
+// ---------------------------------------------------------------------------
+// The route deletes expired stories opportunistically, off a feed read, a
+// successful post and a delete. That is a floor. It is not retention.
+//
+// Before this sweep existed the ONLY unattended trigger was the tail of
+// GET /api/stories, and the shipping client never calls that route, so a table
+// of expired rows in a process nobody posts to stayed full forever. The feed
+// filtered on expires_at, so "stories last 24 hours" was true of what a person
+// could SEE and false of what the database HELD: the image stayed. That is a
+// retention promise about a photograph on a product whose enforced age floor is
+// 13, so it is worth a test rather than a comment.
+//
+// Deleting the schedule is invisible: every stories test still passes, because
+// they all drive the route, which still purges. Nothing would notice until
+// somebody looked at the table. So this asserts the two halves that make it
+// unattended, and asserts them by property rather than by spelling: the purge
+// is handed to setInterval somewhere in boot, and the handle is cleared in
+// shutdown. A rename of the local variable is fine; losing the timer is not.
+test('the expired-story purge is scheduled on its own timer and cleared on shutdown', () => {
+  // Comments are stripped before anything is matched here, and that is not a
+  // flourish. The first version of this test read the raw file, so commenting
+  // the schedule out left the words setInterval(storyPurge sitting in the
+  // source and the assertion passed while the timer was gone. My own mutation
+  // check is what caught it. It is the same shape the em dash sweep had to fix:
+  // a check that reads source text cannot tell code from a comment unless it is
+  // made to.
+  const rawServerSrc = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  // The \r strip is load-bearing on Windows and was the second bug in this one
+  // assertion. This repository checks out CRLF here and LF in CI, and a JS dot
+  // does not match \r, so `//.*$` stopped before the carriage return, never
+  // matched, and left the comment in place. The guard then passed over a
+  // commented-out timer on a developer machine and would have behaved
+  // differently in CI, which is the environment-dependent class this session
+  // has already been bitten by twice.
+  const serverSrc = rawServerSrc
+    .replace(/\r/g, '')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .map((line) => line.replace(/(^|[^:])\/\/[^\n]*$/, '$1'))
+    .join('\n');
+
+  const scheduled = /setInterval\(\s*storyPurge\b/.test(serverSrc)
+    || /setInterval\(\s*\(\)\s*=>\s*purgeExpiredStories\b/.test(serverSrc);
+  assert.ok(scheduled,
+    'nothing in server.js hands the expired-story purge to setInterval, so expired photos are only deleted when somebody happens to read a feed the shipping client never reads');
+
+  assert.match(serverSrc, /clearInterval\(storyPurgeInterval\)/,
+    'the story purge timer is never cleared, so shutdown cannot drain cleanly');
+
+  // The route half is the floor and must stay: a running process should not
+  // wait up to an hour to honour a delete it just performed.
+  const routeSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'stories.js'), 'utf8');
+  assert.ok(/purgeExpiredStories\(\)/.test(routeSrc),
+    'the route stopped purging opportunistically; the hourly sweep alone leaves a window');
+});
+
+// This one is not a source-text check, and that is the point: the two above can
+// only ever prove that some words are present in a file. This one loads the
+// module the way boot() loads it and asks the object what it actually has, so
+// it fails on the thing that would really take production down, which is the
+// export disappearing or being wrapped in an environment check. Boot happens
+// before listen(), so this is not a degraded feature: it is the port never
+// opening.
+test('routes/stories exports purgeExpiredStories to boot code, unconditionally', () => {
+  const stories = require('../routes/stories');
+  assert.strictEqual(typeof stories.purgeExpiredStories, 'function',
+    'server.js destructures purgeExpiredStories from this module at boot; without it boot() throws before listen() and the service never opens its port');
+
+  // And it must not be reachable only outside production. NODE_ENV is read at
+  // require time by anything that gates on it, so the check has to survive a
+  // fresh load with the production value set.
+  const before = process.env.NODE_ENV;
+  const modPath = require.resolve('../routes/stories');
+  try {
+    process.env.NODE_ENV = 'production';
+    delete require.cache[modPath];
+    const prod = require('../routes/stories');
+    assert.strictEqual(typeof prod.purgeExpiredStories, 'function',
+      'purgeExpiredStories is gated on NODE_ENV, so it exists in tests and is missing in the only environment that matters');
+  } finally {
+    process.env.NODE_ENV = before;
+    delete require.cache[modPath];
+    require('../routes/stories');
   }
 });

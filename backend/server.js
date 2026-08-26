@@ -2029,6 +2029,8 @@ let venueDigestInterval = null;
 let venueDigestKickoff = null;
 let photoPruneInterval = null;
 let photoPruneKickoff = null;
+let storyPurgeInterval = null;
+let storyPurgeKickoff = null;
 let flockSweepInterval = null;
 let flockSweepKickoff = null;
 let moneyWatchInterval = null;
@@ -2093,6 +2095,24 @@ async function boot() {
   const photoPrune = () => prunePhotoStore().catch((e) => console.error('[photoStore] prune failed:', e.message));
   photoPruneInterval = setInterval(photoPrune, 60 * 60 * 1000);
   photoPruneKickoff = setTimeout(photoPrune, 75 * 1000);
+
+  // Delete expired stories. The route deletes them opportunistically off a
+  // feed read, a successful post and a delete, and that is a floor rather than
+  // a scheduler: the only trigger that ran on its own was the tail of
+  // GET /api/stories, and the shipping client never calls that route, so a
+  // table of expired rows in a process nobody posts to stayed full forever.
+  // "Stories last 24 hours" was true of the feed, which filters on expires_at,
+  // and false of the row, which held the image indefinitely. That is a
+  // retention promise about a photograph, on a product whose age floor is 13,
+  // so it gets a timer of its own rather than a hope that somebody reads the
+  // feed. Hourly for the same reason the photo prune is: the window is a day
+  // and the only cost of being an hour late is an hour.
+  const { purgeExpiredStories } = require('./routes/stories');
+  const storyPurge = () => purgeExpiredStories().catch((e) => console.error('[stories] purge failed:', e.message));
+  storyPurgeInterval = setInterval(storyPurge, 60 * 60 * 1000);
+  // Staggered off the photo prune so two DELETE sweeps do not open on the same
+  // tick of a cold boot.
+  storyPurgeKickoff = setTimeout(storyPurge, 105 * 1000);
 
   // Finish plans whose night is over. Until this existed, NOTHING in the
   // product moved a flock through time: a confirmed plan stayed confirmed
@@ -2162,6 +2182,8 @@ function shutdown(signal) {
   if (venueDigestKickoff) clearTimeout(venueDigestKickoff);
   if (photoPruneInterval) clearInterval(photoPruneInterval);
   if (photoPruneKickoff) clearTimeout(photoPruneKickoff);
+  if (storyPurgeInterval) clearInterval(storyPurgeInterval);
+  if (storyPurgeKickoff) clearTimeout(storyPurgeKickoff);
   if (flockSweepInterval) clearInterval(flockSweepInterval);
   if (flockSweepKickoff) clearTimeout(flockSweepKickoff);
   if (moneyWatchInterval) clearInterval(moneyWatchInterval);
