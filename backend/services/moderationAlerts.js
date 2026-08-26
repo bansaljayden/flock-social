@@ -437,6 +437,14 @@ async function alertModerators(io, rawReport = {}) {
 
 module.exports = {
   alertModerators,
+  // Not a test seam. The alert path and the moderation QUEUE have to agree on
+  // which reports carry a federal reporting duty, and the queue used to make
+  // that decision nowhere at all: a 'sexual' report got a distinct subject line
+  // in the mail and rendered in the console as one more row, beside the same
+  // Hide and Ban buttons MODERATION-LEGAL.md § 4 step 2 says not to press yet.
+  // routes/admin.js reads this, so widening CHILD_SAFETY_REASONS widens both.
+  isChildSafetyReason,
+  CHILD_SAFETY_DOC,
   // Test seams: the hourly window is process-global, and the pure helpers are
   // the parts worth pinning.
   __testing: {
