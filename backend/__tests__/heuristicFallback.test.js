@@ -490,8 +490,18 @@ test('the bar-before-night_club ordering in estimateCapacity is pinned in source
     path.join(__dirname, '..', 'services', 'crowdEngine.js'), 'utf8'
   );
 
-  const start = src.indexOf('function estimateCapacity(');
-  assert.ok(start > 0, 'estimateCapacity must still be a named function in crowdEngine.js');
+  // Either spelling of the declaration, which is how photoCacheCost.test.js
+  // reads sendPhoto. d75678d widened that one and rewrote the far bound of this
+  // one in the same commit, and left this end pinned to the keyword. Nothing
+  // holds it there: estimateCapacity is exported from the module.exports object
+  // at the bottom of crowdEngine.js and is called from nowhere above its own
+  // declaration, so `const estimateCapacity = (venue, score) => {` is a rename
+  // and not a change. Pinned to the keyword it answered that rewrite with
+  // "estimateCapacity must still be a named function", a red on correct code,
+  // which is the half of the class the far bound below does not cover.
+  const decl = /(?:function\s+estimateCapacity\b|(?:const|let|var)\s+estimateCapacity\s*=)/.exec(src);
+  assert.ok(decl, 'estimateCapacity is no longer declared in crowdEngine.js under any spelling');
+  const start = decl.index;
   // End at this function's own column-zero close brace rather than at the next
   // `\nfunction ` declaration. The old bound fell back to `undefined` (the rest
   // of the file) whenever the NEXT function was not spelled as a declaration,
