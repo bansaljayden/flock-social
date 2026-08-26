@@ -72,7 +72,18 @@ import AddFriends from './screens/AddFriends';
 // exists to show, every user opens it and most open it more than once a
 // session. The measurement is in the header of the file it moved to.
 import ChatDetail from './screens/ChatDetail';
-import 'maplibre-gl/dist/maplibre-gl.css';
+// maplibre-gl's OWN STYLESHEET IS NOT IMPORTED HERE, and that is the same
+// decision as the library itself, applied to the half of it that was missed.
+// The engine is fetched by `import('maplibre-gl')` inside MapLibreMapView, so
+// it costs a user nothing until a map is built. Its stylesheet was a static
+// import on this line, which put it in App.js's chunk GROUP: 69,505 bytes of
+// CSS, every byte of it a `.maplibregl-` selector, in a chunk webpack's css
+// runtime blocks the group's promise on. `import('./App')` could not resolve
+// until a stylesheet for a widget that was not on screen, and for most people
+// never would be, had been downloaded and parsed. On venue wifi that is dead
+// time in front of a blank app. It is loaded next to the engine now. See the
+// note at the `import('maplibre-gl')` call, and
+// `__tests__/bundleWeightManifest.test.js`, which fails if it comes back.
 
 // The venue owner dashboard is 2,018 lines of a product that is sold to bars,
 // gated behind role venue_owner, and reachable by nobody else. It was declared
@@ -789,6 +800,52 @@ const ChoiceChip = ({ selected, onClick, children, style, ...rest }) => (
     {children}
   </button>
 );
+
+// ---------------------------------------------------------------------------
+// The rotating greeting above "Hey, <name>" on the Nest tab.
+//
+// IT LIVES OUT HERE, AND THAT IS THE WHOLE POINT OF THE COMPONENT. The index
+// and its 3-second timer used to be `useState` + `useEffect` inside
+// FlockAppInner, which is the component that renders the entire application.
+// Two things followed from that and neither was intended. The timer was
+// created on mount with a stable dependency, so it ran for the whole session:
+// every three seconds, on the chat screen, on Discover, on the venue
+// dashboard, in the background of a flock somebody was mid-message in, it set
+// state on the root and re-rendered the app to advance a twelve-pixel line of
+// decoration that was not on screen. And even on the Nest tab, where the line
+// IS on screen, the cheapest correct scope for that re-render is this element
+// and not the other 584 KB of screen bodies FlockAppInner defines.
+//
+// As its own component the timer exists exactly as long as the greeting does:
+// HomeScreen is only called for the home tab, so leaving the tab unmounts this
+// and clears the interval. Nothing above it re-renders at all.
+//
+// The entries are functions, not strings, because the first one reads the
+// clock: a phone left open across 5 PM must say "evening" on the next tick.
+// `key={idx}` restarts the slot-machine animation on every change, which is
+// what makes it read as a spin rather than a text swap.
+const GREETINGS = [
+  () => `Good ${new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}`,
+  () => 'What\'s the move?',
+  () => 'Ready to flock up?',
+  () => 'Let\'s make plans',
+  () => 'Who\'s free tonight?',
+  () => 'Time to link up',
+  () => 'Rounding up the group...',
+];
+
+const CyclingGreeting = React.memo(function CyclingGreeting() {
+  const [idx, setIdx] = useState(0);
+  useEffect(() => {
+    const iv = setInterval(() => setIdx((i) => (i + 1) % GREETINGS.length), 3000);
+    return () => clearInterval(iv);
+  }, []);
+  return (
+    <div style={{ height: '12px', overflow: 'hidden', position: 'relative' }}>
+      <div key={idx} style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0, letterSpacing: '0.3px', fontWeight: '500', lineHeight: 1, animation: 'slotSpin 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)' }}>{GREETINGS[idx]()}</div>
+    </div>
+  );
+});
 
 // The backend stores venue photo URLs as RELATIVE proxy paths
 // (/api/venues/photo?ref=...) so senders can't smuggle tracking hosts.
@@ -2242,7 +2299,22 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     let cancelled = false;
     let resizeObs = null;
     const init = async () => {
+      // The stylesheet travels with the engine, not with App.js. Both requests
+      // start together so the CSS costs no extra round trip, and the map is
+      // only built once the styles have landed: maplibre draws its controls,
+      // attribution and popups as bare DOM, so constructing it first would
+      // paint an unstyled control stack for however long the sheet took.
+      //
+      // Its failure is swallowed on purpose. A chunk that will not load is a
+      // reason to show a map with plain controls, never a reason to show no
+      // map, and the attribution stays legible either way. Order relative to
+      // index.css is unchanged by this: an async CSS chunk is appended to
+      // <head> after the entry stylesheet whichever import fetched it, so the
+      // two `.maplibregl-ctrl-attrib` overrides in index.css still resolve
+      // exactly as they did.
+      const styleSheetReady = import('maplibre-gl/dist/maplibre-gl.css').catch(() => {});
       const maplibregl = (await import('maplibre-gl')).default;
+      await styleSheetReady;
       mapLibreRef.current = maplibregl;
       if (cancelled) return;
       // A caller that already knows where the map should open (the venue
@@ -5228,21 +5300,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Activity feed removed from home (redesign) — re-enable here if surfacing elsewhere
   // const [activityFeed, setActivityFeed] = useState([]);
 
-  // Cycling greeting messages (slot machine style)
-  const [greetingIdx, setGreetingIdx] = useState(0);
-  const greetings = useRef([
-    () => `Good ${new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}`,
-    () => 'What\'s the move?',
-    () => 'Ready to flock up?',
-    () => 'Let\'s make plans',
-    () => 'Who\'s free tonight?',
-    () => 'Time to link up',
-    () => 'Rounding up the group...',
-  ]).current;
-  useEffect(() => {
-    const iv = setInterval(() => setGreetingIdx(i => (i + 1) % greetings.length), 3000);
-    return () => clearInterval(iv);
-  }, [greetings]);
+  // The cycling greeting is CyclingGreeting, defined at module scope. Its index
+  // and its timer used to be a piece of this component's state, which meant a
+  // decorative line advanced by re-rendering the whole app twenty times a
+  // minute for the life of the session. See the note on the component.
 
   // Flocks
   const [flocks, setFlocks] = useState([]);
@@ -11771,9 +11832,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         {/* Greeting + avatar — tight */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
           <div>
-            <div style={{ height: '12px', overflow: 'hidden', position: 'relative' }}>
-              <div key={greetingIdx} style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0, letterSpacing: '0.3px', fontWeight: '500', lineHeight: 1, animation: 'slotSpin 0.4s cubic-bezier(0.34, 1.56, 0.64, 1)' }}>{greetings[greetingIdx]()}</div>
-            </div>
+            <CyclingGreeting />
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
               <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-display)', fontWeight: '600', margin: 0, color: 'var(--text-primary)', letterSpacing: '-0.005em', lineHeight: 1.1 }}>Hey, {profileName.split(' ')[0]}</h1>
               {themeMode === 'auto' && isNightModeActive && (

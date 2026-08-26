@@ -250,3 +250,70 @@ describe('the QR scanner library is loaded on demand', () => {
     expect(appSource).toMatch(/Couldn't load the scanner/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The map's STYLESHEET stays off the startup path too
+// ---------------------------------------------------------------------------
+// maplibre-gl's engine has been behind `import('maplibre-gl')` for a while.
+// Its stylesheet was not: `import 'maplibre-gl/dist/maplibre-gl.css'` sat at
+// the top of App.js and at the top of website/LiveDemo.js, which put it in
+// each of those modules' chunk GROUPS. Measured on 2026-08-26 it was 69,505
+// bytes raw and 10,078 gzipped, every selector in it a `.maplibregl-` one, and
+// it was 68% of all the CSS the app downloaded to boot.
+//
+// A CSS chunk is not a free rider on a group. webpack's mini-css runtime adds
+// the stylesheet's load event to the same `Promise.all` the JS chunks are in,
+// so `import('./App')` did not resolve until a sheet for a widget that was not
+// on screen had arrived. That is dead time in front of a blank app, on a phone,
+// on venue wifi, which is the whole situation this product is used in.
+//
+// Same shape of regression as html5-qrcode above and just as invisible: a
+// static import would put it back with nothing looking or behaving any
+// differently. Hence a test.
+describe('the map stylesheet is loaded on demand', () => {
+  // Comments are stripped before the scan. This very file quotes the import
+  // form in the paragraph above, and App.js and LiveDemo.js both explain in
+  // prose why the import is not there; a scanner that cannot tell a comment
+  // from a line of code reports all three and is useless.
+  const stripComments = (s) =>
+    s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+
+  const CODE = ALL_SOURCE.filter((f) => !f.includes('__tests__')).map((f) => ({
+    rel: path.relative(SRC, f),
+    body: stripComments(fs.readFileSync(f, 'utf8')),
+  }));
+
+  test('the comment stripper leaves real code alone', () => {
+    // Without this, a stripper that ate everything would make the scan below
+    // pass on an empty string and report a clean bundle forever.
+    const sample = stripComments("// import 'maplibre-gl/dist/maplibre-gl.css';\nimport x from 'y';\n");
+    expect(sample).toContain("import x from 'y'");
+    expect(sample).not.toContain('maplibre-gl.css');
+  });
+
+  test('nothing in src/ statically imports the maplibre stylesheet', () => {
+    // `import '...css'` and `require('...css')`. Deliberately does NOT match
+    // `import(` with a parenthesis, which is the dynamic form being kept.
+    const staticImport = /(?:^|\n)\s*import\s+(?:[^;'"]*\s+from\s+)?['"]maplibre-gl\/dist\/maplibre-gl\.css['"]|require\(\s*['"]maplibre-gl\/dist\/maplibre-gl\.css['"]\s*\)/;
+    const offenders = CODE.filter((f) => staticImport.test(f.body)).map((f) => f.rel);
+    expect(offenders).toEqual([]);
+  });
+
+  test('both map call sites load it with a dynamic import instead', () => {
+    // An empty offender list is indistinguishable from a scanner that read
+    // nothing, so name the two files that must carry the dynamic form.
+    const dynamic = /import\(\s*['"]maplibre-gl\/dist\/maplibre-gl\.css['"]\s*\)/;
+    const carriers = CODE.filter((f) => dynamic.test(f.body)).map((f) => f.rel).sort();
+    expect(carriers).toEqual([path.normalize('App.js'), path.normalize('website/LiveDemo.js')]);
+  });
+
+  test('the sheet is awaited before a map is constructed', () => {
+    // Loading it late is only correct if the map waits for it. Without the
+    // await, maplibre paints its controls and attribution as bare DOM for
+    // however long the chunk takes.
+    for (const rel of ['App.js', path.join('website', 'LiveDemo.js')]) {
+      const body = CODE.find((f) => f.rel === rel).body;
+      expect(body).toMatch(/await\s+styleSheetReady/);
+    }
+  });
+});
