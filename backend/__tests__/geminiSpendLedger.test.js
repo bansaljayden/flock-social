@@ -772,7 +772,12 @@ test('the socket image comments no longer quote a limit that does not exist', ()
 });
 
 test('the figure those comments quote is the figure server.js enforces', () => {
-  const apiLimiter = /const apiLimiter = isDev \? [\s\S]*?\n\}\);/.exec(serverSrc);
+  // Not anchored on `isDev ?` any more: apiLimiter is now wrapped in
+  // countOncePerRequest, because `app.use('/api', apiLimiter, router)` charged
+  // every request that fell through it and one request cost one to four units
+  // depending on which route was asked for. The figure this test exists to pin
+  // is max/windowMs, and that is unchanged.
+  const apiLimiter = /const apiLimiter = [\s\S]*?\n\}\), 'apiLimiter'\);/.exec(serverSrc);
   assert.ok(apiLimiter, 'server.js must declare apiLimiter');
   assert.match(apiLimiter[0], /max: 3000/,
     'if this number moves, the two comments in sockets/handlers.js move with it');
