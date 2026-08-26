@@ -291,6 +291,7 @@ function utcDay(now = Date.now()) {
 // once a day. Repeating it on every send would train the reader to skip it,
 // which is the same failure as saying nothing.
 const alarmSaid = new Map();
+const ALARM_KEYS_MAX = 2000;
 
 function raiseEmailAlarm(key, message, extra) {
   try {
@@ -303,8 +304,30 @@ function raiseEmailAlarm(key, message, extra) {
     // utils/cacheKeyInventory.js is that a map holding state a caller can
     // influence never gets emptied wholesale, and there is no reason for this
     // one to be the exception.
-    if (alarmSaid.size > 2000) {
+    if (alarmSaid.size > ALARM_KEYS_MAX) {
       for (const [k, v] of alarmSaid) if (v !== day) alarmSaid.delete(k);
+      // AND THE STALE SWEEP ON ITS OWN DOES NOT BOUND ANYTHING, which is what
+      // this file and utils/cacheKeyInventory.js both claimed it did. The value
+      // of every entry is a UTC day string and the sweep deletes only the
+      // entries whose day is not today, so on the day the map actually fills up
+      // there is nothing stale in it and the loop above frees nothing at all.
+      // Two of the five keys carry a recipient address, so the entry count is
+      // the number of DISTINCT ADDRESSES the alarm has spoken about since
+      // midnight, and it grows without a ceiling. Measured 2026-08-26; the word
+      // "bounded" was aspirational.
+      //
+      // Insertion order is what Map iterates in, so this drops the OLDEST live
+      // entries, which are the conditions that have already had their say
+      // furthest back. Losing one only lets that alarm repeat later today,
+      // which is the direction that makes a problem MORE visible, and is the
+      // same trade the paragraph above already accepts.
+      let over = alarmSaid.size - ALARM_KEYS_MAX;
+      if (over > 0) {
+        for (const k of alarmSaid.keys()) {
+          alarmSaid.delete(k);
+          if (--over <= 0) break;
+        }
+      }
     }
     alarmSaid.set(key, day);
     // One token, so a single grep over the Railway log finds every email
@@ -364,7 +387,17 @@ function rollHealthDay() {
 }
 
 function emailHealthStatus() {
-  return { ...health, keyConfigured: Boolean(process.env.RESEND_API_KEY) };
+  return {
+    ...health,
+    keyConfigured: Boolean(process.env.RESEND_API_KEY),
+    // How many distinct conditions the alarm is currently holding a "said this
+    // already today" note for. Worth an ops surface on its own — a number that
+    // climbs into the hundreds means hundreds of DIFFERENT addresses are being
+    // reported, not one noisy one — and it is also what pins the ceiling above
+    // it, which claimed to bound this map and did not.
+    alarmKeys: alarmSaid.size,
+    alarmKeysMax: ALARM_KEYS_MAX,
+  };
 }
 
 function resetEmailHealth() {
@@ -1052,4 +1085,10 @@ module.exports = {
   emailHealthStatus,
   resetEmailHealth,
   CONSECUTIVE_FAILURES_BEFORE_ALARM,
+  // Exported for the same reason resetEmailHealth is: the dedupe map's growth
+  // bound is a property of THIS function, and a test that reimplemented the
+  // keying would be measuring a different map from the one the alarm uses. It
+  // is not called from anywhere in the app; every alarm is raised inside
+  // sendEmail.
+  raiseEmailAlarm,
 };
