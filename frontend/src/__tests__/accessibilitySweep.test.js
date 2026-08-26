@@ -68,7 +68,7 @@ const read = (p) => fs.readFileSync(path.join(SRC, p), 'utf8');
 // row and the report entry went with it. Same treatment: nothing asserted
 // below changed, the app source is simply in three files now, and all three
 // are read in the order they used to be one.
-const app = read('App.js') + read('screens/ChatDetail.js') + read('screens/VenueDashboard.js');
+const app = read('App.js') + read('screens/ChatDetail.js') + read('screens/VenueDashboard.js') + read('screens/AddFriends.js');
 const css = read('index.css');
 const paywall = read('components/PaywallSheet.js');
 const birdieBird = read('components/ui/BirdieBird.js');
