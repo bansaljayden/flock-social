@@ -112,7 +112,11 @@ const ran = (re) => log.filter((q) => re.test(q.sql));
 // whole statement, so adding a column to the notification does not fail a test
 // about authorization.
 const PROFILE_SELECT = /SELECT p\.id, p\.google_place_id, p\.verified, p\.verification_requested_at/;
-const REQUEST_UPDATE = /SET verification_requested_at = COALESCE\(verification_requested_at, NOW\(\)\)/;
+const REQUEST_UPDATE = /UPDATE venue_profiles\s+SET verification_requested_at = NOW\(\)/;
+// The re-read the route falls back to when the UPDATE matched nothing, which
+// is how it tells a request that was already in apart from a profile that has
+// gone, now that the write itself is the idempotence guard.
+const REQUEST_REREAD = /SELECT verification_requested_at FROM venue_profiles WHERE user_id = \$1/;
 const NO_RIVAL = [/SELECT 1 FROM venue_profiles WHERE google_place_id/, () => ({ rows: [] })];
 const PLACE = 'ChIJexample1234567890abc';
 
@@ -176,22 +180,36 @@ test('the happy path records the request and says what happens next', async () =
   assert.match(res.body.message, /confirm ownership by hand/);
 });
 
-test('a second press is idempotent: COALESCE keeps the first timestamp, and the copy says it is already in', async () => {
+test('a second press is idempotent: the first timestamp stands, and the copy says it is already in', async () => {
   const stamp = '2026-08-20T10:00:00.000Z';
   handlers = [
     [PROFILE_SELECT, () => ({ rows: [{ id: 7, google_place_id: PLACE, verified: false, verification_requested_at: stamp }] })],
     NO_RIVAL,
-    [REQUEST_UPDATE, () => ({ rows: [{ verification_requested_at: stamp }] })],
+    // The row already carries a request, so the guarded UPDATE matches nothing.
+    [REQUEST_UPDATE, () => ({ rows: [], rowCount: 0 })],
+    [REQUEST_REREAD, () => ({ rows: [{ verification_requested_at: stamp }] })],
   ];
   const res = await call('POST', '/api/venue-profile/request-verification');
   assert.strictEqual(res.status, 200);
-  assert.strictEqual(res.body.verification_requested_at, stamp);
+  assert.strictEqual(res.body.verification_requested_at, stamp, 'the original moment, not a fresh one');
   assert.match(res.body.message, /already in/);
   // The idempotency lives in the SQL, not in a read-then-branch: first press
-  // wins whatever raced it.
+  // wins whatever raced it. That is the WHERE clause, and it is now the same
+  // statement that decides whether an operator is mailed.
   const upd = ran(REQUEST_UPDATE)[0];
   assert.ok(upd, 'the update ran');
-  assert.match(upd.sql, /COALESCE\(verification_requested_at, NOW\(\)\)/);
+  assert.match(upd.sql, /WHERE user_id = \$1 AND verification_requested_at IS NULL/);
+});
+
+test('a profile that disappears between the read and the write answers 404, not a null timestamp', async () => {
+  handlers = [
+    [PROFILE_SELECT, () => ({ rows: [{ id: 7, google_place_id: PLACE, verified: false, verification_requested_at: null }] })],
+    NO_RIVAL,
+    [REQUEST_UPDATE, () => ({ rows: [], rowCount: 0 })],
+    [REQUEST_REREAD, () => ({ rows: [], rowCount: 0 })],
+  ];
+  const res = await call('POST', '/api/venue-profile/request-verification');
+  assert.strictEqual(res.status, 404);
 });
 
 // ---------------------------------------------------------------------------
@@ -247,12 +265,67 @@ test('a re-press mails nobody, so an anxious owner cannot page us twice', async 
   handlers = [
     [PROFILE_SELECT, () => ({ rows: [{ id: 7, google_place_id: PLACE, verified: false, verification_requested_at: stamp, business_name: 'The Blue Heron', owner_email: 'ava@example.com' }] })],
     NO_RIVAL,
-    [REQUEST_UPDATE, () => ({ rows: [{ verification_requested_at: stamp }] })],
+    [REQUEST_UPDATE, () => ({ rows: [], rowCount: 0 })],
+    [REQUEST_REREAD, () => ({ rows: [{ verification_requested_at: stamp }] })],
   ];
   const res = await call('POST', '/api/venue-profile/request-verification');
   assert.strictEqual(res.status, 200);
   await new Promise((r) => setImmediate(r));
   assert.strictEqual(sent.calls.length, 0);
+});
+
+// THE RACE THE READ-THEN-BRANCH LOST.
+//
+// "First press only" was `!!profile.verification_requested_at`, read off the
+// SELECT at the top of the handler. Two presses that arrive together, an owner
+// on a phone and the same owner on a laptop, BOTH see NULL there: neither has
+// written yet. Both then counted themselves the first press and both mailed the
+// operator, so one claim arrived twice while the column recorded a single
+// request. The timestamp was never at risk, because COALESCE settled that in
+// SQL. The notification was, because it branched on the read instead.
+//
+// Modelled the way Postgres actually resolves it: both statements are issued,
+// the second blocks on the row lock, and when it is released it re-evaluates
+// `verification_requested_at IS NULL` against the row the first one wrote and
+// matches nothing. So exactly one UPDATE returns a row, and the mail follows
+// the row rather than the read.
+test('two presses that race each other still reach the operator once', async () => {
+  const sent = captureSend();
+  const stamp = '2026-08-21T18:00:00.000Z';
+  let writesThatMatched = 0;
+  handlers = [
+    // Both requests read the profile before either has written to it.
+    [PROFILE_SELECT, () => ({ rows: [{ id: 7, google_place_id: PLACE, verified: false, verification_requested_at: null, business_name: 'The Blue Heron', location: '12 Dock St', owner_email: 'ava@example.com' }] })],
+    NO_RIVAL,
+    [REQUEST_UPDATE, () => {
+      writesThatMatched += 1;
+      return writesThatMatched === 1
+        ? { rows: [{ verification_requested_at: stamp }], rowCount: 1 }
+        : { rows: [], rowCount: 0 };
+    }],
+    [REQUEST_REREAD, () => ({ rows: [{ verification_requested_at: stamp }] })],
+  ];
+
+  const [a, b] = await Promise.all([
+    call('POST', '/api/venue-profile/request-verification'),
+    call('POST', '/api/venue-profile/request-verification'),
+  ]);
+  assert.strictEqual(a.status, 200);
+  assert.strictEqual(b.status, 200);
+
+  // The operator inbox first, because that is the thing the read-then-branch
+  // got wrong. Two notifications here is one claim paged in twice.
+  await sent.first;
+  await new Promise((r) => setImmediate(r));
+  assert.strictEqual(sent.calls.length, 1, 'one claim is one notification, even when two presses race');
+
+  // Both owners are answered, and both are answered with the same moment.
+  assert.strictEqual(a.body.verification_requested_at, stamp);
+  assert.strictEqual(b.body.verification_requested_at, stamp);
+  // One of them is told the request is already in, which is true of exactly one.
+  const messages = [a.body.message, b.body.message].sort();
+  assert.match(messages[0], /Request received/);
+  assert.match(messages[1], /already in/);
 });
 
 test('a failed send does not change the answer the owner gets', async () => {
