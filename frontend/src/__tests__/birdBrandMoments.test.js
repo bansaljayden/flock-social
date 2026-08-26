@@ -66,7 +66,8 @@ const {
 // are read in the order they used to be one.
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatDetail.js'), 'utf8')
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'VenueDashboard.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'VenueDashboard.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'AddFriends.js'), 'utf8');
 const BIRD_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'components', 'ui', 'BirdieBird.js'),
   'utf8'

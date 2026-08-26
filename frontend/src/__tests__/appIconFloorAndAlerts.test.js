@@ -38,7 +38,9 @@ const path = require('path');
 // app source is simply in two files, so both are read, in the order they used
 // to be one.
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatDetail.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatDetail.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'VenueDashboard.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'AddFriends.js'), 'utf8');
 
 /** Comment lines dropped, so prose naming a retired pattern cannot fail the
  *  test the fix was written to pass (same exclusion, and same reason, as
