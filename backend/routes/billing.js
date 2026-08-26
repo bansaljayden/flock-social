@@ -66,7 +66,7 @@ const { getInvisibleUserIds, isBlockedBetween } = require('../utils/blocks');
 // settledCeiling adds the WHEN rule to that: the column holds a published
 // number only once the budget is locked, and before that a ghost commit has no
 // group figure to estimate a share from.
-const { settledCeiling } = require('./budget');
+const { settledCeiling, MEMBER_SUBMISSIONS } = require('./budget');
 // Shape before content — see validators/shape.js.
 const { scalarOnly } = require('../validators/shape');
 
@@ -87,6 +87,40 @@ async function refuseIfBlockedPayer(res, userId, payerId) {
     return true;
   }
   return false;
+}
+
+// NOBODY IS ON THE OTHER END OF THIS PAYMENT (bill split audit 2026-08-26).
+//
+// Both link routes looked the payer up by bill_splits.paid_by and answered
+// 404 "Payer not found" when the row came back empty. That reads like a
+// server that lost something, and it was the answer given to everybody who
+// still owed money in the two states where paid_by is legitimately NULL:
+//
+//   1. The payer deleted their account. paid_by is ON DELETE SET NULL, so the
+//      bill survives with nobody on it. Everybody else's share row survives
+//      too (the payer's own cascades away with their user row, which is why
+//      the sheet also stops adding up to the total). Nobody is overcharged and
+//      nobody can pay: the Pay button is a dead end with no explanation, and
+//      the client turns the 404 into a toast reading "Could not load payment
+//      links. Use Mark as Paid after paying", which is advice to go and pay
+//      somebody who no longer exists.
+//   2. A ghost-commit shell, where paid_by has never been set because nobody
+//      has paid anything yet and the total on the sheet is this server's
+//      estimate off the group budget.
+//
+// A 404 on a payment route is also the wrong status: the bill is there and the
+// caller may read it. What is missing is a counterparty, which is a conflict
+// with the state of the thing, not an absent thing. 409 with a machine-readable
+// reason, and one sentence that is true in both states with the way out of both
+// in it. While paid_by is NULL, POST /:flockId/create applies first-bill
+// rules, so any member can post the bill naming who really paid.
+function noPayerRefusal(res, payerId) {
+  if (payerId != null) return false;
+  res.status(409).json({
+    error: 'Nobody is recorded as having paid this bill, so there is no one to pay. Add the bill again with who paid.',
+    reason: 'no_payer',
+  });
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -445,6 +479,22 @@ router.post('/:flockId/create',
             // Bob nothing while everyone else still owes. Only a payer who is
             // still the payer keeps that flag.
             if (row.user_id === prevPayer && prevPayer !== payerId) continue;
+            // A SETTLED FLAG ON A BILL NOBODY PAID IS NOT A PAYMENT (bill split
+            // audit 2026-08-26). `settled` means "this person paid the payer
+            // back", and a bill with paid_by NULL has no payer to have paid
+            // back. It is either a ghost-commit shell, where the only money in
+            // play is an estimate off the budget ceiling, or a bill whose payer
+            // deleted their account. Carrying the flag across from one was a
+            // free dinner with no exploit needed and no trace left behind:
+            // ghost-commit, then POST /settle against the shell, and when the
+            // real bill lands your share is inserted settled = true. The payer
+            // is never told you owe (the push loop skips settled shares), the
+            // sheet shows you paid, and you were never billed.
+            //
+            // POST /:flockId/settle now refuses a payerless bill outright, so
+            // no new row can reach this loop in that state. This is the second
+            // lock, and it is the one that covers rows already in the database.
+            if (prevPayer === null) continue;
             if (row.settled) existingSettled.set(row.user_id, row.settled_at || new Date());
           }
         }
@@ -468,6 +518,25 @@ router.post('/:flockId/create',
         // rewrite again including Bob, and he is billed a second time with no
         // trace of the first payment. Rows still in the split are rewritten
         // just below; rows dropped from it only go if they were unsettled.
+        //
+        // KNOWN GAP, recorded here rather than half-fixed (bill split audit
+        // 2026-08-26). Keeping a settled row for somebody the rewrite dropped
+        // is right, because they paid, but nothing then credits what they paid
+        // against the new total, so the shares stop summing to the bill and the
+        // people still on it make up the difference. Four friends, $100, $25
+        // each; Bob pays his $25 and leaves the flock; the payer corrects the
+        // total to $120; the equal split now runs over the three who are left
+        // at $40 each, Bob's settled $25 stays on the sheet, and the sheet adds
+        // to $145 for a $120 dinner. Carol and Dave are each out $8.33 and the
+        // payer collects more than they spent.
+        //
+        // The fix is to split (total - sum of retained settled rows) over the
+        // remaining roster, which is arithmetic this route can do but not from
+        // here: `shares` is computed before the transaction opens, and the
+        // amounts it would need are in a SELECT six test suites match on by its
+        // exact column list. It also needs a product answer for the custom
+        // branch, where the payer typed the numbers themselves and the same
+        // credit would silently overwrite them. Not guessed at mid-audit.
         const keepIds = shares.map((s) => s.userId);
         await client.query(
           'DELETE FROM bill_split_shares WHERE bill_id = $1 AND user_id = ANY($2::int[])',
@@ -545,6 +614,11 @@ router.post('/:flockId/create',
         tipPercent: tipPct,
         totalWithTip,
         splitType,
+        // Always true on this path, because payerId is req.user.id or a validated
+        // member id, never NULL. Sent anyway so the created bill and the
+        // fetched bill are the same shape and the client has one field to
+        // branch on rather than two. See the note in GET /:flockId.
+        hasPayer: true,
         paidBy: { id: payerId, name: payer?.name || 'Unknown' },
         shares: shareDetails,
         createdAt: new Date().toISOString(),
@@ -653,14 +727,60 @@ router.get('/:flockId',
       // bill sheet.
       const invisible = new Set(await getInvisibleUserIds(userId));
 
+      // WHOSE BILL IS THIS. paid_by NULL is not a rendering detail, it is two
+      // real states the client had no way to tell apart from a finished bill
+      // (bill split audit 2026-08-26), and it rendered both as "Paid by
+      // Unknown" over a dollar total nobody had entered:
+      //
+      //   1. A ghost-commit shell. Nobody has paid anything and the total is an
+      //      ESTIMATE this server computed from the group budget ceiling. The
+      //      sheet offered "Settle Up" against it, which 404'd, and "Mark as
+      //      Paid", which recorded a debt as paid before the debt existed.
+      //   2. The payer deleted their account. bill_splits.paid_by is
+      //      ON DELETE SET NULL, so the row survives with nobody on it while
+      //      everyone else's share survives too. There is no one left to pay.
+      //
+      // Both are honestly described by one sentence, that nobody is recorded
+      // as having paid this bill, and both have the same way out: post the
+      // bill again naming who paid, which POST /:flockId/create allows any
+      // member to do while paid_by is NULL. So one flag, not a guess between
+      // two states this schema cannot distinguish after the fact.
+      const hasPayer = bill.paid_by !== null && bill.paid_by !== undefined;
+
+      // A payerless bill's numbers ARE the budget ceiling: ghost-commit writes
+      // the banded ceiling into every share and ceiling * memberCount into the
+      // total. routes/budget.js re-asks the reveal threshold on EVERY read, on
+      // purpose, because members leave and a band around the last person left
+      // is a band around one person's budget. This route published the same
+      // number from a cached row and never re-asked, so it was the second door
+      // out of the leak budget.js closed on the first.
+      //
+      // Only shells are gated: once a real bill lands the amounts are what
+      // somebody actually spent, which is not a budget submission and is not
+      // the ceiling's to withhold.
+      let revealShellAmounts = true;
+      if (!hasPayer) {
+        const reveal = await pool.query(
+          `SELECT COUNT(*)::int AS n FROM ${MEMBER_SUBMISSIONS}
+           WHERE bs.flock_id = $1 AND skipped = false`,
+          [flockId]
+        );
+        revealShellAmounts = (reveal.rows[0]?.n || 0) >= 3;
+      }
+      const money = (v) => (revealShellAmounts ? parseFloat(v) : null);
+
       res.json({
         bill: {
           id: bill.id,
           flockId: bill.flock_id,
-          totalAmount: parseFloat(bill.total_amount),
+          totalAmount: money(bill.total_amount),
           tipPercent: parseFloat(bill.tip_percent),
-          totalWithTip,
+          totalWithTip: revealShellAmounts ? totalWithTip : null,
           splitType: bill.split_type,
+          // Nobody is recorded as having paid. The client must not offer a way
+          // to pay them or a way to mark them paid, and must not print the
+          // total as a bill somebody rang up.
+          hasPayer,
           paidBy: {
             id: bill.paid_by,
             name: invisible.has(bill.paid_by) ? null : bill.payer_name,
@@ -670,7 +790,7 @@ router.get('/:flockId',
             .map(s => ({
               userId: s.user_id,
               name: s.name,
-              amount: parseFloat(s.amount),
+              amount: money(s.amount),
               committed: s.committed,
               settled: s.settled,
               settledAt: s.settled_at,
@@ -719,15 +839,72 @@ router.post('/:flockId/settle',
       }
       const billId = billResult.rows[0].id;
 
-      // Mark as settled
+      // Mark as settled. Two conditions were added to this WHERE clause by the
+      // bill split audit of 2026-08-26, and both of them are about real money.
+      //
+      // `settled IS NOT TRUE` makes a repeat tap a no-op instead of a rewrite.
+      // Two things came off the rewrite. settled_at, the one record of WHEN a
+      // debt was cleared, drifted forward to whenever the button was last
+      // pressed. And the push at the bottom of this handler fired again on
+      // every one of those taps, so any member could tell the payer they had
+      // been paid back as many times as they liked, from a control that is one
+      // tap deep on the bill sheet with nothing in front of it. IS NOT TRUE
+      // rather than = false for the same reason the fully-settled count below
+      // uses it: the column has no NOT NULL constraint.
+      //
+      // `EXISTS (... paid_by IS NOT NULL)` is the harder one. Settling means "I
+      // paid the payer back", and a bill with paid_by NULL has no payer to have
+      // paid back: it is either a ghost-commit shell, where the total is this
+      // server's estimate off the group budget and nobody has bought anything
+      // yet, or a bill whose payer deleted their account (paid_by is
+      // ON DELETE SET NULL). Against a shell it was a free dinner. Ghost
+      // commit, settle, and when the real bill finally landed
+      // POST /:flockId/create carried the flag onto it. The payer is never
+      // told you owe, because the notification loop skips settled shares, the
+      // sheet shows you paid, and you were never billed. The carry is refused
+      // at /create as well now; this is the lock on the door rather than on the
+      // safe, and it is the one that keeps new rows out of that state.
+      //
+      // Written as one statement rather than a SELECT then an UPDATE because
+      // the read would have to be its own round trip and this route's queries
+      // are what several suites match on to script it, but also because a
+      // check-then-write here is a race with the payer's own /create.
       const updateResult = await pool.query(
         `UPDATE bill_split_shares SET settled = true, settled_at = NOW()
-         WHERE bill_id = $1 AND user_id = $2
+         WHERE bill_id = $1 AND user_id = $2 AND settled IS NOT TRUE
+           AND EXISTS (SELECT 1 FROM bill_splits WHERE id = $1 AND paid_by IS NOT NULL)
          RETURNING *`,
         [billId, userId]
       );
       if (updateResult.rows.length === 0) {
-        return res.status(404).json({ error: 'No share found for you on this bill' });
+        // Nothing moved, and the three reasons are three different answers.
+        // Only reached on the path where nothing was written, so the ordinary
+        // settle is still two queries.
+        const existing = await pool.query(
+          `SELECT bss.settled, bs.paid_by
+             FROM bill_split_shares bss
+             JOIN bill_splits bs ON bs.id = bss.bill_id
+            WHERE bss.bill_id = $1 AND bss.user_id = $2`,
+          [billId, userId]
+        );
+        if (existing.rows.length === 0) {
+          return res.status(404).json({ error: 'No share found for you on this bill' });
+        }
+        if (existing.rows[0].paid_by == null) {
+          // The way out of both no-payer states is the same, so the message
+          // names it: somebody posts the bill with a payer on it. While paid_by
+          // is NULL, POST /:flockId/create applies first-bill rules, so any
+          // member can do that for themselves and the flock creator can do it
+          // for anyone.
+          return res.status(409).json({
+            error: 'Nobody is recorded as having paid this bill, so there is nothing to settle up. Add the bill again with who paid.',
+            reason: 'no_payer',
+          });
+        }
+        // Already settled. Not an error, because what the caller wanted is already
+        // true, and a retry after a dropped response must not be punished.
+        // 200 without re-notifying anybody.
+        return res.json({ settled: true, alreadySettled: true });
       }
 
       // Emit settled event (per-member fan-out — see emitToFlockMembers).
@@ -808,9 +985,21 @@ router.post('/:flockId/settle',
             // fromUserId is the SETTLER, because the body names them. Same
             // reason /create names the payer: the block gate suppresses a push
             // that carries a blocked person's name.
+            // FLOCK DID NOT SEE THIS MONEY (honesty pass 2026-08-26). "You got
+            // paid back" is a statement of fact about a transfer this app never
+            // touched. Nothing here processes, holds, guarantees or verifies a
+            // payment: /payment-links hands the debtor off to Venmo, Cash App
+            // or Zelle and the debtor comes back and taps a button. All the
+            // server knows is that somebody SAID they paid. A payer who reads
+            // "You got paid back" and stops checking their own payment app is
+            // out of pocket on Flock's word, for a fact Flock does not have.
+            //
+            // So the notification reports the claim and names who made it, and
+            // the amount stays in it because that is the figure the payer has
+            // to go and check against.
             await pushIfOffline(io, payerId,
-              'You got paid back',
-              `${req.user.name} settled up${money} for ${flockName}.`,
+              'Marked as paid back',
+              `${req.user.name} says they paid you${money} for ${flockName}. Check your payment app.`,
               { type: 'bill_settled', flockId: String(flockId), fromUserId: String(userId) }
             );
           }
@@ -821,6 +1010,130 @@ router.post('/:flockId/settle',
     } catch (err) {
       console.error('Settle error:', err);
       if (!res.headersSent) res.status(500).json({ error: 'Failed to settle share' });
+    }
+  }
+);
+
+// POST /api/billing/:flockId/unsettle: take back a settlement you reported
+//
+// SETTLEMENT IS SELF-REPORTED AND WAS ONE-WAY (bill split audit 2026-08-26).
+// Nothing in Flock observes a payment. The only thing that moves a share to
+// settled is the debtor tapping "Mark as Paid (cash or other)", which sits one
+// tap deep on the bill sheet, under the Settle Up button, with no confirmation
+// in front of it and nothing that undoes it, not on this router and not anywhere
+// in the app. A thumb landing an inch low erased a real debt permanently, told
+// the payer they had been paid, and removed the person from the notification
+// loop that would have chased them.
+//
+// The bill sheet's other correction path does not cover this either. Reposting
+// the bill through /create deliberately PRESERVES settled rows, because the
+// alternative is re-billing somebody who really did pay. So the only record
+// that a debt was cleared had no way back, and the payer was the one out of
+// pocket for the mistake.
+//
+// The rules are narrow on purpose:
+//   - You may only take back your OWN report. Nobody gets to mark anybody else
+//     unpaid, the same way nobody gets to mark anybody else paid.
+//   - The PAYER cannot use this. Their share is settled as an artifact of
+//     having paid the venue, not as a debt they cleared, and clearing that flag
+//     would put them in debt to themselves.
+//   - It is idempotent, and a share that was never settled is not an error.
+router.post('/:flockId/unsettle',
+  [param('flockId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID')],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+
+      const flockId = parseInt(req.params.flockId);
+      const userId = req.user.id;
+
+      // Membership, like every other route in this file, and for the reason
+      // /settle records: share rows outlive the flock_members row.
+      const memberCheck = await pool.query(
+        "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
+        [flockId, userId]
+      );
+      if (memberCheck.rows.length === 0) {
+        return res.status(403).json({ error: 'You are not a member of this flock' });
+      }
+
+      const billResult = await pool.query(
+        'SELECT id, paid_by FROM bill_splits WHERE flock_id = $1',
+        [flockId]
+      );
+      if (billResult.rows.length === 0) {
+        return res.status(404).json({ error: 'No bill found for this flock' });
+      }
+      const billId = billResult.rows[0].id;
+      const payerId = billResult.rows[0].paid_by;
+
+      if (payerId != null && Number(payerId) === Number(userId)) {
+        return res.status(409).json({
+          error: 'You are the person who paid this bill, so there is nothing of yours to mark unpaid.',
+          reason: 'payer',
+        });
+      }
+
+      const updateResult = await pool.query(
+        `UPDATE bill_split_shares SET settled = false, settled_at = NULL
+         WHERE bill_id = $1 AND user_id = $2 AND settled IS TRUE
+         RETURNING *`,
+        [billId, userId]
+      );
+      if (updateResult.rows.length === 0) {
+        const existing = await pool.query(
+          'SELECT settled FROM bill_split_shares WHERE bill_id = $1 AND user_id = $2',
+          [billId, userId]
+        );
+        if (existing.rows.length === 0) {
+          return res.status(404).json({ error: 'No share found for you on this bill' });
+        }
+        // Already unsettled. What the caller wanted is already true.
+        return res.json({ settled: false, alreadyUnsettled: true });
+      }
+
+      res.json({ settled: false });
+
+      // Post-response, like every other notification in this file: the write
+      // has landed and a delivery failure must not answer 500 for it.
+      const io = req.app.get('io');
+      if (io) {
+        try {
+          // Names the person who took the report back, so it is block-filtered
+          // like share_settled.
+          await emitToFlockMembers(io, flockId, 'share_unsettled', {
+            flockId,
+            userId,
+            userName: req.user.name,
+          }, await visibleRecipients(flockId, userId));
+        } catch (emitErr) {
+          console.error('Unsettle fan-out failed:', emitErr.message);
+        }
+      }
+
+      // NO PUSH, and this is a deliberate gap rather than an oversight.
+      //
+      // The payer was told "X says they paid you $25" when the report was made,
+      // so the honest thing is to tell them it was taken back. That needs a
+      // `bill_unsettled` type, and a push type is not one constant: it has to
+      // be added to FLOCK_SCOPED_TYPES and FLOCK_VIEW in
+      // services/firebaseService.js AND to FLOCK_TYPES and VIEW_FOR_TYPE in
+      // frontend/src/services/pushNavigation.js, which are pinned against each
+      // other by a frontend suite. Half of that is another file's change and
+      // shipping only the backend half means the notification delivers and then
+      // opens the wrong screen.
+      //
+      // Until it exists, `share_unsettled` above reaches every connected
+      // member's personal room, including the payer's, so an open bill sheet
+      // corrects itself immediately. A payer who is not connected finds out the
+      // next time they open the bill. Nothing tells them a debt was cleared
+      // that has not been, so the correction is late for them and never wrong.
+    } catch (err) {
+      console.error('Unsettle error:', err);
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to mark the share unpaid' });
     }
   }
 );
@@ -862,8 +1175,27 @@ router.post('/:flockId/ghost-commit',
       if (!flockResult.rows[0].ghost_mode_enabled) {
         return res.status(400).json({ error: 'Ghost mode is not enabled for this flock' });
       }
+      // MEMBERSHIP IS THE RELATIONSHIP, on this route too (bill split audit
+      // 2026-08-26). This count used to read budget_submissions with no join,
+      // and routes/budget.js counts the same rows through MEMBER_SUBMISSIONS,
+      // only submissions whose author is still an accepted member, because a
+      // submission row is deliberately left behind when its author leaves.
+      //
+      // The two counts therefore diverged the moment anybody left, and they
+      // diverged in the direction that publishes: three people submit, the
+      // budget locks, one of them leaves, and GET /api/budget/:flockId goes
+      // back to withholding the ceiling (isReady is re-evaluated on every read)
+      // while this route still counted three and handed the banded ceiling out
+      // as `estimatedShare`. That is the exact shape budget.js closed for its
+      // own aggregates: two people plus a throwaway that submits and leaves,
+      // and the band is a band around ONE of the two remaining people.
+      //
+      // budgetCeilingReadParity could not see it, because its pg fake answers both
+      // count statements from the same number, so it was pinning the ceiling
+      // VALUE the two routes publish and never the threshold each one asks.
       const thresholdResult = await pool.query(
-        `SELECT COUNT(*)::int AS n FROM budget_submissions WHERE flock_id = $1 AND skipped = false`,
+        `SELECT COUNT(*)::int AS n FROM ${MEMBER_SUBMISSIONS}
+         WHERE bs.flock_id = $1 AND skipped = false`,
         [flockId]
       );
       if ((thresholdResult.rows[0]?.n || 0) < 3) {
@@ -1012,6 +1344,7 @@ router.get('/:flockId/venmo-link',
       }
       const bill = billResult.rows[0];
       if (await refuseIfBlockedPayer(res, userId, bill.paid_by)) return;
+      if (noPayerRefusal(res, bill.paid_by)) return;
 
       // Get the user's share
       const shareResult = await pool.query(
@@ -1106,6 +1439,7 @@ router.get('/:flockId/payment-links',
       }
       const bill = billResult.rows[0];
       if (await refuseIfBlockedPayer(res, userId, bill.paid_by)) return;
+      if (noPayerRefusal(res, bill.paid_by)) return;
 
       // Get the user's share amount
       const shareResult = await pool.query(

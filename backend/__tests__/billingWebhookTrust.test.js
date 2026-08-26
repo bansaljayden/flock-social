@@ -866,7 +866,29 @@ test('every statement routes/billing.js issues is parameterized', () => {
   // only ones in this file are the socket room names, which are not SQL.
   const queries = src.match(/(?:pool|client)\.query\(\s*`[\s\S]*?`/g) || [];
   assert.ok(queries.length > 10, 'the scan found no queries, so it is not scanning anything');
+
+  // ONE narrow exception, and it is narrowed by proof rather than by name.
+  //
+  // routes/budget.js exports MEMBER_SUBMISSIONS, a fixed FROM fragment that
+  // joins budget_submissions to flock_members, so the reveal threshold is
+  // counted over people who are still in the room. routes/billing.js asks the
+  // same threshold in two places and has to ask it the same way, or the two
+  // routes disagree about when a budget ceiling may be published (they did,
+  // until 2026-08-26). Retyping the join here to satisfy a scanner would put a
+  // second copy of the rule in the codebase, which is the failure the shared
+  // constant exists to prevent.
+  //
+  // What makes it safe is not that it is a constant, it is that its VALUE is
+  // checked below: the fragment itself is scanned for interpolation and for a
+  // placeholder, so it cannot become a channel for anything a request carries.
+  const { MEMBER_SUBMISSIONS } = require('../routes/budget');
+  assert.strictEqual(typeof MEMBER_SUBMISSIONS, 'string', 'the exception has to name something real');
+  assert.doesNotMatch(MEMBER_SUBMISSIONS, /\$\{|\$\d/, 'the shared fragment is a fixed FROM clause, nothing else');
+
   for (const q of queries) {
-    assert.doesNotMatch(q, /\$\{/, `interpolated SQL: ${q.slice(0, 120)}`);
+    const interpolations = q.match(/\$\{[^}]*\}/g) || [];
+    for (const i of interpolations) {
+      assert.strictEqual(i, '${MEMBER_SUBMISSIONS}', `interpolated SQL: ${q.slice(0, 120)}`);
+    }
   }
 });
