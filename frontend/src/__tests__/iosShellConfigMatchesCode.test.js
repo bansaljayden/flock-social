@@ -36,6 +36,10 @@ const pbxproj = read('frontend', 'ios', 'App', 'App.xcodeproj', 'project.pbxproj
 const codemagic = read('codemagic.yaml');
 
 const app = read('frontend', 'src', 'App.js');
+// The only file that touches the address book. The contacts purpose string is
+// asserted against THIS rather than against App.js, because App.js calls it and
+// this is where the permission is actually requested.
+const contactsService = read('frontend', 'src', 'services', 'contacts.js');
 const billing = read('backend', 'routes', 'billing.js');
 const firebaseService = read('backend', 'services', 'firebaseService.js');
 const appDelegate = read(...IOS_APP, 'AppDelegate.swift');
@@ -134,11 +138,12 @@ describe('the shell config files are well formed', () => {
 describe('every NS*UsageDescription is one the app actually needs', () => {
   const usageKeys = () => plistKeys(infoPlist).filter((k) => /UsageDescription$/.test(k));
 
-  test('the plist declares exactly the three permissions the client exercises', () => {
-    // Adding a fourth is not forbidden, it just has to be justified by code and
+  test('the plist declares exactly the four permissions the client exercises', () => {
+    // Adding a fifth is not forbidden, it just has to be justified by code and
     // added to this list in the same change.
     expect(usageKeys().sort()).toEqual([
       'NSCameraUsageDescription',
+      'NSContactsUsageDescription',
       'NSLocationWhenInUseUsageDescription',
       'NSPhotoLibraryUsageDescription',
     ]);
@@ -270,12 +275,59 @@ describe('the permissions that are absent are absent for a reason', () => {
     expect(hasKey(infoPlist, 'NSPhotoLibraryAddUsageDescription')).toBe(false);
   });
 
-  test('no contacts string: contact sync is the web Contacts Picker, not EventKit', () => {
-    // navigator.contacts is a web API and never triggers the native prompt. The
-    // client also knows it does not exist in WKWebView and says so.
-    expect(app).toMatch(/navigator\.contacts\.select\(/);
-    expect(Object.keys(pkg.dependencies)).not.toContain('@capacitor-community/contacts');
-    expect(hasKey(infoPlist, 'NSContactsUsageDescription')).toBe(false);
+  test('the contacts string is present exactly while native code reads contacts', () => {
+    // This test used to assert the OPPOSITE, and it was right to: contact sync
+    // was `navigator.contacts.select`, a web API that does not exist in
+    // WKWebView and never triggers a native prompt, so a contacts string would
+    // have described a permission nothing could use. What changed is that the
+    // native read now exists (services/contacts.js), and with it the reason
+    // the string does.
+    //
+    // Both directions, the way the rest of this file works. The plugin, the
+    // call site and the purpose string are one decision and have to move
+    // together.
+    const declaresPlugin = Object.keys(pkg.dependencies).includes('@capacitor-community/contacts');
+    const readsContacts = /Contacts\.getContacts\(/.test(contactsService)
+      && /Contacts\.requestPermissions\(/.test(contactsService);
+    expect(declaresPlugin).toBe(true);
+    expect(readsContacts).toBe(true);
+    expect(hasKey(infoPlist, 'NSContactsUsageDescription')).toBe(declaresPlugin && readsContacts);
+  });
+
+  test('the contacts string promises phone numbers only, and the projection keeps that promise', () => {
+    // The string tells the user nothing but phone numbers leaves the phone.
+    // That is only true because of ONE line, so that line is what is asserted
+    // rather than the sentence describing it: a projection that grew a `name:
+    // true` would turn the prompt into a false statement, silently.
+    const projections = [...contactsService.matchAll(/getContacts\(\{\s*projection:\s*\{([^}]*)\}/g)];
+    expect(projections.length).toBeGreaterThan(0);
+    for (const [, fields] of projections) {
+      expect(fields).toMatch(/phones:\s*true/);
+      for (const forbidden of ['name', 'emails', 'image', 'note', 'postalAddresses', 'organization', 'birthday', 'urls']) {
+        expect(fields).not.toMatch(new RegExp(`${forbidden}\s*:\s*true`));
+      }
+    }
+    const contacts = plistString(infoPlist, 'NSContactsUsageDescription');
+    expect(contacts).toMatch(/phone number/i);
+    expect(contacts).toMatch(/not stored/i);
+  });
+
+  test('nothing writes to the address book, so there is no write path to describe', () => {
+    // createContact and deleteContact are on the plugin and are not called. If
+    // one ever is, iOS wants the same key but the sentence above stops being
+    // true, and this is where that lands.
+    expect(contactsService).not.toMatch(/Contacts\.createContact\(|Contacts\.deleteContact\(/);
+  });
+
+  test('the contacts prompt cannot fire on launch', () => {
+    // iOS asks once per install. Spending that prompt at cold start, the way
+    // the notification prompt already is, means a permanent denial from people
+    // who had no reason yet to say yes. requestPermissions therefore lives
+    // behind readContactPhoneNumbers, which is exported for a tap handler to
+    // call, and nothing in this module runs it at import time.
+    const topLevelCall = /^\s*(await\s+)?(Contacts\.requestPermissions|readContactPhoneNumbers|syncContacts)\(/m;
+    expect(topLevelCall.test(contactsService)).toBe(false);
+    expect(contactsService).toMatch(/export async function readContactPhoneNumbers\(/);
   });
 
   test('no always-location string, and no plugin that could request it', () => {
@@ -496,6 +548,7 @@ describe('capacitor.config.ts and the copy under ios/ agree', () => {
     // at runtime; an extra entry fails the SwiftPM build.
     const PLUGIN_CLASSES = {
       '@capacitor-community/apple-sign-in': 'SignInWithApple',
+      '@capacitor-community/contacts': 'ContactsPlugin',
       '@capacitor-firebase/app': 'FirebaseAppPlugin',
       '@capacitor-firebase/messaging': 'FirebaseMessagingPlugin',
       '@capacitor/app': 'AppPlugin',
