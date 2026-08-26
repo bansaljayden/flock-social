@@ -82,8 +82,13 @@ const DOT = String.fromCharCode(0xb7);
 
 // decodeURIComponent throws a URIError on a lone "%" or a half-written escape,
 // which a mangled paste produces easily. Thrown from the component body it
-// takes the whole page down to a white screen, and the /i/ route in index.js
-// mounts without an ErrorBoundary, so nothing would catch it.
+// takes the whole page down. index.js now wraps every route in an
+// ErrorBoundary, including this one, so the fallback is a page and not a white
+// screen. (This comment used to say /i/ had no boundary at all, which was true
+// when it was written and stopped being true when the boundary was added
+// outside Suspense in index.js. Guarding here is still right: the boundary's
+// answer is an error page, and a mangled paste deserves the invite page's own
+// "that link isn't complete".)
 const safeDecode = (s) => {
   try { return decodeURIComponent(s); } catch { return s; }
 };
@@ -151,11 +156,84 @@ const whenLabel = (d) => {
   return `${day} ${DOT} ${time}`;
 };
 
+// ---------------------------------------------------------------------------
+// THE PAGE'S OWN REQUEST CLOCK.
+//
+// This page talks to three endpoints with bare fetch, and that part stays.
+// services/api.js is the APP's client: it attaches a JWT, wipes the device and
+// announces an expiry on a 401, and carries the PostHog funnel. None of that
+// means anything to somebody who has no account and may never make one, and
+// importing it would pull the whole REST client into the one lazy chunk this
+// page ships to a stranger who has not decided yet whether Flock is worth a
+// download (index.js loads /i/ as its own chunk precisely so it does not).
+//
+// What that decision did NOT get to keep is the absence of a deadline. A bare
+// fetch has no timeout at all, and this is the page most likely to be opened
+// on the worst network the product ever sees: a phone on data, in a bar, on
+// wifi that completes the handshake and then goes quiet. What that cost, with
+// nothing on screen saying so:
+//
+//   * the first load never settled, so `phase` stayed 'loading' and the
+//     skeleton ran forever. "Try again" only exists in the FAILURE states, so
+//     there was no button, no message and no way out of the growth channel's
+//     first impression except reloading the tab.
+//   * an RSVP or a vote never settled, so `busy` was never cleared. Both
+//     writers open with `if (busy) return`, so ONE stalled tap froze every
+//     control on the page behind a button reading "Saving". (The join band is
+//     deliberately not gated on `busy`, so the primary action survived. The
+//     entire guest path did not.)
+//
+// THE CLOCK COVERS THE BODY. fetch() settles when the status line lands; the
+// body is a second wait, and a connection that answers and then dies stalls
+// there instead. Aborting the controller propagates to the body stream, so one
+// deadline covers both. services/api.js and website/LiveDemo.js each had to
+// make this same correction after clearing the timer at the header.
+// ---------------------------------------------------------------------------
+const REQUEST_TIMEOUT_MS = 15000;
+
+// Statuses this file invents so one number can carry both what the server said
+// and what happened instead of the server saying anything. Zero and negative,
+// so they can never collide with an HTTP status.
+const NO_REACH = 0; // the request never got an answer at all
+const TOO_SLOW = -1; // our own clock ran out
+
+async function ask(url, options) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    let res;
+    try {
+      res = await fetch(url, { ...options, signal: controller.signal });
+    } catch (e) {
+      return { status: e && e.name === 'AbortError' ? TOO_SLOW : NO_REACH, body: {} };
+    }
+    let body;
+    try {
+      body = await res.json();
+    } catch (e) {
+      // Two shapes, and they are not the same fact, so they are not told to
+      // the guest as the same thing. An AbortError is the clock landing on the
+      // BODY after a real status line arrived, which means Flock answered and
+      // a write most likely committed. Anything else is a reply that was not
+      // JSON at all, and every endpoint here speaks JSON, so that is a captive
+      // portal or a proxy page answering in the server's place and nothing was
+      // written. Venue wifi with a sign-in page is the common one, and this is
+      // the page people open in venues.
+      return { status: res.status, body: {}, torn: (e && e.name === 'AbortError') ? 'cut' : 'foreign' };
+    }
+    return { status: res.status, body: (body && typeof body === 'object') ? body : {} };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // One place decides what the guest is told when a write fails, so a raw
 // "TypeError: Failed to fetch" can never reach the screen.
-const failureText = (status, serverText, fallback, host) => {
-  if (status === 0) return 'That did not go through. Check your connection and try again.';
-  if (status === 429) {
+const failureText = (r, fallback, host) => {
+  const serverText = r.body && r.body.error;
+  if (r.status === NO_REACH) return 'That did not go through. Check your connection and try again.';
+  if (r.status === TOO_SLOW) return 'That took too long to come back. Try it again.';
+  if (r.status === 429) {
     // Two different 429s come out of routes/guest.js. The per-flock cap is
     // permanent for this link, so telling someone to wait would be a lie.
     if (serverText && /too many guest rsvps/i.test(serverText)) {
@@ -163,7 +241,16 @@ const failureText = (status, serverText, fallback, host) => {
     }
     return serverText || 'Too many tries from this network. Give it a few minutes.';
   }
-  if (status >= 500) return 'Flock is having a problem on our end. Try that again in a second.';
+  if (r.status >= 500) return 'Flock is having a problem on our end. Try that again in a second.';
+  // The torn cases sit BELOW the statuses, not above them. A refusal's status
+  // line is authoritative whatever shape its body arrived in, and Railway's
+  // gateway answers a 502 with an HTML page: read torn-first, that honest
+  // upstream failure would have been reported to the guest as a captive
+  // portal, which is a different thing to go and do something about.
+  if (r.torn === 'foreign') {
+    return 'This network answered instead of Flock. If this wifi has a sign-in page, open it, or switch to cellular data.';
+  }
+  if (r.torn === 'cut') return 'The reply did not arrive in one piece. Reload the page to see where you stand.';
   return serverText || fallback;
 };
 
@@ -248,7 +335,7 @@ export default function GuestInvite() {
   const token = safeDecode(rawToken.split('/')[0].split('?')[0]).trim();
   const storageKey = `flock_guest_${token}`;
 
-  // loading | ready | gone | badlink | error | slow
+  // loading | ready | gone | badlink | error | slow | stalled | blocked
   const [phase, setPhase] = useState('loading');
   const [data, setData] = useState(null);
   const [name, setName] = useState('');
@@ -272,25 +359,36 @@ export default function GuestInvite() {
   const load = useCallback(async (opts = {}) => {
     if (opts.showLoading) setPhase('loading');
     const fail = (next) => { if (!opts.quiet) setPhase(next); };
-    let res;
-    try {
-      res = await fetch(`${API}/api/guest/${encodeURIComponent(token)}`);
-    } catch {
-      fail('error');
-      return;
-    }
-    if (res.status === 404) { fail('gone'); return; }
-    if (res.status === 400) { fail('badlink'); return; }
-    if (res.status === 429) { fail('slow'); return; }
-    if (!res.ok) { fail('error'); return; }
-    try {
-      const body = await res.json();
-      if (!body || !body.flock) throw new Error('shape');
-      setData(body);
-      setPhase('ready');
-    } catch {
-      fail('error');
-    }
+    const url = `${API}/api/guest/${encodeURIComponent(token)}`;
+
+    let r = await ask(url);
+    // ONE RETRY, AND ONLY FOR OUR OWN CLOCK. Measured against production from a
+    // cold service on 2026-08-26, the first request after the backend has been
+    // idle takes about 23 seconds; the numbers are written out in
+    // website/LiveDemo.js, which had the same 15-second clock and the same
+    // problem. This is the FIRST request a stranger's phone ever makes to
+    // Flock, so it is the one most likely to land on a cold container, and
+    // nobody who has never heard of the product taps "Try again" to find that
+    // out. Warming up is a one-shot condition that fixes itself. Narrow on
+    // purpose: a read, and only when the timer fired. A 429, a 404 and a dead
+    // connection are all worse for being asked twice, and neither write below
+    // is retried at all.
+    if (r.status === TOO_SLOW) r = await ask(url);
+
+    if (r.status === 404) { fail('gone'); return; }
+    if (r.status === 400) { fail('badlink'); return; }
+    if (r.status === 429) { fail('slow'); return; }
+    if (r.status === TOO_SLOW) { fail('stalled'); return; }
+    // NO_REACH is 0, so a request that never got an answer lands here too.
+    if (r.status < 200 || r.status >= 300) { fail('error'); return; }
+    // Only a SUCCESS whose body did not arrive as JSON is one of these, for
+    // the reason failureText spells out: a gateway's HTML error page carries a
+    // 5xx status line and is not this network doing anything.
+    if (r.torn === 'cut') { fail('stalled'); return; }
+    if (r.torn === 'foreign') { fail('blocked'); return; }
+    if (!r.body.flock) { fail('error'); return; }
+    setData(r.body);
+    setPhase('ready');
   }, [token]);
 
   useEffect(() => {
@@ -452,36 +550,32 @@ export default function GuestInvite() {
     setPendingRsvp(status); // optimistic: the choice reads as made immediately
     hush('rsvp');
 
-    let res;
-    let body = {};
-    try {
-      res = await fetch(`${API}/api/guest/${encodeURIComponent(token)}/rsvp`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: typed,
-          status,
-          guestToken: (guest && guest.guestToken) || undefined,
-        }),
-      });
-      body = await res.json().catch(() => ({}));
-    } catch {
-      setPendingRsvp(null);
-      setBusy(null);
-      complain('rsvp', failureText(0));
-      return;
-    }
+    // Never retried, whatever went wrong. Re-POSTing an RSVP through a flaky
+    // connection puts the same person on the roster twice and spends one of
+    // the three guest identities this network is allowed to mint on this flock
+    // in an hour (NEW_GUESTS_PER_IP_PER_FLOCK in routes/guest.js), which on a
+    // shared wifi is somebody else's answer.
+    const r = await ask(`${API}/api/guest/${encodeURIComponent(token)}/rsvp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: typed,
+        status,
+        guestToken: (guest && guest.guestToken) || undefined,
+      }),
+    });
+    const body = r.body;
 
     setBusy(null);
 
-    if (res.status === 404) {
+    if (r.status === 404) {
       // The host revoked the link while this page was open. Say so plainly
       // rather than leaving a button that will never work.
       setPendingRsvp(null);
       setPhase('gone');
       return;
     }
-    if (res.status === 403) {
+    if (r.status === 403) {
       // Either the RSVP behind this token was removed, or the name itself was
       // removed from this flock. Both leave them stuck holding a dead token.
       setPendingRsvp(null);
@@ -489,9 +583,35 @@ export default function GuestInvite() {
       complain('rsvp', body.error || 'That did not go through. Try a different name.');
       return;
     }
-    if (!res.ok) {
+    if (r.status === 409) {
+      // The plan was called off or finished while this page sat open. The page
+      // is still showing the flock it loaded, so every control under this one
+      // is now offering something the server will refuse the same way. Saying
+      // it in one line beside the button and leaving the rest of the page
+      // arguing with the server would be the page not reading its own data, so
+      // it takes the current state, which is what flips the whole thing into
+      // its closed shape: the notice, the past tense, and no RSVP or vote
+      // controls at all. The refetch is quiet, so a flaky one leaves the page
+      // as it is rather than replacing a plan with an error.
       setPendingRsvp(null);
-      complain('rsvp', failureText(res.status, body.error, 'Your answer did not save. Try again.', host));
+      complain('rsvp', body.error || 'This plan is not taking answers anymore.');
+      load({ quiet: true });
+      return;
+    }
+    // NO_REACH and TOO_SLOW are 0 and -1, so this one bound covers every real
+    // refusal and both of the answers that were never an answer.
+    if (r.status < 200 || r.status >= 300) {
+      setPendingRsvp(null);
+      complain('rsvp', failureText(r, 'Your answer did not save. Try again.', host));
+      return;
+    }
+    if (r.torn) {
+      // The status line said 2xx and the reply did not survive the trip, so
+      // there is no guest token to store and no way to tell from here whether
+      // the row landed. Both halves of failureText's answer are honest about
+      // that, and neither invites the double-post a bare "try again" would.
+      setPendingRsvp(null);
+      complain('rsvp', failureText(r, 'Your answer did not save. Try again.', host));
       return;
     }
 
@@ -522,37 +642,41 @@ export default function GuestInvite() {
     setBusy({ kind: 'vote', key: venueName });
     hush('vote');
 
-    let res;
-    let body = {};
-    try {
-      res = await fetch(`${API}/api/guest/${encodeURIComponent(token)}/vote`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ guestToken: guest.guestToken, venueName }),
-      });
-      body = await res.json().catch(() => ({}));
-    } catch {
-      setBusy(null);
-      complain('vote', failureText(0));
-      return;
-    }
+    const r = await ask(`${API}/api/guest/${encodeURIComponent(token)}/vote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ guestToken: guest.guestToken, venueName }),
+    });
+    const body = r.body;
 
     setBusy(null);
 
-    if (res.status === 404) { setPhase('gone'); return; }
-    if (res.status === 403) {
+    if (r.status === 404) { setPhase('gone'); return; }
+    if (r.status === 403) {
       startOver();
       complain('rsvp', 'Your RSVP is not on this plan anymore. Answer again, then vote.');
       return;
     }
-    if (res.status === 400) {
+    if (r.status === 409) {
+      // Called off or finished while the page sat open. Same reasoning as the
+      // RSVP route above: take the current state rather than leave the rest of
+      // the page offering controls the server is now refusing.
+      complain('vote', body.error || 'This plan is not taking votes anymore.');
+      load({ quiet: true });
+      return;
+    }
+    if (r.status === 400) {
       // The group dropped that venue between the page load and the tap.
       complain('vote', 'That place is not on the list anymore. Getting the current options.');
       load({ quiet: true });
       return;
     }
-    if (!res.ok) {
-      complain('vote', failureText(res.status, body.error, 'Your vote did not save. Try again.', host));
+    if (r.status < 200 || r.status >= 300 || r.torn) {
+      // A torn vote is grouped with the refusals rather than given the RSVP's
+      // careful wording, because a repeat vote is not a duplicate: the route
+      // is a delete-then-insert under a per-guest lock and re-sending the same
+      // venue is a no-op there. Nothing is at risk in trying it again.
+      complain('vote', failureText(r, 'Your vote did not save. Try again.', host));
       return;
     }
 
@@ -604,6 +728,23 @@ export default function GuestInvite() {
         title: 'Too many tries from here',
         lead: 'Your network has asked for this page a lot in a short time.',
         help: 'Wait a minute and load it again. Nothing is wrong with the link.',
+        retry: true,
+      },
+      // Two answers to "the connection is up and Flock still did not answer",
+      // kept apart because the thing to do about them is different. Before the
+      // request clock existed neither of these had a screen, and neither had a
+      // failure either: the page simply held its skeleton until somebody gave
+      // up on it.
+      stalled: {
+        title: 'That took too long',
+        lead: 'The request went out and nothing came back in time. In a crowded room that is usually the network rather than the link.',
+        help: 'Try it again. It normally lands on the second go.',
+        retry: true,
+      },
+      blocked: {
+        title: 'This network answered instead of Flock',
+        lead: 'Something on this connection replied instead. Wifi that makes you sign in on a web page does exactly this.',
+        help: 'Open the sign-in page for this wifi, or switch to cellular data, then try again.',
         retry: true,
       },
       error: {
