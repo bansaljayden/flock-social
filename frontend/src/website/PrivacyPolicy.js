@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'August 21, 2026';
+const EFFECTIVE_DATE = 'August 25, 2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // THE OPERATOR NAME IS NOT VERIFIED FROM ANYTHING IN THIS REPO.
@@ -256,8 +256,8 @@ export default function PrivacyPolicy() {
               <h3>You provide directly</h3>
               <ul>
                 <li><strong>Account info:</strong> email, password (stored as a one-way hash, we never see your password), display name, optional avatar, optional short bio. We send a link to your email at sign-up to confirm it's really yours. Your friend code is worked out from your account number when you ask for it, so there is no separate code stored anywhere.</li>
-                <li><strong>Phone number (optional):</strong> sign-up never asks for one. You can add a phone number later from your profile so friends who already have your number can find you. Adding one requires confirming your password or a recent sign-in.</li>
-                <li><strong>Contacts you choose to match (optional):</strong> if you use "Add friends" from your phone contacts, the numbers you pick are sent to our server once to check for existing Flock accounts. We run the lookup and don't store those numbers.</li>
+                <li><strong>Phone number (optional):</strong> sign-up never asks for one. You can add a phone number later from your profile. It is not used to find you unless you turn on "Let friends find me by my phone number" in Settings, which is off until you turn it on. Adding a number requires confirming your password or a recent sign-in, and turning discovery off erases the code we match against.</li>
+                <li><strong>Contacts you choose to match (optional):</strong> if you use "Add friends" from your phone contacts, only phone numbers are sent, never names or anything else on a contact card. We turn each one into a one-way keyed code and compare it with the codes of people who chose to be findable by phone. We run the lookup and don't store those numbers, and a number belonging to someone who is not on Flock leaves nothing behind.</li>
                 <li><strong>Date of birth:</strong> collected at sign-up so we can confirm you're 13 or older. The check runs on our server, which recalculates your age from the date rather than trusting what the app says.</li>
                 <li><strong>Your acceptance of the terms:</strong> we store the moment you agreed to the Terms of Service, so both of us know what you agreed to and when.</li>
                 <li><strong>Interests:</strong> the tags you pick on your profile, such as live music or trivia. They are kept on your device and synced to your account so a second device agrees with the first.</li>
@@ -769,6 +769,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Do-not-mail entries:</strong> kept for as long as the address should not be mailed. Removing it is what would let mail resume, so it has no expiry.</li>
                 <li><strong>Reports and moderation records:</strong> kept after an account is deleted so our moderation history stays intact, but with the deleted account unlinked from them.</li>
                 <li><strong>Banned accounts:</strong> if an account is banned and its owner then deletes it, we keep a one-way hashed code of its email, phone number, and Apple or Google sign-in ID for 12 months. This stops a banned person from signing straight back up. The code can't be turned back into the original email or number, contains no name or content, and expires on its own after 12 months. Nothing like this is kept for accounts that weren't banned.</li>
+                <li><strong>A phone matching code,</strong> only while you have "Let friends find me by my phone number" switched on. It is a one-way keyed code of your number, it cannot be turned back into the number, and it is deleted the moment you switch discovery off or delete your account.</li>
                 <li><strong>Plan statistics:</strong> when a flock ends we keep one row per plan describing how it went: group size, whether a budget was used, the group's ceiling, how many people submitted, whether it was confirmed, how long that took, and where it stalled. It carries no names, no messages, and no individual budget amounts, and once the plan is deleted it is not linked to anyone. We keep these to understand where planning breaks down.</li>
                 <li><strong>Venue occupancy readings by owners:</strong> kept indefinitely, including retracted and expired ones, because each is a labelled observation the crowd model learns from. They are deleted if the venue account is deleted.</li>
                 <li><strong>Venue digest send records:</strong> 90 days, then deleted.</li>
@@ -822,7 +823,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Location:</strong> Flock asks before it reads your location and never reads it in the background. You can turn the permission off for Flock in your device settings at any time. The map then opens on a default area and venue search asks you where to look.</li>
                 <li><strong>Live location sharing:</strong> stop at any time from within the flock or the conversation you started it in.</li>
                 <li><strong>Push notifications:</strong> Flock asks before it sends any. To stop them, turn notifications off for Flock in your device settings. Signing out also deletes that device's push token from our servers.</li>
-                <li><strong>Photos and contacts:</strong> both are asked for at the moment you use them, and both can be withdrawn in your device settings. Phone numbers you matched were never stored.</li>
+                <li><strong>Photos and contacts:</strong> both are asked for at the moment you use them, and both can be withdrawn in your device settings. Phone numbers you matched were never stored. Turning off "Let friends find me by my phone number" erases the code we matched you against.</li>
                 <li><strong>Email:</strong> we don't send marketing email. Optional email, which today means the waitlist confirmation and the Monday venue digest, carries an unsubscribe link in every message and needs no sign-in. Transactional email cannot be turned off while your account is active.</li>
                 <li><strong>Blocking and reporting:</strong> you can block anyone and report any message, profile, review or guest from inside the app. Our <a href="/guidelines">Community Guidelines</a> say where every one of those controls is.</li>
                 <li><strong>Complaints:</strong> if you think we have handled your information badly, tell us first at {mail}. If you are in the EEA or the UK you can also complain to your national data protection authority.</li>
