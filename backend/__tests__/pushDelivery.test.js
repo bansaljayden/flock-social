@@ -226,12 +226,76 @@ test('push that cannot be delivered does not query the database', async () => {
   assert.strictEqual(sends.length, 0);
 });
 
-test('an online user is not pushed, and is not looked up either', async () => {
+test('an online user whose every device is attended is not pushed', async () => {
   reset();
-  const connected = { sockets: { adapter: { rooms: new Map([['user:1', new Set(['s1'])]]) } } };
+  // The one device this account has registered is the one holding the socket,
+  // so the notification is already on the screen the person is looking at.
+  const connected = {
+    sockets: {
+      adapter: { rooms: new Map([['user:1', new Set(['s1'])]]) },
+      sockets: new Map([['s1', { handshake: { auth: { pushToken: 'phone-token-aaaa' } } }]]),
+    },
+  };
+  on(/SELECT token FROM device_tokens/i, () => ({ rows: [{ token: 'phone-token-aaaa' }] }));
+  on(/INSERT INTO push_sends/i, () => ({ rows: [], rowCount: 1 }));
   const res = await pushHelper.pushIfOffline(connected, 1, 'T', 'B', { type: 'flock_message', flockId: 7 });
   assert.strictEqual(res.reason, 'online');
-  assert.strictEqual(log.length, 0);
+  assert.strictEqual(sends.length, 0);
+  // No visibility check and no provider call. The device lookup is the one
+  // query this path now costs, and it is the entire fix: without it a socket
+  // spoke for the whole account.
+  assert.ok(!log.some((l) => /FROM users u/i.test(l.sql)), 'a suppressed push must not spend a visibility check');
+});
+
+// ---------------------------------------------------------------------------
+// THE LAPTOP TAB. This is the bug the rule above replaces, stated as a test.
+//
+// Before 2026-08-25 any socket in `user:{id}` suppressed every push on the
+// account. A tab left open on a laptop therefore killed notifications on the
+// owner's phone for as long as the tab existed, with no symptom: the app is
+// open, the messages are there when you look, the phone is simply silent.
+// ---------------------------------------------------------------------------
+test('a laptop tab left open does not silence the phone in your pocket', async () => {
+  reset();
+  const connected = {
+    sockets: {
+      adapter: { rooms: new Map([['user:1', new Set(['laptop'])]]) },
+      sockets: new Map([['laptop', { handshake: { auth: { pushToken: 'laptop-token-bbbb' } } }]]),
+    },
+  };
+  on(/SELECT token FROM device_tokens/i, () => ({
+    rows: [{ token: 'laptop-token-bbbb' }, { token: 'phone-token-aaaa' }],
+  }));
+  on(/FROM user_blocks/i, () => ({ rows: [] }));
+  on(/FROM users u/i, () => ({ rows: [{ is_banned: false, can_see: true }] }));
+  on(/SELECT timezone FROM device_tokens/i, () => ({ rows: [] }));
+  on(/INSERT INTO push_sends/i, () => ({ rows: [], rowCount: 1 }));
+  on(/UPDATE device_tokens SET updated_at/i, () => ({ rows: [], rowCount: 2 }));
+
+  const res = await pushHelper.pushIfOffline(connected, 1, 'Ava', 'see you at 9', {
+    type: 'flock_message', flockId: 7,
+  });
+  assert.strictEqual(res.sent, 1, 'the unattended phone must still be told');
+});
+
+test('a socket that names no device silences nothing', async () => {
+  reset();
+  // An older client build, or a browser that refused notification permission.
+  // It cannot be lined up with a device_tokens row, so it speaks for no device.
+  const connected = {
+    sockets: {
+      adapter: { rooms: new Map([['user:1', new Set(['anon'])]]) },
+      sockets: new Map([['anon', { handshake: { auth: {} } }]]),
+    },
+  };
+  on(/SELECT token FROM device_tokens/i, () => ({ rows: [{ token: 'phone-token-aaaa' }] }));
+  on(/FROM user_blocks/i, () => ({ rows: [] }));
+  on(/FROM users u/i, () => ({ rows: [{ is_banned: false, can_see: true }] }));
+  on(/SELECT timezone FROM device_tokens/i, () => ({ rows: [] }));
+  on(/INSERT INTO push_sends/i, () => ({ rows: [], rowCount: 1 }));
+  on(/UPDATE device_tokens SET updated_at/i, () => ({ rows: [], rowCount: 1 }));
+  const res = await pushHelper.pushIfOffline(connected, 1, 'T', 'B', { type: 'flock_message', flockId: 7 });
+  assert.strictEqual(res.sent, 1);
 });
 
 // ---------------------------------------------------------------------------
@@ -296,8 +360,14 @@ test('a push with no flock still confirms the recipient is a real, allowed accou
     type: 'moderation_report', reportId: '5',
   });
   assert.strictEqual(res.sent, 1);
-  assert.strictEqual(log.length, 1);
-  assert.deepStrictEqual(log[0].params, [1, null]);
+  // ONE question about the recipient: the account lookup, with no flock id and
+  // no actor bound to it. Everything else on this path is bookkeeping, and none
+  // of it can change the verdict: the badge count, the delivery ledger and the
+  // token liveness stamp.
+  const roster = log.filter((l) => /FROM users u/i.test(l.sql));
+  assert.strictEqual(roster.length, 1);
+  assert.deepStrictEqual(roster[0].params, [1, null]);
+  assert.ok(!log.some((l) => /FROM flocks f/i.test(l.sql) && !/FROM users u/i.test(l.sql)));
 });
 
 test('a banned account is not pulled back into an app that rejects it', async () => {
@@ -486,7 +556,31 @@ test('device token registration', async (t) => {
     const res = await call('/api/notifications/register', 'POST', { token: 'a'.repeat(160), deviceType: 'ios' });
     assert.strictEqual(res.status, 200);
     assert.match(upsert.sql, /ON CONFLICT \(token\) DO UPDATE/i);
-    assert.deepStrictEqual(upsert.params, [1, 'a'.repeat(160), 'ios']);
+    assert.deepStrictEqual(upsert.params, [1, 'a'.repeat(160), 'ios', null]);
+  });
+
+  await t.test('a device registers the clock quiet hours are decided on', async () => {
+    reset();
+    let upsert = null;
+    on(/INSERT INTO device_tokens/i, (params, sql) => { upsert = { params, sql }; return { rows: [] }; });
+    const res = await call('/api/notifications/register', 'POST', {
+      token: 'b'.repeat(160), deviceType: 'ios', timezone: 'America/New_York',
+    });
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(upsert.params[3], 'America/New_York');
+    // Widened, never cleared. An older client build on the same device posts no
+    // timezone, and wiping the stored one would switch quiet hours off for
+    // anybody who signs in from two clients.
+    assert.match(upsert.sql, /timezone = COALESCE\(EXCLUDED\.timezone, device_tokens\.timezone\)/);
+  });
+
+  await t.test('a nonsense timezone is refused rather than stored', async () => {
+    reset();
+    on(/INSERT INTO device_tokens/i, () => { throw new Error('should not reach the database'); });
+    const res = await call('/api/notifications/register', 'POST', {
+      token: 'c'.repeat(160), timezone: 'Nowhere; DROP TABLE device_tokens',
+    });
+    assert.strictEqual(res.status, 400);
   });
 
   await t.test('an unbounded token is not stored', async () => {

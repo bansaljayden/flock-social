@@ -14,6 +14,14 @@ import { getMessaging, getToken, onMessage, deleteToken } from 'firebase/messagi
 // a logged-out state for a boolean to notice.
 import { registerDeviceToken, unregisterDeviceToken, unregisterAllTokens, getToken as getAuthToken } from './api';
 import { startPushNavigation, handleNotificationData } from './pushNavigation';
+// The socket needs to know which device it is speaking for, so the backend can
+// suppress a push on THIS device without silencing the account. The token is
+// pushed to it from here rather than read from localStorage over there, for the
+// same reason the auth token is read through api.js above: this module owns
+// PUSH_TOKEN_KEY, and a second reader of a key nobody renames in step is how a
+// rename silently unsubscribes everybody. services/socket.js carries the whole
+// explanation of what the server does with it.
+import { setDevicePushToken } from './socket';
 
 const firebaseConfig = {
   apiKey: process.env.REACT_APP_FIREBASE_API_KEY,
@@ -40,6 +48,10 @@ function rememberPushToken(token) {
     if (token) localStorage.setItem(PUSH_TOKEN_KEY, token);
     else localStorage.removeItem(PUSH_TOKEN_KEY);
   } catch (err) { /* private mode */ }
+  // Every path that changes this device's identity goes through here:
+  // first registration, a rotated token from the tokenReceived listener, and
+  // logout clearing it. So this is the one place the socket has to be told.
+  try { setDevicePushToken(token); } catch (err) { /* socket not up yet */ }
 }
 
 function knownPushToken() {
@@ -109,6 +121,34 @@ async function registerServiceWorker() {
 const isNativeApp = () =>
   typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true;
 
+// ---------------------------------------------------------------------------
+// This device's clock, as an IANA zone name.
+//
+// Quiet hours are decided on the RECIPIENT's local time, and the server has no
+// other way to know it: Railway runs on UTC and there is no timezone column on
+// users. Without this, "do not ring at 3am" would be evaluated against UTC,
+// which for a US east coast user means muting 22:00 to 04:00 local. That is
+// the entire night out. It would silence the exact hours this app exists for
+// in order to protect the ones it does not.
+//
+// The device is the right place to ask, because the device is the thing with a
+// clock and the thing the notification arrives on. Registration happens on
+// every sign-in, so somebody who travels re-registers on arrival.
+//
+// Returns undefined rather than a guess when the runtime cannot answer, and
+// services/pushHelper.js reads an unknown zone as "deliver now": holding
+// somebody's messages for six hours on a wrong guess is worse than one badly
+// timed notification.
+// ---------------------------------------------------------------------------
+function deviceTimezone() {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return typeof zone === 'string' && zone.length > 0 && zone.length <= 64 ? zone : undefined;
+  } catch (err) {
+    return undefined;
+  }
+}
+
 // Native (Capacitor iOS/Android) path: @capacitor-firebase/messaging bridges
 // APNs -> FCM, so the token it returns works with the existing firebase-admin
 // send path on the backend. Web Notification/service-worker APIs don't exist
@@ -127,7 +167,7 @@ async function requestNativePermission() {
     const { token } = await FirebaseMessaging.getToken();
     if (!token) return null;
     const platform = window.Capacitor.getPlatform() === 'android' ? 'android' : 'ios';
-    await registerDeviceToken(token, platform);
+    await registerDeviceToken(token, platform, deviceTimezone());
     rememberPushToken(token);
     markSessionRegistered();
     // Firebase rotates tokens while the app stays installed; without this
@@ -138,7 +178,7 @@ async function requestNativePermission() {
       FirebaseMessaging.addListener('tokenReceived', (event) => {
         if (event?.token) {
           rememberPushToken(event.token);
-          registerDeviceToken(event.token, platform).catch(() => {});
+          registerDeviceToken(event.token, platform, deviceTimezone()).catch(() => {});
         }
       }).catch(() => { tokenRotationSubscribed = false; });
     }
@@ -184,7 +224,7 @@ export async function requestNotificationPermission() {
 
     const token = await getToken(m, tokenOptions);
     if (token) {
-      await registerDeviceToken(token, 'web');
+      await registerDeviceToken(token, 'web', deviceTimezone());
       rememberPushToken(token);
       markSessionRegistered();
       localStorage.removeItem('flock_notif_denied');
@@ -395,6 +435,11 @@ export { onPushNavigate, peekPendingNavigation } from './pushNavigation';
 // Both are safe to run at import time and both are no-ops outside a browser.
 startPushNavigation();
 startPushSessionWatcher();
+// Seed the socket from storage on a cold start. Registration only happens once
+// per session, so without this a reload would leave the connection unable to
+// name the device it belongs to until the next sign-in, and the backend would
+// fall back to suppressing nothing for it.
+try { setDevicePushToken(knownPushToken()); } catch (err) { /* private mode */ }
 
 // Foreground pushes on native carry the same data payload; nothing consumes it
 // until the user taps, but keeping the shape in one place means the tap

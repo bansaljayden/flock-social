@@ -7,7 +7,13 @@
 const pool = require('../config/database');
 const { calculateCrowdScore, generateHourlyForecast, venueLocalNow, weekdayOffset } = require('./crowdEngine');
 const { getWeather } = require('./weatherService');
-const { pushAlways, isPushConfigured, wantsCrowdAlerts } = require('./pushHelper');
+const {
+  pushAlways,
+  isPushConfigured,
+  wantsCrowdAlerts,
+  sweepPushOutbox,
+  sweepPushMaintenance,
+} = require('./pushHelper');
 
 const ALERT_TYPE = 'crowd';
 
@@ -207,6 +213,18 @@ async function checkCrowdAlerts() {
     await pool
       .query("DELETE FROM crowd_alert_sends WHERE sent_at < NOW() - INTERVAL '7 days'")
       .catch((e) => console.warn('[CrowdAlerts] marker sweep failed:', e.message));
+
+    // The push outbox rides this schedule rather than adding a second one to
+    // server.js. Two things live in it: a notification whose provider call
+    // failed transiently, and one held because it was the middle of the night
+    // where the recipient is (services/pushHelper.js explains both). The
+    // outbox also runs its own one-minute timer while it has due work; this is
+    // the floor that guarantees a row is never stranded by that timer having
+    // stood down, and it is why nothing had to be added to the boot path.
+    await sweepPushOutbox().catch((e) => console.warn('[CrowdAlerts] push outbox sweep failed:', e.message));
+    // Rate-limited to once an hour inside pushHelper. Ages out device tokens
+    // FCM has already expired, and trims the delivery ledger to 30 days.
+    await sweepPushMaintenance().catch((e) => console.warn('[CrowdAlerts] push maintenance failed:', e.message));
 
     // Find confirmed flocks with event_time in the next 3 hours that have a venue set
     const { rows: flocks } = await pool.query(`
