@@ -221,9 +221,12 @@ export function clearLocalSession() {
  * Flock's users are teenagers on phone data: subway platforms, venue
  * basements, the walk between wifi and cellular. Three rules hold here:
  *
- *  1. Nothing hangs forever. Every request runs under an abort timeout, so a
- *     connection that silently dies settles in seconds instead of whenever
- *     the OS gives up. Callers' finally blocks and spinners always run.
+ *  1. Nothing hangs forever. Every request runs under an abort deadline that
+ *     covers the BODY as well as the headers, so a connection that silently
+ *     dies settles in seconds instead of whenever the OS gives up. Callers'
+ *     finally blocks and spinners always run. The deadline is rearmed on
+ *     every chunk received, so a slow download is never punished for being
+ *     slow; what ends a request is silence. See fetchWithTimeout.
  *  2. Reads retry, writes never do. GETs get two automatic retries with
  *     backoff on network failures and 502/503/504, because a blip while
  *     loading a feed should be invisible. Anything non-GET is sent exactly
@@ -300,11 +303,96 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Distinguishes "the body said null" from "the body could not be read at
+// all". On an error status the difference is cosmetic (the status code is the
+// signal); on a 2xx it is the difference between returning data and returning
+// a lie, so request() checks for this sentinel before handing data back.
+const PARSE_FAILED = Symbol('flock-parse-failed');
+
+/**
+ * THE DEADLINE HAS TO OUTLIVE THE HEADERS.
+ *
+ * fetch() settles the moment the status line and headers arrive. The body is
+ * still on the wire at that point, and reading it is a second, separate wait.
+ * This helper used to clear its abort timer in a `finally` around the fetch
+ * alone, so every byte after the headers was downloaded with no deadline and
+ * no live signal. A connection that answered and then stalled, whether by a
+ * cellular handoff mid-download, a venue router that opens the socket and
+ * drops it, or a proxy that dies after flushing headers, left
+ * `await request(...)` pending for as long as the OS kept the socket open.
+ * That is minutes of spinner, the caller's `finally` never runs, and it is
+ * precisely the hang rule 1 above says cannot happen.
+ *
+ * So fetch and body read now share one deadline, and the deadline is REARMED
+ * on progress rather than being a flat cap on the whole exchange. The
+ * difference matters because a flock chat's history carries photos as data:
+ * URLs, so a legitimate reply can be megabytes and a legitimate download on
+ * bad signal can take a lot longer than fifteen seconds while working
+ * perfectly. What we refuse is silence: headers must arrive within the
+ * window, and after that no gap between two chunks may exceed it. A download
+ * that is merely slow keeps its leash; one that has stopped moving settles.
+ *
+ * Where the platform cannot report progress (Response.body is absent: jsdom,
+ * and Safari before 14.5), the body still gets its own fresh window rather
+ * than the old infinity.
+ */
+async function readBodyText(res, onProgress) {
+  const stream = res.body;
+  if (!stream || typeof stream.getReader !== 'function' || typeof TextDecoder === 'undefined') {
+    return res.text();
+  }
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value || !value.length) continue;
+    onProgress();
+    // stream: true so a multi-byte character split across two chunks is not
+    // decoded into a replacement character.
+    text += decoder.decode(value, { stream: true });
+  }
+  return text + decoder.decode();
+}
+
+async function parseBody(res, onProgress) {
+  if (res.status === 204) return null;
+  const contentType = res.headers.get('content-type') || '';
+  let text;
+  try {
+    text = await readBodyText(res, onProgress);
+  } catch (e) {
+    // An abort is the deadline firing and has to reach the caller as a
+    // timeout. Anything else is a body that died mid-download, which is the
+    // PARSE_FAILED case and must not surface as a raw TypeError.
+    if (e && e.name === 'AbortError') throw e;
+    return PARSE_FAILED;
+  }
+  if (!contentType.includes('application/json')) return text;
+  // A body that dies mid-download, or a proxy error page mislabeled as JSON,
+  // must not surface as a SyntaxError.
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    return PARSE_FAILED;
+  }
+}
+
 async function fetchWithTimeout(url, options, timeoutMs) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let timer = null;
+  const arm = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => controller.abort(), timeoutMs);
+  };
+  arm();
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    const res = await fetch(url, { ...options, signal: controller.signal });
+    arm(); // the headers landed; the body gets its own window
+    const data = await parseBody(res, arm);
+    return { res, data };
   } catch (e) {
     // Both failure modes become errors with copy a person can act on. The
     // raw TypeError ("Failed to fetch") used to surface verbatim in every
@@ -312,25 +400,8 @@ async function fetchWithTimeout(url, options, timeoutMs) {
     if (e && e.name === 'AbortError') throw timeoutError();
     throw connectionError();
   } finally {
-    clearTimeout(timer);
+    if (timer) clearTimeout(timer);
   }
-}
-
-// Distinguishes "the body said null" from "the body could not be read at
-// all". On an error status the difference is cosmetic (the status code is the
-// signal); on a 2xx it is the difference between returning data and returning
-// a lie, so request() checks for this sentinel before handing data back.
-const PARSE_FAILED = Symbol('flock-parse-failed');
-
-async function parseBody(res) {
-  if (res.status === 204) return null;
-  const contentType = res.headers.get('content-type') || '';
-  if (contentType.includes('application/json')) {
-    // A body that dies mid-download, or a proxy error page mislabeled as
-    // JSON, must not surface as a SyntaxError.
-    return res.json().catch(() => PARSE_FAILED);
-  }
-  return res.text().catch(() => PARSE_FAILED);
 }
 
 // Guard a 2xx before it is returned as data. Every endpoint is JSON, so a
@@ -430,8 +501,12 @@ async function request(endpoint, options = {}) {
     if (isOffline()) throw connectionError();
 
     let res;
+    let data;
     try {
-      res = await fetchWithTimeout(`${BASE_URL}${endpoint}`, { ...fetchOptions, headers }, timeoutMs);
+      // The body is read inside the deadline, not after it. See the note on
+      // fetchWithTimeout: reading it out here is what let a stalled reply hang
+      // forever with the abort timer already cancelled.
+      ({ res, data } = await fetchWithTimeout(`${BASE_URL}${endpoint}`, { ...fetchOptions, headers }, timeoutMs));
     } catch (err) {
       // Timeouts are excluded on purpose: one already cost the full 15s, and
       // a stalled connection is not a blip. Retrying it would stack up to
@@ -450,7 +525,6 @@ async function request(endpoint, options = {}) {
       continue;
     }
 
-    const data = await parseBody(res);
     if (!res.ok) throw buildHttpError(res, data === PARSE_FAILED ? null : data, endpoint, !!token);
 
     const guardErr = badResponseGuard(res, data, method);
@@ -1284,12 +1358,11 @@ export async function uploadProfileImage(file) {
   const token = getToken();
   const formData = new FormData();
   formData.append('image', file);
-  const res = await fetchWithTimeout(`${BASE_URL}/api/users/upload-image`, {
+  const { res, data } = await fetchWithTimeout(`${BASE_URL}/api/users/upload-image`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },
     body: formData,
   }, UPLOAD_TIMEOUT_MS);
-  const data = await parseBody(res);
   if (!res.ok) throw buildHttpError(res, data === PARSE_FAILED ? null : data, '/api/users/upload-image', !!token);
   // Same 200-but-not-JSON guard as request(): venue wifi portals intercept
   // multipart POSTs too, and never retried for the same reason as above.
