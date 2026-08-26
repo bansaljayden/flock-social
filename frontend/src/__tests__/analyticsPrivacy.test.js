@@ -278,15 +278,21 @@ describe('capture-site sweep: what leaves the device is a short, named list', ()
       'flock_rerun',
       'flock_rsvp',          // does an invited person ever answer
       'flock_status_set',    // does a plan reach confirmed, or die in planning
+      'invite_handoff_started', // did the guest who answered go make an account
       'invite_link_created',
       'invite_link_joined',
       'invite_link_opened',  // was the link the product spreads through opened
+      'invite_sent',         // people added to a plan that already existed
       'login',
       'login_failed',        // locked out, or uninterested
       'nfc_tap',
       'nfc_tap_action',
+      'roost_question_asked',      // is the B2B advisor used, and does it answer
+      'screen_viewed',       // the denominator: who ARRIVED where a step happens
       'signup',
       'signup_failed',       // the drop between the form and the account
+      'venue_profile_created',     // does an owner who starts onboarding finish
+      'venue_verification_requested',
       'venue_vote_cast',     // does the mechanic the product is named for run
     ]);
   });
@@ -359,5 +365,71 @@ describe('isLocalAnalyticsOrigin', () => {
     expect(index).toMatch(/const analyticsEnabled = [\s\S]*?isLocalAnalyticsOrigin\(window\.location, !!window\.Capacitor\)/);
     expect(index).toMatch(/REACT_APP_POSTHOG_ALLOW_LOCAL === 'true'/);
     expect(index).toMatch(/if \(analyticsEnabled\) \{\s*\n\s*import\('posthog-js'\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE CHAT EVENTS MUST STAY ON THE TRANSPORT THAT CARRIES THE MESSAGES.
+//
+// api.js's sendMessage and sendDM are the HTTP FALLBACK. App.js emits over the
+// websocket first and only reaches them in the `else` of that emit's own
+// return value, so a capture that lives only inside those two functions counts
+// socket outages and calls the result message volume. That is what shipped,
+// and it is invisible from api.js alone: the file looks fully instrumented.
+//
+// analyticsEvents.test.js proves the two trackers behave. This proves App.js
+// still CALLS them, on the branch that matters, which is the half that a
+// refactor of the send path would quietly drop.
+//
+// Comments are stripped first. This repository has had five separate source
+// scans pass on the paragraph explaining the code instead of the code, one of
+// them written the same minute as the code it was guarding.
+// ---------------------------------------------------------------------------
+describe('App.js reports a message on the socket path, not only on the fallback', () => {
+  const codeOnly = (src) => src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((line) => !/^\s*\/\//.test(line))
+    .join('\n');
+
+  let app;
+  beforeAll(() => {
+    app = codeOnly(readSrc('App.js'));
+  });
+
+  test('the scan is reading the real send paths, so its silence would mean something', () => {
+    // Trap 4: an empty result is indistinguishable from a broken scanner. If
+    // these anchors ever stop matching, the assertions below would pass on
+    // nothing, so the anchors are asserted before anything is concluded from
+    // them. Both are the exact branch that decides the transport.
+    expect(app.match(/if \(sentOverSocket\) \{/g)).toHaveLength(1);
+    expect(app.match(/if \(dmSentOverSocket\) \{/g)).toHaveLength(1);
+    // And the comment stripper did not eat the file.
+    expect(app.length).toBeGreaterThan(400000);
+  });
+
+  test('each socket branch opens with its tracker, exactly once', () => {
+    // Adjacency rather than a slice: a slice between two anchors hands back the
+    // rest of the file the day one anchor moves, and every assertion then
+    // passes on text from somewhere else entirely.
+    expect(app).toMatch(/if \(sentOverSocket\) \{\s*trackFlockMessageSent\(/);
+    expect(app).toMatch(/if \(dmSentOverSocket\) \{\s*trackDmSent\(/);
+
+    // Once each. Two calls on one send is a double count, which is worse than
+    // the undercount this replaced, because it looks plausible.
+    expect(app.match(/trackFlockMessageSent\(/g)).toHaveLength(1);
+    expect(app.match(/trackDmSent\(/g)).toHaveLength(1);
+  });
+
+  test('the guest page reports its own funnel through api.js and never the SDK', () => {
+    const guest = codeOnly(readSrc('website', 'GuestInvite.js'));
+    // The page must not import the REST client at module scope: it is the most
+    // expensive blank screen in the product and api.js may not sit in the queue
+    // ahead of the plan a stranger is waiting for.
+    expect(guest).not.toMatch(/^import .*services\/api/m);
+    expect(guest).toMatch(/import\('\.\.\/services\/api'\)/);
+    for (const call of ['trackGuestRsvp', 'trackGuestVenueVote', 'trackInviteHandoffStarted']) {
+      expect({ call, called: guest.includes(`api.${call}(`) }).toEqual({ call, called: true });
+    }
   });
 });
