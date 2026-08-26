@@ -199,6 +199,54 @@ test('blocks: an ABSENT counterparty is still simply "not blocked"', async () =>
   assert.strictEqual(await blocks.isBlockedBetween('7', 7), false, 'string and number are one user');
 });
 
+// A block is MUTUAL, and the pair check is the one place that has to say so.
+// Nothing asserted it. A mutation pass dropped
+// `OR (blocker_id = $2 AND blocked_id = $1)` from isBlockedBetween and the whole
+// suite stayed green, because every mock of this query in the repo dispatches on
+// the PREFIX `FROM user_blocks WHERE (blocker_id = $1 AND blocked_id = $2)`,
+// which a one-directional query still contains. What that would ship is A
+// blocking B, A stops reaching B, and B goes on reaching A through DMs, invites
+// and every other caller of this function. That is the failure Apple 1.2 is
+// about, and getInvisibleUserIds is pinned for it while the pair check was not.
+//
+// Asserted as a PROPERTY rather than a spelling, so it survives reformatting,
+// renaming the alias and reordering the terms: swapping the two bind
+// placeholders must leave the set of OR-terms unchanged. A query naming one
+// direction is not symmetric under that swap. A query naming both is, however
+// it is written.
+function orTerms(sql) {
+  const flat = String(sql).replace(/\s+/g, ' ').trim();
+  const at = flat.toUpperCase().indexOf(' WHERE ');
+  assert.ok(at > 0, 'the block probe must have a WHERE clause');
+  return new Set(
+    flat.slice(at + ' WHERE '.length)
+      .replace(/\s*LIMIT\s+\d+\s*$/i, '')
+      .split(/\s+OR\s+/i)
+      .map((t) => t.trim())
+      .filter(Boolean)
+  );
+}
+const swapBinds = (s) => String(s).replace(/\$1|\$2/g, (m) => (m === '$1' ? '$2' : '$1'));
+
+test('blocks: the pair probe is symmetric, so a block bites in both directions', async () => {
+  const asked = [];
+  const db = { query: async (text, params) => { asked.push({ sql: String(text), params }); return { rows: [] }; } };
+
+  assert.strictEqual(await blocks.isBlockedBetween(7, 9, db), false);
+  assert.strictEqual(asked.length, 1);
+  const { sql, params } = asked[0];
+
+  assert.match(sql, /FROM user_blocks/, 'the answer must come from user_blocks');
+  assert.deepStrictEqual(params, [7, 9]);
+
+  const terms = orTerms(sql);
+  assert.ok(terms.size >= 2,
+    'one term cannot name both directions of a mutual block');
+  assert.deepStrictEqual(terms, orTerms(swapBinds(sql)),
+    'the probe must ask the same question with the two ids swapped. As written, one of the two '
+    + 'people can still reach the other after the block');
+});
+
 test('blocks: the cached check refuses an unreadable id rather than caching "allowed"', async () => {
   // The cached variant is the one on live location and typing, where a false
   // "not blocked" is a stream of coordinates to somebody who was just blocked.
