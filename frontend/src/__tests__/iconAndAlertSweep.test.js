@@ -35,7 +35,9 @@ const path = require('path');
 // app source is simply in two files, so both are read, in the order they used
 // to be one.
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatDetail.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatDetail.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'VenueDashboard.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'AddFriends.js'), 'utf8');
 const ICONS = fs.readFileSync(
   path.join(__dirname, '..', 'components', 'ui', 'Icons.js'),
   'utf8'
