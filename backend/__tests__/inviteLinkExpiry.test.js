@@ -318,7 +318,27 @@ test('R2-4: a migration adds expires_at, backfills it, and leaves no permanent r
   // Existing rows are the whole point: a column nobody backfilled leaves every
   // already-leaked link permanent, which is the finding untouched.
   assert.match(sql, /UPDATE flock_invite_links[\s\S]*SET expires_at =/);
-  assert.match(sql, /WHERE (f\.id = il\.flock_id AND )?il\.expires_at IS NULL|expires_at IS NULL/);
+  // The backfill's OWN where clause, isolated to the statement it belongs to.
+  // This was a top-level alternation whose second branch, `expires_at IS NULL`,
+  // is a substring of the tail of its first, so the specific branch was dead
+  // text and the assertion reduced to "the file says expires_at IS NULL
+  // somewhere". The orphan sweep two statements below carries that string, so
+  // deleting the joined backfill's own guard left all eleven tests green and
+  // migrationBootSafety green with them. That guard is what stops a re-run over
+  // a populated database recomputing an expiry a link already has, which is the
+  // "hand every already-leaked link another window" outcome this migration's own
+  // header calls the opposite of the finding.
+  const backfill = /UPDATE flock_invite_links il\b[\s\S]*?;/.exec(sql);
+  assert.ok(backfill, 'the joined backfill statement is gone');
+  assert.match(backfill[0], /WHERE f\.id = il\.flock_id AND il\.expires_at IS NULL/);
+  // And the orphan sweep that follows it, for the same reason: with the old
+  // alternation it was the only statement being read, and with the fix above it
+  // would have been the only one NOT read. Without its guard that UPDATE
+  // overwrites the event_time-based expiry the backfill just computed with a
+  // flat created_at + 14 days for every row.
+  const sweep = /UPDATE flock_invite_links SET[^;]*;/.exec(sql);
+  assert.ok(sweep, 'the orphan sweep is gone');
+  assert.match(sweep[0], /WHERE expires_at IS NULL/);
   // And nothing may be left NULL afterwards, or the enforcement clause has a
   // hole shaped exactly like the rows that predate it.
   assert.match(sql, /ALTER COLUMN expires_at SET NOT NULL/);
