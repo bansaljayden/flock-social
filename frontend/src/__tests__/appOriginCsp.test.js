@@ -300,8 +300,19 @@ describe('invite-preview.js documents the CURRENT write path (I-2)', () => {
   it('still escapes regardless, which is the thing the comment must not talk anyone out of', () => {
     // The comment is documentation; this is the behaviour. esc() must still be
     // applied, and the token still shape-checked, whatever the database does.
+    //
+    // THE UPPER BOUND MOVED, AND THIS ASSERTION IS WHY IT IS WORTH SAYING SO.
+    // It used to pin the literal {8,20}, which pinned a LIVE BUG in place:
+    // newLinkToken mints LINK_TOKEN_LENGTH = 24 characters, so every invite
+    // link created since that widening failed the shape test and previewed in
+    // iMessage as the generic marketing card with no host, no plan and no
+    // time. A pin on an exact literal cannot tell "this is the correct value"
+    // from "this is the current value". So this asserts only the property this
+    // test is actually about, which is that the token is shape-checked and
+    // bounded at all; guestInviteRebuild.test.js owns the RANGE and derives it
+    // from backend/routes/guest.js rather than restating it.
     expect(SRC).toMatch(/function esc\s*\(/);
-    expect(SRC).toMatch(/\[A-Za-z0-9\]\{8,20\}/);
+    expect(SRC).toMatch(/const TOKEN_RE = \/\^\[A-Za-z0-9\]\{\d+,\d+\}\$\//);
   });
 });
 
