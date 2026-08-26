@@ -229,6 +229,65 @@ describe('a slow download is not a failed one', () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
   }, 10000);
 
+  test('a trickle cannot hold a request open for as long as it likes', async () => {
+    // THE OTHER SIDE OF THE REARM. A deadline that every chunk pushes back is
+    // not a bound on anything: a reply that dribbles one byte just inside the
+    // window, forever, is "progress" by that rule. The promise never settles,
+    // the spinner never ends, and readBodyText concatenates every byte of it,
+    // so the tab's memory goes the same way the request did. That is the exact
+    // failure this file exists for, arrived at from the opposite direction.
+    //
+    // So under the idle window there is an absolute ceiling that is never
+    // rearmed, and the request dies on whichever fires first. Virtual time
+    // here: chunks every ten seconds against a fifteen second idle window, so
+    // no gap ever looks like silence and only the ceiling can end this.
+    jest.useFakeTimers();
+    const chunks = new Array(400).fill('x'); // never reaches the end
+    global.fetch.mockImplementation((url, opts) => Promise.resolve(streamingRes({
+      chunks,
+      gapMs: 10000,
+      signal: opts.signal,
+    })));
+    const pending = rejection(request('/api/flocks', { retry: false }));
+    const settle = async () => { for (let i = 0; i < 50; i += 1) await Promise.resolve(); }; // eslint-disable-line no-await-in-loop
+    await settle();
+    // Ten minutes of wire time, all of it "moving".
+    for (let i = 0; i < 60; i += 1) {
+      jest.advanceTimersByTime(10000);
+      await settle(); // eslint-disable-line no-await-in-loop
+    }
+    const err = await pending;
+    jest.useRealTimers();
+    expect(err.isTimeout).toBe(true);
+    expect(err.isNetworkError).toBe(true);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  }, 15000);
+
+  test('an upload that trickles is bounded too, on its own longer leash', async () => {
+    // uploadProfileImage runs outside request(), so the ceiling has to reach it
+    // through the shared helper rather than through the caller. Its idle window
+    // is ninety seconds, which is longer than the ceiling would allow on its
+    // own, and the ceiling is what ends this either way.
+    jest.useFakeTimers();
+    localStorage.setItem('flockToken', 'tok');
+    global.fetch.mockImplementation((url, opts) => Promise.resolve(streamingRes({
+      chunks: new Array(400).fill('y'),
+      gapMs: 60000,
+      signal: opts.signal,
+    })));
+    const file = new File(['x'], 'me.png', { type: 'image/png' });
+    const pending = rejection(uploadProfileImage(file));
+    const settle = async () => { for (let i = 0; i < 50; i += 1) await Promise.resolve(); }; // eslint-disable-line no-await-in-loop
+    await settle();
+    for (let i = 0; i < 20; i += 1) {
+      jest.advanceTimersByTime(60000);
+      await settle(); // eslint-disable-line no-await-in-loop
+    }
+    const err = await pending;
+    jest.useRealTimers();
+    expect(err.isTimeout).toBe(true);
+  }, 15000);
+
   test('a name with an accent split across two chunks decodes whole, not mangled', async () => {
     // The photo case in miniature: multi-byte characters do not respect chunk
     // boundaries, and a non-streaming decode turns them into replacement
