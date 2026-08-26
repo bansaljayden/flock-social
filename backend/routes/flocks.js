@@ -98,7 +98,7 @@ function openRsvpWindow(key, seed) {
     if (oldest === undefined) break;
     closeRsvpWindow(oldest);
   }
-  const win = { ...seed, count: 0, firstName: null, timer: null };
+  const win = { ...seed, count: 0, firstName: null, firstUserId: null, timer: null };
   win.timer = setTimeout(() => { flushRsvpWindow(key).catch(() => {}); }, RSVP_DIGEST_MS);
   // A pending notification must never be the reason a process stays alive.
   if (typeof win.timer.unref === 'function') win.timer.unref();
@@ -112,11 +112,28 @@ async function flushRsvpWindow(key) {
   // Re-armed rather than left closed, so a steady stream of joins stays at one
   // notification a minute instead of alternating batched and immediate.
   openRsvpWindow(String(key), { io: win.io, hostId: win.hostId, flockName: win.flockName });
+  // WHO THIS PUSH NAMES, and why the id has to travel with the name.
+  //
+  // services/pushHelper.js canNotify() only runs its block and ban gate when
+  // the payload names somebody, through senderId, fromUserId or actorId. A
+  // one-person digest prints a joiner's name on the host's lock screen, which
+  // is the same sentence the immediate push one function below prints, and
+  // that one has always carried fromUserId. This one did not, so a host who
+  // had blocked the second person to join still got their name, and so did a
+  // host whose joiner had since been banned or deleted. A notification is not
+  // recallable once it is on a lock screen, which is exactly why the gate
+  // exists.
+  //
+  // A multi-person digest is a count ("8 more people are going") and names
+  // nobody, so it carries no actor and is gated on the flock alone. Adding one
+  // there would be picking an arbitrary member to gate on.
+  const data = { type: 'flock_rsvp', flockId: String(key) };
+  if (win.count === 1 && win.firstUserId) data.fromUserId = String(win.firstUserId);
   try {
     await pushIfOffline(win.io, win.hostId,
       win.count === 1 ? `${win.firstName} is going!` : `${win.count} more people are going`,
       win.flockName,
-      { type: 'flock_rsvp', flockId: String(key) }
+      data
     );
   } catch (err) {
     console.error('RSVP digest push error:', err.message);
@@ -126,14 +143,27 @@ async function flushRsvpWindow(key) {
 // Returns true when the caller should send its own immediate push (this is the
 // first RSVP in the window), false when the joiner has been folded into the
 // digest that is already scheduled.
-function claimRsvpPush({ io, flockId, hostId, flockName, joinerName }) {
+//
+// TWO ROUTES CALL THIS, not one. Accepting an invite (POST /api/flocks/:id/join)
+// and joining through a shared link (POST /api/guest/:token/join) are the same
+// event to the host: somebody is now going. The link path used to push
+// directly, so a group arriving through one shared link was one notification
+// per person, each collapsing the last on the lock screen, which is the exact
+// failure the window above was built to stop. They key on the same flock id, so
+// they share one window rather than each keeping their own.
+function claimRsvpPush({ io, flockId, hostId, flockName, joinerName, joinerId }) {
   const key = String(flockId);
   const open = rsvpWindows.get(key);
   if (open) {
     // Only the first name is kept, because that is all a one-person digest
-    // prints; everything after it is a count.
+    // prints; everything after it is a count. The id is kept with it for the
+    // block gate, and the two are always set together so they can never
+    // describe different people.
     open.count += 1;
-    if (open.firstName == null) open.firstName = joinerName;
+    if (open.firstName == null) {
+      open.firstName = joinerName;
+      open.firstUserId = joinerId == null ? null : joinerId;
+    }
     return false;
   }
   openRsvpWindow(key, { io, hostId, flockName });
@@ -1644,6 +1674,7 @@ router.post('/:id/join', requireVerified, param('id').isInt({ min: 1, max: INT4_
             hostId: flockData.rows[0].creator_id,
             flockName: flockData.rows[0].name,
             joinerName: req.user.name,
+            joinerId: req.user.id,
           });
           if (firstOfWindow) {
             await pushIfOffline(io, flockData.rows[0].creator_id,
@@ -2958,6 +2989,16 @@ router.post('/:id/attendance',
 );
 
 module.exports = router;
+
+// NOT a test seam. routes/guest.js needs the same RSVP window this file keeps,
+// because a link join and an invite acceptance are the same news to the same
+// host and must share one window rather than each opening their own. It is a
+// property on the router for the same reason __testables below is: this module
+// exports an express router, and that is the only place to hang anything.
+// guest.js requires it lazily at its call site, mirroring the lazy
+// `require('./guest')` this file already does for newLinkToken, so neither
+// module has to be loaded before the other.
+module.exports.claimRsvpPush = claimRsvpPush;
 
 // Test seam. `pushInvitesToOffline` is the ONE invite-push site in the app —
 // POST /:id/invite and POST /:id/rerun both call it — so pinning its debounce

@@ -547,6 +547,56 @@ test('a single late joiner is still named rather than counted', async () => {
   assert.strictEqual(pushCalls[0].title, 'User8 is going!', 'one person is a person, not "1 more people"');
 });
 
+// ---------------------------------------------------------------------------
+// 6b. The digest names a person, so the block gate has to be able to run
+//
+// services/pushHelper.js canNotify() only performs the block and ban lookup
+// when the payload names somebody, through senderId / fromUserId / actorId. The
+// immediate RSVP push has always carried fromUserId. The DIGEST printed the
+// same sentence about the same person and carried nothing, so the one push in
+// this app that a blocked joiner could still land on their blocker's lock
+// screen was the batched one. Everything else in the RSVP path was already
+// block-aware: the socket fan-out excludes blocks, and the immediate push is
+// gated.
+// ---------------------------------------------------------------------------
+test('a one-person digest carries the joiner id, so a blocked or banned name cannot reach the host', async () => {
+  const { flushRsvpWindow } = flocksRouter.__testables;
+  scriptJoin(7);
+  await call('POST', '/api/flocks/42/join');
+  await settle();
+
+  pushCalls = [];
+  scriptJoin(8);
+  await call('POST', '/api/flocks/42/join');
+  await settle();
+
+  await flushRsvpWindow('42');
+  assert.strictEqual(pushCalls.length, 1);
+  assert.strictEqual(pushCalls[0].title, 'User8 is going!');
+  assert.strictEqual(pushCalls[0].data.fromUserId, '8',
+    'the digest names User8, so pushHelper has to be told who User8 is or it cannot check the block');
+});
+
+test('a counted digest names nobody, so it carries no actor to gate on', async () => {
+  const { flushRsvpWindow } = flocksRouter.__testables;
+  scriptJoin(7);
+  await call('POST', '/api/flocks/42/join');
+  await settle();
+
+  pushCalls = [];
+  for (const uid of [8, 9, 10]) {
+    scriptJoin(uid);
+    await call('POST', '/api/flocks/42/join'); // eslint-disable-line no-await-in-loop
+    await settle(); // eslint-disable-line no-await-in-loop
+  }
+
+  await flushRsvpWindow('42');
+  assert.strictEqual(pushCalls.length, 1);
+  assert.strictEqual(pushCalls[0].title, '3 more people are going');
+  assert.strictEqual(pushCalls[0].data.fromUserId, undefined,
+    'picking one of three members to gate on would be arbitrary; the flock gate is the honest one');
+});
+
 test('two flocks filling at once keep their own windows', async () => {
   scriptJoin(7);
   await call('POST', '/api/flocks/42/join');

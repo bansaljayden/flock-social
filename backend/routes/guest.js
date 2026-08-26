@@ -1178,11 +1178,35 @@ router.post('/:token/join',
         }
         const host = await pool.query('SELECT creator_id, name FROM flocks WHERE id = $1', [link.flock_id]);
         if (host.rows.length && host.rows[0].creator_id !== req.user.id) {
-          await pushIfOffline(io, host.rows[0].creator_id,
-            `${req.user.name} is going!`,
-            host.rows[0].name,
-            { type: 'flock_rsvp', flockId: String(link.flock_id), fromUserId: String(req.user.id) }
-          );
+          // THE SAME WINDOW AS AN INVITE ACCEPTANCE, not a second one.
+          //
+          // This used to push directly, one notification per joiner. A link is
+          // the path a whole group arrives on at once, which made it the most
+          // likely place to produce the burst routes/flocks.js built the RSVP
+          // digest to stop: every one of those pushes shares an
+          // apns-collapse-id, so eight of nine were destroyed on the lock
+          // screen by the ninth and the host was interrupted nine times to
+          // learn one thing.
+          //
+          // Keyed on the flock id, which is what flocks.js keys on, so a plan
+          // filling through both doors at once still costs the host one
+          // notification a minute rather than two.
+          const { claimRsvpPush } = require('./flocks');
+          const firstOfWindow = claimRsvpPush({
+            io,
+            flockId: link.flock_id,
+            hostId: host.rows[0].creator_id,
+            flockName: host.rows[0].name,
+            joinerName: req.user.name,
+            joinerId: req.user.id,
+          });
+          if (firstOfWindow) {
+            await pushIfOffline(io, host.rows[0].creator_id,
+              `${req.user.name} is going!`,
+              host.rows[0].name,
+              { type: 'flock_rsvp', flockId: String(link.flock_id), fromUserId: String(req.user.id) }
+            );
+          }
         }
       } catch (announceErr) {
         console.error('Link join announce error:', announceErr.message);
