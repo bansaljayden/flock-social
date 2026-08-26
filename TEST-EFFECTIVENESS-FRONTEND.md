@@ -14,6 +14,12 @@ every one.
 mutant and is excluded. The survivors are not spread evenly, which is the useful
 part: two areas account for eighteen of them.
 
+> **Follow-up, same day.** The five defects this report deliberately left alive,
+> with reasons, are now all closed. The reasons are still worth reading, because
+> two of them turned out to be wrong about how hard the fix was. See
+> "Changed in the follow-up pass" at the bottom, and the struck-through lines in
+> sections 1 and 2 and in the source-scanning section.
+
 ---
 
 ## Where the next hour goes
@@ -46,9 +52,17 @@ defects above now go red, plus three more (three numbers per contact instead of
 two, mobile-first ranking reversed, a rejected permission dialog swallowed as
 granted). The comment now points at the block that actually does the pinning.
 
-**Still open here:** the web Contacts Picker path (`navigator.contacts.select`)
-is untested; reading a dismissed picker as a denial still passes. It is the
-desktop-browser path, not the launch platform, which is why it is last.
+~~**Still open here:** the web Contacts Picker path~~ **Closed 2026-08-26.**
+Nine more executed tests run the `navigator.contacts.select` branch on a
+plain-web window with a stand-in picker. The one this block was written about:
+the Picker API rejects with a **TypeError** when the sheet is closed with
+nothing chosen, and reading that as a denial shows the permission-refused state
+to somebody who refused nothing, on a platform where there is no stored
+permission to repair. Eight defects verified red: the TypeError read as a
+denial, every failure read as a cancellation, an empty selection accepted as a
+successful read, the projection widened past `tel`, the two-numbers-per-card
+ceiling dropped, dedupe dropped, the web branch asking the native plugin for a
+stored state, and picker detection removed.
 
 ### 2. The flock chat send path had no test either. PARTLY FIXED.
 
@@ -63,9 +77,9 @@ The most-used control in the product. Eleven defects planted, ten of them passed
 | a refused send is silent again | green |
 | an empty composer sends | green |
 | the retry drops `venue_data` | green |
-| the invite sheet fires with nothing selected | green |
-| an invite failure is swallowed | green |
-| the send button loses `disabled={!chatInputHasText}` | green |
+| the invite sheet fires with nothing selected | green, **red since 2026-08-26** |
+| an invite failure is swallowed | green, **red since 2026-08-26** |
+| the send button loses `disabled={!chatInputHasText}` | green, **red since 2026-08-26** |
 | the failed bubble loses its tap-to-retry | **red** |
 
 The first one is the worst: that expression is the difference between a lost
@@ -79,8 +93,36 @@ it for real means rendering the whole app. A pin refuses the specific edit that
 removes the property; it does not establish the property. Every one was verified
 by making the edit and watching it go red.
 
-The three invite/composer rows are still green. Fixing them properly needs a
-render harness for the chat screen, which is a bigger job than this audit.
+~~The three invite/composer rows are still green.~~ **Closed 2026-08-26, and the
+render harness was not the bigger job it looked like.** The screen that left
+`App.js` has 146 props and **not one hook**: no `useState`, no `useEffect`, no
+`useRef`. It is a pure function of its props, so it mounts on its own against a
+hand-built props object with no `App.js` anywhere near it, and the two button
+facts stopped being source pins:
+
+- **The send button.** `disabled={!chatInputHasText}` is now proved by
+  dispatching the click and asserting `sendChatMessage` was not called. What
+  ships without that attribute is not a missing affordance: `opacity` and
+  `cursor` are separate expressions on the same element, so the button still
+  *looks* unavailable and posts an empty message on every tap. The opposite
+  defect is covered too, since `disabled` hard-coded true would otherwise pass.
+- **The invite sheet.** The send button is not in the document with nothing
+  selected, its label carries the count that was actually picked, and a send
+  already in flight cannot be fired twice.
+
+`handleSendFlockInvites` is genuinely unreachable from the screen, because it is
+a `useCallback` in `FlockAppInner` that arrives as a prop. It is not pinned
+either. Its **body is lifted out of `App.js` as source text and executed**
+against stand-in collaborators, which is `extractDeclaration` extended to a
+closure by naming the free variables and passing them in. The guard runs, so
+deleting it lets a real call reach a real spy; the catch runs, so a rejected
+invite either reaches `showToast` or it does not. What the lift does not prove
+is that `App.js` passes those particular collaborators. It is anchored on the
+opening line and on the exact dependency array, so a change to either throws by
+name instead of testing a stale copy, and that was verified both ways.
+
+New harness file: `chatComposerAndInviteSheet.test.js`, 14 tests, seven defects
+verified red plus three that break the harness loudly on purpose.
 
 ### 3. Two api.js timeout facts were asserted by tests that could not see them. FIXED.
 
@@ -137,7 +179,7 @@ screens* were checked against the suites that claim them:
 | a new tab opened with a bare target (`ChatDetail.js`) | yes |
 | a raw star glyph back in the source (`VenueDashboard.js`) | yes |
 | a raw-interpolating map popup (`VenueDashboard.js`) | yes |
-| **an em dash in user-visible copy (`ChatDetail.js`)** | **no** |
+| **an em dash in user-visible copy (`ChatDetail.js`)** | **no, until 2026-08-26. Yes now** |
 
 And the scans cannot silently shrink: cutting the screen reads back out of
 `iconAndAlertSweep`, `appIconFloorAndAlerts`, `birdBrandMoments`,
@@ -151,13 +193,40 @@ file are all negative cannot tell that file from an empty string.*
 `src/` rather than naming files, so it is move-proof by construction. It is the
 pattern to copy.
 
-**The em dash is the one real gap.** SLOP-AUDIT calls A2 "the #1 regression risk
-on any new copy." There is no app-wide guard. Every check is scoped to about
-eight pinned regions (`handleSendFlockInvites`, the pay sheet, the two error
-boundaries, a settings row), and an em dash anywhere outside them passes. Not
-fixed here: doing it right means matching string literals and JSX text rather
-than characters, since SLOP-AUDIT's own rule is "count the strings, not the
-characters" and the file has 100+ em dashes in comments.
+~~**The em dash is the one real gap.**~~ **Closed 2026-08-26.** SLOP-AUDIT calls
+A2 "the #1 regression risk on any new copy," and there was no app-wide guard:
+every check was scoped to about eight pinned regions (`handleSendFlockInvites`,
+the pay sheet, the two error boundaries, a settings row), and an em dash
+anywhere outside them passed.
+
+`copyEmDashSweep.test.js` now walks all 46 non-test `.js` files under
+`frontend/src`, parses each with `@babel/parser`, and reads **StringLiteral,
+TemplateElement and JSXText and nothing else**. That is what tells copy from a
+comment: a comment is not any of those node types, so it is excluded by
+construction rather than by a pattern somebody has to keep correct. A regex over
+lines cannot make that distinction, and the distinction is the whole problem,
+because there are well over a hundred em dashes in `frontend/src` and every one
+of them is a comment. A character count would be red the day it shipped and stay
+red, which is a check people learn to scroll past.
+
+**What it found: zero.** Not one em dash in a user-visible string anywhere in
+the app today, so the pinned-region checks happened to be sufficient and no copy
+needed rewriting. The value is entirely in the next one. Three things it does
+not flag, each measured rather than guessed: test NAMES in the colocated
+`src/services/flockWriteContract.test.js`, CSS comments inside the `<style>`
+template in `App.js`, and the four strings whose entire value is a single em
+dash used as the empty-cell glyph in the admin-only moderation console, which
+SLOP-AUDIT A2 itself counted and passed. The last allowance is exactly one
+character wide, so a spaced dash between two words is still caught.
+
+Vacuity, since a broadened sweep fails by inspecting less rather than by
+inspecting wrong: the walk must find 40+ files, the parse must inspect 25,000+
+strings (36,124 today), a file that fails to parse is a hard failure and never a
+skip, and real copy from six named files must appear in what was collected.
+Verified against ten mutations: an em dash in a string literal, in JSX text, in a
+template chunk, in `<style>` CSS outside a comment, and as a spaced dash all go
+red; an em dash added to a source comment stays green; and emptying the walk,
+narrowing it to one file, or breaking a file's syntax each turn the guards red.
 
 ---
 
@@ -232,3 +301,29 @@ red, and reverting.
 
 1,691 tests across 65 suites, `CI=true npx react-scripts build` compiles with
 zero warnings.
+
+---
+
+## Changed in the follow-up pass, 2026-08-26
+
+The five survivors this report left open on purpose. All five are closed, and
+again no source file was changed, because again no mutation revealed a source
+defect. The em dash sweep was the reason to expect one and it found nothing:
+there is not a single em dash in a user-visible string anywhere in the app.
+
+| file | added | verified against |
+|---|---|---|
+| `copyEmDashSweep.test.js` (new) | app-wide AST sweep for A2 over all 46 source files | 10 mutations: 5 red, 1 green control, 4 vacuity guards red |
+| `chatComposerAndInviteSheet.test.js` (new) | 14 tests: the screen rendered, plus `handleSendFlockInvites` lifted and executed | 7 defects red, 3 anchor breaks fail by name |
+| `contactDiscoverySurface.test.js` | 9 executed tests for the web Contacts Picker path | 8 defects, all now red |
+
+1,725 tests across 67 suites, `CI=true npx react-scripts build` compiles with
+zero warnings.
+
+**Two things worth carrying forward.** First, `screens/ChatDetail.js` has no
+hooks, so it renders standalone: anything else in that 2,000-line screen can be
+tested by mounting it rather than reading it, and the props factory in
+`chatComposerAndInviteSheet.test.js` is the harness. Second, a closure inside
+`FlockAppInner` can be executed after all, by slicing its body out of the source
+and naming its free variables. That is weaker than mounting and much stronger
+than a pin, and it applies to `transmitFlockMessage` and `sendChatMessage` next.
