@@ -248,11 +248,20 @@ describe('presentation pins (jsdom computes no layout, so the CSS is the record)
     expect(z).toBeLessThan(60);
   });
 
-  it('themes come from tokens: no hardcoded surface or text colors beyond the two deliberate ones', () => {
-    // #b91c1c (destructive red) and #2d5a87 (brand steel navy) are the only
-    // literals; everything else must be a var(--*) so dark mode holds.
+  it('themes come from tokens: no hardcoded surface or text colors beyond the deliberate ones', () => {
+    // #b91c1c (destructive red), #2d5a87 (brand steel navy) and #14532d (the
+    // stand-down green) are the only literals; everything else must be a
+    // var(--*) so dark mode holds. All three are SOLID BACKGROUNDS carrying
+    // white text, which is why a literal is allowed here: the pair is
+    // self-contained and reads the same on either ground, so there is no token
+    // to swap. #14532d on #ffffff is 9.1:1, above the 6.47:1 the red ships.
+    //
+    // The green earns its place by NOT being red. It is the only control on
+    // this sheet that ends an alarm rather than raising one, and painting it in
+    // the alarm colour is how somebody trying to stand down taps the thing that
+    // frightens their contacts a second time.
     const hexes = [...new Set(SHEET_CSS.match(/#[0-9a-fA-F]{3,8}\b/g))];
-    expect(hexes.sort()).toEqual(['#2d5a87', '#b91c1c', '#ffffff'].sort());
+    expect(hexes.sort()).toEqual(['#14532d', '#2d5a87', '#b91c1c', '#ffffff'].sort());
   });
 
   it('no icon in the sheet renders below the 12px legibility floor', () => {
@@ -324,5 +333,114 @@ describe('the App.js splice is minimal and correctly wired', () => {
     expect(APP).not.toContain("setTimeout(() => setSosArmed(false), 4000)");
     // Still rendered exactly once in the tree.
     expect(APP.match(/\{SOSModal\(\)\}/g)).toHaveLength(1);
+  });
+});
+
+/**
+ * THE STAND-DOWN.
+ *
+ * POST /api/safety/alert/cancel was built on the server, rate limited, careful
+ * to only withdraw an alert that actually reached somebody, and completely
+ * unreachable from the app: api.js had a wrapper for sendEmergencyAlert and
+ * none for its opposite, and no screen referenced the route. Somebody who
+ * pressed SOS by accident could not tell the people they had just frightened
+ * that they were fine.
+ *
+ * These lock the parts of the fix that an edit can quietly undo. The component
+ * half is RENDERED. The App.js half is a source scan, same doctrine as the
+ * wiring block above, because the handler lives in a 20,000 line component.
+ */
+describe('SOS stand-down', () => {
+  const SAFETY_API = fs.readFileSync(
+    path.join(__dirname, '..', 'services', 'api.js'),
+    'utf8'
+  );
+
+  it('offers nothing to withdraw when no alert is live', () => {
+    render(<EmergencySheet {...baseProps} />);
+    expect(screen.queryByText(/Tell them I'm OK/i)).toBeNull();
+  });
+
+  it('the band is ABSENT rather than disabled, so it never reads as a dead offer', () => {
+    const { container } = render(<EmergencySheet {...baseProps} />);
+    expect(container.querySelector('.es-standdown')).toBeNull();
+    expect(container.querySelector('.es-ok')).toBeNull();
+  });
+
+  it('states that an alert is out, and offers the correction, once one is live', () => {
+    const onStandDown = jest.fn();
+    render(<EmergencySheet {...baseProps} alertLive onStandDown={onStandDown} />);
+    // The fact first: somebody reopening this sheet hours later has no other
+    // way to know an alarm is still standing.
+    expect(screen.getByText(/Your contacts were alerted/i)).toBeTruthy();
+    fireEvent.click(screen.getByText(/Tell them I'm OK/i));
+    expect(onStandDown).toHaveBeenCalledTimes(1);
+  });
+
+  it('the stand-down is not painted in the alarm colour', () => {
+    // Every red control on this sheet raises an alarm. This one ends one, and
+    // giving it the same colour is how a frightened person taps the thing that
+    // alarms their contacts a second time.
+    const okBlock = SHEET_CSS.slice(SHEET_CSS.indexOf('.es-ok {'));
+    const decl = okBlock.slice(0, okBlock.indexOf('}'));
+    expect(decl).not.toContain('#b91c1c');
+    expect(decl).toContain('#14532d');
+  });
+
+  it('a stand-down in flight disables the two controls that would raise a new alarm', () => {
+    render(<EmergencySheet {...baseProps} alertLive standingDown onStandDown={noop} />);
+    expect(screen.getByText('Alert Contacts').closest('button').disabled).toBe(true);
+    expect(screen.getByText('Share Location').closest('button').disabled).toBe(true);
+    expect(screen.getByText(/Telling them\.\.\./i)).toBeTruthy();
+  });
+
+  it('api.js can actually reach the route, with the same leash as the alert', () => {
+    expect(SAFETY_API).toContain('/api/safety/alert/cancel');
+    const fn = SAFETY_API.slice(SAFETY_API.indexOf('export async function cancelEmergencyAlert'));
+    const body = fn.slice(0, fn.indexOf('\n}'));
+    expect(body).toContain("method: 'POST'");
+    // An SOS stand-down fans out emails before answering. Giving up on the
+    // default leash leaves contacts holding an alert nobody withdrew.
+    expect(body).toContain('timeout: 30000');
+  });
+
+  it('App.js remembers a live alert across a relaunch, not just across a render', () => {
+    // The sheet closes on a successful send and iOS reclaims the web view. If
+    // the timestamp lived only in React state, the band would be gone at
+    // exactly the moment somebody reopens the app to undo what they did.
+    expect(APP).toContain("localStorage.getItem('flock.sosAlertAt')");
+    expect(APP).toContain("localStorage.setItem('flock.sosAlertAt'");
+    expect(APP).toContain('rememberSosAlert(Date.now())');
+  });
+
+  it('App.js clears the band on nothingToCancel and KEEPS it on a failure', () => {
+    const h = APP.slice(APP.indexOf('const handleStandDown'));
+    const body = h.slice(0, h.indexOf('const handleShareLocationWithContacts'));
+    // The server said there was nothing out there: the local copy is stale.
+    expect(body).toContain('err?.data?.nothingToCancel');
+    expect(body).toContain('rememberSosAlert(0)');
+    // Exactly two clears: the success path and the nothing-to-cancel path.
+    // A third would almost certainly be on an error path, which is the one
+    // place clearing is wrong: the alert is still standing.
+    expect(body.match(/rememberSosAlert\(0\)/g)).toHaveLength(2);
+  });
+
+  it("App.js prefers the server's own words when a stand-down fails", () => {
+    // api.js rewrites 502/503/504 messages to "Flock's servers are having a
+    // moment. Try again in a minute." That is right for a gateway and wrong
+    // here: this endpoint's 502 says the contacts STILL HAVE the alert and to
+    // call them. Telling somebody to wait instead is the one substitution on
+    // this screen that could matter.
+    const h = APP.slice(APP.indexOf('const handleStandDown'));
+    const body = h.slice(0, h.indexOf('const handleShareLocationWithContacts'));
+    expect(body).toContain('err?.data?.error');
+    expect(body.indexOf('serverSaid')).toBeLessThan(body.indexOf('err?.message'));
+  });
+
+  it('the sheet is handed the stand-down from App.js', () => {
+    const region = APP.slice(APP.indexOf('<EmergencySheet'), APP.indexOf('/>', APP.indexOf('<EmergencySheet')));
+    expect(region).toContain('alertLive={sosAlertLive}');
+    expect(region).toContain('onStandDown={handleStandDown}');
+    expect(region).toContain('standingDown={sosStandingDown}');
   });
 });

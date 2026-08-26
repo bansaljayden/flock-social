@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, getBudgetStatus, getBillSplit, updatePaymentMethods, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, getBudgetStatus, getBillSplit, updatePaymentMethods, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery } from './services/api';
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
@@ -6257,6 +6257,47 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [sosAlertSending, setSosAlertSending] = useState(false);
   const [sosArmed, setSosArmed] = useState(false); // two-step confirm: first tap arms, second fires
 
+  /* ── THE LIVE ALERT, AND WHY IT OUTLIVES THIS COMPONENT ──────────────
+     When an alert goes out, contacts hold it until somebody tells them
+     otherwise. The server accepts a stand-down for six hours (routes/
+     safety.js, CANCEL_WINDOW_MS), so the app has to remember for six hours
+     that there is something to withdraw.
+
+     React state alone cannot do that. The sheet closes on a successful send,
+     the app gets backgrounded, iOS reclaims the web view, and the person
+     reopens Flock to a screen with no memory of the alarm they just raised.
+     That is the exact moment the button has to be there, so the timestamp is
+     written to localStorage and read back on mount.
+
+     A stale value is harmless in both directions: the server refuses a cancel
+     outside its own window with nothingToCancel, which clears this, and the
+     six-hour check below hides the band without asking. The clock is the
+     server's, not this one's, and the local copy only decides whether to
+     OFFER the action. */
+  const SOS_CANCEL_WINDOW_MS = 6 * 60 * 60 * 1000;
+  const [sosAlertAt, setSosAlertAt] = useState(() => {
+    try {
+      const raw = window.localStorage.getItem('flock.sosAlertAt');
+      const n = raw ? Number(raw) : 0;
+      return Number.isFinite(n) && n > 0 ? n : 0;
+    } catch (_) {
+      // Private mode, or storage disabled. The band simply does not appear;
+      // nothing else on this screen depends on it.
+      return 0;
+    }
+  });
+  const [sosStandingDown, setSosStandingDown] = useState(false);
+
+  const rememberSosAlert = useCallback((at) => {
+    setSosAlertAt(at);
+    try {
+      if (at) window.localStorage.setItem('flock.sosAlertAt', String(at));
+      else window.localStorage.removeItem('flock.sosAlertAt');
+    } catch (_) { /* see above */ }
+  }, []);
+
+  const sosAlertLive = sosAlertAt > 0 && (Date.now() - sosAlertAt) < SOS_CANCEL_WINDOW_MS;
+
   /* ── FAB DOCK GEOMETRY ──────────────────────────────────────────────
      The FABs are position:absolute inside the SCREEN root, and the screen
      root contains the tab bar, so `bottom: 0` is the bottom of the tab bar,
@@ -9085,6 +9126,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         longitude: loc?.longitude,
         includeLocation: !!loc,
       });
+      // There is now something to withdraw. Recorded before the toast so a
+      // render triggered by the toast already knows.
+      rememberSosAlert(Date.now());
       const sent = data.message || 'Emergency alert sent';
       // Say plainly what went out. No promise about the follow-up here: it may
       // never arrive, and a safety screen is the last place to write a cheque
@@ -9099,7 +9143,55 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     } finally {
       setSosAlertSending(false);
     }
-  }, [trustedContacts, trustedContactsLoaded, loadTrustedContacts, showToast, startSosLocationFollowUp, cancelSosLocationFollowUp]);
+  }, [trustedContacts, trustedContactsLoaded, loadTrustedContacts, showToast, startSosLocationFollowUp, cancelSosLocationFollowUp, rememberSosAlert]);
+
+  /* THE STAND-DOWN.
+     The server does the hard part: it finds the most recent alert that
+     actually reached somebody, mails those contacts an all clear, and refuses
+     politely when there is nothing out there. This handler's whole job is to
+     be honest about which of those happened.
+
+     The three answers are deliberately not collapsed into one toast:
+
+       nothingToCancel  There was no live alert. The local timestamp is stale,
+                        so it is cleared and the band goes away. Saying "told
+                        them" here would be a lie in the one place a lie
+                        matters most.
+       canRetry         Some or all of the mails failed. The alert is STILL
+                        out there, so the timestamp is KEPT and the button
+                        stays, because the person needs to try again or call.
+       success          Cleared, and the server's own sentence is shown rather
+                        than a generic one: it knows how many contacts were
+                        reached and how many were not. */
+  const handleStandDown = useCallback(async () => {
+    setSosStandingDown(true);
+    try {
+      const data = await cancelEmergencyAlert();
+      rememberSosAlert(0);
+      showToast(data.message || 'Your contacts have been told you are OK');
+      setShowSOS(false);
+    } catch (err) {
+      if (err?.data?.nothingToCancel) {
+        rememberSosAlert(0);
+        showToast(err.message || 'There is no recent alert to stand down.');
+        return;
+      }
+      // Everything else leaves the alert standing, so the band stays.
+      //
+      // err.data.error is preferred over err.message ON PURPOSE, and only here.
+      // api.js replaces the message on 502/503/504 with "Flock's servers are
+      // having a moment. Try again in a minute." That is the right generic copy
+      // for a gateway, and it is the wrong sentence for this one endpoint: the
+      // server's own 502 body says the contacts still have the alert and to
+      // CALL them. Telling somebody to wait a minute instead, while people who
+      // think they are in danger sit with an un-withdrawn alarm, is the one
+      // substitution on this screen that could matter.
+      const serverSaid = typeof err?.data?.error === 'string' ? err.data.error : null;
+      showToast(serverSaid || err?.message || "That didn't send. Your contacts still have your alert, so call them.", 'error');
+    } finally {
+      setSosStandingDown(false);
+    }
+  }, [rememberSosAlert, showToast]);
 
   const handleShareLocationWithContacts = useCallback(async () => {
     if (trustedContacts.length === 0) {
@@ -9378,6 +9470,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       onAlertContacts={handleEmergencyAlert}
       onShareLocation={handleShareLocationWithContacts}
       onAddContacts={() => { setShowSOS(false); setProfileScreen('safety'); setCurrentScreen('profile'); loadTrustedContacts(); }}
+      alertLive={sosAlertLive}
+      standingDown={sosStandingDown}
+      onStandDown={handleStandDown}
       onClose={() => { setSosArmed(false); setShowSOS(false); }}
     />
   );
