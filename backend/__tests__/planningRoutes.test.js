@@ -864,16 +864,26 @@ test('budget: a non-skip with no usable amount is still refused, in words', asyn
 // two failures that motivated them. The banded value is read out of
 // routes/budget.js rather than retyped, so the band table and the expectation
 // cannot drift apart.
-async function threeSubmissions(amounts) {
+//
+// Round 22 moved WHEN the number is published, not what it is. Flock 10 has
+// four members and the ceiling is published only once the last of them has
+// answered (settledCeiling in routes/budget.js), so this helper sends a fourth,
+// deliberately huge amount to close the flock. $10,000 is the validator's
+// maximum and can never be the MIN, so the number under test is still
+// MIN(amounts) and the band expectations below are unchanged.
+async function settledFlock(amounts) {
   fresh();
   for (let i = 0; i < amounts.length; i++) {
     const res = await call('POST', '/api/budget/10/submit', { amount: amounts[i], skipped: false }, i + 1);
     assert.strictEqual(res.status, 200, `submission ${i + 1} -> ${res.raw}`);
   }
+  const closing = await call('POST', '/api/budget/10/submit', { amount: 10000, skipped: false }, amounts.length + 1);
+  assert.strictEqual(closing.status, 200, `closing submission -> ${closing.raw}`);
+  assert.strictEqual(closing.json.budgetLocked, true, 'the last answer did not settle the budget');
 }
 
 test('budget: the pushed ceiling is the banded ceiling, and the API agrees with it', async () => {
-  await threeSubmissions([40, 12.5, 30]);
+  await settledFlock([40, 12.5, 30]);
   const banded = budgetRouter.bandCeiling(12.5); // 10 — nearest $5 down under $50
   const ready = pushes.filter((p) => p.data && p.data.type === 'budget_ready');
   assert.ok(ready.length > 0, 'the threshold push never fired');
@@ -890,7 +900,7 @@ test('budget: a sub-dollar ceiling is not announced as $0', async () => {
   // $0.75 is below the smallest band, and the band below $1 is $0 — which the
   // app reads as "no ceiling yet" and which tells the group nothing. So the
   // sub-dollar reveal is a cent: never zero, never above the true MIN.
-  await threeSubmissions([5, 0.75, 9]);
+  await settledFlock([5, 0.75, 9]);
   const ready = pushes.filter((p) => p.data && p.data.type === 'budget_ready');
   assert.ok(ready.length > 0, 'the threshold push never fired');
   assert.match(ready[0].body, /\$0\.01\b/, `push said: ${ready[0].body}`);
@@ -898,7 +908,7 @@ test('budget: a sub-dollar ceiling is not announced as $0', async () => {
 });
 
 test('budget: a whole-dollar ceiling still reads as a whole dollar', async () => {
-  await threeSubmissions([40, 25, 30]);
+  await settledFlock([40, 25, 30]);
   const ready = pushes.filter((p) => p.data && p.data.type === 'budget_ready');
   assert.match(ready[0].body, /\$25\b/, `push said: ${ready[0].body}`);
   assert.doesNotMatch(ready[0].body, /\$25\.00/, `push over-formatted: ${ready[0].body}`);
@@ -915,7 +925,7 @@ test('budget: a whole-dollar ceiling still reads as a whole dollar', async () =>
 // stored MIN of 1.01 publishes as 1 — the one place these two now differ, and
 // the difference is the point.
 test('budget: the caller sees their own amount to the cent, and the group sees a band', async () => {
-  await threeSubmissions([1.005, 20, 30]);
+  await settledFlock([1.005, 20, 30]);
   const stored = db.budget_submissions.find((r) => r.user_id === 1).amount;
   assert.strictEqual(stored, '1.01', `NUMERIC(8,2) stored ${stored}`);
   const status = await call('GET', '/api/budget/10', undefined, 1);
@@ -967,7 +977,15 @@ test('budget lock: the refusal explains that skips do not count', async () => {
 });
 
 test('budget lock: three real amounts do lock, and the locked ceiling is the banded minimum', async () => {
-  await threeSubmissions([40, 12.5, 30]);
+  // Three of the four members answer, so the flock does not settle by itself
+  // and the creator's lock is the publication. That is the whole reason the
+  // lock button still exists: a flock waiting on somebody who never answers.
+  fresh();
+  for (const [i, amount] of [[1, 40], [2, 12.5], [3, 30]]) {
+    const sub = await call('POST', '/api/budget/10/submit', { amount, skipped: false }, i);
+    assert.strictEqual(sub.status, 200, sub.raw);
+    assert.strictEqual(sub.json.ceiling, null, 'a number was published before everyone answered');
+  }
   const res = await call('POST', '/api/budget/10/lock', undefined, 1);
   assert.strictEqual(res.status, 200, res.raw);
   // Was 12.5, the raw MIN. The lock publishes the same band every other surface
@@ -1013,7 +1031,12 @@ test('budget: a non-member can neither read nor submit to a flock budget', async
 });
 
 test('budget: only the creator can lock or send reminders', async () => {
-  await threeSubmissions([40, 50, 60]);
+  // Three of four, so the budget is still open and `budget_locked` staying
+  // false below means the refusal, not an earlier auto-settle.
+  fresh();
+  for (const [i, amount] of [[1, 40], [2, 50], [3, 60]]) {
+    await call('POST', '/api/budget/10/submit', { amount, skipped: false }, i);
+  }
   const lock = await call('POST', '/api/budget/10/lock', undefined, 2);
   assert.strictEqual(lock.status, 403, lock.raw);
   assert.strictEqual(db.flocks.find((f) => f.id === 10).budget_locked, false);
@@ -1024,7 +1047,7 @@ test('budget: only the creator can lock or send reminders', async () => {
 });
 
 test('budget: no member amount ever leaves the server', async () => {
-  await threeSubmissions([40, 12.5, 30]);
+  await settledFlock([40, 12.5, 30]);
   const status = await call('GET', '/api/budget/10', undefined, 2);
   const body = JSON.stringify(status.json);
   assert.strictEqual(status.json.userAmount, 12.5, 'a caller must still see their OWN amount');
@@ -1383,7 +1406,7 @@ test('budget reminder: the cooldown is per flock and claimed before the work', a
 });
 
 test('budget: the "Budget set!" push fires on the crossing and not on later edits', async () => {
-  await threeSubmissions([40, 50, 60]);
+  await settledFlock([40, 50, 60]);
   assert.strictEqual(pushes.filter((p) => p.data && p.data.type === 'budget_ready').length, 3,
     'the crossing should notify the three other members exactly once each');
   pushes.length = 0;

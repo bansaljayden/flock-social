@@ -239,14 +239,18 @@ describe('picking exactly one person', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('the group budget', () => {
-  test('the three-amount rule is stated before the first submission', () => {
-    // It is a privacy floor, not a quota: the group number is built from the
-    // lowest amount, so publishing it over one or two answers publishes
-    // somebody's budget. Until now the only place it was ever said was a 400
-    // from the lock route, after the tap.
+  test('the rule for when a number appears is stated before the first submission', () => {
+    // It is a privacy floor, not a quota. Two parts, and the screen has to say
+    // both: the group number is built from the lowest amount, so publishing it
+    // over one or two answers publishes somebody's budget, and publishing it
+    // before everyone has answered means it MOVES when the last person answers,
+    // which names that person as the one with the least money. Until this was
+    // written down the only place either rule was ever stated was a 400 from
+    // the lock route, after the tap.
     expect(APP_SRC).toMatch(
-      /A group number only appears once three people have shared an amount/
+      /One group number appears after everyone has answered, and only if at least three people shared an amount/
     );
+    expect(APP_SRC).toMatch(/it does not change after that/);
   });
 
   test('a flock too small to reach three is told so, not left waiting', () => {
