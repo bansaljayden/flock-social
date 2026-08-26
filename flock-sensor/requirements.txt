@@ -5,7 +5,15 @@
 # run `pip3 freeze > requirements.lock.txt` on that unit, commit it, and have
 # setup.sh install from the lock file instead. See README.md, "Pinning".
 
-RPi.GPIO                             # IR break-beam on GPIO 17
+# IR break-beam on GPIO 17. Correct for the Pi 3, 4 and Zero.
+#
+# NOT correct for the Pi 5, which moved GPIO behind the RP1 southbridge:
+# RPi.GPIO cannot drive it and fails at startup with a message about a
+# peripheral base address. `rpi-lgpio` is a drop-in replacement providing the
+# same module and API, and setup.sh installs it instead when it sees a Pi 5.
+# The two cannot both be installed. This matters because the hardware demo unit
+# build plan specifies a Pi 5.
+RPi.GPIO
 adafruit-circuitpython-mlx90640      # thermal headcount over I2C
 adafruit-blinka                      # CircuitPython shim the MLX90640 driver needs
 spidev                               # MCP3008 ADC (noise) over SPI

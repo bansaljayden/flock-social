@@ -8,6 +8,32 @@ This is the only part of Flock that runs on hardware, in a building we do not
 control, on wifi we do not control, with nobody around to restart it. Every
 design choice below follows from that.
 
+> ## Status: this has never run on a Raspberry Pi
+>
+> Read this before you trust anything below. As of 2026-08-25, `main.py` has
+> only ever been executed by `test_main.py` on a developer laptop. Nothing in
+> this directory has been on a board. The evidence, so nobody has to re-derive
+> it:
+>
+> - No `requirements.lock.txt` exists, and `requirements.txt` says a lock file
+>   is produced "once a unit is verified on real hardware".
+> - The IR receiver's voltage question below is still open, which means nobody
+>   has wired one.
+> - `noise_db` is uncalibrated, which needs a sound level meter next to a
+>   running mic.
+> - The only compiled bytecode ever produced here is CPython 3.14, which is the
+>   development machine's Python, not a Pi OS one.
+> - The backend pipeline WAS proven end to end on 2026-05-02, but with curl,
+>   not with this program. Those are different claims and only one of them has
+>   been checked.
+>
+> So `init_ir`, `init_thermal`, `init_noise`, `thermal_loop`, `noise_loop` and
+> `display_loop` are unexecuted code. Everything else here is covered by tests
+> and has been reasoned about hard, but the first time this meets a bus, a
+> level and a framebuffer, expect it to be wrong somewhere. Budget a bench day
+> before a venue day, and read "The build plan and this code do not agree"
+> below before ordering anything.
+
 ---
 
 ## What it collects (and what it cannot)
@@ -39,11 +65,20 @@ If anyone ever proposes adding wifi probe capture, BLE scanning, camera frames,
 or per-person tracking: that is a different product with different law attached
 to it, and this README is the place the change has to be argued first.
 
-> **Open item.** The published privacy policy
-> (`frontend/src/website/PrivacyPolicy.js`) does not mention venue sensors at
-> all. Deploying a unit into a real venue before that page describes thermal
-> headcount and ambient noise measurement is shipping undisclosed collection.
-> See "Known gaps" at the bottom.
+**This is disclosed, and the disclosure is pinned to this code.** Section 3 of
+the published privacy policy, "Venue occupancy sensors"
+(`frontend/src/website/PrivacyPolicy.js`), describes all three measurements and
+states that no photo, audio, phone or identity is captured. It is checked
+against this directory on every frontend test run by
+`frontend/src/__tests__/legalPagesMatchCode.test.js`, which reads the push
+interval and the thermal grid dimensions out of `main.py`, reads the stored
+columns out of the ingest route's `INSERT`, and parses `main.py`'s imports to
+confirm no camera, audio or radio library is present. Change what this device
+measures and that test goes red on the same commit.
+
+The one thing to be careful about: it is written as a promise about a device
+that has never been switched on. Before the first venue install, re-read
+section 3 against the running unit rather than against this file.
 
 ---
 
@@ -61,6 +96,44 @@ to it, and this README is the place the change has to be argued first.
 > receivers are 5V parts. The Pi's GPIO is **not** 5V tolerant. Use a receiver
 > with an open-collector output pulled up to 3V3, or put a level shifter in
 > line. Wiring a 5V signal straight into GPIO 17 will damage the Pi.
+
+### Pi 5
+
+`RPi.GPIO` does not work on a Pi 5. The Pi 5 put GPIO behind the RP1
+southbridge, and the original library cannot reach it: the doorway counter
+fails at startup and the unit reports 0 crossings for as long as it is
+deployed, with a log line about a peripheral base address that explains
+nothing. `setup.sh` detects the board and installs `rpi-lgpio` instead, which
+provides the same module and API and needs no change to `main.py`. The two
+libraries cannot both be installed. `main.py --selftest` prints the board it is
+running on as its first line.
+
+### The build plan and this code do not agree
+
+The hardware demo unit build plan (Jayden's own notes, form factor locked
+2026-05-04) specifies different parts from the ones this code drives. Nothing
+here is wrong on its own, but both cannot be true of one box, and **this is a
+decision only Jayden can make.**
+
+| | Build plan | This code |
+|---|---|---|
+| Board | Pi 5 8GB | any Pi; needs the `rpi-lgpio` swap on a 5 |
+| Thermal | FLIR Lepton 3.5, 160×120, over USB (PureThermal 3) | MLX90640, 24×32, over I2C, grid size hardcoded |
+| Display | 7" 720×1280 DSI, portrait | 800×480 landscape, hardcoded |
+| Thermal heatmap view | step 6 of the pitch: tap the screen, see the heat signature | not built; the display handles no touch input at all |
+| IR receiver, mic, ADC | "still to spec", never ordered | assumed present and wired |
+
+The plan's reason for the FLIR is explicit: it wants the heatmap to be a 15 to
+30 second highlight of the pitch, which the MLX90640's 24×32 cannot carry. If
+the FLIR is the decision, `count_thermal_clusters` needs a different grid size,
+`init_thermal` needs a different driver, and the privacy policy's "24 by 32
+grid of temperatures" and "768 temperature readings" both change with it. The
+legal test named above will fail on that commit, which is the point of it.
+
+Also worth resolving before ordering: the plan puts a SIM7600 4G HAT on the
+40-pin header and says "single HAT only". This code needs GPIO 17, I2C on pins
+3 and 5, and SPI on pins 19, 21, 23 and 24 at the same time. Whether the HAT
+passes those through has not been checked.
 
 ---
 
@@ -184,7 +257,9 @@ This is the part that matters, because nobody is going to be there.
 | **Wrong or revoked API key** | The device keeps its queue, logs the reason, and retries on a slowing schedule up to every 30 minutes. Fix the key and everything taken in the meantime still delivers, without a site visit. |
 | **Someone points it at an `http://` endpoint** | It refuses to send at all rather than putting the device key on the venue's wifi in the clear, and says so in the log. Set `ALLOW_INSECURE_URL=true` only for a bench backend. |
 | **A reading the backend will never accept (400)** | Dropped, with the reason logged. One bad reading is worth losing; re-sending it every 30 seconds forever is not. |
-| **A sensor fails** | That signal reports 0 and the other two carry on. Repeated read errors are logged once every 5 minutes, not every 2 seconds. |
+| **A sensor fails at startup** | That signal reports 0 and the other two carry on. Repeated read errors are logged once every 5 minutes, not every 2 seconds. |
+| **A sensor stops answering mid-shift** | Same: it reports 0, not the last number it read. The thermal count and the noise level are latched values, so without this a bus that locked up at 11pm went on posting 11pm's headcount every 30 seconds, and the venue card showed a packed room at 4am. Thermal goes to 0 after 90 seconds without a good read, the mic after 60. |
+| **The backend says slow down (429)** | It waits the interval the backend asks for, which is seconds, and carries on draining. It does not treat this as an outage. |
 | **The push thread dies** | It cannot: the cycle is wrapped. If it somehow does, an in-process watchdog exits non-zero and systemd restarts the service. |
 | **The display crashes (demo units)** | The process falls through to headless operation instead of exiting cleanly, which systemd would not have restarted. |
 | **systemd gives up** | It cannot. `StartLimitIntervalSec=0` disables the "5 fast restarts and stay dead" default, which is the wrong behaviour for a box nobody can reach. |
@@ -244,7 +319,38 @@ Commit it and have `setup.sh` install from it.
 | Service works by hand, fails under systemd | Missing hardware group membership | `sudo adduser <user> i2c` (also `spi`, `gpio`) then reboot |
 | Headcount stuck at 0 | I2C not enabled or wiring | `i2cdetect -y 1` should show `33` |
 | Headcount stuck at 1 in a busy room | Ambient too warm | Raise `THERMAL_MARGIN_C` |
+| Crossings stuck at 0, `--selftest` says the board is a Pi 5 | `RPi.GPIO` cannot drive Pi 5 GPIO | `sudo pip3 uninstall RPi.GPIO && sudo pip3 install --break-system-packages rpi-lgpio`, then restart |
 | Crossings stuck at 0 | Beam misaligned or receiver unpowered | Break the beam by hand and watch the log |
+| `has not read successfully for over 90s` in the log | A sensor answered once and then stopped, usually a locked I2C or SPI bus | The device is reporting 0 for that signal on purpose. Reseat the wiring; a reboot clears a locked bus |
+
+---
+
+## Is a deployed unit alive?
+
+`GET /api/sensors/:placeId/status`, authenticated, and only for the account that
+owns that venue's profile. It returns one row per device at that venue:
+
+```json
+{ "devices": [{ "device_id": "sensor_001", "device_name": "The Fox, front door",
+                "is_active": true, "last_seen_at": "2026-08-25T21:40:12.881Z",
+                "seconds_since_last_seen": 18, "online": true }],
+  "online_within_minutes": 15 }
+```
+
+`online` uses the same 15-minute window the app's occupancy card uses, so the
+two can never disagree. A device that has never reported has a null
+`last_seen_at`, which is a different thing from one that has gone quiet, and
+both are distinguishable from a row with `is_active: false`.
+
+**Nothing renders this yet.** Both occupancy cards in `App.js` draw only when
+`/current` returns a row, so today a unit that dies does not appear as broken,
+the section simply stops existing and the owner is told nothing. The endpoint is
+the half of that fix that lives in this project. Wiring it into the venue
+dashboard as an offline state is a frontend change and is listed under Known
+gaps.
+
+Nothing alerts on it either. Checking it is still a thing a person has to
+decide to do.
 
 ---
 
@@ -252,9 +358,8 @@ Commit it and have `setup.sh` install from it.
 
 Things that are still open, so nobody has to rediscover them.
 
-1. **The privacy policy does not mention this device.** No page describes
-   thermal headcount or ambient noise measurement in a venue. This must be
-   written before a unit goes into a venue with real customers in it.
+1. **This has never run on a Pi.** See the status box at the top. It is the
+   gap every other gap here is downstream of.
 2. **No provisioning UI.** Creating, rotating and revoking a device key is
    hand-written SQL against production. That is a mistake waiting to happen
    (wrong `place_id`, plaintext key pasted somewhere) and should become an
@@ -266,11 +371,29 @@ Things that are still open, so nobody has to rediscover them.
    needs hardware-backed keys (a TPM or a secure element), which is a hardware
    decision, not a code one.
 4. **`noise_db` is uncalibrated** (see Calibration) but is stored in a column
-   called `noise_db` and shown to users as decibels.
+   called `noise_db` and **printed to users as a decibel figure.** The Live
+   Occupancy card in `App.js` renders `· {noiseDb.toFixed(0)} dB` next to the
+   word Quiet/Moderate/Lively/Loud. Nobody has ever held a sound level meter
+   next to one of these microphones, so that number is a relative index wearing
+   a unit it has not earned, and it is on a screen users see. The word is the
+   honest half; the figure is the half to drop until someone calibrates a unit.
+   This device's own display already says "level", not "dB".
 5. **`ir_beam_count` is crossings, not entries**, but the backend's history
    endpoint sums it as "entries per hour" and `RETRAIN.md` lists it as high
    quality ground truth.
 6. **Dependencies are unpinned** (see Pinning).
-7. **No fleet visibility.** `sensor_devices.last_seen_at` is the only health
-   signal, and nothing alerts on it. A venue whose sensor died on Friday just
-   quietly stops having a Live Occupancy card.
+7. **Fleet health has a read but no reader.** `GET /:placeId/status` exists (see
+   "Is a deployed unit alive?"), and nothing calls it. The venue dashboard
+   should show an offline state built from it instead of hiding the whole
+   occupancy section when a unit stops reporting, and something should alert
+   when a device that was reporting stops.
+8. **The demo unit's thermal heatmap view does not exist.** Step 6 of the locked
+   pitch choreography is "tap the touchscreen, see the heat signature of the
+   hand". `display_loop` handles no touch events and has no heatmap view, and
+   the frame it would draw is discarded inside `count_thermal_clusters` by
+   design. Building it means keeping a frame in memory for the display only,
+   which is a privacy-relevant change and belongs in the policy discussion in
+   "What it collects" before it belongs in code.
+9. **The build plan and this code specify different hardware.** See "The build
+   plan and this code do not agree". Needs Jayden's decision before anything is
+   ordered.
