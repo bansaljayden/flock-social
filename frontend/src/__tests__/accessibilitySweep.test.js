@@ -59,7 +59,11 @@ const path = require('path');
 const SRC = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(SRC, p), 'utf8');
 
-const app = read('App.js');
+// The venue owner dashboard left App.js on 2026-08-26: it is its own lazily
+// loaded chunk now (screens/VenueDashboard.js), and about 2,000 lines of what
+// this file scans went with it. Nothing asserted below changed. The app source
+// is simply in two files, so both are read, in the order they used to be one.
+const app = read('App.js') + read('screens/VenueDashboard.js');
 const css = read('index.css');
 const paywall = read('components/PaywallSheet.js');
 const birdieBird = read('components/ui/BirdieBird.js');
