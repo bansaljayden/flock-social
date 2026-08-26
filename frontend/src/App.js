@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, getBudgetStatus, getBillSplit, updatePaymentMethods, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, getBudgetStatus, getBillSplit, updatePaymentMethods, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery } from './services/api';
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
@@ -8293,24 +8293,73 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Activity feed fetch removed with the home-screen redesign.
 
   // Add reaction to message
-  const addReactionToMessage = useCallback((flockId, messageId, reaction) => {
-    setFlocks(prev => prev.map(f => {
-      if (f.id === flockId) {
-        return {
-          ...f,
-          messages: f.messages.map(m => {
-            if (m.id === messageId) {
-              const hasReaction = m.reactions.includes(reaction);
-              return { ...m, reactions: hasReaction ? m.reactions.filter(r => r !== reaction) : [...m.reactions, reaction] };
-            }
-            return m;
-          })
-        };
-      }
-      return f;
-    }));
+  /* FLOCK MESSAGE REACTIONS.
+     This function used to be the whole feature, and the whole feature was a
+     local state edit. It toggled an emoji into `m.reactions` and stopped
+     there: it never called the server, `addReaction` in services/api.js had
+     no caller anywhere in the app, and nothing was ever written to
+     emoji_reactions. Tapping a heart changed your own screen, reached nobody
+     else in the flock, and was gone on reload. The backend has had POST and
+     DELETE the whole time, and App.js has subscribed to flock_reaction_added
+     and flock_reaction_removed the whole time; the only missing piece was the
+     send, so the receive half could never fire either.
+
+     IT ALSO STORED THE WRONG SHAPE, which is the part that would have broken
+     the screen rather than just doing nothing. GET /api/flocks/:id/messages
+     returns each reaction as a ROW ({ emoji, user_id, user_name }), and both
+     socket handlers push rows too. This pushed a bare STRING. ChatDetail
+     renders `{r}` directly, so a string renders and a row is an object child,
+     which React refuses to render at all. Nothing had hit it only because
+     nothing had ever persisted a reaction: the first real one, from anybody,
+     would have taken the message list down. The row is the canonical shape
+     everywhere now.
+
+     Optimistic with rollback, following the vote and venue handlers above:
+     the reaction moves on the tap, the refusal puts it back, and the toast
+     names the action that did not happen so the movement does not read as a
+     bug. */
+  const addReactionToMessage = useCallback((flockId, messageId, emoji) => {
     setShowReactionPicker(null);
-  }, []);
+    const me = meRef.current;
+    const myId = me?.id;
+    if (myId == null) return;
+
+    const before = flocksRef.current.find(f => f.id === flockId) || null;
+    const message = before ? (before.messages || []).find(m => m.id === messageId) : null;
+    const previousReactions = message ? (message.reactions || []) : null;
+    const mine = (r) => r && String(r.user_id) === String(myId) && r.emoji === emoji;
+    const hadIt = (previousReactions || []).some(mine);
+
+    const next = hadIt
+      ? (previousReactions || []).filter(r => !mine(r))
+      : [...(previousReactions || []), { emoji, user_id: myId, user_name: me?.name || 'You' }];
+
+    setFlocks(prev => prev.map(f => (
+      f.id === flockId
+        ? { ...f, messages: (f.messages || []).map(m => (m.id === messageId ? { ...m, reactions: next } : m)) }
+        : f
+    )));
+
+    // An optimistic bubble still carries its Date.now() placeholder id until
+    // the server echo lands. Reacting to one would address a row the server has
+    // never issued, so the local toggle stands and nothing is sent, exactly as
+    // the send path treats a pending echo.
+    if (typeof messageId !== 'number' || typeof flockId !== 'number') return;
+
+    (hadIt ? removeReaction(messageId, emoji) : addReaction(messageId, emoji))
+      .catch((err) => {
+        if (previousReactions) {
+          setFlocks(prev => prev.map(f => (
+            f.id === flockId
+              ? { ...f, messages: (f.messages || []).map(m => (m.id === messageId ? { ...m, reactions: previousReactions } : m)) }
+              : f
+          )));
+        }
+        if (err?.sessionExpired) return;
+        const lead = hadIt ? "Removing your reaction didn't save." : "Your reaction didn't save.";
+        showToast(err?.message ? `${lead} ${err.message}` : `${lead} Try again.`, 'error');
+      });
+  }, [showToast]);
 
   // Simulate typing indicator with user name
   // Typing indicators now driven by real WebSocket events
