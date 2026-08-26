@@ -525,6 +525,23 @@ router.get('/:token',
         // reachable by anyone with the link, so keep it minimal.
         host: firstNameOnly(link.host_name),
         going: going.rows[0].members + going.rows[0].guests,
+        // Whether POST /:token/join can still admit a NEW account, asked here
+        // so the page does not send a stranger through a whole signup that
+        // ends in a 429 it cannot explain. Same count and same ceiling the
+        // join route enforces (LINK_JOIN_MEMBER_CAP below), read off the
+        // accepted-member figure that was already fetched for `going`, so this
+        // costs no extra query.
+        //
+        // Deliberately a BOOLEAN and not the count or the cap. This is an
+        // unauthenticated surface and the roster is already limited to first
+        // names; the exact size of a group is not something the link needs to
+        // publish, and a client that knew the ceiling could not do anything
+        // with it that this flag does not already say.
+        //
+        // A guest RSVP is NOT capped by this: guests have their own ceiling
+        // and their own table, so the answer section below the join band keeps
+        // working on a full plan and the page stays free of dead ends.
+        full: going.rows[0].members >= LINK_JOIN_MEMBER_CAP,
         // Who those people are, and what each of them said. The exact fields,
         // and the ones deliberately withheld, are on rosterFor above.
         people,

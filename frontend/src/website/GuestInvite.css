@@ -476,6 +476,17 @@
   color: var(--gi-invite-dim);
 }
 
+/* Fine print inside the inverted band. Dimmer and smaller than the alt line
+   above it, because it is the thing you read after you have decided, not
+   before. Same dim ink as .gi-join-alt so it cannot drift into a third
+   contrast level inside one band. */
+.gi .gi-join-note {
+  margin: 10px 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--gi-invite-dim);
+}
+
 .gi-join-link {
   padding: 0;
   border: 0;

@@ -584,8 +584,14 @@ export default function GuestInvite() {
     const copy = {
       gone: {
         title: 'This invite has closed',
-        lead: 'The link was either switched off or the plan is over.',
-        help: 'Ask whoever sent it for a new one. Links belong to one plan, so an old one never starts working again.',
+        // Expiry is a real state and it is the common one. Invite links carry
+        // an expires_at (migrations/028_invite_link_expiry.sql: 14 days, or a
+        // week past the plan's own start time, whichever is later), and
+        // resolveLink answers an expired row exactly as it answers a revoked
+        // one. Saying only "switched off" left the most likely reader of this
+        // screen thinking the host had shut them out on purpose.
+        lead: 'Invite links stop working after a couple of weeks, and a host can switch one off. The plan may also be over.',
+        help: 'Ask whoever sent it for a new link. They can make one from the plan in the app. An old link never starts working again.',
         retry: false,
       },
       badlink: {
@@ -646,6 +652,15 @@ export default function GuestInvite() {
 
   const when = whenLabel(eventDate);
   const going = Number(data && data.going) || 0;
+  // The server's answer to "can a NEW account still be admitted", which is a
+  // different question from "is this plan closed". A flock at the link-join
+  // ceiling still takes guest answers, so this changes the join band and
+  // nothing else on the page.
+  //
+  // === true, not a truthiness test: the frontend and the backend deploy
+  // separately, so an OLD SERVER omits this key entirely, and an absent key
+  // must read as "not full" rather than as anything. Same rule as hasRoster.
+  const atCapacity = !!(data && data.full === true);
   const showNameField = !guest || editingName;
   const shown = people.slice(0, ROSTER_SHOWN);
   const hidden = people.length - shown.length;
@@ -759,28 +774,76 @@ export default function GuestInvite() {
       {!closed && (
         <section className="gi-join" aria-labelledby="gi-join-h">
           <div className="gi-join-body">
-            <h2 id="gi-join-h">Get in the chat</h2>
-            <p className="gi-join-lead">
-              Making an account puts you in this group chat, on the vote, and on
-              the plan when it moves. It is free and it takes a minute.
-            </p>
-            <button type="button" className="gi-join-btn" onClick={() => goJoin('/signup')}>
-              {/* Naming the plan makes the button specific, which is worth
-                  having. It is only worth having while it FITS: flocks.name is
-                  long enough that a 60-character title turned the one primary
-                  action on the page into a five-line block at 320px, which is
-                  the opposite of unmistakable. Past the bound the headline two
-                  inches above already says which flock this is. */}
-              {flockName && flockName.length <= JOIN_NAME_MAX
-                ? `Join "${flockName}"`
-                : 'Join this flock'}
-            </button>
-            <p className="gi-join-alt">
-              Already have Flock?{' '}
-              <button type="button" className="gi-join-link" onClick={() => goJoin('/app')}>
-                Sign in and join
-              </button>
-            </p>
+            {/* A FULL PLAN GETS A DIFFERENT BAND, not a disabled button.
+                POST /:token/join refuses a new account past the member ceiling
+                with a 429, and until the server started saying so up front,
+                this page's answer to a full flock was to send a stranger
+                through a whole signup that could not end in this flock and
+                then say nothing at all. A control whose only job is to reject
+                you is worse than no control (SLOP-AUDIT H5), so the button is
+                not drawn. The quiet sign-in line stays, because someone who is
+                ALREADY on this plan tapping their own link is a 200 that opens
+                the chat, and taking that away would be a new dead end in place
+                of the old one. */}
+            <h2 id="gi-join-h">{atCapacity ? 'This plan is full' : 'Get in the chat'}</h2>
+            {atCapacity ? (
+              <>
+                <p className="gi-join-lead">
+                  It already holds as many people as a flock can, so making an
+                  account will not put you in this one. You can still answer
+                  below, and {host || 'they'} will see it.
+                </p>
+                <p className="gi-join-alt">
+                  Already on this plan?{' '}
+                  <button type="button" className="gi-join-link" onClick={() => goJoin('/app')}>
+                    Sign in and open it
+                  </button>
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="gi-join-lead">
+                  Making an account puts you in this group chat, on the vote, and
+                  on the plan when it moves. It is free and it takes a minute.
+                </p>
+                <button type="button" className="gi-join-btn" onClick={() => goJoin('/signup')}>
+                  {/* Naming the plan makes the button specific, which is worth
+                      having. It is only worth having while it FITS: flocks.name
+                      is long enough that a 60-character title turned the one
+                      primary action on the page into a five-line block at
+                      320px, which is the opposite of unmistakable. Past the
+                      bound the headline two inches above already says which
+                      flock this is. */}
+                  {flockName && flockName.length <= JOIN_NAME_MAX
+                    ? `Join "${flockName}"`
+                    : 'Join this flock'}
+                </button>
+                <p className="gi-join-alt">
+                  Already have Flock?{' '}
+                  <button type="button" className="gi-join-link" onClick={() => goJoin('/app')}>
+                    Sign in and join
+                  </button>
+                </p>
+                {/* THE STEP THIS PAGE USED TO LEAVE OUT, and it is the one that
+                    decides whether the trip finishes. A password signup writes
+                    users.email_verified FALSE (routes/auth.js), and
+                    POST /api/guest/:token/join is behind requireVerified, so
+                    the membership is refused until the address is confirmed.
+                    The refusal is the right one and it is not being argued
+                    with here: an unverified account never becomes an accepted
+                    member. What was wrong was the promise. The band above said
+                    making an account puts you in the chat, and for the default
+                    signup path it does not, not yet, which is exactly the
+                    claim SLOP-AUDIT rule 5 forbids. Say the step instead.
+                    No provider is named: which buttons the signup screen shows
+                    depends on build configuration this page cannot see. */}
+                <p className="gi-join-note">
+                  If you sign up with an email and a password, open the
+                  confirmation email we send you. That is the step that puts you
+                  in the chat.
+                </p>
+              </>
+            )}
           </div>
           {/* The brand bird, and the one place on this page it earns its keep:
               a stranger is being asked to make an account, and this is the
