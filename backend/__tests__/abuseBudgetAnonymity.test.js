@@ -31,11 +31,15 @@
 //      present members only, the reveal now needs three people who are
 //      actually there, and it reverses if one of them leaves.
 //
-//   G. DIFFERENCING (attacked, held at the band). A member who resubmits and
-//      re-reads can binary-search the others' minimum, but bandCeiling floors
-//      the answer, so the search converges on the BAND EDGE and stops there.
-//      Pinned here so a future change to the band steps is measured against
-//      what an attacker actually recovers.
+//   G. DIFFERENCING (was held at the band, CLOSED in round 22). A member who
+//      resubmitted and re-read could binary-search the others' minimum, and
+//      bandCeiling floored the answer so the search converged on the BAND EDGE
+//      rather than the figure. The oracle itself is gone now: a ceiling is
+//      published once, when the budget settles, and submissions are refused
+//      after that, so one sample is all there is and a probe cannot be
+//      repeated. The wider form of the same bug, which needed no probing at
+//      all because the number simply MOVED when the last person answered, has
+//      its own file: __tests__/budgetCeilingDifferencing.
 //
 //   H. SKIP COUNT (was a defect, closed). skipCount was returned raw to every
 //      member. The caller knows their own answer, so in a two-person flock it
@@ -123,9 +127,11 @@ async function dispatch(sql, params) {
     const f = world.flocks.get(Number(p[0]));
     return f ? { rows: [{ budget_enabled: f.budget_enabled, budget_locked: f.budget_locked }], rowCount: 1 } : { rows: [], rowCount: 0 };
   }
-  if (/^SELECT creator_id, budget_enabled FROM flocks WHERE id = \$1 FOR UPDATE$/.test(flat)) {
+  if (/^SELECT creator_id, budget_enabled, budget_locked FROM flocks WHERE id = \$1 FOR UPDATE$/.test(flat)) {
     const f = world.flocks.get(Number(p[0]));
-    return f ? { rows: [{ creator_id: f.creator_id, budget_enabled: f.budget_enabled }], rowCount: 1 } : { rows: [], rowCount: 0 };
+    return f
+      ? { rows: [{ creator_id: f.creator_id, budget_enabled: f.budget_enabled, budget_locked: f.budget_locked }], rowCount: 1 }
+      : { rows: [], rowCount: 0 };
   }
   if (/^SELECT budget_enabled, budget_context, budget_locked, budget_ceiling, ghost_mode_enabled FROM flocks WHERE id = \$1$/.test(flat)) {
     const f = world.flocks.get(Number(p[0]));
@@ -262,15 +268,17 @@ const status = () => call('GET', `/api/budget/${FLOCK}`);
 test('ABUSE E: a member submits $0.01 and leaves, and the cent leaves with them', async () => {
   seedFlock({ creator: 1, members: [1, 2, 3, 4] });
 
-  // The three real participants say what they can spend.
+  // Three of the four real participants say what they can spend. Nothing is
+  // published yet. One member has not answered, so a number now would be a
+  // number that MOVES when they do. See settledCeiling in routes/budget.js.
   as(2); await submit(60);
   as(3); await submit(75);
   as(4); await submit(80);
 
   as(1);
   let s = await status();
-  assert.strictEqual(s.body.isReady, true);
-  assert.strictEqual(s.body.ceiling, 60, 'a healthy $60 band');
+  assert.strictEqual(s.body.isReady, true, 'three amounts are enough for a number to be publishable');
+  assert.strictEqual(s.body.ceiling, null, 'and it is still not published, because user 1 has not answered');
 
   // The griefer joins the conversation with a cent and then walks out. While
   // they are IN the flock the cent counts, and it should: a present member who
@@ -280,7 +288,7 @@ test('ABUSE E: a member submits $0.01 and leaves, and the cent leaves with them'
   as(G);
   const poisoned = await submit(0.01);
   assert.strictEqual(poisoned.status, 200, poisoned.text);
-  assert.strictEqual(poisoned.body.ceiling, 0.01, 'the sub-dollar band');
+  assert.strictEqual(poisoned.body.ceiling, null, 'four of five answered, so still nothing published');
 
   // POST /api/flocks/:id/leave deletes the flock_members row and nothing else,
   // so the submission row still exists...
@@ -288,14 +296,22 @@ test('ABUSE E: a member submits $0.01 and leaves, and the cent leaves with them'
   assert.ok(submission(FLOCK, G), 'the row is still in the table');
 
   // ...and it no longer counts, because every aggregate reads through
-  // flock_members now.
+  // flock_members now. The proof is the number the flock finally settles on
+  // when its last member answers.
   as(1);
   s = await status();
-  assert.strictEqual(s.body.ceiling, 60, 'the group is back to what its members can spend');
   assert.strictEqual(s.body.submissionCount, 3, 'the departed row stopped being counted');
   assert.strictEqual(s.body.totalMembers, 4,
     'and "3 of 4 answered" is arithmetic again: a departed submitter used to push the left number past the right one',
   );
+
+  const settling = await submit(90);
+  assert.strictEqual(settling.status, 200, settling.text);
+  assert.strictEqual(settling.body.ceiling, 60,
+    'the group settles on what its MEMBERS can spend, not on a departed account\'s cent');
+  assert.strictEqual(settling.body.budgetLocked, true);
+  s = await status();
+  assert.strictEqual(s.body.ceiling, 60, 'and reads the same number back');
 
   // The author still cannot edit the row from outside the flock, which is the
   // correct answer and is no longer a trap: leaving IS the withdrawal.
@@ -314,7 +330,10 @@ test('ABUSE E: a member submits $0.01 and leaves, and the cent leaves with them'
 });
 
 test('ABUSE E2: the LOCK commits the group to the members\' MIN, not a departed account\'s', async () => {
-  seedFlock({ creator: 1, members: [1, 2, 3] });
+  // Four members, one of whom never answers, so the budget never settles by
+  // itself and the creator's lock is the publication. That is the path this
+  // case is about.
+  seedFlock({ creator: 1, members: [1, 2, 3, 4] });
   as(1); await submit(70);
   as(2); await submit(65);
   as(3); await submit(65);
@@ -328,7 +347,7 @@ test('ABUSE E2: the LOCK commits the group to the members\' MIN, not a departed 
   const locked = await call('POST', `/api/budget/${FLOCK}/lock`);
   assert.strictEqual(locked.status, 200, locked.text);
   assert.strictEqual(locked.body.ceiling, 60,
-    'MIN over the three present members is $65, banded down to $60',
+    'MIN over the three present sharers is $65, banded down to $60',
   );
   assert.strictEqual(world.flocks.get(FLOCK).budget_locked, true);
   assert.strictEqual(world.flocks.get(FLOCK).budget_ceiling, 60,
@@ -352,11 +371,12 @@ test('HELD: a LOCKED ceiling does not move when someone leaves afterwards', asyn
   as(1); await submit(70);
   as(2); await submit(65);
   as(3); await submit(200);
-  as(4); await submit(90);
-
-  as(1);
-  const locked = await call('POST', `/api/budget/${FLOCK}/lock`);
-  assert.strictEqual(locked.body.ceiling, 60, 'MIN $65, banded to $60');
+  // The last answer settles the budget in the same transaction that records
+  // it, so this response is the one and only publication.
+  as(4);
+  const settling = await submit(90);
+  assert.strictEqual(settling.body.ceiling, 60, 'MIN $65, banded to $60');
+  assert.strictEqual(settling.body.budgetLocked, true);
 
   // User 2, whose $65 was the binding constraint, leaves. Three sharers are
   // still present, so the number is still publishable, and a recompute would
@@ -378,12 +398,20 @@ test('ABUSE E3: a departed submitter cannot hold the lock threshold open either'
   // words of the rule rather than handed a two-person reveal.
   seedFlock({ creator: 1, members: [1, 2] });
   as(1); await submit(70);
-  as(2); await submit(43.20);
 
   const G = 9;
   world.members.push({ flock_id: FLOCK, user_id: G, status: 'accepted' });
   as(G); await submit(10000);
   world.members = world.members.filter((m) => m.user_id !== G);
+
+  // User 2 answers last, so this is the flock's "everyone has answered"
+  // moment. Two present sharers is below the floor, so nothing settles and
+  // nothing is published, and the budget stays open rather than freezing on a
+  // number it is not allowed to show.
+  as(2);
+  const lastAnswer = await submit(43.20);
+  assert.strictEqual(lastAnswer.body.ceiling, null);
+  assert.strictEqual(lastAnswer.body.budgetLocked, false);
 
   as(1);
   const locked = await call('POST', `/api/budget/${FLOCK}/lock`);
@@ -468,39 +496,42 @@ test('ABUSE F2: a third account that STAYS is the honest residual, and its depar
 // G. DIFFERENCING — attacked, and it stops at the band
 // ═════════════════════════════════════════════════════════════════════════════
 
-test('HELD: resubmit-and-difference recovers the BAND of the others\' minimum and no more', async () => {
+test('CLOSED: resubmit-and-difference gets ONE sample, because the first answer that completes the flock settles it', async () => {
+  // This case used to end "held at the band": the attacker could resubmit as
+  // often as they liked and binary-search the others' minimum, and banding
+  // meant the search converged on a band edge rather than the exact figure.
+  //
+  // Round 22 closed the oracle itself. The attacker's first submission is the
+  // flock's last answer, so it settles the budget and every probe after it is
+  // refused. One sample is not a search.
   seedFlock({ creator: 1, members: [1, 2, 3] });
   const SECRET = 37.42;      // what user 2 can spend
   as(2); await submit(SECRET);
   as(3); await submit(88);
 
-  // A (user 1) drives their own amount up and down and reads the published
-  // ceiling each time. This is the whole attack: one member, no collusion,
-  // an oracle they can query as often as they like while the budget is open.
   const observed = [];
   as(1);
   for (const probe of [5, 20, 30, 35, 36, 37, 37.41, 37.42, 37.43, 38, 40, 45, 100, 10000]) {
     const r = await submit(probe);
-    assert.strictEqual(r.status, 200, r.text);
-    observed.push([probe, r.body.ceiling]);
+    observed.push([probe, r.status, r.body.ceiling]);
   }
 
-  // For probes at or above the secret the answer is constant: band(37.42) = 35.
-  const aboveSecret = observed.filter(([probe]) => probe >= SECRET).map(([, c]) => c);
-  assert.deepStrictEqual([...new Set(aboveSecret)], [35],
-    'every probe above the secret returns the same banded answer');
+  const [firstProbe, firstStatus, firstCeiling] = observed[0];
+  assert.strictEqual(firstProbe, 5);
+  assert.strictEqual(firstStatus, 200);
+  assert.strictEqual(firstCeiling, 5,
+    'the settling answer publishes band(MIN), which here is the attacker\'s own $5');
 
-  // The finest distinction the oracle can draw is the band edge, so the
-  // attacker ends knowing 35 <= min(others) < 40 and nothing sharper. Probes
-  // one cent either side of the secret are indistinguishable.
-  const at3741 = observed.find(([probe]) => probe === 37.41)[1];
-  const at3743 = observed.find(([probe]) => probe === 37.43)[1];
-  assert.strictEqual(at3741, at3743, 'a one-cent step across the secret is invisible');
+  for (const [probe, statusCode, ceiling] of observed.slice(1)) {
+    assert.strictEqual(statusCode, 400, `probe ${probe} was accepted after the budget settled`);
+    assert.strictEqual(ceiling, undefined, `probe ${probe} answered with a ceiling`);
+  }
 
-  // And the search cannot be sharpened by moving to a band with a finer step:
-  // probing inside [1,5) only ever reports the attacker's own number back.
-  const at5 = observed.find(([probe]) => probe === 5)[1];
-  assert.strictEqual(at5, 5, 'below the secret the oracle just echoes the probe');
+  // One published number, and it is the one the attacker's own amount set, so
+  // it says nothing about user 2 at all.
+  const published = observed.filter(([, statusCode]) => statusCode === 200).map(([, , c]) => c);
+  assert.deepStrictEqual(published, [5], 'more than one ceiling reached the attacker');
+  assert.ok(bandCeiling(SECRET) === 35, 'and the band that used to be recoverable was 35');
   assertQueriesUnderstood();
 });
 
@@ -630,15 +661,20 @@ test('HELD: the raw MIN never reaches the wire on any of the three read paths', 
   seedFlock({ creator: 1, members: [1, 2, 3] });
   as(1); await submit(37.42);
   as(2); await submit(41);
-  as(3); await submit(63.99);
+  as(3);
+  const settling = await submit(63.99);
+  assert.strictEqual(settling.body.ceiling, 35, 'the settle response carries the band');
 
   as(1);
   const s = await status();
-  assert.strictEqual(s.body.ceiling, 35);
+  assert.strictEqual(s.body.ceiling, 35, 'and so does the read path');
+  // The budget is settled, so neither door is open any more: a resubmission and
+  // a second lock are both refused rather than answering with a number that
+  // could differ from the first one.
   const sub = await submit(37.42);
-  assert.strictEqual(sub.body.ceiling, 35);
+  assert.strictEqual(sub.status, 400, sub.text);
   const locked = await call('POST', `/api/budget/${FLOCK}/lock`);
-  assert.strictEqual(locked.body.ceiling, 35);
+  assert.strictEqual(locked.status, 400, locked.text);
   assert.strictEqual(world.flocks.get(FLOCK).budget_ceiling, 35,
     'the cached column holds the band, not the minimum');
   assertQueriesUnderstood();

@@ -7678,15 +7678,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Money layer socket listeners
   useEffect(() => {
     const unsubBudget = onBudgetUpdated((data) => {
-      // Always update flock-level state
-      if (data.ceiling) setFlocks(prev => prev.map(f => f.id === data.flockId ? { ...f, budgetCeiling: data.ceiling } : f));
+      // The server sends a ceiling in exactly one budget_updated, the one that
+      // settles the flock, and null in every other. Carrying that straight
+      // through is the point: a screen that re-rendered a new number on each
+      // submission told everyone watching whose answer had just moved it.
+      if (data.ceiling) setFlocks(prev => prev.map(f => f.id === data.flockId ? { ...f, budgetCeiling: data.ceiling, budgetLocked: true } : f));
       // Update detailed status if viewing this flock
       if (data.flockId === selectedFlockId) {
         setBudgetStatus(prev => {
-          if (prev && !prev.isReady && data.isReady && data.ceiling) {
+          if (prev && !prev.ceiling && data.ceiling) {
             showToast('Budget set. Showing spots that work for everyone');
           }
-          return prev ? { ...prev, ceiling: data.ceiling, submissionCount: data.submissionCount, totalMembers: data.totalMembers, isReady: data.isReady, skipCount: data.skipCount } : prev;
+          return prev ? { ...prev, ceiling: data.ceiling, submissionCount: data.submissionCount, totalMembers: data.totalMembers, isReady: data.isReady, skipCount: data.skipCount, budgetLocked: data.budgetLocked || prev.budgetLocked } : prev;
         });
       }
     });
@@ -14120,10 +14123,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           <div role="button" tabIndex={0} aria-label="Open group cash pool" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowChatPool(true); } }} onClick={() => setShowChatPool(true)} style={{ padding: '8px 14px', background: `linear-gradient(135deg, ${colors.steel}08, ${colors.steel}15)`, borderBottom: `1px solid ${colors.steel}25`, flexShrink: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               {Icons.dollar(colors.steel, 13)}
-              {budgetStatus.isReady && budgetStatus.ceiling ? (
+              {budgetStatus.ceiling ? (
+                /* A ceiling only exists here once the budget is settled, so
+                   there is no "up to, for now" state left to describe. */
                 <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>
-                  {budgetStatus.budgetLocked ? 'Budget locked at ' : 'Group budget: up to '}
-                  <span style={{ color: colors.steel, fontWeight: '700' }}>${budgetStatus.ceiling}</span>
+                  Group budget: up to
+                  <span style={{ color: colors.steel, fontWeight: '700' }}> ${budgetStatus.ceiling}</span>
                   <span style={{ color: 'var(--text-secondary)', fontWeight: '500' }}> per person</span>
                 </p>
               ) : (
@@ -14605,7 +14610,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           400 from POST /api/budget/:id/lock, reachable only by
                           pressing a button that looked ready. */}
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0, lineHeight: 1.5 }}>
-                        This is anonymous. No one sees your answer. A group number only appears once three people have shared an amount, so nobody's figure can be worked out from it.
+                        This is anonymous. No one sees your answer. One group number appears after everyone has answered, and only if at least three people shared an amount. It is rounded down to a range, and it does not change after that.
                       </p>
                     </div>
                     <button className="hit44 glass-btn glass-primary" disabled={budgetSubmitting} onClick={async () => {
@@ -14641,12 +14646,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {/* Budget Status (already submitted or locked) */}
                 {hasBudget && (userSubmitted || budgetStatus?.budgetLocked) && !showCreateBill && (
                   <div>
-                    {budgetStatus?.isReady && budgetStatus?.ceiling ? (
+                    {budgetStatus?.ceiling ? (
                       <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: `${colors.steel}10`, border: `1px solid ${colors.steel}30`, marginBottom: '14px' }}>
                         <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.steel, margin: 0 }}>
-                          {budgetStatus.budgetLocked ? `Group budget locked at $${budgetStatus.ceiling}` : `Group budget: up to $${budgetStatus.ceiling} per person`}
+                          Group budget: up to ${budgetStatus.ceiling} per person
                         </p>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0' }}>{budgetStatus.submissionCount} of {budgetStatus.totalMembers} submitted</p>
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0' }}>{budgetStatus.submissionCount} of {budgetStatus.totalMembers} answered. This number is set and does not change.</p>
+                      </div>
+                    ) : budgetStatus?.budgetLocked ? (
+                      /* Settled, then the flock dropped below three people who
+                         shared an amount, so the number is withheld again. Say
+                         that, rather than leave a screen reading "waiting" when
+                         nothing is being waited for and answers are closed. */
+                      <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
+                        <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>The group number is not being shown</p>
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: 1.5 }}>
+                          It takes three people who shared an amount, and fewer than three of them are still in this flock. The budget is closed, so nobody can add an amount now.
+                        </p>
                       </div>
                     ) : (
                       /* "Waiting for budgets, 2 of 2 submitted" was the single
@@ -14665,9 +14681,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           </>
                         ) : (
                           <>
-                            <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>Waiting on more amounts</p>
+                            <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>Waiting on more answers</p>
                             <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: 1.5 }}>
-                              {budgetStatus?.submissionCount || 0} of {budgetStatus?.totalMembers || '?'} have answered. Flock shows a group number once three people have shared an amount. Skips do not count towards that.
+                              {budgetStatus?.submissionCount || 0} of {budgetStatus?.totalMembers || '?'} have answered. Flock shows one group number once everyone has answered, and only if at least three people shared an amount. Skips do not count towards those three. Showing a number earlier would move it every time somebody answered, which is how you work out whose answer it was.
                             </p>
                           </>
                         )}
@@ -14693,10 +14709,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         used to be offered whenever the creator was looking,
                         and answered "Budget locks once 3 people have shared an
                         amount" from a 400 after the tap. */}
+                    {isCreator && !budgetStatus?.budgetLocked && budgetStatus?.isReady && (
+                      /* Say what the button does before it is pressed. It
+                         publishes the group number from the amounts shared so
+                         far and closes the budget, so anyone who has not
+                         answered yet no longer can. */
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 8px', lineHeight: 1.5 }}>
+                        Locking now sets the group number from the amounts already shared and closes the budget. Anyone who has not answered will not be able to.
+                      </p>
+                    )}
                     {isCreator && !budgetStatus?.budgetLocked && (
                       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                         {budgetStatus?.isReady && (
-                          <button className="hit44 glass-btn glass-primary" onClick={async () => { try { await lockBudget(selectedFlockId); setBudgetStatus(prev => ({ ...prev, budgetLocked: true })); showToast('Budget locked'); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Lock Budget</button>
+                          <button className="hit44 glass-btn glass-primary" onClick={async () => { try { const d = await lockBudget(selectedFlockId); setBudgetStatus(prev => ({ ...prev, budgetLocked: true, ceiling: d?.ceiling ?? prev?.ceiling })); showToast('Budget locked'); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Lock Budget</button>
                         )}
                         <button className="hit44 glass-btn glass-secondary" onClick={async () => { try { const d = await sendBudgetReminder(selectedFlockId); showToast(`Reminded ${d.reminded} member${d.reminded !== 1 ? 's' : ''}`); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid var(--border-color)`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Send Reminder</button>
                       </div>

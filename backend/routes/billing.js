@@ -63,7 +63,10 @@ const { getInvisibleUserIds, isBlockedBetween } = require('../utils/blocks');
 // flocks.budget_ceiling, which is only as banded as whatever last wrote it.
 // Imported from routes/budget.js — the route that owns the banding rule — so
 // there is one implementation of the thresholds rather than two that can drift.
-const { bandCeiling } = require('./budget');
+// settledCeiling adds the WHEN rule to that: the column holds a published
+// number only once the budget is locked, and before that a ghost commit has no
+// group figure to estimate a share from.
+const { settledCeiling } = require('./budget');
 // Shape before content — see validators/shape.js.
 const { scalarOnly } = require('../validators/shape');
 
@@ -846,7 +849,7 @@ router.post('/:flockId/ghost-commit',
 
       // Get budget ceiling and member count
       const flockResult = await pool.query(
-        'SELECT budget_ceiling, status, ghost_mode_enabled FROM flocks WHERE id = $1',
+        'SELECT budget_ceiling, budget_locked, status, ghost_mode_enabled FROM flocks WHERE id = $1',
         [flockId]
       );
       if (flockResult.rows.length === 0) {
@@ -867,12 +870,18 @@ router.post('/:flockId/ghost-commit',
         return res.status(400).json({ error: 'Ghost commit opens after at least 3 people have submitted budgets' });
       }
 
-      // Banded, not raw: a row cached before 1fdea72 still holds the exact MIN,
-      // and estimatedShare below IS this number on the wire. bandCeiling is a
-      // no-op on an already-banded value, so this only ever repairs a legacy row.
-      const ceiling = bandCeiling(flockResult.rows[0].budget_ceiling);
+      // Settled and banded, not raw and not live. estimatedShare below IS this
+      // number on the wire and it is also WRITTEN into a bill_split_shares row
+      // that GET /api/billing/:flockId serves back later, so a ghost commit
+      // taken while the budget was still open would have persisted a snapshot
+      // of the running minimum and let anyone difference two of them at leisure.
+      // Banding is a no-op on an already-banded value, so it only ever repairs
+      // a legacy row.
+      const ceiling = settledCeiling(flockResult.rows[0].budget_locked, flockResult.rows[0].budget_ceiling);
       if (!ceiling) {
-        return res.status(400).json({ error: 'No budget ceiling set, so we cannot estimate a share' });
+        return res.status(400).json({
+          error: 'The group budget is not set yet, so we cannot estimate a share',
+        });
       }
 
       // Get member count for estimated share
