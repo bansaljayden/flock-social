@@ -7,7 +7,8 @@
 // rows that silently vanished were the OLDEST open ones — the people who had
 // been waiting longest, which is the exact population Guideline 1.2's "act
 // promptly" is about, on a console that cannot be checked by hand in
-// production (ADMIN_USER_IDS is unset, so no account can reach it).
+// production without a signed-in admin account (ADMIN_USER_IDS names exactly
+// one, confirmed set on the Railway service 2026-08-18).
 //
 // What this file pins:
 //
