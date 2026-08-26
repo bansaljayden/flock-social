@@ -4306,7 +4306,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       await resendVerificationEmail();
       setVerifyNote('Sent. Check your inbox, and your spam folder.');
     } catch (e) {
-      if (e?.status === 429) setVerifyNote('That is a lot of emails. Try again in a few minutes.');
+      // The server now words this refusal with the real window (utils/retryAfter.js:
+      // the resend budget's longest leg is a day, not "a few minutes"), so render
+      // what it said rather than a hardcoded guess that FIX 5 exists to remove.
+      // Fall back to the old copy only when the body carried no sentence.
+      if (e?.status === 429) setVerifyNote(e?.message || 'That is a lot of emails. Try again later.');
       else setVerifyNote(e?.message || 'Could not send it just now. Try again shortly.');
     }
   }, [verifyCooldown]);
