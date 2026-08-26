@@ -811,15 +811,16 @@ export default function PrivacyPolicy() {
                 <li><strong>Anything already learned by the crowd model.</strong> A trained model is not a database and cannot have one row removed from it. The training data itself carries no account numbers.</li>
               </ul>
               <p>
-                If you would rather have a copy of your data before you delete it, ask us at{' '}
-                {mail} and we will send you one.
+                If you would rather have a copy of your data before you delete it, you can get one
+                yourself in the app, under Profile and then Get a copy of my data. It downloads as a
+                file. If you would rather we sent it, ask us at {mail}.
               </p>
             </section>
 
             <section id="your-choices">
               <h2>{num('your-choices')} Your choices and rights</h2>
               <ul>
-                <li><strong>Access, correction, export, deletion:</strong> you can request any of these by emailing {mail}. An export is a machine-readable copy of your account, your settings, your plans and calendar entries, the messages you sent, your votes, budgets, reactions, reviews, crowd reports, check-ins, bill-split shares, SOS records, friends, reports you filed, your trusted contacts, and your reliability score. Four things are not in that file today and we would rather say so than let you assume otherwise: the record of which crowd predictions we showed you, the list of accounts you have blocked, your registered push notification tokens, and your venue profile if you run a venue. Ask and we will send those too. The file itself also lists what it leaves out and why. You can delete your account yourself in the app (Profile &rarr; Delete account) or from our <a href="/delete-account">account deletion page</a>. To protect your account, deleting it asks you to confirm your password, or to sign in again if you use Apple or Google.</li>
+                <li><strong>Access, correction, export, deletion:</strong> you can export your data yourself in the app, under Profile and then Get a copy of my data, and it asks for your password first so that somebody holding your phone cannot lift it. For access or correction, or for the four things named below that the file leaves out, email {mail}. An export is a machine-readable copy of your account, your settings, your plans and calendar entries, the messages you sent, your votes, budgets, reactions, reviews, crowd reports, check-ins, bill-split shares, SOS records, friends, reports you filed, your trusted contacts, and your reliability score. Four things are not in that file today and we would rather say so than let you assume otherwise: the record of which crowd predictions we showed you, the list of accounts you have blocked, your registered push notification tokens, and your venue profile if you run a venue. Ask and we will send those too. The file itself also lists what it leaves out and why. You can delete your account yourself in the app (Profile &rarr; Delete account) or from our <a href="/delete-account">account deletion page</a>. To protect your account, deleting it asks you to confirm your password, or to sign in again if you use Apple or Google.</li>
                 <li><strong>Location:</strong> Flock asks before it reads your location and never reads it in the background. You can turn the permission off for Flock in your device settings at any time. The map then opens on a default area and venue search asks you where to look.</li>
                 <li><strong>Live location sharing:</strong> stop at any time from within the flock or the conversation you started it in.</li>
                 <li><strong>Push notifications:</strong> Flock asks before it sends any. To stop them, turn notifications off for Flock in your device settings. Signing out also deletes that device's push token from our servers.</li>

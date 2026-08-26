@@ -568,3 +568,37 @@ describe('house copy rules', () => {
     }
   });
 });
+
+describe('the promised in-app data export exists and is gated the way the policy says', () => {
+  // The policy used to send people to an email address for a copy of their
+  // data while GET /api/users/export sat built and unreachable, so every
+  // request was answered by hand using a route that already did the whole job.
+  // Now the policy names an in-app control. A page that names a control the app
+  // does not have is the exact failure this file was written to prevent, and it
+  // is worse for a data right than for a feature, because somebody relying on
+  // it is exercising a legal one.
+  test('the policy points at the control by the name the app actually uses', () => {
+    expect(privacy).toMatch(/Get a copy of my data/);
+    expect(APP_SOURCE).toContain('Get a copy of my data');
+  });
+
+  test('the export the policy promises is really wired to the route', () => {
+    const api = read('frontend', 'src', 'services', 'api.js');
+    expect(api).toContain("'/api/users/export'");
+    // And something calls it. An exported wrapper with no caller is the state
+    // this whole change existed to end.
+    expect(APP_SOURCE).toContain('exportMyData(');
+  });
+
+  test('it asks for a password, which is what the policy tells people it does', () => {
+    expect(privacy).toMatch(/asks for your password/i);
+    const api = read('frontend', 'src', 'services', 'api.js');
+    expect(api).toContain("'x-export-password'");
+  });
+
+  test('the policy no longer says email is the only way to get a copy', () => {
+    // The old sentence: "ask us at {mail} and we will send you one." Email is
+    // still offered, and it is no longer the only route.
+    expect(privacy).not.toMatch(/copy of your data before you delete it, ask us at/);
+  });
+});
