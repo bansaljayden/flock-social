@@ -1,0 +1,17 @@
+-----FIXTURE CMS ENVELOPE-----
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Name</key><string>Flock App Store 2026-08-26</string>
+	<key>UUID</key><string>AAAAAAAA-1111-4111-8111-AAAAAAAAAAAA</string>
+	<key>CreationDate</key><date>2026-08-26T09:14:00Z</date>
+	<key>Entitlements</key>
+	<dict>
+		<key>application-identifier</key><string>ABCDE12345.com.flockcorp.flock</string>
+		<key>aps-environment</key><string>production</string>
+		<key>com.apple.developer.applesignin</key><array><string>Default</string></array>
+		<key>com.apple.developer.associated-domains</key><array><string>applinks:flockcorp.com</string></array>
+	</dict>
+</dict>
+</plist>

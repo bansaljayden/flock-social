@@ -108,6 +108,14 @@ workflows:
           # names the variable to set.
           set -eu
           PLIST=ios/App/App/GoogleService-Info.plist
+          # Named rather than typed out, in both this step and the signing check
+          # below, for one reason: an absolute path to a macOS-only binary is the
+          # single thing that stopped either of these scripts from being RUN
+          # anywhere but a Codemagic Mac. On the runner this is exactly what it
+          # was. Off it, frontend/src/__tests__/codemagicShellSteps.test.js
+          # points it at a stand-in and drives the real body of this step through
+          # every case below.
+          PLIST_BUDDY="${PLIST_BUDDY:-/usr/libexec/PlistBuddy}"
 
           if [ -z "${GOOGLE_SERVICE_INFO_PLIST:-}" ]; then
             if [ "${ALLOW_PUSHLESS_BUILD:-}" != "true" ]; then
@@ -153,13 +161,24 @@ workflows:
             echo "FIX: regenerate the value with  base64 -i GoogleService-Info.plist  and paste all of it."
             exit 1
           fi
-          PLIST_BUNDLE=$(/usr/libexec/PlistBuddy -c "Print :BUNDLE_ID" "$PLIST" 2>/dev/null || echo "")
+          # `|| VAR=""` AND NOT `|| echo ""`, WHICH IS NOT THE SAME THING.
+          # PlistBuddy reports a missing key by exit status, and it also PRINTS
+          # its complaint: "Print: Entry, ":API_KEY", Does Not Exist". Which
+          # stream that lands on is a detail this script must not depend on,
+          # because if it is stdout then `$(... || echo "")` captures the
+          # complaint as the VALUE. Every check under here then reads a
+          # non-empty string and agrees with it: a plist carrying no API_KEY at
+          # all passes `[ -z "$PLIST_KEY" ]`, is not the literal placeholder
+          # either, and ships as verified. Assigning on failure instead throws
+          # whatever was printed away and keeps only the exit status, so the
+          # answer is the same on both streams. Both are driven in the test.
+          PLIST_BUNDLE=$("$PLIST_BUDDY" -c "Print :BUNDLE_ID" "$PLIST" 2>/dev/null) || PLIST_BUNDLE=""
           if [ "$PLIST_BUNDLE" != "$BUNDLE_ID" ]; then
             echo "PUSH CHECK FAILED: this plist is registered to bundle id '$PLIST_BUNDLE', not $BUNDLE_ID."
             echo "FIX: Firebase console, Project settings, General, the iOS app for $BUNDLE_ID, download its plist."
             exit 1
           fi
-          PLIST_KEY=$(/usr/libexec/PlistBuddy -c "Print :API_KEY" "$PLIST" 2>/dev/null || echo "")
+          PLIST_KEY=$("$PLIST_BUDDY" -c "Print :API_KEY" "$PLIST" 2>/dev/null) || PLIST_KEY=""
           if [ -z "$PLIST_KEY" ] || [ "$PLIST_KEY" = "invalid-placeholder" ]; then
             echo "PUSH CHECK FAILED: the decoded plist carries no usable API_KEY."
             exit 1
@@ -197,7 +216,19 @@ workflows:
           # the invisible failure this whole step exists to end, moved into the
           # build log: the line at the bottom names the project either way, and
           # nothing in it used to say whether anything had agreed with it.
-          PLIST_PROJECT=$(/usr/libexec/PlistBuddy -c "Print :PROJECT_ID" "$PLIST" 2>/dev/null || echo "")
+          PLIST_PROJECT=$("$PLIST_BUDDY" -c "Print :PROJECT_ID" "$PLIST" 2>/dev/null) || PLIST_PROJECT=""
+          # AN EMPTY PROJECT_ID IS NOT A PROJECT TO NAME. Without this the skip
+          # branch below prints "Firebase project '', WHICH NOTHING HERE
+          # CHECKED" and exits 0: a green verdict about a plist that does not
+          # say which project it belongs to, which is the one fact the verdict
+          # is about. Firebase needs the key to configure at all.
+          if [ -z "$PLIST_PROJECT" ]; then
+            echo "PUSH CHECK FAILED: the decoded plist names no Firebase PROJECT_ID."
+            echo "FIX: re-download GoogleService-Info.plist from the Firebase console, for the"
+            echo "     iOS app for $BUNDLE_ID, and regenerate GOOGLE_SERVICE_INFO_PLIST from"
+            echo "     the whole file with  base64 -i GoogleService-Info.plist"
+            exit 1
+          fi
           if [ -z "${REACT_APP_FIREBASE_PROJECT_ID:-}" ]; then
             PROJECT_VERDICT="project '$PLIST_PROJECT', WHICH NOTHING HERE CHECKED: REACT_APP_FIREBASE_PROJECT_ID is not set in this group, so there was nothing to compare it against"
           elif [ "$PLIST_PROJECT" != "$REACT_APP_FIREBASE_PROJECT_ID" ]; then
@@ -248,8 +279,22 @@ workflows:
           set -eu
           PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
           DECODED=/tmp/flock-provisioning-profile.plist
+          # See the note in the plist step above: named so this body can be run
+          # off a Mac by frontend/src/__tests__/codemagicShellSteps.test.js.
+          PLIST_BUDDY="${PLIST_BUDDY:-/usr/libexec/PlistBuddy}"
           WANTED=$(plutil -convert json -o - ios/App/App/App.entitlements \
             | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin).keys()))')
+          # THE GUARD AND THE LOOP READ THE SAME LIST, and they did not before.
+          # `WANTED` is one string and the loop asks one question per WORD in
+          # it, which are two different things whenever a word boundary and a
+          # character are not the same fact. A key list of nothing but
+          # whitespace is not empty, so `[ -z ]` passed it, and then it split
+          # into zero words and the loop asked nothing. That is the same
+          # disagreement as the one this whole step keeps finding: two systems
+          # that are supposed to describe one thing and can differ. Splitting
+          # once, here, and counting and iterating that ONE list is what makes
+          # them the same system.
+          set -- $WANTED
           echo "App.entitlements declares: $WANTED"
 
           # AN EMPTY LIST IS NOT A PASS. The loop below asks one question per
@@ -265,10 +310,12 @@ workflows:
           # It is also reachable by the exact move the FIX text at the bottom of
           # this step tells people not to make, and by Capacitor regenerating the
           # iOS project over the file.
-          if [ -z "$WANTED" ]; then
-            echo "SIGNING CHECK FAILED: ios/App/App/App.entitlements declares no entitlements at all."
+          if [ -z "$WANTED" ] || [ "$#" -eq 0 ]; then
+            echo "SIGNING CHECK FAILED: ios/App/App/App.entitlements declares nothing this check can ask about."
             echo "Nothing below would have been examined and every installed profile would have passed."
-            echo "CAUSE: the file was emptied, or the iOS project was regenerated over it."
+            echo "CAUSE: the file was emptied, the iOS project was regenerated over it, or its keys"
+            echo "       are blank, which is the same thing to the loop below and used to read as empty"
+            echo "       to nothing but this line."
             echo "FIX: restore App.entitlements. It has to declare aps-environment for push,"
             echo "     com.apple.developer.applesignin for Guideline 4.8, and the associated-domains"
             echo "     entitlement the invite links open through."
@@ -299,19 +346,22 @@ workflows:
           for p in "$PROFILE_DIR"/*.mobileprovision; do
             [ -e "$p" ] || continue
             security cms -D -i "$p" -o "$DECODED" 2>/dev/null || continue
-            APPID=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" "$DECODED" 2>/dev/null || echo "")
+            APPID=$("$PLIST_BUDDY" -c "Print :Entitlements:application-identifier" "$DECODED" 2>/dev/null) || APPID=""
             case "$APPID" in
               *".$BUNDLE_ID") ;;
               *) continue ;;
             esac
             FOUND=$((FOUND + 1))
-            echo "Profile: $(/usr/libexec/PlistBuddy -c 'Print :Name' "$DECODED")"
-            echo "UUID:    $(/usr/libexec/PlistBuddy -c 'Print :UUID' "$DECODED")"
-            echo "Created: $(/usr/libexec/PlistBuddy -c 'Print :CreationDate' "$DECODED")"
+            echo "Profile: $("$PLIST_BUDDY" -c 'Print :Name' "$DECODED" 2>/dev/null || true)"
+            echo "UUID:    $("$PLIST_BUDDY" -c 'Print :UUID' "$DECODED" 2>/dev/null || true)"
+            echo "Created: $("$PLIST_BUDDY" -c 'Print :CreationDate' "$DECODED" 2>/dev/null || true)"
 
             MISSING=""
-            for key in $WANTED; do
-              if ! /usr/libexec/PlistBuddy -c "Print :Entitlements:$key" "$DECODED" >/dev/null 2>&1; then
+            # "$@", not $WANTED: the list counted above and the list asked about
+            # here have to be the one list, or the guard is guarding something
+            # else. This is the whole of that fix.
+            for key in "$@"; do
+              if ! "$PLIST_BUDDY" -c "Print :Entitlements:$key" "$DECODED" >/dev/null 2>&1; then
                 MISSING="$MISSING $key"
               fi
             done
