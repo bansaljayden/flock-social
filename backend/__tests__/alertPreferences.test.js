@@ -558,6 +558,25 @@ for (const rel of ['routes/flocks.js', 'routes/venueProfile.js', 'services/crowd
 // lookup and a send without also reading the preference column. That is the
 // exact drift migrations/017 was written about, in the direction it always goes.
 // ---------------------------------------------------------------------------
+// ONE NARROW EXCEPTION, and it is checked rather than trusted.
+//
+// The heuristic above is file-level: it reads "mentions venue_profiles" plus
+// "sends something" as "notifies a venue owner". routes/admin.js is the first
+// file to be both without being that. It touches venue_profiles for the verify
+// and tier routes, and its one send is the moderation WARNING, addressed to a
+// reported user and to nobody else. That send must not be behind a preference
+// switch: a warning a user can mute is not a warning, and the switches this
+// column stores are about bookings, reviews and weekly reports.
+//
+// The exception is conditional on the file still having exactly one send and on
+// that send still being the warning, so adding a second one to admin.js puts it
+// straight back in the offenders list.
+function exemptSend(file, code) {
+  if (file !== 'admin.js') return false;
+  const sends = code.match(/sendEmail\s*\(/g) || [];
+  return sends.length === 1 && /subject: WARN_SUBJECT/.test(code);
+}
+
 test('any file that notifies a venue owner must read notification_prefs', () => {
   const roots = [path.join(__dirname, '..', 'routes'), path.join(__dirname, '..', 'services')];
   const offenders = [];
@@ -571,7 +590,7 @@ test('any file that notifies a venue owner must read notification_prefs', () => 
       const code = src.split('\n').map((l) => codeOnly(l)).join('\n');
       const looksUpOwner = /venue_profiles/.test(code);
       const sends = /push(Always|IfOffline|IfOfflineDebounced)\s*\(|sendPushToUser\s*\(|sendEmail\s*\(/.test(code);
-      if (looksUpOwner && sends && !/notification_prefs/.test(code)) {
+      if (looksUpOwner && sends && !/notification_prefs/.test(code) && !exemptSend(file, code)) {
         offenders.push(`${path.basename(dir)}/${file}`);
       }
     }

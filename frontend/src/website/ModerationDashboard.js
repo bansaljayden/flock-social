@@ -33,10 +33,21 @@ const AUDIT_TYPE_LABEL = { venue_profile: 'Venue profile' };
 // it, but every value the server writes TODAY is named.
 const ACTION_LABEL = {
   content_hidden: 'Content hidden', content_restored: 'Content restored',
-  user_banned: 'User banned', user_unbanned: 'User unbanned',
+  // 'user_warned' has been legal in the moderation_actions CHECK since
+  // migration 001 and nothing wrote one until the Warn control below existed.
+  user_warned: 'User warned', user_banned: 'User banned', user_unbanned: 'User unbanned',
   dismissed: 'Report dismissed', tier_changed: 'Venue tier changed',
   venue_verified: 'Venue verified', venue_unverified: 'Venue verification removed',
   evidence_viewed: 'Evidence viewed',
+};
+// What the audit log's last-action line should say on a card, in the past
+// tense and short enough to sit in a sentence. Same keys, different job: the
+// log labels a row, this finishes "last time we".
+const PRIOR_ACTION_LABEL = {
+  content_hidden: 'took content down', content_restored: 'restored content',
+  user_warned: 'warned them', user_banned: 'banned them', user_unbanned: 'unbanned them',
+  dismissed: 'dismissed the report', tier_changed: 'changed their venue tier',
+  venue_verified: 'verified their venue', venue_unverified: 'removed their venue verification',
 };
 // Mirrors TAKEDOWN_TARGETS in backend/routes/admin.js: seven types have an
 // is_hidden row behind them, 'profile' does not (a profile report is answered
@@ -71,6 +82,53 @@ const lowerLabel = (t) => {
   const s = typeLabel(t);
   return s.charAt(0).toLowerCase() + s.slice(1);
 };
+
+// WHICH FAILURES ARE ACTUALLY "YOU ARE NOT SIGNED IN HERE".
+//
+// This console reads its bearer token out of localStorage on whatever origin it
+// loads on, and the most likely way to arrive is a browser that has never had
+// the Flock app open: a different laptop, a private window, the phone handing
+// the address to Safari from inside the native shell. That is not a 403. It is
+// middleware/auth.js answering 401 "No token provided", and the hint used to
+// match on /403|Admin/ alone, so the one arrival that most needs the sentence
+// was the one that never got it: a moderator opening the queue at two in the
+// morning read the words "No token provided" and no next step.
+//
+// Matched on the server's own strings rather than on the status code, because
+// adminFetch throws an Error carrying the message and the status is gone by the
+// time this renders. All five 401 messages in middleware/auth.js are covered:
+// no token, user no longer exists, session expired, token expired, invalid
+// token. An unrelated failure (a 500 on the audit log, a dropped connection)
+// still gets no hint, because telling somebody to sign in when they already are
+// sends them away from a problem that is not theirs.
+const needsSignIn = (m) => /403|admin access|token|session expired|sign in/i.test(String(m || ''));
+
+// ---------------------------------------------------------------------------
+// CHILD SAFETY, ON THE SCREEN WHERE THE DECISION IS MADE
+// ---------------------------------------------------------------------------
+//
+// A report filed under 'sexual' is the only category in this product with a
+// federal reporting duty behind it (18 U.S.C. 2258A, and the app's floor is
+// 13). services/moderationAlerts.js has always given those reports a distinct
+// email subject and a distinct log token, and the queue then rendered one as an
+// ordinary row: same card, same three buttons, no sign that MODERATION-LEGAL.md
+// exists or that its § 4 step 2 says to preserve the evidence BEFORE touching
+// any of them.
+//
+// That gap is not cosmetic. Closing a report releases the holds that keep
+// reported evidence alive: routes/stories.js refuses to delete a story only
+// while its report is open or under review, and migration 020's owner_deleted_at
+// sweep works the same way for venue rows. So the natural first click on a
+// child-safety report is the one that starts the clock on the thing a
+// CyberTipline report is supposed to be about.
+//
+// The flag is computed SERVER-side (routes/admin.js reads isChildSafetyReason
+// from the same module the alerting uses) so this console cannot drift from the
+// alert path. The fallback below only covers a server too old to send the
+// field, and it is the same single reason value.
+const isChildSafety = (r) => (
+  typeof r.child_safety === 'boolean' ? r.child_safety : r.reason === 'sexual'
+);
 
 async function adminFetch(path, options = {}) {
   const token = getToken();
@@ -152,6 +210,10 @@ export default function ModerationDashboard() {
   // first load owns the blank screen; every later one keeps the queue up.
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState(null);
+  // The last action's side effect, in one sentence. Not an error and not a
+  // toast: there is no toast on this screen, and an alert() for something that
+  // went right would make a moderator dismiss a dialog after every takedown.
+  const [note, setNote] = useState('');
   // reportId -> { status: 'loading' | 'ready' | 'collapsed' | 'error',
   //               url, error, renderFailed, attempt }
   // Keyed by report id, which is stable across a refresh, so a picture a
@@ -403,6 +465,9 @@ export default function ModerationDashboard() {
     const labels = {
       hide: `Hide this ${noun}`, ban: `Ban ${report.reported_user_name || 'this user'}`,
       dismiss: 'Dismiss this report', unban: `Unban ${report.reported_user_name || 'this user'}`,
+      // Says what actually happens. A warning is an email to the account, not a
+      // silent flag, and a moderator should know that before they send one.
+      warn: `Email a warning to ${report.reported_user_name || 'this user'}`,
       // "…where everyone can see it" was a promise the action does not make. A
       // restored DM goes back to two people and a restored story goes back to
       // the author's friends; only the audience it was hidden from gets it
@@ -418,10 +483,18 @@ export default function ModerationDashboard() {
       // verbatim, and an audit row whose reason is '' reads as a moderator who
       // wrote nothing on purpose.
       const reason = (own(reasons, report.id) || '').trim();
-      await adminFetch(`/api/admin/reports/${report.id}`, {
+      const result = await adminFetch(`/api/admin/reports/${report.id}`, {
         method: 'PUT',
         body: JSON.stringify(reason ? { action, reason } : { action }),
       });
+      // A takedown closes every other open report about the same content, in
+      // the same transaction. Those cards vanish on the refresh below, and a
+      // moderator watching nine rows disappear deserves to be told why rather
+      // than left to wonder what the click did.
+      const swept = Number(result && result.alsoResolved) || 0;
+      setNote(swept > 0
+        ? `Content hidden. ${swept} other ${swept === 1 ? 'report' : 'reports'} about the same content ${swept === 1 ? 'was' : 'were'} closed with it.`
+        : '');
       // Sent and recorded; a stale draft must not attach itself to the NEXT
       // action on this card.
       setReasons((p) => {
@@ -432,6 +505,7 @@ export default function ModerationDashboard() {
       });
       await load({ background: true });
     } catch (e) {
+      setNote('');
       alert(e.message);
       // A refusal is news about the world, not just about the click. "That
       // content no longer exists" and "that account is a moderator" both mean
@@ -474,7 +548,7 @@ export default function ModerationDashboard() {
             list, so saying it twice says nothing extra. */}
         {Array.from(new Set([queue.error, log.error].filter(Boolean))).map((m) => (
           <div key={m} style={S.err} role="alert">
-            {m}{/403|Admin/i.test(m) ? '. Sign in to the app as an admin account first, then reload this page.' : ''}
+            {m}{needsSignIn(m) ? '. Sign in to the app as an admin account first, then reload this page.' : ''}
           </div>
         ))}
 
@@ -493,6 +567,8 @@ export default function ModerationDashboard() {
         {queue.error && queue.counts.length > 0 ? (
           <p style={{ ...S.dimSmall, margin: '8px 0 0' }}>These numbers are from the last load that worked, not from now.</p>
         ) : null}
+
+        {note ? <div style={S.note} role="status">{note}</div> : null}
 
         {loading ? <p style={S.dim}>Loading…</p> : (
           <>
@@ -530,12 +606,20 @@ export default function ModerationDashboard() {
                   const canBan = !!r.reported_user_id;
                   // Dismissing something already finished changes nothing but the
                   // word on the row, so it stays with the unhandled reports.
+                  // Warn sits between doing nothing and a permanent ban, which
+                  // were the only two account outcomes this console had. It
+                  // sends a real email, so it is offered only where there is
+                  // somebody to send one to and a ban would not already have
+                  // overtaken it.
+                  const canWarn = canBan && !r.reported_user_banned;
+                  const childSafety = isChildSafety(r);
                   const showActions = canHide || canRestore || canBan || unhandled;
                   return (
                   <div key={r.id} style={{ ...S.card, opacity: unhandled ? 1 : 0.7 }}>
                     <div style={S.cardTop}>
                       <span style={S.reason}>{own(REASON_LABEL, r.reason) || r.reason}</span>
                       <span style={S.type}>{typeLabel(r.content_type)}{r.content_id ? ` #${r.content_id}` : ''}</span>
+                      {childSafety ? <span style={S.childTag}>CHILD SAFETY</span> : null}
                       <span style={{ ...S.status, color: unhandled ? '#e5484d' : '#7c7c87' }}>{String(r.status || '').replace(/_/g, ' ')}</span>
                     </div>
                     <div style={S.meta}>
@@ -543,6 +627,7 @@ export default function ModerationDashboard() {
                       {r.reported_user_banned ? <span style={S.banned}>BANNED</span> : null}
                       {'  ·  '}reporter: {r.reporter_name || '—'}{'  ·  '}{fmt(r.created_at)}
                     </div>
+                    <ReportRecord report={r} unhandled={unhandled} />
                     {r.details ? <div style={S.details}>Reporter wrote: “{r.details}”</div> : null}
 
                     <ReportedContent
@@ -556,6 +641,37 @@ export default function ModerationDashboard() {
 
                     {showActions && (
                       <>
+                        {/* The one thing on this card that has to be read
+                            BEFORE a button is pressed, so it sits directly
+                            above the buttons rather than in the header. The
+                            wording is the runbook's own order of operations,
+                            and it names the file instead of restating seven
+                            steps a card has no room for. */}
+                        {childSafety ? (
+                          <div style={S.childNotice} role="note">
+                            <b>Preserve the evidence before you act.</b> This report may carry a legal
+                            reporting duty. Export the rows and file the CyberTipline report first, then
+                            hide and ban. Closing a report also releases the holds that stop reported
+                            stories and venue rows from being deleted. The steps are in
+                            MODERATION-LEGAL.md in the repository root.
+                            {/* The server answers "under 18" and never sends a date of
+                                birth. Said out loud only where it changes the decision:
+                                the whole app is 13 and up, so a flag on every card would
+                                be noise, but on a report that may be reportable under
+                                18 U.S.C. 2258A it is the fact the runbook turns on. */}
+                            {r.reported_user_is_minor || r.reporter_is_minor ? (
+                              <div style={{ marginTop: 6 }}>
+                                <b>
+                                  {r.reported_user_is_minor && r.reporter_is_minor
+                                    ? 'Both accounts on this report are under 18.'
+                                    : r.reported_user_is_minor
+                                      ? 'The reported account is under 18.'
+                                      : 'The account that filed this report is under 18.'}
+                                </b>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
                         {/* One optional line, sent with whichever action is
                             clicked, stored verbatim in the audit log by the
                             route that already validated it (string, <=1000).
@@ -578,6 +694,9 @@ export default function ModerationDashboard() {
                         ) : null}
                         {canRestore ? (
                           <button disabled={busyId === r.id} onClick={() => act(r, 'unhide')} style={S.btn}>Restore content</button>
+                        ) : null}
+                        {canWarn ? (
+                          <button disabled={busyId === r.id} onClick={() => act(r, 'warn')} style={S.btn}>Warn user</button>
                         ) : null}
                         {canBan ? (
                           r.reported_user_banned
@@ -663,6 +782,54 @@ export default function ModerationDashboard() {
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+// WHAT THIS CARD COULD NOT ANSWER, and a moderator had no second screen to go
+// and ask. Three questions, one line each, and every one of them changes the
+// decision:
+//
+//   How many people are waiting on this?  Ten reporters on one message is ten
+//     rows in this queue, because the duplicate check in routes/moderation.js
+//     is per-reporter on purpose. Without this line the tenth report reads as
+//     one more unrelated complaint instead of as the tenth person to complain.
+//   What is this account's record?  "Nobody has ever reported them" and
+//     "eleven earlier reports" are different decisions.
+//   What did we do last time?  A warning already given is the argument for a
+//     ban. A dismissal already made is the argument against one.
+//
+// And, for a report somebody has already closed, WHO closed it and when.
+// content_reports.handled_by has been written since the first takedown and
+// shown nowhere, so a second moderator opening a resolved report could not tell
+// whether a colleague had acted a minute ago or a month ago. Nothing prevents
+// two people acting on the same report (every action is accepted at any status,
+// deliberately), so the defence is that the screen says who already did.
+//
+// Anything the server does not send renders as nothing at all. A server older
+// than these columns leaves the line out rather than printing a confident zero.
+function ReportRecord({ report: r, unhandled }) {
+  const dup = Number(r.content_open_reports) || 0;
+  const prior = Number(r.user_total_reports) || 0;
+  const lastAction = r.user_last_action
+    ? (own(PRIOR_ACTION_LABEL, r.user_last_action) || actionLabel(r.user_last_action))
+    : '';
+  const handled = !unhandled && r.handled_by_name;
+  if (dup < 2 && prior === 0 && !lastAction && !handled) return null;
+  return (
+    <div style={S.record}>
+      {dup >= 2 ? (
+        <div><b>{dup} people</b> have reported this same {lowerLabel(r.content_type)}. Hiding it closes the rest.</div>
+      ) : null}
+      {prior > 0 ? (
+        <div>
+          {prior} earlier {prior === 1 ? 'report' : 'reports'} against this account
+          {lastAction ? `. Last time we ${lastAction}${r.user_last_action_at ? ` on ${fmt(r.user_last_action_at)}` : ''}.` : '.'}
+        </div>
+      ) : lastAction ? (
+        <div>{`Last time we ${lastAction}${r.user_last_action_at ? ` on ${fmt(r.user_last_action_at)}` : ''}.`}</div>
+      ) : null}
+      {handled ? <div>Already handled by {r.handled_by_name}{r.resolved_at ? ` on ${fmt(r.resolved_at)}` : ''}.</div> : null}
     </div>
   );
 }
@@ -883,6 +1050,16 @@ const S = {
   meta: { fontSize: 13, color: '#9a9aa3' },
   banned: { color: '#e5484d', fontWeight: 700, marginLeft: 6, fontSize: 11 },
   details: { marginTop: 8, fontSize: 14, color: '#c7c7cd', fontStyle: 'italic' },
+  // The account's record. Dimmer than the report itself and above the evidence:
+  // it is context for the decision, never the thing being judged.
+  record: { marginTop: 6, fontSize: 13, color: '#9a9aa3', display: 'flex', flexDirection: 'column', gap: 2 },
+  // Amber, not the takedown steel and not the ban red. It is neither a state
+  // the content is in nor an action taken: it is an instruction to stop and
+  // read before pressing anything, and it has to be the loudest thing on the
+  // card without pretending to be a button.
+  childTag: { color: '#f5a623', border: '1px solid #7a5a12', borderRadius: 5, padding: '1px 6px', fontSize: 10, letterSpacing: 0.5, fontWeight: 700 },
+  childNotice: { marginTop: 12, background: '#251c08', border: '1px solid #7a5a12', color: '#f0cf95', borderRadius: 10, padding: '10px 12px', fontSize: 13, lineHeight: 1.45 },
+  note: { background: '#12281c', border: '1px solid #2d6a45', color: '#a7e0bf', padding: '10px 14px', borderRadius: 10, margin: '12px 0 0', fontSize: 14 },
   content: { marginTop: 10, background: '#121216', border: '1px solid #24242a', borderRadius: 10, padding: '10px 12px' },
   contentHead: { fontSize: 12, color: '#8a8a93', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   hiddenTag: { color: '#a8cbe8', border: '1px solid #2d5a87', borderRadius: 5, padding: '1px 6px', fontSize: 10, letterSpacing: 0.5 },

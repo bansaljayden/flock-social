@@ -11,9 +11,11 @@
  * They are the whole of Apple Guideline 1.2 as a user and a reviewer meet it:
  * the sheet is where a report is filed, the console is where it is actioned,
  * and the venue portal is the third front door into the same binary. The
- * console in particular is unreachable in production today (ADMIN_USER_IDS is
- * unset on Railway, so no account holds role='admin'), which means it has had
- * far less real use than the rest of the app and cannot be checked by hand.
+ * console in particular is reachable in production by exactly ONE account
+ * (ADMIN_USER_IDS names one id and was confirmed set on Railway 2026-08-18;
+ * this comment said it was unset, which was true when it was written), and it
+ * has no in-app entry on iOS at all, which means it has had far less real use
+ * than the rest of the app and cannot be checked by hand.
  * Everything below therefore has to be checked mechanically.
  *
  * WHAT IT COVERS, and why each part is shaped the way it is
@@ -484,6 +486,27 @@ describe('two lists, two verdicts', () => {
     expect(screen.getByText(/Sign in to the app as an admin account first/)).toBeInTheDocument();
     // Exactly one banner carries it: the one that actually saw a 403.
     expect(screen.getAllByText(/Sign in to the app as an admin account first/)).toHaveLength(1);
+  });
+
+  test('the signed-out arrival gets the hint too, not just the 403', async () => {
+    // The likeliest way to reach this page is a browser that has never had the
+    // Flock app open, which is middleware/auth.js answering 401 "No token
+    // provided". The hint used to match on 403 alone, so the arrival that most
+    // needed the next step was the one that never got it.
+    for (const msg of ['No token provided', 'Token expired', 'Session expired, please sign in again', 'Invalid token']) {
+      routes[REPORTS] = () => respond({ error: msg }, { ok: false, status: 401 });
+      routes[ACTIONS] = () => respond({ error: msg }, { ok: false, status: 401 });
+      const view = await renderConsole();
+      expect(screen.getAllByText(/Sign in to the app as an admin account first/)).toHaveLength(1);
+      view.unmount();
+    }
+  });
+
+  test('a failure that has nothing to do with signing in is not answered with "sign in"', async () => {
+    routes[REPORTS] = () => respond({ error: 'Failed to fetch reports' }, { ok: false, status: 500 });
+    routes[ACTIONS] = () => respond({ error: 'Failed to fetch audit log' }, { ok: false, status: 500 });
+    await renderConsole();
+    expect(screen.queryByText(/Sign in to the app as an admin account first/)).toBeNull();
   });
 
   test('one failure that takes out both reads is stated once, not keyed twice', async () => {
@@ -1068,5 +1091,156 @@ describe('the sheet names every content type the server accepts', () => {
     const local = /maxLength=\{(\d+)\}/.exec(sheetSrc);
     expect(local).not.toBeNull();
     expect(Number(local[1])).toBeLessThanOrEqual(Number(cap[1]));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE CARD'S MEMORY, THE CHILD-SAFETY NOTICE, AND THE MIDDLE RUNG
+//
+// Three gaps found by walking a report from the tap that files it to the click
+// that closes it, rather than by reading the file:
+//
+//   * the card carried no record at all, so a moderator could not tell a first
+//     complaint from an eleventh, could not see that nine other people were
+//     waiting on the same message, and could not see that a colleague had
+//     already handled the report they were looking at;
+//   * a report under 'sexual' rendered exactly like a spam report, beside the
+//     buttons MODERATION-LEGAL.md section 4 step 2 says not to press until the
+//     evidence is preserved;
+//   * the only account-level outcomes were "leave it alone" and "banned
+//     forever", on an app whose floor is 13.
+//
+// The server halves are pinned in backend/__tests__/adminQueueContextAndWarning.
+// ═══════════════════════════════════════════════════════════════════════════
+describe('the card carries the account record', () => {
+  test('a crowd reporting one message is stated, and hiding it is said to close the rest', async () => {
+    routes[REPORTS] = () => respond(queueBody([aReport({ content_open_reports: 10 })]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    await renderConsole();
+    expect(screen.getByText(/10 people/)).toBeInTheDocument();
+    expect(screen.getByText(/Hiding it closes the rest/)).toBeInTheDocument();
+  });
+
+  test('one report about a piece of content says nothing about a crowd', async () => {
+    routes[REPORTS] = () => respond(queueBody([aReport({ content_open_reports: 1 })]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    await renderConsole();
+    expect(screen.queryByText(/have reported this same/)).toBeNull();
+  });
+
+  test('prior reports and what was decided last time both render', async () => {
+    routes[REPORTS] = () => respond(queueBody([aReport({
+      user_total_reports: 4,
+      user_last_action: 'user_warned',
+      user_last_action_at: '2026-08-01T10:00:00Z',
+    })]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    await renderConsole();
+    expect(screen.getByText(/4 earlier reports against this account/)).toBeInTheDocument();
+    expect(screen.getByText(/Last time we warned them/)).toBeInTheDocument();
+  });
+
+  test('a handled report names who handled it, so two moderators do not redo one report', async () => {
+    routes[REPORTS] = () => respond(queueBody([aReport({
+      status: 'resolved',
+      handled_by_name: 'Jo',
+      resolved_at: '2026-08-20T10:00:00Z',
+    })]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    await renderConsole();
+    expect(screen.getByText(/Already handled by Jo/)).toBeInTheDocument();
+  });
+
+  test('a server that sends none of those columns prints no record at all', async () => {
+    // Not a confident "0 earlier reports" for something it never measured.
+    routes[REPORTS] = () => respond(queueBody([aReport()]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    await renderConsole();
+    expect(screen.queryByText(/earlier report/)).toBeNull();
+    expect(screen.queryByText(/Already handled by/)).toBeNull();
+  });
+});
+
+describe('a child-safety report does not look like a spam report', () => {
+  test('the flag and the preserve-first notice both render, and name the runbook', async () => {
+    routes[REPORTS] = () => respond(queueBody([aReport({ reason: 'sexual', child_safety: true })]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    await renderConsole();
+    expect(screen.getByText('CHILD SAFETY')).toBeInTheDocument();
+    expect(screen.getByText(/Preserve the evidence before you act/)).toBeInTheDocument();
+    expect(screen.getByText(/MODERATION-LEGAL/)).toBeInTheDocument();
+  });
+
+  test('a minor on either side of the report is said out loud, and no birthday is', async () => {
+    routes[REPORTS] = () => respond(queueBody([aReport({
+      reason: 'sexual', child_safety: true, reported_user_is_minor: true, reporter_is_minor: false,
+    })]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    await renderConsole();
+    expect(screen.getByText('The reported account is under 18.')).toBeInTheDocument();
+  });
+
+  test('an ordinary report carries neither', async () => {
+    routes[REPORTS] = () => respond(queueBody([aReport({ reason: 'spam', child_safety: false })]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    await renderConsole();
+    expect(screen.queryByText('CHILD SAFETY')).toBeNull();
+    expect(screen.queryByText(/Preserve the evidence/)).toBeNull();
+  });
+
+  test('a server too old to send the flag still marks the one reason that carries the duty', async () => {
+    routes[REPORTS] = () => respond(queueBody([aReport({ reason: 'sexual' })]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    await renderConsole();
+    expect(screen.getByText('CHILD SAFETY')).toBeInTheDocument();
+  });
+});
+
+describe('warn is a real action with a real delivery', () => {
+  test('the button is offered, and it sends the action the server understands', async () => {
+    routes[REPORTS] = () => respond(queueBody([aReport()]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    routes['/api/admin/reports/1'] = () => respond({ message: 'Action applied', action: 'user_warned', alsoResolved: 0 });
+    await renderConsole();
+    fireEvent.click(screen.getByText('Warn user'));
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
+    const put = calls.find((c) => c.method === 'PUT');
+    expect(JSON.parse(put.body).action).toBe('warn');
+  });
+
+  test('a banned account is not offered a warning, because a ban has already said more', async () => {
+    routes[REPORTS] = () => respond(queueBody([aReport({ reported_user_banned: true })]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    await renderConsole();
+    expect(screen.queryByText('Warn user')).toBeNull();
+    expect(screen.getByText('Unban user')).toBeInTheDocument();
+  });
+
+  test('a report naming no user offers no warning', async () => {
+    routes[REPORTS] = () => respond(queueBody([aReport({ reported_user_id: null, reported_user_name: null })]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    await renderConsole();
+    expect(screen.queryByText('Warn user')).toBeNull();
+  });
+});
+
+describe('a takedown says what it closed', () => {
+  test('the reports that vanished on the refresh are accounted for', async () => {
+    routes[REPORTS] = () => respond(queueBody([aReport()]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    routes['/api/admin/reports/1'] = () => respond({ message: 'Action applied', action: 'content_hidden', alsoResolved: 9 });
+    await renderConsole();
+    fireEvent.click(screen.getByText('Hide content'));
+    await waitFor(() => expect(screen.getByText(/9 other reports about the same content were closed with it/)).toBeInTheDocument());
+  });
+
+  test('a takedown that closed nothing else says nothing', async () => {
+    routes[REPORTS] = () => respond(queueBody([aReport()]));
+    routes[ACTIONS] = () => respond({ actions: [] });
+    routes['/api/admin/reports/1'] = () => respond({ message: 'Action applied', action: 'content_hidden', alsoResolved: 0 });
+    await renderConsole();
+    fireEvent.click(screen.getByText('Hide content'));
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
+    expect(screen.queryByText(/other reports about the same content/)).toBeNull();
   });
 });

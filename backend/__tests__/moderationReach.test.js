@@ -341,7 +341,15 @@ const evidenceAudit = () => [/INSERT INTO moderation_actions/, () => ({ rows: [{
 test('the queue still withholds inline images, and now says one is waiting', () => {
   // Both halves matter. Inlining 200 story photos is a hundred-megabyte
   // response; withholding them SILENTLY is a blank card.
-  const listSql = ADMIN_SRC.slice(ADMIN_SRC.indexOf('LEFT JOIN LATERAL') - 3000, ADMIN_SRC.indexOf('LEFT JOIN LATERAL'));
+  // Anchored on the query's own first line rather than on a fixed 3,000
+  // characters back from the join. Round 25 added four columns and their
+  // reasoning to this select list and the window silently slid off the front of
+  // it, failing a test about images because of a change about duplicate
+  // reports. A byte count is not a boundary; `SELECT r.*` is.
+  const selectStart = ADMIN_SRC.indexOf('SELECT r.*');
+  const joinStart = ADMIN_SRC.indexOf('LEFT JOIN LATERAL');
+  assert.ok(selectStart > 0 && joinStart > selectStart, 'the queue query is not where this test thinks it is');
+  const listSql = ADMIN_SRC.slice(selectStart, joinStart);
   // Matched on the AS clause, not the bare word: the paragraph explaining this
   // sits in the same slice, so a looser pattern passes on the comment alone.
   assert.match(listSql, /\bAS content_image_deferred\b/,

@@ -7,6 +7,16 @@ const { authenticate } = require('../middleware/auth');
 // sockets/handlers.js and neither is built by string interpolation here — a
 // route that spells a room name itself is how the two halves drift.
 const { emitToFlockMembers, emitToVenueContentViewers } = require('../sockets/handlers');
+// One definition of "this report has a federal reporting duty behind it",
+// shared with the alert path. See the note on the export in that file.
+const { isChildSafetyReason, CHILD_SAFETY_DOC } = require('../services/moderationAlerts');
+// The warning email. Held as the module object rather than destructured for the
+// reason services/pushHelper.js holds firebaseService that way: tests replace
+// the exported function and a destructured copy keeps calling the original.
+const emailService = require('../services/emailService');
+// The age gate's own arithmetic, so "is this person a minor" means the same
+// thing on the moderation queue as it does at signup.
+const { ageFromDob } = require('../utils/age');
 
 const router = express.Router();
 router.use(authenticate);
@@ -329,10 +339,81 @@ router.get('/reports', async (req, res) => {
               c.created_at AS content_created_at,
               c.is_hidden AS content_is_hidden,
               (r.content_id IS NOT NULL AND r.content_type <> 'profile' AND c.author_id IS NULL
-                 AND c.body IS NULL AND c.created_at IS NULL) AS content_missing
+                 AND c.body IS NULL AND c.created_at IS NULL) AS content_missing,
+              -- ROUND 25. THE THREE THINGS A MODERATOR HAD TO LEAVE THE SCREEN
+              -- TO FIND OUT, and could not find out at all without a psql
+              -- prompt. Each is one indexed lookup per row.
+              --
+              -- content_open_reports  how many people are waiting on THIS piece
+              --   of content. Ten reporters on one message is ten rows in this
+              --   queue (the duplicate check in routes/moderation.js is
+              --   per-REPORTER, deliberately, so a second person reporting the
+              --   same thing is never silently swallowed). The card can now say
+              --   so instead of presenting the tenth report as one more
+              --   unrelated complaint. Uses idx_content_reports_content
+              --   (migration 018).
+              -- user_total_reports    what this account's record looks like.
+              --   "First complaint anyone has made" and "eleventh this week"
+              --   are different decisions and the screen showed neither.
+              --   Counts every status, because a dismissed report against
+              --   somebody is still a report against them.
+              -- prior.action/at       what we did LAST time. A warning already
+              --   given, or a takedown already made, is the difference between
+              --   escalating and starting over.
+              --
+              -- All three are NULL-guarded on the id they key off, so a profile
+              -- report (no content_id) never groups with every other profile
+              -- report, and a guest RSVP report (no account behind it) reads
+              -- zero rather than counting every report that names nobody.
+              (SELECT COUNT(*)::int FROM content_reports dup
+                 WHERE r.content_id IS NOT NULL
+                   AND dup.content_type = r.content_type
+                   AND dup.content_id = r.content_id
+                   AND dup.status IN ('open', 'under_review')) AS content_open_reports,
+              (SELECT COUNT(*)::int FROM content_reports pr
+                 WHERE r.reported_user_id IS NOT NULL
+                   AND pr.reported_user_id = r.reported_user_id
+                   AND pr.id <> r.id) AS user_total_reports,
+              prior.action AS user_last_action,
+              prior.created_at AS user_last_action_at,
+              -- Who closed it, by name. content_reports.handled_by has always
+              -- been written and never once shown: a second moderator opening a
+              -- resolved report saw the word "resolved" and no idea whether a
+              -- colleague had handled it a minute ago or a month ago. Two people
+              -- acting on the same report is not prevented anywhere (every
+              -- action is accepted at any status, on purpose. See the note on
+              -- the console's gating), so the defence is that the screen says
+              -- who already acted.
+              hb.name AS handled_by_name,
+              -- IS A MINOR INVOLVED. The date of birth itself never leaves this
+              -- function: both columns are reduced to a boolean below and
+              -- deleted from the row, so the console is told "under 18" and
+              -- never told a birthday. That is the least the screen can be
+              -- given and still answer the question, and the question decides
+              -- whether MODERATION-LEGAL.md applies.
+              --
+              -- BOTH sides, because either can be the child. The reported
+              -- account is the obvious one; the reporter is the one who matters
+              -- when a 13-year-old is the person being sent the content.
+              tu.date_of_birth AS reported_user_dob,
+              ru.date_of_birth AS reporter_dob
        FROM content_reports r
        LEFT JOIN users ru ON ru.id = r.reporter_id
        LEFT JOIN users tu ON tu.id = r.reported_user_id
+       LEFT JOIN users hb ON hb.id = r.handled_by
+       LEFT JOIN LATERAL (
+         -- The last DECISION about this account, not the last access record.
+         -- 'evidence_viewed' rows are records of a moderator reading, and one
+         -- of them answering "what happened last time" would be a lie.
+         SELECT ma.action, ma.created_at
+         FROM moderation_actions ma
+         WHERE r.reported_user_id IS NOT NULL
+           AND ma.target_user_id = r.reported_user_id
+           AND ma.action <> 'evidence_viewed'
+           AND ma.report_id IS DISTINCT FROM r.id
+         ORDER BY ma.created_at DESC, ma.id DESC
+         LIMIT 1
+       ) prior ON true
        LEFT JOIN LATERAL (
          -- Every body expression comes from CONTENT_TEXT_SQL above, which the
          -- detail endpoint reads too, so the excerpt and the full text can never
@@ -393,6 +474,27 @@ router.get('/reports', async (req, res) => {
     const reports = result.rows;
     const hasMore = reports.length > limit;
     if (hasMore) reports.length = limit;
+    // WHICH ROWS CARRY A REPORTING DUTY, decided by the same function that
+    // decides which alert email says CHILD SAFETY in its subject line. Derived
+    // here rather than in the console for the reason every other map on this
+    // router is: a second copy of the rule in a different build is a copy that
+    // drifts, and this one drifting means a report with a statutory clock on it
+    // renders as an ordinary row.
+    for (const row of reports) {
+      row.child_safety = isChildSafetyReason(row.reason);
+      // The floor is 13 and the target audience is 15 to 22, so most of the
+      // queue is minors and a flag on every row would say nothing. It is not
+      // decoration on a child-safety row: it is the difference between a
+      // sexual-content report between two adults and one that starts a
+      // statutory clock, and the console had no way to tell them apart.
+      const reportedAge = ageFromDob(row.reported_user_dob);
+      const reporterAge = ageFromDob(row.reporter_dob);
+      row.reported_user_is_minor = reportedAge === null ? null : reportedAge < 18;
+      row.reporter_is_minor = reporterAge === null ? null : reporterAge < 18;
+      // A date of birth is not evidence and the screen never needs one.
+      delete row.reported_user_dob;
+      delete row.reporter_dob;
+    }
     // Counts for the queue header
     const counts = await pool.query(
       `SELECT status, COUNT(*)::int AS count FROM content_reports GROUP BY status`
@@ -750,9 +852,66 @@ const TAKEDOWN_TARGETS = {
   guest_rsvp: { table: 'guest_rsvps', audience: 'flock_id, NULL::int AS notify_a, NULL::int AS notify_b, NULL::text AS place_id' },
 };
 
+// ---------------------------------------------------------------------------
+// THE WARNING EMAIL, round 25, and the reason 'warn' exists at all
+// ---------------------------------------------------------------------------
+//
+// 'user_warned' has been a legal value in the moderation_actions.action CHECK
+// since migration 001 and NOTHING has ever written one. Until now the console
+// offered exactly two account-level outcomes: leave it alone, or ban the
+// account permanently, with no expiry column anywhere and no route that clears
+// is_banned except another moderator's click. On an app whose floor is 13, the
+// first rude message a 14-year-old sends had two available answers and one of
+// them was "gone forever". A queue with no middle rung is a queue that either
+// over-punishes or does nothing, and doing nothing is the one that happens.
+//
+// This is the middle rung, and it is a real one because it is DELIVERED, not
+// logged. The email goes out BEFORE anything is written: if it cannot be sent,
+// the action is refused whole and no audit row claims a warning that nobody
+// received. That ordering can, in a double failure, mail somebody and then fail
+// to commit: a warned user with no audit row, which a retry fixes and which is
+// strictly better than the reverse (a permanent record of a warning that was
+// never sent).
+//
+// Deliberately NOT a push notification: services/pushHelper.js is a no-op
+// without FIREBASE_SERVICE_ACCOUNT and delivers nothing to a user with no
+// registered device, so a "warning" that rides only on push is a warning that
+// silently reaches nobody. Deliberately NOT an in-app notice either: there is
+// no notifications table and no screen that would render one, and inventing one
+// here would be claiming a surface that does not exist.
+const WARN_SUBJECT = 'About your recent activity on Flock';
+
+function warnEmailText(name) {
+  return [
+    `Hi ${name || 'there'},`,
+    '',
+    'Someone reported content you posted on Flock, and a moderator reviewed it. '
+    + 'It broke our Community Guidelines, so this is a warning on your account.',
+    '',
+    'What happens next is up to you. Accounts that keep breaking the guidelines get banned, '
+    + 'and a ban is permanent.',
+    '',
+    'The guidelines are at https://www.flockcorp.com/guidelines. '
+    + 'If you think this was a mistake, reply to this email and a person will read it.',
+    '',
+    'The Flock Team',
+  ].join('\n');
+}
+
+function warnEmailHtml(name) {
+  const safe = emailService.escapeHtml(String(name || 'there'));
+  return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:15px;line-height:1.5;color:#16233a">
+    <p>Hi ${safe},</p>
+    <p>Someone reported content you posted on Flock, and a moderator reviewed it. It broke our Community Guidelines, so this is a warning on your account.</p>
+    <p>What happens next is up to you. Accounts that keep breaking the guidelines get banned, and a ban is permanent.</p>
+    <p>The guidelines are at <a href="https://www.flockcorp.com/guidelines">flockcorp.com/guidelines</a>. If you think this was a mistake, reply to this email and a person will read it.</p>
+    <p>The Flock Team</p>
+  </div>`;
+}
+
 // PUT /api/admin/reports/:id — take a moderation action:
-//   action ∈ 'hide' (take content down) | 'unhide' (put it back) | 'ban' |
-//            'unban' | 'dismiss'
+//   action ∈ 'hide' (take content down) | 'unhide' (put it back) | 'warn' |
+//            'ban' | 'unban' | 'dismiss'
 router.put('/reports/:id', async (req, res) => {
   try {
     // A non-numeric :id used to reach Postgres as NaN and surface as a 500,
@@ -770,7 +929,7 @@ router.put('/reports/:id', async (req, res) => {
     // where destructuring undefined is a TypeError the moderator reads as
     // `500 Failed to apply action`. Do not read it as a tested guard.
     const { action, reason } = req.body || {};
-    if (!['hide', 'unhide', 'ban', 'unban', 'dismiss'].includes(action)) {
+    if (!['hide', 'unhide', 'warn', 'ban', 'unban', 'dismiss'].includes(action)) {
       return res.status(400).json({ error: 'Invalid action' });
     }
     // `reason` is free text a moderator writes for other moderators and it is
@@ -809,6 +968,44 @@ router.put('/reports/:id', async (req, res) => {
     // an oversight.
     const newStatus = (action === 'dismiss' || action === 'unhide') ? 'dismissed' : 'resolved';
 
+    // THE WARNING GOES OUT BEFORE ANYTHING IS WRITTEN. Every refusal below
+    // happens with nothing recorded and nothing sent, and each one names the
+    // action the moderator can take instead, the same rule as the takedown
+    // refusals further down.
+    if (action === 'warn') {
+      if (!report.reported_user_id) {
+        return res.status(400).json({ error: 'This report names no user, so there is nobody to warn. Hide the content or dismiss the report.' });
+      }
+      const who = await pool.query(
+        'SELECT id, name, email, is_banned FROM users WHERE id = $1',
+        [report.reported_user_id]
+      );
+      const target = who.rows[0];
+      if (!target) {
+        return res.status(404).json({ error: 'That user no longer exists. Dismiss the report instead.' });
+      }
+      if (target.is_banned) {
+        return res.status(409).json({ error: 'That account is already banned, so a warning would say less than what has already happened. Unban it first if that is what you mean to do.' });
+      }
+      if (!emailService.isMailableAddress(target.email)) {
+        // An Apple private-relay placeholder or an evicted-squat tombstone.
+        // There is no other channel: push is inert without Firebase and there
+        // is no in-app notice to write to, so this is honestly a dead end and
+        // says so rather than logging a warning into the void.
+        return res.status(409).json({ error: 'That account has no address a warning could be sent to, so the only real options are a takedown, a ban, or dismissing the report.' });
+      }
+      const sent = await emailService.sendEmail({
+        to: target.email,
+        subject: WARN_SUBJECT,
+        text: warnEmailText(target.name),
+        html: warnEmailHtml(target.name),
+      });
+      if (!sent || !sent.sent) {
+        console.error(`[MODERATION] warning email for report ${reportId} was NOT delivered (${sent && (sent.error || sent.reason) ? (sent.error || sent.reason) : 'skipped'}); nothing was recorded.`);
+        return res.status(502).json({ error: 'The warning email could not be sent, so nothing was recorded. Try again, or ban the account if this cannot wait.' });
+      }
+    }
+
     // Round 11: the mutation, the report resolution and the audit row were
     // three independent pool.query calls. A failure between them could ban a
     // user or hide content with NO audit record, or resolve a report that was
@@ -821,6 +1018,17 @@ router.put('/reports/:id', async (req, res) => {
     let banTargetId = null;
     let refusal = null;
     let audience = null;
+    // How many OTHER open reports about the same content this takedown closed.
+    // Reported back so the console can say it out loud rather than leaving a
+    // moderator to notice nine cards missing on the next refresh.
+    let alsoResolved = 0;
+    // A boolean rather than a second read of the audit action name. The drift
+    // guard in __tests__/unhidePath.test.js scrapes this file for assignments to
+    // that variable and reads every quoted string up to the next semicolon as a
+    // value written to moderation_actions.action. Testing it in a condition that
+    // wraps a SQL statement would hand the scraper the status literals inside
+    // that statement and fail a guard which is protecting something real.
+    let sweepSiblingReports = false;
     try {
       await client.query('BEGIN');
 
@@ -881,6 +1089,41 @@ router.put('/reports/:id', async (req, res) => {
             // migration 017; without it this INSERT dies as a 23514 and takes
             // the un-hide down with it.
             actionType = hiding ? 'content_hidden' : 'content_restored';
+            // ROUND 25. TEN PEOPLE REPORTING ONE MESSAGE LEFT NINE REPORTS
+            // OPEN AFTER IT WAS TAKEN DOWN.
+            //
+            // routes/moderation.js dedupes per REPORTER and nothing else, on
+            // purpose: a second person reporting the same thing is a second
+            // person waiting on an answer and must never be swallowed. The
+            // consequence lands here. Once the content is hidden, every other
+            // open report about it describes something that is already gone.
+            // the console correctly refuses to hide it twice, so the only move
+            // left on each of those cards is Dismiss, one click at a time, and
+            // a brigade of two hundred reports on one message is two hundred
+            // clicks of work with nothing behind them. That is not a tidiness
+            // problem: it is the queue filling with resolved work while real
+            // reports sit under it.
+            //
+            // Hiding closes them, in the SAME transaction as the takedown, so
+            // there is no window in which the content is down and the reports
+            // still say open. Each closed row records handled_by and
+            // resolved_at like any other, which is the audit trail for those
+            // rows; the single content_hidden action row names this exact
+            // content_type and content_id, so "why did report #N close" is
+            // answered by the takedown of the thing it was about. One audit row
+            // per swept report would put two hundred rows into a LIMIT 200 log
+            // and bury the decision that caused them.
+            //
+            // Only on the way DOWN. An un-hide does not reopen them: the
+            // reports were closed by a decision a moderator has now reversed,
+            // and silently pushing two hundred rows back into the queue is a
+            // second surprise on top of the first. The reversal is the
+            // moderator's to communicate, and content_reports keeps the row.
+            //
+            // The sweep itself runs below, AFTER this report's own resolution,
+            // so the first content_reports write in the transaction is always
+            // the one about the report in the URL.
+            sweepSiblingReports = hiding;
             const row = changed.rows[0];
             audience = {
               flockId: row.flock_id ?? null,
@@ -931,10 +1174,13 @@ router.put('/reports/:id', async (req, res) => {
           // that is a mis-click on your own row or one moderator acting on
           // another, permanently removes that account's access to the only
           // moderation surface this product has, and the only way back in is a
-          // psql prompt against production. On a deployment with one admin (the
-          // current one — ADMIN_USER_IDS is unset, so today there are none at
-          // all) that is the whole Guideline 1.2 control gone, silently, with
-          // the console still answering 200 to the click that did it.
+          // psql prompt against production. This deployment has ONE admin:
+          // ADMIN_USER_IDS was confirmed set on the Railway service on
+          // 2026-08-18 (this comment said it was unset, which was true when it
+          // was written and had stopped being true by the time it was read), so
+          // exactly one account can reach the console and banning it is the
+          // whole Guideline 1.2 control gone, silently, with the console still
+          // answering 200 to the click that did it.
           //
           // Un-ban is deliberately NOT guarded: it is the recovery direction and
           // it cannot lock anybody out.
@@ -968,6 +1214,12 @@ router.put('/reports/:id', async (req, res) => {
             if (banned) banTargetId = report.reported_user_id;
           }
         }
+      } else if (action === 'warn') {
+        // The email is already delivered. See the block above the transaction.
+        // Nothing about the account row changes: a warning is a record and a
+        // message, not a state. That is the whole point of it existing between
+        // "do nothing" and "banned forever".
+        actionType = 'user_warned';
       } else {
         actionType = 'dismissed';
       }
@@ -979,6 +1231,20 @@ router.put('/reports/:id', async (req, res) => {
           'UPDATE content_reports SET status = $1, handled_by = $2, resolved_at = NOW() WHERE id = $3',
           [newStatus, req.user.id, reportId]
         );
+        // The other people waiting on this same piece of content. See the note
+        // in the hide branch for why this exists and why it is one direction
+        // only. Same transaction as the takedown and this report's resolution:
+        // there is no moment in which the content is down and nine reports
+        // still say open.
+        if (sweepSiblingReports) {
+          const swept = await client.query(
+            `UPDATE content_reports SET status = 'resolved', handled_by = $1, resolved_at = NOW()
+             WHERE content_type = $2 AND content_id = $3 AND id <> $4
+               AND status IN ('open', 'under_review')`,
+            [req.user.id, report.content_type, report.content_id, reportId]
+          );
+          alsoResolved = swept.rowCount || 0;
+        }
         await client.query(
           `INSERT INTO moderation_actions (report_id, moderator_id, target_user_id, action, content_type, content_id, reason)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
@@ -1079,7 +1345,7 @@ router.put('/reports/:id', async (req, res) => {
       }
     }
 
-    res.json({ message: 'Action applied', status: newStatus, action: actionType });
+    res.json({ message: 'Action applied', status: newStatus, action: actionType, alsoResolved });
   } catch (err) {
     console.error('Admin moderate error:', err);
     res.status(500).json({ error: 'Failed to apply action' });
