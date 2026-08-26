@@ -175,12 +175,26 @@ was never carried forward with the app after that.
 1. **Other people's** budget amounts never leave the server. A client only ever
    sees the aggregate `{ ceiling, submissionCount, totalMembers, isReady,
    skipCount }`, plus the amount that caller submitted themselves. `ceiling` is
-   withheld entirely until at least three non-skipped submissions exist, and
-   what it publishes is a **band**, not the raw minimum: rounded down to the
+   withheld entirely until at least three non-skipped submissions exist, it is
+   **published once and never changes**, and what it publishes is a **band**,
+   not the raw minimum: rounded down to the
    nearest $10 at $50 and up, the nearest $5 from $5 to $50, the nearest $1 from
    $1 to $5, and a flat $0.01 below a dollar (never $0, which the client reads
    as "no ceiling yet"). It only ever rounds down, so every venue under the
    published ceiling is still inside everyone's real budget.
+
+   "Published once" is the second half of the rule and it is load-bearing.
+   The ceiling is a minimum, so it only moves when a new minimum arrives, and a
+   number that moves is a number anyone watching can attribute: three people
+   submit, a ceiling appears, the fourth person submits and it drops, and every
+   member has just been told which of them has the least money. So no ceiling
+   is published while the budget is open. It is published at the moment the
+   budget settles, which is the last member answering (submitting or skipping)
+   or the creator locking it, and after that the budget is closed and a further
+   submission is refused rather than moving the number. `flocks.budget_ceiling`
+   holds the published number and nothing else writes it. All five readers of
+   that column apply the same gate: `GET /api/budget/:id`, the flock list, the
+   flock detail, the flock update, and the ghost commit in `routes/billing.js`.
 
    What this does not do: the ceiling is the minimum of the submitted amounts,
    so participants who compare notes can narrow down what a remaining

@@ -456,7 +456,7 @@ test('budget: submit response carries the aggregate keys and nothing else, ceili
   assert.strictEqual(res.status, 200, res.text);
   // A new key in this list is a privacy review, not a merge.
   assert.deepStrictEqual(Object.keys(res.body).sort(), [
-    'ceiling', 'isReady', 'skipCount', 'submissionCount', 'submitted', 'totalMembers', 'userSubmitted',
+    'budgetLocked', 'ceiling', 'isReady', 'skipCount', 'submissionCount', 'submitted', 'totalMembers', 'userSubmitted',
   ]);
   assert.strictEqual(res.body.isReady, false, 'two non-skips must not be ready');
   assert.strictEqual(res.body.ceiling, null, 'ceiling revealed below the 3-submission threshold');
@@ -473,7 +473,7 @@ test('budget: the socket fan-out payload is aggregate-only and withheld below 3'
   assert.ok(updates.length > 0, 'no budget_updated fan-out');
   for (const u of updates) {
     assert.deepStrictEqual(Object.keys(u.payload).sort(),
-      ['ceiling', 'flockId', 'isReady', 'skipCount', 'submissionCount', 'totalMembers']);
+      ['budgetLocked', 'ceiling', 'flockId', 'isReady', 'skipCount', 'submissionCount', 'totalMembers']);
     assert.strictEqual(u.payload.ceiling, null);
     assert.ok(!JSON.stringify(u.payload).includes('47.13'), 'individual amount reached the socket wire');
   }
@@ -484,6 +484,12 @@ test('budget: GET exposes exactly the documented keys plus the caller own row, a
   budgets.set(2, { amount: VICTIM_AMOUNT, skipped: false });
   budgets.set(3, { amount: 60, skipped: false });
   budgets.set(1, { amount: 90, skipped: false });
+  budgets.set(4, { amount: null, skipped: true });
+  // Settled: every member has answered, so the number was published once and
+  // the cached column is what published it. Before that moment this route
+  // answers null however many amounts exist, because a ceiling that can still
+  // move is a ceiling somebody can watch move (round 22).
+  flock.budget_locked = true;
   flock.budget_ceiling = String(VICTIM_AMOUNT);
 
   const res = await call('GET', `/api/budget/${FLOCK_ID}`, 1);
@@ -609,6 +615,11 @@ test('budget: two colluding submissions cannot read the third person exact amoun
   // sockpuppet; both pin $9,999 so the MIN can only be user 2's real number.
   budgets.set(2, { amount: VICTIM_AMOUNT, skipped: false });
   budgets.set(3, { amount: 9999, skipped: false });
+  // User 4 has already skipped, so the attacker's own submission is the flock's
+  // last answer and therefore the one publication. That is the only moment a
+  // number leaves at all now (round 22); the exploit is run at it deliberately,
+  // because the band has to hold at the moment the reveal happens.
+  budgets.set(4, { amount: null, skipped: true });
 
   const res = await call('POST', `/api/budget/${FLOCK_ID}/submit`, 1, { amount: 9999 });
 
@@ -626,6 +637,7 @@ test('budget: the socket fan-out publishes the same banded ceiling the response 
   // a literal.
   budgets.set(2, { amount: VICTIM_AMOUNT, skipped: false });
   budgets.set(3, { amount: 9999, skipped: false });
+  budgets.set(4, { amount: null, skipped: true }); // so this submit settles it
 
   const res = await call('POST', `/api/budget/${FLOCK_ID}/submit`, 1, { amount: 9999 });
 
@@ -669,11 +681,14 @@ test('budget: the lock response, its socket event and the cached column all carr
 test('budget: a submit caches the band, not the MIN, so downstream readers cannot unbank it', async () => {
   budgets.set(2, { amount: VICTIM_AMOUNT, skipped: false });
   budgets.set(3, { amount: 9999, skipped: false });
+  budgets.set(4, { amount: null, skipped: true }); // so this submit settles it
 
   await call('POST', `/api/budget/${FLOCK_ID}/submit`, 1, { amount: 9999 });
 
   assert.strictEqual(Number(flock.budget_ceiling), 45,
     'flocks.budget_ceiling still holds the raw MIN');
+  assert.strictEqual(flock.budget_locked, true,
+    'the settling submission must also freeze the number it published');
   assertQueriesUnderstood();
 });
 
@@ -684,6 +699,8 @@ test('budget: GET re-bands a ceiling that was cached raw before this fix', async
   budgets.set(1, { amount: 9999, skipped: false });
   budgets.set(2, { amount: VICTIM_AMOUNT, skipped: false });
   budgets.set(3, { amount: 9999, skipped: false });
+  budgets.set(4, { amount: null, skipped: true });
+  flock.budget_locked = true;
   flock.budget_ceiling = String(VICTIM_AMOUNT);
 
   const res = await call('GET', `/api/budget/${FLOCK_ID}`, 1);
@@ -733,25 +750,34 @@ test('budget: banding did not move the threshold or change what a skip means', a
 test('budget: concurrent double-submit from one user counts once and crosses the threshold once', async () => {
   budgets.set(1, { amount: 40, skipped: false });
   budgets.set(2, { amount: VICTIM_AMOUNT, skipped: false });
+  budgets.set(4, { amount: null, skipped: true });
 
-  // User 3's client fires twice (retry over a flaky connection). The upsert
-  // plus the FOR UPDATE flock lock must make this ONE submission: without the
-  // serialization both transactions read "no prior row, 2 others" and BOTH
-  // believe they crossed the threshold — the "Budget set!" push fires twice,
-  // and the fixture's in-insert delay guarantees the overlap this needs.
+  // User 3's client fires twice (retry over a flaky connection), and user 3 is
+  // the last member yet to answer, so this submission is the one that settles
+  // the budget. The upsert plus the FOR UPDATE flock lock must make this ONE
+  // submission: without the serialization both transactions read "no prior
+  // row, 3 answers" and BOTH believe they settled it: the "Budget set!" push
+  // fires twice and two ceilings go out where one is allowed to. The fixture's
+  // in-insert delay guarantees the overlap this needs.
   const [a, b] = await Promise.all([
     call('POST', `/api/budget/${FLOCK_ID}/submit`, 3, { amount: 50 }),
     call('POST', `/api/budget/${FLOCK_ID}/submit`, 3, { amount: 50 }),
   ]);
 
-  assert.strictEqual(a.status, 200, a.text);
-  assert.strictEqual(b.status, 200, b.text);
-  for (const res of [a, b]) {
-    assert.strictEqual(res.body.submissionCount, 3, 'a double-submit double-counted');
-    assert.strictEqual(res.body.isReady, true);
-    assert.strictEqual(res.body.ceiling, 40);
-  }
-  assert.strictEqual(budgets.size, 3, 'the upsert wrote a second row for one user');
+  // Exactly one wins. The loser meets the settled budget at the top of its own
+  // transaction and is refused, which is the same answer any late submission
+  // gets: the number is set and it does not move for anybody, including a
+  // retry of the request that set it.
+  const winners = [a, b].filter((r) => r.status === 200);
+  const losers = [a, b].filter((r) => r.status !== 200);
+  assert.strictEqual(winners.length, 1, `both requests were accepted: ${a.text} / ${b.text}`);
+  assert.strictEqual(losers[0].status, 400, losers[0].text);
+  assert.match(losers[0].body.error, /locked/i);
+  assert.strictEqual(winners[0].body.submissionCount, 4, 'a double-submit double-counted');
+  assert.strictEqual(winners[0].body.isReady, true);
+  assert.strictEqual(winners[0].body.ceiling, 40);
+  assert.strictEqual(winners[0].body.budgetLocked, true);
+  assert.strictEqual(budgets.size, 4, 'the upsert wrote a second row for one user');
   // The crossing is announced exactly once: the "Budget set!" path re-reads
   // the flock name, so one name read = one announcement.
   const crossings = queries.filter((q) => q.sql.includes('SELECT name FROM flocks'));
@@ -760,7 +786,7 @@ test('budget: concurrent double-submit from one user counts once and crosses the
   assertQueriesUnderstood();
 });
 
-test('budget: a plain submit runs 11 statements, with the redundant others-count gone', async () => {
+test('budget: a plain submit runs 9 statements, with the redundant others-count gone', async () => {
   budgets.set(2, { amount: VICTIM_AMOUNT, skipped: false });
 
   const res = await call('POST', `/api/budget/${FLOCK_ID}/submit`, 1, { amount: 90 });
@@ -768,10 +794,13 @@ test('budget: a plain submit runs 11 statements, with the redundant others-count
   assert.strictEqual(res.status, 200, res.text);
   // Before this pass the submit transaction issued a second COUNT restricted
   // to `user_id != $2` — information the main count already contains, since a
-  // submit only ever changes the caller's own row. 12 statements then, 11 now:
-  // member check, BEGIN, flock FOR UPDATE, prior row, upsert, MIN, cache
-  // write, counts, COMMIT, total members, fan-out roster.
-  assert.strictEqual(queries.length, 11,
+  // submit only ever changes the caller's own row. 12 statements then, 9 now:
+  // member check, BEGIN, flock FOR UPDATE, upsert, MIN, counts, total members,
+  // COMMIT, fan-out roster. Round 22 removed two more: the prior-row read (the
+  // announcement fires on the settle, which can only happen once, so there is
+  // nothing to compare against) and the cache write (flocks.budget_ceiling is
+  // written only when the budget settles, and this submit does not settle it).
+  assert.strictEqual(queries.length, 9,
     `submit issued ${queries.length} statements:\n${queries.map((q) => q.sql).join('\n')}`);
   assert.ok(!queries.some((q) => q.sql.includes('user_id != $2') && q.sql.includes('budget_submissions')),
     'the redundant per-submit others-count is back');
