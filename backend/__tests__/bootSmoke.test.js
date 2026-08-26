@@ -190,3 +190,89 @@ test('server.js boots to its listen line or exits with a NAMED cause — never a
   assert.match(result.stdout, /DATABASE_URL: \[configured\]/,
     'the child never printed the top-of-file config line — module evaluation did not even start');
 });
+
+// ---------------------------------------------------------------------------
+// EVERY TIMER boot() STARTS, shutdown() STOPS
+// ---------------------------------------------------------------------------
+// boot() starts fourteen repeating jobs: crowd alerts, the venue digest, the
+// photo prune, the expired-story purge, the flock sweep, the money watch, the
+// night-context sweep and their staggered kickoffs. shutdown() has to clear
+// every one, or the process keeps a live handle after SIGTERM and Railway's
+// stop turns into a kill.
+//
+// THIS TEST IS A CLASS, AND IT EXISTS BECAUSE ITS INSTANCE WAS NOT. The story
+// purge was scheduled on 2026-08-26 with a guard written for exactly that one
+// timer, by name. That guard would not have noticed the next timer added
+// without a clear, which is the same fix-the-instance-miss-the-class shape that
+// has come up repeatedly. Naming a new timer is not a thing anybody should have
+// to remember to do twice.
+//
+// Comments and string literals are stripped before matching. A source scan that
+// cannot tell code from prose reports whatever the prose says, and server.js is
+// full of comments that name these handles while explaining them.
+test('every interval and timeout boot() assigns is cleared in shutdown()', () => {
+  const raw = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+
+  const code = (() => {
+    const s = raw.split('\r').join('');
+    let out = '';
+    let i = 0;
+    while (i < s.length) {
+      const c = s[i];
+      const d = s[i + 1];
+      if (c === '/' && d === '/') { while (i < s.length && s[i] !== '\n') i += 1; continue; }
+      if (c === '/' && d === '*') { i += 2; while (i < s.length && !(s[i] === '*' && s[i + 1] === '/')) i += 1; i += 2; continue; }
+      if (c === '"' || c === "'" || c === '`') {
+        const q = c; out += ' '; i += 1;
+        while (i < s.length) {
+          if (s[i] === '\\') { i += 2; continue; }
+          if (s[i] === q) { i += 1; break; }
+          if (q !== '`' && s[i] === '\n') break;
+          i += 1;
+        }
+        continue;
+      }
+      out += c; i += 1;
+    }
+    return out;
+  })();
+
+  const scheduled = new Map();   // handle -> 'Interval' | 'Timeout'
+  for (const m of code.matchAll(/(\w+)\s*=\s*set(Interval|Timeout)\s*\(/g)) {
+    // Skip locals that are not module-level handles; every real one is
+    // declared as `let <name> = null;` at module scope.
+    //
+    // A plain includes(), not a RegExp built from a template literal. That
+    // construction ate its own backslashes twice in this codebase already
+    // (\s became s, \b became a backspace character) and produced a pattern
+    // that matched nothing while reading like a check.
+    if (code.includes('let ' + m[1] + ' = null')) scheduled.set(m[1], m[2]);
+  }
+
+  const cleared = new Set();
+  for (const m of code.matchAll(/clear(?:Interval|Timeout)\s*\(\s*(\w+)\s*\)/g)) cleared.add(m[1]);
+
+  // The scan has to be known to have found something. An empty `scheduled`
+  // would make the assertion below pass over a server with no cleanup at all.
+  assert.ok(scheduled.size >= 8,
+    `expected boot() to schedule the known set of repeating jobs; found ${scheduled.size}, so this scan is reading the wrong thing`);
+
+  const leaked = [...scheduled.keys()].filter((h) => !cleared.has(h)).sort();
+  assert.deepStrictEqual(leaked, [],
+    'these timers are started and never cleared, so SIGTERM leaves a live handle and the stop becomes a kill:\n  '
+    + leaked.join('\n  '));
+});
+
+test('the clears live in shutdown(), not somewhere that never runs', () => {
+  const raw = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const from = raw.indexOf('function shutdown(');
+  assert.ok(from > -1, 'server.js no longer has a shutdown function');
+  const body = raw.slice(from, from + 4000);
+  // A representative handful rather than all fourteen: this asserts the clears
+  // are INSIDE shutdown, which the test above cannot see. The class check is
+  // the one above; this pins where it happens.
+  for (const handle of ['crowdAlertsInterval', 'storyPurgeInterval', 'nightContextInterval']) {
+    assert.ok(body.includes(`clearInterval(${handle})`),
+      `${handle} is cleared somewhere other than shutdown(), so SIGTERM does not reach it`);
+  }
+});
