@@ -175,6 +175,53 @@ function isInsideStyleElement(templatePath) {
 
 const stripCssComments = (text) => text.replace(/\/\*[\s\S]*?\*\//g, '');
 
+// A character that renders as a word, so a lone glyph next to it is prose
+// punctuation, not a placeholder.
+const HAS_WORD = /[A-Za-z0-9]/;
+
+/**
+ * True when a lone-glyph StringLiteral has a WORD sitting immediately beside it,
+ * which is the case the whole-glyph allowance must NOT cover. Two shapes:
+ *
+ *   1. A concatenation operand. `'Invited 3 people ' + glyph + ' tonight'` puts
+ *      a dash between two words out of a string whose entire value is the glyph.
+ *      Any `+` BinaryExpression counts: a lone em dash is never arithmetic.
+ *
+ *   2. Its own `{expression}` JSX child with a sibling child that renders a
+ *      word. `{'Sold '}{glyph}{' out'}` is the same sentence built out of
+ *      adjacent JSXExpressionContainers.
+ *
+ * The moderation console's placeholders are neither: `{name || glyph}` makes the
+ * glyph the right operand of `||` (parent LogicalExpression) and `cond ? glyph :
+ * fmt()` makes it a ternary consequent (parent ConditionalExpression). No word
+ * STRING sits beside either, so both stay exempt, which is the carve-out
+ * SLOP-AUDIT A2 counted and passed.
+ */
+function wordSitsBeside(p) {
+  const parent = p.parent;
+  if (parent && parent.type === 'BinaryExpression' && parent.operator === '+') {
+    return true;
+  }
+  if (parent && parent.type === 'JSXExpressionContainer') {
+    const container = p.parentPath;
+    const host = container.parentPath;
+    const siblings = (host && host.node && host.node.children) || [];
+    for (const sib of siblings) {
+      if (sib === container.node) continue;
+      if (sib.type === 'JSXText' && HAS_WORD.test(sib.value)) return true;
+      if (
+        sib.type === 'JSXExpressionContainer' &&
+        sib.expression &&
+        sib.expression.type === 'StringLiteral' &&
+        HAS_WORD.test(sib.expression.value)
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 /**
  * Every user-visible string in one file, plus a count of every string node the
  * walk looked at. That count is the vacuity number: it drops the moment the
@@ -193,7 +240,14 @@ function collect(code, rel) {
 
   traverse(ast, {
     StringLiteral(p) {
-      keep(p.node.value, p.node.loc.start.line, 'string', true);
+      // The whole-glyph allowance is narrowed here, not removed. A StringLiteral
+      // whose entire value is one em dash is still exempt as a placeholder, but
+      // ONLY when no word sits beside it. A glyph that is a `+` operand or an
+      // adjacent JSX child of a word-bearing sibling is prose punctuation with a
+      // word on either side, which is exactly the class the sweep exists to
+      // catch, and it was shipping green out of a lone-glyph string until now.
+      const allowLoneGlyph = !wordSitsBeside(p);
+      keep(p.node.value, p.node.loc.start.line, 'string', allowLoneGlyph);
     },
     JSXText(p) {
       keep(p.node.value, p.node.loc.start.line, 'jsx text', false);
@@ -336,6 +390,35 @@ describe('SLOP-AUDIT A2: no em dash in any user-visible string the frontend ship
     // renders a dash between two words is caught, INCLUDING the template chunk
     // whose entire value is the glyph, which is the one this used to miss.
     expect(flagged).toEqual(['jsx text', 'string', 'template']);
+  });
+
+  test('a lone glyph loses its allowance when a word sits beside it', () => {
+    // The hole this closes: the whole-glyph allowance was handed to EVERY
+    // StringLiteral, so a lone glyph that renders a dash between two words out
+    // of a concatenation or out of adjacent JSX children shipped green. Both are
+    // the "word on either side of the glyph" class the allowance was never meant
+    // to cover. Written with escapes so this file never holds the character.
+    const G = EM_DASH;
+    const kinds = (src) => collect(src, 'synthetic.js').strings
+      .filter((str) => str.value.includes(EM_DASH))
+      .map((str) => str.kind);
+
+    // 1. Concatenation. The glyph is a `+` operand between two worded strings.
+    expect(kinds("const a = 'Invited 3 people ' + '" + G + "' + ' tonight';"))
+      .toEqual(['string']);
+
+    // 2. Adjacent JSX expression containers. Same sentence, built out of
+    //    siblings: {'Sold '}{glyph}{' out'}.
+    expect(kinds("const b = <p>{'Sold '}{'" + G + "'}{' out'}</p>;"))
+      .toEqual(['string']);
+
+    // And the moderation placeholder stays legal in BOTH the shapes it ships in,
+    // because no word STRING sits beside the glyph in either. Verify against the
+    // real file too, below, so this cannot drift from what the console renders.
+    expect(kinds("const c = <b>{name || '" + G + "'}</b>;")).toEqual([]);
+    expect(kinds("const d = cond ? '" + G + "' : fmt(x);")).toEqual([]);
+    // A standalone attribute value is a placeholder as well, not adjacent copy.
+    expect(kinds("const e = <td title={'" + G + "'} />;")).toEqual([]);
   });
 
   test('the style carve-out strips comments and keeps the CSS', () => {
