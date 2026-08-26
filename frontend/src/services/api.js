@@ -1561,6 +1561,21 @@ export async function sendEmergencyAlert({ latitude, longitude, includeLocation 
   });
 }
 
+// The stand-down. This existed on the server, fully built and rate limited,
+// with nothing in the app able to reach it: sendEmergencyAlert had a wrapper
+// and its opposite did not, so somebody who pressed SOS by accident had no way
+// to tell the people they had just frightened that they were fine. Same 30
+// second leash as the alert, and for the same reason: this one fans out emails
+// too, and giving up early leaves contacts holding an alert nobody withdrew.
+export async function cancelEmergencyAlert() {
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  return request('/api/safety/alert/cancel', {
+    method: 'POST',
+    timeout: 30000,
+    body: JSON.stringify({ timezone }),
+  });
+}
+
 export async function shareLocationWithContacts({ latitude, longitude }) {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return request('/api/safety/share-location', {
