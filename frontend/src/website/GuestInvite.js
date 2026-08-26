@@ -352,14 +352,21 @@ export default function GuestInvite() {
   // Which phase the last committed render used, so a phase CHANGE can be told
   // apart from the phase this page happened to open on.
   const lastPhase = useRef(null);
-  // Which load is the current one. See the ordering note on load() below.
-  const loadSeq = useRef(0);
+  // WHICH ANSWER THE PAGE IS SHOWING, as a number that only goes up. Anything
+  // that decides this page's state takes one before it commits, and a reply may
+  // only commit while the number it took is still the newest. Loads take one,
+  // and so does a WRITE that closes the page on its own, because a reply
+  // already in the air cannot tell those two apart: it only knows that
+  // something newer than itself has answered. See the ordering note on load()
+  // below, and the 404s in the two writers.
+  const stateSeq = useRef(0);
+  const claim = useCallback(() => { stateSeq.current += 1; return stateSeq.current; }, []);
 
   // `quiet` is for the refresh that runs AFTER a successful write. Without it a
   // rate-limited or flaky refetch would replace a just-saved RSVP with a
   // full-page error, telling the guest their answer failed when it landed.
   //
-  // ONLY THE NEWEST LOAD MAY COMMIT, AND THAT IS NOT A TIDINESS RULE. Every
+  // ONLY THE NEWEST ANSWER MAY COMMIT, AND THAT IS NOT A TIDINESS RULE. Every
   // successful write starts a quiet refresh, so two of these are in flight
   // together the moment somebody answers and then taps a venue, and the clock
   // above gives one of them up to thirty seconds (fifteen, then the one retry).
@@ -377,10 +384,16 @@ export default function GuestInvite() {
   // that order and the page reopened. A stale reply is now dropped instead,
   // including its failure states, so an old request can no longer put the page
   // into `gone` or `stalled` either.
+  //
+  // A LOAD IS NOT THE ONLY THING THAT DECIDES THIS PAGE. The two writers below
+  // close the page themselves on a 404, with no load involved, and counting
+  // only loads left that half of the same undo wide open: the closed screen
+  // went up and the refresh already in the air, still the newest LOAD, put the
+  // whole live invite back over it. So they claim() too, and the rule this
+  // reads by is the one above: newest answer wins, whichever kind it was.
   const load = useCallback(async (opts = {}) => {
-    const seq = loadSeq.current + 1;
-    loadSeq.current = seq;
-    const current = () => seq === loadSeq.current;
+    const seq = claim();
+    const current = () => seq === stateSeq.current;
 
     if (opts.showLoading) setPhase('loading');
     const fail = (next) => { if (!opts.quiet && current()) setPhase(next); };
@@ -417,7 +430,7 @@ export default function GuestInvite() {
     if (!current()) return;
     setData(r.body);
     setPhase('ready');
-  }, [token]);
+  }, [token, claim]);
 
   useEffect(() => {
     if (!token || token.length < TOKEN_MIN || token.length > TOKEN_MAX) {
@@ -599,7 +612,16 @@ export default function GuestInvite() {
     if (r.status === 404) {
       // The host revoked the link while this page was open. Say so plainly
       // rather than leaving a button that will never work.
+      //
+      // CLAIMED, not merely set. This closes the page with no load involved,
+      // and the quiet refresh a previous successful write started can still be
+      // in the air for up to thirty seconds. It left before the link died, so
+      // it answers with the whole live plan, and while it was still the newest
+      // LOAD it committed straight over this screen: the invite came back with
+      // its join band, its RSVP buttons and its vote buttons, on a link the
+      // server had already started answering 404 to.
       setPendingRsvp(null);
+      claim();
       setPhase('gone');
       return;
     }
@@ -679,7 +701,10 @@ export default function GuestInvite() {
 
     setBusy(null);
 
-    if (r.status === 404) { setPhase('gone'); return; }
+    // Claimed for the reason the RSVP's 404 spells out, and this is the likelier
+    // of the two to meet a refresh in the air: the tap before this one was the
+    // RSVP, and its quiet refresh is exactly what is still out there.
+    if (r.status === 404) { claim(); setPhase('gone'); return; }
     if (r.status === 403) {
       startOver();
       complain('rsvp', 'Your RSVP is not on this plan anymore. Answer again, then vote.');

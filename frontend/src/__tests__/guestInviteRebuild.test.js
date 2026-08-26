@@ -609,6 +609,62 @@ describe('GuestInvite: the rebuilt screen', () => {
     expect(screen.queryByRole('button', { name: /bookstore speakeasy/i })).toBeNull();
   });
 
+  test('a revoked link stays closed when the refresh that left before it lands', async () => {
+    // The test above holds the LOAD against the LOAD. This one holds the WRITE
+    // against the load, because counting only loads left the same undo open on
+    // the other side and the page reopened there too.
+    //
+    // A vote that comes back 404 is the host revoking the link, and the page
+    // closes itself on the spot: no load runs, so nothing takes a newer number
+    // than the refresh already in the air. That refresh left when the RSVP
+    // succeeded, before the link died, so it answers with the whole live plan,
+    // and it was still the newest LOAD.
+    //
+    //   answer the RSVP        -> refresh #1 leaves and stalls
+    //   the host revokes the link
+    //   tap a venue            -> 404 -> "This invite has closed"
+    //   refresh #1 lands       -> carrying the plan, live
+    //
+    // Driven against the page before the fix, that put the invite back over the
+    // closed screen: the join band, both RSVP buttons and the vote buttons, all
+    // working, on a link the server answers 404 to. Worse than the cancelled
+    // case, because the 404 branch says nothing beside a control at all, so
+    // there was not even a stale line left to contradict it.
+    let previews = 0;
+    let landStaleRefresh;
+    const { container } = mount((url, opts) => {
+      if (opts && opts.method === 'POST') {
+        return /\/vote$/.test(url)
+          ? Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({ error: 'This invite link no longer exists' }) })
+          : Promise.resolve({ ok: true, status: 201, json: () => Promise.resolve({ guestToken: 'g1' }) });
+      }
+      previews += 1;
+      if (previews === 1) return okWith(PLAN)();
+      // The post-RSVP refresh, held open until the assertion below wants it.
+      return new Promise((resolve) => {
+        landStaleRefresh = () => resolve({ ok: true, status: 200, json: () => Promise.resolve(PLAN) });
+      });
+    });
+
+    await screen.findByRole('heading', { level: 1, name: /friday night out/i });
+    fireEvent.change(screen.getByLabelText(/your name/i), { target: { value: 'Maya' } });
+    fireEvent.click(screen.getByRole('button', { name: /i'm in/i }));
+    await waitFor(() => expect(previews).toBe(2));
+
+    fireEvent.click(await screen.findByRole('button', { name: /bookstore speakeasy/i }));
+    await waitFor(() => expect(container.textContent).toMatch(/this invite has closed/i));
+
+    await act(async () => {
+      landStaleRefresh();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toMatch(/this invite has closed/i);
+    expect(screen.queryByRole('button', { name: /i'm in/i })).toBeNull();
+    expect(screen.queryAllByRole('button', { name: /join/i })).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: /bookstore speakeasy/i })).toBeNull();
+  });
+
   test('every request the page makes carries a deadline', () => {
     const src = readSrc('GuestInvite.js');
     // No bare fetch survives: all three endpoints go through the one helper
