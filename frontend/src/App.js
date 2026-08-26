@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, getBudgetStatus, getBillSplit, updatePaymentMethods, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, getBudgetStatus, getBillSplit, updatePaymentMethods, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery } from './services/api';
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
@@ -38,6 +38,7 @@ import VenueLoginScreen from './components/auth/VenueLoginScreen';
 import ModerationSheet from './components/ModerationSheet';
 import ErrorBoundary from './components/ErrorBoundary';
 import EmergencySheet from './components/safety/EmergencySheet';
+import { deliverExport } from './services/dataExport';
 import PaywallSheet from './components/PaywallSheet';
 import { initPurchases } from './services/purchases';
 import { getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock } from './services/api';
@@ -6035,6 +6036,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [blockedError, setBlockedError] = useState('');
   const [unblockingId, setUnblockingId] = useState(null);
   const [unblockTarget, setUnblockTarget] = useState(null);
+  /* Getting a copy of your own data.
+     The route has existed and been unreachable: nothing called it, so the
+     privacy policy told people to email and ask, and answering those by hand is
+     work the server already does in one request. It asks for the same proof
+     deletion does — an export is every message, every flock and every trusted
+     contact in one file, so a stolen 24h token must not be enough to lift it. */
+  const [showExportData, setShowExportData] = useState(false);
+  const [exportPassword, setExportPassword] = useState('');
+  const [exportError, setExportError] = useState('');
+  const [exportNeedsReauth, setExportNeedsReauth] = useState(false);
+  const [exportingData, setExportingData] = useState(false);
+
   // In-app account deletion (Apple 5.1.1(v))
   const [showDeleteAccount, setShowDeleteAccount] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
@@ -9241,6 +9254,47 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setSosStandingDown(false);
     }
   }, [rememberSosAlert, showToast]);
+
+  /* The export, end to end.
+     The 401 here is a RE-PROMPT, not a failure: the server answers
+     reauthRequired 'password' when it wants one and 'reauth' when an OAuth
+     account's session is too old to count as proof. Treating either as an error
+     would tell somebody their export failed when the server was asking a
+     question. Same shape the delete flow already uses. */
+  const handleExportData = useCallback(async () => {
+    setExportingData(true);
+    setExportError('');
+    try {
+      const payload = await exportMyData(exportPassword || undefined);
+      const how = await deliverExport(payload);
+      setShowExportData(false);
+      setExportPassword('');
+      // Say which of the three actually happened. "Downloaded" after a
+      // clipboard copy is the kind of small lie that sends somebody looking
+      // through their Files app for a file that was never written.
+      showToast(
+        how === 'shared' ? 'Your data is ready to save.'
+          : how === 'downloaded' ? 'Your data has been downloaded.'
+            : 'Your data was copied to your clipboard. Paste it somewhere safe.'
+      );
+    } catch (err) {
+      const reauth = err?.data?.reauthRequired;
+      if (reauth === 'reauth') {
+        setExportNeedsReauth(true);
+        setExportError('For your security, sign out and back in, then try again.');
+      } else if (reauth === 'password') {
+        setExportError(exportPassword
+          ? 'That password is not right. Try again.'
+          : 'Enter your password to confirm it is you.');
+      } else if (err?.sessionExpired) {
+        setShowExportData(false);
+      } else {
+        setExportError(err?.message || "That didn't work. Try again in a moment.");
+      }
+    } finally {
+      setExportingData(false);
+    }
+  }, [exportPassword, showToast]);
 
   const handleShareLocationWithContacts = useCallback(async () => {
     if (trustedContacts.length === 0) {
@@ -15690,12 +15744,53 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {Icons.logout('#ffffff', 18)}
               <span style={{ fontWeight: '600', fontSize: 'var(--t-body)' }}>Log Out</span>
             </button>
+            {/* Your data, before you decide anything else about the account.
+                It sits above Delete on purpose: somebody who has come to this
+                part of the screen to leave should see that they can take their
+                things with them BEFORE they hit the irreversible one. */}
+            <button className="hit44" onClick={() => { setExportPassword(''); setExportError(''); setExportNeedsReauth(false); setShowExportData(true); }} style={{ width: '100%', marginTop: '10px', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
+              {Icons.download('var(--text-tertiary)', 18)}
+              <span style={{ fontWeight: '600', fontSize: 'var(--t-body)' }}>Get a copy of my data</span>
+            </button>
+
             {/* Delete account (Apple Guideline 5.1.1(v)) — permanent, in-app */}
             <button className="hit44" onClick={() => { setDeleteConfirmText(''); setDeletePassword(''); setDeleteError(''); setDeleteNeedsReauth(false); setShowDeleteAccount(true); }} style={{ width: '100%', marginTop: '10px', padding: '12px', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)' }}>
               {Icons.trash('var(--text-tertiary)', 18)}
               <span style={{ fontWeight: '600', fontSize: 'var(--t-body)' }}>Delete account</span>
             </button>
 
+          {/* Get a copy of my data. Same proof of identity deletion asks for,
+              and for a comparable reason: this file is every message, every
+              flock and every trusted contact in one place, so a stolen 24h
+              token must not be enough to lift it. */}
+          {showExportData && (
+            <div onClick={() => !exportingData && setShowExportData(false)} style={{ position: 'absolute', inset: 0, zIndex: 210, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+            <DialogBehavior onClose={() => setShowExportData(false)} label="Get a copy of my data" />
+              <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '360px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif" }}>
+                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>Get a copy of my data</h3>
+                <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>A JSON file with your profile, flocks, messages, votes, budgets, reviews, check-ins, friends and trusted contacts. Photos are referenced by link rather than included. Our Privacy Policy lists the few things left out and why.</p>
+                {!exportNeedsReauth && (
+                  <input
+                    type="password"
+                    autoComplete="current-password"
+                    value={exportPassword}
+                    onChange={(e) => { setExportPassword(e.target.value); if (exportError) setExportError(''); }}
+                    placeholder="Your password"
+                    aria-label="Your password"
+                    disabled={exportingData}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: '10px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-input)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', marginBottom: '10px', boxSizing: 'border-box' }}
+                  />
+                )}
+                {exportError && (
+                  <p role="alert" style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#EF4444', margin: '0 0 10px' }}>{exportError}</p>
+                )}
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button className="hit44 glass-btn glass-secondary" disabled={exportingData} onClick={() => setShowExportData(false)} style={{ flex: 1, minHeight: '44px', borderRadius: '10px', border: '1px solid var(--border-mid)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
+                  <button className="hit44 glass-btn glass-primary" disabled={exportingData || exportNeedsReauth} onClick={handleExportData} style={{ flex: 1, minHeight: '44px', borderRadius: '10px', border: 'none', backgroundColor: colors.navy, color: '#ffffff', fontWeight: '700', cursor: exportingData ? 'default' : 'pointer' }}>{exportingData ? 'Preparing…' : 'Get my data'}</button>
+                </div>
+              </div>
+            </div>
+          )}
           {/* Delete-account confirmation — requires typing DELETE; hard-delete is irreversible */}
           {showDeleteAccount && (
             <div onClick={() => !deletingAccount && setShowDeleteAccount(false)} style={{ position: 'absolute', inset: 0, zIndex: 210, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
