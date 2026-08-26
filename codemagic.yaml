@@ -12,25 +12,49 @@
 #    (created in App Store Connect → Users and Access → Integrations).
 #    Name the integration exactly:  FlockASC   (matches `app_store_connect` below).
 #
-# 2. Web build secrets — create a variable group named  flock_web  and add the
+# 2. Web build secrets. Create a variable group named  flock_web  and add the
 #    REACT_APP_* lines listed in frontend/.env.example as Secure variables.
-#    Critical ones:
-#      REACT_APP_MAPTILER_KEY          (no map renders without it)
-#      REACT_APP_API_URL               (optional; defaults to the Railway prod URL)
-#      REACT_APP_FIREBASE_* / REACT_APP_GOOGLE_CLIENT_ID / REACT_APP_GOOGLE_IOS_CLIENT_ID
 #    CRA inlines these at `npm run build`, so they must exist in the build env.
+#
+#    EVERY ONE OF THESE FAILS GREEN. A missing value never stops the archive and
+#    never stops the TestFlight upload; it ships a build in which one feature
+#    quietly does not exist. That is the only reason this list is written out:
+#      REACT_APP_MAPTILER_KEY          the map still renders, on a generic light
+#                                      CARTO basemap instead of the intended style
+#      REACT_APP_GOOGLE_CLIENT_ID      Google sign-in cannot verify against the
+#                                      backend, which enforces the same id
+#      REACT_APP_GOOGLE_IOS_CLIENT_ID  the native Google button HIDES ITSELF
+#                                      rather than shipping a button that cannot
+#                                      work (useGoogleAuth.js
+#                                      isGoogleSignInAvailable). Nothing on the
+#                                      login screen says a provider went missing.
+#      REACT_APP_FIREBASE_*            web push registration only. NATIVE push
+#                                      comes from GoogleService-Info.plist below,
+#                                      not from these six.
+#      REACT_APP_REVENUECAT_IOS_KEY    the paywall can never show, even with
+#                                      PAYWALL_ENABLED set on the backend
+#      REACT_APP_SENTRY_DSN            crashes inside the shell go unreported
+#      REACT_APP_POSTHOG_KEY           posthog-js is never imported, no analytics
+#      REACT_APP_API_URL               optional. Defaults to the Railway prod URL
+#
 #    Add ONLY vars the app reads. CRA's DefinePlugin emits the whole process.env
 #    object, so any REACT_APP_* present in the build env is published verbatim in
-#    build/static/js/*.js whether or not a line of code reads it — an unused
+#    build/static/js/*.js whether or not a line of code reads it: an unused
 #    billable key in this group is an unused billable key on every visitor's
 #    machine. Maps are MapTiler + MapLibre (App.js), so there is NO Google Maps
 #    key here: REACT_APP_GOOGLE_MAPS_API_KEY has no consumer and must not be set.
 #    Enforced by frontend/src/__tests__/noUnusedGoogleApiKey.test.js.
 #    Non-REACT_APP vars the scripts below also read from this group:
-#      CM_CERTIFICATE_PRIVATE_KEY   (PEM private key; pins ONE distribution cert
-#                                    across builds — signing step fails without it)
-#      GOOGLE_SERVICE_INFO_PLIST    (base64 of GoogleService-Info.plist; optional —
-#                                    absent = push stays off via placeholder plist)
+#      CM_CERTIFICATE_PRIVATE_KEY   PEM private key. Pins ONE distribution cert
+#                                   across builds, and the signing step fails
+#                                   without it.
+#      GOOGLE_SERVICE_INFO_PLIST    base64 of GoogleService-Info.plist. REQUIRED.
+#                                   When it is absent the build now STOPS. It
+#                                   used to write a placeholder and carry on,
+#                                   which shipped TestFlight builds whose push
+#                                   was dead on every device.
+#      ALLOW_PUSHLESS_BUILD         set to the string true only to override that
+#                                   stop and deliberately build without push.
 #
 # 3. Create the app record in App Store Connect (My Apps → +) with bundle id
 #    com.flockcorp.flock so TestFlight submission has somewhere to land.
@@ -63,22 +87,38 @@ workflows:
         script: npm run build
       - name: Capacitor sync iOS
         script: npx cap sync ios
-      - name: Write GoogleService-Info.plist (push notifications)
+      - name: Write and verify GoogleService-Info.plist (push notifications)
         script: |
           # The plist holds a Firebase client API key, so it lives in the
           # flock_web env group (var GOOGLE_SERVICE_INFO_PLIST, base64 of the
-          # file) instead of git — zero-keys-in-repo policy. Skipping when the
-          # var is absent keeps builds green until it's configured; push simply
-          # stays off in that build.
-          if [ -n "${GOOGLE_SERVICE_INFO_PLIST:-}" ]; then
-            echo "$GOOGLE_SERVICE_INFO_PLIST" | base64 -d > ios/App/App/GoogleService-Info.plist
-            echo "GoogleService-Info.plist written"
-          else
+          # file) instead of git, under the zero-keys-in-repo policy.
+          #
+          # THIS WAS THE MOST DANGEROUS STEP IN THE FILE. When the variable was
+          # absent it wrote a placeholder plist and let the build carry on, so
+          # the archive succeeded, the upload succeeded, TestFlight accepted it,
+          # the app installed and ran, and push was dead on every device. The
+          # only signal was one WARNING line twenty minutes up a build log that
+          # nobody reads when the build is green. A shipped feature that silently
+          # does nothing is worse than a red build, so the absence stops here and
+          # names the variable to set.
+          set -eu
+          PLIST=ios/App/App/GoogleService-Info.plist
+
+          if [ -z "${GOOGLE_SERVICE_INFO_PLIST:-}" ]; then
+            if [ "${ALLOW_PUSHLESS_BUILD:-}" != "true" ]; then
+              echo "PUSH CHECK FAILED: GOOGLE_SERVICE_INFO_PLIST is not set in the flock_web variable group."
+              echo "This build could not deliver a single push notification on device, and neither"
+              echo "the build, the upload, the install nor the app would say so."
+              echo "FIX: add GOOGLE_SERVICE_INFO_PLIST to the flock_web group, as the base64 of"
+              echo "     frontend/ios/App/App/GoogleService-Info.plist (PUSH-SETUP.md step 3a)."
+              echo "OVERRIDE: set ALLOW_PUSHLESS_BUILD=true in the same group to build without push."
+              exit 1
+            fi
             # The Xcode project lists the plist in Resources, so a MISSING file
             # fails the archive outright. Write a valid placeholder (dummy ids)
-            # so the push-disabled build actually builds; the messaging plugin
-            # fails soft at runtime and the app runs without push.
-            cat > ios/App/App/GoogleService-Info.plist <<'PLIST'
+            # so a deliberately push-disabled build still archives; the messaging
+            # plugin fails soft at runtime and the app runs without push.
+            cat > "$PLIST" <<'PLIST_EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict>
@@ -89,9 +129,37 @@ workflows:
             <key>GOOGLE_APP_ID</key><string>1:000000000000:ios:0000000000000000</string>
             <key>IS_ANALYTICS_ENABLED</key><false/>
           </dict></plist>
-          PLIST
-            echo "WARNING: GOOGLE_SERVICE_INFO_PLIST not set — placeholder plist written, push stays OFF in this build"
+          PLIST_EOF
+            echo "WARNING: ALLOW_PUSHLESS_BUILD=true, placeholder plist written, PUSH IS OFF IN THIS BUILD"
+            exit 0
           fi
+
+          echo "$GOOGLE_SERVICE_INFO_PLIST" | base64 -d > "$PLIST" || true
+
+          # Three questions, all cheap, none of which anything downstream asks.
+          # A value pasted truncated, or with a stray character in it, decodes to
+          # a file the Xcode project copies into Resources without looking at it,
+          # and a plist for the wrong bundle id decodes perfectly. Firebase then
+          # either refuses to configure at launch or registers the device under
+          # ids belonging to another app, and APNs accepts a token registered
+          # that way and never delivers to it. Both look like a working build.
+          if ! plutil -lint "$PLIST" >/dev/null 2>&1; then
+            echo "PUSH CHECK FAILED: GOOGLE_SERVICE_INFO_PLIST did not decode to a valid plist."
+            echo "FIX: regenerate the value with  base64 -i GoogleService-Info.plist  and paste all of it."
+            exit 1
+          fi
+          PLIST_BUNDLE=$(/usr/libexec/PlistBuddy -c "Print :BUNDLE_ID" "$PLIST" 2>/dev/null || echo "")
+          if [ "$PLIST_BUNDLE" != "$BUNDLE_ID" ]; then
+            echo "PUSH CHECK FAILED: this plist is registered to bundle id '$PLIST_BUNDLE', not $BUNDLE_ID."
+            echo "FIX: Firebase console, Project settings, General, the iOS app for $BUNDLE_ID, download its plist."
+            exit 1
+          fi
+          PLIST_KEY=$(/usr/libexec/PlistBuddy -c "Print :API_KEY" "$PLIST" 2>/dev/null || echo "")
+          if [ -z "$PLIST_KEY" ] || [ "$PLIST_KEY" = "invalid-placeholder" ]; then
+            echo "PUSH CHECK FAILED: the decoded plist carries no usable API_KEY."
+            exit 1
+          fi
+          echo "GoogleService-Info.plist written and verified for $PLIST_BUNDLE. PUSH IS ON IN THIS BUILD."
       - name: Set up code signing (reuse pinned cert + App Store profile)
         script: |
           keychain initialize
@@ -105,6 +173,72 @@ workflows:
             --create
           keychain add-certificates
           xcode-project use-profiles
+      - name: Check the fetched profile against App.entitlements
+        script: |
+          # ENABLING A CAPABILITY ON THE APP ID INVALIDATES EVERY PROVISIONING
+          # PROFILE THAT ALREADY EXISTS. Apple says so on the save dialog, and
+          # Associated Domains was enabled on com.flockcorp.flock on 2026-08-26,
+          # so the first build after that is the first one that has to mint a
+          # replacement. `fetch-signing-files --create` above derives the profile
+          # from the App ID and normally does exactly that, but when it reuses a
+          # profile that predates the capability the archive fails roughly twenty
+          # minutes later, inside an xcodebuild log, with a line that names an
+          # entitlement and not the step that produced the profile:
+          #
+          #   Provisioning profile "..." doesn't include the
+          #   com.apple.developer.associated-domains entitlement.
+          #
+          # That is an hour of debugging for a question that can be answered in
+          # one second, from files that are already on disk. So ask it here. The
+          # list of entitlements is read from App.entitlements rather than typed
+          # out, so this check covers whatever the app declares next as well.
+          set -eu
+          PROFILE_DIR="$HOME/Library/MobileDevice/Provisioning Profiles"
+          DECODED=/tmp/flock-provisioning-profile.plist
+          WANTED=$(plutil -convert json -o - ios/App/App/App.entitlements \
+            | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin).keys()))')
+          echo "App.entitlements declares: $WANTED"
+
+          MATCH=""
+          for p in "$PROFILE_DIR"/*.mobileprovision; do
+            [ -e "$p" ] || continue
+            security cms -D -i "$p" -o "$DECODED" 2>/dev/null || continue
+            APPID=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" "$DECODED" 2>/dev/null || echo "")
+            case "$APPID" in
+              *".$BUNDLE_ID") MATCH="$p"; break ;;
+            esac
+          done
+
+          if [ -z "$MATCH" ]; then
+            echo "SIGNING CHECK FAILED: no provisioning profile for $BUNDLE_ID was installed."
+            echo "The fetch-signing-files step above is where that went wrong, not the archive."
+            exit 1
+          fi
+
+          security cms -D -i "$MATCH" -o "$DECODED"
+          echo "Profile: $(/usr/libexec/PlistBuddy -c 'Print :Name' "$DECODED")"
+          echo "UUID:    $(/usr/libexec/PlistBuddy -c 'Print :UUID' "$DECODED")"
+          echo "Created: $(/usr/libexec/PlistBuddy -c 'Print :CreationDate' "$DECODED")"
+
+          MISSING=""
+          for key in $WANTED; do
+            if ! /usr/libexec/PlistBuddy -c "Print :Entitlements:$key" "$DECODED" >/dev/null 2>&1; then
+              MISSING="$MISSING $key"
+            fi
+          done
+
+          if [ -n "$MISSING" ]; then
+            echo "SIGNING CHECK FAILED: the profile above is missing:$MISSING"
+            echo "The archive would have failed with \"provisioning profile does not match the entitlements file\"."
+            echo "CAUSE: a capability was turned on for App ID $BUNDLE_ID after this profile was created,"
+            echo "       and this build reused the stale profile instead of creating a new one."
+            echo "FIX: delete the profile named above in the Apple Developer portal"
+            echo "     (Certificates, Identifiers and Profiles, then Profiles) and re-run this build."
+            echo "DO NOT delete the entitlement to make this pass. Sign in with Apple is required by"
+            echo "     Guideline 4.8 while Google sign-in ships, and push needs aps-environment."
+            exit 1
+          fi
+          echo "The provisioning profile carries every entitlement this app declares."
       - name: Set unique build number (TestFlight rejects duplicates)
         script: |
           # App Store Connect rejects any upload whose CFBundleVersion was used before
@@ -115,7 +249,20 @@ workflows:
           # of Codemagic's internal counter. MARKETING_VERSION (1.0) is left untouched.
           # Auth comes from the FlockASC integration env vars already in scope.
           LATEST=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APP_ID" --platform IOS 2>/dev/null || true)
-          case "$LATEST" in ''|*[!0-9]*) LATEST=0;; esac
+          case "$LATEST" in
+            ''|*[!0-9]*)
+              # Say it out loud. The lookup used to fail into LATEST=0 in
+              # silence, and the only visible consequence was a 409 at
+              # Publishing after a twenty minute archive, with nothing anywhere
+              # in the log naming the cause. Codemagic's own counter is the
+              # fallback below and is usually higher, so this is a warning
+              # rather than a stop, but it has to be findable.
+              echo "WARNING: the App Store Connect build-number lookup returned nothing usable."
+              echo "         Falling back to Codemagic's counter. If Publishing 409s on a duplicate"
+              echo "         build number, this line is why."
+              LATEST=0
+              ;;
+          esac
           NEXT=$((LATEST + 1))
           # If Codemagic's monotonic build counter is somehow higher, prefer it.
           if [ "${BUILD_NUMBER:-0}" -gt "$NEXT" ] 2>/dev/null; then NEXT=$BUILD_NUMBER; fi

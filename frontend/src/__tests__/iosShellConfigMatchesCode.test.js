@@ -787,3 +787,133 @@ describe('the declared device and orientation support is real', () => {
     expect(pbxproj).not.toMatch(/CAPACITOR_DEBUG\s*=\s*(true|YES)/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 9. The pipeline has to fail where it used to fail silently.
+//
+// Every check below pins a guard added to codemagic.yaml on 2026-08-26, and
+// each one exists because the failure it catches is invisible from a green
+// build. A test on a CI file looks like belt and braces until somebody deletes
+// a step to make a red build go away, which is exactly the moment the step was
+// earning its keep.
+// ---------------------------------------------------------------------------
+describe('the build stops on the failures that used to ship green', () => {
+  const signingCheck = () => {
+    const step = codemagic.split(/^ {6}- name: /m).find((s) => /App\.entitlements/.test(s.split('\n')[0]));
+    return step || '';
+  };
+
+  test('the archive is not the first thing that reads the fetched profile', () => {
+    // Enabling a capability on the App ID invalidates every existing
+    // provisioning profile. When the profile the build signs with predates the
+    // capability, xcodebuild fails roughly twenty minutes in with "provisioning
+    // profile does not match the entitlements file", inside a log that names an
+    // entitlement and not the step that produced the profile. The check has to
+    // sit between fetch-signing-files and build-ipa, in that order, or it is
+    // reading a profile the archive will not use.
+    const order = ['fetch-signing-files', 'App.entitlements', 'build-ipa'];
+    let at = -1;
+    for (const marker of order) {
+      const next = codemagic.indexOf(marker, at + 1);
+      expect({ marker, found: next > at }).toEqual({ marker, found: true });
+      at = next;
+    }
+  });
+
+  test('the entitlement list is read from App.entitlements, not typed into the yaml', () => {
+    // A hardcoded list is a list that stops being true the next time this app
+    // declares a capability, and it stops being true silently.
+    const step = signingCheck();
+    expect(step).toContain('ios/App/App/App.entitlements');
+    expect(step).toMatch(/security cms -D/);
+    expect(step).toMatch(/application-identifier/);
+    expect(step).toMatch(/exit 1/);
+    // The message a red build shows has to name the entitlement AND say what to
+    // do, because the wrong fix (deleting the key) turns a build failure into a
+    // Guideline 4.8 rejection.
+    expect(step).toMatch(/SIGNING CHECK FAILED/);
+    expect(step).toMatch(/DO NOT delete the entitlement/);
+    // No key name appears in anything the shell EXECUTES: the check must not
+    // know which entitlements exist. Comments and the failure message are
+    // allowed to name them, because prose that explains a stop is not a list
+    // the stop depends on.
+    const executable = step
+      .split('\n')
+      .filter((l) => !/^\s*#/.test(l) && !/^\s*echo\b/.test(l))
+      .join('\n');
+    for (const key of plistKeys(entitlements)) {
+      expect({ key, hardcodedInYaml: executable.includes(key) }).toEqual({ key, hardcodedInYaml: false });
+    }
+  });
+
+  test('a build with no push configuration stops instead of shipping to TestFlight', () => {
+    // The placeholder GoogleService-Info.plist archives, signs, installs and
+    // runs. Push is dead on every device and the only signal was one WARNING
+    // line in a green build's log. This workflow publishes to TestFlight
+    // unconditionally, so "green" meant real testers on a build whose
+    // notifications did nothing.
+    expect(codemagic).toMatch(/submit_to_testflight:\s*true/);
+    expect(codemagic).toContain('PUSH CHECK FAILED');
+    expect(codemagic).toContain('ALLOW_PUSHLESS_BUILD');
+    // The placeholder still exists, but only behind the explicit override.
+    const placeholderAt = codemagic.indexOf('invalid-placeholder');
+    const overrideAt = codemagic.indexOf('ALLOW_PUSHLESS_BUILD');
+    expect(placeholderAt).toBeGreaterThan(overrideAt);
+  });
+
+  test('a decoded push plist is checked for the bundle id it belongs to', () => {
+    // A plist for another Firebase iOS app decodes perfectly, lints perfectly,
+    // and registers APNs tokens that are accepted and never delivered to.
+    expect(codemagic).toMatch(/plutil -lint/);
+    expect(codemagic).toMatch(/Print :BUNDLE_ID/);
+    expect(codemagic).toMatch(/PLIST_BUNDLE" != "\$BUNDLE_ID/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10. The build environment the iOS shell needs has to be written down.
+//
+// CRA inlines REACT_APP_* at build time, so a variable missing from the
+// Codemagic `flock_web` group is not an error anywhere: the bundle compiles,
+// the archive signs, the app runs, and one feature is simply absent. The only
+// defence is that the list of variables is complete in the file codemagic.yaml
+// points whoever fills that group at.
+// ---------------------------------------------------------------------------
+describe('every REACT_APP_ variable the shell reads is documented', () => {
+  const envExample = read('frontend', '.env.example');
+
+  const shippedSources = () => {
+    const files = [];
+    const walk = (dir) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name === '__tests__') continue;
+        const p = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(p);
+        else if (/\.(js|jsx|ts|tsx)$/.test(entry.name) && !/\.test\.\w+$/.test(entry.name)) files.push(p);
+      }
+    };
+    walk(path.join(REPO, 'frontend', 'src'));
+    return files;
+  };
+
+  test('frontend/.env.example names every variable src actually reads', () => {
+    // REACT_APP_GOOGLE_IOS_CLIENT_ID was read by useGoogleAuth.js and absent
+    // from this file, while codemagic.yaml told the person filling the env
+    // group to "add the REACT_APP_* lines listed in frontend/.env.example".
+    // Following that instruction produced a green iOS build with no Google
+    // sign-in button and no error anywhere.
+    const used = new Set();
+    for (const f of shippedSources()) {
+      const src = fs.readFileSync(f, 'utf8');
+      for (const m of src.matchAll(/process\.env\.(REACT_APP_[A-Z0-9_]+)/g)) used.add(m[1]);
+    }
+    expect(used.size).toBeGreaterThan(5); // the scan found the real tree
+
+    const undocumented = [...used].filter((v) => !new RegExp(`^${v}=`, 'm').test(envExample)).sort();
+    expect(undocumented).toEqual([]);
+  });
+
+  test('codemagic still points at that file rather than repeating the list', () => {
+    expect(codemagic).toContain('frontend/.env.example');
+  });
+});
