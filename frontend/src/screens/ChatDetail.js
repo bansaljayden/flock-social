@@ -82,7 +82,7 @@
  * character. Nothing was renamed, reformatted or improved on the way across.
  */
 import React from 'react';
-import { leaveFlock as apiLeaveFlock, BASE_URL, createBillSplit, createFlockInviteLink, getPaymentLinks, ghostCommit, lockBudget, sendBudgetReminder, settleShare, submitBudget } from '../services/api';
+import { leaveFlock as apiLeaveFlock, BASE_URL, createBillSplit, createFlockInviteLink, getPaymentLinks, ghostCommit, lockBudget, sendBudgetReminder, settleShare, submitBudget, unsettleShare } from '../services/api';
 import { leaveFlock } from '../services/socket';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
@@ -1317,6 +1317,32 @@ export default function ChatDetail({
                         } catch (err) { showToast(err.message, 'error'); }
                       }} style={{ width: '100%', padding: '10px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
                         Mark as Paid (cash or other)
+                      </button>
+                    )}
+                    {/* The way back out of "I paid".
+                        Settling was a one-way door: the Mark as Paid button
+                        disappears the moment it succeeds, and nothing called
+                        the unsettle route, so a mis-tap left a debt recorded as
+                        cleared and the only remedy was asking whoever paid to
+                        remember it differently.
+
+                        Hidden for the payer rather than shown and refused. The
+                        server answers 409 reason:'payer' because there is
+                        nothing of theirs to unmark, and a control that exists
+                        only to be rejected is a dead button. */}
+                    {billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && s.settled)
+                      && String(billSplit.paidBy?.id ?? '') !== String(authUser?.id ?? '') && (
+                      <button className="hit44 glass-btn glass-secondary" onClick={async () => {
+                        try {
+                          await unsettleShare(selectedFlockId);
+                          setBillSplit(prev => ({
+                            ...prev,
+                            shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: false, settledAt: null } : s),
+                          }));
+                          showToast('Your share is marked unpaid again');
+                        } catch (err) { showToast(err.message, 'error'); }
+                      }} style={{ width: '100%', padding: '10px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-tertiary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
+                        That was a mistake, I have not paid
                       </button>
                     )}
                     {billSplit.shares?.every(s => s.settled) && (

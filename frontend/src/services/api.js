@@ -1721,6 +1721,20 @@ export async function settleShare(flockId) {
   return request(`/api/billing/${flockId}/settle`, { method: 'POST' });
 }
 
+// Taking back "I paid". The route has always existed and nothing called it, so
+// settling was a one-way door: a mis-tapped "Mark as Paid" left a debt recorded
+// as cleared with no way back, and the only fix was asking whoever paid to
+// remember it differently.
+//
+// It only ever touches the CALLER's own share (the UPDATE is keyed on
+// user_id), so this cannot be used to mark somebody else unpaid. The server
+// answers 409 with reason 'payer' when the caller is the person who paid the
+// bill, which the caller should not be able to reach: there is nothing of
+// theirs to unmark.
+export async function unsettleShare(flockId) {
+  return request(`/api/billing/${flockId}/unsettle`, { method: 'POST' });
+}
+
 export async function ghostCommit(flockId) {
   return request(`/api/billing/${flockId}/ghost-commit`, { method: 'POST' });
 }
