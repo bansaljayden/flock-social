@@ -87,8 +87,24 @@ test('the live caller venue shape produces the venue\'s real coordinates', () =>
     'daylight is exactly 12 hours only on the equator — the 0,0 tell');
 
   // The climate band is the venue's, not band 0.
-  assert.equal(map.temp_anomaly,
-    Math.max(-25, Math.min(25, WEATHER.temp - _internals.climateNorm(nyc.latitude, 2))));
+  //
+  // PROBED IN A MONTH THE ARTIFACT HAS CLIMATOLOGY FOR, which February is not.
+  // Since skew fix (e) the anomaly slot is 0 for every latitude outside the
+  // corpus months (see monthClimateNorm), so a February build cannot tell band
+  // 40 from band 0 and the assertion that used to sit here had quietly stopped
+  // probing anything. May is inside the corpus, so the band lookup is live and
+  // the two bands give genuinely different answers, which is what makes this a
+  // coordinate probe rather than a restatement of the same arithmetic.
+  const mayTs = new Date(2026, 4, 8, 20, 0);
+  const mayMap = _internals.buildFeatureMap(
+    liveVenue({ location: nyc }), WEATHER, mayTs, null, null, 50, null);
+  const anomalyAt = (lat) => Math.max(-25, Math.min(25,
+    WEATHER.temp - _internals.monthClimateNorm(lat, 5)));
+  assert.equal(mayMap.temp_anomaly, anomalyAt(nyc.latitude));
+  assert.notEqual(anomalyAt(nyc.latitude), anomalyAt(0),
+    'band 40 and band 0 must disagree here, or this assertion is not a 0,0 tell');
+  assert.equal(map.temp_anomaly, 0,
+    'February is outside the corpus climatology, so no anomaly is claimed at any latitude');
 
   // And the SAME venue described with top-level coordinates instead of a
   // `location` object must build the identical vector, so neither shape is the
