@@ -267,10 +267,97 @@ describe('error announcement and focus management (3.3.1 / 4.1.3)', () => {
     fireEvent.submit(container.querySelector('form'));
     await waitFor(() => {
       const alert = getByRole('alert');
-      expect(alert.textContent).toMatch(/password is missing a requirement/i);
+      // The FIRST empty field, which on an untouched form is Name. This
+      // assertion used to read /password is missing a requirement/, because
+      // handleSubmit graded the password before it noticed the four empty
+      // fields above it, and an empty form was answered with a complaint
+      // about a password nobody had typed.
+      expect(alert.textContent).toMatch(/name your friends know you by/i);
       expect(alert.getAttribute('tabindex')).toBe('-1');
       expect(document.activeElement).toBe(alert);
     });
+  });
+
+  // The regression this file now exists to hold shut, alongside the 1.4.1 one
+  // in the header. Every field on these forms carries `required`, and iOS
+  // WKWebView draws NO validation bubble: the submit is refused and nothing
+  // appears. Production PostHog measured the result over 90 days. The largest
+  // $dead_click cluster in the whole product was the signup screen inside the
+  // native app, five of them on the Create account button itself, against
+  // 1,792 pageviews and 6 signups.
+  //
+  // noValidate is what makes handleSubmit the only gate, and handleSubmit
+  // always renders a message. Deleting the attribute silently restores a
+  // primary button that does nothing, which is also App Store rejection
+  // ground (SLOP-AUDIT K1, "every single button must work"), so it is pinned
+  // here rather than left to review.
+  it('every auth form disables native validation, so the button can never silently do nothing', () => {
+    const forms = [
+      ['signup', React.createElement(SignupScreen, { onSignupSuccess: () => {}, onSwitchToLogin: () => {} })],
+      ['login', React.createElement(LoginScreen, {
+        onLoginSuccess: () => {}, onSwitchToSignup: () => {}, onSwitchToVenueLogin: () => {},
+      })],
+    ];
+    forms.forEach(([name, element]) => {
+      const { container, unmount } = render(element);
+      const form = container.querySelector('form');
+      expect(form).not.toBeNull();
+      expect(form.hasAttribute('novalidate')).toBe(true);
+      // A field still carrying `required` is fine and desirable: it keeps the
+      // semantics for assistive tech. It just must not be the thing deciding
+      // whether the submit happens.
+      unmount();
+      expect(name).toBeTruthy();
+    });
+  });
+
+  it('signup names the offending field in order down the form, not the last rule checked', async () => {
+    const { container, getByLabelText, getByRole } = render(
+      React.createElement(SignupScreen, { onSignupSuccess: () => {}, onSwitchToLogin: () => {} })
+    );
+    const submit = () => fireEvent.submit(container.querySelector('form'));
+
+    submit();
+    await waitFor(() => expect(getByRole('alert').textContent).toMatch(/name your friends know you by/i));
+
+    fireEvent.change(getByLabelText('Name'), { target: { value: 'Sam' } });
+    submit();
+    await waitFor(() => expect(getByRole('alert').textContent).toMatch(/add your email address/i));
+
+    fireEvent.change(getByLabelText('Email'), { target: { value: 'not-an-email' } });
+    submit();
+    await waitFor(() => expect(getByRole('alert').textContent).toMatch(/does not look right/i));
+
+    fireEvent.change(getByLabelText('Email'), { target: { value: 'sam@example.com' } });
+    submit();
+    await waitFor(() => expect(getByRole('alert').textContent).toMatch(/add your date of birth/i));
+
+    fireEvent.change(getByLabelText('Date of birth'), { target: { value: '2000-01-01' } });
+    submit();
+    await waitFor(() => expect(getByRole('alert').textContent).toMatch(/choose a password/i));
+
+    // Only once everything above it is filled does the password checklist get
+    // to be the complaint.
+    fireEvent.change(getByLabelText('Password'), { target: { value: 'short' } });
+    submit();
+    await waitFor(() => expect(getByRole('alert').textContent).toMatch(/password is missing a requirement/i));
+  });
+
+  it('an empty sign-in submit says which field is missing instead of doing nothing', async () => {
+    const { container, getByLabelText, getByRole } = render(
+      React.createElement(LoginScreen, {
+        onLoginSuccess: () => {}, onSwitchToSignup: () => {}, onSwitchToVenueLogin: () => {},
+      })
+    );
+    fireEvent.submit(container.querySelector('form'));
+    await waitFor(() => expect(getByRole('alert').textContent).toMatch(/email address you signed up with/i));
+
+    fireEvent.change(getByLabelText('Email'), { target: { value: 'sam@example.com' } });
+    fireEvent.submit(container.querySelector('form'));
+    await waitFor(() => expect(getByRole('alert').textContent).toMatch(/add your password/i));
+
+    // And the network was never touched for either of those.
+    expect(require('../services/api').login).not.toHaveBeenCalled();
   });
 
   it('a rejected login lands the server message in the alert, focused', async () => {

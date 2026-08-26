@@ -70,6 +70,13 @@ export const ForgotPasswordScreen = ({ onBack, initialEmail = '' }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    // noValidate is on the form, so the empty case is caught here rather than
+    // by a browser that draws nothing on iOS.
+    if (!email.trim()) {
+      setError('Add the email address you signed up with.');
+      document.getElementById('forgot-email')?.focus();
+      return;
+    }
     setLoading(true);
     try {
       await request('/api/auth/forgot-password', {
@@ -106,7 +113,8 @@ export const ForgotPasswordScreen = ({ onBack, initialEmail = '' }) => {
 
   return (
     <AuthShell hero={heroOf('Forgot your password?', 'Give us the address you sign in with.')}>
-      <form onSubmit={handleSubmit}>
+      {/* noValidate: see the signup screen. handleSubmit is the only gate. */}
+      <form onSubmit={handleSubmit} noValidate>
         <AuthError>{error}</AuthError>
 
         <div className="auth-field-row" style={{ marginBottom: '24px' }}>
@@ -293,7 +301,8 @@ export const ResetPasswordScreen = ({ onSignIn, onRequestNew }) => {
 
   return (
     <AuthShell hero={heroOf('Set a new password', 'Pick one you have not used anywhere else.')}>
-      <form onSubmit={handleSubmit}>
+      {/* noValidate: see the signup screen. handleSubmit is the only gate. */}
+      <form onSubmit={handleSubmit} noValidate>
         <AuthError>{error}</AuthError>
 
         <div className="auth-field-row">
