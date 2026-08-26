@@ -145,6 +145,52 @@ const MIGRATIONS_DIR = path.join(__dirname, '..', 'migrations');
 // rather than about how it was laid out.
 const sqlText = (s) => s.replace(/^\s*--.*$/gm, '').replace(/\s+/g, ' ').trim();
 
+// The `NOT EXISTS ( ... )` that consults user_blocks, on its own, whichever
+// options the predicate was built with. Balanced-paren scan rather than a
+// regex, because the clause contains parentheses of its own.
+function blockClause(sql) {
+  const flat = sqlText(sql);
+  const at = flat.indexOf('FROM user_blocks');
+  assert.ok(at > 0, 'the story predicate must consult user_blocks');
+  const open = flat.lastIndexOf('(', at);
+  let depth = 0;
+  let end = open;
+  for (; end < flat.length; end += 1) {
+    if (flat[end] === '(') depth += 1;
+    else if (flat[end] === ')') { depth -= 1; if (depth === 0) break; }
+  }
+  return flat.slice(open + 1, end).trim();
+}
+
+// The OR-terms of a clause, as a set, so reordering and reformatting them does
+// not move the answer.
+function orTerms(clause) {
+  const at = clause.toUpperCase().indexOf(' WHERE ');
+  assert.ok(at > 0, 'expected a WHERE clause');
+  return new Set(clause.slice(at + ' WHERE '.length).split(/\s+OR\s+/i).map((t) => t.trim()).filter(Boolean));
+}
+
+// Swap the two people the block clause is about: the viewer's bind placeholder
+// and the story author's column. A clause that names both directions of a
+// mutual block is unchanged by that swap. One that names a single direction is
+// not, which is the whole property and the reason to assert it this way rather
+// than by matching the text.
+function swapSides(clause, viewer) {
+  return clause.split(viewer).join('\u0000').split('s.user_id').join(viewer).split('\u0000').join('s.user_id');
+}
+
+// Blocks are mutual, and this predicate is the only thing standing between a
+// block and the blocker's stories: shared-flock membership survives a block, so
+// the reach grants would keep leaking either way round without it.
+function assertMutualBlock(sql, viewer) {
+  const clause = blockClause(sql);
+  const terms = orTerms(clause);
+  assert.ok(terms.size >= 2, 'one term cannot name both directions of a mutual block');
+  assert.deepStrictEqual(terms, orTerms(swapSides(clause, viewer)),
+    'the block clause must read the same with the viewer and the author swapped. As written, one '
+    + "of the two can still see the other's stories after the block");
+}
+
 // Migration files in this repo carry long prose headers that quote the very
 // statements they run. Every assertion below reads the EXECUTABLE half only —
 // checked by commenting a statement out and watching these go red, which they
@@ -522,12 +568,22 @@ test('the helper reproduces routes/stories.js byte for byte, so adopting it is a
   const helper = sqlText(storyVisibilitySql({ viewer: '$1', authorAlias: 'u' }));
 
   if (STORIES_SRC.includes('storyVisibilitySql')) {
-    // Adopted. Then the only thing to check is that it asks for the feed's
-    // settings, not the report gate's.
+    // Adopted. This branch used to end here, and ending here is how the test
+    // stopped being about anything: the two texts it was written to compare are
+    // now one text, so every remaining assertion was about the CALL SITE and
+    // none was about what the helper emits. A mutation pass proved it, by
+    // dropping the reverse-direction term out of the block clause in
+    // utils/relationships.js and watching all 4,676 tests stay green.
+    //
+    // So the branch now asserts the same three things the byte comparison used
+    // to assert on the feed's behalf, against the helper's own output.
     assert.match(STORIES_SRC, /storyVisibilitySql\(\{[^}]*authorAlias: 'u'/,
       'the feed must keep its is_banned filter: a ban has to retract what the account already posted');
     assert.ok(!/excludeHidden:\s*false/.test(STORIES_SRC),
       'the feed must keep filtering takedowns');
+    assert.match(helper, /s\.is_hidden IS NOT TRUE/, 'the emitted feed predicate must filter takedowns');
+    assert.match(helper, /u\.is_banned IS NOT TRUE/, 'and stories by suspended accounts');
+    assertMutualBlock(helper, '$1');
     return;
   }
 
@@ -566,6 +622,10 @@ test('the report gate still runs the whole predicate, not a shortened one', asyn
   assert.match(gate, /FROM friendships/);
   assert.match(gate, /JOIN flock_members fm2/);
   assert.match(gate, /s\.expires_at > NOW\(\)/);
+  // And the block clause names BOTH directions. `FROM user_blocks b` on its own
+  // is satisfied by a one-directional clause, which is how a mutation letting the
+  // blocked account keep reading the blocker survived the whole suite.
+  assertMutualBlock(gate, '$2');
   assert.strictEqual(ran(/FROM stories s/)[0].params[1], 99, 'the viewer is the caller, bound not inlined');
 });
 
@@ -584,6 +644,7 @@ test('the two deliberate differences from the feed are still there, and only tho
   assert.match(gate, /FROM user_blocks b/);
   assert.match(gate, /FROM friendships/);
   assert.match(gate, /JOIN flock_members fm2/);
+  assertMutualBlock(gate, '$2');
 });
 
 test('you can report your own story instead of being told it does not exist', () => {
