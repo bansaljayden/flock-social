@@ -343,6 +343,34 @@ describe('error announcement and focus management (3.3.1 / 4.1.3)', () => {
     await waitFor(() => expect(getByRole('alert').textContent).toMatch(/password is missing a requirement/i));
   });
 
+  it('a second tap with the same complaint still moves focus, onto the field', async () => {
+    // The $dead_click cluster this file exists for is TAPS, plural. AuthError
+    // moves focus to itself only when its text CHANGES, so on the second tap
+    // of Create account with nothing filled in, its effect does not re-fire
+    // and the only thing that moves is handleSubmit's focus() on the offending
+    // field. Deleting that line left every assertion above green: measured
+    // 2026-08-26 against all 1,666, and the result is a primary button that
+    // silently does nothing from the second tap onward, which is the exact
+    // failure the noValidate test below is here to prevent.
+    const { container, getByRole, getByLabelText } = render(
+      React.createElement(SignupScreen, { onSignupSuccess: () => {}, onSwitchToLogin: () => {} })
+    );
+    const submit = () => fireEvent.submit(container.querySelector('form'));
+
+    submit();
+    await waitFor(() => expect(getByRole('alert')).toBeTruthy());
+    const alert = getByRole('alert');
+    expect(document.activeElement).toBe(alert);
+
+    // Move focus somewhere else, the way tapping the button does.
+    container.querySelector('form').focus();
+    const before = getByRole('alert').textContent;
+    submit();
+    await waitFor(() => expect(document.activeElement).toBe(getByLabelText('Name')));
+    // Same message, so the alert's own effect had nothing to announce.
+    expect(getByRole('alert').textContent).toBe(before);
+  });
+
   it('an empty sign-in submit says which field is missing instead of doing nothing', async () => {
     const { container, getByLabelText, getByRole } = render(
       React.createElement(LoginScreen, {

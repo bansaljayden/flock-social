@@ -192,21 +192,50 @@ describe('a body that stalls after the headers arrive', () => {
     localStorage.setItem('flockToken', 'tok');
     const file = new File(['x'], 'me.png', { type: 'image/png' });
     // uploadProfileImage runs outside request() (multipart), so it has to be
-    // proven separately. Its own leash is 90s, which no test should sit
-    // through; what matters is that the promise settles at all, and it only
-    // can if the deadline survives the headers. jest's own 5s timeout is the
-    // backstop that would catch a regression here.
+    // proven separately. Its own leash is 90s, and this test used to prove
+    // only that the promise settled at all, which shortening UPLOAD_TIMEOUT_MS
+    // to the 15s default does not disturb: measured 2026-08-26, that change
+    // stayed green across all 1,666 assertions, and it is the change that cuts
+    // off every photo sent on a weak connection. So both edges are pinned.
     jest.useFakeTimers();
-    const pending = rejection(uploadProfileImage(file));
+    let settled = false;
+    const pending = rejection(uploadProfileImage(file)).then((e) => { settled = true; return e; });
     // Let the fetch resolve and the reader register its abort listener before
     // the clock moves. Advancing first would fire the pre-headers deadline
     // against a request that has already answered.
-    for (let i = 0; i < 50; i += 1) await Promise.resolve(); // eslint-disable-line no-await-in-loop
-    jest.advanceTimersByTime(95000);
+    const flush = async () => { for (let i = 0; i < 50; i += 1) await Promise.resolve(); }; // eslint-disable-line no-await-in-loop
+    await flush();
+    // Past the 15s a plain request() would have given up at, and well past it.
+    jest.advanceTimersByTime(30000);
+    await flush();
+    expect(settled).toBe(false);
+    // And it does end, on its own longer leash rather than never.
+    jest.advanceTimersByTime(65000);
     const err = await pending;
     jest.useRealTimers();
     expect(err.isTimeout).toBe(true);
   });
+
+  test('a slow first byte does not spend the window the body needs', async () => {
+    // The rearm on the line after the fetch resolves. Everything before it is
+    // time-to-first-byte, which on a weak connection can be most of the
+    // deadline; without the rearm a body that STARTS arriving just inside the
+    // window is killed on its first chunk. Real timers and small numbers,
+    // because the point is the order of two clocks rather than their size.
+    const payload = JSON.stringify({ flocks: [] });
+    global.fetch.mockImplementation((url, opts) => new Promise((resolve) => {
+      // 200ms of silence before the headers land: two thirds of the window.
+      // Then the first byte at 350ms, PAST the deadline that was armed when
+      // the request started and inside the one the rearm should have set.
+      setTimeout(() => resolve(streamingRes({
+        chunks: payload.match(/[\s\S]{1,4}/g),
+        gapMs: 150,
+        signal: opts.signal,
+      })), 200);
+    }));
+    const data = await request('/api/flocks', { timeout: 300, retry: false });
+    expect(data).toEqual({ flocks: [] });
+  }, 10000);
 });
 
 // --- slow is not the same as stopped ----------------------------------------
