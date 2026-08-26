@@ -267,6 +267,72 @@ describe('icon-only controls on the hot paths are named', () => {
     });
   });
 
+  // The nine cases above are a hand-written list, and a hand-written list is
+  // exactly as good as whoever last edited it. It named Birdie's Send button
+  // and not the flock chat one, so `onClick={sendChatMessage}` could lose its
+  // aria-label with all 1,666 assertions still green. This derives the set
+  // instead of naming it.
+  //
+  // The rule is deliberately narrow so it has no false positives: a <button>
+  // whose ENTIRE child is one Icons.* call renders a glyph and nothing else,
+  // so its accessible name can only come from an attribute. Buttons that mix
+  // an icon with text are not in scope here; they name themselves.
+  const iconOnlyButtons = (() => {
+    const BACKSLASH = String.fromCharCode(92);
+    // Find the '>' that closes an opening <button tag, skipping any '>' that
+    // is inside a JSX expression (`(e) => ...`) or a string.
+    const openTagEnd = (s, i) => {
+      let depth = 0;
+      for (let j = i + '<button'.length; j < s.length; j += 1) {
+        const c = s[j];
+        if (c === '{') { depth += 1; continue; }
+        if (c === '}') { depth -= 1; continue; }
+        if (c === "'" || c === '"' || c === '`') {
+          const quote = c;
+          j += 1;
+          while (j < s.length) {
+            if (s[j] === BACKSLASH) { j += 2; continue; }
+            if (s[j] === quote) break;
+            j += 1;
+          }
+          continue;
+        }
+        if (c === '>' && depth === 0) return j;
+      }
+      return -1;
+    };
+    const found = [];
+    let i = 0;
+    while ((i = app.indexOf('<button', i)) !== -1) {
+      const end = openTagEnd(app, i);
+      if (end === -1) { i += '<button'.length; break; }
+      const attrs = app.slice(i, end);
+      const close = app.indexOf('</button>', end);
+      const inner = close === -1 ? '' : app.slice(end + 1, close);
+      const line = app.slice(0, i).split('\n').length;
+      i = end + 1;
+      // One Icons.* call, alone, allowing one level of nested parens for
+      // arguments like `colors.navy` or a ternary.
+      if (!/^\s*\{Icons\.\w+\((?:[^()]|\([^()]*\))*\)\}\s*$/.test(inner)) continue;
+      found.push({ line, attrs: attrs.replace(/\s+/g, ' ') });
+    }
+    return found;
+  })();
+
+  it('the scan finds the icon-only buttons rather than an empty set', () => {
+    // Without this, every assertion below passes on a scan that matched
+    // nothing, which is how a sweep survives the code moving out from under
+    // it. 90 at the time of writing across App.js and the three screens.
+    expect(iconOnlyButtons.length).toBeGreaterThan(70);
+  });
+
+  it('every button whose only child is an icon carries a name', () => {
+    const unnamed = iconOnlyButtons
+      .filter((b) => !/aria-label|aria-labelledby/.test(b.attrs))
+      .map((b) => `line ${b.line}: ${b.attrs.slice(0, 140)}`);
+    expect(unnamed).toEqual([]);
+  });
+
   it('the three "Features" toggles keep a name when they collapse to an X', () => {
     // Each renders the word "Features" when closed and a bare Icons.x when
     // open, so the name vanished exactly when the control mattered.
