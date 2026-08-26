@@ -59,6 +59,32 @@ const AUTH_DIR = path.join(__dirname, '..', 'components', 'auth');
 const LOGIN_SRC = fs.readFileSync(path.join(AUTH_DIR, 'LoginScreen.js'), 'utf8');
 const APPLE_SRC = fs.readFileSync(path.join(AUTH_DIR, 'AppleSignInButton.js'), 'utf8');
 
+// Lift a span of source between two markers, and REFUSE to hand back a span
+// that was not actually found.
+//
+// The two assertions below this are negative: they say a region does NOT
+// contain a max attribute, and does NOT name an age. A negative assertion over
+// a slice is only worth what the slice is worth, and `indexOf` answers -1 for a
+// marker that moved. `slice(-1, -1)` is the empty string, and the empty string
+// contains no max attribute and names no age, so BOTH of these child-safety
+// guards passed on nothing the moment somebody renamed an element id. Renaming
+// an id is a behaviour-preserving thing to do, and nothing in this file would
+// have said a word. That is the same silent-vacuity shape that let a
+// one-directional block clause survive the whole suite.
+function region(src, startMarker, endMarker, what) {
+  const start = src.indexOf(startMarker);
+  const end = start === -1 ? -1 : src.indexOf(endMarker, start);
+  if (start === -1 || end === -1) {
+    throw new Error(
+      `${what}: could not lift this region out of LoginScreen.js. `
+      + `${start === -1 ? JSON.stringify(startMarker) : JSON.stringify(endMarker)} is no longer in the file. `
+      + 'Repoint the marker rather than deleting the assertion under it: that assertion '
+      + 'is a negative one and would pass on the empty string this used to return.'
+    );
+  }
+  return src.slice(start, end);
+}
+
 // The screen only shows the date field after the server has asked for one, so
 // every test starts by getting the 403 that reveals it.
 const renderWithDobAsked = async () => {
@@ -158,7 +184,7 @@ describe('an under-13 date cannot leave the sign-in screen unread', () => {
 
 describe('the shape of the choice, so it is not undone by accident', () => {
   it('the field stays uncapped', () => {
-    const field = LOGIN_SRC.slice(LOGIN_SRC.indexOf('id="login-dob"'), LOGIN_SRC.indexOf('login-dob-hint'));
+    const field = region(LOGIN_SRC, 'id="login-dob"', 'login-dob-hint', 'the date field');
     // A max here would make the server-side under-13 flow unreachable from this
     // screen, which is the defect the signup screen carried until its cap came
     // off. The reasoning is written out above the declaration in LoginScreen.js.
@@ -166,7 +192,7 @@ describe('the shape of the choice, so it is not undone by accident', () => {
   });
 
   it('the panel names no age and no rule', () => {
-    const panel = LOGIN_SRC.slice(LOGIN_SRC.indexOf('id="login-dob-check-title"'), LOGIN_SRC.indexOf('auth-check-actions'));
+    const panel = region(LOGIN_SRC, 'id="login-dob-check-title"', 'auth-check-actions', 'the read-back panel');
     // A refusal that teaches which birthday gets in is not a neutral age
     // screen (16 CFR 312, and the note above the age gate in routes/auth.js).
     expect(panel).not.toMatch(/\b13\b/);
