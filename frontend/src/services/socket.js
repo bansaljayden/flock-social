@@ -784,6 +784,20 @@ export function onFlockReactionRemoved(callback) {
   return register('flock_reaction_removed', callback);
 }
 
+// --- Safety ---
+//
+// Somebody on a plan you are confirmed for, happening around now, pressed SOS.
+// routes/safety.js emits this to each qualifying member's own user room after
+// it has already emailed their trusted contacts, so by the time this arrives
+// the external half has been done and this is the people in the room.
+//
+// The payload carries fromUserId, fromUserName, an ISO `at`, and latitude and
+// longitude ONLY when the sender chose to share them. Absent rather than null,
+// so a consumer cannot mistake "did not share" for "shared nothing".
+export function onSafetyAlert(callback) {
+  return register('safety_alert', callback);
+}
+
 // --- Flock lifecycle events ---
 
 export function onFlockDeleted(callback) {
