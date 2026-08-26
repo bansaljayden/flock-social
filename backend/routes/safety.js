@@ -1,6 +1,36 @@
 const express = require('express');
 const router = express.Router();
-const { authenticate } = require('../middleware/auth');
+// ---------------------------------------------------------------------------
+// WHY THE SOS ROUTES DO NOT USE THE ORDINARY `authenticate` (round 23).
+// ---------------------------------------------------------------------------
+// `authenticate` answers 403 "This account has been suspended for violating our
+// community guidelines." for any row with is_banned. Mounted on POST /alert,
+// that sentence is what a suspended sixteen-year-old gets back from the button
+// they pressed because something was wrong. A ban is a judgement about how
+// somebody behaved in a group chat. It is not a finding that their night is
+// safe, and it is not a reason to refuse to email the parent they nominated.
+//
+// This is the same argument, and the same middleware, that DELETE
+// /api/users/me already uses: there are actions an account keeps after a ban
+// because refusing them causes harm out of all proportion to the offence.
+// Erasing yourself is one. Telling the people you nominated that you need help
+// is the other.
+//
+// THE BOUNDARY IS THE SAME SHAPE AS THE EMERGENCY MAIL CATEGORY BELOW: as
+// narrow as it can be. Only the two routes that stand an alert up and stand it
+// down are exempt, plus the read that tells the screen who is on the list.
+// Adding a trusted contact, editing one, and /share-location all keep the
+// ordinary gate, because those are the surfaces that turn an account into a
+// mail relay aimed at a new address, and a banned account has no business
+// reaching a new address.
+//
+// WHAT THIS DOES NOT FIX, STATED PLAINLY. App.js signs a banned user out at
+// boot: GET /api/auth/me answers 403 and the app shows "This account is
+// suspended". So a banned account cannot reach the SOS button today no matter
+// what this file allows, and this change is the half that lives here rather
+// than a user-visible fix on its own. The other half is a product decision
+// recorded in the handoff, not something this route can make.
+const { authenticate, authenticateAllowBanned } = require('../middleware/auth');
 const pool = require('../config/database');
 const { stripHtml } = require('../utils/sanitize');
 // Round 20: this file used to build its own Resend client, at REQUIRE time:
@@ -145,6 +175,46 @@ function readCoords(latitude, longitude) {
   return { lat, lng };
 }
 
+// ---------------------------------------------------------------------------
+// HOW SURE ARE WE (round 23). The alert email printed six decimal places of
+// latitude and a button reading "View Location on Map", and it printed exactly
+// that whether the fix came from GPS on a street corner or from a cell tower
+// through two floors of concrete. Six decimal places is eleven centimetres.
+// The second fix is routinely wrong by two kilometres, and App.js asks for it
+// with `maximumAge: 60000`, so it can also be a minute old.
+//
+// A parent driving to a pin that is two kilometres from their child is worse
+// off than a parent told "somewhere around here, we are not sure", because the
+// first one stops looking when they arrive. The browser already hands us the
+// number that settles it — `position.coords.accuracy`, a radius in metres at
+// 95% confidence — and nothing was doing anything with it.
+//
+// OPTIONAL, AND SILENT WHEN ABSENT. A client that does not send it produces
+// exactly the email it produces today. Nothing here may turn a missing field
+// into a refused alert; see the three things this route is not allowed to do.
+const COARSE_FIX_METRES = 1000;
+
+function readAccuracy(value) {
+  const n = typeof value === 'number' ? value
+    : (typeof value === 'string' && value.trim() !== '' ? Number(value) : NaN);
+  // Zero and negatives are not radii, and anything past 100 km is a broken
+  // sensor rather than a wide fix. Both read as "we were not told".
+  if (!Number.isFinite(n) || n <= 0 || n > 100000) return null;
+  return n;
+}
+
+// Metres, in the words a person driving somewhere would use. Never more
+// precise than the number deserves: 1,847 m is "about 2 km", because writing
+// it out to the metre is the same false confidence as the six decimal places.
+function accuracyPhrase(metres) {
+  if (metres >= 1000) {
+    const km = metres / 1000;
+    return `about ${km >= 10 ? Math.round(km) : Math.round(km * 10) / 10} km`;
+  }
+  if (metres >= 100) return `about ${Math.round(metres / 100) * 100} m`;
+  return `about ${Math.max(5, Math.round(metres / 5) * 5)} m`;
+}
+
 // ── Get user's trusted contacts ──
 //
 // Each contact carries `email_deliverable`. It is false when the address is on
@@ -167,7 +237,7 @@ function readCoords(latitude, longitude) {
 // suppressionReason never throws and answers null on a database error, so a
 // blip renders every contact as fine rather than failing the screen — the same
 // fail-open direction the send path takes, for the same reason.
-router.get('/contacts', authenticate, async (req, res) => {
+router.get('/contacts', authenticateAllowBanned, async (req, res) => {
   try {
     const result = await pool.query(
       'SELECT * FROM trusted_contacts WHERE user_id = $1 ORDER BY created_at DESC',
@@ -632,6 +702,19 @@ function isLocationFollowUp(coords, previous, ageMs) {
   return Number(ageMs) <= LOCATION_FOLLOWUP_WINDOW_MS;
 }
 
+// "Mum has" / "Mum and Dad have" / "Mum, Dad and 2 others have". Two names is
+// the cap because this lands in a toast on a phone, and a list of five names
+// the user typed themselves can be longer than the screen. Names are
+// stripHtml'd on the way in and this string is rendered as text, never as
+// markup.
+function namePhrase(names) {
+  const list = names.map((n) => String(n == null ? '' : n).trim()).filter(Boolean);
+  if (list.length === 0) return 'They have';
+  if (list.length === 1) return `${list[0]} has`;
+  if (list.length === 2) return `${list[0]} and ${list[1]} have`;
+  return `${list[0]}, ${list[1]} and ${list.length - 2} other${list.length - 2 === 1 ? '' : 's'} have`;
+}
+
 function agoPhrase(ms) {
   const s = Math.max(0, Math.round(ms / 1000));
   if (s < 90) return `${Math.max(1, s)} second${s === 1 ? '' : 's'} ago`;
@@ -703,15 +786,20 @@ function agoPhrase(ms) {
 //    follows it, which is why that UPDATE carries a .catch — it runs after
 //    every email is already out, and its failure is not the user's to hear
 //    about.
-router.post('/alert', authenticate, async (req, res) => {
+router.post('/alert', authenticateAllowBanned, async (req, res) => {
   try {
-    const { latitude, longitude, includeLocation, timezone } = req.body;
+    const { latitude, longitude, accuracy, includeLocation, timezone } = req.body;
 
     // Parsed once, up front, before anything is committed or sent. `coords` is
     // null when the user opted out OR when the client sent something we cannot
     // safely put on a map — both mean "alert without a location", which is a
     // degraded alert, not a failed one.
     const coords = includeLocation === false ? null : readCoords(latitude, longitude);
+    // Only meaningful alongside a position, and never stored: the accuracy of
+    // a fix is a fact about the moment the alert was sent, not about the
+    // account, and emergency_alerts holds only what the privacy policy says it
+    // holds (the account, the coordinates, the number of contacts emailed).
+    const fixMetres = coords ? readAccuracy(accuracy) : null;
 
     // Claim phase: cooldown check, contact read, and the emergency_alerts row
     // are one atomic unit. The row is written with contacts_alerted = 0, which
@@ -769,8 +857,13 @@ router.post('/alert', authenticate, async (req, res) => {
         // would have left the fix inert for the timing it was written for.
         if (!delivered && ageMs < ALERT_FLOOR_MS && !locationFollowUp) {
           await client.query('ROLLBACK');
+          // Round 23: this was the one refusal in the file that did not name
+          // 911, and it is the refusal that fires while the outcome of the
+          // first alert is still unknown — nothing has been confirmed
+          // delivered, so the person reading it has been told less than every
+          // other 429 here tells them. That is the wrong place to be quietest.
           return res.status(429).json({
-            error: 'An alert is already going out. Give it a moment before trying again.',
+            error: `An alert is already going out. Give it a moment before trying again. ${CALL_911}`,
           });
         }
 
@@ -885,12 +978,50 @@ router.post('/alert', authenticate, async (req, res) => {
 
     const safeName = escapeHtml(userName);
 
+    // The slot is claimed; now send and record what ACTUALLY happened (audit
+    // 2026-08-12: the response must never claim a delivery that did not occur).
+    const alerts = [];
+    let emailsSent = 0;
+
+    // Round 12: these went out one at a time and awaited in sequence, so five
+    // contacts meant five serial round trips — with the new 8s deadline a
+    // brownout would still delay the last contact by half a minute. Fan out and
+    // settle: contact 3 is not held hostage by contact 1's slow send, and no
+    // single rejection can abort the loop mid-alert.
+    const withEmail = contacts.rows.filter((c) => isMailableAddress(c.contact_email));
+
     // coords is already numeric and in range, so nothing user-controlled reaches
     // this HTML — the href cannot be broken out of and toFixed cannot throw.
+    // fixMetres is likewise a finite number or null.
+    //
+    // Round 23: the button used to read "View Location on Map" for every fix we
+    // had, and the coordinates were always printed to six decimal places. When
+    // the phone tells us the fix is only good to a kilometre, saying "location"
+    // and printing eleven centimetres of precision is a claim we cannot support,
+    // and it is the claim that makes somebody stop searching once they arrive.
+    // So a coarse fix is labelled as an area, and the radius is printed next to
+    // the coordinates in both cases when we were told one.
+    const coarse = fixMetres !== null && fixMetres > COARSE_FIX_METRES;
+    const accuracyLine = fixMetres === null
+      ? ''
+      : (coarse
+        ? `<p style="color:#b45309;font-size:13px;margin:8px 0 0">This position is approximate. The phone put it within ${accuracyPhrase(fixMetres)}, so treat it as the area to search rather than the spot.</p>`
+        : `<p style="color:#6b7280;font-size:13px;margin:4px 0 0">Accurate to ${accuracyPhrase(fixMetres)}.</p>`);
     const locationBlock = coords
-      ? `<p style="margin:12px 0"><a href="https://maps.google.com/?q=${coords.lat},${coords.lng}" style="display:inline-block;padding:12px 24px;background:#ef4444;color:white;text-decoration:none;border-radius:8px;font-weight:bold">View Location on Map</a></p>
-         <p style="color:#6b7280;font-size:13px">Coordinates: ${coords.lat.toFixed(6)}, ${coords.lng.toFixed(6)}</p>`
+      ? `<p style="margin:12px 0"><a href="https://maps.google.com/?q=${coords.lat},${coords.lng}" style="display:inline-block;padding:12px 24px;background:#ef4444;color:white;text-decoration:none;border-radius:8px;font-weight:bold">${coarse ? 'View Area on Map' : 'View Location on Map'}</a></p>
+         <p style="color:#6b7280;font-size:13px">Coordinates: ${coords.lat.toFixed(6)}, ${coords.lng.toFixed(6)}</p>
+         ${accuracyLine}`
       : '<p style="color:#6b7280">Location was not available.</p>';
+
+    // Round 23: WHO ELSE IS COMING. A trusted contact had no way to know
+    // whether they were one of five people being told or the only one, and the
+    // two call for opposite things. Somebody who is the only contact needs to
+    // act rather than assume a parent already has it; one of five needs to
+    // know that four other people are about to ring the same number. The count
+    // is settled before the fan-out starts, so it costs nothing to say.
+    const alsoLine = withEmail.length > 1
+      ? `<p style="color:#6b7280;font-size:13px">You are one of ${withEmail.length} people ${safeName} asked us to alert.</p>`
+      : `<p style="color:#6b7280;font-size:13px">You are the only contact ${safeName} asked us to alert.</p>`;
 
     const htmlBody = `
       <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px">
@@ -900,23 +1031,12 @@ router.post('/alert', authenticate, async (req, res) => {
         </div>
         <p style="font-size:15px;color:#1e293b">${safeName} has triggered an emergency alert on the <strong>Flock</strong> app and may need your assistance.</p>
         ${locationBlock}
+        ${alsoLine}
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0">
         <p style="color:#6b7280;font-size:12px">Alert sent at ${time}</p>
-        <p style="color:#9ca3af;font-size:11px">This is an automated safety alert from the Flock app. If this is an emergency, call your local emergency number.</p>
+        <p style="color:#9ca3af;font-size:11px">This is an automated safety alert from the Flock app. If this is an emergency, call your local emergency number. Replying to this message does not reach ${safeName}.</p>
       </div>`;
 
-    // The slot is claimed; now send and record what ACTUALLY happened (audit
-    // 2026-08-12: the response must never claim a delivery that did not occur).
-    const alerts = [];
-    let emailsSent = 0;
-    let emailsSkipped = 0;
-
-    // Round 12: these went out one at a time and awaited in sequence, so five
-    // contacts meant five serial round trips — with the new 8s deadline a
-    // brownout would still delay the last contact by half a minute. Fan out and
-    // settle: contact 3 is not held hostage by contact 1's slow send, and no
-    // single rejection can abort the loop mid-alert.
-    const withEmail = contacts.rows.filter((c) => isMailableAddress(c.contact_email));
     for (const c of contacts.rows) {
       if (!isMailableAddress(c.contact_email)) {
         // The response says which contact could not be reached and why, because
@@ -927,7 +1047,6 @@ router.post('/alert', authenticate, async (req, res) => {
           sent: false,
           reason: c.contact_email ? 'that address cannot receive mail' : 'no email',
         });
-        emailsSkipped++;
       }
     }
 
@@ -1009,17 +1128,243 @@ router.post('/alert', authenticate, async (req, res) => {
       });
     }
 
-    const parts = [`${emailsSent} email${emailsSent > 1 ? 's' : ''} sent`];
-    if (emailsSkipped > 0) parts.push(`${emailsSkipped} contact${emailsSkipped > 1 ? 's' : ''} skipped (no usable email address)`);
+    // Round 23: this said "2 emails sent". App.js puts it straight into the
+    // toast that is the only confirmation a frightened person gets, and it
+    // answered the machinery's question rather than theirs. Nobody presses SOS
+    // wanting to know how many SMTP transactions succeeded; they want to know
+    // WHO now knows. The names are already in hand.
+    //
+    // The second half counts EVERY contact who was not reached, not just the
+    // ones with no usable address. The old counter covered only the rows we
+    // refused to attempt, never a send that was attempted and failed, so a
+    // contact whose provider was down vanished from the sentence entirely and
+    // the user finished the night believing everybody had been told. Total
+    // contacts minus confirmed deliveries is the number they have to act on.
+    const notReached = contacts.rows.length - emailsSent;
+    const parts = [`${namePhrase(alerts.filter((a) => a.sent).map((a) => a.contactName))} been told`];
+    if (notReached > 0) parts.push(`${notReached} contact${notReached > 1 ? 's' : ''} could not be reached`);
 
     res.json({
       success: true,
-      message: parts.join(', '),
+      message: parts.join('. '),
+      contactsAlerted: emailsSent,
       alerts,
     });
   } catch (err) {
+    // Round 23: this answered `500 Failed to send alert` and stopped there. It
+    // is the only outcome in this route that tells a person nothing about what
+    // to do next, and it fires on the worst inputs available — the database
+    // being unreachable, or a throw from somewhere nobody predicted. Every
+    // other failure here names 911 and says whether a retry is worth making;
+    // the one that means "we do not know what just happened" said the least.
+    //
+    // `canRetry` is honest rather than optimistic. A throw before the COMMIT
+    // stored nothing, and a throw after it leaves a claim row that stops
+    // blocking in sixty seconds, so trying again is the right advice in both
+    // cases even though only one of them is clean.
     console.error('[Safety] Alert error:', err);
-    res.status(500).json({ error: 'Failed to send alert' });
+    res.status(500).json({
+      error: `Something went wrong on our end and we cannot tell whether your alert went out. ${CALL_911} Try again in a moment.`,
+      canRetry: true,
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// ── Stand the alert down (round 23) ──
+// ---------------------------------------------------------------------------
+// THE GAP THIS CLOSES. Until now an SOS was a one-way door. Five people, at
+// least one of them a parent, received "your child needs help" with a map link,
+// and there was no mechanism in this product — not a button, not a route, not a
+// second email — by which they could ever be told otherwise. The only thing
+// that ended an alert was the user phoning each contact individually, which is
+// the thing they pressed a button to avoid having to do.
+//
+// That matters most in the case that is by far the most common one. On a
+// product whose floor is 13 and whose users are 15 to 22, most SOS presses are
+// going to be a pocket, a dare, or a scare that resolves in ninety seconds. The
+// alert is right to be cheap to send. What it must not be is impossible to
+// withdraw, because a false alarm nobody can cancel teaches exactly one lesson,
+// which is not to press the button.
+//
+// WHY THIS ROUTE MAY BE LIMITED WHEN /alert MAY NOT. The rule on /alert is
+// "never be the reason an alert did not go out", and a refused SOS can leave
+// somebody alone. A refused stand-down leaves somebody worried. Those are not
+// the same harm, so this route is allowed a meter that /alert is not — and the
+// meter is still set well past any real sequence of taps.
+//
+// WHAT IT DOES NOT DO.
+//
+//   * It writes NO row. emergency_alerts is the alert log, and the cooldown
+//     reads its most recent row: a stand-down inserted there would read as a
+//     delivered alert and block the next real SOS for five minutes. A cancel
+//     must never be able to do that, so it touches nothing.
+//   * It sends no location, ever. The whole content of the message is that the
+//     earlier one is withdrawn.
+//   * It cannot invent an alert. With nothing delivered in the window there is
+//     nobody holding a message to withdraw, and mailing a stand-down for an
+//     alert that never went out would be the first thing some contacts ever
+//     heard from Flock.
+const CANCEL_WINDOW_MS = 6 * 60 * 60 * 1000;
+const MAX_CANCELS_PER_WINDOW = 3;
+const CANCEL_METER_WINDOW_MS = 15 * 60 * 1000;
+const CANCEL_METER_MAX_KEYS = 5000;
+const cancelWrites = new Map(); // userId -> { count, resetAt }
+
+// Check-then-charge, and charged BEFORE the sends rather than after. The
+// opposite of the contact form's rule, and for the opposite reason: there the
+// meter protects strangers from a relay and only a stored address can become
+// mail, so only a stored address is charged. Here the send itself is the whole
+// action, and an attempt that fanned out and failed has already put the load on
+// the provider that this number exists to bound.
+function allowCancel(userId, now = Date.now()) {
+  if (cancelWrites.size > CANCEL_METER_MAX_KEYS) {
+    for (const [k, v] of cancelWrites) if (now >= v.resetAt) cancelWrites.delete(k);
+    while (cancelWrites.size > CANCEL_METER_MAX_KEYS) {
+      cancelWrites.delete(cancelWrites.keys().next().value);
+    }
+  }
+  let entry = cancelWrites.get(userId);
+  if (!entry || now >= entry.resetAt) {
+    entry = { count: 0, resetAt: now + CANCEL_METER_WINDOW_MS };
+    cancelWrites.set(userId, entry);
+  }
+  if (entry.count >= MAX_CANCELS_PER_WINDOW) return false;
+  entry.count += 1;
+  return true;
+}
+
+router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
+  try {
+    const { timezone } = req.body || {};
+
+    // The most recent alert that actually reached somebody. contacts_alerted is
+    // confirmed sends only (see the claim comment on /alert), so a claim row
+    // that reached nobody correctly does not qualify: there is no message out
+    // there to withdraw.
+    const last = await pool.query(
+      `SELECT created_at, contacts_alerted
+         FROM emergency_alerts
+        WHERE user_id = $1
+          AND COALESCE(contacts_alerted, 0) > 0
+          AND created_at > NOW() - ($2::int || ' milliseconds')::interval
+        ORDER BY created_at DESC LIMIT 1`,
+      [req.user.id, CANCEL_WINDOW_MS]
+    );
+    if (last.rowCount === 0) {
+      return res.status(400).json({
+        error: 'You have not sent an alert that reached anyone recently, so there is nothing to stand down.',
+        nothingToCancel: true,
+      });
+    }
+
+    if (!allowCancel(req.user.id)) {
+      return res.status(429).json({
+        error: 'You have already told your contacts you are OK a few times just now. Give it a few minutes.',
+      });
+    }
+
+    // Exactly the people who existed when the alert went out. A contact added
+    // afterwards never received the alert, and a stand-down is the wrong first
+    // message to send anybody. A contact removed since is gone from the table
+    // and cannot be reached at all, which is reported rather than hidden.
+    const contacts = await pool.query(
+      `SELECT contact_name, contact_email
+         FROM trusted_contacts
+        WHERE user_id = $1 AND created_at <= $2
+        ORDER BY created_at ASC`,
+      [req.user.id, last.rows[0].created_at]
+    );
+    const withEmail = contacts.rows.filter((c) => isMailableAddress(c.contact_email));
+    if (withEmail.length === 0) {
+      return res.status(400).json({
+        error: 'None of the contacts who received that alert are still on your list with a working email, so we cannot reach them here. Call them.',
+        unreachableContacts: true,
+      });
+    }
+
+    const user = await pool.query('SELECT name FROM users WHERE id = $1', [req.user.id]);
+    const userName = user.rows[0]?.name || 'A Flock user';
+    const safeName = escapeHtml(userName);
+    const tz = timezone || 'UTC';
+    let time;
+    try { time = new Date().toLocaleString('en-US', { timeZone: tz, timeZoneName: 'short' }); }
+    catch { time = `${new Date().toLocaleString('en-US', { timeZone: 'UTC' })} UTC`; }
+
+    const htmlBody = `
+      <div style="font-family:Arial,sans-serif;max-width:500px;margin:0 auto;padding:20px">
+        <div style="background:#dcfce7;border-radius:12px;padding:20px;text-align:center;margin-bottom:20px">
+          <h1 style="color:#15803d;margin:0 0 8px;font-size:24px">All Clear</h1>
+          <p style="color:#166534;margin:0;font-size:16px"><strong>${safeName}</strong> says they are OK</p>
+        </div>
+        <p style="font-size:15px;color:#1e293b">${safeName} has withdrawn the emergency alert you were sent earlier and says they are safe. Nothing further is needed.</p>
+        <p style="font-size:15px;color:#1e293b">This came from ${safeName}'s own phone, not from us. If you are not satisfied that they are safe, contact them directly.</p>
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0">
+        <p style="color:#6b7280;font-size:12px">Stood down at ${time}</p>
+        <p style="color:#9ca3af;font-size:11px">This is an automated safety message from the Flock app. Replying to this message does not reach ${safeName}.</p>
+      </div>`;
+
+    // EMERGENCY_CATEGORY, deliberately, and this is the SECOND caller of it —
+    // services/emailSuppression.js asks that the argument be made in writing
+    // before a second one exists, so here it is.
+    //
+    // The whole reason a hard bounce does not stop an SOS is that a trusted
+    // contact never subscribed to anything and a deliverability fact is not a
+    // refusal. Every word of that applies unchanged to the message that ends
+    // the alert. It applies with more force, in fact: the only person who can
+    // receive a stand-down is somebody who already received the alarm, so a
+    // suppression that swallowed this one would leave a parent holding "your
+    // child needs help" and nothing else, forever. Withdrawing an emergency is
+    // part of the emergency. It is not a new list to be on.
+    //
+    // The boundary does not widen past this. Both callers are the same alert,
+    // one raising it and one ending it. A third caller needs its own argument.
+    const settled = await Promise.allSettled(
+      withEmail.map((c) => sendAlertEmail(
+        c.contact_email,
+        `${safeSubjectText(userName)} is OK`,
+        htmlBody,
+        { category: EMERGENCY_CATEGORY }
+      ))
+    );
+
+    const told = [];
+    settled.forEach((outcome, i) => {
+      const c = withEmail[i];
+      if (outcome.status === 'rejected') {
+        console.error('[Safety] Stand-down email threw for', maskAddress(c.contact_email), outcome.reason?.message);
+      }
+      if (outcome.status === 'fulfilled' && outcome.value?.sent === true) told.push(c.contact_name);
+    });
+
+    if (told.length === 0) {
+      // Same rule as /alert: never report a delivery that did not happen, and
+      // say what to do instead. The meter is given back, because an attempt
+      // that reached nobody has not withdrawn anything.
+      const entry = cancelWrites.get(req.user.id);
+      if (entry && entry.count > 0) entry.count -= 1;
+      return res.status(502).json({
+        success: false,
+        error: 'We could not tell any of your contacts that you are OK. They still have your alert. Call them.',
+        canRetry: true,
+      });
+    }
+
+    const missed = withEmail.length - told.length;
+    const parts = [`${namePhrase(told)} been told you are OK`];
+    if (missed > 0) parts.push(`${missed} contact${missed > 1 ? 's' : ''} could not be reached, so call them`);
+
+    res.json({
+      success: true,
+      message: parts.join('. '),
+      contactsToldCount: told.length,
+    });
+  } catch (err) {
+    console.error('[Safety] Alert cancel error:', err);
+    res.status(500).json({
+      error: 'Something went wrong and we could not tell your contacts you are OK. They still have your alert. Try again, or call them.',
+      canRetry: true,
+    });
   }
 });
 
@@ -1167,6 +1512,13 @@ module.exports.__test = {
   isEscalation,
   isLocationFollowUp,
   agoPhrase,
+  namePhrase,
+  readAccuracy,
+  accuracyPhrase,
+  COARSE_FIX_METRES,
+  CANCEL_WINDOW_MS,
+  MAX_CANCELS_PER_WINDOW,
+  resetCancels: () => cancelWrites.clear(),
   ALERT_COOLDOWN_MS,
   ALERT_FLOOR_MS,
   LOCATION_FOLLOWUP_WINDOW_MS,

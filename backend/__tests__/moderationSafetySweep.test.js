@@ -637,7 +637,10 @@ test('sos: an unmailable contact is skipped by name and the mailable one still g
     const nan = res.body.alerts.find((a) => a.contactName === 'Nan');
     assert.strictEqual(nan.sent, false);
     assert.match(nan.reason, /cannot receive mail/);
-    assert.match(res.body.message, /skipped/);
+    // Round 23: the message names WHO was told rather than counting SMTP
+    // transactions, and it still has to account for the contact who was not.
+    assert.match(res.body.message, /Dad has been told/);
+    assert.match(res.body.message, /1 contact could not be reached/);
   } finally { cap.restore(); sender.restore(); restore(); }
 });
 
