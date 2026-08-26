@@ -4548,31 +4548,67 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [pendingFlockInvites, setPendingFlockInvites] = useState([]);
   const [showFlockInviteModal, setShowFlockInviteModal] = useState(false);
   const [flockInviteSearch, setFlockInviteSearch] = useState('');
-  const [flockInviteSearching, setFlockInviteSearching] = useState(false);
-  const [flockInviteResults, setFlockInviteResults] = useState([]);
   const [flockInviteSelected, setFlockInviteSelected] = useState([]);
+  // The friends list itself. Jayden's words for what was missing: "you can go
+  // to your friend's list and just pick them". You could not. The sheet had no
+  // list, an empty search box returned nothing, and the only default content
+  // was "Available tonight", which is the availability pulses. Eight friends
+  // and nobody had posted a pulse meant an empty sheet and a name typed from
+  // memory. GET /api/friends already returns the whole accepted, block-filtered
+  // list, so the data was there the entire time and simply unused.
+  //
+  // It stays null until a fetch actually lands, so a failed load can never be
+  // drawn as "you have no friends". Same rule as pastFlocks, same reason.
+  const [flockInviteAllFriends, setFlockInviteAllFriends] = useState(null);
+  const [flockInviteFriendsLoading, setFlockInviteFriendsLoading] = useState(false);
+  const [flockInviteFriendsError, setFlockInviteFriendsError] = useState('');
+  // Everyone already on this flock's roster, at ANY status. The already-a-member
+  // filter used to read flock.members, which is filled by a fetch keyed to the
+  // detail screen and, on the chat screen, holds accepted members only. So from
+  // plans list to chat to invite, somebody already invited was offered as
+  // invitable. The server dedupes, so nothing broke. The list was just lying.
+  const [flockInviteMemberIds, setFlockInviteMemberIds] = useState([]);
   // The guest link the user just copied. Kept so the sheet can confirm it in
   // place and show the URL, instead of copying in total silence.
   const [copiedInviteUrl, setCopiedInviteUrl] = useState('');
   const [flockInviteSending, setFlockInviteSending] = useState(false);
 
-  // Flock invite search (searches friends list)
-  const flockInviteTimerRef = useRef(null);
+  const loadFlockInviteFriends = useCallback(() => {
+    setFlockInviteFriendsLoading(true);
+    setFlockInviteFriendsError('');
+    getFriends()
+      .then((d) => setFlockInviteAllFriends(Array.isArray(d.friends) ? d.friends : []))
+      .catch((err) => setFlockInviteFriendsError(err?.message || "Couldn't load your friends."))
+      .finally(() => setFlockInviteFriendsLoading(false));
+  }, []);
+
+  // Opening the sheet is what loads it, once per open. The roster comes with
+  // it so the already-a-member filter has something current to work from,
+  // whichever screen the sheet was opened from.
+  useEffect(() => {
+    if (!showFlockInviteModal) return undefined;
+    loadFlockInviteFriends();
+    // Dropped rather than carried over. Held ids belong to whichever flock the
+    // sheet was last opened from, and filtering this flock's friends against
+    // another flock's roster hides someone who could be invited. An id short
+    // is one extra name for a moment, which the server dedupes anyway.
+    setFlockInviteMemberIds([]);
+    if (!selectedFlockId) return undefined;
+    let cancelled = false;
+    getFlock(selectedFlockId)
+      .then((data) => {
+        if (!cancelled) setFlockInviteMemberIds((data.members || []).map(m => String(m.id)));
+      })
+      // A roster we could not read shows one extra name, which the server
+      // dedupes. Worth nothing on screen.
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [showFlockInviteModal, selectedFlockId, loadFlockInviteFriends]);
+
+  // Typing filters the array already in hand. It used to refetch the entire
+  // friends list on every keystroke, 300ms after the last one.
   const handleFlockInviteSearch = useCallback((val) => {
     setFlockInviteSearch(val);
-    if (flockInviteTimerRef.current) clearTimeout(flockInviteTimerRef.current);
-    if (val.trim().length < 1) { setFlockInviteResults([]); return; }
-    setFlockInviteSearching(true);
-    flockInviteTimerRef.current = setTimeout(async () => {
-      try {
-        const data = await getFriends();
-        const friends = (data.friends || []).filter(f =>
-          f.name.toLowerCase().includes(val.toLowerCase())
-        );
-        setFlockInviteResults(friends);
-      } catch { setFlockInviteResults([]); }
-      finally { setFlockInviteSearching(false); }
-    }, 300);
   }, []);
 
   // Send flock invites
@@ -4581,12 +4617,28 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     setFlockInviteSending(true);
     try {
       const userIds = flockInviteSelected.map(f => f.id);
-      await inviteToFlock(selectedFlockId, userIds);
-      showToast(`Invited ${flockInviteSelected.length} friend${flockInviteSelected.length > 1 ? 's' : ''}!`);
+      const res = await inviteToFlock(selectedFlockId, userIds);
+      // The number picked is not the number that went out. POST /:id/invite
+      // answers 200 with { invited, throttled, full } on a PARTIAL success:
+      // pick five with two left in your invite budget and two are sent. This
+      // read the length of the local selection, so it said "Invited 5 friends!"
+      // either way.
+      const asked = userIds.length;
+      const sent = Array.isArray(res?.invited) ? res.invited.length : asked;
+      let note;
+      if (sent >= asked) {
+        note = `Invited ${sent} friend${sent === 1 ? '' : 's'}.`;
+      } else if (res?.full) {
+        note = `Invited ${sent} of ${asked}. This flock holds as many people as it can.`;
+      } else if (res?.throttled) {
+        note = `Invited ${sent} of ${asked}. You have invited a lot of people recently, so the rest did not go out.`;
+      } else {
+        note = `Invited ${sent} of ${asked}. The rest were already in this flock.`;
+      }
+      showToast(note, sent >= asked ? 'success' : 'warning');
       setShowFlockInviteModal(false);
       setFlockInviteSelected([]);
       setFlockInviteSearch('');
-      setFlockInviteResults([]);
     } catch (err) {
       showToast(err.message || 'Failed to send invites', 'error');
     } finally {
@@ -4630,6 +4682,70 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [myPulse, setMyPulse] = useState(null);
   const [friendsPulses, setFriendsPulses] = useState([]); // [{id, name, profile_image_url, status, note, set_at, expires_at}]
   const [pulseSaving, setPulseSaving] = useState(false);
+
+  // ── What the invite sheet shows ────────────────────────────────────────
+  // Declared here rather than beside the rest of the invite state because
+  // "Available tonight" reads off friendsPulses, which is declared above.
+  //
+  // Candidates are every friend who is not already on the roster. Selection is
+  // filtered at the point of display instead, so a sheet where every candidate
+  // has been picked shows the chips and the Send button, not "everyone is
+  // already here".
+  const flockInviteCandidates = useMemo(() => {
+    const onRoster = new Set(flockInviteMemberIds);
+    return (flockInviteAllFriends || []).filter(f => !onRoster.has(String(f.id)));
+  }, [flockInviteAllFriends, flockInviteMemberIds]);
+
+  const flockInvitePulses = useMemo(() => {
+    const onRoster = new Set(flockInviteMemberIds);
+    const picked = new Set(flockInviteSelected.map(f => String(f.id)));
+    return friendsPulses.filter(p => p.status !== 'not'
+      && !onRoster.has(String(p.id))
+      && !picked.has(String(p.id)));
+  }, [friendsPulses, flockInviteMemberIds, flockInviteSelected]);
+
+  // Everyone else, so nobody is listed twice under two headings.
+  const flockInviteRest = useMemo(() => {
+    const picked = new Set(flockInviteSelected.map(f => String(f.id)));
+    const shownAbove = new Set(flockInvitePulses.map(p => String(p.id)));
+    return flockInviteCandidates.filter(f => !picked.has(String(f.id)) && !shownAbove.has(String(f.id)));
+  }, [flockInviteCandidates, flockInvitePulses, flockInviteSelected]);
+
+  const flockInviteResults = useMemo(() => {
+    const q = flockInviteSearch.trim().toLowerCase();
+    if (!q) return [];
+    const picked = new Set(flockInviteSelected.map(f => String(f.id)));
+    return flockInviteCandidates.filter(f => !picked.has(String(f.id))
+      && (f.name || '').toLowerCase().includes(q));
+  }, [flockInviteCandidates, flockInviteSearch, flockInviteSelected]);
+
+  // One row, used by all three lists. The pulse is looked up rather than passed
+  // in, so a friend who is down tonight carries the same dot and the same line
+  // whether they were found by search or by scrolling.
+  const renderFlockInviteRow = useCallback((friend, i, arr) => {
+    const pulse = friendsPulses.find(p => String(p.id) === String(friend.id));
+    const live = pulse && pulse.status !== 'not' ? pulse.status : null;
+    const dot = live === 'down' ? '#10b981' : live === 'maybe' ? '#f59e0b' : null;
+    return (
+      <button className="hit44" key={friend.id} onClick={() => setFlockInviteSelected(prev => prev.some(s => String(s.id) === String(friend.id)) ? prev : [...prev, friend])} style={{ width: '100%', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: i < arr.length - 1 ? `1px solid ${colors.creamDark}` : 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
+        <div style={{ position: 'relative', flexShrink: 0 }}>
+          <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-label)', fontWeight: '600', color: 'white', overflow: 'hidden' }}>
+            {friend.profile_image_url ? <img src={friend.profile_image_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '18px', objectFit: 'cover' }} /> : friend.name?.[0]?.toUpperCase()}
+          </div>
+          {dot && <div style={{ position: 'absolute', bottom: -1, right: -1, width: '12px', height: '12px', borderRadius: '6px', backgroundColor: dot, border: '2px solid var(--bg-card-solid)' }} />}
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>{friend.name}</p>
+          {live && (
+            <p style={{ fontSize: 'var(--t-meta)', color: live === 'down' ? '#10b981' : '#f59e0b', margin: '2px 0 0', fontWeight: '500' }}>
+              {live === 'down' ? 'Down to hang tonight' : 'Convince me'}
+            </p>
+          )}
+        </div>
+        <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.steel, fontSize: 'var(--t-meta)', fontWeight: '500' }}>Add</div>
+      </button>
+    );
+  }, [friendsPulses, colors]);
 
   // Hardware sensor: live occupancy + checkin state for the active venue
   const [sensorData, setSensorData] = useState(null);     // { sensor_data: {...}, recent_checkins: N }
@@ -4876,7 +4992,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         setPendingFlockInvites(mapped.filter(f => f.memberStatus === 'invited'));
         // The list is in state, so the chat has something to render. This is
         // the last step of the trip that started on the invite link.
-        if (invite) openJoinedFlock(invite);
+        // Three outcomes, and the middle one used to be silent. A stranger
+        // opens a texted invite, taps Join, signs up with an email and a
+        // password, and the account is created unverified. Joining sits behind
+        // requireVerified, so the join is refused, and they landed on an empty
+        // home screen with nothing said. redeemPendingInvite reports that
+        // refusal now; the object carries no flockId, so openJoinedFlock would
+        // navigate nowhere. Say what happened and offer the resend. The stash
+        // is deliberately KEPT for this one case, so the next boot after they
+        // click the link finishes the join by itself.
+        if (invite && invite.needsEmailVerification) {
+          setVerifyPrompt(invite.flockName ? `join ${invite.flockName}` : 'join this flock');
+          setVerifyNote('');
+        } else if (invite) {
+          openJoinedFlock(invite);
+        }
       })
       .catch(() => setFlocks([]))
       .finally(() => setFlocksLoading(false));
@@ -13101,7 +13231,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: chatNavOpen ? 1 : 'none', justifyContent: chatNavOpen ? 'center' : 'flex-end', flexShrink: 0 }}>
               <div style={{ display: 'flex', gap: '6px', overflow: 'hidden', maxWidth: chatNavOpen ? '300px' : '0px', opacity: chatNavOpen ? 1 : 0, transition: 'max-width 0.3s ease, opacity 0.25s ease' }}>
                 <button className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowVotePanel(true); loadPopularVenues(); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: flock.status === 'voting' ? colors.steel : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 15)}</button>
-                <button className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('white', 15)}</button>
+                <button className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('white', 15)}</button>
                 <button className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowChatSearch(!showChatSearch); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 15)}</button>
                 <button className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowChatPool(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.dollar('white', 15)}</button>
               </div>
@@ -13385,7 +13515,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 This is where {flock.name} gets sorted out. Say hi, or put a place on the table for everyone to vote on.
               </p>
               <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                <button className="hit44 glass-btn glass-navy" onClick={() => { setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }} style={{ padding: '10px 16px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <button className="hit44 glass-btn glass-navy" onClick={() => { setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); }} style={{ padding: '10px 16px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   {Icons.userPlus('white', 14)} Invite friends
                 </button>
                 <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowVotePanel(true); loadPopularVenues(); }} style={{ padding: '10px 16px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -14318,7 +14448,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     showToast(err?.message || "Couldn't make an invite link. Try again.", 'error');
                     return;
                   }
-                  if (navigator.share && window.Capacitor?.isNativePlatform?.()) {
+                  // Web Share works in mobile Safari and Chrome on Android,
+                  // which is exactly where a texted invite gets shared from.
+                  // This used to also require window.Capacitor.isNativePlatform,
+                  // so every one of those browsers fell through to the
+                  // clipboard. The AbortError branch below covers a decline and
+                  // the clipboard covers a browser without it, so the feature
+                  // check on its own is the whole gate.
+                  if (typeof navigator.share === 'function') {
                     try {
                       await navigator.share({ title: 'Join my flock', url });
                       return;
@@ -14375,88 +14512,96 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 />
                 <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(colors.textTertiary, 14)}</span>
                 {flockInviteSearch && (
-                  <button className="hit44" onClick={() => { setFlockInviteSearch(''); setFlockInviteResults([]); }} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 14)}</button>
+                  <button className="hit44" onClick={() => setFlockInviteSearch('')} style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 14)}</button>
                 )}
               </div>
 
-              {/* Search results */}
-              {flockInviteSearching && (
-                <div style={{ textAlign: 'center', padding: '10px 0' }}>
-                  <div style={{ display: 'inline-block', width: '14px', height: '14px', border: `2px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginLeft: '6px' }}>Searching...</span>
-                </div>
+              {/* Friends.
+                  A failed load says so and offers a retry. It is never drawn
+                  as an empty list, because "nobody by that name" and "the
+                  request did not land" are two different things to be told,
+                  and the catch here used to answer both with the first. */}
+              {flockInviteFriendsLoading && !flockInviteAllFriends && (
+                <ListSkeleton count={3} thumb={36} thumbRadius={18} label="Loading your friends" />
               )}
-              {!flockInviteSearching && flockInviteResults.length > 0 && (
-                <div style={{ maxHeight: '200px', overflowY: 'auto', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)' }}>
-                  {flockInviteResults
-                    .filter(u => !flockInviteSelected.some(s => s.id === u.id))
-                    .filter(u => !(flock?.members || []).some(m => m.id === u.id))
-                    .map((friend, i, arr) => {
-                      const pulse = friendsPulses.find(p => p.id === friend.id);
-                      const dot = pulse?.status === 'down' ? '#10b981' : pulse?.status === 'maybe' ? '#f59e0b' : null;
-                      return (
-                        <button className="hit44" key={friend.id} onClick={() => setFlockInviteSelected(prev => [...prev, friend])} style={{ width: '100%', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: i < arr.length - 1 ? `1px solid ${colors.creamDark}` : 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
-                          <div style={{ position: 'relative', flexShrink: 0 }}>
-                            <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-label)', fontWeight: '600', color: 'white', overflow: 'hidden' }}>
-                              {friend.profile_image_url ? <img src={friend.profile_image_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '18px', objectFit: 'cover' }} /> : friend.name[0]?.toUpperCase()}
-                            </div>
-                            {dot && <div style={{ position: 'absolute', bottom: -1, right: -1, width: '12px', height: '12px', borderRadius: '6px', backgroundColor: dot, border: '2px solid var(--bg-card-solid)' }} />}
-                          </div>
-                          <div style={{ flex: 1 }}>
-                            <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>{friend.name}</p>
-                            {pulse && pulse.status !== 'not' && (
-                              <p style={{ fontSize: 'var(--t-meta)', color: pulse.status === 'down' ? '#10b981' : '#f59e0b', margin: '2px 0 0', fontWeight: '500' }}>
-                                {pulse.status === 'down' ? 'Down to hang tonight' : 'Convince me'}
-                              </p>
-                            )}
-                          </div>
-                          <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.steel, fontSize: 'var(--t-meta)', fontWeight: '500' }}>Add</div>
-                        </button>
-                      );
-                    })}
-                </div>
-              )}
-              {!flockInviteSearching && flockInviteSearch.trim().length >= 1 && flockInviteResults.length === 0 && (
+
+              {!flockInviteFriendsLoading && flockInviteFriendsError && (
                 <BirdNote
                   layout="row"
                   size={48}
-                  title="No friends by that name"
-                  body="Try a shorter piece of the name."
+                  bird={WARM_BIRD}
+                  title={flockInviteFriendsError}
+                  body="Nobody has been lost. The share link above still works while this is down."
+                  action={<button className="hit44 glass-btn glass-navy" onClick={loadFlockInviteFriends} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
                   style={{ padding: '8px 0' }}
                 />
               )}
 
-              {/* When search is empty: show friends who are down/maybe (the magic) */}
-              {!flockInviteSearching && flockInviteSearch.trim().length === 0 && friendsPulses.filter(p => p.status !== 'not').length > 0 && (
-                <div style={{ marginTop: '4px' }}>
-                  <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Available tonight</p>
+              {/* Typing: matches out of the list already in hand. */}
+              {!flockInviteFriendsError && flockInviteAllFriends && flockInviteSearch.trim().length > 0 && (
+                flockInviteResults.length > 0 ? (
                   <div style={{ maxHeight: '240px', overflowY: 'auto', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)' }}>
-                    {friendsPulses
-                      .filter(p => p.status !== 'not')
-                      .filter(p => !flockInviteSelected.some(s => s.id === p.id))
-                      .filter(p => !(flock?.members || []).some(m => m.id === p.id))
-                      .map((friend, i, arr) => {
-                        const isDown = friend.status === 'down';
-                        return (
-                          <button className="hit44" key={friend.id} onClick={() => setFlockInviteSelected(prev => [...prev, friend])} style={{ width: '100%', padding: '10px 12px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderBottom: i < arr.length - 1 ? `1px solid ${colors.creamDark}` : 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'left' }}>
-                            <div style={{ position: 'relative', flexShrink: 0 }}>
-                              <div style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-label)', fontWeight: '600', color: 'white', overflow: 'hidden' }}>
-                                {friend.profile_image_url ? <img src={friend.profile_image_url} alt="" style={{ width: '36px', height: '36px', borderRadius: '18px', objectFit: 'cover' }} /> : friend.name[0]?.toUpperCase()}
-                              </div>
-                              <div style={{ position: 'absolute', bottom: -1, right: -1, width: '12px', height: '12px', borderRadius: '6px', backgroundColor: isDown ? '#10b981' : '#f59e0b', border: '2px solid var(--bg-card-solid)' }} />
-                            </div>
-                            <div style={{ flex: 1 }}>
-                              <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>{friend.name}</p>
-                              <p style={{ fontSize: 'var(--t-meta)', color: isDown ? '#10b981' : '#f59e0b', margin: '2px 0 0', fontWeight: '500' }}>
-                                {isDown ? 'Down to hang tonight' : 'Convince me'}
-                              </p>
-                            </div>
-                            <div style={{ padding: '4px 10px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', color: colors.steel, fontSize: 'var(--t-meta)', fontWeight: '500' }}>Add</div>
-                          </button>
-                        );
-                      })}
+                    {flockInviteResults.map(renderFlockInviteRow)}
                   </div>
-                </div>
+                ) : (
+                  <BirdNote
+                    layout="row"
+                    size={48}
+                    title="No friends by that name"
+                    body="Try a shorter piece of the name."
+                    style={{ padding: '8px 0' }}
+                  />
+                )
+              )}
+
+              {/* Empty box: the list, which is the whole point. Available
+                  tonight stays its own group above it, because a friend who
+                  has said they are down is a different piece of information
+                  from a friend who is on your list. */}
+              {!flockInviteFriendsError && flockInviteAllFriends && flockInviteSearch.trim().length === 0 && (
+                <>
+                  {flockInvitePulses.length > 0 && (
+                    <div style={{ marginTop: '4px' }}>
+                      <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Available tonight</p>
+                      <div style={{ maxHeight: '240px', overflowY: 'auto', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)' }}>
+                        {flockInvitePulses.map(renderFlockInviteRow)}
+                      </div>
+                    </div>
+                  )}
+
+                  {flockInviteRest.length > 0 && (
+                    <div style={{ marginTop: flockInvitePulses.length > 0 ? '14px' : '4px' }}>
+                      <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: '0 0 8px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Your friends</p>
+                      <div style={{ maxHeight: '260px', overflowY: 'auto', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)' }}>
+                        {flockInviteRest.map(renderFlockInviteRow)}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Someone with no friends was being told to try a shorter
+                      piece of the name. Point at the button directly above
+                      instead, which is the thing that actually helps them. */}
+                  {flockInviteAllFriends.length === 0 && (
+                    <BirdNote
+                      layout="row"
+                      size={48}
+                      bird={WARM_BIRD}
+                      title="No friends on Flock yet"
+                      body="Use the share link above. Anyone who opens it can RSVP and vote without making an account."
+                      style={{ padding: '8px 0' }}
+                    />
+                  )}
+
+                  {flockInviteAllFriends.length > 0 && flockInviteCandidates.length === 0 && (
+                    <BirdNote
+                      layout="row"
+                      size={48}
+                      title="Everyone is already here"
+                      body="Every friend on your list is in this flock. The share link above reaches anyone who is not."
+                      style={{ padding: '8px 0' }}
+                    />
+                  )}
+                </>
               )}
 
               {/* Send button */}
@@ -14905,7 +15050,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <h4 style={{ color: colors.navy, margin: 0, fontSize: 'var(--t-body)', fontWeight: '700' }}>
                 Going ({goingCount})
               </h4>
-              <button className="hit44 glass-btn glass-navy" onClick={() => { setCurrentScreen('chatDetail'); setTimeout(() => { setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); setFlockInviteResults([]); }, 100); }} style={{ padding: '5px 12px', background: colors.navyBg, border: 'none', borderRadius: '16px', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <button className="hit44 glass-btn glass-navy" onClick={() => { setCurrentScreen('chatDetail'); setTimeout(() => { setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); }, 100); }} style={{ padding: '5px 12px', background: colors.navyBg, border: 'none', borderRadius: '16px', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px' }}>
                 {Icons.userPlus('white', 12)} Invite
               </button>
             </div>
