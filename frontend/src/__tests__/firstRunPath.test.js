@@ -112,7 +112,16 @@ describe('the location prompt waits for a map to be on screen', () => {
       'const MapLibreMapView = React.memo(',
       'const rehydrateAfterStyleSwap'
     ));
-    expect(init).toMatch(/initialCenter \? \{ lat: initialCenter\.lat, lng: initialCenter\.lng \} : await getUserLocation\(\)/);
+    // Asserted as a property rather than as one spelling. The expression grew a
+    // second skip on 2026-08-26 (the Settings "Location services" switch, which
+    // used to report a state it did not enforce), and a test pinned to the exact
+    // characters would have called that a regression when the behaviour it
+    // guards was untouched.
+    expect(init).toMatch(/await getUserLocation\(\)/);
+    expect(init).toMatch(/initialCenter/);
+    // The two legitimate reasons not to ask, and only those two: the caller
+    // already knows where to open, or the person turned the switch off.
+    expect(init).toMatch(/locationAllowed/);
   });
 
   it('the venue load on mount still refuses to ask on an unanswered device', () => {
