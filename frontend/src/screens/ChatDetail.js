@@ -88,6 +88,31 @@ import { getNotificationStatus, requestNotificationPermission } from '../service
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
 
+/* One pill per emoji, not one per person.
+ *
+ * GET /api/flocks/:id/messages returns emoji_reactions as one ROW per person
+ * ({ emoji, user_id, user_name }), and both socket handlers in App.js push
+ * rows in the same shape. The list below used to map over those rows directly
+ * and print a hardcoded "1" beside each, so four people sending the same heart
+ * drew four identical pills that each claimed one reaction.
+ *
+ * Tolerant of a bare string on purpose. Reactions were local-only state until
+ * the send was wired, and anything still holding the old shape (a message in
+ * memory across the change, an older cached payload) degrades to a pill with
+ * no owner rather than rendering an object, which React refuses outright. */
+export function groupReactions(reactions) {
+  const byEmoji = new Map();
+  for (const r of reactions || []) {
+    const emoji = typeof r === 'string' ? r : r?.emoji;
+    if (!emoji) continue;
+    if (!byEmoji.has(emoji)) byEmoji.set(emoji, { emoji, count: 0, userIds: [] });
+    const g = byEmoji.get(emoji);
+    g.count += 1;
+    if (typeof r === 'object' && r?.user_id != null) g.userIds.push(r.user_id);
+  }
+  return [...byEmoji.values()];
+}
+
 export default function ChatDetail({
   // Module-level helpers, constants and components that live in App.js and
   // are shared with screens other than this one, so they stay declared there
@@ -827,29 +852,45 @@ export default function ChatDetail({
                   </div>
                 )}
 
-                {/* Reactions display */}
+                {/* Reactions display.
+                    Grouped by emoji, because the server sends one ROW per
+                    person ({ emoji, user_id, user_name }) and this used to map
+                    straight over those rows: four people reacting with the same
+                    heart drew four separate pills, each hardcoded to say "1".
+                    The count is now the number of people, and the pill is a
+                    button, so a reaction can be taken back by tapping it rather
+                    than only through the picker. Yours is outlined. */}
                 {m.reactions && m.reactions.length > 0 && (
                   <div style={{ display: 'flex', gap: '4px', marginTop: '6px', flexWrap: 'wrap' }}>
-                    {m.reactions.map((r, i) => (
-                      <span
-                        key={i}
-                        className="reaction-pop"
-                        style={{
-                          fontSize: 'var(--t-body)',
-                          backgroundColor: 'var(--bg-card-solid)',
-                          borderRadius: '14px',
-                          padding: '4px 8px',
-                          boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-                          border: '1px solid var(--border-subtle)',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '4px'
-                        }}
-                      >
-                        {r}
-                        <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500' }}>1</span>
-                      </span>
-                    ))}
+                    {groupReactions(m.reactions).map((g) => {
+                      const mine = g.userIds.some((id) => String(id) === String(authUser?.id));
+                      return (
+                        <button
+                          key={g.emoji}
+                          type="button"
+                          className="reaction-pop hit44"
+                          aria-pressed={mine}
+                          aria-label={`${g.emoji} ${g.count}${mine ? ', including you. Tap to remove your reaction' : '. Tap to react'}`}
+                          onClick={(e) => { e.stopPropagation(); addReactionToMessage(flock.id, m.id, g.emoji); }}
+                          style={{
+                            fontSize: 'var(--t-body)',
+                            backgroundColor: 'var(--bg-card-solid)',
+                            borderRadius: '14px',
+                            padding: '4px 8px',
+                            boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                            border: mine ? `1px solid ${colors.steel}` : '1px solid var(--border-subtle)',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '4px',
+                            cursor: 'pointer',
+                            minHeight: 'auto',
+                          }}
+                        >
+                          {g.emoji}
+                          <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500' }}>{g.count}</span>
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
