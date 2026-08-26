@@ -348,7 +348,17 @@ function resolveCardLoader() {
 }
 
 async function runVenueDigestSweep(now = new Date()) {
-  const tally = { considered: 0, sent: 0, skipped: 0, failed: 0 };
+  // `due` and `alreadySent` are the heartbeat, and they exist because of the
+  // recurring shape of failure in this codebase: a scheduled job that stops
+  // doing its job produces exactly the same output as one with nothing to do.
+  // Until this, the only evidence a Monday sweep left behind was a log line
+  // printed when something was sent or failed, so "the digest ran and mailed
+  // nobody because every venue was already mailed" and "the digest ran and
+  // mailed nobody because it is broken" were both total silence, and so was
+  // "the timer was never registered". `due` counts the venues that cleared
+  // every gate including the venue-local Monday morning window, so a sweep with
+  // work in front of it now says so whatever the outcome was.
+  const tally = { considered: 0, due: 0, alreadySent: 0, sent: 0, skipped: 0, failed: 0 };
   if (!digestEnabled()) return tally;
 
   let loadCards;
@@ -405,10 +415,37 @@ async function runVenueDigestSweep(now = new Date()) {
     const parts = localParts(now, row.timezone);
     if (!isMondayMorning(parts)) { tally.skipped += 1; continue; }
     const weekStart = isoDate(parts.year, parts.month, parts.day);
+    tally.due += 1;
 
     try {
-      // Cards first: it is read-only, so an unverified or unlinked venue (a
-      // null from the loader) is skipped without ever claiming a marker.
+      // ALREADY MAILED THIS MONDAY? ASK BEFORE BUILDING, NOT AFTER.
+      //
+      // The send window is 07:00 to 11:59 on the venue's clock and the sweep
+      // runs hourly, so a venue that is mailed at 07:00 is walked again at
+      // 08:00, 09:00, 10:00 and 11:00. Every one of those passes reached the
+      // card build below, did the whole of it, and only then lost the claim it
+      // could never win.
+      //
+      // A card build is not cheap and it is not local. buildAroundYou probes
+      // Ticketmaster once per day of the week through mlPredictor's shared
+      // event cache and daily budget, buildWeekAhead runs a seven-day model
+      // forecast, and the verdict and readings cards each aggregate the venue's
+      // own history. Doing that five times per venue and throwing four of them
+      // away turns Monday breakfast into the heaviest hour of the product's
+      // week, on work that by construction cannot produce an email.
+      //
+      // One indexed read answers it, the same shape of pre-check
+      // services/crowdAlerts.js does before its own claim. The claim below is
+      // still the authority, so losing the race between this read and that
+      // INSERT costs one wasted build and never a second email.
+      const already = await pool.query(
+        'SELECT 1 FROM venue_digest_sends WHERE venue_profile_id = $1 AND week_start = $2',
+        [row.id, weekStart]
+      );
+      if (already.rowCount > 0) { tally.alreadySent += 1; tally.skipped += 1; continue; }
+
+      // Cards next: the loader is read-only, so an unverified or unlinked venue
+      // (a null from it) is skipped without ever claiming a marker.
       const cards = await loadCards({ userId: row.user_id, tier, now });
       if (cards === null) { tally.skipped += 1; continue; }
 
@@ -507,8 +544,14 @@ async function runVenueDigestSweep(now = new Date()) {
     console.warn('[venueDigest] marker prune failed:', err.message);
   }
 
-  if (tally.sent || tally.failed) {
-    console.log(`[venueDigest] sweep: ${tally.sent} sent, ${tally.failed} failed, ${tally.skipped} skipped of ${tally.considered}`);
+  // `tally.due` is in the condition, not just the message: an hour in which
+  // venues were due and none of them was mailed is the exact state that used to
+  // print nothing at all.
+  if (tally.sent || tally.failed || tally.due) {
+    console.log(
+      `[venueDigest] sweep: ${tally.due} due, ${tally.alreadySent} already mailed, `
+      + `${tally.sent} sent, ${tally.failed} failed, ${tally.skipped} skipped of ${tally.considered}`
+    );
   }
   return tally;
 }
