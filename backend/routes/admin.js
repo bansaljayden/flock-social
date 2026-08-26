@@ -1399,6 +1399,75 @@ router.get('/venues/unverified', async (req, res) => {
   }
 });
 
+
+// TELLING THE VENUE OWNER WHAT WAS DECIDED.
+//
+// Verification gates the public badge, promotions, review replies and the whole
+// Roost advisor, so it is the difference between a claimed listing and a
+// working one. Until now the owner learned the outcome by noticing: a verified
+// claim simply started working on their next load, and a declined one silently
+// put the "Request verification" button back with nothing said. The second one
+// is the worse half. From the owner's side a decline and a queue nobody has
+// read yet look identical, so the only sensible move left is to ask again, and
+// the queue fills with the same claim.
+//
+// WHAT THE DECLINE EMAIL DOES NOT SAY: the admin's `reason`. That field lands
+// in moderation_actions and is written for the next moderator, not for the
+// person it is about. It can hold an internal note, and a reason for refusing a
+// claim is also a description of what a second attempt would need to defeat.
+// The owner gets a plain outcome and a real address to reply to, which is the
+// honest version of "there is a human here" without handing over the rubric.
+//
+// Never throws and never blocks the admin's response. The decision is already
+// committed and recorded; this is a courtesy on top of it, and a mail outage
+// must not make a completed action look failed.
+async function notifyVerificationDecided(row) {
+  const to = row.owner_email;
+  if (!to || !emailService.isMailableAddress(to)) {
+    console.log(
+      `[venue-verification] profile #${row.id} decided (verified=${row.verified}) `
+      + 'but the owner has no mailable address on file, so nobody was told.'
+    );
+    return;
+  }
+
+  const esc = emailService.escapeHtml;
+  const name = String(row.business_name || 'Your venue').slice(0, 200);
+  const owner = String(row.owner_name || '').slice(0, 120);
+  const hello = owner ? `Hi ${owner},` : 'Hi,';
+
+  const subject = row.verified
+    ? `${name} is verified on Flock`
+    : `About your verification request for ${name}`;
+
+  const body = row.verified
+    ? [
+      `${name} is now verified.`,
+      'The verified badge shows on your listing, and you can post promotions, reply to reviews, and use Roost.',
+      'If anything about the listing is wrong, reply to this email and tell us what to change.',
+    ]
+    : [
+      `We looked at your verification request for ${name} and we have not verified it.`,
+      'Your venue page and your account are unchanged and still yours. What verification adds is the badge, promotions, review replies and Roost, so those stay off for now.',
+      'If you run this venue and think we got this wrong, reply to this email and tell us who you are and how you are connected to it. A person reads these.',
+    ];
+
+  const result = await emailService.sendEmail({
+    to,
+    subject,
+    html: `<p>${esc(hello)}</p>` + body.map((line) => `<p>${esc(line)}</p>`).join(''),
+    text: `${hello}\n\n${body.join('\n\n')}`,
+  });
+
+  if (!result.sent) {
+    console.error(
+      `[venue-verification] profile #${row.id}: the owner was not told (verified=${row.verified}, `
+      + `${result.error || result.reason || 'skipped'}). They will find out by noticing, which for a `
+      + 'decline means they will probably just request it again.'
+    );
+  }
+}
+
 router.put('/venues/:profileId/verify', async (req, res) => {
   try {
     // A non-numeric :profileId used to reach Postgres as NaN and surface as a
@@ -1496,8 +1565,18 @@ router.put('/venues/:profileId/verify', async (req, res) => {
        )
        SELECT u.id, u.business_name, u.verified,
               t.google_place_id,
+              -- The owner, so the decision can be told to the person it is
+              -- about. Joined into the SAME statement rather than fetched
+              -- afterwards: this route is deliberately one query (the
+              -- venueTierGate tests hold it to that) and a second SELECT for an
+              -- address would be a second chance to fail between the write and
+              -- the notice.
+              ou.email AS owner_email,
+              ou.name AS owner_name,
               (SELECT user_id FROM blocked) AS conflict_user_id
-       FROM target t LEFT JOIN upd u ON true`,
+       FROM target t
+       LEFT JOIN upd u ON true
+       LEFT JOIN users ou ON ou.id = t.user_id`,
       [verified, profileId, req.user.id, reason || null]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Venue profile not found' });
@@ -1517,6 +1596,22 @@ router.put('/venues/:profileId/verify', async (req, res) => {
       });
     }
     res.json({ id: row.id, business_name: row.business_name, verified: row.verified });
+
+    // Tell the owner, AFTER the response, on both outcomes.
+    //
+    // Verifying showed up silently on their next load, and declining silently
+    // restored their "Request verification" button with no explanation, so the
+    // only rational thing left for them to do was ask again. A queue that
+    // answers by saying nothing trains the people in it to re-enter it.
+    //
+    // Post-response and never awaited by the admin's request, for the reason
+    // every other notification in this codebase is: the decision is already
+    // committed, and a mail outage must not turn a completed action into a 500
+    // that invites the admin to click it a second time.
+    notifyVerificationDecided(row).catch((err) => console.error(
+      `[venue-verification] profile #${row.id}: telling the owner failed (${err.message}). `
+      + 'The decision itself is committed and recorded in moderation_actions.'
+    ));
   } catch (err) {
     // Two admins verifying rival claims on the same place at the same instant
     // both see an empty `blocked`, and the unique index decides. That is the
