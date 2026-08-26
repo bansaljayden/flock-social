@@ -47,10 +47,31 @@
 	    installs fine while push stays off at runtime. Check the build log line
 	    for that step before concluding push is broken on device.
 
-	Deliberately NOT here: com.apple.developer.associated-domains. Nothing can
-	be signed with it until the capability is enabled on the App ID and an
-	apple-app-site-association file is served from flockcorp.com. See the
-	deep-link note in Info.plist.
+	  Associated Domains  -  ENABLED ON THE APP ID 2026-08-26, and the
+	    entitlement below was added in the same sitting. This block used to say
+	    the entitlement was deliberately absent because neither half existed.
+	    Both halves exist now:
+
+	      1. The capability is ticked on App ID com.flockcorp.flock in the
+	         developer portal, verified by reloading the page and reading the
+	         checkbox back. Apple warns on save that this INVALIDATES existing
+	         provisioning profiles, which is why the next build must regenerate
+	         one. codemagic.yaml runs `app-store-connect fetch-signing-files`
+	         with its create flag, so it derives a fresh profile FROM the App ID
+	         and picks the capability up on its own. If a build ever fails with
+	         "provisioning profile does not match the entitlements file", that
+	         step is where to look, and the fix is a fresh profile rather than
+	         deleting this key.
+	      2. https://www.flockcorp.com/.well-known/apple-app-site-association is
+	         served by frontend/api/apple-app-site-association.js, which reads
+	         APPLE_TEAM_ID from the Vercel environment and answers 503 rather
+	         than serving a wrong Team ID. The build in App Store review was
+	         signed before any of this and is unaffected.
+
+	    The domains are the apex and www, both, because iOS does not follow a
+	    redirect when it fetches the association file: whichever host the link
+	    names has to answer it directly. Vercel serves both from the same
+	    deployment.
 -->
 <plist version="1.0">
 <dict>
@@ -60,5 +81,10 @@
 	</array>
 	<key>aps-environment</key>
 	<string>production</string>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:flockcorp.com</string>
+		<string>applinks:www.flockcorp.com</string>
+	</array>
 </dict>
 </plist>
