@@ -935,6 +935,17 @@ const INVENTORY = [
 
   // ── server.js ─────────────────────────────────────────────────────────────
   {
+    file: 'server.js', name: 'moneyWatchSaid', kind: 'counter',
+    key: "'<leg>:<level>' — eight fixed strings, four legs x two levels, all literals in this file",
+    callerControls: 'nothing. No request path writes to it; only the 15-minute watchdog timer does',
+    protects: 'the reader. It is what stops a ceiling that stays exhausted for eight hours raising thirty-two identical alerts',
+    denominator: 'one alert per leg per level per UTC day (per calendar month for the photo leg, whose ceiling is a month)',
+    bound: 'eight entries, structurally — the key space is the cross product of two literal lists, so it cannot grow',
+    verdict: 'SAFE',
+    why: 'The only map in the repo whose key space is closed by construction rather than by an eviction policy, because nothing outside this file can produce a key. It holds day strings, not counts, so an entry going stale costs one repeated alert rather than a lost budget; and it is deliberately NOT reset on a deploy the way the counters it watches are — a fresh process starts with an empty map and a zeroed budget, which is the consistent pair.',
+  },
+
+  {
     file: 'server.js', name: 'socketConnections', kind: 'counter',
     key: 'socketClientIp(socket) — the LAST X-Forwarded-For hop',
     callerControls: 'nothing — prepended attacker hops are ignored',
@@ -947,49 +958,257 @@ const INVENTORY = [
 ];
 
 // ---------------------------------------------------------------------------
-// The express-rate-limit limiters in server.js are part of the same layer and
-// are recorded here rather than in INVENTORY, because they are library state
-// rather than a Map this repo declares.
+// THE RATE LIMITERS, AS DATA RATHER THAN AS A COMMENT
+// ---------------------------------------------------------------------------
 //
-//   apiLimiter          15 min / 3000   req.ip   — a flood valve, not a spend
-//                                                  control; every paid surface
-//                                                  behind it carries its own
-//                                                  in-route budget.
-//   authLimiter         60 s   / 10     req.ip   — correct dimension: there is
-//                                                  no authenticated identity
-//                                                  yet. (Round 4 R4-A2: this is
-//                                                  the ONLY bound on the pure-JS
-//                                                  bcrypt compare, which is
-//                                                  denominated in milliseconds
-//                                                  of the only thread, not in
-//                                                  requests.)
-//   venueSearchLimiter  60 s   / 120    req.ip   — in front of the
-//                                                  unauthenticated photo proxy;
-//                                                  the money ceiling is
-//                                                  photoIpHits + the global
-//                                                  Places leg, not this.
-//   imageSpendLimiter   60 s   / 10     ACCOUNT  — keyed on a jwt.verify'd user
-//                                                  id, so a forged token cannot
-//                                                  mint a bucket, and mounted
-//                                                  once globally so alternating
-//                                                  between the four image doors
-//                                                  cannot buy their sum.
-//   aiLimiter           60 s   / 30     ACCOUNT  — bounds REQUESTS; Gemini is
-//                                                  billed per TOKEN, and that
-//                                                  ceiling is geminiUserSpend.
-//                                                  Neither replaces the other.
+// WHY THIS IS NOW A LIST INSTEAD OF PROSE. Until this change the
+// express-rate-limit limiters in server.js were described here in a comment
+// block, on the grounds that they are library state rather than a Map this repo
+// declares. The comment named five limiters. server.js had TEN, and had had ten
+// for some time: advisorLimiter, advisorQuestionLimiter, venueDashboardLimiter,
+// venueProfileLimiter and digestOptOutLimiter all landed after the comment was
+// written and none of them changed it, because nothing could fail when they
+// did not.
 //
-// ONE SYSTEMIC WEAKNESS ACROSS ALL FOUR IP-KEYED LIMITERS, carried from round 4
+// That is precisely the failure this whole file exists to prevent, arrived at
+// through the one door it left open. INVENTORY is enforced by a scanner
+// (__tests__/cacheKeyInventory.test.js); the limiter block was enforced by
+// remembering. So the limiters get the same treatment the Maps got: rows, and a
+// build that fails without them (__tests__/rateLimiterInventory.test.js).
+//
+// WHAT THE TEST CHECKS, which is more than presence:
+//   1. every `rateLimit({...})` in server.js has a row here;
+//   2. every row's windowMs, max and user-visible message MATCH the literals in
+//      server.js, so a ceiling cannot move without the row moving with it;
+//   3. every `app.use('/api/...')` mount in server.js either names a limiter
+//      listed here, or is named in UNLIMITED_MOUNTS below with a reason. A
+//      route cannot land with no ceiling and no argument for having none;
+//   4. the backstop's ceiling is >= the sum of every other limiter's
+//      15-minute-equivalent allowance, which is what makes it a backstop rather
+//      than a new, tighter limit nobody derived.
+//
+// THE THREE QUESTIONS EACH ROW ANSWERS, which are the limiter twins of the two
+// INVENTORY asks:
+//   * WHAT DOES IT KEY ON, and can the caller mint a fresh bucket? An address
+//     is rotatable and is shared by everyone behind one NAT. An account is not
+//     rotatable but does not exist yet at the signup and login doors.
+//   * WHAT DOES THE CALLER SEE, and does that sentence describe THIS window? A
+//     429 that names a wait shorter than the real one is worse than a bare
+//     refusal: the user retries on its advice, is refused again, and concludes
+//     the feature is broken rather than rationed.
+//   * WHAT DOES IT ACTUALLY PROTECT? A request ceiling in front of a per-token
+//     or per-call money meter is a brake, not a cap, and the two are not
+//     substitutes.
+//
+// ONE SYSTEMIC WEAKNESS ACROSS EVERY IP-KEYED LIMITER, carried from round 4
 // R4-A3: express-rate-limit@7 keys on the FULL req.ip with no IPv6 subnet
 // grouping, so a single /64 voids every per-IP control at once. It is latent
 // only because the production API host publishes no AAAA record — a fact
 // nothing in this repo asserts on. If an AAAA record ever appears, or a custom
-// api. domain is pointed at the service with one, every per-IP row above
-// silently becomes a no-op.
+// api. domain is pointed at the service with one, every `keyKind: 'ip'` row
+// below silently becomes a no-op.
+//
+// A SECOND ONE, TRUE OF ALL TEN: express-rate-limit uses its MemoryStore, so
+// every counter here lives in this process's heap. It resets on every deploy
+// and divides by the instance count — the same caveat utils/placesBudget.js and
+// utils/probeBudget.js carry, and the reason CLAUDE.md says a second Railway
+// instance needs `rate-limit-redis` before it needs anything else.
+//
+// A THIRD: every limiter below is REPLACED BY A PASS-THROUGH when
+// NODE_ENV === 'development'. That is deliberate and it fails safe (an unset
+// NODE_ENV leaves them on), but it means nothing about these ceilings is
+// exercised by simply running the app locally. They are exercised by
+// __tests__/rateLimiterInventory.test.js and __tests__/imageSpendLimits.test.js
+// and nowhere else.
+
+/**
+ * @typedef {object} Limiter
+ * @property {string} name        the binding in server.js
+ * @property {number} windowMs    must equal the literal in server.js
+ * @property {number} max         must equal the literal in server.js
+ * @property {'ip'|'account'} keyKind
+ * @property {string} key         how the bucket is derived
+ * @property {string} message     the user-visible string, verbatim
+ * @property {string[]} mounts    every path server.js mounts it on
+ * @property {string} protects    the scarce thing behind it
+ * @property {'SAFE'|'OPEN'} verdict
+ * @property {string} why         one line the next round can check
+ */
+
+/** @type {Limiter[]} */
+const LIMITERS = [
+  {
+    name: 'globalBackstopLimiter',
+    windowMs: 15 * 60 * 1000,
+    max: 8500,
+    keyKind: 'account',
+    key: 'billedImageKey — `user:<jwt.verify\'d id>` when a valid bearer token is present, `addr:<req.ip>` otherwise',
+    message: 'Too many requests, please try again later',
+    mounts: ['(app-wide, ahead of the body parsers)'],
+    protects: 'the process itself, and specifically the four surfaces that had NO ceiling of any kind',
+    verdict: 'SAFE',
+    why: 'Before this existed there was no app-wide ceiling: apiLimiter is one shared instance across ~25 routers (so those DO share one 3000/15min bucket), but /api/revenuecat, /api/email-events, GET /api/health and EVERY unmatched path that falls through to the 404 handler were mounted with no limiter at all, and a caller could spend each per-route ceiling in full and then flood 404s without limit. The number is DERIVED, not chosen: the sum of every other limiter\'s 15-minute-equivalent allowance is 8,403 (apiLimiter 3000 + venueSearch 1800 + venueDashboard 1800 + venueProfile 450 + ai 450 + advisor 300 + digestOptOut 300 + authLimiter 150 + imageSpend 150 + advisorQuestion 3) and 8500 is that rounded up to the next hundred, so by construction it cannot refuse a caller every per-route limiter would have allowed. __tests__/rateLimiterInventory.test.js recomputes that sum and fails if a new limiter pushes it past this number. It keys on the ACCOUNT where there is one for billedImageKey\'s reason, which also means a NAT full of signed-in users gets a bucket each rather than one to fight over; unauthenticated callers land in `addr:` and are bounded far tighter by apiLimiter first, so this can never be the limiter that bites them. It is mounted AHEAD of express.json, which no other limiter is: a refusal here is the only one in the file that stops the body being read.',
+  },
+  {
+    name: 'apiLimiter',
+    windowMs: 15 * 60 * 1000,
+    max: 3000,
+    keyKind: 'ip',
+    key: 'req.ip (express-rate-limit default)',
+    message: 'Too many requests, please try again later',
+    mounts: [
+      '/api/flocks', '/api/guest', '/api/badge', '/api/sensors', '/api/checkin',
+      '/api/waitlist', '/api/public', '/api/users', '/api', '/api/stories',
+      '/api/friends', '/api/safety', '/api/crowd', '/api/feedback', '/api/weather',
+      '/api/budget', '/api/billing', '/api/events', '/api/entitlements',
+      '/api/notifications', '/api/admin', '/api/availability', '/api/calendar',
+    ],
+    protects: 'a flood valve on the whole authenticated product; not a spend control, every paid surface behind it carries its own in-route budget',
+    verdict: 'SAFE',
+    why: 'ONE rateLimit instance mounted on every path above, so all of them share a single 3000/15min bucket per address rather than getting one each — worth stating because the opposite reading (a bucket per mount) is the natural one and would make this 23 x 3000. 200 requests a minute is generous for a chat and feed client and is deliberately not the money ceiling: utils/placesBudget.js, utils/visionBudget.js and services/birdieUsage.js are. The dimension is the weak part rather than the number: one school or one bar behind a NAT shares this bucket, which is why every authenticated meter added since keys on the account instead.',
+  },
+  {
+    name: 'authLimiter',
+    windowMs: 60 * 1000,
+    max: 10,
+    keyKind: 'ip',
+    key: 'req.ip (express-rate-limit default)',
+    message: 'Too many login attempts, please try again later',
+    mounts: ['/api/auth'],
+    protects: 'the pure-JS bcrypt compare, which is denominated in milliseconds of the only thread, and the signup/login/reset doors generally',
+    verdict: 'SAFE',
+    why: 'The address is the CORRECT dimension here and the only one available: there is no authenticated identity at a login, a signup or a password reset, so an account key would be a key the caller mints for free. Round 4 R4-A2: this is the only bound on the bcrypt compare. The NAT cost is real and accepted — ten sign-ins a minute for a whole school is tight — and is the reason routes/auth.js layers per-address AND per-canonical-email counters underneath rather than leaning on this alone.',
+  },
+  {
+    name: 'venueSearchLimiter',
+    windowMs: 60 * 1000,
+    max: 120,
+    keyKind: 'ip',
+    key: 'req.ip (express-rate-limit default)',
+    message: 'Too many venue searches, please try again later',
+    mounts: ['/api/venues'],
+    protects: 'request volume in front of the unauthenticated photo proxy; NOT the money',
+    verdict: 'SAFE',
+    why: 'The money ceilings on this router are photoIpHits, the durable dollar budget in services/photoStore.js and the global Places leg — not this. Address-keyed because the photo proxy takes no auth, which is the one honest reason for an IP key on this router; the authenticated halves of it (text search, details) charge allowPlacesSearch on the account underneath.',
+  },
+  {
+    name: 'imageSpendLimiter',
+    windowMs: 60 * 1000,
+    max: 10,
+    keyKind: 'account',
+    key: 'billedImageKey — a jwt.verify\'d user id, falling back to req.ip only for a request about to be 401\'d',
+    message: 'Slow down a moment.',
+    mounts: ['(app-wide, conditional on carriesBilledImage)'],
+    protects: 'a PAID Google Cloud Vision SafeSearch call per image, plus the row and the fan-out',
+    verdict: 'SAFE',
+    why: 'Verified rather than decoded, so a forged token cannot mint a bucket, and mounted ONCE globally rather than per route so alternating between the four image doors cannot buy their sum. Same numbers as the socket\'s send_image bucket, pinned across both files by __tests__/imageSpendLimits.test.js. The message is one of the few in the app whose wording matches its window: a 60-second window really is a moment.',
+  },
+  {
+    name: 'aiLimiter',
+    windowMs: 60 * 1000,
+    max: 30,
+    keyKind: 'account',
+    key: 'billedAccountKey (= billedImageKey)',
+    message: 'Too many AI requests, please slow down',
+    mounts: ['/api/ai'],
+    protects: 'reaching the Birdie router at all; the invoice is bounded by the token ledger, not by this',
+    verdict: 'SAFE',
+    why: 'It bounds REQUESTS and Gemini is billed per TOKEN, so this is the cheap early brake and services/birdieUsage.js geminiUserSpend is the cap denominated in money. Neither replaces the other and the pair is the house pattern. Account-keyed for billedImageKey\'s reason.',
+  },
+  {
+    name: 'advisorLimiter',
+    windowMs: 60 * 1000,
+    max: 20,
+    keyKind: 'account',
+    key: 'billedAccountKey (= billedImageKey)',
+    message: 'Too many advisor requests, please slow down',
+    mounts: ['/api/venue/advisor'],
+    protects: 'Postgres and latency: one GET /cards walks seven days of ML event lookups and forecasts plus three aggregates',
+    verdict: 'SAFE',
+    why: 'Roost is more expensive per request than Birdie and sat on the general 3000/15min limiter until this was written, which allowed three thousand of those in a quarter of an hour from one account. The vendor meters and the token ledgers bound the money; nothing bounded the database, which is what this is for.',
+  },
+  {
+    name: 'advisorQuestionLimiter',
+    windowMs: 60 * 60 * 1000,
+    max: 10,
+    keyKind: 'account',
+    key: 'billedAccountKey (= billedImageKey)',
+    message: 'That is a lot of questions in one hour. Give it a little while and ask again.',
+    mounts: ['/api/venue/advisor/question'],
+    protects: 'at least two model calls per typed question, over a prompt carrying the owner\'s own words',
+    verdict: 'SAFE',
+    why: 'The ONE advisor path the caller shapes, so it gets an HOUR window rather than a minute: advisorLimiter\'s 20 a minute is 1,200 an hour and a question is a thought. Mounted at a longer path than advisorLimiter and therefore charged IN ADDITION to it, tighter one first, which is the right precedence. Its sentence names the hour, which is more than most 429s in this codebase do — see the handoff list in the round-24 report. It sits UNDER the per-venue daily cap in migration 039 rather than replacing it: this one is per process and a restart clears it, the Postgres one is not.',
+  },
+  {
+    name: 'venueDashboardLimiter',
+    windowMs: 60 * 1000,
+    max: 120,
+    keyKind: 'account',
+    key: 'billedAccountKey (= billedImageKey)',
+    message: 'Too many dashboard requests, please slow down',
+    mounts: ['/api/venue-dashboard'],
+    protects: 'four fourteen-day aggregate scans per /this-week, a DISTINCT ON plus a correlated NOT EXISTS per /busy-now, a per-call vote join per /incoming-flocks',
+    verdict: 'SAFE',
+    why: 'These landed on the general limiter, which is an ADDRESS meter sized for consumer chat and feed traffic, in front of routes that are analytics. Account-keyed because both routers are authenticated and an address meter on an authenticated route is a meter IP rotation defeats.',
+  },
+  {
+    name: 'venueProfileLimiter',
+    windowMs: 60 * 1000,
+    max: 30,
+    keyKind: 'account',
+    key: 'billedAccountKey (= billedImageKey)',
+    message: 'Too many profile requests, please slow down',
+    mounts: ['/api/venue-profile'],
+    protects: 'an EXISTS plus a COUNT(*) over ml_venue_baselines on every save',
+    verdict: 'SAFE',
+    why: 'Same reasoning as venueDashboardLimiter, sized for a profile saved by hand rather than a dashboard opening a dozen panels at once.',
+  },
+  {
+    name: 'digestOptOutLimiter',
+    windowMs: 60 * 1000,
+    max: 20,
+    keyKind: 'ip',
+    key: 'req.ip (express-rate-limit default)',
+    message: 'Too many requests, please try again later',
+    mounts: ['/api/venue-digest', '/api/unsubscribe'],
+    protects: 'an open unauthenticated endpoint being used as free load',
+    verdict: 'SAFE',
+    why: 'The two unsubscribe surfaces are the venue and waitlist doors with NO login, so the address is all there is to key on. Both authorise on an HMAC that is not guessable, so this is not a brute-force gate — and one instance across both mounts, so they share the bucket. NOTE the interaction with RFC 8058 one-click POST: Gmail and Apple Mail send those from THEIR egress addresses, not the reader\'s, so a large send could in principle put many unrelated unsubscribes into one bucket. At this list size it cannot; if the list ever grows, this is the row to revisit and the evidence that settles it is the source addresses in the Railway access log for a Monday send.',
+  },
+];
+
 // ---------------------------------------------------------------------------
+// MOUNTS WITH NO LIMITER, AND WHY EACH ONE IS ALLOWED TO HAVE NONE
+// ---------------------------------------------------------------------------
+// __tests__/rateLimiterInventory.test.js fails if server.js mounts a path that
+// neither names a limiter above nor appears here. The point is not that an
+// unlimited mount is forbidden — two of these are signed webhooks whose senders
+// we do not control and must not refuse — it is that "this one has no ceiling"
+// has to be a decision somebody wrote down rather than a line nobody noticed.
+//
+// All four are now covered by globalBackstopLimiter, which is the whole reason
+// it exists. Before it, each of these was genuinely unbounded.
+const UNLIMITED_MOUNTS = [
+  {
+    path: '/api/revenuecat',
+    why: 'RevenueCat\'s subscription webhook, authorised by a shared secret. Refusing it loses a purchase or an expiry event and RevenueCat\'s retry schedule is its own, so a per-address ceiling here would trade a billing-state bug for a load saving we do not need. The body ceiling is the scoped webhookJsonParser and the identity check is the shared secret; the backstop is the volume ceiling.',
+  },
+  {
+    path: '/api/email-events',
+    why: 'Resend\'s delivery webhook, Svix-signed over the RAW bytes. Same reasoning as RevenueCat: a refused bounce notification is a suppression list that silently stops being true. emailWebhookParser gives it the raw body it needs.',
+  },
+  {
+    path: '/api/health',
+    why: 'GET only, and defended by shape rather than by a counter: the answer is cached for HEALTH_CACHE_MS and concurrent misses share one in-flight probe, so however hard it is polled the database sees at most one SELECT 1 per 5 seconds. Railway polls it, so a limiter here could take a healthy instance out of rotation.',
+  },
+  {
+    path: '(unmatched paths -> the 404 handler)',
+    why: 'Not a mount at all, which is exactly why it was missed: anything matching no router falls through to the 404 handler, and until globalBackstopLimiter existed that path had no ceiling of any kind. It is cheap per request, but "cheap and unbounded" is the shape of every load problem this file catalogues.',
+  },
+];
 
 /** Directories the standing scanner sweeps. Adding one here is enough. */
 const SWEPT = ['routes', 'services', 'utils', 'sockets', 'middleware', 'config'];
 const SWEPT_FILES = ['server.js'];
 
-module.exports = { INVENTORY, SWEPT, SWEPT_FILES };
+module.exports = { INVENTORY, LIMITERS, UNLIMITED_MOUNTS, SWEPT, SWEPT_FILES };
