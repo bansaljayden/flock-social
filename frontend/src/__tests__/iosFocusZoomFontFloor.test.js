@@ -261,12 +261,15 @@ const KNOWN_OUTSTANDING = [
   // .lpd-input (the LiveDemo field) was listed here at 15px; its owner fixed
   // it to 16px at source on 2026-08-14 and the entry was pruned, per the rule
   // above.
-  {
-    file: 'src/components/ui/placeholders-and-vanish-input.js',
-    what: 'Tailwind `text-sm` (14px) on the shadcn vanish input',
-    fix: 'text-sm -> text-base. Component currently has zero callers, so this is dormant.',
-    reachedByFloor: true,
-  },
+  //
+  // src/components/ui/placeholders-and-vanish-input.js was listed here for a
+  // Tailwind `text-sm` (14px) on the shadcn vanish input, annotated "zero
+  // callers, so this is dormant". The bundle audit on 2026-08-26 confirmed the
+  // zero-callers half and acted on it: that component, and ten more like it,
+  // were imported by nothing in the repo and appeared in no built chunk, so
+  // they were deleted rather than restyled. A deleted file cannot have a font
+  // size, and the assertion below that every entry names a file that EXISTS
+  // would have gone red on the deletion. Pruned, per the rule above.
 ];
 
 const isKnown = (file) => KNOWN_OUTSTANDING.some((k) => rel(file) === k.file);
