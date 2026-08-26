@@ -89,22 +89,50 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
     return d.toISOString().split('T')[0];
   })();
 
+  // Rough shape check only. The server is the authority on what it will accept
+  // (express-validator's isEmail on /signup); this exists so an obvious typo is
+  // answered on the device instead of costing a round trip.
+  const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  // The first thing wrong with the form, in the order the fields appear on
+  // screen, as [field id, what to say]. Order matters: the old code checked the
+  // password rules first, so someone who had filled in nothing at all was told
+  // about a password requirement while the empty Name field sat above it.
+  const firstProblem = () => {
+    if (!name.trim()) return ['signup-name', 'Add the name your friends know you by.'];
+    if (!email.trim()) return ['signup-email', 'Add your email address.'];
+    if (!EMAIL_SHAPE.test(email.trim())) return ['signup-email', 'That email address does not look right. Check it and try again.'];
+    if (!dob) return ['signup-dob', 'Add your date of birth.'];
+    if (ageFromDob(dob) === null) return ['signup-dob', 'That date of birth does not look right. Check it and try again.'];
+    if (!password) return ['signup-password', 'Choose a password.'];
+    if (!pwChecks.every((c) => c.ok)) return ['signup-password', 'Your password is missing a requirement listed below it.'];
+    return null;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
 
-    if (!pwChecks.every((c) => c.ok)) {
-      setError('Your password is missing a requirement below');
+    // THIS IS THE FORM'S ONLY VALIDATION, and it has to be, because the form
+    // carries `noValidate`. See the comment on the <form> element for why.
+    //
+    // Focus the offending field as well as setting the error. AuthError moves
+    // focus to itself when its text CHANGES, which announces the message and
+    // scrolls it into view; on a second tap with the same message unchanged its
+    // effect does not re-fire, and this focus() is then what puts something on
+    // screen. Between the two, every tap of Create account moves something.
+    const problem = firstProblem();
+    if (problem) {
+      const [fieldId, message] = problem;
+      setError(message);
+      document.getElementById(fieldId)?.focus();
       return;
     }
 
     const age = ageFromDob(dob);
-    if (age === null) {
-      setError('Please enter your date of birth');
-      return;
-    }
     if (age < MIN_AGE) {
       setError(`You must be at least ${MIN_AGE} to use Flock`);
+      document.getElementById('signup-dob')?.focus();
       return;
     }
 
@@ -164,7 +192,24 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
 
   return (
     <AuthShell hero={hero}>
-      <form onSubmit={handleSubmit}>
+      {/* noValidate, and this is the most load-bearing attribute on the screen.
+          Every field below carries `required`, and one carries `minLength` and
+          one `max`. On iOS there is no validation bubble: WKWebView refuses the
+          submit, focuses nothing the user can see, and draws NOTHING. So an
+          incomplete form met a Create account button that did not visibly
+          respond, with no way to find out which field was the problem.
+
+          Production PostHog measured it. Over 90 days the single largest
+          cluster of $dead_click in the whole product was this screen inside the
+          native app: five on this button, five on the date field, six on the
+          email field, three on the age hint below the date field, and two on
+          each of the four labels. 1,792 pageviews produced 6 signups.
+
+          Turning the browser's validation off makes handleSubmit the only gate,
+          and handleSubmit always renders a message through AuthError, which
+          announces itself and scrolls into view. The rule is that this button
+          must never be tappable without something happening. */}
+      <form onSubmit={handleSubmit} noValidate>
         <AuthError>{error}</AuthError>
 
         <div className="auth-field-row">
