@@ -588,13 +588,24 @@ const INVENTORY = [
   // ── services/emailService.js ──────────────────────────────────────────────
   {
     file: 'services/emailService.js', name: 'recipientCounts', kind: 'counter',
-    key: 'the RECIPIENT address, lowercased, + a rolling 24h window',
-    callerControls: 'the address, on exactly one path: an unauthenticated waitlist signup names its own recipient. Every other sender resolves the address from a database row (the venue owner, the account being verified, a trusted contact, an admin).',
+    key: 'the CATEGORY + the recipient address, lowercased, + a rolling 24h window',
+    callerControls: 'the address, on exactly one path: an unauthenticated waitlist signup names its own recipient. Every other sender resolves the address from a database row (the venue owner, the account being verified, a trusted contact, an admin). The category is never caller data: every call site passes a literal.',
     protects: 'Resend, which bills per send, and the sending domain reputation a runaway loop burns',
-    denominator: 'messages to one address (60 per 24h), charged before the provider is called',
+    denominator: 'messages of one category to one address (300 per 24h), charged before the provider is called. The emergency category is counted and NOT capped.',
     bound: '5k entries, expired-first sweep',
     verdict: 'SAFE',
-    why: 'It is a BACKSTOP, not the control: every caller already has its own throttle (waitlist 3/IP/hr + 500/day, moderation 40/hr, reset debounced hourly, digest one marker per venue per week), and this exists to bound the loop that spans two of them or the caller added later with none. Naming your own address only ever spends YOUR OWN allowance, so the one caller-chosen key is a self-denial-of-service and nothing else. The ceiling is set far above any real path (the busiest legitimate recipient is a moderation address at 40/hr) so it cannot silently swallow an SOS, and it logs at error level when it trips.',
+    why: 'It is a BACKSTOP, not the control: every caller already has its own throttle (waitlist 3/IP/hr + 500/day, moderation 40/hr, reset debounced hourly, digest one marker per venue per week), and this exists to bound the loop that spans two of them or the caller added later with none. Naming your own address only ever spends YOUR OWN allowance, so the one caller-chosen key is a self-denial-of-service and nothing else. TWO CORRECTIONS, round 27. This row used to read "60 per 24h" and justify it with "the busiest legitimate recipient is a moderation address at 40/hr", which is 960 a day: the backstop was an order of magnitude BELOW the ceiling of the caller it was written to back up, so it was cutting the operator inbox off at message sixty-one and dropping every content report, child-safety alert and venue verification claim after it. And this row claimed the ceiling was set so that "it cannot silently swallow an SOS", which was not true of the code: the emergency category bypassed the suppression list and did not bypass this counter, so an SOS alert and, worse, the stand-down that tells a parent it is over, were both eatable by a marketing loop-breaker. Emergency is now uncapped (bounded instead by the five-minute per-user cooldown routes/safety.js holds in Postgres, which survives a deploy as this map does not) and reported when it crosses the number every other category stops at. The key now carries the category, so a flood of one kind of mail to an address can never be the reason a password reset to that same address is refused.',
+  },
+
+  {
+    file: 'services/emailService.js', name: 'alarmSaid', kind: 'cache',
+    key: 'the alarm condition, which for two of the five conditions carries the recipient address, -> the UTC day it last spoke',
+    callerControls: 'the address half of the locked-out and emergency-loop keys, on the same single unauthenticated path as recipientCounts (a waitlist signup names its own recipient)',
+    protects: 'the reader. It is a dedupe on an ALARM, so a miss costs a repeated log line and a repeated Sentry message, never a send and never a refusal',
+    denominator: 'not a counter. One entry per condition, holding a date string',
+    bound: '2k entries, stale-first sweep (entries whose day is not today); never cleared wholesale',
+    verdict: 'SAFE',
+    why: 'This is the only map in this file that cannot refuse anything. Nothing reads it to decide whether a message goes out; it decides whether the log has already said this today, so the worst an attacker gets by flooding distinct keys is an alarm repeated, which is the direction that makes a problem MORE visible rather than less. It is swept stale-first rather than cleared for the rule rather than for the risk. Added in round 27 with the alarm itself: every caller in this codebase fails soft on a mail failure, correctly and independently, and the sum of that was a product where an expired Resend key meant no account could be created, no password could be recovered and no parent was told their child raised an alarm, with nothing on any screen looking wrong and nobody told.',
   },
 
   // ── services/emailSuppression.js ──────────────────────────────────────────
