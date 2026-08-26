@@ -15776,7 +15776,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 {notifStatus === 'granted' ? (
                   <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#22c55e' }}>On</span>
                 ) : notifStatus === 'denied' ? (
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Blocked in browser</span>
+                  // THERE IS NO BROWSER IN THE iOS APP, and this said there
+                  // was. It is the only state a user can reach where the app
+                  // cannot fix itself: iOS gives an app one notification prompt
+                  // per install and a denial is permanent, so the only way back
+                  // is the OS settings page, and the one line telling them so
+                  // was naming a thing that does not exist on the platform this
+                  // app ships on. The note under it says where to go, because
+                  // "Blocked" on its own is a dead end wearing a status label.
+                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
+                    {window.Capacitor?.isNativePlatform?.() === true ? 'Blocked in Settings' : 'Blocked in browser'}
+                  </span>
                 ) : (
                     <button className="hit44 glass-btn glass-secondary" onClick={() => requestNotificationPermission().then((token) => {
                       // null = denied or registration failed — saying
@@ -15786,6 +15796,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     }).catch(() => showToast("Notifications aren't on. Check your device settings.", 'error'))} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Enable</button>
                 )}
               </div>
+              {notifStatus === 'denied' && (
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0 44px', lineHeight: 1.35 }}>
+                  {window.Capacitor?.isNativePlatform?.() === true
+                    ? 'Turn them back on in the Settings app, under Notifications and then Flock. Flock cannot ask again.'
+                    : 'Turn them back on in your browser, under site settings for this page.'}
+                </p>
+              )}
               {/* Crowd alerts opt-out. This switch controls ONLY the pre-peak
                   crowd push (backend/services/crowdAlerts.js), so the label
                   stays that narrow. The backend treats an absent key as ON. */}
@@ -17721,6 +17738,93 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           ? `${new Date(vp.lastOutcome.at).toLocaleString()}.${vp.lastOutcome.detail ? ` ${vp.lastOutcome.detail}` : ''} Counted in this container's memory, so it resets on every deploy.`
                           : 'No image has been screened since this container started. That is normal on a quiet day and says nothing either way.')}
                       {visionDep && visionDep.finding && <p style={foot}>{visionDep.finding}</p>}
+                    </div>
+                  );
+                })()}
+
+                {/* PUSH DELIVERY. The one subsystem whose failure is completely
+                    silent: an invite that never left the building and one that
+                    landed on a lock screen look identical from every other
+                    screen in this app, and the user-visible symptom of a dead
+                    push system ("nobody answered") is the same as the product
+                    simply being quiet. Migration 050 built push_sends to answer
+                    it and nothing read the table, which is the same amount of
+                    evidence as not having built it. This is the reader.
+
+                    Suppressions are listed rather than summed into one number
+                    because they are not one thing. "Everyone was already
+                    looking" is the system working; "nobody has a device
+                    registered" is the whole feature being off for that person;
+                    "held until morning" is a notification that still exists.
+                    A single Suppressed count would hide all three behind each
+                    other. */}
+                {d.pushDelivery && (() => {
+                  const p = d.pushDelivery;
+                  const t = p.totals || {};
+                  const byOutcome = {};
+                  for (const r of (p.byTypeAndOutcome || [])) {
+                    byOutcome[r.outcome] = (byOutcome[r.outcome] || 0) + r.pushes;
+                  }
+                  // Every outcome services/pushHelper.js can write, in the
+                  // order a person reads them: what landed, then what did not
+                  // and why. A key that arrives without an entry here still
+                  // renders, under its own raw name, because an unexplained
+                  // count is better than a count silently dropped.
+                  const WORDS = {
+                    delivered: 'Reached at least one device',
+                    failed: 'The provider refused or timed out',
+                    'no-device': 'Nobody had a device registered',
+                    online: 'Every device was already looking',
+                    debounced: 'Same conversation, inside 30 seconds',
+                    'not-visible': 'Left the plan, blocked, or banned',
+                    'opted-out': 'Crowd alerts switched off',
+                    'quiet-held': 'Held for the morning',
+                    'quiet-dropped': 'Dropped, because a crowd alert at 3am is about last night',
+                    expired: 'Given up on before it could be sent',
+                  };
+                  const ORDER = ['delivered', 'failed', 'quiet-held', 'expired', 'no-device', 'online', 'debounced', 'not-visible', 'opted-out', 'quiet-dropped'];
+                  const seen = Object.keys(byOutcome);
+                  const ordered = [
+                    ...ORDER.filter((k) => seen.includes(k)),
+                    ...seen.filter((k) => !ORDER.includes(k)).sort(),
+                  ];
+                  const attempts = Number.isFinite(t.attempts) ? t.attempts : null;
+                  // A number the sentence below interpolates, so it has to be a
+                  // number. count() answers null for anything unmeasured, and
+                  // "null devices reached" reads as a bug rather than as an
+                  // absence.
+                  const reached = Number.isFinite(t.devicesReached) ? t.devicesReached : 0;
+                  return (
+                    <div key="push-delivery" style={{ ...card, border: p.configured === false ? `1px solid ${colors.amber}` : undefined }}>
+                      <h3 style={h3}>Push delivery</h3>
+                      <p style={sub}>
+                        Every notification this app sends passes through one place and writes a row there, so this is the whole record for the last {p.days} days. It holds no titles, no message bodies and no device tokens. Rows are kept for 30 days and then deleted.
+                      </p>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                        <div>
+                          <p style={kicker}>Landed</p>
+                          <p style={big}>{count(t.delivered) || 'Not measured'}</p>
+                          <p style={{ ...sub, margin: '3px 0 0' }}>
+                            {attempts === null
+                              ? 'The ledger could not be read, which says nothing either way.'
+                              : attempts === 0
+                                ? 'Nothing has been attempted in this window at all. On a product with no users that is the expected reading, and it is not evidence that delivery works.'
+                                : `${count(reached)} device${reached === 1 ? '' : 's'} reached across ${count(attempts)} attempt${attempts === 1 ? '' : 's'}.`}
+                          </p>
+                        </div>
+                        <div>
+                          <p style={kicker}>Provider</p>
+                          <p style={big}>{p.configured === false ? 'Switched off' : 'Configured'}</p>
+                          <p style={{ ...sub, margin: '3px 0 0' }}>
+                            {p.configured === false
+                              ? 'FIREBASE_SERVICE_ACCOUNT is not set on this server, so every notification in the app is a no-op and no row below can be anything but a skip.'
+                              : 'FIREBASE_SERVICE_ACCOUNT is set, so a count of zero below means nothing was sent rather than that sending is off.'}
+                          </p>
+                        </div>
+                      </div>
+                      {ordered.length === 0
+                        ? <p style={foot}>No push has been attempted in the last {p.days} days.</p>
+                        : ordered.map((k) => row(`push-${k}`, WORDS[k] || k, count(byOutcome[k])))}
                     </div>
                   );
                 })()}
