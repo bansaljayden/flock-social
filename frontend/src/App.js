@@ -79,7 +79,43 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 // Flock to vote on a bar downloaded all of it. It is its own chunk now, fetched
 // the first time an owner opens the screen. The full reasoning, and the reason
 // its state stayed behind, is at the top of the file it moved to.
-const VenueDashboard = React.lazy(() => import('./screens/VenueDashboard'));
+//
+// A `let`, and it is reassigned, because React.lazy remembers a FAILURE as
+// hard as it remembers a module. The payload it builds has three states, and
+// the rejected one is terminal: the first import that throws sets status 2 and
+// stores the error, and every render after that re-throws the SAME error
+// without going near the network again (react 19.2.3,
+// `lazyInitializer` in react/cjs/react.development.js). That is fine for a
+// module that throws while evaluating, which will throw again. It is wrong for
+// a chunk that failed to download, which is the only new failure the venue
+// dashboard has now that it is fetched rather than bundled, and the one a bar
+// on a bad connection will actually hit.
+//
+// The screen crash boundary catches the rejection and offers "Try again". With
+// a single lazy that button could never work: reset re-renders, the payload is
+// still rejected, it throws again instantly, and the owner is back on the same
+// error with no way to the dashboard short of force-quitting the app. Dead
+// button, on the paid product, and SLOP-AUDIT H5 says a reviewer finding one
+// is a rejection reason. So the fallback arms a new lazy before it resets, and
+// the new one has no memory of the failed fetch. Webpack clears its own failed
+// chunk entry on error, so the retry is a real second request rather than a
+// replay of the first.
+let VenueDashboard = React.lazy(() => import('./screens/VenueDashboard'));
+
+// Called by both ways out of the screen crash fallback. "Try again" calls it
+// directly, before reset. "Go to Nest" gets it through leaveCrashedScreen,
+// because a remembered rejection outlives the screen: walk away without
+// re-arming and the next tap on the dashboard, minutes later and back on wifi,
+// throws the stored error before it asks for anything, so the screen stays
+// broken for the life of the page.
+//
+// Cheap and harmless on a crash that had nothing to do with a chunk: a fresh
+// lazy for a module already in the webpack cache resolves from memory on the
+// next render, so a re-armed dashboard that was never the problem costs one
+// extra element type and no request.
+const rearmLazyScreens = () => {
+  VenueDashboard = React.lazy(() => import('./screens/VenueDashboard'));
+};
 
 // What stands in while that chunk arrives. A skeleton, not a spinner
 // (SLOP-AUDIT rule 10): the navy header, the tab strip and the cards are
@@ -18740,6 +18776,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // mode chooser and venue onboarding sit in front of it, so a button that
   // works from all five is the thing that must always be there.
   const leaveCrashedScreen = () => {
+    // A remembered rejection outlives the screen. Walking away from a
+    // dashboard chunk that failed to download and not re-arming means the next
+    // tap on it, minutes later and back on wifi, throws the stored error
+    // before it asks for anything. See rearmLazyScreens.
+    rearmLazyScreens();
     // Only reachable from the fallback, i.e. only after that screen has
     // already failed to render. Dropping the two gate flags here is what stops
     // a crash in the mode chooser or in venue onboarding from being a trap:
@@ -18776,7 +18817,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <button
               type="button"
               className="hit44"
-              onClick={reset}
+              onClick={() => { rearmLazyScreens(); reset(); }}
               style={{ flex: '1 1 130px', padding: '13px 16px', borderRadius: '12px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '700', cursor: 'pointer' }}
             >
               Try again
