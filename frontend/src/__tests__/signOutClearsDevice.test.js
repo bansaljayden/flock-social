@@ -358,11 +358,27 @@ describe('convergence', () => {
   it('endSession is still the single teardown every session end reaches', () => {
     // The Log out button, the delete-account flow, the socket revoke and the
     // flock-session-expired event.
-    expect(APP).toContain('onLogout={() => endSession(\'\')}');
+    // This pins the PROPERTY, that onLogout routes into endSession and nowhere
+    // else, rather than the exact spelling of the arrow function. It used to
+    // pin the literal text of that line, and when onLogout gained a parameter
+    // so a deleted account could say so on the login screen, the pin went red
+    // while the property it exists to protect was untouched. A test that fails
+    // on a change it does not care about teaches people to edit tests until
+    // they pass, which is the habit that makes the next real failure look like
+    // noise.
+    expect(APP).toMatch(/onLogout=\{\(\w*\)\s*=>\s*endSession\(/);
     expect(APP).toContain("window.addEventListener('flock-session-expired', onExpired);");
     expect(APP).toContain('endSession(sessionEndCopy(reason)');
+    // The delete flow reaches the same teardown, and now hands it the
+    // account_deleted line instead of nothing. The toast it used to raise was
+    // painted onto a tree that unmounted in the same commit, so the person who
+    // deleted their account saw a bare login screen and could not tell it apart
+    // from a session expiring.
     const del = APP.indexOf('await deleteAccount(');
-    expect(APP.indexOf('if (onLogout) onLogout();', del)).toBeGreaterThan(del);
+    expect(del).toBeGreaterThan(-1);
+    const afterDelete = APP.slice(del, del + 900);
+    expect(afterDelete).toContain("if (onLogout) onLogout(sessionEndCopy('account_deleted'));");
+    expect(afterDelete).not.toContain("showToast('Your account has been deleted')");
   });
 });
 

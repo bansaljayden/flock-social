@@ -15325,7 +15325,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <DialogBehavior onClose={() => setShowDeleteAccount(false)} label="Delete account" />
               <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '360px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif" }}>
                 <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>Delete your account?</h3>
-                <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>This permanently deletes your account, messages, flocks, friends, and payment settings. <strong>This cannot be undone.</strong></p>
+                <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>This permanently deletes your account, messages, friends and payment settings. <strong>Any flock you created is deleted for everyone in it</strong>, along with its chat and votes, and they are told it was cancelled. Your direct messages disappear from the other person's app too. A few things are kept, and our Privacy Policy lists them. <strong>This cannot be undone.</strong></p>
                 {/* Proof of identity. The server requires the password for a
                     password account and a sign-in inside the last five minutes
                     for an OAuth one, so a stolen token alone can no longer
@@ -15374,8 +15374,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       try {
                         await deleteAccount(deletePassword || undefined);
                         setShowDeleteAccount(false);
-                        showToast('Your account has been deleted');
-                        if (onLogout) onLogout();
+                        // No toast here. setAuthUser(null) unmounts this tree in
+                        // the same commit, so a toast raised on it is never
+                        // painted. The login screen carries the message instead,
+                        // which is the surface that actually survives.
+                        if (onLogout) onLogout(sessionEndCopy('account_deleted'));
                       } catch (err) {
                         const reauth = err?.data?.reauthRequired;
                         if (err?.status === 429) {
@@ -20665,7 +20668,15 @@ const FlockApp = () => {
 
   // The Log out button routes through the same teardown as a revoke, with no
   // note: this sign-out is the one the user asked for.
-  return <FlockAppInner authUser={authUser} venueLoginFlag={venueLoginFlag} onLogout={() => endSession('')} />;
+  // onLogout takes an optional note for the login screen. It used to be
+  // hardwired to endSession(''), which is why deleting an account looked
+  // exactly like a session expiring: the delete handler raised a toast and then
+  // unmounted the tree that would have painted it, in the same commit, so the
+  // only thing the person saw was a login screen with a blank notice line. The
+  // copy for this already existed and was already delivered to the account's
+  // OTHER devices by the socket revalidation sweep. The device that did the
+  // deleting was the only one told nothing.
+  return <FlockAppInner authUser={authUser} venueLoginFlag={venueLoginFlag} onLogout={(note) => endSession(note || '')} />;
 };
 
 // Wrap with Google OAuth provider
