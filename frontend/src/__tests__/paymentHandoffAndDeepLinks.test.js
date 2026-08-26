@@ -708,13 +708,18 @@ describe('intentFromUrl', () => {
     expect(intentFromUrl('flock:' + '//dm/45')).toEqual({ screen: 'dm', userId: 45, type: 'link' });
   });
 
-  test('an invite link resolves to NOTHING, and that is the tracked gap', () => {
+  test('an invite link resolves to NOTHING, and that gap is now LIVE', () => {
     // https://www.flockcorp.com/i/<token> is the link the product spreads
     // through, and it is the one form intentFromUrl does not parse. There is
-    // also no screen in App.js that redeems an invite token. Turning on
-    // associated domains without both would replace "the invite opens Safari"
-    // with "the invite opens the app on the wrong screen", which is worse.
-    // This assertion has to be REPLACED by that work, not deleted around it.
+    // also no screen in App.js that redeems an invite token.
+    //
+    // This comment used to say turning on associated domains without both
+    // would be worse than leaving them off. Associated domains went on in
+    // 9fab8a9 and the association file claims `/i/*`, so that is no longer a
+    // warning about the future: on a phone with the app installed, an invite
+    // link is handed to the app today and the app has nowhere to put it. The
+    // assertion below is what is TRUE, not what is wanted. It has to be
+    // REPLACED by an invite-redemption route, not deleted around.
     expect(intentFromUrl('https://www.flockcorp.com/i/abc123')).toBeNull();
   });
 
@@ -913,12 +918,27 @@ describe('the iOS URL entry points are declared exactly when something produces 
     expect(schemes).toEqual([expect.stringMatching(/^com\.googleusercontent\.apps\./)]);
   });
 
-  test('associated domains stay out because they cannot be signed from this repo', () => {
-    // A different reason, and a human one: the entitlement only signs once the
+  test('associated domains are entitled and served, both halves or neither', () => {
+    // This test used to pin the key ABSENT: the entitlement only signs once the
     // Associated Domains capability is on App ID com.flockcorp.flock AND an
-    // apple-app-site-association file is served from flockcorp.com. Adding it
-    // first fails the archive.
-    expect(hasKey(entitlements, 'com.apple.developer.associated-domains')).toBe(false);
+    // apple-app-site-association file is served from flockcorp.com, and neither
+    // was true. Both are true as of 9fab8a9, so the assertion follows.
+    //
+    // The two halves fail together on purpose. An entitlement with nothing
+    // serving the association file is a deep link that silently never fires;
+    // an association file no build claims is a file nobody fetches.
+    expect(hasKey(entitlements, 'com.apple.developer.associated-domains')).toBe(true);
+    expect(fs.existsSync(path.join(REPO, 'frontend', 'api', 'apple-app-site-association.js'))).toBe(true);
+    expect(JSON.parse(readSource('frontend', 'vercel.json')).rewrites).toContainEqual({
+      source: '/.well-known/apple-app-site-association',
+      destination: '/api/apple-app-site-association',
+    });
+
+    // Both hosts, because iOS does not follow a redirect when it fetches the
+    // association file: whichever host the link names has to answer directly,
+    // so apex-only or www-only half works and reports nothing.
+    const domains = [...entitlements.matchAll(/<string>applinks:([^<]+)<\/string>/g)].map((m) => m[1]);
+    expect(domains.sort()).toEqual(['flockcorp.com', 'www.flockcorp.com']);
   });
 
   test('the plist still records both reasons where the next reader will look', () => {
