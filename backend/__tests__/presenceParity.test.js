@@ -268,11 +268,21 @@ test('the windows are still deliberately different, and in the documented direct
   // A review is written after the fact — often the next morning — so presence
   // counts for 30 days on BOTH signals. Forcing feedback's 3-hour tap window on
   // it would refuse nearly every honest review.
-  assert.match(sql, /created_at > NOW\(\) - INTERVAL '30 days'/, 'the check-in window is no longer the review window');
-  assert.match(sql, /f\.event_time BETWEEN NOW\(\) - INTERVAL '30 days'/, 'the flock window is no longer the review window');
+  // NOW_UTC accepts both the bare NOW() these clauses used to carry and the
+  // (NOW() AT TIME ZONE 'UTC') the event_time comparisons carry now. That
+  // rewrite was a real fix and not a rename: event_time is TIMESTAMP WITHOUT
+  // TIME ZONE holding a UTC wall clock, so a bare NOW() casts the naive side at
+  // the database session zone and the window was right only because Railway
+  // runs UTC. The WINDOW LENGTHS below are what this test is about and they are
+  // unchanged; only the spelling of "now" moved, and these patterns had pinned
+  // the spelling. venueDashboardClockBounds.test.js is what fails if a bare
+  // NOW() comes back against event_time, so widening here loses no guard.
+  const NOW_UTC = "(?:NOW\\(\\)|\\(NOW\\(\\) AT TIME ZONE 'UTC'\\))";
+  assert.match(sql, new RegExp(`created_at > ${NOW_UTC} - INTERVAL '30 days'`), 'the check-in window is no longer the review window');
+  assert.match(sql, new RegExp(`f\\.event_time BETWEEN ${NOW_UTC} - INTERVAL '30 days'`), 'the flock window is no longer the review window');
   // ...and reviewing while you are still there works: feedback's 12-hour lead
   // is kept on the forward edge.
-  assert.match(sql, /NOW\(\) \+ INTERVAL '12 hours'/);
+  assert.match(sql, new RegExp(`${NOW_UTC} \\+ INTERVAL '12 hours'`));
 
   // Feedback is a LIVE crowd report and keeps the tight windows. If this ever
   // matches 30 days, somebody has "unified" the two rules in the wrong
