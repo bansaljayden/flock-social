@@ -68,7 +68,13 @@ const USERS = {
 const MEMBERS = [1, 2, 3];
 
 let flock;         // the one flock row, as the column actually holds it
-let nonSkipCount;  // how many non-skipped budget submissions exist
+let nonSkipCount;  // non-skipped submissions whose author is STILL a member
+// Non-skipped submission rows left behind by authors who have LEFT the flock.
+// routes/budget.js counts submissions through MEMBER_SUBMISSIONS and never sees
+// these; a reader that queries budget_submissions with no membership join does.
+// The two counts are what this fixture used to answer from one variable, which
+// is why it could not see routes/billing.js counting the departed (2026-08-26).
+let departedNonSkip;
 let bills;         // [{ id, flock_id, paid_by, total_amount }]
 let shares;        // [{ bill_id, user_id, amount, committed }]
 let queries;       // { sql, params } for every statement
@@ -98,6 +104,7 @@ function reset() {
     updated_at: '2026-08-13T00:00:00.000Z',
   };
   nonSkipCount = 3;   // past the reveal threshold on every surface
+  departedNonSkip = 0;
   bills = [];
   shares = [];
   queries = [];
@@ -196,8 +203,12 @@ async function dispatch(text, params = []) {
       rowCount: 1,
     };
   }
-  if (has('SELECT COUNT(*)::int AS n FROM budget_submissions WHERE flock_id = $1 AND skipped = false')) {
-    return { rows: [{ n: nonSkipCount }], rowCount: 1 };
+  // routes/billing.js ghost-commit. Member-joined since 2026-08-26; the
+  // unjoined form is still answered so a route that regresses to it is visibly
+  // reading a DIFFERENT number rather than quietly reading the same one.
+  if (has('COUNT(*)::int AS n FROM budget_submissions')) {
+    const joined = has('JOIN flock_members');
+    return { rows: [{ n: joined ? nonSkipCount : nonSkipCount + departedNonSkip }], rowCount: 1 };
   }
   if (has('SELECT COUNT(*) AS submissions FROM budget_submissions WHERE flock_id = $1')) {
     return { rows: [{ submissions: String(nonSkipCount) }], rowCount: 1 };
@@ -396,6 +407,34 @@ test('the band is applied on TOP of the reveal threshold, not instead of it', as
   const ghost = await call('POST', `/api/billing/${FLOCK_ID}/ghost-commit`, 1);
   assert.strictEqual(ghost.status, 400, 'ghost commit opened below the threshold');
   for (const res of [detail, list, updated, budget, ghost]) assertNoRawMin(res, 'a below-threshold read');
+});
+
+test('a submitter who LEAVES closes the reveal on the ghost commit too', async () => {
+  // Three people submitted, the budget locked on those three, and then two of
+  // them left the flock. routes/budget.js counts submissions through
+  // MEMBER_SUBMISSIONS, so isReady is re-evaluated on every read and goes back
+  // to false: the band it would publish is now a band around the ONE person
+  // still in the room, which is the reveal the threshold exists to prevent.
+  //
+  // routes/billing.js gated its ghost commit on the same threshold but counted
+  // budget_submissions with no membership join, and a submission row is
+  // deliberately left behind when its author leaves. So it still counted three
+  // and still handed out the band, from a route that also WRITES that number
+  // into a bill_split_shares row for GET /api/billing/:flockId to serve later.
+  //
+  // The old fixture answered both count statements from one variable, so the
+  // two routes could not disagree in it however far apart they drifted.
+  nonSkipCount = 1;
+  departedNonSkip = 2;
+
+  const budget = await call('GET', `/api/budget/${FLOCK_ID}`, 1);
+  const ghost = await call('POST', `/api/billing/${FLOCK_ID}/ghost-commit`, 1);
+  assertQueriesUnderstood();
+
+  assert.strictEqual(budget.body.ceiling, null, 'the budget route withheld, as it should');
+  assert.strictEqual(ghost.status, 400, 'the ghost commit published a ceiling the budget route withheld');
+  assert.strictEqual(shares.length, 0, 'and it must not have written the band into a share row');
+  for (const res of [budget, ghost]) assertNoRawMin(res, 'a read after the submitters left');
 });
 
 test('a NULL cached ceiling stays null rather than becoming a band', async () => {
