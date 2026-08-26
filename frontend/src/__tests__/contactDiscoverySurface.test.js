@@ -101,8 +101,8 @@ describe('the permission prompt fires only after the screen that explains it', (
   });
 
   test('the service still refuses to read the book at module load', () => {
-    // Pinned in services/contacts.js by its own suite too; repeated here
-    // because this file is about the screen that decides when to ask.
+    // Pinned by the executed block at the bottom of this file, which imports
+    // the module and asserts the plugin was never touched by the import.
     expect(contactsService).toMatch(/export async function readContactPhoneNumbers\(/);
   });
 });
@@ -205,5 +205,216 @@ describe('the sensor cards report a band, not a measurement', () => {
     // The bands themselves stay.
     expect(app).toContain("{ text: 'Quiet'");
     expect(app).toContain("{ text: 'Loud'");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The service itself, executed rather than read.
+//
+// Everything above this line greps source text, and a grep over this boundary
+// is worth less than it looks. Measured 2026-08-26 by hand-mutating
+// services/contacts.js one defect at a time and running all 1,666 assertions:
+// never firing the iOS prompt, dropping the denial throw, treating iOS 18
+// limited access as a refusal, sending every number undeduped, removing the
+// batch ceiling and turning a 429 back into a hard failure ALL stayed green.
+// The file is the privacy boundary for the address book and it had no
+// behavioural test of any kind. These run it against a stand-in plugin.
+// ---------------------------------------------------------------------------
+
+const mockPlugin = {
+  checkPermissions: jest.fn(),
+  requestPermissions: jest.fn(),
+  getContacts: jest.fn(),
+};
+jest.mock('@capacitor-community/contacts', () => ({ Contacts: mockPlugin }));
+
+// eslint-disable-next-line global-require
+const service = require('../services/contacts');
+
+const asNative = () => { window.Capacitor = { isNativePlatform: () => true }; };
+const asPlainWeb = () => { delete window.Capacitor; };
+
+describe('services/contacts, run against a stand-in address book', () => {
+  beforeEach(() => {
+    mockPlugin.checkPermissions.mockReset();
+    mockPlugin.requestPermissions.mockReset();
+    mockPlugin.getContacts.mockReset();
+    asNative();
+  });
+  afterEach(asPlainWeb);
+
+  test('importing the module touches no mockPlugin method', () => {
+    // The module-load rule, proven rather than described. `service` was
+    // required at the top of this block and nothing has been called since.
+    expect(mockPlugin.checkPermissions).not.toHaveBeenCalled();
+    expect(mockPlugin.requestPermissions).not.toHaveBeenCalled();
+    expect(mockPlugin.getContacts).not.toHaveBeenCalled();
+  });
+
+  test('an unasked device is asked, exactly once, and then read', async () => {
+    // requestPermissions IS the iOS dialog. A version of this file that only
+    // ever checked would leave a fresh install stuck on "denied" forever with
+    // the user never having seen a prompt.
+    mockPlugin.checkPermissions.mockResolvedValue({ contacts: 'prompt' });
+    mockPlugin.requestPermissions.mockResolvedValue({ contacts: 'granted' });
+    mockPlugin.getContacts.mockResolvedValue({ contacts: [{ phones: [{ type: 'mobile', number: '555-000-1111' }] }] });
+
+    const out = await service.readContactPhoneNumbers();
+    expect(mockPlugin.requestPermissions).toHaveBeenCalledTimes(1);
+    expect(out.permission).toBe('granted');
+    expect(out.numbers).toEqual(['555-000-1111']);
+  });
+
+  test('an already-granted device is read without a second dialog', async () => {
+    mockPlugin.checkPermissions.mockResolvedValue({ contacts: 'granted' });
+    mockPlugin.getContacts.mockResolvedValue({ contacts: [{ phones: [{ type: 'mobile', number: '5550002222' }] }] });
+
+    await service.readContactPhoneNumbers();
+    expect(mockPlugin.requestPermissions).not.toHaveBeenCalled();
+  });
+
+  test('iOS 18 limited access is a success, not a refusal', async () => {
+    // The person chose which contacts the app may see. Throwing here would
+    // show them the "go to Settings" dead end after they had just said yes.
+    mockPlugin.checkPermissions.mockResolvedValue({ contacts: 'limited' });
+    mockPlugin.getContacts.mockResolvedValue({ contacts: [{ phones: [{ type: 'mobile', number: '5550003333' }] }] });
+
+    const out = await service.readContactPhoneNumbers();
+    expect(out.permission).toBe('limited');
+    expect(out.numbers).toEqual(['5550003333']);
+  });
+
+  test('a refusal throws code denied and never reaches the book', async () => {
+    mockPlugin.checkPermissions.mockResolvedValue({ contacts: 'denied' });
+    mockPlugin.getContacts.mockResolvedValue({ contacts: [{ phones: [{ type: 'mobile', number: '5550004444' }] }] });
+
+    await expect(service.readContactPhoneNumbers()).rejects.toMatchObject({ code: 'denied' });
+    expect(mockPlugin.getContacts).not.toHaveBeenCalled();
+  });
+
+  test('a prompt the person dismisses is a denial, not an unhandled throw', async () => {
+    mockPlugin.checkPermissions.mockResolvedValue({ contacts: 'prompt' });
+    mockPlugin.requestPermissions.mockRejectedValue(new Error('user dismissed'));
+
+    await expect(service.readContactPhoneNumbers()).rejects.toMatchObject({ code: 'denied' });
+    expect(mockPlugin.getContacts).not.toHaveBeenCalled();
+  });
+
+  test('the request asks for phone numbers and nothing else', async () => {
+    mockPlugin.checkPermissions.mockResolvedValue({ contacts: 'granted' });
+    mockPlugin.getContacts.mockResolvedValue({ contacts: [] });
+
+    await service.readContactPhoneNumbers();
+    const [[arg]] = mockPlugin.getContacts.mock.calls;
+    expect(Object.keys(arg.projection).sort()).toEqual(['phones']);
+    expect(arg.projection.phones).toBe(true);
+  });
+
+  test('two numbers per contact, mobile first, and no card field rides along', async () => {
+    mockPlugin.checkPermissions.mockResolvedValue({ contacts: 'granted' });
+    mockPlugin.getContacts.mockResolvedValue({
+      contacts: [{
+        name: 'Should Not Travel',
+        phones: [
+          { type: 'fax', number: '5551110000' },
+          { type: 'work', number: '5551112222' },
+          { type: 'mobile', number: '5551111111' },
+          { type: 'home', number: '5551113333' },
+        ],
+      }],
+    });
+
+    const out = await service.readContactPhoneNumbers();
+    expect(out.numbers).toEqual(['5551111111', '5551113333']);
+    expect(JSON.stringify(out)).not.toMatch(/Should Not Travel/);
+  });
+
+  test('the same number in three punctuations leaves the phone once', async () => {
+    mockPlugin.checkPermissions.mockResolvedValue({ contacts: 'granted' });
+    mockPlugin.getContacts.mockResolvedValue({
+      contacts: [
+        { phones: [{ type: 'mobile', number: '(555) 111-2222' }] },
+        { phones: [{ type: 'mobile', number: '555-111-2222' }] },
+        { phones: [{ type: 'mobile', number: '+1 5551112222' }] },
+        { phones: [{ type: 'mobile', number: '5559998888' }] },
+      ],
+    });
+
+    const out = await service.readContactPhoneNumbers();
+    expect(out.numbers).toHaveLength(2);
+    expect(out.contactCount).toBe(4);
+  });
+
+  test('a desktop browser with no picker says so instead of throwing something else', async () => {
+    asPlainWeb();
+    await expect(service.readContactPhoneNumbers()).rejects.toMatchObject({ code: 'unavailable' });
+  });
+});
+
+describe('syncContacts stops where the server said it would', () => {
+  const book = (n) => ({
+    contacts: Array.from({ length: n }, (_, i) => ({
+      phones: [{ type: 'mobile', number: `555${String(1000000 + i)}` }],
+    })),
+  });
+
+  beforeEach(() => {
+    mockPlugin.checkPermissions.mockReset();
+    mockPlugin.requestPermissions.mockReset();
+    mockPlugin.getContacts.mockReset();
+    asNative();
+    mockPlugin.checkPermissions.mockResolvedValue({ contacts: 'granted' });
+  });
+  afterEach(asPlainWeb);
+
+  test('a book bigger than the allowance is chunked and CAPPED, not sent whole', async () => {
+    // Without the cap the fourth batch is a 429 the user pays for, and on a
+    // large address book it is several of them.
+    mockPlugin.getContacts.mockResolvedValue(book(service.CONTACT_BATCH_SIZE * 5));
+    const lookup = jest.fn().mockResolvedValue({ users: [], checked: service.CONTACT_BATCH_SIZE });
+
+    const out = await service.syncContacts(lookup);
+    expect(lookup).toHaveBeenCalledTimes(service.MAX_BATCHES);
+    lookup.mock.calls.forEach(([batch]) => expect(batch.length).toBeLessThanOrEqual(service.CONTACT_BATCH_SIZE));
+    // And it must SAY it did not look at everything, or the empty state lies.
+    expect(out.throttled).toBe(true);
+    expect(out.total).toBe(service.CONTACT_BATCH_SIZE * 5);
+  });
+
+  test('a whole book that fits reports throttled false', async () => {
+    mockPlugin.getContacts.mockResolvedValue(book(10));
+    const lookup = jest.fn().mockResolvedValue({ users: [], checked: 10 });
+
+    const out = await service.syncContacts(lookup);
+    expect(out.throttled).toBe(false);
+    expect(lookup).toHaveBeenCalledTimes(1);
+  });
+
+  test('a 429 mid-run keeps what the earlier batches found', async () => {
+    mockPlugin.getContacts.mockResolvedValue(book(service.CONTACT_BATCH_SIZE * 3));
+    const rate = Object.assign(new Error('slow down'), { status: 429 });
+    const lookup = jest.fn()
+      .mockResolvedValueOnce({ users: [{ id: 7, name: 'Sam' }], checked: service.CONTACT_BATCH_SIZE })
+      .mockRejectedValueOnce(rate);
+
+    const out = await service.syncContacts(lookup);
+    expect(out.users).toEqual([{ id: 7, name: 'Sam' }]);
+    expect(out.throttled).toBe(true);
+    expect(lookup).toHaveBeenCalledTimes(2);
+  });
+
+  test('any other lookup failure is the caller problem it is, not a silent empty list', async () => {
+    mockPlugin.getContacts.mockResolvedValue(book(5));
+    const lookup = jest.fn().mockRejectedValue(Object.assign(new Error('nope'), { status: 500 }));
+
+    await expect(service.syncContacts(lookup)).rejects.toMatchObject({ status: 500 });
+  });
+
+  test('the same person found in two batches is one row', async () => {
+    mockPlugin.getContacts.mockResolvedValue(book(service.CONTACT_BATCH_SIZE * 2));
+    const lookup = jest.fn().mockResolvedValue({ users: [{ id: 4, name: 'Ali' }], checked: 1 });
+
+    const out = await service.syncContacts(lookup);
+    expect(out.users).toEqual([{ id: 4, name: 'Ali' }]);
   });
 });
