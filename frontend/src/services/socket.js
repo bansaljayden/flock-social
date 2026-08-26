@@ -309,8 +309,27 @@ export function disconnectSocket() {
 const NUDGE_INTERVAL_MS = 2000;
 let lastNudge = 0;
 
+function isHidden() {
+  return typeof document !== 'undefined' && document.visibilityState === 'hidden';
+}
+
 function nudge() {
   if (!socket || socket.connected) return;
+  // A HIDDEN DOCUMENT DOES NOT GET DIALLED BACK.
+  //
+  // 'online' fires whenever the device regains a network, and it fires whether
+  // or not anybody is looking at this app. Without this guard the first wifi
+  // blip after a tab went hidden rebuilt the connection that releaseWhileHidden
+  // had just given up, and nothing ever released it again, because the only
+  // thing that schedules a release is a visibilitychange INTO hidden, which
+  // will not fire again while the tab stays hidden. So "hidden means gone"
+  // held exactly until the network flickered once, and after that a backgrounded
+  // app sat connected, occupying a server slot and claiming its device is being
+  // looked at, for the rest of the session.
+  //
+  // Coming back is unaffected: visibilitychange -> visible calls nudgeNow(),
+  // which is the path a returning user actually takes.
+  if (isHidden()) return;
   const now = Date.now();
   if (now - lastNudge < NUDGE_INTERVAL_MS) return;
   lastNudge = now;
