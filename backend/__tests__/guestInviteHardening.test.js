@@ -312,6 +312,15 @@ test('the preview answers with a fixed allowlist and nothing else', async () => 
   // which now also covers the roster), bad tokens are still one uniform 404 on
   // every route including the new one, and the post-event payload still may not
   // grow.
+  //
+  // ── PIN UPDATE. `full` was added deliberately. ────────────────────────────
+  // POST /:token/join refuses a NEW account past LINK_JOIN_MEMBER_CAP with a
+  // 429, and the page had no way to know that before it sent a stranger
+  // through a whole signup that could not end in this flock. It is a BOOLEAN,
+  // not the member count and not the ceiling: the roster is already first
+  // names only, and the exact size of a group is not something a link needs to
+  // publish. Read off the accepted-member figure the `going` query already
+  // fetched, so it costs no extra round trip and cannot disagree with `going`.
   on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
   on(/SUM\(c\)::int AS votes/, () => ({ rows: [{ venue_name: 'The Bar', votes: 3 }] }));
   on(/AS members/, () => ({ rows: [{ members: 2, guests: 1 }] }));
@@ -324,10 +333,13 @@ test('the preview answers with a fixed allowlist and nothing else', async () => 
 
   const res = await call('GET', `/api/guest/${LEGACY_TOKEN}`);
   assert.strictEqual(res.status, 200);
-  assert.deepStrictEqual(Object.keys(res.body).sort(), ['flock', 'going', 'host', 'people', 'venues']);
+  assert.deepStrictEqual(Object.keys(res.body).sort(), ['flock', 'full', 'going', 'host', 'people', 'venues']);
   assert.deepStrictEqual(Object.keys(res.body.flock).sort(), ['chosenVenue', 'name', 'status', 'when']);
   assert.strictEqual(res.body.host, 'Ava', 'host is a FIRST name only');
   assert.strictEqual(res.body.going, 3, 'going is a count, never a list');
+  assert.strictEqual(res.body.full, false, 'a two-member flock is nowhere near the join cap');
+  assert.strictEqual(typeof res.body.full, 'boolean',
+    'the capacity answer is a yes or a no, never the count or the ceiling');
   assert.deepStrictEqual(res.body.venues, [{ venue_name: 'The Bar', votes: 3 }],
     'venue tallies are counts only — no voter identities cross the guest surface');
 
@@ -344,6 +356,55 @@ test('the preview answers with a fixed allowlist and nothing else', async () => 
     assert.ok(!/\s/.test(p.name), 'a surname must never cross this surface');
     assert.ok(p.name.length <= 24, 'names are length-capped');
   }
+});
+
+test('a plan at the join ceiling says so on the preview, before anybody signs up', async () => {
+  // THE SILENT DEAD END THIS CLOSES. POST /:token/join answers a new account
+  // past LINK_JOIN_MEMBER_CAP with a 429 the client cannot explain, so the
+  // page used to send a stranger through a whole signup that could not end in
+  // this flock and then say nothing at all about why. The preview now answers
+  // the same question the join route will answer, using the same count and the
+  // same ceiling, so the page can be honest before the trip starts.
+  //
+  // Pinned against the exported constant, not against 50, so raising the cap
+  // stays one edit.
+  on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
+  on(/SUM\(c\)::int AS votes/, () => ({ rows: [] }));
+  on(/AS members/, () => ({ rows: [{ members: guest.LINK_JOIN_MEMBER_CAP, guests: 0 }] }));
+  on(/FROM flock_members fm JOIN users u/, () => ({ rows: [] }));
+  on(/SELECT name, status FROM guest_rsvps/, () => ({ rows: [] }));
+
+  const res = await call('GET', `/api/guest/${LEGACY_TOKEN}`);
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.full, true);
+});
+
+test('one member under the ceiling is not reported as full', async () => {
+  // Off by one here is the difference between an honest page and a page that
+  // turns people away from a plan they could have joined.
+  on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
+  on(/SUM\(c\)::int AS votes/, () => ({ rows: [] }));
+  on(/AS members/, () => ({ rows: [{ members: guest.LINK_JOIN_MEMBER_CAP - 1, guests: 0 }] }));
+  on(/FROM flock_members fm JOIN users u/, () => ({ rows: [] }));
+  on(/SELECT name, status FROM guest_rsvps/, () => ({ rows: [] }));
+
+  const res = await call('GET', `/api/guest/${LEGACY_TOKEN}`);
+  assert.strictEqual(res.body.full, false);
+});
+
+test('guests do not fill the member ceiling, because they do not take member seats', async () => {
+  // guest_rsvps and flock_members are different tables with different caps.
+  // Counting guests toward the join ceiling would close the join band on a
+  // plan that has room, which is the mirror image of the bug above.
+  on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
+  on(/SUM\(c\)::int AS votes/, () => ({ rows: [] }));
+  on(/AS members/, () => ({ rows: [{ members: 3, guests: guest.LINK_JOIN_MEMBER_CAP }] }));
+  on(/FROM flock_members fm JOIN users u/, () => ({ rows: [] }));
+  on(/SELECT name, status FROM guest_rsvps/, () => ({ rows: [] }));
+
+  const res = await call('GET', `/api/guest/${LEGACY_TOKEN}`);
+  assert.strictEqual(res.body.full, false);
+  assert.strictEqual(res.body.going, 3 + guest.LINK_JOIN_MEMBER_CAP);
 });
 
 test('the roster is capped, and the cap is what the route advertises', async () => {

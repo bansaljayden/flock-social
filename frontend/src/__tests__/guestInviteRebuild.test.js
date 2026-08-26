@@ -298,6 +298,69 @@ describe('GuestInvite: the rebuilt screen', () => {
     expect(container.querySelectorAll('.gi-who-row')).toHaveLength(5);
   });
 
+  test('a full plan does not offer a join that the server will refuse', async () => {
+    // POST /api/guest/:token/join answers a new account past
+    // LINK_JOIN_MEMBER_CAP with a 429, and until the preview started saying so
+    // this page happily sent a stranger through a whole signup that could not
+    // end in this flock, then said nothing at all about why. A control whose
+    // only job is to reject you is worse than no control (SLOP-AUDIT H5).
+    const { container } = mount(okWith({ ...PLAN, full: true }));
+    await screen.findByRole('heading', { level: 1, name: /friday night out/i });
+
+    expect(container.querySelector('.gi-join-btn')).toBeNull();
+    expect(container.textContent).toMatch(/this plan is full/i);
+    // Not a dead end: the guest answer below still works, and it is named as
+    // the thing that does.
+    expect(container.querySelector('#gi-name')).not.toBeNull();
+    expect(screen.getByRole('button', { name: /i'm in/i })).toBeInTheDocument();
+    // Somebody ALREADY on the plan tapping their own link is a 200 that opens
+    // the chat, so that way in survives.
+    expect(screen.getByRole('button', { name: /sign in and open it/i })).toBeInTheDocument();
+  });
+
+  test('an old server that does not send `full` is not read as a full plan', async () => {
+    // The frontend deploys to Vercel and the backend to Railway, separately,
+    // so there is always a window where one is newer. An absent key must read
+    // as "not full", never as anything else. Same rule as hasRoster.
+    const { container } = mount(okWith(PLAN));
+    await screen.findByRole('heading', { level: 1, name: /friday night out/i });
+    expect(container.querySelector('.gi-join-btn')).not.toBeNull();
+    expect(container.textContent).not.toMatch(/this plan is full/i);
+
+    // And a truthy-but-not-true value is not enough either.
+    const { container: c2 } = mount(okWith({ ...PLAN, full: 'yes' }));
+    await waitFor(() => expect(c2.querySelector('.gi-join-btn')).not.toBeNull());
+  });
+
+  test('the join band names the email confirmation step instead of promising past it', async () => {
+    // THE REPORTED FAILURE, on the copy side. A password signup writes
+    // users.email_verified FALSE and the join route sits behind
+    // requireVerified, so "making an account puts you in this group chat" was
+    // not true of the default signup path at the moment it was read. SLOP-AUDIT
+    // rule 5: never claim what the shipping build does not do.
+    const { container } = mount(okWith(PLAN));
+    await screen.findByRole('heading', { level: 1, name: /friday night out/i });
+    const note = container.querySelector('.gi-join-note');
+    expect(note).not.toBeNull();
+    expect(note.textContent).toMatch(/confirmation email/i);
+  });
+
+  test('a closed link says links expire, because that is the state most people hit', async () => {
+    // migrations/028_invite_link_expiry.sql gave every link an expires_at, and
+    // resolveLink answers an expired row exactly as it answers a revoked one.
+    // Reporting only "switched off" told the most likely reader of this screen
+    // that the host had shut them out on purpose.
+    const { container } = mount(() => Promise.resolve({
+      ok: false, status: 404, json: () => Promise.resolve({}),
+    }));
+    await screen.findByRole('heading', { level: 1, name: /this invite has closed/i });
+    expect(container.textContent).toMatch(/stop working after/i);
+    // And it says what to do next, naming who can do it.
+    expect(container.textContent).toMatch(/ask whoever sent it for a new link/i);
+    // Never a retry button on a link that will not start working again.
+    expect(screen.queryByRole('button', { name: /try again/i })).toBeNull();
+  });
+
   test('a plan with no time and no venue says so rather than leaving a blank', async () => {
     const { container } = mount(okWith({ ...PLAN, venues: [] }));
     await screen.findByRole('heading', { level: 1, name: /friday night out/i });
@@ -472,7 +535,7 @@ describe('inviteHandoff: carrying the token across the auth round trip', () => {
     // the same shape, for the same reason.
     handoff.rememberInvite(NEW_TOKEN);
     joinFlockByInviteToken.mockRejectedValue(fail(403, { emailVerificationRequired: true }));
-    expect(await handoff.redeemPendingInvite()).toBeNull();
+    await handoff.redeemPendingInvite();
     expect(handoff.pendingInvite()).not.toBeNull();
 
     const netErr = new Error('offline');
@@ -480,6 +543,42 @@ describe('inviteHandoff: carrying the token across the auth round trip', () => {
     joinFlockByInviteToken.mockRejectedValue(netErr);
     expect(await handoff.redeemPendingInvite()).toBeNull();
     expect(handoff.pendingInvite()).not.toBeNull();
+  });
+
+  test('an unverified account is REPORTED, not swallowed into the same null as nothing-to-do', async () => {
+    // THE REPORTED FAILURE. A password signup writes users.email_verified
+    // FALSE, POST /api/guest/:token/join is behind requireVerified, and this
+    // used to answer that 403 with the same bare null it answers an empty
+    // stash with. The app therefore could not tell "we tried and they need to
+    // confirm their email" from "there is nothing here", so somebody who made
+    // an account specifically to get into a plan landed on an empty home
+    // screen with nothing said. The refusal is correct; the silence was not.
+    handoff.rememberInvite(NEW_TOKEN, { flockName: 'Friday Night Out' });
+    joinFlockByInviteToken.mockRejectedValue(fail(403, { emailVerificationRequired: true }));
+
+    const result = await handoff.redeemPendingInvite();
+    expect(result).toEqual({ needsEmailVerification: true, flockName: 'Friday Night Out' });
+    // Still kept, so the next boot after they click the link finishes the join.
+    expect(handoff.pendingInvite()).not.toBeNull();
+
+    // A plain 403 with no flag is a refusal that will never change, and it
+    // stays silent and still clears.
+    handoff.rememberInvite(NEW_TOKEN);
+    joinFlockByInviteToken.mockRejectedValue(fail(403));
+    expect(await handoff.redeemPendingInvite()).toBeNull();
+    expect(handoff.pendingInvite()).toBeNull();
+  });
+
+  test('the verification result carries no flockId, so a caller that has not been taught it navigates nowhere', async () => {
+    // The change has to be inert for App.js until App.js opts in: the old code
+    // returned null here and the caller does `if (invite) openJoinedFlock(invite)`.
+    handoff.rememberInvite(NEW_TOKEN);
+    joinFlockByInviteToken.mockRejectedValue(fail(403, { emailVerificationRequired: true }));
+    const result = await handoff.redeemPendingInvite();
+
+    expect(result.flockId).toBeUndefined();
+    expect(handoff.openJoinedFlock(result)).toBe(false);
+    expect(emitPushNavigation).not.toHaveBeenCalled();
   });
 
   test('a redeem never rejects, because it runs on the app boot path', async () => {
@@ -503,6 +602,97 @@ describe('inviteHandoff: carrying the token across the auth round trip', () => {
     });
   });
 
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// The share preview: what the link looks like when it lands in a group chat.
+//
+// api/invite-preview.js answers the preview bots (iMessage, WhatsApp, Slack,
+// Discord and the rest) through a user-agent rewrite in vercel.json, so the
+// link that spreads the product can say who sent it and what the plan is
+// instead of previewing as the marketing page. A bare-looking preview is a
+// link nobody taps, so this is a growth surface and not a nicety.
+// ───────────────────────────────────────────────────────────────────────────
+describe('invite-preview: the card the link draws in a group chat', () => {
+  // eslint-disable-next-line global-require
+  const preview = require('../../api/invite-preview');
+
+  const serverSrc = fs.readFileSync(
+    path.join(__dirname, '..', '..', '..', 'backend', 'routes', 'guest.js'),
+    'utf8'
+  );
+
+  test('a token of the length the server actually mints reaches the backend', () => {
+    // THIS WAS A LIVE BUG, and it is the same one GuestInvite.js already had
+    // and fixed. The regex here read {8,20} while newLinkToken mints
+    // LINK_TOKEN_LENGTH = 24, so EVERY invite link created since that widening
+    // failed the shape test, took the generic-tags branch, and previewed in
+    // iMessage as "Flock | Plans that actually happen" with no host, no plan
+    // and no time. Only the legacy 12-character tokens still previewed.
+    expect(preview.TOKEN_RE.test(NEW_TOKEN)).toBe(true);
+    expect(preview.readToken({ query: { token: NEW_TOKEN } })).toBe(NEW_TOKEN);
+  });
+
+  test('the accepted range is the range the server enforces, read out of the server', () => {
+    // A comment claiming the bound is what let the last one rot. Derive it.
+    const min = Number(/const LINK_TOKEN_PARAM_MIN = (\d+);/.exec(serverSrc)[1]);
+    const max = Number(/const LINK_TOKEN_PARAM_MAX = (\d+);/.exec(serverSrc)[1]);
+    const mint = Number(/const LINK_TOKEN_LENGTH = (\d+);/.exec(serverSrc)[1]);
+
+    expect(preview.TOKEN_RE.test('a'.repeat(min))).toBe(true);
+    expect(preview.TOKEN_RE.test('a'.repeat(max))).toBe(true);
+    expect(preview.TOKEN_RE.test('a'.repeat(mint))).toBe(true);
+    // And still bounded on both sides: this value is concatenated into og:url
+    // and into an href.
+    expect(preview.TOKEN_RE.test('a'.repeat(min - 1))).toBe(false);
+    expect(preview.TOKEN_RE.test('a'.repeat(max + 1))).toBe(false);
+    expect(preview.TOKEN_RE.test('has a space')).toBe(false);
+    expect(preview.TOKEN_RE.test('../../etc')).toBe(false);
+  });
+
+  test('every character the generator can emit passes the shape test', () => {
+    const alphabet = /const LINK_TOKEN_ALPHABET = '([^']+)'/.exec(serverSrc)[1];
+    for (const ch of alphabet) {
+      expect(preview.TOKEN_RE.test(ch.repeat(24))).toBe(true);
+    }
+  });
+
+  test('a real plan previews with the host, the plan and the time, not the marketing tags', () => {
+    const copy = preview.describe({
+      flock: { name: 'Friday Night Out', when: null, chosenVenue: 'Good Dog Bar', status: 'planning' },
+      host: 'Maya',
+      going: 3,
+    });
+    expect(copy.title).toBe('Maya invited you to Friday Night Out');
+    expect(copy.description).toMatch(/Good Dog Bar/);
+    expect(copy.description).toMatch(/3 going/);
+    expect(copy.title).not.toMatch(/Plans that actually happen/);
+  });
+
+  test('a cancelled plan is not previewed as an invitation', () => {
+    const copy = preview.describe({
+      flock: { name: 'Friday Night Out', when: null, chosenVenue: null, status: 'cancelled' },
+      host: 'Maya',
+      going: 3,
+    });
+    expect(copy.title).toMatch(/called off/i);
+    expect(copy.title).not.toMatch(/invited you/i);
+  });
+
+  test('no em dash reaches a preview card', () => {
+    // SLOP-AUDIT A2 / H18, on the one surface where the copy is read by people
+    // who have never heard of the product.
+    const html = preview.renderPage({
+      title: 'Maya invited you to Friday Night Out',
+      description: 'Fri, Jan 9 at 9:00 PM EST',
+      token: NEW_TOKEN,
+    });
+    expect(html).not.toContain(String.fromCharCode(0x2014));
+    expect(html).toContain('/i/' + NEW_TOKEN + '?open=1');
+  });
+});
+
+describe('inviteHandoff: App.js wiring', () => {
   test('App.js joins BEFORE it loads flocks, and opens the chat only after', () => {
     // Ordering is the whole correctness of the handoff: joining after the list
     // has loaded leaves the new flock missing, and navigating before the list
