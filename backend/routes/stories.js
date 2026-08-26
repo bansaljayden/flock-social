@@ -432,7 +432,14 @@ router.get('/',
       // placeholder the helper checks the shape of, and the viewer's id travels
       // as a parameter exactly as before.
       const result = await pool.query(
-        `SELECT s.id, s.user_id, s.image_url, s.caption, s.created_at, s.expires_at,
+        // Both instants are cast on the way out for the reason spelled out at
+        // STORY_LIMIT_STATE_SQL: these are naive TIMESTAMP columns and the driver
+        // reads a bare one as the SERVER's local calendar. The two refusal legs
+        // were cast when that was found and this leg was not, which left the
+        // module asserting an invariant it only half held.
+        `SELECT s.id, s.user_id, s.image_url, s.caption,
+                s.created_at::timestamptz AS created_at,
+                s.expires_at::timestamptz AS expires_at,
                 u.name AS user_name, u.profile_image_url
          FROM stories s
          JOIN users u ON u.id = s.user_id
@@ -619,7 +626,9 @@ router.post('/',
                   WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour') < $4::int
             AND (SELECT COUNT(*) FROM stories
                   WHERE user_id = $1 AND expires_at > NOW()) < $5::int
-         RETURNING id, user_id, caption, created_at, expires_at`,
+         RETURNING id, user_id, caption,
+                   created_at::timestamptz AS created_at,
+                   expires_at::timestamptz AS expires_at`,
         [req.user.id,
           // Re-typed from the sniffed bytes and stripped of metadata
           // (sanitizeStoredImage): the stored payload is the screened one with
@@ -736,6 +745,15 @@ router.delete('/:id',
 );
 
 module.exports = router;
+
+// A REAL export, not a test hook. server.js schedules this hourly, and the
+// first version of that reached into __test to get it. That works today and is
+// a trap tomorrow: the name says test-only, so the first person to wrap this
+// object in an `if (NODE_ENV !== 'production')` would be making an obviously
+// correct cleanup that takes the production boot down with it, at the one
+// moment nothing is watching. Boot code gets a supported name.
+module.exports.purgeExpiredStories = purgeExpiredStories;
+
 // Exposed for __tests__/storiesFlow.test.js. A property on the router changes
 // nothing about the mount in server.js (same pattern as routes/moderation.js).
 module.exports.__test = {
