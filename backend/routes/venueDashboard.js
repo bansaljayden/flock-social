@@ -684,8 +684,8 @@ router.get('/incoming-flocks', requirePremium, async (req, res) => {
        WHERE vv.venue_id = $1
          AND (f.status IS NULL OR f.status IN ('active', 'confirmed'))
          AND f.event_time IS NOT NULL
-         AND f.event_time > NOW() - INTERVAL '12 hours'
-         AND f.event_time < NOW() + INTERVAL '7 days'
+         AND f.event_time > (NOW() AT TIME ZONE 'UTC') - INTERVAL '12 hours'
+         AND f.event_time < (NOW() AT TIME ZONE 'UTC') + INTERVAL '7 days'
        ORDER BY f.event_time ASC
        LIMIT 20`,
       [venue.google_place_id]
@@ -761,8 +761,8 @@ async function countUnattributedVotes(venue) {
          AND LOWER(BTRIM(vv.venue_name)) = LOWER(BTRIM(vp.business_name))
          AND (f.status IS NULL OR f.status IN ('active', 'confirmed'))
          AND f.event_time IS NOT NULL
-         AND f.event_time > NOW() - INTERVAL '12 hours'
-         AND f.event_time < NOW() + INTERVAL '7 days'`,
+         AND f.event_time > (NOW() AT TIME ZONE 'UTC') - INTERVAL '12 hours'
+         AND f.event_time < (NOW() AT TIME ZONE 'UTC') + INTERVAL '7 days'`,
       [venue.id]
     );
     const n = rows && rows[0] ? Number(rows[0].n) : NaN;
@@ -1104,8 +1104,8 @@ router.post('/submit-review', requireVerified, [
              AND fm.status = 'accepted'
              AND f.venue_id = $2
              AND f.status IS DISTINCT FROM 'cancelled'
-             AND f.event_time BETWEEN NOW() - INTERVAL '30 days'
-                                  AND NOW() + INTERVAL '12 hours'
+             AND f.event_time BETWEEN (NOW() AT TIME ZONE 'UTC') - INTERVAL '30 days'
+                                  AND (NOW() AT TIME ZONE 'UTC') + INTERVAL '12 hours'
              AND (
                SELECT COUNT(*) FROM flock_members m
                WHERE m.flock_id = f.id AND m.status = 'accepted'
