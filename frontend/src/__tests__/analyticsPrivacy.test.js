@@ -83,9 +83,32 @@ describe('POSTHOG_PRIVACY_CONFIG is pinned to minimum collection', () => {
   });
 
   test('every option name exists in the installed SDK, so none can be a silently ignored typo', () => {
-    const typesFile = path.resolve(
-      SRC, '..', 'node_modules', '@posthog', 'types', 'dist', 'posthog-config.d.ts'
-    );
+    // Ask Node where the package is rather than hand-building a path into
+    // node_modules. The hardcoded '../node_modules/@posthog/types/dist/...'
+    // this replaces assumed one hoisting outcome: it is correct here and throws
+    // a bare ENOENT wherever npm hoists the package to the repo root instead,
+    // under pnpm or Yarn PnP, or after any release that moves dist/. That is a
+    // test that fails on the machine rather than on the code, and its message
+    // names a file path instead of the problem.
+    //
+    // The walk up from the resolved entry point is what survives a dist/ move.
+    // A miss throws with what to do about it, and is deliberately NOT a skip:
+    // skipping would mean these option names stop being checked against the SDK
+    // at all, which is the one thing this test is for.
+    const typesFile = (() => {
+      let dir = path.dirname(require.resolve('@posthog/types'));
+      for (let i = 0; i < 4; i += 1) {
+        const candidate = path.join(dir, 'posthog-config.d.ts');
+        if (fs.existsSync(candidate)) return candidate;
+        dir = path.dirname(dir);
+      }
+      throw new Error(
+        'posthog-config.d.ts is not next to the resolved @posthog/types entry point. '
+        + 'The package moved its declaration files. Find the new location and update '
+        + 'this lookup; do not delete the test, or a mistyped privacy option becomes '
+        + 'silently ignored again.'
+      );
+    })();
     const types = fs.readFileSync(typesFile, 'utf8');
     for (const key of Object.keys(POSTHOG_PRIVACY_CONFIG)) {
       expect({ key, declared: new RegExp(`^\\s*${key}\\??:`, 'm').test(types) })

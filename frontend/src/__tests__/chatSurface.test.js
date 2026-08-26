@@ -291,21 +291,50 @@ describe('layout', () => {
     // The DM row printed toLocaleDateString unconditionally, so a message that
     // landed a minute ago read "Aug 25" while the flock row beside it read
     // "3:45 PM" for the same instant.
-    const now = new Date();
-    const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const today = conversationStamp(now);
-    expect(today).toBe(now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
+    // THE CLOCK IS PINNED HERE, and it has to be.
+    //
+    // conversationStamp calls its own new Date() to find today's midnight, and
+    // this test called new Date() again to build the input. Two independent
+    // reads of the wall clock: a run that crosses local midnight between them
+    // gets 'Yesterday' back where it expects a time string, and the suite fails
+    // on the hour it ran rather than on the code. That is once a night, not
+    // never, and it fails nowhere a developer can reproduce it.
+    //
+    // Measured, not reasoned about: at 23:59:59.900 and 00:00:00.100, two reads
+    // 200ms apart, the test expects "11:59 PM" and conversationStamp answers
+    // "Yesterday".
+    //
+    // The 'Yesterday' line was ALSO suspected of a DST problem, because
+    // new Date(y, m, d) is LOCAL midnight and the zones whose transition lands
+    // there (America/Santiago, America/Havana, Asia/Beirut, Australia/Lord_Howe)
+    // have no such instant on the transition date. That one did NOT reproduce:
+    // this file passes under all four today. It is not the reason for the pin
+    // and is recorded only so the next person does not re-derive it.
+    //
+    // Mid-June at local noon is twelve hours from either midnight, which is the
+    // whole requirement.
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date(2026, 5, 17, 12, 0, 0));
 
-    // One hour before today's midnight is the previous calendar day, always.
-    expect(conversationStamp(new Date(midnight.getTime() - 60 * 60 * 1000))).toBe('Yesterday');
+      const now = new Date();
+      const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const today = conversationStamp(now);
+      expect(today).toBe(now.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
 
-    const older = new Date(midnight.getTime() - 20 * 24 * 60 * 60 * 1000);
-    expect(conversationStamp(older)).toBe(
-      older.toLocaleDateString([], { month: 'short', day: 'numeric' })
-    );
+      // One hour before today's midnight is the previous calendar day, always.
+      expect(conversationStamp(new Date(midnight.getTime() - 60 * 60 * 1000))).toBe('Yesterday');
 
-    expect(conversationStamp(null)).toBe('');
-    expect(conversationStamp('not a date')).toBe('');
+      const older = new Date(midnight.getTime() - 20 * 24 * 60 * 60 * 1000);
+      expect(conversationStamp(older)).toBe(
+        older.toLocaleDateString([], { month: 'short', day: 'numeric' })
+      );
+
+      expect(conversationStamp(null)).toBe('');
+      expect(conversationStamp('not a date')).toBe('');
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
 
