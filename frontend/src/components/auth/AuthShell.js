@@ -177,6 +177,45 @@ export const AuthNotice = ({ children }) => (
   children ? <div className="auth-notice" role="status">{children}</div> : null
 );
 
+/* ---------------------------------------------------------------------------
+   The age gate's client-side half, in ONE place.
+
+   `backend/utils/age.js` is the authority: it recomputes the age from the
+   stored date on every path and nothing here can talk it out of an answer.
+   MIN_AGE below is a copy of the number in that file, and it exists so the
+   two screens that draw a date-of-birth field cannot drift apart on what they
+   SAY. It must never become a second opinion on what is allowed.
+   --------------------------------------------------------------------------- */
+export const MIN_AGE = 13;
+
+export const ageFromDob = (value) => {
+  if (!value) return null;
+  const b = new Date(value);
+  if (isNaN(b.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - b.getFullYear();
+  const m = now.getMonth() - b.getMonth();
+  if (m < 0 || (m === 0 && now.getDate() < b.getDate())) age -= 1;
+  return age;
+};
+
+/* "2015-03-04" -> "March 4, 2015", for reading a date back to the person who
+   typed it. Split field by field rather than handed to `new Date(value)`: an
+   ISO date string is parsed as UTC midnight, so anywhere west of Greenwich
+   toLocaleDateString prints the day BEFORE. On a panel whose whole job is
+   "check this date", showing a different date than the field holds is the one
+   failure it cannot have. Returns the raw string if the shape is unfamiliar,
+   which is still the value the field is carrying. */
+export const formatDob = (value) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(value || ''));
+  if (!m) return String(value || '');
+  const months = ['January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'];
+  const month = months[Number(m[2]) - 1];
+  if (!month) return String(value);
+  return `${month} ${Number(m[3])}, ${m[1]}`;
+};
+
 /* A label with a link on the same line, for "Password ... Forgot password?".
    The link is the smaller, quieter half: it is a way out of the screen, not the
    thing the screen is for. */
@@ -382,6 +421,39 @@ const AUTH_CSS = `
   border: 1px solid rgba(52,211,153,0.30);
   color: ${AUTH.green}; font-size: 13.5px; font-weight: 500; line-height: 1.45;
 }
+
+/* The read-back panel on the sign-in screen's date-of-birth field. Not an
+   error and not styled as one: at this point nothing has gone wrong and
+   nothing has been sent. It is the field's own value, in words, with the
+   consequence of sending it written out.
+
+   The two buttons carry IDENTICAL weight on purpose. Making "change the date"
+   the filled one would read as the screen telling a child to type a different
+   birthday, and making the confirm the filled one would push a teenager
+   through their own typo. Neither button is the recommended one, because the
+   screen has no business having an opinion about which is true. */
+.auth-check {
+  border-radius: 12px; padding: 13px 14px; margin-bottom: 18px;
+  background: rgba(244,239,227,0.06);
+  border: 1px solid rgba(244,239,227,0.24);
+  color: ${AUTH.cream}; font-size: 13.5px; line-height: 1.5;
+}
+.auth-check h2 {
+  margin: 0 0 6px; font-size: 14px; font-weight: 700; font-family: inherit;
+  color: ${AUTH.cream};
+}
+.auth-check p { margin: 0 0 6px; color: ${AUTH.cream2}; }
+.auth-check p:last-of-type { margin-bottom: 12px; }
+.auth-check-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.auth-check-actions button {
+  flex: 1 1 140px; min-height: 44px; padding: 10px 12px;
+  border-radius: 11px; border: 1px solid rgba(244,239,227,0.38);
+  background: none; color: ${AUTH.cream};
+  font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+  transition: background 0.15s ease;
+}
+.auth-check-actions button:hover { background: rgba(244,239,227,0.10); }
+.auth-check-actions button:active { transform: scale(0.985); }
 
 /* baseline alignment so the 13px label and the 13px link sit on one line, and
    the link keeps its 44px finger target through .hit44 without pushing the
