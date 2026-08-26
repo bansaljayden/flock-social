@@ -20,6 +20,22 @@
 # Nothing here touches the working repository. The filter runs on a throwaway
 # copy under a temp directory, which is deleted on exit.
 #
+# THREE GATES, IN THIS ORDER, AND EACH ONE EXISTS BECAUSE THE ONE ABOVE IT IS
+# NOT ENOUGH.
+#
+#   1. the strip list   removes whole PATHS from all history
+#   2. redactions.txt   removes LITERALS from inside files that must stay
+#   3. scan-secrets.py  refuses the push over anything credential-shaped that
+#                       nobody listed, across every blob in every commit
+#
+# 1 and 2 only ever stop something already known. On 2026-08-25 a real reused
+# personal password reached the public mirror because it was in neither list: it
+# was a plain word with two digits substituted, inside a file that legitimately
+# belongs in the repository, and gitleaks was green the entire six days it was
+# public because that shape has no signature to key on. 3 exists for exactly
+# that, and it is the only gate that can catch a secret nobody knew about. It
+# adds about twenty seconds and it is not optional.
+#
 # Usage:  bash tools/publish/publish-public.sh          # push
 #         bash tools/publish/publish-public.sh --dry-run  # build and report only
 
@@ -65,6 +81,12 @@ STRIP=(
   # privately, because a fresh clone with no redactions file would silently skip
   # the redaction step and the guard would have nothing to check.
   --path tools/publish/redactions.txt
+  # scan-allowlist.txt holds salted fingerprints, never plaintext, but a salted
+  # hash of a short human-chosen password is one dictionary run from the
+  # password, so it stays private for the same reason redactions.txt does. A
+  # public clone without it simply reports the known-safe hits again, which is
+  # the harmless direction to fail.
+  --path tools/publish/scan-allowlist.txt
   --path PUBLIC-REPO-AUDIT.md
   --path VENUE-ADVISOR.md
   --path PAYMENTS-ROUTING.md
@@ -150,13 +172,41 @@ if [ -s "$REDACTIONS" ]; then
   echo "    redaction verified: every literal absent from all history"
 fi
 
+# ---------------------------------------------------------------------------
+# SCAN FOR SECRETS NOBODY HAS LISTED YET.
+# ---------------------------------------------------------------------------
+# Everything above this line stops something already known: a path on the strip
+# list, a literal in redactions.txt. The 2026-08-25 leak was neither. It was a
+# real password nobody had thought to write down anywhere, in a file that
+# legitimately belongs in the repository, in a shape gitleaks structurally
+# cannot see.
+#
+# So the last gate is a scanner that judges values by the POSITION they sit in
+# rather than by whether they look like a key, run over every blob in every
+# commit of the filtered mirror. It runs AFTER the redaction pass, so a listed
+# literal is already gone and only the unknown reaches it, and it exits non-zero
+# on any finding, which refuses the push.
+#
+# Reading the allowlist from $SRC and not from the mirror is deliberate: the
+# mirror has had it stripped by the filter above.
+echo "==> scanning every blob in every commit for unlisted secrets"
+if ! python "$SRC/tools/publish/scan-secrets.py" \
+       --repo "$WORK/mirror" \
+       --allowlist "$SRC/tools/publish/scan-allowlist.txt"; then
+  echo "REFUSING TO PUSH: the secret scan above is not clean." >&2
+  echo "Judge each finding. Real ones go in redactions.txt AND get rotated;" >&2
+  echo "false ones go in scan-allowlist.txt with a reason. Nothing gets skipped." >&2
+  exit 1
+fi
+
 AFTER_COMMITS="$(git rev-list --count HEAD)"
 SIZE="$(git count-objects -vH | awk '/size-pack/{print $2, $3}')"
 
 echo "==> verifying nothing excluded survived"
 FAIL=0
 for p in backend/scripts/ml/models/crowd_model.onnx backend/scripts/ml/models/model_metadata.json \
-         backend/.env frontend/.env.production mobile/android/app/debug.keystore; do
+         backend/.env frontend/.env.production mobile/android/app/debug.keystore \
+         tools/publish/redactions.txt tools/publish/scan-allowlist.txt; do
   n="$(git log --all --oneline -- "$p" | wc -l | tr -d ' ')"
   if [ "$n" != "0" ]; then echo "    LEAK: $p still in $n commits" >&2; FAIL=1; fi
 done
