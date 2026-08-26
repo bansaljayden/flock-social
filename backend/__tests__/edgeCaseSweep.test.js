@@ -773,7 +773,12 @@ const PENDING_ROW = { id: 55, status: 'pending', requester_id: 2 };
 
 function friendFixtures({ existing = [], target = [{ id: 2, name: 'Ben' }], blocks = [] } = {}) {
   handlers.push([/^SELECT id, status, requester_id FROM friendships/i, () => ({ rows: existing, rowCount: existing.length })]);
-  handlers.push([/^SELECT id, name FROM users WHERE id = \$1$/i, () => ({ rows: target, rowCount: target.length })]);
+  // `is_banned` is optional in the pattern: routes/friends.js selects it in
+  // the same statement (a banned target folds into the existing miss rather
+  // than costing a second query) and routes/flocks.js does not. Fixture rows
+  // carry no is_banned, which reads as not banned, so these race tests stay
+  // about the race.
+  handlers.push([/^SELECT id, name(, is_banned)? FROM users WHERE id = \$1$/i, () => ({ rows: target, rowCount: target.length })]);
   handlers.push([/FROM user_blocks/i, () => ({ rows: blocks, rowCount: blocks.length })]);
 }
 

@@ -67,6 +67,7 @@ const VICTIM_AMOUNT = 47.13;
 
 let friendships;    // [{ id, requester_id, addressee_id, status }]
 let blocks;         // [[a, b]]
+let bannedIds;      // Set of userIds whose users.is_banned is TRUE
 let budgets;        // Map "userId" -> { amount, skipped }
 let flock;          // the one flock row
 let members;        // accepted member ids
@@ -83,6 +84,7 @@ let gates;          // name -> { remaining, waiters } rendezvous barriers
 function reset() {
   friendships = [];
   blocks = [];
+  bannedIds = new Set();
   budgets = new Map();
   flock = {
     id: FLOCK_ID, name: 'Rooftop Friday', creator_id: 1,
@@ -188,11 +190,15 @@ async function dispatch(text, params = [], ctx = null) {
     return { rows: ids.map((id) => ({ id })), rowCount: ids.length };
   }
 
-  // users directory
-  if (has('SELECT id, name FROM users WHERE id = $1')) {
+  // users directory. `is_banned` joined this statement when the ban gap was
+  // closed: POST /request and POST /add-by-code fold a banned row into the same
+  // single miss a missing row gets, so the column has to come back from the one
+  // query rather than a second one.
+  if (has('SELECT id, name, is_banned FROM users WHERE id = $1')) {
     const u = AUTHED[params[0]] || (Number(params[0]) >= 1 && Number(params[0]) <= 100
       ? { id: Number(params[0]), name: `User${params[0]}` } : null);
-    return { rows: u ? [{ id: u.id, name: u.name }] : [], rowCount: u ? 1 : 0 };
+    const banned = u ? bannedIds.has(Number(u.id)) : false;
+    return { rows: u ? [{ id: u.id, name: u.name, is_banned: banned }] : [], rowCount: u ? 1 : 0 };
   }
 
   // find-by-phone: the digest lookup, then the ONE batched friendship read.

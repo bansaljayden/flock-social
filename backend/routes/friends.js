@@ -151,6 +151,46 @@ async function severedByFreshBlock(a, b) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// A BAN HAS TO REACH THE PLACES A BLOCK ALREADY REACHES.
+// ---------------------------------------------------------------------------
+// Every relationship path in this file consults utils/blocks.js, and until now
+// not one of them consulted `users.is_banned`. POST /find-by-phone was the sole
+// exception, and its own header says why: "a banned account is not somebody to
+// hand anyone". That sentence was true of the whole file and enforced on one
+// route of it, because contact discovery was written last and the rest was
+// written before there was a ban.
+//
+// What that left, on a product whose floor is 13 and whose bans are handed out
+// for exactly this: a moderator bans an account, and Flock keeps offering it.
+// It came back from Quick Add as a suggestion with a face and a mutual-friend
+// count. A friend request aimed at it was accepted and answered "Friend request
+// sent", so the sender watched a request sit on Pending forever against an
+// account that can never sign in to accept it. A pending request it had sent
+// BEFORE the ban stayed at the top of the victim's requests screen, actionable,
+// and accepting it minted a live friendship. And GET /api/users/:id/card has
+// refused banned rows since it was written, so the friends list was already
+// offering a row whose profile card could not open.
+//
+// TWO SHAPES, matching what the rest of the repo already does:
+//
+//   LISTS filter, the same way they filter blocked accounts (`GET /`,
+//   /pending, /outgoing, /suggestions). Filtering is not deleting: an
+//   unbanned account reappears in every one of them with nothing to restore.
+//
+//   PROBES fold the banned row into the miss they already have. POST /request
+//   and POST /add-by-code answer their existing single `miss()`, and POST
+//   /accept answers its existing "No pending request from this user", byte
+//   for byte the answer a missing row and a blocked pair already get. A
+//   distinguishable "that account is banned" would be a NEW oracle: it
+//   confirms an id exists AND reports a moderation decision about a named
+//   person to a stranger. Same rule routes/users.js's card probe and
+//   routes/moderation.js's block probe were built on.
+//
+// The budget is charged before the ban is consulted, so a banned target costs
+// a probe exactly like any other miss and cannot be walked for free.
+const NOT_BANNED_SQL = 'COALESCE(u.is_banned, FALSE) = FALSE';
+
 // A CROSSED PAIR IS AN ORPHAN THAT NO SCREEN CAN CLEAR (§O round: "two things
 // at once", the other direction).
 //
@@ -274,8 +314,12 @@ router.post('/request',
       // Deliberately queried even when the budget is spent, so the exhausted
       // path does the same work as a genuine miss and cannot be separated from
       // it by response time.
-      const userCheck = await pool.query('SELECT id, name FROM users WHERE id = $1', [user_id]);
-      if (!withinBudget || userCheck.rows.length === 0) {
+      //
+      // is_banned rides along in the SAME statement rather than a second one,
+      // so a banned target and a missing one still cost one identical query and
+      // one identical 404 (see NOT_BANNED_SQL above).
+      const userCheck = await pool.query('SELECT id, name, is_banned FROM users WHERE id = $1', [user_id]);
+      if (!withinBudget || userCheck.rows.length === 0 || userCheck.rows[0].is_banned) {
         return miss();
       }
 
@@ -425,9 +469,25 @@ router.post('/accept',
         return res.status(404).json({ error: 'No pending request from this user' });
       }
 
+      // The requester may have been banned since they asked. A request sent
+      // before the ban is still a live pending row, and accepting it minted a
+      // friendship with an account moderation has removed. That is the one
+      // shape a ban most needs to stop, because the requests screen is where a
+      // stranger
+      // reaches a 13-year-old. Refused in the UPDATE itself rather than in a
+      // second round trip: nothing matches, so the existing `rows.length === 0`
+      // branch answers the same "No pending request from this user" a missing
+      // row and a blocked pair already answer (see NOT_BANNED_SQL).
+      //
+      // The row is NOT deleted, unlike the block path above it. A ban expires
+      // and can be lifted; GET /pending already stops listing the request, so
+      // it is invisible rather than lingering, and it comes back intact if the
+      // account is restored. Deleting would destroy a real request over a
+      // decision that is reversible.
       const result = await pool.query(
         `UPDATE friendships SET status = 'accepted'
          WHERE requester_id = $1 AND addressee_id = $2 AND status = 'pending'
+           AND EXISTS (SELECT 1 FROM users u WHERE u.id = $1 AND ${NOT_BANNED_SQL})
          RETURNING *`,
         [user_id, req.user.id]
       );
@@ -500,6 +560,7 @@ router.get('/', async (req, res) => {
        FROM friendships f
        JOIN users u ON u.id = CASE WHEN f.requester_id = $1 THEN f.addressee_id ELSE f.requester_id END
        WHERE (f.requester_id = $1 OR f.addressee_id = $1) AND f.status = 'accepted'
+         AND ${NOT_BANNED_SQL}
        ORDER BY u.name ASC`,
       [req.user.id]
     );
@@ -532,6 +593,7 @@ router.get('/pending', async (req, res) => {
        FROM friendships f
        JOIN users u ON u.id = f.requester_id
        WHERE f.addressee_id = $1 AND f.status = 'pending'
+         AND ${NOT_BANNED_SQL}
        ORDER BY f.created_at DESC`,
       [req.user.id]
     );
@@ -610,6 +672,7 @@ router.get('/outgoing', async (req, res) => {
        FROM friendships f
        JOIN users u ON u.id = f.addressee_id
        WHERE f.requester_id = $1 AND f.status = 'pending'
+         AND ${NOT_BANNED_SQL}
        ORDER BY f.created_at DESC`,
       [req.user.id]
     );
@@ -637,6 +700,7 @@ router.get('/suggestions', async (req, res) => {
        AND f2.status = 'accepted'
        AND (f1.requester_id = $1 OR f1.addressee_id = $1)
        AND u.id != $1
+       AND ${NOT_BANNED_SQL}
        AND NOT EXISTS (
          SELECT 1 FROM friendships
          WHERE ((requester_id = $1 AND addressee_id = u.id) OR (requester_id = u.id AND addressee_id = $1))
@@ -661,6 +725,7 @@ router.get('/suggestions', async (req, res) => {
          JOIN flock_members fm2 ON fm2.flock_id = fm1.flock_id AND fm2.user_id != fm1.user_id AND fm2.status = 'accepted'
          JOIN users u ON u.id = fm2.user_id
          WHERE fm1.user_id = $1 AND fm1.status = 'accepted'
+         AND ${NOT_BANNED_SQL}
          AND NOT EXISTS (
            SELECT 1 FROM friendships
            WHERE ((requester_id = $1 AND addressee_id = u.id) OR (requester_id = u.id AND addressee_id = $1))
@@ -741,8 +806,12 @@ router.post('/add-by-code',
 
       const withinBudget = existing.rows.length > 0 || friendProbeBudget.allow(req.user.id);
 
-      const userCheck = await pool.query('SELECT id, name FROM users WHERE id = $1', [targetUserId]);
-      if (!withinBudget || userCheck.rows.length === 0) {
+      // Same statement, same single miss, and the banned row folded into it.
+      // See NOT_BANNED_SQL. A friend code is a base36 user id, so this door is
+      // the id space walked with a different spelling and has to answer
+      // identically to POST /request.
+      const userCheck = await pool.query('SELECT id, name, is_banned FROM users WHERE id = $1', [targetUserId]);
+      if (!withinBudget || userCheck.rows.length === 0 || userCheck.rows[0].is_banned) {
         return miss();
       }
 
