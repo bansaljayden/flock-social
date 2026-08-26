@@ -777,13 +777,26 @@ test('a foreign window is not treated as our app', async () => {
   assert.deepStrictEqual(sw.state.opened, ['https://flockcorp.com/?flock=7']);
 });
 
+// The expectations here were written when the worker's fallback was a shorter,
+// worse copy of deepLinkPath, and they pinned that worse copy in place. Two of
+// the five were the exact defects the other two tap paths had already fixed:
+// `flock_invite` resolved to the flock CHAT, which reads against the ACCEPTED
+// list an invited flock is by definition not in, and `moderation_report`
+// resolved to "/", which is the "landed nowhere" case. The fallback now answers
+// what the backend answers, so this pins agreement rather than a snapshot of
+// one file.
 test('the type map still routes a notification sent before data.link existed', async () => {
   for (const [data, expected] of [
-    [{ type: 'flock_invite', flockId: '3' }, 'https://flockcorp.com/?flock=3'],
+    [{ type: 'flock_invite', flockId: '3' }, 'https://flockcorp.com/?invite=3'],
     [{ type: 'dm_message', senderId: '8' }, 'https://flockcorp.com/?dm=8'],
     [{ type: 'friend_request' }, 'https://flockcorp.com/?tab=you'],
+    [{ type: 'friend_accepted' }, 'https://flockcorp.com/?tab=you'],
+    [{ type: 'availability_pulse' }, 'https://flockcorp.com/?tab=home'],
+    [{ type: 'attendance_marked', flockId: '3' }, 'https://flockcorp.com/?tab=you'],
     [{ type: 'crowd_alert', flockId: '3' }, 'https://flockcorp.com/?flock=3'],
-    [{ type: 'moderation_report' }, 'https://flockcorp.com/'],
+    [{ type: 'flock_cancelled', flockId: '3' }, 'https://flockcorp.com/?flock=3'],
+    [{ type: 'flock_cancelled' }, 'https://flockcorp.com/?tab=chat'],
+    [{ type: 'moderation_report' }, 'https://flockcorp.com/?admin=true'],
   ]) {
     const sw = loadServiceWorker({ clients: [] });
     await sw.click(data); // eslint-disable-line no-await-in-loop
