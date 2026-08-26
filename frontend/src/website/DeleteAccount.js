@@ -125,6 +125,9 @@ export default function DeleteAccount() {
           those flocks: the whole chat, the RSVPs, and the votes, for every person who was
           in them. They are not moved to another owner. Flocks you only joined are left
           alone; you are removed from them, and the messages you sent in them go with you.
+          The people who were going to a plan you created are told it is off: in the app if
+          they have it open, and by notification if they do not. Nobody is left holding a plan
+          that no longer exists.
         </p>
         <p>
           Direct messages go too, on both sides. A DM belongs to the two people in it, so
@@ -139,15 +142,41 @@ export default function DeleteAccount() {
           legal or security obligations.
         </p>
         <p>
-          Three things survive a deletion, all explained in our{' '}
-          <a href="/privacy">Privacy Policy</a>. Reports and moderation records are kept, with
-          your account unlinked from them. If your account was banned when you deleted it, a
-          one-way hashed code of its email, phone number, and sign-in ID is kept for 12 months
-          to stop the ban from being dodged; that code can't be turned back into your info and
-          expires on its own. And one row per finished plan is kept describing how it went
-          (group size, whether a budget was used, whether it was confirmed, where it stalled),
-          which carries no names, no messages, and no individual budget amounts.
+          Some things survive a deletion. Every one of them is listed in our{' '}
+          <a href="/privacy">Privacy Policy</a> under <em>What survives, and why</em>, and these are
+          the ones that can involve you.
         </p>
+        <ul>
+          <li>
+            Reports and moderation records are kept, with your account unlinked from them.
+          </li>
+          <li>
+            If your account was banned when you deleted it, a one-way hashed code of its
+            email, phone number, and sign-in ID is kept for 12 months to stop the ban from
+            being dodged. That code can't be turned back into your info and expires on its
+            own. Nothing like it is kept for an account that was not banned.
+          </li>
+          <li>
+            One row per finished plan describing how it went: group size, whether a budget was
+            used, whether it was confirmed, where it stalled. It carries no names, no
+            messages, and no individual budget amounts.
+          </li>
+          <li>
+            <strong>Your email address, if it is on our do-not-mail list.</strong> An address
+            goes on that list when mail to it hard-bounces, when someone reports us as spam,
+            or when someone uses an unsubscribe link. The list is keyed on the address itself
+            and has no link to your account, so deleting the account does not take the address
+            off it, and it has no expiry. It is there so we do not mail an address that should
+            not be mailed. Ask me at{' '}
+            <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a> and I will remove it.
+          </li>
+          <li>
+            Two references in other people's plans stop pointing at you rather than being
+            deleted: who paid, on a bill split inside a plan you did not create, and who made
+            an invite link that somebody else's flock still holds. Neither says anything about
+            you once your account is gone.
+          </li>
+        </ul>
       </section>
 
       {/* The shared SiteFooter: legal links, the one real mailbox, and the
