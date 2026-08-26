@@ -2,7 +2,9 @@
 
 ## Reporting a vulnerability
 
-Use GitHub's private vulnerability reporting: go to the **Security** tab of <https://github.com/bansaljayden/flock-social>, click **Report a vulnerability**, and write it up there. The report is visible only to you and to the maintainer, and it keeps the whole conversation, including the fix, in one thread. If you would rather not use GitHub, email **social@flockcorp.com** with the subject line "Security" instead.
+Email **social@flockcorp.com** with the subject line "Security". That mailbox is monitored and it is the channel that is guaranteed to reach a person.
+
+If the **Security** tab of <https://github.com/bansaljayden/flock-social> offers **Report a vulnerability**, that works too and is nicer for both of us: the report is visible only to you and to the maintainer, and it keeps the whole conversation, including the fix, in one thread. Use email if that button is not there.
 
 Either way, include what you found, where it is (a route, a file, a URL), and steps to reproduce it. A proof-of-concept helps; exploiting real user data does not, so please stop at the point where the problem is demonstrated.
 
