@@ -30,7 +30,12 @@
 #                                      login screen says a provider went missing.
 #      REACT_APP_FIREBASE_*            web push registration only. NATIVE push
 #                                      comes from GoogleService-Info.plist below,
-#                                      not from these six.
+#                                      not from these six. One of them is read by
+#                                      the plist step anyway:
+#                                      REACT_APP_FIREBASE_PROJECT_ID is compared
+#                                      against the plist's own PROJECT_ID, so the
+#                                      web half and the native half cannot end up
+#                                      naming two different Firebase projects.
 #      REACT_APP_REVENUECAT_IOS_KEY    the paywall can never show, even with
 #                                      PAYWALL_ENABLED set on the backend
 #      REACT_APP_SENTRY_DSN            crashes inside the shell go unreported
@@ -136,7 +141,7 @@ workflows:
 
           echo "$GOOGLE_SERVICE_INFO_PLIST" | base64 -d > "$PLIST" || true
 
-          # Three questions, all cheap, none of which anything downstream asks.
+          # Four questions, all cheap, none of which anything downstream asks.
           # A value pasted truncated, or with a stray character in it, decodes to
           # a file the Xcode project copies into Resources without looking at it,
           # and a plist for the wrong bundle id decodes perfectly. Firebase then
@@ -159,7 +164,37 @@ workflows:
             echo "PUSH CHECK FAILED: the decoded plist carries no usable API_KEY."
             exit 1
           fi
-          echo "GoogleService-Info.plist written and verified for $PLIST_BUNDLE. PUSH IS ON IN THIS BUILD."
+
+          # The bundle id says this plist belongs to an app CALLED
+          # com.flockcorp.flock. It does not say which Firebase project that app
+          # lives in, and one bundle id can be registered in several: a staging
+          # project and a production project is the ordinary reason for two.
+          #
+          # That gap is the other half of the failure the check above was
+          # written for. A plist from the wrong project decodes, lints, carries
+          # the right bundle id and passes everything here. On device it
+          # registers an FCM token in THAT project, APNs accepts it, and
+          # backend/services/firebaseService.js sends from whichever project its
+          # FIREBASE_SERVICE_ACCOUNT belongs to, so nothing is ever delivered
+          # and nothing anywhere reports a failure. That is the same shape as
+          # the wrong-app case and the bundle id cannot see it.
+          #
+          # The web half of this same variable group already names the project,
+          # so ask the two halves whether they agree. Only when the web variable
+          # is set: the REACT_APP_FIREBASE_* six are optional (web push only)
+          # and an absent one is not evidence of a mismatch.
+          PLIST_PROJECT=$(/usr/libexec/PlistBuddy -c "Print :PROJECT_ID" "$PLIST" 2>/dev/null || echo "")
+          if [ -n "${REACT_APP_FIREBASE_PROJECT_ID:-}" ] && [ "$PLIST_PROJECT" != "$REACT_APP_FIREBASE_PROJECT_ID" ]; then
+            echo "PUSH CHECK FAILED: this plist belongs to Firebase project '$PLIST_PROJECT', but"
+            echo "REACT_APP_FIREBASE_PROJECT_ID in the same variable group says '$REACT_APP_FIREBASE_PROJECT_ID'."
+            echo "One of the two came from the wrong project. A device would register its token in one"
+            echo "project while the server sends from the other, and every push would be accepted and"
+            echo "never delivered, on a build that installs and runs perfectly."
+            echo "FIX: take both from the one Firebase project the backend's FIREBASE_SERVICE_ACCOUNT"
+            echo "     belongs to, then re-run this build."
+            exit 1
+          fi
+          echo "GoogleService-Info.plist written and verified for $PLIST_BUNDLE, Firebase project '$PLIST_PROJECT'. PUSH IS ON IN THIS BUILD."
       - name: Set up code signing (reuse pinned cert + App Store profile)
         script: |
           keychain initialize
@@ -199,46 +234,73 @@ workflows:
             | python3 -c 'import json,sys; print(" ".join(json.load(sys.stdin).keys()))')
           echo "App.entitlements declares: $WANTED"
 
-          MATCH=""
+          # EVERY installed profile for this bundle id is read, not the first one
+          # the glob happens to return.
+          #
+          # This loop used to stop at the first match, and the case this step
+          # exists for is exactly the case that leaves TWO on disk: a capability
+          # was saved, Apple invalidated the profile that already existed, and a
+          # replacement was minted beside it. fetch-signing-files installs what
+          # App Store Connect holds for the id, so both arrive. Stopping at the
+          # first one made the answer depend on the filename sort order of two
+          # UUIDs, and `xcode-project use-profiles` picks by its own rule, so
+          # half the time the check read one profile and the archive signed with
+          # the other. Measured against this file's own script with two profiles
+          # planted on disk: the good one sorted first, the check said the
+          # profile carries every entitlement, and the stale one was still
+          # installed and still reachable by the archive.
+          #
+          # So no profile for this id may be missing anything. That is also what
+          # makes the FIX below true: deleting the stale one is the whole of it,
+          # and a check that had already skipped past it could not name it.
+          FOUND=0
+          STALE=0
           for p in "$PROFILE_DIR"/*.mobileprovision; do
             [ -e "$p" ] || continue
             security cms -D -i "$p" -o "$DECODED" 2>/dev/null || continue
             APPID=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" "$DECODED" 2>/dev/null || echo "")
             case "$APPID" in
-              *".$BUNDLE_ID") MATCH="$p"; break ;;
+              *".$BUNDLE_ID") ;;
+              *) continue ;;
             esac
+            FOUND=$((FOUND + 1))
+            echo "Profile: $(/usr/libexec/PlistBuddy -c 'Print :Name' "$DECODED")"
+            echo "UUID:    $(/usr/libexec/PlistBuddy -c 'Print :UUID' "$DECODED")"
+            echo "Created: $(/usr/libexec/PlistBuddy -c 'Print :CreationDate' "$DECODED")"
+
+            MISSING=""
+            for key in $WANTED; do
+              if ! /usr/libexec/PlistBuddy -c "Print :Entitlements:$key" "$DECODED" >/dev/null 2>&1; then
+                MISSING="$MISSING $key"
+              fi
+            done
+            if [ -n "$MISSING" ]; then
+              STALE=$((STALE + 1))
+              echo "  STALE, missing:$MISSING"
+            else
+              echo "  carries every entitlement this app declares."
+            fi
           done
 
-          if [ -z "$MATCH" ]; then
+          if [ "$FOUND" -eq 0 ]; then
             echo "SIGNING CHECK FAILED: no provisioning profile for $BUNDLE_ID was installed."
             echo "The fetch-signing-files step above is where that went wrong, not the archive."
             exit 1
           fi
 
-          security cms -D -i "$MATCH" -o "$DECODED"
-          echo "Profile: $(/usr/libexec/PlistBuddy -c 'Print :Name' "$DECODED")"
-          echo "UUID:    $(/usr/libexec/PlistBuddy -c 'Print :UUID' "$DECODED")"
-          echo "Created: $(/usr/libexec/PlistBuddy -c 'Print :CreationDate' "$DECODED")"
-
-          MISSING=""
-          for key in $WANTED; do
-            if ! /usr/libexec/PlistBuddy -c "Print :Entitlements:$key" "$DECODED" >/dev/null 2>&1; then
-              MISSING="$MISSING $key"
-            fi
-          done
-
-          if [ -n "$MISSING" ]; then
-            echo "SIGNING CHECK FAILED: the profile above is missing:$MISSING"
-            echo "The archive would have failed with \"provisioning profile does not match the entitlements file\"."
-            echo "CAUSE: a capability was turned on for App ID $BUNDLE_ID after this profile was created,"
-            echo "       and this build reused the stale profile instead of creating a new one."
-            echo "FIX: delete the profile named above in the Apple Developer portal"
+          if [ "$STALE" -gt 0 ]; then
+            echo "SIGNING CHECK FAILED: $STALE of the $FOUND installed profiles for $BUNDLE_ID is stale."
+            echo "The archive would have failed with \"provisioning profile does not match the entitlements file\","
+            echo "and it would have failed that way even if a good profile is also installed, because the"
+            echo "archive does not choose the profile this check happened to read first."
+            echo "CAUSE: a capability was turned on for App ID $BUNDLE_ID after that profile was created."
+            echo "FIX: delete every profile marked STALE above, by name, in the Apple Developer portal"
             echo "     (Certificates, Identifiers and Profiles, then Profiles) and re-run this build."
             echo "DO NOT delete the entitlement to make this pass. Sign in with Apple is required by"
             echo "     Guideline 4.8 while Google sign-in ships, and push needs aps-environment."
             exit 1
           fi
-          echo "The provisioning profile carries every entitlement this app declares."
+          echo "All $FOUND installed profiles for $BUNDLE_ID carry every entitlement this app declares."
       - name: Set unique build number (TestFlight rejects duplicates)
         script: |
           # App Store Connect rejects any upload whose CFBundleVersion was used before
