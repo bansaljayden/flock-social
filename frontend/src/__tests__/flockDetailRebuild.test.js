@@ -207,9 +207,13 @@ describe('the header speaks the icon system and names its controls', () => {
     expect(R_CODE).not.toContain('←');
   });
 
-  it('both icon-only header buttons have accessible names', () => {
+  it('the icon-only header button has an accessible name', () => {
     expect(header).toContain('aria-label="Back to your plans"');
-    expect(header).toContain('aria-label="Add to your calendar"');
+    // The add-to-calendar button left 2026-08-27: it wrote a manual row to
+    // the in-app Plans calendar where the flock is already auto-derived, so
+    // tapping it doubled the entry, and it never reached the device calendar
+    // users actually meant. Device-calendar export is on the design list.
+    expect(header).not.toContain('aria-label="Add to your calendar"');
   });
 
   it('the status chip row wraps instead of overflowing at 320px', () => {

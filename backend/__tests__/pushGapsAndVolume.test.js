@@ -194,7 +194,13 @@ test('moving the time notifies the members who are not looking at the app', asyn
     // dragging a time control must be one notification, not six.
     assert.strictEqual(p.kind, 'pushIfOfflineDebounced');
     assert.strictEqual(p.title, 'Plan updated');
-    assert.match(p.body, /^Dinner moved to /);
+    // The body deliberately does NOT carry the new time: event_time is a
+    // naive TIMESTAMP and the server runs in UTC, so the old "moved to
+    // Fri, 2:00 AM" string was the UTC wall clock, wrong hour and often
+    // wrong weekday, on the one notification whose whole job is the time.
+    // The app shows the correct client-local time on open.
+    assert.strictEqual(p.body, 'Dinner has a new time. Open it to see when.');
+    assert.doesNotMatch(p.body, /\d:\d\d/, 'no wall-clock time in a UTC process');
     assert.strictEqual(p.data.flockId, '42');
   }
 });

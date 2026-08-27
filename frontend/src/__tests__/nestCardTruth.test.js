@@ -170,9 +170,23 @@ describe('the home screen stops asking once the vote is cast', () => {
     expect(line.length).toBeGreaterThan(marker.length);
     expect(line.length).toBeLessThan(300);
     // eslint-disable-next-line no-new-func
-    const build = new Function('flocks', 'hasCastMyVote', `${line}\nreturn needsAction;`);
-    return (flocks) => build(flocks, hasCastMyVote);
+    const build = new Function('flocks', 'hasCastMyVote', 'votesLoadedRef', `${line}\nreturn needsAction;`);
+    return (flocks) => build(flocks, hasCastMyVote, { current: new Set(flocks.map((f) => f.id)) });
   })();
+
+  test('a flock whose votes were never loaded this session is not accused', () => {
+    // Cold boot seeds votes as [], so before this gate the card said
+    // "Needs your vote" about plans the person voted in yesterday until
+    // they happened to open one. An unloaded [] is not evidence.
+    const marker = 'const needsAction = flocks.filter(';
+    const at = APP.indexOf(marker);
+    const line = APP.slice(at, APP.indexOf(';', at) + 1);
+    // eslint-disable-next-line no-new-func
+    const build = new Function('flocks', 'hasCastMyVote', 'votesLoadedRef', `${line}
+return needsAction;`);
+    const unloaded = build([{ id: 9, status: 'voting', votes: [] }], hasCastMyVote, { current: new Set() });
+    expect(unloaded).toEqual([]);
+  });
 
   const voting = (id, votes) => ({ id, name: `Flock ${id}`, status: 'voting', votes });
 
