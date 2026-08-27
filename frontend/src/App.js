@@ -33,7 +33,7 @@ import EmergencySheet from './components/safety/EmergencySheet';
 import { deliverExport } from './services/dataExport';
 import PaywallSheet from './components/PaywallSheet';
 import { initPurchases } from './services/purchases';
-import { trackScreenView, trackFlockMessageSent, trackDmSent, getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock } from './services/api';
+import { trackScreenView, trackEmailVerified, trackFlockMessageSent, trackDmSent, getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock } from './services/api';
 import { m, AnimatePresence, MotionConfig, LazyMotion, domAnimation } from 'framer-motion';
 // BirdieStill is the same photographed mascot with the animation machinery
 // left out — the dashboards get the mark, never the rAF loop. WARM_BIRD is
@@ -18810,6 +18810,16 @@ const FlockApp = () => {
   // would need a real router, and the app navigates by state.
   useEffect(() => {
     document.title = 'Flock';
+  }, []);
+
+  // The email-verification outcome, reported once. readEmailVerifiedOutcome
+  // (module scope) parsed and stripped it from the URL at load; this turns
+  // that into the one funnel event for the step, a success ('1') and a
+  // failure ('expired'/'invalid'/'error') event at once. It is the wall
+  // between having an account and doing anything, and its failure side is the
+  // drop most likely to be silently killing activation.
+  useEffect(() => {
+    if (EMAIL_VERIFIED_OUTCOME) trackEmailVerified(EMAIL_VERIFIED_OUTCOME);
   }, []);
 
   // The server can cut a live session mid-flight: a ban, an account deletion,

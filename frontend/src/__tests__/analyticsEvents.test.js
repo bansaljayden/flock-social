@@ -90,6 +90,34 @@ describe('the NFC tag source is an allowlist, not a pass-through', () => {
   });
 });
 
+// The top of the funnel, where almost every visitor is lost today, had two
+// dark steps: arrival at the auth forms (screen_viewed only fires inside the
+// authed shell) and the email-verification wall (its outcome was computed and
+// then dropped). Both clamp to a fixed vocabulary; neither carries anything
+// about the person.
+describe('the top-of-funnel arrival and verification events', () => {
+  test('auth_screen_viewed reports the form shown, clamped to the two it knows', async () => {
+    api.trackAuthScreen('signup');
+    api.trackAuthScreen('login');
+    api.trackAuthScreen('whatever-someone-passed');
+    await flush();
+    expect(events('auth_screen_viewed')).toEqual([
+      { screen: 'signup' }, { screen: 'login' }, { screen: 'unknown' },
+    ]);
+  });
+
+  test('email_verified reports the outcome bucket, and one it does not know is a failure', async () => {
+    api.trackEmailVerified('1');
+    api.trackEmailVerified('expired');
+    api.trackEmailVerified('invalid');
+    api.trackEmailVerified('surprise');
+    await flush();
+    expect(events('email_verified')).toEqual([
+      { outcome: '1' }, { outcome: 'expired' }, { outcome: 'invalid' }, { outcome: 'error' },
+    ]);
+  });
+});
+
 describe('signup and login failures', () => {
   test('a 400 is recorded as a bucket, and the server copy is not', async () => {
     respondWith(400, { error: 'Email already registered' });

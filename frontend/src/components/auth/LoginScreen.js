@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { login } from '../../services/api';
+import React, { useState, useEffect } from 'react';
+import { login, trackAuthScreen } from '../../services/api';
 import useGoogleAuth, { isGoogleSignInAvailable } from './useGoogleAuth';
 import AppleSignInButton from './AppleSignInButton';
 import AuthShell, {
@@ -18,6 +18,12 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
   const [view, setView] = useState(() => (isPasswordResetRoute() ? 'reset' : 'login'));
   // Carried back from the reset flow, e.g. "Your password is set. Sign in."
   const [notice, setNotice] = useState('');
+
+  // The arrival event for the login form, and only the login form: this
+  // component also hosts the password-reset screens, so a /reset-password
+  // landing must not be counted as a sign-in view. Fires whenever the login
+  // view is the one actually on screen.
+  useEffect(() => { if (view === 'login') trackAuthScreen('login'); }, [view]);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
