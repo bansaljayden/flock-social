@@ -153,9 +153,11 @@ function deepLinkPath(data = {}) {
   // "Free tonight" is answered from the Nest, which is where the Tonight
   // control and the start-a-plan button are.
   if (type === 'availability_pulse') return '/?tab=home';
-  // Admin only. This used to resolve to '/', so tapping a report alert did
-  // nothing at all.
-  if (type === 'moderation_report') return '/?admin=true';
+  // Admin only, and straight to the reports queue: /admin/moderation is a
+  // top-level page the web client serves. This resolved to '/' once (tapping
+  // did nothing at all) and then to '/?admin=true', which the app turned into
+  // the analytics dashboard, one screen short of the queue the alert names.
+  if (type === 'moderation_report') return '/admin/moderation';
   // The SOS tap is routed from the data payload, not a URL. Its live fields are
   // a person's name and their coordinates, which do not belong in a query
   // string, so this deliberately returns no deep link: a native tap and a web

@@ -126,7 +126,7 @@ test('the types that used to resolve to nothing now have a destination', () => {
   const { deepLinkPath } = firebaseService;
   // This one did nothing at all when tapped: '/' on the link side and null out
   // of the client's intent parser.
-  assert.strictEqual(deepLinkPath({ type: 'moderation_report', reportId: '3' }), '/?admin=true');
+  assert.strictEqual(deepLinkPath({ type: 'moderation_report', reportId: '3' }), '/admin/moderation');
   assert.strictEqual(deepLinkPath({ type: 'friend_accepted', fromUserId: '4' }), '/?tab=you');
   assert.strictEqual(deepLinkPath({ type: 'availability_pulse', fromUserId: '4' }), '/?tab=home');
   // A cancellation whose flock is already deleted carries no id on purpose:
@@ -796,7 +796,7 @@ test('the type map still routes a notification sent before data.link existed', a
     [{ type: 'crowd_alert', flockId: '3' }, 'https://flockcorp.com/?flock=3'],
     [{ type: 'flock_cancelled', flockId: '3' }, 'https://flockcorp.com/?flock=3'],
     [{ type: 'flock_cancelled' }, 'https://flockcorp.com/?tab=chat'],
-    [{ type: 'moderation_report' }, 'https://flockcorp.com/?admin=true'],
+    [{ type: 'moderation_report' }, 'https://flockcorp.com/admin/moderation'],
   ]) {
     const sw = loadServiceWorker({ clients: [] });
     await sw.click(data); // eslint-disable-line no-await-in-loop
