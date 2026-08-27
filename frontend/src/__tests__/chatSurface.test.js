@@ -421,3 +421,147 @@ describe('a message that leaves the composer arrives, fails, or says which', () 
     expect(body).toMatch(/venue_data: failedMsg\.venue_data \|\| null/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// THE SEND BUTTON THAT LIT UP FOR A BOXFUL OF SPACES.
+//
+// `chatInputHasText` is the only thing arming Send on both chat screens, and
+// both input handlers write it. Both computed `!!e.target.value`, which is
+// true for a string of spaces, while every send path decides whether there is
+// anything to send with `.trim()`. So a composer holding whitespace showed a
+// live Send button, the tap reached `if (!text) return`, and nothing at all
+// happened: no bubble, no error, no cleared box, no way to tell a dead button
+// from a dropped message. `tools/e2e/chat.spec.js` drove it on the flock
+// screen; the DM composer is the same state through a different handler, and
+// it had no local guard of its own.
+//
+// screens/ChatDetail.js carries a second, local check on the flock side
+// (`composerHasRealText`). This is the shared boolean underneath both of them,
+// so the DM composer is correct at the source and the flock composer is
+// covered twice.
+//
+// EXECUTED, not pinned. Both handlers are useCallbacks inside FlockAppInner,
+// so they are lifted out as source text and run against stand-in
+// collaborators, the same move this file already makes for the module-scope
+// helpers above. A pin refuses one spelling of one edit; this one refuses the
+// behaviour.
+// ---------------------------------------------------------------------------
+
+/** Lift a `const <name> = useCallback(...)` declared INSIDE a component. */
+function liftCallback(source, name) {
+  const marker = `  const ${name} = useCallback(`;
+  const start = source.indexOf(marker);
+  if (start === -1) throw new Error(`liftCallback: no \`${name} = useCallback(\` in source`);
+  let i = source.indexOf('=', start) + 1;
+  let depth = 0;
+  while (i < source.length) {
+    const ch = source[i];
+    const next = source[i + 1];
+    if (ch === '/' && next === '/') {
+      i = source.indexOf('\n', i);
+      if (i === -1) break;
+      continue;
+    }
+    if (ch === '/' && next === '*') {
+      const end = source.indexOf('*/', i + 2);
+      i = end === -1 ? source.length : end + 2;
+      continue;
+    }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch;
+      i += 1;
+      while (i < source.length) {
+        if (source[i] === '\\') { i += 2; continue; }
+        if (source[i] === quote) { i += 1; break; }
+        i += 1;
+      }
+      continue;
+    }
+    if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+    else if (ch === ')' || ch === ']' || ch === '}') depth -= 1;
+    else if (ch === ';' && depth === 0) return source.slice(start, i + 1);
+    i += 1;
+  }
+  throw new Error(`liftCallback: unterminated declaration for ${name}`);
+}
+
+/**
+ * Build one composer handler and hand back what it wrote. `useCallback` is the
+ * identity here, and every free name the body reads is supplied, so a name the
+ * body starts reading that this list does not carry is a ReferenceError rather
+ * than a silent undefined.
+ */
+function runComposerHandler(name, value, { threadOpen = true } = {}) {
+  const chatInputRef = { current: 'stale' };
+  let hasText = null;
+  const setChatInputHasText = (next) => {
+    hasText = typeof next === 'function' ? next(hasText) : next;
+  };
+  const noop = () => {};
+  const source = liftCallback(appSource, name);
+  // eslint-disable-next-line no-new-func
+  const factory = new Function(
+    'useCallback', 'chatInputRef', 'setChatInputHasText', 'selectedFlockId',
+    'selectedDmId', 'startTyping', 'stopTyping', 'dmStartTyping', 'dmStopTyping',
+    'typingActiveRef', 'typingTimeoutRef', 'dmTypingTimeoutRef',
+    `${source}\nreturn ${name};`
+  );
+  const handler = factory(
+    (fn) => fn, chatInputRef, setChatInputHasText,
+    threadOpen ? 7 : null, threadOpen ? 7 : null,
+    noop, noop, noop, noop,
+    { current: false }, { current: null }, { current: null }
+  );
+  handler({ target: { value } });
+  return { hasText, draft: chatInputRef.current };
+}
+
+describe('whitespace does not arm the Send button on either chat screen', () => {
+  const HANDLERS = [
+    ['handleChatInputChange', 'the flock composer'],
+    ['handleDmInputChange', 'the DM composer'],
+  ];
+
+  test('the lift found both handlers, so nothing below is running on nothing', () => {
+    HANDLERS.forEach(([name]) => {
+      const source = liftCallback(appSource, name);
+      expect(source.length).toBeGreaterThan(120);
+      expect(source).toContain('setChatInputHasText');
+    });
+  });
+
+  HANDLERS.forEach(([name, label]) => {
+    test(`${label} refuses to arm Send for spaces alone`, () => {
+      // Three spaces is what a thumb on a phone keyboard produces on the way
+      // to giving up on a sentence.
+      expect(runComposerHandler(name, '   ').hasText).toBe(false);
+      expect(runComposerHandler(name, '\n\t ').hasText).toBe(false);
+    });
+
+    test(`${label} still arms Send for real text, padded or not`, () => {
+      expect(runComposerHandler(name, 'hi').hasText).toBe(true);
+      // A leading space is ordinary and must not disarm anything.
+      expect(runComposerHandler(name, '  see you at 9  ').hasText).toBe(true);
+    });
+
+    test(`${label} disarms Send for an empty box`, () => {
+      expect(runComposerHandler(name, '').hasText).toBe(false);
+    });
+
+    test(`${label} still hands the untrimmed draft to the send path`, () => {
+      // The trim belongs to the BUTTON, not to the draft. The send path does
+      // its own trimming, and a handler that stored a trimmed value would
+      // stop somebody typing "see you at " and then a venue name.
+      expect(runComposerHandler(name, '  see you at  ').draft).toBe('  see you at  ');
+    });
+  });
+
+  test('the DM Send button is the one reading that boolean', () => {
+    // If this ever stops being true the executed tests above are describing a
+    // button nothing is wired to.
+    const bar = appSource.slice(appSource.indexOf('{/* Input bar'));
+    const send = bar.slice(0, bar.indexOf('</div>', bar.indexOf('aria-label="Send"')));
+    expect(send.length).toBeGreaterThan(200);
+    expect(send).toContain('disabled={!chatInputHasText}');
+  });
+});
