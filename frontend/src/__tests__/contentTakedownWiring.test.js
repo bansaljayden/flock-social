@@ -600,13 +600,13 @@ describe('the client is in step with routes/admin.js', () => {
     // The reply bar quotes the message body under "Replying to …", so a
     // takedown that leaves it open leaves the removed words on screen. Scoped
     // per type: messages.id and direct_messages.id are separate sequences.
-    expect(appSource).toContain(
-      "setReplyingTo(prev => (prev && sameContentId(prev.id, ev.contentId) ? null : prev))"
-    );
+    // The FLOCK half of this pin left 2026-08-27 with the flock reply
+    // feature itself: the affordance was wired to nothing and was removed,
+    // so no flock reply bar exists to leak removed words. DM reply is real
+    // and its hygiene stays pinned.
     expect(appSource).toContain(
       'setDmReplyingTo(prev => (prev && sameContentId(prev.id, ev.contentId) ? null : prev))'
     );
-    expect(appSource).toMatch(/if \(ev\.contentType === 'flock_message'\) \{\n\s+setReplyingTo\(/);
     // A promotion/event composer open on a row that was just taken down can
     // only ever answer 409 on Save.
     expect(appSource).toContain('if (hidden && editingPromo && sameContentId(editingPromo.id, ev.contentId)) {');
