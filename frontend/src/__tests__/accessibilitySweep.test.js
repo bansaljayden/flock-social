@@ -433,3 +433,310 @@ describe('states that arrive on their own announce themselves', () => {
     expect(app).toMatch(/<div role="status"[^>]*>\{editSuccess\}<\/div>/);
   });
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SECOND PASS, 2026-08-26: THINGS THAT ARE INVISIBLE AND STILL IN THE TREE.
+
+   Everything above this line is about what a control is CALLED. This block is
+   about whether a control is THERE, which turned out to be the larger problem
+   and the one no amount of aria-label work fixes.
+
+   Four defects, all of the same shape: a surface hides itself with a property
+   that stops paint and does nothing to focus.
+
+     A. THREE HEADER NAVS COLLAPSE BY ANIMATING TO ZERO WIDTH. The flock chat,
+        the DM thread and Discover each hide a group of controls behind a
+        "Features" pill by putting `maxWidth: 0` and `overflow: hidden` on
+        their container. That paints nothing, and it leaves every button
+        inside focusable and readable. Tab out of the flock chat's back arrow
+        landed on "Vote on a venue", "Invite friends", "Search messages" and
+        "Group cash pool", four controls zero pixels wide, before it reached
+        anything on screen.
+
+     B. DISCOVER'S LIVE EVENTS PANEL PARKS OFF THE RIGHT EDGE. Closed, it sits
+        at `translateX(100%)` behind `pointerEvents: 'none'` and a negative
+        z-index. Those stop a finger. Tab walked into its back arrow and its
+        "Search events" box anyway, both of them past the right edge of the
+        phone, and focusing them scrolled the whole app sideways.
+
+     C. THE TWO TYPING INDICATORS FADE TO `opacity: 0` AND KEEP THEIR TEXT.
+        A quiet chat still carried "Someone" and a bubble in the accessibility
+        tree at the bottom of the message list.
+
+     D. SEVEN OVERLAYS HAD NO DIALOG BEHAVIOUR AT ALL, the venue detail card
+        among them, which is the busiest overlay in the product. No focus
+        move, no Escape, no trap: the card covered the screen and Tab walked
+        around the map underneath it.
+
+   THE FIX IS `visibility`, AND THE OPEN STATE MUST BE `undefined`.
+   `visibility` is the one property that takes a subtree out of the tab order
+   and out of the accessibility tree while leaving layout alone. It also
+   INHERITS, and an explicit `visible` on a child BEATS a `hidden` ancestor.
+   The first version of this fix wrote `'visible'` for the open state, and
+   because the whole Discover screen is held at `visibility: hidden` while
+   another tab is on screen, that put three Discover buttons into the tab
+   order of every other screen in the app. Hence the test below that allows
+   exactly one explicit open state in the codebase: the screen container that
+   has no hidden ancestor to fight with.
+
+   ON COMMENTS. Every scan below reads a comment-stripped copy of the source,
+   built from @babel/parser's own comment ranges rather than from a regex.
+   This file's prose quotes those style properties several times; a scan that
+   cannot tell code from comment would read this very paragraph as a
+   violation, or worse, as a pass.
+
+   ON EMPTY RESULTS. Each derived scan asserts a floor on how much it found
+   before it asserts anything about the contents. A scan that matches nothing
+   returns an empty array, and an empty array passes every "none of these are
+   broken" assertion ever written.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const parser = require('@babel/parser');
+
+/** The same source, with every comment blanked out. */
+const stripComments = (src) => {
+  const ast = parser.parse(src, { sourceType: 'module', plugins: ['jsx'], errorRecovery: true });
+  const chars = src.split('');
+  (ast.comments || []).forEach((c) => {
+    for (let i = c.start; i < c.end; i += 1) chars[i] = ' ';
+  });
+  return chars.join('');
+};
+
+const APP_FILES = [
+  'App.js', 'screens/ChatDetail.js', 'screens/VenueDashboard.js', 'screens/AddFriends.js',
+  'components/EditProfileForm.js', 'components/NewDmModal.js', 'components/VerifyEmailSheet.js',
+];
+const code = APP_FILES.map((f) => stripComments(read(f))).join('\n');
+
+/** The `style={{ ... }}` object an offset sits inside. */
+const styleAround = (s, i) => {
+  const start = s.lastIndexOf('style={{', i);
+  if (start === -1) return null;
+  const end = s.indexOf('}}', i);
+  if (end === -1) return null;
+  return s.slice(start, end + 2);
+};
+
+describe('a container that hides its contents hides them from the keyboard too', () => {
+  // Every style that clips its children and fades them out: the three header
+  // navs and the two typing indicators. Derived, not listed, so a fourth one
+  // added tomorrow is held to the same rule on the day it is written.
+  const collapsers = (() => {
+    const found = [];
+    const re = /overflow: 'hidden'[^\n]*?opacity: (\w+) \? 1 : 0/g;
+    let m;
+    while ((m = re.exec(code)) !== null) {
+      const style = styleAround(code, m.index);
+      if (!style) continue;
+      found.push({ state: m[1], style });
+    }
+    return found;
+  })();
+
+  it('the scan finds the collapsing containers rather than an empty set', () => {
+    // Five when this was written: chatNavOpen, dmNavOpen, discoverNavOpen and
+    // the two typing indicators. Without this floor every assertion below
+    // passes on nothing the moment the pattern is written differently.
+    expect(collapsers.length).toBeGreaterThanOrEqual(5);
+    expect(collapsers.map((c) => c.state).sort())
+      .toEqual(['chatNavOpen', 'discoverNavOpen', 'dmIsTyping', 'dmNavOpen', 'isTyping']);
+  });
+
+  it('each one toggles visibility on the same state it fades on', () => {
+    const missing = collapsers
+      .filter((c) => !c.style.includes(`visibility: ${c.state} ? undefined : 'hidden'`))
+      .map((c) => `${c.state}: ${c.style.replace(/\s+/g, ' ').slice(0, 150)}`);
+    expect(missing).toEqual([]);
+  });
+
+  it('the collapse still animates, so the fix did not just delete the transition', () => {
+    // A `visibility` change is not animatable, so it is delayed out and
+    // instant in. Without the delay the group vanishes before it has slid.
+    collapsers.forEach((c) => {
+      expect(c.style).toMatch(
+        new RegExp(`visibility 0s linear \\$\\{${c.state} \\? '0s' : '[0-9.]+s'\\}`),
+      );
+    });
+  });
+
+  it('the open state is `undefined` everywhere but the one place it cannot be', () => {
+    // `visibility` inherits and an explicit open state on a child overrides a
+    // hidden ancestor. The ONE legitimate use is the Discover screen's own
+    // container, which is a child of the app shell with nothing above it
+    // holding it hidden. Every other toggle must leave the property unset so
+    // the ancestor wins.
+    const explicit = code.match(/visibility: \w+ \? 'visible'/g) || [];
+    expect(explicit).toEqual(["visibility: isExploreVisible ? 'visible'"]);
+  });
+});
+
+describe('the parked events panel is hidden, not merely un-clickable', () => {
+  it('the closed panel leaves the tab order', () => {
+    const at = code.indexOf('zIndex: showEventsView ? 45 : -1');
+    expect(at).toBeGreaterThan(-1);
+    const style = styleAround(code, at);
+    expect(style).toContain("pointerEvents: showEventsView ? 'auto' : 'none'");
+    expect(style).toContain("visibility: showEventsView ? undefined : 'hidden'");
+  });
+
+  it('it can still be left with a key while it is open', () => {
+    // Conditional on purpose: the wrapper is mounted for the whole session,
+    // so an unconditional marker would grab focus at app start.
+    expect(code).toContain('{showEventsView && <DialogBehavior modal={false}');
+  });
+});
+
+describe('every overlay that covers the app manages focus', () => {
+  // A full-bleed positioned container at a stacking level that puts it over
+  // the product, holding something focusable. Derived rather than listed: the
+  // seven that were missing had all been added after the last hand-written
+  // list was.
+  const OFFLINE_GATE = "zIndex: 99999, backgroundColor: '#16283d'";
+  const overlays = (() => {
+    const re = /style=\{\{ ?position: '(?:fixed|absolute)',[^\n]*?(?:inset: 0|top: 0, left: 0, right: 0, bottom: 0)[^\n]*/g;
+    const found = [];
+    let m;
+    while ((m = re.exec(code)) !== null) {
+      const head = m[0];
+      const zi = /zIndex: ([^,}]+)/.exec(head);
+      const ziText = zi ? zi[1].trim() : '';
+      const ziNum = Number(ziText);
+      // A stateful z-index is an overlay that opens and closes. A literal one
+      // below 40 is paint: a gradient scrim, a photo wash, a focus ring.
+      if (!(ziText.includes('?') || (Number.isFinite(ziNum) && ziNum >= 40))) continue;
+      // A childless <div ... /> is a dismiss scrim. It has an onClick and
+      // nothing to focus, and wrapping it in a dialog would be wrong.
+      const tail = code.slice(m.index + head.length - 20, m.index + head.length + 8);
+      if (/\}\}\s*\/>/.test(tail)) continue;
+      const body = code.slice(m.index, m.index + 3200);
+      if (!/<button|<input|<textarea|<a href|<SearchInputLocal/.test(body)) continue;
+      found.push({
+        head: head.replace(/\s+/g, ' ').slice(0, 130),
+        hasDialog: /<DialogBehavior/.test(code.slice(Math.max(0, m.index - 400), m.index + 3200)),
+        isOfflineGate: head.includes(OFFLINE_GATE),
+      });
+    }
+    return found;
+  })();
+
+  it('the scan finds the overlays rather than an empty set', () => {
+    // 37 when this was written. The number moves; the floor is here so a
+    // refactor of how overlays are declared shows up as a failure rather than
+    // as a silently empty scan.
+    expect(overlays.length).toBeGreaterThanOrEqual(30);
+  });
+
+  it('each one carries a DialogBehavior, or is the offline gate', () => {
+    // OfflineGate is the single exception and it is not an overlay: it
+    // REPLACES the app when the network is gone. There is nothing behind it
+    // to trap focus away from and nothing to return focus to.
+    const missing = overlays.filter((o) => !o.hasDialog && !o.isOfflineGate).map((o) => o.head);
+    expect(missing).toEqual([]);
+  });
+
+  it('the offline gate really is in the set, so the exception is not a dead branch', () => {
+    expect(overlays.filter((o) => o.isOfflineGate).length).toBe(1);
+  });
+
+  it('the seven added in this pass are named, so a revert is loud', () => {
+    [
+      'onClose={closeVenueDetail}',                        // the venue detail card
+      'onClose={() => setEventDetail(null)}',              // the event detail screen
+      "label={editingContact ? 'Edit contact' : 'Add trusted contact'}",
+      'label="Crop photo"',
+      'label="Send this photo"',
+      'label="Share this venue"',
+      'modal={false} onClose={() => setShowSearchResults(false)}',
+    ].forEach((anchor) => expect(code).toContain(anchor));
+  });
+});
+
+describe('DialogBehavior hands focus back to something that can take it', () => {
+  const dialog = code.slice(
+    code.indexOf('const FOCUSABLE_SELECTOR'),
+    code.indexOf('SOS LOCATION TIMING'),
+  );
+
+  it('the slice under test is the helper and not an empty string', () => {
+    expect(dialog.length).toBeGreaterThan(2000);
+    expect(dialog).toContain('const DialogBehavior = ');
+  });
+
+  it('focusability is judged on computed visibility, not on the box', () => {
+    // This is the bug the whole section exists for. An element under a hidden
+    // ancestor keeps its width, its height and its client rects. A box-only
+    // test therefore calls it focusable, `.focus()` on it is a silent no-op,
+    // and focus is left on the document body.
+    expect(dialog).toMatch(/const isFocusable = /);
+    expect(dialog).toMatch(/cs\.visibility === 'hidden'/);
+    expect(dialog).toMatch(/cs\.display === 'none'/);
+  });
+
+  it('the Tab trap uses the same test as the focus restore', () => {
+    // Two different answers to "can this take focus" is how a trap ends up
+    // cycling onto a control nobody can reach.
+    expect(dialog).toMatch(/\.filter\(\(el\) => isFocusable\(el\) \|\| el === document\.activeElement\)/);
+  });
+
+  it('a restore onto the document body is refused rather than counted as success', () => {
+    expect(dialog).toMatch(/if \(!restoreTo \|\| restoreTo === document\.body\) return;/);
+  });
+
+  it('when the opener has hidden itself, focus goes to what replaced it', () => {
+    // "Vote on a venue" collapses the header nav on its way to opening the
+    // sheet, so by the time the sheet closes the opener is inside a hidden
+    // group. The walk finds the nearest ancestor still on screen and focuses
+    // the first control in it, which is the Features pill standing where the
+    // opener was.
+    expect(dialog).toMatch(/let hop = restoreTo\.parentElement;/);
+    expect(dialog).toMatch(/const near = Array\.from\(hop\.querySelectorAll\(FOCUSABLE_SELECTOR\)\)\.find\(isFocusable\);/);
+  });
+
+  it('the element that last held focus is remembered before the browser drops it', () => {
+    // A control that hides itself is blurred by the browser during the same
+    // commit that opens the sheet, so `document.activeElement` is already the
+    // document body by the time the effect runs.
+    expect(code).toMatch(/let lastFocusedElement = null;/);
+    expect(code).toMatch(/document\.addEventListener\('focusin'/);
+    expect(dialog).toMatch(/lastFocusedElement && !node\.contains\(lastFocusedElement\)/);
+  });
+
+  it('the cleanup still calls it, so the helper is not orphaned', () => {
+    expect(dialog).toMatch(/restoreFocusTo\(restoreTo\);/);
+  });
+});
+
+describe('reduce motion reaches the animations CSS cannot see', () => {
+  it('the CSS half is still there', () => {
+    // Collapses every CSS animation and transition in the app. It is the half
+    // that has been right all along, and it reaches none of framer-motion.
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{/);
+    expect(css).toMatch(/animation-duration: 0\.001ms !important;/);
+    expect(css).toMatch(/transition-duration: 0\.01ms !important;/);
+  });
+
+  it('framer-motion is told to follow the OS setting', () => {
+    // framer-motion writes inline styles frame by frame from JavaScript, so
+    // no CSS animation and no CSS transition exists for the media query above
+    // to shorten. Without this the Discover venue card still slides and
+    // scales in on delays past a second for somebody who asked it not to.
+    expect(code).toMatch(/import \{ motion, AnimatePresence, MotionConfig \} from 'framer-motion';/);
+    expect(code).toMatch(/<MotionConfig reducedMotion="user">/);
+  });
+
+  it('it wraps the app rather than one screen', () => {
+    // A provider below the root reaches only what is under it, and motion
+    // components are added in this file all the time.
+    const providers = code.slice(code.indexOf('const FlockAppWithProviders'));
+    const block = providers.slice(0, providers.indexOf('export default'));
+    expect(block).toMatch(/<MotionConfig reducedMotion="user">[\s\S]*<FlockApp \/>[\s\S]*<\/MotionConfig>/);
+  });
+
+  it('it is "user", not "always" or "never"', () => {
+    // "always" would strip motion from people who never asked, and "never"
+    // is the bug. There must be exactly one declaration and it follows the OS.
+    const all = code.match(/reducedMotion="\w+"/g) || [];
+    expect(all).toEqual(['reducedMotion="user"']);
+  });
+});
