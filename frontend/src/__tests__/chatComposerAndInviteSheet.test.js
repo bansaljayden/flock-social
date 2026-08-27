@@ -810,13 +810,29 @@ describe('the header says whether the connection is actually up', () => {
     expect(screen.queryByText('reconnecting...')).toBeNull();
   });
 
-  test('a dead socket does not', () => {
+  test('a dead socket with the network up reads reconnecting, because that is what socket.io is doing', () => {
     setConnection(false);
     render(React.createElement(ChatDetail, chatProps()));
-    // The claim is the thing that must not survive. What replaces it matters
-    // less than that nothing says online while nothing is connected.
     expect(screen.queryByText('online')).toBeNull();
     expect(screen.getByText('reconnecting...')).toBeTruthy();
+    expect(screen.queryByText('offline')).toBeNull();
+  });
+
+  test('with the device itself offline the header says offline, not reconnecting', () => {
+    // Jayden's rule: "reconnecting" only while something really is trying.
+    // With navigator.onLine false the device knows no retry can succeed, and
+    // printing "reconnecting" over airplane mode is the hardcoded "online"
+    // lie again, wearing amber.
+    setConnection(false);
+    const spy = jest.spyOn(window.navigator, 'onLine', 'get').mockReturnValue(false);
+    try {
+      render(React.createElement(ChatDetail, chatProps()));
+      expect(screen.getByText('offline')).toBeTruthy();
+      expect(screen.queryByText('reconnecting...')).toBeNull();
+      expect(screen.queryByText('online')).toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test('no socket at all is not online either', () => {

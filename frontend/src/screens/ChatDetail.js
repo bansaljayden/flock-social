@@ -307,13 +307,38 @@ export default function ChatDetail({
     // fatal-auth teardown or a session expiry, so a listener welded to one
     // instance goes quiet for good. Reading `.connected` is instance-agnostic
     // and costs a boolean, and the timer only runs while a chat is open.
-    const [socketLive, setSocketLive] = React.useState(() => !!getSocket()?.connected);
+    // Three states, not two, and the middle one earns its word. Jayden's rule,
+    // 2026-08-26: say "reconnecting" only while something really is trying, and
+    // "offline" when the device already knows nothing can succeed.
+    //   'online'        the socket is connected.
+    //   'reconnecting'  the socket is down but the network is up, and
+    //                   socket.io retries forever on a backoff, so trying is
+    //                   exactly what is happening.
+    //   'offline'       navigator.onLine is false: the DEVICE says there is no
+    //                   network, retries cannot succeed, and printing
+    //                   "reconnecting" over airplane mode would be the same
+    //                   lie the hardcoded "online" was, wearing amber.
+    const readConnection = () => {
+      if (getSocket()?.connected) return 'online';
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'offline';
+      return 'reconnecting';
+    };
+    const [connectionState, setConnectionState] = React.useState(readConnection);
     React.useEffect(() => {
-      const sample = () => setSocketLive(!!getSocket()?.connected);
+      const sample = () => setConnectionState(readConnection());
       sample();
       const id = setInterval(sample, SOCKET_SAMPLE_MS);
-      return () => clearInterval(id);
+      // The two events that change the answer between samples, so airplane
+      // mode is named the moment it happens rather than up to two seconds late.
+      window.addEventListener('online', sample);
+      window.addEventListener('offline', sample);
+      return () => {
+        clearInterval(id);
+        window.removeEventListener('online', sample);
+        window.removeEventListener('offline', sample);
+      };
     }, []);
+    const socketLive = connectionState === 'online';
 
     // LEAVING THIS SCREEN, WRITTEN ONCE.
     //
@@ -379,7 +404,7 @@ export default function ChatDetail({
                       HTTP, and what is missing is anything said since. A total
                       loss of network is a different thing and OfflineGate
                       covers the whole app for it. */}
-                  {isTyping ? <span style={{ fontSize: 'var(--t-meta)', color: '#86EFAC', fontWeight: '500' }}>{typingUser} is typing...</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: socketLive ? '#22c55e' : '#F59E0B', boxShadow: 'none' }} /><span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>{socketLive ? 'online' : 'reconnecting...'}</span></>}
+                  {isTyping ? <span style={{ fontSize: 'var(--t-meta)', color: '#86EFAC', fontWeight: '500' }}>{typingUser} is typing...</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: connectionState === 'online' ? '#22c55e' : connectionState === 'offline' ? '#9CA3AF' : '#F59E0B', boxShadow: 'none' }} /><span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>{connectionState === 'online' ? 'online' : connectionState === 'offline' ? 'offline' : 'reconnecting...'}</span></>}
                 </div>
               </div>
             )}
