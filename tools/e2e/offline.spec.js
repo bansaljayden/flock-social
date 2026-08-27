@@ -238,9 +238,22 @@ test('going offline is said in words, and coming back does not cost you what you
   await ada.context.close();
 });
 
-test('the offline screen buries the plan you are standing in the middle of', async ({ browser }) => {
+test('going offline anywhere brings up the bird game, and the game itself needs no network', async ({ browser }) => {
   test.slow();
-  const ada = await newPerson(browser, 'offline-buried');
+  // DECIDED, NOT DEFECTIVE. This spec shipped red under the name "the offline
+  // screen buries the plan you are standing in the middle of", arguing the
+  // plan's name and address should stay readable. Jayden ruled the other way
+  // on 2026-08-26: anytime anything goes offline, the game is the screen,
+  // everywhere. So what this pins now is HIS design, in both halves:
+  //
+  //   1. The takeover really happens on every screen, including mid chat.
+  //      A gate that only covered some screens would be the defect now.
+  //   2. The game genuinely runs offline. FlockBirdGame is pure canvas
+  //      drawing, no image files, no fetches, so cutting the network before
+  //      it ever mounts must still produce a live, playable game. If somebody
+  //      ever gives the bird a fetched sprite sheet, this goes red in the one
+  //      place that would notice.
+  const ada = await newPerson(browser, 'offline-game');
   const name = `Buried ${ada.surname}`;
   await createFlockNamed(ada.page, name);
   await sendInFlock(ada.page, 'address is the side door on 3rd');
@@ -250,16 +263,36 @@ test('the offline screen buries the plan you are standing in the middle of', asy
   await expect(ada.page.getByRole('heading', { name: /you.re offline/i }))
     .toBeVisible({ timeout: 10_000 });
 
-  // Losing signal in a basement bar is the normal case for this product, and
-  // the thing you need at that exact moment is the plan you already have: the
-  // name, the time, the address somebody posted in the chat. OfflineGate is
-  // position fixed, inset 0, zIndex 99999, so it paints over all of it and
-  // puts a bird game where the plan was. Nothing here is missing because it
-  // failed to load. It loaded, and it is behind a canvas.
-  expect(await isOnTop(ada.page.getByRole('heading', { name, exact: true })),
-    'the name of the plan is readable while offline').toBe(true);
-  expect(await isOnTop(ada.page.getByText('address is the side door on 3rd')),
-    'the address posted in the chat is readable while offline').toBe(true);
+  // The game is front and centre: the top element at screen centre is the
+  // canvas, which is exactly the measurement that used to prove the burial.
+  const centreIsGame = await ada.page.evaluate(() => {
+    const el = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
+    return el ? el.tagName : null;
+  });
+  expect(centreIsGame, 'the game canvas is the screen while offline').toBe('CANVAS');
+
+  // And it is a running game, not a frozen picture: the canvas repaints. Two
+  // snapshots of the pixels a beat apart must differ while the loop animates.
+  const animates = await ada.page.evaluate(() => new Promise((resolve) => {
+    const c = document.querySelector('canvas');
+    if (!c) return resolve(false);
+    const a = c.toDataURL();
+    setTimeout(() => resolve(c.toDataURL() !== a), 450);
+  }));
+  expect(animates, 'the bird game is animating with no network at all').toBe(true);
+
+  // Playable: a tap reaches the canvas (the flap control) rather than being
+  // swallowed by something above it.
+  await ada.page.mouse.click(195, 300);
+  const stillGame = await ada.page.evaluate(() => {
+    const el = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
+    return el ? el.tagName : null;
+  });
+  expect(stillGame, 'tapping the game does not dismiss or break it').toBe('CANVAS');
+
+  // Coming back online returns the plan untouched.
+  await ada.context.setOffline(false);
+  await expect(ada.page.getByText('address is the side door on 3rd')).toBeVisible({ timeout: 20_000 });
 
   await ada.context.close();
 });
