@@ -331,7 +331,7 @@ describe('the permissions that are absent are absent for a reason', () => {
     // photo save written either of those two ways would have kept this green.
     //
     // So it scans every source file now and matches both spellings. What it
-    // asserts is not "nothing downloads" — that was never the point. The point
+    // asserts is not "nothing downloads". That was never the point. The point
     // is the Info.plist claim below: nothing writes IMAGE data to the device,
     // so no NSPhotoLibraryAddUsageDescription is owed.
     const files = [];
