@@ -5608,32 +5608,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Animations
   const [activeTabAnimation, setActiveTabAnimation] = useState(null);
   // scrollY removed — parallax now uses direct DOM manipulation via headerRef
-  const [swipeState, setSwipeState] = useState({ id: null, x: 0, startX: 0 });
-
   const headerRef = useRef(null);
   const handleScroll = useCallback(() => {}, []);
 
-  // Swipe gesture handlers
-  const handleTouchStart = useCallback((id, e) => {
-    setSwipeState({ id, x: 0, startX: e.touches[0].clientX });
-  }, []);
-
-  const handleTouchMove = useCallback((id, e) => {
-    if (swipeState.id !== id) return;
-    const diff = e.touches[0].clientX - swipeState.startX;
-    if (diff > 0) { // Only allow right swipe
-      setSwipeState(prev => ({ ...prev, x: Math.min(diff, 80) }));
-    }
-  }, [swipeState.id, swipeState.startX]);
-
-  const handleTouchEnd = useCallback((id, message, e) => {
-    if (swipeState.id !== id) return;
-    if (swipeState.x > 50) {
-      // Trigger reply
-      setReplyingTo(message);
-    }
-    setSwipeState({ id: null, x: 0, startX: 0 });
-  }, [swipeState.id, swipeState.x]);
+  // The flock swipe-to-reply gesture and its per-frame swipeState were removed
+  // 2026-08-27, on Jayden's call, for two audits' worth of reasons at once.
+  // The chat audit: the whole flock reply affordance was wired to nothing
+  // (messages has no reply_to_id column, no transport carried a quote, no
+  // bubble rendered one), so the recipient got a plain message while the
+  // sender's "Replying to" bar stayed up lying. The performance audit: the
+  // gesture wrote top-level state on every touchmove, re-rendering the whole
+  // app per frame of the drag. The DM side keeps its REAL reply feature and
+  // is the implementation to copy if flock reply is ever plumbed for real:
+  // migration for messages.reply_to_id, both transports, and the quote
+  // render, together.
 
   // AI Assistant
   // Starts EMPTY — the empty state (Birdie himself + prompt chips) is the
@@ -6393,7 +6381,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
   }, [showChatSearch, chatSearch]);
 
-  const [replyingTo, setReplyingTo] = useState(null);
   const [showReactionPicker, setShowReactionPicker] = useState(null);
   const [showVenueShareModal, setShowVenueShareModal] = useState(false);
   const [showVotePanel, setShowVotePanel] = useState(false);
@@ -15726,7 +15713,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           // to the matching type because messages.id and direct_messages.id are
           // separate sequences that collide constantly.
           if (ev.contentType === 'flock_message') {
-            setReplyingTo(prev => (prev && sameContentId(prev.id, ev.contentId) ? null : prev));
           }
           break;
         case 'dm':
@@ -16622,9 +16608,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         handleChatInputChange,
         handleFlockInviteSearch,
         handleSendFlockInvites,
-        handleTouchEnd,
-        handleTouchMove,
-        handleTouchStart,
         isDark,
         isLoading,
         isTyping,
@@ -16642,7 +16625,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         popularVenues,
         profilePic,
         renderFlockInviteRow,
-        replyingTo,
         retryFailedMessage,
         selectedFlockId,
         sendChatMessage,
@@ -16671,7 +16653,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         setPendingImage,
         setPickingVenueForCreate,
         setPickingVenueForFlockId,
-        setReplyingTo,
         setShowChatPool,
         setShowChatSearch,
         setShowCreateBill,
@@ -16702,7 +16683,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         startSharingLocation,
         stopLocationSharing,
         styles,
-        swipeState,
         typingUser,
         updateFlockVenue,
         updateFlockVotes,

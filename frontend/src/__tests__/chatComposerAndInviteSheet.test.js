@@ -181,9 +181,6 @@ function chatProps(over = {}) {
     handleChatInputChange: fn(),
     handleFlockInviteSearch: fn(),
     handleSendFlockInvites: fn(),
-    handleTouchEnd: fn(),
-    handleTouchMove: fn(),
-    handleTouchStart: fn(),
     isDark: false,
     isLoading: false,
     isTyping: false,
@@ -201,7 +198,6 @@ function chatProps(over = {}) {
     popularVenues: [],
     profilePic: null,
     renderFlockInviteRow: () => null,
-    replyingTo: null,
     retryFailedMessage: fn(),
     selectedFlockId: 1,
     sendChatMessage: fn(),
@@ -230,7 +226,6 @@ function chatProps(over = {}) {
     setPendingImage: fn(),
     setPickingVenueForCreate: fn(),
     setPickingVenueForFlockId: fn(),
-    setReplyingTo: fn(),
     setShowChatPool: fn(),
     setShowChatSearch: fn(),
     setShowCreateBill: fn(),
@@ -261,7 +256,6 @@ function chatProps(over = {}) {
     startSharingLocation: fn(),
     stopLocationSharing: fn(),
     styles: {},
-    swipeState: {},
     typingUser: '',
     updateFlockVenue: fn(),
     updateFlockVotes: fn(),
@@ -732,20 +726,10 @@ describe('leaving the flock chat leaves the half-written message behind', () => 
     expect(p.setCurrentTab).toHaveBeenCalledWith('home');
   });
 
-  // `replyingTo` is the other piece of shared state that used to survive an
-  // exit: come back and the composer is quoting a message from a thread you
-  // are no longer looking at, with nothing on screen saying so. One render per
-  // test, because two renders in one test put two of every button in the same
-  // container and getByRole then refuses on ambiguity rather than on the fact
-  // under test.
-  test('the reply target goes with it, out of the back arrow', () => {
-    expect(clicked('Back').setReplyingTo).toHaveBeenCalledWith(null);
-  });
-
-  test('the reply target goes with it, out of a venue control too', () => {
-    const p = clicked('Change', { getSelectedFlock: () => FLOCK_WITH_VENUE });
-    expect(p.setReplyingTo).toHaveBeenCalledWith(null);
-  });
+  // The two reply-target-exit tests that sat here left 2026-08-27 with the
+  // flock reply feature itself: the affordance was wired to nothing (no
+  // column, no transport, no quote render) and was removed rather than kept
+  // lying. The DM side's real reply keeps its own coverage.
 });
 
 // ---------------------------------------------------------------------------
@@ -834,7 +818,7 @@ describe('no exit from the flock chat can skip the clear', () => {
     // the half of the defect that reaches the DM composer.
     expect(setInput.args[0].value).toBe('');
     expect(clearCallsMade.map((c) => c.name)).toEqual(
-      expect.arrayContaining(['setChatInput', 'setReplyingTo', 'setChatSearch']),
+      expect.arrayContaining(['setChatInput', 'setChatSearch']),
     );
   });
 });
