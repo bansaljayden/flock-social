@@ -104,8 +104,12 @@ test('a good signup lands somewhere that names the address and says what to do n
   // and invisible.
   await expect(page.getByRole('heading', { name: /confirm your email/i })).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText(email, { exact: false })).toBeVisible();
-  // And a way onward, not a cul de sac.
-  await expect(page.getByRole('button', { name: /send the link again/i })).toBeEnabled();
+  // And a way onward, not a cul de sac. The button reads "Send the link again"
+  // when the mail left and "Send the link" when it did not (linkSent, from
+  // data.verificationSent). This stack sets no Resend key on purpose, so it
+  // lands on the honest did-not-go-out branch; both are the same onward path and
+  // the test defends its presence, not which of the two truths it is telling.
+  await expect(page.getByRole('button', { name: /send the link( again)?/i })).toBeEnabled();
   await expect(page.getByRole('button', { name: /^sign in$/i })).toBeEnabled();
 
   expect(errors).toEqual([]);
