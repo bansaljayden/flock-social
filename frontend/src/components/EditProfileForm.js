@@ -44,7 +44,6 @@ const EditProfileForm = ({
   colors,
   confirmClick,
   profileBio,
-  profileHandle,
   profileName,
   profilePhone,
   profilePic,
@@ -52,7 +51,6 @@ const EditProfileForm = ({
   setCropOffset,
   setCropZoom,
   setProfileBio,
-  setProfileHandle,
   setProfileName,
   setProfilePhone,
   setShowPicModal,
@@ -61,7 +59,6 @@ const EditProfileForm = ({
                 const [editName, setEditName] = React.useState(profileName);
                 const [editEmail, setEditEmail] = React.useState(authUser?.email || '');
                 const [editPhone, setEditPhone] = React.useState(profilePhone);
-                const [editHandle, setEditHandle] = React.useState(profileHandle);
                 const [editBio, setEditBio] = React.useState(profileBio);
                 const [currentPw, setCurrentPw] = React.useState('');
                 const [newPw, setNewPw] = React.useState('');
@@ -120,7 +117,6 @@ const EditProfileForm = ({
 
                     const data = await updateProfile(payload);
                     setProfileName(data.user.name);
-                    setProfileHandle(data.user.email.split('@')[0]);
                     // Keep the server's word for the bio when it gives one; a
                     // backend that has not learned the field yet answers
                     // without it, and the optimistic value stands.
@@ -164,10 +160,6 @@ const EditProfileForm = ({
                     <div style={{ marginBottom: '12px' }}>
                       <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }} htmlFor="profile-name-input">Display Name *</label>
                       <input id="profile-name-input" type="text" value={editName} onChange={(e) => setEditName(e.target.value)} style={styles.input} autoComplete="off" />
-                    </div>
-                    <div style={{ marginBottom: '12px' }}>
-                      <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }} htmlFor="profile-handle-input">Username</label>
-                      <input id="profile-handle-input" type="text" value={editHandle} onChange={(e) => setEditHandle(e.target.value)} style={styles.input} autoComplete="off" />
                     </div>
                     <div style={{ marginBottom: '12px' }}>
                       <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }} htmlFor="profile-email-input">Email *</label>

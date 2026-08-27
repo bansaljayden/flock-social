@@ -71,7 +71,7 @@ import AddFriends from './screens/AddFriends';
 // it is a static import rather than a lazy one. It is the screen this product
 // exists to show, every user opens it and most open it more than once a
 // session. The measurement is in the header of the file it moved to.
-import ChatDetail from './screens/ChatDetail';
+import ChatDetail, { groupReactions } from './screens/ChatDetail';
 // Three components that were declared INSIDE FlockAppInner's render and
 // mounted as elements. That combination is the remount defect written up
 // beside `numVenues` below: a function rebuilt on every render is a new
@@ -1143,6 +1143,44 @@ const mergeHistory = (local, history, { keepOlder = false } = {}) => {
   const older = keepOlder ? mine.filter((m) => settled(m) && isServerId(m.id) && m.id < oldestId) : [];
   const newer = mine.filter((m) => settled(m) && isServerId(m.id) && m.id > newestId);
   return [...older, ...hist, ...newer, ...unsettled];
+};
+
+// A message somebody typed and watched fail is React state and nothing else, so
+// a reload took it and the "Tap to retry" it was told to come back to with it.
+// On a phone a reload is the ordinary case, not an unusual one: the tab
+// refreshes, iOS evicts the web view, the person closes Flock and reopens it. So
+// failed flock sends are mirrored to localStorage, per flock, and rehydrated
+// when the chat's history loads. mergeHistory already hides a persisted failure
+// that turns out to have landed (it matches a history row by content), and
+// loadFlockMessages rewrites the store to drop it for good, so a send that
+// finally arrived never comes back as a ghost failure.
+const FAILED_MSG_KEY = 'flock_failed_msgs';
+const readFailedStore = () => {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(FAILED_MSG_KEY) || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch { return {}; }
+};
+const writeFailedStore = (store) => {
+  try { localStorage.setItem(FAILED_MSG_KEY, JSON.stringify(store)); } catch { /* quota or blocked storage: the failed bubble still lives in state this session */ }
+};
+const readFailedFlockMessages = (flockId) => {
+  const list = readFailedStore()[String(flockId)];
+  return Array.isArray(list) ? list : [];
+};
+const writeFailedFlockMessages = (flockId, list) => {
+  const store = readFailedStore();
+  if (list && list.length) store[String(flockId)] = list;
+  else delete store[String(flockId)];
+  writeFailedStore(store);
+};
+const persistFailedFlockMessage = (flockId, msg) => {
+  const list = readFailedFlockMessages(flockId).filter((m) => m.id !== msg.id);
+  list.push(msg);
+  writeFailedFlockMessages(flockId, list);
+};
+const removeFailedFlockMessage = (flockId, id) => {
+  writeFailedFlockMessages(flockId, readFailedFlockMessages(flockId).filter((m) => m.id !== id));
 };
 
 // How often the socket's liveness is sampled, and how close together two
@@ -4411,8 +4449,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             setUserLocation({ lat: latitude, lng: longitude });
             localStorage.setItem('flock_user_lat', latitude.toString());
             localStorage.setItem('flock_user_lng', longitude.toString());
+            setLocationError('');
           },
-          () => {},
+          (err) => {
+            // Flipping the switch back on cannot conjure a permission the
+            // device has refused. The banner that WAS explaining the empty map
+            // disappears the instant locationEnabled flips, so without a
+            // sentence here Turn on looks like it worked and the map still knows
+            // nothing about the person. Only a real denial gets the Settings
+            // line; a timeout or device error is a different fact.
+            setLocationError(err && err.code === 1
+              ? 'Location is off on your device, so Flock cannot show what is near you. Turn it on in Settings, or search for a place by name.'
+              : 'Could not get your location just now. Try again, or search for a place by name.');
+          },
           { enableHighAccuracy: true, timeout: 10000 }
         );
       }
@@ -4760,13 +4809,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const handleInviteSearch = useCallback((val) => {
     setInviteSearch(val);
     if (inviteTimerRef.current) clearTimeout(inviteTimerRef.current);
-    if (val.trim().length < 1) { setInviteResults([]); return; }
+    if (val.trim().length < 1) { setInviteResults([]); setInviteSearchError(''); return; }
     setInviteSearching(true);
+    setInviteSearchError('');
     inviteTimerRef.current = setTimeout(async () => {
       try {
         const data = await searchUsers(val.trim());
         setInviteResults(data.users || []);
-      } catch { setInviteResults([]); }
+        setInviteSearchError('');
+      } catch (err) {
+        // A network or server failure is not the same fact as "nobody by that
+        // name", and drawing the empty state over it told the person their
+        // friend does not exist. Surface the real sentence, the way the venue
+        // search does with venueLoadError.
+        setInviteResults([]);
+        setInviteSearchError(err?.message || 'Search is not responding. Try again in a moment.');
+      }
       finally { setInviteSearching(false); }
     }, 400);
   }, []);
@@ -4784,13 +4842,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const handleConnectSearch = useCallback((val) => {
     setConnectSearch(val);
     if (connectTimerRef.current) clearTimeout(connectTimerRef.current);
-    if (val.trim().length < 1) { setConnectResults([]); return; }
+    if (val.trim().length < 1) { setConnectResults([]); setConnectSearchError(''); return; }
     setConnectSearching(true);
+    setConnectSearchError('');
     connectTimerRef.current = setTimeout(async () => {
       try {
         const data = await searchUsers(val.trim());
         setConnectResults(data.users || []);
-      } catch { setConnectResults([]); }
+        setConnectSearchError('');
+      } catch (err) {
+        // See handleInviteSearch: a failed search is not an empty result.
+        setConnectResults([]);
+        setConnectSearchError(err?.message || 'Search is not responding. Try again in a moment.');
+      }
       finally { setConnectSearching(false); }
     }, 400);
   }, []);
@@ -4803,6 +4867,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [addFriendsSearch, setAddFriendsSearch] = useState('');
   const [addFriendsResults, setAddFriendsResults] = useState([]);
   const [addFriendsSearching, setAddFriendsSearching] = useState(false);
+  const [addFriendsError, setAddFriendsError] = useState('');
   const [myFriendCode, setMyFriendCode] = useState('');
   const [friendCodeInput, setFriendCodeInput] = useState('');
   const [friendCodeLoading, setFriendCodeLoading] = useState(false);
@@ -4851,13 +4916,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const handleAddFriendsSearch = useCallback((val) => {
     setAddFriendsSearch(val);
     if (addFriendsTimerRef.current) clearTimeout(addFriendsTimerRef.current);
-    if (val.trim().length < 1) { setAddFriendsResults([]); return; }
+    if (val.trim().length < 1) { setAddFriendsResults([]); setAddFriendsError(''); return; }
     setAddFriendsSearching(true);
+    setAddFriendsError('');
     addFriendsTimerRef.current = setTimeout(async () => {
       try {
         const data = await searchUsers(val.trim());
         setAddFriendsResults(data.users || []);
-      } catch { setAddFriendsResults([]); }
+        setAddFriendsError('');
+      } catch (err) {
+        // See handleInviteSearch: a failed search is not an empty result. The
+        // Add Friends screen lives in screens/AddFriends.js; this value reaches
+        // it through addFriendsProps and it renders it in place of "No users
+        // found".
+        setAddFriendsResults([]);
+        setAddFriendsError(err?.message || 'Search is not responding. Try again in a moment.');
+      }
       finally { setAddFriendsSearching(false); }
     }, 400);
   }, []);
@@ -5822,6 +5896,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [inviteSearch, setInviteSearch] = useState('');
   const [inviteResults, setInviteResults] = useState([]);
   const [inviteSearching, setInviteSearching] = useState(false);
+  const [inviteSearchError, setInviteSearchError] = useState('');
   const [suggestedUsers, setSuggestedUsers] = useState([]);
   const [flockCashPool, setFlockCashPool] = useState(false);
   const [flockBudgetContext, setFlockBudgetContext] = useState('dinner');
@@ -6107,6 +6182,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [connectSearch, setConnectSearch] = useState('');
   const [connectResults, setConnectResults] = useState([]);
   const [connectSearching, setConnectSearching] = useState(false);
+  const [connectSearchError, setConnectSearchError] = useState('');
   const [friendStatuses, setFriendStatuses] = useState({}); // { [userId]: 'pending' | 'accepted' }
 
   // Chat — use refs for input values to avoid full re-renders on every keystroke
@@ -6475,7 +6551,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   });
   const [profileScreen, setProfileScreen] = useState('main');
   const [profileName, setProfileName] = useState(authUser?.name || '');
-  const [profileHandle, setProfileHandle] = useState(authUser?.email?.split('@')[0] || '');
+  // The local part of the address, shown as a read-only @handle on the profile
+  // card. Derived, not state: it used to be edited in a "Username" field that
+  // had no column behind it, so typing in it changed nothing and the field
+  // reset to this on save. The field is gone; this stays as a display.
+  const profileHandle = authUser?.email?.split('@')[0] || '';
   // Real bio from the account, never invented. (This used to be a hardcoded
   // sample sentence about exploring places that no server ever saw.)
   const [profileBio, setProfileBio] = useState(authUser?.bio || '');
@@ -7054,8 +7134,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           // code 1; anything else is a device or timeout failure and deserves
           // different words, because "turn it on in Settings" is useless
           // advice to someone who already did.
+          //
+          // A refused permission answers getCurrentPosition in a single frame,
+          // so tapping Try again cleared the banner and set it right back to the
+          // identical sentence with nothing a person could see having changed.
+          // A retry (forceRefresh) that is still refused says so in its own
+          // words, so the tap is acknowledged instead of swallowed.
           setLocationError(err && err.code === 1
-            ? 'Location is off, so Flock cannot show what is near you. Turn it on in Settings, or search for a place by name.'
+            ? (forceRefresh
+                ? 'Location is still off. Turn it on in your device Settings, then come back. Or search for a place by name.'
+                : 'Location is off, so Flock cannot show what is near you. Turn it on in Settings, or search for a place by name.')
             : 'Could not get your location just now. Try again, or search for a place by name.');
         }
       },
@@ -7710,9 +7798,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return getMessages(flockId)
       .then((data) => {
         const msgs = (data.messages || []).map(m => mapFlockRow(m, meRef.current?.id));
-        setFlocks(prev => prev.map(f => f.id === flockId
-          ? { ...f, messages: mergeHistory(f.messages, msgs, { keepOlder }) }
-          : f));
+        // Bring back any send that failed in a previous session, minus the ones
+        // that turn out to have landed after all (they now appear in history,
+        // matched by content), and rewrite the store so a settled send never
+        // comes back as a ghost failure.
+        const failed = readFailedFlockMessages(flockId).filter(fm => !msgs.some(h => sameSend(fm, {
+          message_text: h.text, message_type: h.message_type, image_url: h.image || h.image_url || null,
+        })));
+        writeFailedFlockMessages(flockId, failed);
+        setFlocks(prev => prev.map(f => {
+          if (f.id !== flockId) return f;
+          const have = new Set((f.messages || []).map(m => m.id));
+          const localWithFailed = [...(f.messages || []), ...failed.filter(fm => !have.has(fm.id))];
+          return { ...f, messages: mergeHistory(localWithFailed, msgs, { keepOlder }) };
+        }));
       })
       .catch(() => {
         // A failed read must not look like a successful one to the throttle,
@@ -8594,6 +8693,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           if (f.id !== flockId) return f;
           return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, pending: false, failed: true } : m)) };
         }));
+        persistFailedFlockMessage(flockId, { id: tempId, sender: 'You', senderId: authUser?.id, time: 'Now', text, reactions: [], message_type: msgType, ...(image ? { image } : {}), ...(venueData ? { venue_data: venueData } : {}), failed: true });
       }, 8000);
       pendingEchoRef.current.set(tempId, { flockId, text, message_type: msgType, image, venue_data: venueData, timer });
     } else {
@@ -8624,6 +8724,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           if (f.id !== flockId) return f;
           return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, pending: false, failed: true } : m)) };
         }));
+        persistFailedFlockMessage(flockId, { id: tempId, sender: 'You', senderId: authUser?.id, time: 'Now', text, reactions: [], message_type: msgType, ...(image ? { image } : {}), ...(venueData ? { venue_data: venueData } : {}), failed: true });
       }
     }
   }, [addMessageToFlock, authUser, showToast]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -8637,6 +8738,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // `Check out X!` as a plain sentence with no card under it, which is why the
   // HTTP path used to DELETE a refused card instead of offering a retry.
   const retryFailedMessage = useCallback((flockId, failedMsg) => {
+    // The old failed bubble is dropped from state and from the reload store; the
+    // resend below mints a fresh one that persists again only if it fails again.
+    removeFailedFlockMessage(flockId, failedMsg.id);
     setFlocks(prev => prev.map(f => {
       if (f.id !== flockId) return f;
       return { ...f, messages: (f.messages || []).filter(m => m.id !== failedMsg.id) };
@@ -10078,18 +10182,28 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // New DM Modal - Friend Selector (searches real users via API)
   const [dmModalResults, setDmModalResults] = useState([]);
   const [dmModalSearching, setDmModalSearching] = useState(false);
+  const [dmSearchError, setDmSearchError] = useState('');
   const dmModalTimerRef = useRef(null);
 
   const handleDmSearch = useCallback((val) => {
     setDmSearchText(val);
     if (dmModalTimerRef.current) clearTimeout(dmModalTimerRef.current);
-    if (val.trim().length < 1) { setDmModalResults([]); return; }
+    if (val.trim().length < 1) { setDmModalResults([]); setDmSearchError(''); return; }
     setDmModalSearching(true);
+    setDmSearchError('');
     dmModalTimerRef.current = setTimeout(async () => {
       try {
         const data = await searchUsers(val.trim());
         setDmModalResults(data.users || []);
-      } catch { setDmModalResults([]); }
+        setDmSearchError('');
+      } catch (err) {
+        // See handleInviteSearch: a failed search is not an empty result. The
+        // New Message sheet lives in components/NewDmModal.js; this value
+        // reaches it through newDmModalProps and it renders it in place of
+        // "No users found".
+        setDmModalResults([]);
+        setDmSearchError(err?.message || 'Search is not responding. Try again in a moment.');
+      }
       finally { setDmModalSearching(false); }
     }, 400);
   }, []);
@@ -11300,12 +11414,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     ) : m.text}
                   </div>
                 )}
-                {/* Reactions display */}
+                {/* Reactions display. groupReactions, the same helper the flock
+                    side uses, so a DM reaction read back from history keeps the
+                    id of who left it and ownership is compared as a string. The
+                    old inline reduce dropped user_id from the key and compared
+                    r.user_id === authUser.id with ===, so a reaction survived a
+                    reload as a pill you could see but could no longer take back:
+                    the REST history hands user_id back as a number while the
+                    live socket payload hands it back as a string, so strict
+                    equality answered false for your own reaction after a reload. */}
                 {m.reactions && m.reactions.length > 0 && (
                   <div style={{ display: 'flex', gap: '4px', marginTop: '4px', flexWrap: 'wrap', justifyContent: m.sender === 'You' ? 'flex-end' : 'flex-start' }}>
-                    {Object.entries(m.reactions.reduce((acc, r) => { acc[r.emoji] = (acc[r.emoji] || 0) + 1; return acc; }, {})).map(([emoji, count]) => (
-                      <span key={emoji} onClick={() => { const otherUser = selectedDmId; if (m.reactions.some(r => r.emoji === emoji && r.user_id === authUser?.id)) { dmRemoveReact(m.id, emoji, otherUser); } else { dmReact(m.id, emoji, otherUser); } }} style={{ fontSize: 'var(--t-meta)', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', borderRadius: '12px', padding: '2px 6px', cursor: 'pointer', boxShadow: 'var(--card-shadow-sm)' }}>{emoji} {count > 1 ? count : ''}</span>
-                    ))}
+                    {groupReactions(m.reactions).map((g) => {
+                      const mine = g.userIds.some((id) => String(id) === String(authUser?.id));
+                      return (
+                        <span key={g.emoji} onClick={() => { const otherUser = selectedDmId; if (mine) { dmRemoveReact(m.id, g.emoji, otherUser); } else { dmReact(m.id, g.emoji, otherUser); } }} style={{ fontSize: 'var(--t-meta)', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', borderRadius: '12px', padding: '2px 6px', cursor: 'pointer', boxShadow: 'var(--card-shadow-sm)' }}>{g.emoji} {g.count > 1 ? g.count : ''}</span>
+                      );
+                    })}
                   </div>
                 )}
                 {/* Reaction picker */}
@@ -12501,6 +12626,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 ...fl,
                 messages: (fl.messages || []).map(m => (m.id === venueCardTempId ? { ...m, pending: false, failed: true } : m)),
               })));
+              persistFailedFlockMessage(f.id, { id: venueCardTempId, sender: 'You', senderId: authUser?.id, time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), text: `Check out ${venueName}!`, reactions: [], message_type: 'venue_card', venue_data: venueCardData, failed: true });
               if (err?.sessionExpired) return;
               const lead = "The flock is created, but the venue card didn't reach the chat.";
               showToast(err?.message ? `${lead} ${err.message}` : `${lead} Tap it to retry.`, 'error');
@@ -12719,9 +12845,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   ))}
                 </div>
               )}
+              {/* A search that hit a network or server error, not an empty
+                  result. Its own line, so "Nobody by that name" never stands in
+                  for "the search did not run". */}
+              {!inviteSearching && inviteSearchError && (
+                <p role="status" style={{ fontSize: 'var(--t-label)', color: 'var(--accent-red-text, #b91c1c)', textAlign: 'center', padding: '16px 8px', margin: '10px 0 0', lineHeight: 1.5 }}>{inviteSearchError}</p>
+              )}
               {/* A search that found nobody. Warm bird, because this is about
                   the user's own people rather than a Flock-wide list. */}
-              {!inviteSearching && inviteSearch.trim().length >= 1 && inviteResults.length === 0 && (
+              {!inviteSearching && !inviteSearchError && inviteSearch.trim().length >= 1 && inviteResults.length === 0 && (
                 <BirdNote
                   layout="row"
                   size={48}
@@ -13930,7 +14062,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </div>
               )}
 
-              {!connectSearching && connectSearch.trim().length >= 1 && connectResults.length === 0 && (
+              {/* A failed search, said in the server's own words, rather than as
+                  "No users found" over a lookup that never completed. */}
+              {!connectSearching && connectSearchError && (
+                <p role="status" style={{ fontSize: 'var(--t-label)', color: 'var(--accent-red-text, #b91c1c)', textAlign: 'center', padding: '20px 8px', margin: 0, lineHeight: 1.5 }}>{connectSearchError}</p>
+              )}
+
+              {!connectSearching && !connectSearchError && connectSearch.trim().length >= 1 && connectResults.length === 0 && (
                 <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px 0', margin: 0 }}>No users found for "{connectSearch}"</p>
               )}
 
@@ -15518,7 +15656,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 colors,
                 confirmClick,
                 profileBio,
-                profileHandle,
                 profileName,
                 profilePhone,
                 profilePic,
@@ -15526,7 +15663,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 setCropOffset,
                 setCropZoom,
                 setProfileBio,
-                setProfileHandle,
                 setProfileName,
                 setProfilePhone,
                 setShowPicModal,
@@ -19377,6 +19513,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         ListSkeleton,
         SearchInputLocal,
         BottomNav,
+        addFriendsError,
         addFriendsResults,
         addFriendsSearch,
         addFriendsSearching,
@@ -19906,6 +20043,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     colors,
     dmModalResults,
     dmModalSearching,
+    dmSearchError,
     dmSearchText,
     handleDmSearch,
     setDmModalResults,
@@ -21576,6 +21714,13 @@ const FlockApp = () => {
     () => (typeof window !== 'undefined' && window.location.pathname === '/signup' ? 'signup' : 'login')
   );
   const [authChecking, setAuthChecking] = useState(true);
+  // A cold start that has a stored session but cannot reach the server. The
+  // device believes it is online (navigator.onLine is true on venue wifi whose
+  // backhaul is dead), so OfflineGate never fires, and dropping the person on
+  // the sign-in form tells them they were signed out when they were not. This
+  // holds the boot on an honest "cannot reach Flock" screen instead, while the
+  // retry loop below reconnects on its own.
+  const [bootUnreachable, setBootUnreachable] = useState(false);
   const [venueLoginFlag, setVenueLoginFlag] = useState(false);
   // The line shown on the sign-in screen when the session ended without the
   // user pressing Log out. Empty for a normal logout.
@@ -21703,17 +21848,23 @@ const FlockApp = () => {
         if (err?.status === 401 || err?.status === 403) {
           // api.js has already fired flock-session-expired for the 401 case,
           // so this is usually a no-op that only matters for a 403.
+          setBootUnreachable(false);
           endSession(bootSessionCopy(err));
           return;
         }
+        // Not an auth rejection: the wire is dead but the session is fine. Say
+        // so rather than show a sign-in form that cannot possibly work.
+        setBootUnreachable(true);
         retryHandler = () => {
           getCurrentUser()
             .then((d) => {
+              setBootUnreachable(false);
               beginSession(d.user || d);
               stopRetrying();
             })
             .catch((e) => {
               if (e?.status === 401 || e?.status === 403) {
+                setBootUnreachable(false);
                 endSession(bootSessionCopy(e));
                 stopRetrying();
               }
@@ -21779,6 +21930,41 @@ const FlockApp = () => {
           <div style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: 'rgba(241,237,224,0.5)' }}>Loading...</div>
         </div>
       </div>
+    );
+  }
+
+  // A stored session that cannot reach the server on boot. Not the sign-in
+  // form: the person is not signed out, so saying so and offering to retry is
+  // the honest screen. The retry loop in the boot effect keeps trying on its
+  // own; this button is the manual one.
+  if (!authUser && bootUnreachable) {
+    return (
+      <>
+        {notice}
+        <div style={{
+          minHeight: '100vh',
+          background: `linear-gradient(135deg, #1e293b 0%, #1a3a5c 50%, #2d5a87 100%)`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '24px',
+          fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif",
+        }}>
+          <div style={{ textAlign: 'center', maxWidth: '340px' }}>
+            <div style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: '#f1ede0', letterSpacing: '-0.5px', marginBottom: '10px' }}>Flock</div>
+            <h1 style={{ fontSize: 'var(--t-title)', fontWeight: '600', color: '#f1ede0', margin: '0 0 8px' }}>Couldn't reach Flock</h1>
+            <p style={{ fontSize: 'var(--t-body)', color: 'rgba(241,237,224,0.7)', margin: '0 0 20px', lineHeight: 1.5 }}>You are still signed in. Check your connection and Flock will pick up where you left off. It keeps trying on its own.</p>
+            <button
+              type="button"
+              className="hit44"
+              onClick={() => window.location.reload()}
+              style={{ padding: '12px 22px', borderRadius: '14px', border: '1px solid rgba(244,239,227,0.3)', background: 'rgba(244,239,227,0.1)', color: '#f1ede0', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', fontFamily: 'inherit' }}
+            >
+              Try again
+            </button>
+          </div>
+        </div>
+      </>
     );
   }
 

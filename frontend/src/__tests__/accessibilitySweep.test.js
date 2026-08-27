@@ -214,7 +214,6 @@ describe('form controls have a real accessible name', () => {
   // no placeholder, so each announced as an unnamed "edit text".
   const PAIRS = [
     ['profile-name-input', 'Display Name *'],
-    ['profile-handle-input', 'Username'],
     ['profile-email-input', 'Email *'],
     ['contact-relationship', 'Relationship (optional)'],
     ['venue-info-name', 'Venue Name'],

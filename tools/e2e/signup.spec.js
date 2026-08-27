@@ -480,31 +480,22 @@ test('saving the first profile edit tells the person whether it saved', async ({
   expect(errors).toEqual([]);
 });
 
-test('the Username field on the profile keeps what you typed', async ({ page }) => {
+test('the profile has no Username field, because there is no column behind one', async ({ page }) => {
   const errors = [];
   failOnPageErrors(page, errors);
-  const email = await signUpAndSignIn(page, 'username');
-  const localPart = email.split('@')[0];
-
-  const sent = [];
-  page.on('request', (req) => {
-    if (req.url().includes('/api/users/profile') && req.method() === 'PUT') sent.push(req.postData() || '');
-  });
+  await signUpAndSignIn(page, 'username');
 
   await openEditProfile(page);
-  // It is prefilled with the local part of the address, so a person arriving
-  // here sees their own email in a field labelled Username and changes it. That
-  // is the whole reason the field looks like it does something.
-  await expect(page.getByLabel(/username/i)).toHaveValue(localPart);
-  await page.getByLabel(/username/i).fill('adatheowl');
-  await page.getByRole('textbox', { name: 'Current password' }).fill(PASSWORD);
-  await page.getByRole('button', { name: /save changes/i }).click();
-
-  await expect.poll(() => sent.length, { timeout: 20_000 }).toBeGreaterThan(0);
-  // Either the value goes to the server, or the field is lying about being a
-  // field. Both halves are asserted because either one alone can be argued away.
-  expect(sent.join(' '), 'the typed username never left the device').toContain('adatheowl');
-  await expect(page.getByLabel(/username/i)).toHaveValue('adatheowl');
+  // The field was a dead control: it prefilled with the email's local part,
+  // took whatever you typed, sent none of it to the server, and reset itself on
+  // save. There is no username column in the schema (backend .claude/CLAUDE.md
+  // says so), so an editable field for it could only ever lie about persisting.
+  // A field that cannot keep what you type is worse than no field, so it is
+  // gone rather than pretending.
+  await expect(page.getByLabel(/username/i)).toHaveCount(0);
+  // The fields that actually persist are still here.
+  await expect(page.getByLabel(/display name/i)).toBeVisible();
+  await expect(page.getByRole('button', { name: /save changes/i })).toBeVisible();
 
   expect(errors).toEqual([]);
 });

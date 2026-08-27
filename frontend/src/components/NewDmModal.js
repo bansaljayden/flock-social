@@ -41,6 +41,7 @@ const NewDmModal = ({
   colors,
   dmModalResults,
   dmModalSearching,
+  dmSearchError,
   dmSearchText,
   handleDmSearch,
   setDmModalResults,
@@ -78,7 +79,15 @@ const NewDmModal = ({
                 <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginLeft: '8px' }}>Searching...</span>
               </div>
             )}
-            {!dmModalSearching && usersToShow.length === 0 && dmSearchText.trim() && (
+            {/* A failed search, in the server's own words, rather than "No
+                users found" drawn over a lookup that never completed. Set in
+                App.js's handleDmSearch catch, arrives through newDmModalProps. */}
+            {!dmModalSearching && dmSearchError && dmSearchText.trim() && (
+              <div role="status" style={{ textAlign: 'center', padding: '24px', color: 'var(--accent-red-text, #b91c1c)' }}>
+                <p style={{ fontSize: 'var(--t-label)', margin: 0, lineHeight: 1.5 }}>{dmSearchError}</p>
+              </div>
+            )}
+            {!dmModalSearching && !dmSearchError && usersToShow.length === 0 && dmSearchText.trim() && (
               <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-secondary)' }}>
                 <p style={{ fontSize: 'var(--t-label)', margin: 0 }}>No users found for "{dmSearchText}"</p>
               </div>
