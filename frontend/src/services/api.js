@@ -1441,6 +1441,7 @@ export async function sendMessage(flockId, text, opts = {}) {
       message_type: opts.message_type || 'text',
       venue_data: opts.venue_data || undefined,
       image_url: opts.image_url || undefined,
+      thumb_url: opts.thumb_url || undefined,
     }),
   });
   track('flock_message_sent', { kind: messageKind(opts), transport: 'http' });
@@ -1497,6 +1498,7 @@ export async function sendDM(userId, text, opts = {}) {
       message_type: opts.message_type || 'text',
       venue_data: opts.venue_data || undefined,
       image_url: opts.image_url || undefined,
+      thumb_url: opts.thumb_url || undefined,
       reply_to_id: opts.reply_to_id || undefined,
     }),
   });

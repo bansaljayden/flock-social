@@ -72,6 +72,17 @@ const roomUsers = new Map(); // String(flockId) -> Map(socketId -> { socketId, u
 // needing a backend deploy. It also lines up with the rest of the app's image
 // paths: stories cap a data URL at 700KiB, avatars at ~400KB.
 const CHAT_IMAGE_MAX_BYTES = 1024 * 1024;
+// The chat-photo thumbnail's own ceiling. See the block comment in
+// routes/messages.js (readImageThumb there is this rule's REST twin): the
+// thumb is client-derived, moderated like the image, and DROPPED on any
+// failure rather than ever costing the message.
+const THUMB_MAX_BYTES = 96 * 1024;
+function readImageThumb(value) {
+  if (typeof value !== 'string') return null;
+  if (!/^data:image\//.test(value)) return null;
+  if (Buffer.byteLength(value, 'utf8') > THUMB_MAX_BYTES) return null;
+  return value;
+}
 
 // Wording for the refusals below. These strings are shown to the user verbatim
 // (App.js toasts the server's 'error' channel), and both send paths must use
@@ -1245,6 +1256,18 @@ function registerHandlers(io, socket) {
           return;
         }
       }
+      // The thumbnail rides only when its full image passed; moderated like
+      // it, dropped on any failure. routes/messages.js documents the rule.
+      let safeThumb = null;
+      if (imageCheck) {
+        const rawThumb = readImageThumb(data && data.thumb_url);
+        if (rawThumb) {
+          try {
+            const thumbVerdict = await moderateImage(rawThumb, { userId: user.id });
+            if (thumbVerdict.allowed) safeThumb = sanitizeStoredImage(rawThumb);
+          } catch { /* no thumbnail */ }
+        }
+      }
 
       // Venue cards carry sender-controlled text and photo URLs — same
       // sanitizing as the REST path (round 8).
@@ -1257,8 +1280,8 @@ function registerHandlers(io, socket) {
       // Persist to database (membership was verified above, before the billed
       // image screen)
       const result = await pool.query(
-        `INSERT INTO messages (flock_id, sender_id, message_text, message_type, venue_data, image_url)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO messages (flock_id, sender_id, message_text, message_type, venue_data, image_url, thumb_url)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
         [
           flockId,
@@ -1270,6 +1293,7 @@ function registerHandlers(io, socket) {
           // is present. Stored with its MIME re-typed from the sniffed bytes —
           // see restampImageMime above; the REST twin does the same.
           imageCheck ? sanitizeStoredImage(image_url) : null,
+          safeThumb,
         ]
       );
 
@@ -1943,14 +1967,28 @@ function registerHandlers(io, socket) {
         return;
       }
 
+      // The thumbnail, under the same rule as every other door: moderated
+      // like its image, dropped on any failure, never fatal.
+      let dmSafeThumb = null;
+      if (dmImageCheck) {
+        const rawThumb = readImageThumb(data && data.thumb_url);
+        if (rawThumb) {
+          try {
+            const thumbVerdict = await moderateImage(rawThumb, { userId: user.id });
+            if (thumbVerdict.allowed) dmSafeThumb = sanitizeStoredImage(rawThumb);
+          } catch { /* no thumbnail */ }
+        }
+      }
+
       // Persist to database
       const result = await pool.query(
-        `INSERT INTO direct_messages (sender_id, receiver_id, message_text, message_type, venue_data, image_url, reply_to_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+        `INSERT INTO direct_messages (sender_id, receiver_id, message_text, message_type, venue_data, image_url, reply_to_id, thumb_url)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
         [user.id, receiverId, text, safeType, dmVenueCheck.data ? JSON.stringify(dmVenueCheck.data) : null,
           // Same re-typing as send_message: the stored MIME is the sniffed one.
           dmImageCheck ? sanitizeStoredImage(image_url) : null,
-          replyRow ? replyToId : null]
+          replyRow ? replyToId : null,
+          dmSafeThumb]
       );
 
       // This row IS the relationship (hasDmRelationship counts an existing DM),

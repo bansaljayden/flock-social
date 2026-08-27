@@ -587,7 +587,7 @@ function loadClientSocketModule() {
 // The exact key set api.js's sendMessage() puts in the REST body. If the two
 // transports stop agreeing on the fields a message carries, one of them is
 // dropping something the other keeps — which is finding 2 in its general form.
-const MESSAGE_FIELDS = ['message_text', 'message_type', 'venue_data', 'image_url'];
+const MESSAGE_FIELDS = ['message_text', 'message_type', 'venue_data', 'image_url', 'thumb_url'];
 
 test('client sendMessage carries image_url — a captioned photo survives the socket', () => {
   const { api, emitted } = loadClientSocketModule();
@@ -618,6 +618,9 @@ test('client sendImageMessage is now a spelling of sendMessage, and keeps a capt
       message_type: 'image',
       venue_data: null,
       image_url: SMALL_IMAGE,
+      // The chat-photo thumbnail (2026-08-27) rides both transports; null
+      // here because this caller derived none.
+      thumb_url: null,
     }
   );
 });
