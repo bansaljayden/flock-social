@@ -29,13 +29,15 @@
 const fs = require('fs');
 const path = require('path');
 
-// The flock chat screen left App.js on 2026-08-26: it lives in
-// screens/ChatDetail.js now, and the message list, the composer, the reaction
-// row and the report entry went with it. Nothing asserted below changed. The
-// app source is simply in two files, so both are read, in the order they used
-// to be one.
+// Four screens left App.js for src/screens/: the flock chat and the venue
+// dashboard and Add Friends on 2026-08-26, the one-to-one DM thread on
+// 2026-08-27. The message lists, the composers, the reaction rows, the report
+// entries and the DM vote panel went with them. Nothing asserted below changed.
+// The app source is simply in several files now, so all of them are read, in
+// the order they used to be one.
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatDetail.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'DmDetail.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'VenueDashboard.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'AddFriends.js'), 'utf8');
 const ICONS = fs.readFileSync(
