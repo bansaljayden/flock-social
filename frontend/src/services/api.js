@@ -1518,8 +1518,28 @@ export async function getDmVenueVotes(userId) {
   return request(`/api/dm/${userId}/venue-votes`);
 }
 
+// A DM venue vote is the same funnel step as a flock vote, cast through a third
+// door. voteForVenue reports surface: 'member' and the guest page reports
+// surface: 'guest'; this is surface: 'dm'. The venue name and the place id that
+// ride in the body stay OUT of the event for the reason voteForVenue names: an
+// identified event carrying the venue is a record of where a specific teenager
+// is going tonight. App.js casts DM votes over the socket (socket.js
+// dmVoteVenue) and this REST helper is the unused fallback, so trackDmVenueVote
+// below is what the socket cast site calls; both report the one venue_vote_cast
+// the funnel counts.
 export async function voteDmVenue(userId, venueName, venueId) {
-  return request(`/api/dm/${userId}/venue-votes`, { method: 'POST', body: JSON.stringify({ venue_name: venueName, venue_id: venueId }) });
+  const data = await request(`/api/dm/${userId}/venue-votes`, { method: 'POST', body: JSON.stringify({ venue_name: venueName, venue_id: venueId }) });
+  track('venue_vote_cast', { surface: 'dm' });
+  return data;
+}
+
+// The socket-path tracker for a DM venue vote, the same shape sendDM and
+// trackDmSent have. App.js emits dm_vote_venue over the websocket and never
+// calls voteDmVenue above, so a capture that lived only in that REST helper
+// would never fire, which is exactly the flock_message_sent mistake. Called at
+// the moment a vote is cast, never on an unvote.
+export function trackDmVenueVote() {
+  track('venue_vote_cast', { surface: 'dm' });
 }
 
 export async function getDmPinnedVenue(userId) {
@@ -2124,6 +2144,31 @@ export function trackNfcTap(tag) {
 
 export function trackNfcAction(tag, choice) {
   track('nfc_tap_action', { source: nfcSource(tag), action: choice });
+}
+
+/* PUSH-NOTIFICATION OPENS. A tap on a notification is the only thing in the
+   funnel that reaches a user who has closed the app, so whether taps happen at
+   all, and what they open, is the difference between push being a working
+   channel and a silent one. services/pushNavigation.js calls this from the
+   three notification-tap sources (the service worker click, the FCM click
+   relay, and the native notificationActionPerformed); a deep link, the OAuth
+   redirect, the launch URL and the invite handoff are deliberately not opens
+   and never call it.
+
+   `destination` is the resolved screen bucket and nothing else. The tap carries
+   a flock id or a user id, which is a person, so it stays out exactly as the
+   venue stays out of a vote. An allowlist, not a pass-through: a notification
+   payload is server-authored data reaching a clamp for the same reason
+   nfc_tap's source is clamped. A tap that resolved to no screen is 'none'; a
+   screen the allowlist does not know is 'unknown'. */
+const PUSH_DESTINATIONS = ['flock', 'flockInvite', 'flocks', 'dm', 'friends', 'home', 'admin'];
+function pushDestination(screen) {
+  if (!screen) return 'none';
+  return PUSH_DESTINATIONS.includes(screen) ? screen : 'unknown';
+}
+
+export function trackPushOpened(screen) {
+  track('push_opened', { destination: pushDestination(screen) });
 }
 
 /* THE TWO EVENTS THAT BELONG TO A ROUTE, NOT TO A REQUEST

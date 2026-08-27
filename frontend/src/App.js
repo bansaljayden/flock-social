@@ -41,7 +41,7 @@ import EmergencySheet from './components/safety/EmergencySheet';
 import { deliverExport } from './services/dataExport';
 import PaywallSheet from './components/PaywallSheet';
 import { initPurchases } from './services/purchases';
-import { trackScreenView, trackFlockMessageSent, trackDmSent, getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock } from './services/api';
+import { trackScreenView, trackFlockMessageSent, trackDmSent, trackDmVenueVote, getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock } from './services/api';
 import { m, AnimatePresence, MotionConfig, LazyMotion, domAnimation } from 'framer-motion';
 // BirdieStill is the same photographed mascot with the animation machinery
 // left out — the dashboards get the mark, never the rAF loop. WARM_BIRD is
@@ -10995,6 +10995,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             setDmVenueVotes(newVotes);
           }
           dmVoteVenue(selectedDmId, venueName, venueId);
+          trackDmVenueVote();
                  };
 
         const handleDmUnvote = () => {
@@ -11390,6 +11391,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         setDmVenueVotes(prev => [...prev.map(v => ({ ...v, voters: (v.voters || []).filter(x => x !== mn), vote_count: (v.voters || []).includes(mn) ? parseInt(v.vote_count || 0) - 1 : parseInt(v.vote_count || 0) })).filter(v => parseInt(v.vote_count || 0) > 0), { venue_name: vName, venue_id: vId, vote_count: 1, voters: [mn] }]);
                       }
                       dmVoteVenue(selectedDmId, vName, vId);
+                      trackDmVenueVote();
                     }}
                   />
                   </div>
