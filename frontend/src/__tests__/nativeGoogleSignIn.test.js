@@ -48,6 +48,9 @@ const { render, fireEvent, waitFor, screen } = require('@testing-library/react')
 // Mocks. CRA ships resetMocks: true, so implementations are set per test.
 // ---------------------------------------------------------------------------
 jest.mock('../services/api', () => ({
+  // The auth screens report their own arrival (auth_screen_viewed, added
+  // 2026-08-27); a factory that omits the tracker crashes the mount effect.
+  trackAuthScreen: jest.fn(),
   login: jest.fn(),
   signup: jest.fn(),
   resendVerificationEmail: jest.fn(),
