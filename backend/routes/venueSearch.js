@@ -262,6 +262,41 @@ function isPhotoRefShaped(ref) {
 }
 
 // ---------------------------------------------------------------------------
+// WHAT A MISSING GOOGLE_PLACES_API_KEY IS ALLOWED TO SAY, and why it stays a 500.
+// ---------------------------------------------------------------------------
+// All three routes in this file answered this branch with our own internal
+// string: "Google Places API key not configured" on /search and /details,
+// "API key not configured" on /photo. frontend/src/App.js doVenueSearch renders
+// the server's message verbatim in the search dropdown, on purpose (see the
+// note above the /search validators), so a user who typed the name of a bar was
+// shown a sentence about an environment variable. It is unactionable, and it
+// narrates our deployment state to anybody with the app installed.
+//
+// THE COPY. A missing key is not a blip. It is off until an operator turns it
+// back on, so a sentence ending "try again in a moment" would be a lie in the
+// one direction that wastes the user's time. The honest sentence says three
+// things: it is off, it is us, and retrying will not help.
+//
+// THE STATUS STAYS 500, DELIBERATELY, AND THIS IS THE SURPRISING HALF.
+// 503 is the better code for "not configured" and is what routes/emailWebhook.js
+// and routes/revenuecat.js use. It cannot be used here yet, because
+// frontend/src/services/api.js buildHttpError REPLACES the server's message with
+// "Flock's servers are having a moment. Try again in a minute." for every
+// RETRYABLE_STATUSES member (502, 503, 504). On this branch that substitution
+// would swap an accurate sentence for one that tells the user to wait out a
+// minute that changes nothing. 500 is the only 5xx on which this file's copy
+// actually reaches the person reading it. Move this to 503 in the SAME change
+// that teaches buildHttpError to keep a JSON `error` string it was given.
+const SEARCH_OFF = 'Venue search is turned off right now. Nothing you typed caused it, and retrying will not help.';
+const DETAILS_OFF = 'Venue pages are turned off right now. Nothing you tapped caused it, and retrying will not help.';
+const PHOTOS_OFF = 'Venue photos are turned off right now. Retrying will not bring them back.';
+// The one sentence for "Google did not answer", whichever way it failed to.
+// Named rather than repeated because runTextSearch now has four exits that mean
+// the same thing to a user and different things to a log, and four copies of a
+// sentence is four chances for three of them to drift.
+const UPSTREAM_SICK = 'Venue search is not answering right now. Try again in a moment.';
+
+// ---------------------------------------------------------------------------
 // WHAT A SPENT PLACES BUDGET IS ALLOWED TO SAY, in one place for this router.
 //
 // The rule the comment above the /search charge already stated and only that
@@ -297,7 +332,7 @@ router.get('/photo',
       // The validator's own message, so "missing" and "not a photo name" are
       // distinguishable in a log instead of both reading as "Missing photo ref".
       if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
-      if (!API_KEY) return res.status(500).json({ error: 'API key not configured' });
+      if (!API_KEY) return res.status(500).json({ error: PHOTOS_OFF });
 
       const photoRef = req.query.ref;
       // Snapped to two sizes: arbitrary maxwidth values let one photo ref mint
@@ -352,7 +387,7 @@ router.get('/photo',
       sendPhoto(res, out);
     } catch (err) {
       console.error('[Photo Proxy] Error:', err.message, '| ref:', req.query.ref?.slice(0, 60));
-      res.status(500).json({ error: 'Failed to fetch photo' });
+      res.status(500).json({ error: 'That photo could not be loaded. Try again in a moment.' });
     }
   }
 );
@@ -483,7 +518,7 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req) {
     const metaRes = await fetch(metaUrl, { signal: upstreamSignal('places') });
     if (!metaRes.ok) {
       console.error('[Photo Proxy] Google API error:', metaRes.status, 'for ref:', photoRef.slice(0, 60));
-      return { status: 502, error: 'Google API error' };
+      return { status: 502, error: 'That photo is not loading right now. Try again in a moment.' };
     }
     const meta = await metaRes.json();
     if (!meta.photoUri) {
@@ -495,7 +530,7 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req) {
     const imgRes = await fetch(meta.photoUri, { signal: upstreamSignal('places') });
     if (!imgRes.ok) {
       console.error('[Photo Proxy] CDN fetch failed:', imgRes.status, 'for ref:', photoRef.slice(0, 60));
-      return { status: 502, error: 'CDN fetch failed' };
+      return { status: 502, error: 'That photo is not loading right now. Try again in a moment.' };
     }
 
     // Step 3: cache and return the image bytes
@@ -514,7 +549,7 @@ async function fetchPhotoOnce(photoRef, maxWidth, cacheKey, req) {
     return { status: 200, buffer, contentType };
   } catch (err) {
     console.error('[Photo Proxy] Error:', err.message, '| ref:', photoRef.slice(0, 60));
-    return { status: 500, error: 'Failed to fetch photo' };
+    return { status: 500, error: 'That photo could not be loaded. Try again in a moment.' };
   }
 }
 
@@ -691,14 +726,19 @@ router.get('/search',
       }
 
       if (!API_KEY) {
-        return res.status(500).json({ error: 'Google Places API key not configured' });
+        console.error('Venue search unavailable: GOOGLE_PLACES_API_KEY is unset');
+        return res.status(500).json({ error: SEARCH_OFF });
       }
 
       // Round 18: `?query=a&query=b` arrives as an ARRAY, walked past the
       // validator chain, and `.toLowerCase()` turned it into a 500 per request.
       // Anything that is not a scalar string is a 400, before it costs anything.
+      //
+      // NOT "Search query is required", which is what this said. The caller sent
+      // one, twice, and is looking at it; a message that contradicts the screen
+      // is the same defect as the length bound two lines above.
       if (typeof req.query.query !== 'string') {
-        return res.status(400).json({ error: 'Search query is required' });
+        return res.status(400).json({ error: 'That search did not arrive as one term. Type it again.' });
       }
 
       // Round 18 — the cache key is a NORMAL FORM, not the raw string. "Bars
@@ -785,8 +825,12 @@ router.get('/search',
       if (out.status !== 200) return res.status(out.status).json({ error: out.error });
       res.json(out.result);
     } catch (err) {
+      // Reached only when THIS handler throws. Every upstream failure is caught
+      // inside runTextSearch and returned as a descriptor. So this sentence is
+      // about us, and says so, rather than "Failed to search venues", which
+      // reads to the person typing as though their search was the problem.
       console.error('Venue search error:', err);
-      res.status(500).json({ error: 'Failed to search venues' });
+      res.status(500).json({ error: 'Venue search hit a problem on our side. Try again in a moment.' });
     }
   }
 );
@@ -816,6 +860,11 @@ async function runTextSearch(searchQuery, coarse, cacheKey) {
       signal: upstreamSignal('places'), // round 12
     });
 
+    // Carried out of the try so the guards below can see it. The two reads are
+    // deliberately in the same try: an upstreamSignal abort rejects the fetch
+    // and a non-JSON body rejects the json(), and both are the same class of
+    // failure (Google did not answer), so both belong to the same catch.
+    const httpStatus = response.status;
     const data = await response.json();
 
     // ---------------------------------------------------------------------
@@ -836,9 +885,43 @@ async function runTextSearch(searchQuery, coarse, cacheKey) {
     // on them, and the caller gets one plain sentence. The STATUS CODE is
     // unchanged (502, and still uncached, so the next request retries), which
     // is what any client keying off err.status still keys off.
-    if (data.error) {
+    if (data && data.error) {
       console.error('Places API error:', data.error.status, data.error.message);
-      return { status: 502, error: 'Venue search is not answering right now. Try again in a moment.' };
+      return { status: 502, error: UPSTREAM_SICK };
+    }
+
+    // ---------------------------------------------------------------------
+    // A FAILED SEARCH WAS BEING RENDERED AS "NO VENUES FOUND".
+    // ---------------------------------------------------------------------
+    // `response.ok` was never read on this path. Google's `{error:{...}}` body
+    // is only ONE of the shapes a non-answer arrives in: a 5xx from Google's
+    // edge, from Railway's egress or from any intermediary carries whatever
+    // JSON that hop feels like ({"message":"backend unavailable"} is the shape
+    // services/placeDetailsCache.js observed), and every one of those walked
+    // past the check above into `data.places || []`. The route then answered
+    // 200 {venues: [], total: 0}, which is the ONE answer the client is
+    // allowed to print "No venues found. Try a different search." for. An
+    // outage was being reported to the user as their spelling, which is the
+    // exact defect the copy work above this function exists to prevent, and it
+    // was reachable through the half of the path nobody had guarded.
+    //
+    // services/placeDetailsCache.js closed this for Place Details and wrote the
+    // finding up in its own header; the fix never crossed to Text Search. The
+    // guards are the same three, in the same order, for the same reasons.
+    //
+    // ORDER MATTERS: Google's own error body is read FIRST, because Places
+    // (New) sends `{error:{...}}` under a 4xx and reclassifying it by status
+    // would lose the status and message this file logs for an operator.
+    if (httpStatus < 200 || httpStatus >= 300) {
+      console.error('Places text search HTTP', httpStatus, 'with no error body');
+      return { status: 502, error: UPSTREAM_SICK };
+    }
+    // A 200 whose body is not an object at all, or whose `places` is present
+    // and is not a list. `places` ABSENT is the legitimate zero-result answer
+    // and must stay a 200. Google omits the key rather than sending [].
+    if (!data || typeof data !== 'object' || (data.places !== undefined && !Array.isArray(data.places))) {
+      console.error('Places text search returned a body with no usable places list');
+      return { status: 502, error: UPSTREAM_SICK };
     }
 
     // Map results to clean venue objects
@@ -872,8 +955,49 @@ async function runTextSearch(searchQuery, coarse, cacheKey) {
     setCache(cacheKey, result);
     return { status: 200, result };
   } catch (err) {
-    console.error('Venue search error:', err);
-    return { status: 500, error: 'Failed to search venues' };
+    // A TIMEOUT AND A BUG ARE NOT THE SAME EVENT AND WERE ANSWERED AS ONE.
+    // Everything reaching here used to be 500 "Failed to search venues", which
+    // is wrong on both halves: the status blamed this server for an upstream
+    // that did not answer, and the sentence reads to a user as though the
+    // search itself was rejected.
+    //
+    // upstreamSignal('places') is AbortSignal.timeout(6000) and it REJECTS the
+    // fetch with a TimeoutError; a non-JSON body (an HTML error page from a
+    // proxy) rejects the json() with a SyntaxError. Both mean Google did not
+    // answer, so both are gateway statuses, and the timeout gets the one code
+    // that says what happened.
+    //
+    // WHY THE TIMEOUT IS A 500 AND NOT THE 504 IT OBVIOUSLY IS.
+    // frontend/src/services/api.js retries every GET that answers 502, 503 or
+    // 504, twice, with backoff (RETRYABLE_STATUSES). Each of those retries is
+    // a fresh request to this route, which is a fresh utils/placesBudget.js
+    // charge and a fresh PAID Google call, because a failure is never cached.
+    // utils/upstream.js states the rule this would break in as many words:
+    // aborting is a local act, Google has already received, parsed and metered
+    // the request by the time our six-second deadline fires, so a retry is a
+    // second invoice for a question we already paid to ask, and a slow upstream
+    // is exactly when the retries pile up. Three invoices and twenty-one
+    // seconds of spinner, to say the same thing.
+    //
+    // 500 also keeps the sentence. buildHttpError REPLACES the body message on
+    // 502/503/504, so the honest "took too long" line only reaches a person on
+    // a status the client does not treat as a gateway problem.
+    //
+    // Change this to 504 in the SAME commit that makes searchVenues pass
+    // `retry: false`, and not before.
+    //
+    // The OTHER exits stay 502, deliberately, and the difference is whether
+    // Google metered the request. An upstream that ANSWERED with a failure
+    // (an error body, a 5xx from an edge, an HTML page from a proxy) is a
+    // fast, usually transient no, and the client's retry is what turns a blip
+    // into a result the user never had to see fail. An upstream that never
+    // answered is the one case where the retry is guaranteed to be billed.
+    const timedOut = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
+    console.error('Venue search upstream failure:', err && err.name, err && err.message);
+    if (timedOut) {
+      return { status: 500, error: 'Venue search took too long to answer. Try that again in a moment.' };
+    }
+    return { status: 502, error: UPSTREAM_SICK };
   }
 }
 
@@ -903,7 +1027,8 @@ router.get('/details',
       }
 
       if (!API_KEY) {
-        return res.status(500).json({ error: 'Google Places API key not configured' });
+        console.error('Venue details unavailable: GOOGLE_PLACES_API_KEY is unset');
+        return res.status(500).json({ error: DETAILS_OFF });
       }
 
       const placeId = req.query.place_id;
@@ -938,7 +1063,7 @@ router.get('/details',
       res.json(out.result);
     } catch (err) {
       console.error('Venue details error:', err);
-      res.status(500).json({ error: 'Failed to get venue details' });
+      res.status(500).json({ error: 'Opening that venue hit a problem on our side. Try again in a moment.' });
     }
   }
 );
@@ -966,8 +1091,30 @@ function shapeDetails(out) {
       console.error('Places API error (details):', out.message);
       return { status: 502, error: 'That venue is not loading right now. Try again in a moment.' };
     }
-    console.error('Venue details error:', out.message);
-    return { status: 500, error: 'Failed to get venue details' };
+    // 'unconfigured' is not a failure of Google's and it is not transient, so
+    // it may not wear the sentence that says to try again. The route's own
+    // !API_KEY guard above normally catches it first; this is the second door,
+    // because services/placeDetailsCache.js reads the environment at call time
+    // and this file read it at require time. Same status, same reasoning as
+    // SEARCH_OFF: 500 is the only 5xx whose message the client still prints.
+    if (out.kind === 'unconfigured') {
+      console.error('Venue details unavailable:', out.message);
+      return { status: 500, error: DETAILS_OFF };
+    }
+    // Everything else is a transport failure, a timeout, or a body that was not
+    // a place. "Failed to get venue details" told the user nothing and told an
+    // operator nothing either, so the words change here.
+    //
+    // THE STATUS DOES NOT, and that is a decision rather than an omission.
+    // 502 is the better code for an upstream that did not answer, but
+    // services/placeDetailsCache.js reports a TIMEOUT and a bad body under one
+    // `unreachable` kind, and timeouts dominate this class. A 502 here would
+    // hand the whole class to the client's retry loop, and a retried Place
+    // Details timeout is a second and third invoice for a request Google has
+    // already metered. See the long note in runTextSearch's catch above, and
+    // utils/upstream.js.
+    console.error('Venue details upstream failure:', out.message);
+    return { status: 500, error: 'That venue is not loading right now. Try again in a moment.' };
   }
   const p = out.place;
   const photos = (p.photos || []).slice(0, 5).map(photo => photoUrl(photo.name, 600));
