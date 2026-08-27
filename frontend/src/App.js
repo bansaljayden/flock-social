@@ -4530,9 +4530,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     if (ceiling <= 80) return 3;
     return 4;
   }, []);
-  const [slideProgress, setSlideProgress] = useState(0);
+  // The slider's per-frame progress lives OUTSIDE React on purpose. Every
+  // touchmove used to setState a percentage at the top of FlockAppInner,
+  // which re-dispatched ~700 hooks and rebuilt the active screen per frame of
+  // the gesture the user was watching: dropped frames on exactly the drag.
+  // The fill and thumb are now written imperatively (the same pattern the
+  // draggable FAB uses), and React keeps only the coarse stage the copy and
+  // colors read, which changes at threshold crossings, not per frame.
+  const [slideStage, setSlideStage] = useState('idle'); // 'idle' | 'past30' | 'armed'
   const slideRef = useRef(null);
   const slidingRef = useRef(false);
+  const slidePctRef = useRef(0);
+  const slideFillRef = useRef(null);
+  const slideThumbRef = useRef(null);
   const [venueDetailHistory, setVenueDetailHistory] = useState([]);
   const skipCrowdFetchRef = useRef(false);
   const [liveWeather, setLiveWeather] = useState(null);
@@ -8945,7 +8955,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
   }, [selectedFlockId, transmitFlockMessage]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const getCategoryColor = (cat) => {
+  // useCallback, and the dep is the palette: this is a prop of the
+  // React.memo'd MapLibreMapView, and as a plain arrow it was re-created on
+  // every FlockAppInner render, which made the memo dead. Once Discover had
+  // been visited, every app-level setState re-ran the whole map component
+  // body (hooks plus overlay JSX) for the rest of the session, hidden or not,
+  // because this one prop never compared equal. Every other prop the map
+  // takes was already stable; this line restores the intended bail-out on the
+  // biggest permanently mounted child in the tree.
+  const getCategoryColor = useCallback((cat) => {
     switch(cat) {
       case 'Food': return colors.food;
       case 'Nightlife': return colors.nightlife;
@@ -8953,7 +8971,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       case 'Sports': return colors.sports;
       default: return colors.navy;
     }
-  };
+  }, [colors]);
 
   // Relative time formatter
   const getRelativeTime = (timeStr) => {
@@ -14686,16 +14704,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 const rect = slideRef.current.getBoundingClientRect();
                 const x = e.touches[0].clientX - rect.left;
                 const pct = Math.max(0, Math.min(100, ((x - 22) / (rect.width - 44)) * 100));
-                setSlideProgress(pct);
+                slidePctRef.current = pct;
+                if (slideFillRef.current) slideFillRef.current.style.width = `${Math.max(44, (pct / 100) * rect.width)}px`;
+                if (slideThumbRef.current) slideThumbRef.current.style.left = `${Math.max(3, (pct / 100) * (rect.width - 44))}px`;
+                const stage = pct > 85 ? 'armed' : pct > 30 ? 'past30' : 'idle';
+                setSlideStage(prev => (prev === stage ? prev : stage));
               }}
               onTouchEnd={() => {
                 slidingRef.current = false;
-                if (slideProgress > 85) {
+                if (slidePctRef.current > 85) {
                   // markFlockCompleted owns the toast now: announcing success
                   // here fired even when the server refused the change.
                   markFlockCompleted(flock.id);
                 }
-                setSlideProgress(0);
+                slidePctRef.current = 0;
+                if (slideFillRef.current) slideFillRef.current.style.width = '';
+                if (slideThumbRef.current) slideThumbRef.current.style.left = '';
+                setSlideStage('idle');
               }}
               onMouseDown={(e) => {
                 const rect = slideRef.current.getBoundingClientRect();
@@ -14707,27 +14732,35 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 const rect = slideRef.current.getBoundingClientRect();
                 const x = e.clientX - rect.left;
                 const pct = Math.max(0, Math.min(100, ((x - 22) / (rect.width - 44)) * 100));
-                setSlideProgress(pct);
+                slidePctRef.current = pct;
+                if (slideFillRef.current) slideFillRef.current.style.width = `${Math.max(44, (pct / 100) * rect.width)}px`;
+                if (slideThumbRef.current) slideThumbRef.current.style.left = `${Math.max(3, (pct / 100) * (rect.width - 44))}px`;
+                const stage = pct > 85 ? 'armed' : pct > 30 ? 'past30' : 'idle';
+                setSlideStage(prev => (prev === stage ? prev : stage));
               }}
               onMouseUp={() => {
                 if (!slidingRef.current) return;
                 slidingRef.current = false;
-                if (slideProgress > 85) {
+                if (slidePctRef.current > 85) {
                   markFlockCompleted(flock.id);
                 }
-                setSlideProgress(0);
+                slidePctRef.current = 0;
+                if (slideFillRef.current) slideFillRef.current.style.width = '';
+                if (slideThumbRef.current) slideThumbRef.current.style.left = '';
+                setSlideStage('idle');
               }}
-              onMouseLeave={() => { if (slidingRef.current) { slidingRef.current = false; setSlideProgress(0); } }}
+              onMouseLeave={() => { if (slidingRef.current) { slidingRef.current = false; slidePctRef.current = 0; if (slideFillRef.current) slideFillRef.current.style.width = ''; if (slideThumbRef.current) slideThumbRef.current.style.left = ''; setSlideStage('idle'); } }}
             >
-              {/* Fill track */}
-              <div style={{ position: 'absolute', top: 0, left: 0, bottom: 0, width: `${Math.max(44, (slideProgress / 100) * (slideRef.current?.offsetWidth || 300))}px`, borderRadius: '22px', background: slideProgress > 85 ? '#2d5a87' : colors.navyBg, transition: slidingRef.current ? 'none' : 'width 0.3s ease, background 0.2s ease' }} />
+              {/* Fill track: width written imperatively during the drag; the
+                  empty-string resets on release hand back to this default. */}
+              <div ref={slideFillRef} style={{ position: 'absolute', top: 0, left: 0, bottom: 0, width: '44px', borderRadius: '22px', background: slideStage === 'armed' ? '#2d5a87' : colors.navyBg, transition: slidingRef.current ? 'none' : 'width 0.3s ease, background 0.2s ease' }} />
               {/* Thumb */}
-              <div style={{ position: 'absolute', top: '3px', left: `${Math.max(3, ((slideProgress / 100) * ((slideRef.current?.offsetWidth || 300) - 44)))}px`, width: '38px', height: '38px', borderRadius: '19px', backgroundColor: 'white', boxShadow: '0 2px 8px rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: slidingRef.current ? 'none' : 'left 0.3s ease' }}>
-                <span style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navyBg, transition: 'transform 0.15s ease' }}>{slideProgress > 85 ? Icons.check(colors.navyBg, 16) : Icons.chevronRight(colors.navyBg, 16)}</span>
+              <div ref={slideThumbRef} style={{ position: 'absolute', top: '3px', left: '3px', width: '38px', height: '38px', borderRadius: '19px', backgroundColor: 'white', boxShadow: '0 2px 8px rgba(0,0,0,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: slidingRef.current ? 'none' : 'left 0.3s ease' }}>
+                <span style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navyBg, transition: 'transform 0.15s ease' }}>{slideStage === 'armed' ? Icons.check(colors.navyBg, 16) : Icons.chevronRight(colors.navyBg, 16)}</span>
               </div>
               {/* Label */}
               <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: slideProgress > 30 ? 'rgba(255,255,255,0.9)' : 'var(--text-secondary)', transition: 'color 0.2s ease', letterSpacing: '0.3px' }}>{slideProgress > 85 ? 'Release to complete!' : 'Slide to mark done'}</span>
+                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: slideStage !== 'idle' ? 'rgba(255,255,255,0.9)' : 'var(--text-secondary)', transition: 'color 0.2s ease', letterSpacing: '0.3px' }}>{slideStage === 'armed' ? 'Release to complete!' : 'Slide to mark done'}</span>
               </div>
             </div>
           </div>

@@ -370,6 +370,23 @@ export default function ChatDetail({
     // the header. An empty flock list here is a TypeError during render, which
     // React answers by unmounting the entire app.
     if (!flock) return <MissingFlockPanel />;
+    // Hot-loop precomputation. The search filter used to run twice per render
+    // (once for the count line, once for the list), and the avatar cell ran
+    // flock.members.find up to four times per MESSAGE ROW per render, which at
+    // a few pages of history times a full roster is thousands of string
+    // comparisons on every app-level state change while the chat is open. One
+    // filtered list, one name-to-image Map, both O(n) once.
+    const visibleMessages = showChatSearch && chatSearch.trim()
+      ? flock.messages.filter(m => {
+          const q = chatSearch.toLowerCase();
+          return (m.text || '').toLowerCase().includes(q) || (m.sender || '').toLowerCase().includes(q);
+        })
+      : flock.messages;
+    const memberImageByName = new Map(
+      (flock.members || [])
+        .filter(mb => mb && typeof mb === 'object' && mb.name && mb.image)
+        .map(mb => [mb.name, mb.image])
+    );
     const reactions = ['❤️', '👍', '😂', '🔥'];
     // PUT /api/flocks/:id is creator-only. The venue controls below are the
     // same route the vote panel's Confirm button already gates on this.
@@ -501,10 +518,7 @@ export default function ChatDetail({
             </div>
             {chatSearch.trim() && (
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '6px 0 0 4px', fontWeight: '500' }}>
-                {flock.messages.filter(m => {
-                  const q = chatSearch.toLowerCase();
-                  return (m.text || '').toLowerCase().includes(q) || (m.sender || '').toLowerCase().includes(q);
-                }).length} messages found
+                {visibleMessages.length} messages found
               </p>
             )}
           </div>
@@ -799,13 +813,7 @@ export default function ChatDetail({
               </div>
             </div>
           )}
-          {(showChatSearch && chatSearch.trim()
-            ? flock.messages.filter(m => {
-                const q = chatSearch.toLowerCase();
-                return (m.text || '').toLowerCase().includes(q) || (m.sender || '').toLowerCase().includes(q);
-              })
-            : flock.messages
-          ).map((m, idx) => (
+          {visibleMessages.map((m, idx) => (
             <div
               key={m.id}
               onTouchStart={(e) => handleTouchStart(m.id, e)}
@@ -831,7 +839,8 @@ export default function ChatDetail({
               <div style={{ position: 'relative', flexShrink: 0 }}>
                 <div style={{ width: '34px', height: '34px', borderRadius: '17px', background: m.sender === 'You' ? colors.navyBg : 'white', border: m.sender === 'You' ? 'none' : '2px solid rgba(13,40,71,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: m.sender === 'You' ? 'white' : colors.navy, boxShadow: m.sender === 'You' ? '0 3px 10px rgba(13,40,71,0.10)' : '0 2px 6px rgba(0,0,0,0.06)', overflow: 'hidden' }}>
                   {(() => {
-                    const imgUrl = m.sender === 'You' ? profilePic : (m.senderImage ? (m.senderImage.startsWith('/uploads/') ? `${BASE_URL}${m.senderImage}` : m.senderImage) : (flock.members?.find(mb => mb.name === m.sender)?.image ? (flock.members.find(mb => mb.name === m.sender).image.startsWith('/uploads/') ? `${BASE_URL}${flock.members.find(mb => mb.name === m.sender).image}` : flock.members.find(mb => mb.name === m.sender).image) : null));
+                    const raw = m.sender === 'You' ? profilePic : (m.senderImage || memberImageByName.get(m.sender) || null);
+                    const imgUrl = raw ? (raw.startsWith('/uploads/') ? `${BASE_URL}${raw}` : raw) : null;
                     return imgUrl ? <img src={imgUrl} alt="" style={{ width: '34px', height: '34px', borderRadius: '17px', objectFit: 'cover' }} /> : m.sender[0];
                   })()}
                 </div>
