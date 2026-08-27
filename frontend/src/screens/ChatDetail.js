@@ -74,19 +74,32 @@
  * half-typed message survive a trip elsewhere exactly as they did before.
  * Moving them down would have reset all of it on every exit.
  *
- * The block reads no hooks of its own, which is why calling it and mounting it
- * are the same thing here.
+ * The block arrived here reading no hooks of its own. It reads two now, both
+ * added on 2026-08-26 and both explained where they are declared: one for
+ * whether the composer holds anything but whitespace, and one for whether the
+ * socket is actually up. Neither fact is visible from App.js, which is the
+ * whole reason they are not props. It is a real component and App.js mounts it
+ * as `<ChatDetail {...props} />`, so hooks are legal here; they sit above the
+ * `!flock` early return, where they always run.
  *
- * The body below is the old block verbatim, including its original four-space
- * indentation, so it can be diffed against the deleted lines character for
- * character. Nothing was renamed, reformatted or improved on the way across.
+ * The body below was the old block verbatim, including its original four-space
+ * indentation, so it could be diffed against the deleted lines character for
+ * character. What has changed since is three defects the browser suite proved
+ * from the screen: the draft that followed the user into a private thread, the
+ * Send button armed over whitespace, and the "online" literal wired to nothing.
  */
 import React from 'react';
 import { leaveFlock as apiLeaveFlock, BASE_URL, createBillSplit, createFlockInviteLink, getPaymentLinks, ghostCommit, lockBudget, sendBudgetReminder, settleShare, submitBudget, unsettleShare } from '../services/api';
-import { leaveFlock } from '../services/socket';
+import { getSocket, leaveFlock } from '../services/socket';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
+
+/* How often the header re-reads whether the socket is actually up. The same
+ * 2000ms App.js's reconnect catch-up samples on, and for the same reason: a
+ * drop shorter than one sample is never drawn, and a real reconnect takes
+ * longer than one sample in every case that has been measured. */
+const SOCKET_SAMPLE_MS = 2000;
 
 /* One pill per emoji, not one per person.
  *
@@ -265,6 +278,69 @@ export default function ChatDetail({
   updateFlockVenue,
   updateFlockVotes,
 }) {
+    // TWO PIECES OF STATE, AND WHY THEY ARE HERE RATHER THAN IN App.js.
+    //
+    // This screen arrived from App.js as a pure function of its props and the
+    // header of this file says so. These two are the exceptions, and both are
+    // here because what they hold is a fact about THIS screen's own DOM and
+    // this screen's own connection, which App.js cannot see:
+    //
+    //   composerHasRealText. The composer is an uncontrolled input, so the
+    //   only place the difference between "" and "   " is ever visible is its
+    //   change event, below. App.js computes chatInputHasText as `!!value`
+    //   while sendChatMessage guards on `.trim()`, so a box holding nothing
+    //   but spaces lit the Send button up and then threw the tap away in
+    //   silence. That is the dead control SLOP-AUDIT rule C1 bans, on the
+    //   most-used button in the product.
+    //
+    //   socketLive. The header printed "online" beside a green dot as a
+    //   hardcoded literal wired to nothing. It said online with the socket
+    //   dead, on the one screen a person opens to work out why nothing is
+    //   arriving.
+    //
+    // Both are declared above the `!flock` return below, because a hook after
+    // a conditional return is a hook that does not always run.
+    const [composerHasRealText, setComposerHasRealText] = React.useState(false);
+    // Sampled rather than subscribed to, for the reason App.js's reconnect
+    // catch-up gives at length: socket.io's 'connect' fires on the INSTANCE,
+    // and services/socket.js replaces the instance on a token swap, a
+    // fatal-auth teardown or a session expiry, so a listener welded to one
+    // instance goes quiet for good. Reading `.connected` is instance-agnostic
+    // and costs a boolean, and the timer only runs while a chat is open.
+    const [socketLive, setSocketLive] = React.useState(() => !!getSocket()?.connected);
+    React.useEffect(() => {
+      const sample = () => setSocketLive(!!getSocket()?.connected);
+      sample();
+      const id = setInterval(sample, SOCKET_SAMPLE_MS);
+      return () => clearInterval(id);
+    }, []);
+
+    // LEAVING THIS SCREEN, WRITTEN ONCE.
+    //
+    // A half-written flock message used to follow the user out of here. The
+    // composer is uncontrolled and its text lives in a ref in App.js that the
+    // one-to-one DM composer reads too, and only the back arrow ever cleared
+    // it. Every other exit on this screen left the sentence loaded, so opening
+    // a private thread put a message written for a group of people one tap of
+    // Send away from going to one of them.
+    //
+    // So there is one definition and every exit calls it, the back arrow
+    // included. A new exit that forgets to is the only route back to that bug,
+    // and __tests__/chatComposerAndInviteSheet.test.js counts the navigation
+    // calls in this file against the calls to this function so that route
+    // stays shut.
+    const leaveChatScreen = () => {
+      setChatInput('');
+      setComposerHasRealText(false);
+      setReplyingTo(null);
+      setShowFlockMenu(false);
+      setShowLeaveConfirm(false);
+      setShowChatSearch(false);
+      setChatSearch('');
+      setShowVotePanel(false);
+      setChatNavOpen(false);
+    };
+
     const flock = getSelectedFlock();
     // Every line below reads off `flock` unguarded, starting with flock.name in
     // the header. An empty flock list here is a TypeError during render, which
@@ -274,19 +350,36 @@ export default function ChatDetail({
     // PUT /api/flocks/:id is creator-only. The venue controls below are the
     // same route the vote panel's Confirm button already gates on this.
     const isCreator = String(flock.creatorId) === String(authUser?.id);
+    // The composer's arming condition, read by the Send button and by the
+    // Enter key so the two cannot disagree about what is sendable. It is an
+    // AND of two facts owned by two places and it needs both. App.js's
+    // chatInputHasText is the authority on whether the box was CLEARED: a
+    // send, a photo caption going out and every exit above all clear through
+    // it, and none of them is visible from in here. composerHasRealText is the
+    // authority on whether what is in the box is more than whitespace, which
+    // is only visible in here, because chatInputHasText is `!!value` and a
+    // string of spaces is truthy.
+    const canSendComposerText = chatInputHasText && composerHasRealText;
 
     return (
       <div key="chat-detail-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
         <div style={{ padding: '10px 10px 8px 6px', background: colors.navyBg, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
           <div style={{ display: 'flex', alignItems: 'stretch', gap: '6px' }}>
-            <button aria-label="Back" className="hit44" onClick={() => { setCurrentScreen('main'); setChatInput(''); setReplyingTo(null); setShowFlockMenu(false); setShowLeaveConfirm(false); setShowChatSearch(false); setChatSearch(''); setShowVotePanel(false); setChatNavOpen(false); }} style={{ width: '34px', borderRadius: '10px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
+            <button aria-label="Back" className="hit44" onClick={() => { leaveChatScreen(); setCurrentScreen('main'); }} style={{ width: '34px', borderRadius: '10px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
             {!chatNavOpen && (
               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: 0 }}>
                 <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontWeight: '600', color: 'white', fontSize: 'var(--t-title)', margin: 0, lineHeight: '1.2', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.name}</h2>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px' }}>
                   <span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>{memberCountLabel(flock)}</span>
                   <span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.3)' }}>•</span>
-                  {isTyping ? <span style={{ fontSize: 'var(--t-meta)', color: '#86EFAC', fontWeight: '500' }}>{typingUser} is typing...</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: '#22c55e', boxShadow: 'none' }} /><span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>online</span></>}
+                  {/* Reads the live socket, not a literal. The dot and the
+                      word both move, so the state is carried by more than a
+                      tint, and "reconnecting..." is the truth while socket.io
+                      is still retrying: history is already on screen over
+                      HTTP, and what is missing is anything said since. A total
+                      loss of network is a different thing and OfflineGate
+                      covers the whole app for it. */}
+                  {isTyping ? <span style={{ fontSize: 'var(--t-meta)', color: '#86EFAC', fontWeight: '500' }}>{typingUser} is typing...</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: socketLive ? '#22c55e' : '#F59E0B', boxShadow: 'none' }} /><span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>{socketLive ? 'online' : 'reconnecting...'}</span></>}
                 </div>
               </div>
             )}
@@ -399,6 +492,7 @@ export default function ChatDetail({
               <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
                 <button
                   onClick={() => {
+                    leaveChatScreen();
                     setVenueDetailReturnTo({ tab: 'chat', screen: 'chatDetail', flockId: selectedFlockId });
                     setCurrentTab('explore');
                     setCurrentScreen('main');
@@ -417,7 +511,7 @@ export default function ChatDetail({
                 {isCreator && (
                   <button
                     className="hit44 glass-btn glass-secondary"
-                    onClick={() => { setPickingVenueForCreate(true); setPickingVenueForFlockId(flock.id); setCurrentTab('explore'); setCurrentScreen('main'); }}
+                    onClick={() => { leaveChatScreen(); setPickingVenueForCreate(true); setPickingVenueForFlockId(flock.id); setCurrentTab('explore'); setCurrentScreen('main'); }}
                     style={{ padding: '8px 10px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, background: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
                   >
                     Change
@@ -428,7 +522,7 @@ export default function ChatDetail({
           </div>
         ) : isCreator ? (
           <button className="hit44"
-            onClick={() => { setPickingVenueForCreate(true); setPickingVenueForFlockId(flock.id); setCurrentTab('explore'); setCurrentScreen('main'); }}
+            onClick={() => { leaveChatScreen(); setPickingVenueForCreate(true); setPickingVenueForFlockId(flock.id); setCurrentTab('explore'); setCurrentScreen('main'); }}
             style={{ margin: '0', padding: '10px 14px', background: `linear-gradient(135deg, var(--bg-primary), var(--bg-card-solid))`, borderBottom: `1px solid ${colors.creamDark}`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', width: '100%', flexShrink: 0 }}
           >
             <div style={{ width: '40px', height: '40px', borderRadius: '12px', border: `2px dashed ${colors.steel}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -750,6 +844,7 @@ export default function ChatDetail({
                       const vc = m.venue_data;
                       const pid = vc.place_id;
                       if (pid) {
+                        leaveChatScreen();
                         setVenueDetailReturnTo({ tab: 'chat', screen: 'chatDetail', flockId: selectedFlockId });
                         setCurrentTab('explore');
                         setCurrentScreen('main');
@@ -986,11 +1081,14 @@ export default function ChatDetail({
               refused to shrink, and the overflow was pushed onto the only
               flex item that could still shrink: the send button. It measured
               20px wide with its right edge 7px off-screen. */}
-          <input key="chat-input" id="chat-input" aria-label="Message" type="text" defaultValue="" onChange={handleChatInputChange} onKeyDown={(e) => e.key === 'Enter' && sendChatMessage()} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: '1 1 0%', minWidth: 0, padding: '15px 18px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '16px', outline: 'none', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
+          <input key="chat-input" id="chat-input" aria-label="Message" type="text" defaultValue="" onChange={(e) => { setComposerHasRealText(e.target.value.trim().length > 0); handleChatInputChange(e); }} onKeyDown={(e) => { if (e.key === 'Enter' && canSendComposerText) sendChatMessage(); }} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: '1 1 0%', minWidth: 0, padding: '15px 18px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '16px', outline: 'none', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
           {/* The mic button that lived here only toasted "coming soon" (dead
               button, SLOP-AUDIT.md C1). The send button now stays put and
-              disables when the input is empty. */}
-          <button aria-label="Send message" className="hit44 glass-btn glass-navy" onClick={sendChatMessage} disabled={!chatInputHasText} style={{ width: '42px', height: '42px', minWidth: '42px', flexShrink: 0, borderRadius: '21px', border: 'none', background: colors.navyBg, color: 'white', cursor: chatInputHasText ? 'pointer' : 'default', opacity: chatInputHasText ? 1 : 0.45, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.10)', transition: 'opacity 0.2s ease' }}>{Icons.send('white', 18)}</button>
+              disables when there is nothing sendable in the input. Spaces are
+              nothing: armed on a box holding only spaces, this button lit up
+              and sendChatMessage's own `.trim()` guard then dropped the tap
+              without a word. See canSendComposerText above. */}
+          <button aria-label="Send message" className="hit44 glass-btn glass-navy" onClick={sendChatMessage} disabled={!canSendComposerText} style={{ width: '42px', height: '42px', minWidth: '42px', flexShrink: 0, borderRadius: '21px', border: 'none', background: colors.navyBg, color: 'white', cursor: canSendComposerText ? 'pointer' : 'default', opacity: canSendComposerText ? 1 : 0.45, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.10)', transition: 'opacity 0.2s ease' }}>{Icons.send('white', 18)}</button>
         </div>
 
 
@@ -1855,8 +1953,10 @@ export default function ChatDetail({
                     // the membership check — battery spent on nothing.
                     if (sharingLocationRef.current === flockId) stopLocationSharing();
                     setFlocks(prev => prev.filter(f => f.id !== flockId));
-                    setShowLeaveConfirm(false);
-                    setShowFlockMenu(false);
+                    // Clears the composer along with the two sheets this used
+                    // to close by hand. A draft written for a flock you have
+                    // just left is the worst one to carry into a DM.
+                    leaveChatScreen();
                     setCurrentScreen('main');
                     setCurrentTab('home');
                     // Notify other members via socket. Through the helper, not
