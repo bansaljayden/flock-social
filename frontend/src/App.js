@@ -1146,7 +1146,16 @@ const mapFlockRow = (m, myId) => ({
   text: m.message_text,
   message_type: m.message_type || 'text',
   venue_data: m.venue_data || null,
-  reactions: (m.reactions || []).map(r => r.emoji),
+  // Keep the whole reaction row, not just its emoji. The server hands each
+  // reaction back as { emoji, user_id, user_name } and every consumer of a
+  // flock reaction reads the user_id: groupReactions to decide whose pill is
+  // whose, addReactionToMessage to know if a tap is a take-back, and the
+  // socket add/remove handlers to dedupe by person. Stripping to a bare emoji
+  // string on the reload path was the flock twin of the A1 DM bug: the pill
+  // came back knowing a reaction existed but not that it was yours, so after a
+  // reopen it could be seen and never taken back. mapDmRow keeps the row for
+  // the same reason; the two mappers now agree.
+  reactions: m.reactions || [],
   ...(m.image_url ? { image: m.image_url } : {}),
 });
 
@@ -3980,14 +3989,30 @@ const SearchInputLocal = React.memo(function SearchInputLocal({
   const [val, setVal] = React.useState(() => (transform ? transform(initialValue) : initialValue));
   const timerRef = React.useRef(null);
   React.useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current); }, []);
-  // Sync when parent pushes a different initialValue (e.g. modal re-open with new data)
-  React.useEffect(() => { setVal(transform ? transform(initialValue) : initialValue); }, [initialValue, transform]);
+  // The last value this input committed upward. The parent stores it and hands
+  // it straight back as initialValue, and that echo must not reset the box.
+  const committedRef = React.useRef(initialValue);
+  // Adopt initialValue only on a genuinely EXTERNAL change (a modal re-open with
+  // new data, or a real clear), never when it is the parent echoing back what
+  // this input just committed. A debounced commit that fires mid-typing pushes a
+  // PARTIAL value up, and a keystroke gap wider than debounceMs is enough to make
+  // that happen while the person is still typing. Resetting val to that echo
+  // there drops every character typed between the commit and this effect, which
+  // is the search box eating a name typed one key at a time at human speed.
+  React.useEffect(() => {
+    if (initialValue === committedRef.current) return;
+    committedRef.current = initialValue;
+    setVal(transform ? transform(initialValue) : initialValue);
+  }, [initialValue, transform]);
   const handleChange = (e) => {
     const raw = e.target.value;
     const next = transform ? transform(raw) : raw;
     setVal(next);
     if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => onCommit(next), debounceMs);
+    // committedRef is set to the value we are about to publish, BEFORE onCommit
+    // fires the parent update, so the initialValue echo it produces is
+    // recognised as our own and skipped by the effect above.
+    timerRef.current = setTimeout(() => { committedRef.current = next; onCommit(next); }, debounceMs);
   };
   if (as === 'textarea') {
     return <textarea {...inputProps} ref={inputRef} value={val} onChange={handleChange} />;
@@ -9552,7 +9577,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // Then ask the server, so the counts under the roster are its numbers
     // rather than our subtraction.
     if (selectedFlockId) refreshFlockRoster(selectedFlockId);
-  }, [selectedDmId, selectedFlockId, refreshFlockRoster]);
+    // Refresh the blocked list from the server too. Without this, a block made
+    // from the person card or a chat header never reaches blockedUsers, and the
+    // Blocked accounts row on the You tab keeps reading "None" straight after
+    // blocking somebody, until the Blocked screen is opened and loads it. The
+    // refetch also re-seeds blockedIdsRef from the server's whole answer, which
+    // supersedes the add above.
+    loadBlockedUsers();
+  }, [selectedDmId, selectedFlockId, refreshFlockRoster, loadBlockedUsers]);
 
   // Open the person card. Callers hand over exactly what their own row already
   // renders; anything missing stays missing rather than being fetched.
