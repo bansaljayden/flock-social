@@ -181,9 +181,9 @@ NOISE_REF_COUNTS = _cfg_number('NOISE_REF_COUNTS', float, 1e-6, 1024.0, 1.0)
 NOISE_DB_OFFSET = _cfg_number('NOISE_DB_OFFSET', float, -100.0, 200.0, 50.0)
 
 # Ceilings mirrored from backend/routes/sensors.js. Sending a value the server
-# will reject only wastes a retry, so clamp here too. (That file's comment on
-# MAX_THERMAL still names the MLX90640; the ceiling it sets is right for either
-# sensor and is not this program's to change.)
+# will reject only wastes a retry, so clamp here too. The ceilings are the
+# server's to change, not this program's; they are right for either thermal
+# sensor this project has specified.
 MAX_IR_PER_READING = 10000
 MAX_THERMAL = 1000
 MAX_NOISE_DB = 140.0
@@ -1188,14 +1188,30 @@ def snapshot():
 
 
 def _resolve_timestamp(item):
-    """Fill in recorded_at for a reading taken before the clock was set."""
-    mono = item.pop('_mono', None)
-    if 'recorded_at' in item or mono is None:
+    """Fill in recorded_at for a reading taken before the clock was set.
+
+    Returns the payload to SEND, which is not always the queued dict: while the
+    clock is still untrusted, the monotonic mark stays on the queued entry and
+    a sanitised copy goes out, so a delivery that fails now does not cost the
+    reading its real time later. The first version popped the mark before
+    knowing whether it could use it, so one failed pre-NTP delivery attempt per
+    boot was enough to file that reading on arrival time forever.
+    """
+    if 'recorded_at' in item:
+        item.pop('_mono', None)
+        return item
+    mono = item.get('_mono')
+    if mono is None:
         return item
     if clock_is_sane():
+        item.pop('_mono', None)
         item['recorded_at'] = iso_utc(time.time() - (time.monotonic() - mono))
-    # Still no valid clock: send it undated and let the backend stamp arrival.
-    return item
+        return item
+    # Still no valid clock: send it undated and let the backend stamp arrival,
+    # keeping the mark so a later attempt can still reconstruct the real time.
+    send = dict(item)
+    send.pop('_mono', None)
+    return send
 
 
 class Pusher:
@@ -1277,6 +1293,26 @@ class Pusher:
                 continue
 
             if code in FATAL_PAYLOAD_STATUSES:
+                # A clock running FAST is the one payload problem this device
+                # can repair by itself, and dropping the reading would drop
+                # every reading forever: clock_is_sane() only checks the past,
+                # so a fast clock passes it and stamps every snapshot ahead,
+                # and the server 400s each one. The server names the condition
+                # in its own words ("recorded_at is in the future"), which is
+                # the only clock reference this device has, so on those words:
+                # strip the stamp and resend undated. The backend files the
+                # reading on arrival, which for a live reading is within
+                # seconds of the truth. Once stripped it cannot 400 for this
+                # reason again, so this cannot loop.
+                if 'recorded_at' in _pending[0] and 'recorded_at' in (body or '') and 'future' in (body or ''):
+                    log_throttled('clock_ahead', logging.ERROR,
+                                  'Backend says this clock is running fast; sending undated '
+                                  'until it is fixed (readings are filed on arrival time)',
+                                  every_seconds=300)
+                    _pending[0].pop('recorded_at', None)
+                    _pending[0].pop('_mono', None)
+                    handled += 1
+                    continue
                 # The server will never accept this reading. Dropping one bad
                 # reading is right; retrying it forever is not.
                 logger.error(f'Backend rejected a reading permanently (status {code}): {body}')
@@ -1358,6 +1394,25 @@ class Pusher:
             log_throttled('buffer_full', logging.WARNING,
                           f'Buffer full; dropped the {dropped} oldest reading(s)')
         self.flush()
+        # A 429 asks for a couple of seconds, and until this loop existed the
+        # answer was thirty: flush scheduled the short retry it was asked for
+        # and nothing ran it until the next push interval, so the throttled
+        # tail of a drain crawled out at one flush per cycle and the "about a
+        # minute of extra drain" both sides document took fifteen to twenty.
+        # Honour the short wait here, inside the cycle. Bounded twice over:
+        # it runs only while the ONLY thing in the way is rate limiting (any
+        # failure or auth error ends it, and _succeed zeroing the counter ends
+        # it on a full drain), and never past one push interval of extra
+        # waiting, so a misbehaving backend cannot pin this thread. _stop cuts
+        # it instantly on shutdown.
+        deadline = time.monotonic() + PUSH_INTERVAL
+        while (_pending and not _stop.is_set()
+               and self.rate_limits and not self.failures and not self.auth_failures
+               and self.next_attempt and time.monotonic() < deadline):
+            wait = self.next_attempt - time.monotonic()
+            if wait > 0 and _stop.wait(min(wait, PUSH_INTERVAL)):
+                break
+            self.flush()
         # Persist only when something is actually waiting, or when the disk copy
         # needs clearing. In normal operation this writes nothing at all.
         if _pending or before or _buffer_on_disk:

@@ -1156,7 +1156,14 @@ export default function VenueDashboard({
               : noiseDb < 85 ? { text: 'Lively', color: colors.food, ink: colors.foodText }
               : { text: 'Loud', color: colors.red, ink: colors.redText };
             const lastSeenMin = sd.recorded_at ? Math.round((Date.now() - new Date(sd.recorded_at).getTime()) / 60000) : Infinity;
-            const online = lastSeenMin < 5;
+            // 15 matches CURRENT_READING_MAX_AGE_MINUTES in routes/sensors.js,
+            // the window the occupancy card itself uses. This used to say 5,
+            // so for ten minutes out of every gap the owner's panel called a
+            // sensor Offline while the consumer card was still showing its
+            // reading as live. GET /status returns online_within_minutes
+            // precisely so no client has to carry this constant; wire that in
+            // when this panel next grows a fetch.
+            const online = lastSeenMin < 15;
             const max24 = Math.max(1, ...ownerSensorHistory.map(r => r.thermal_headcount || 0));
             return (
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '14px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
@@ -1176,7 +1183,16 @@ export default function VenueDashboard({
 
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px', marginBottom: '12px' }}>
                   <div>
-                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Currently Inside</p>
+                    {/* "In View Now", not "Currently Inside": the number is
+                        a heat-cluster count in one doorway camera's field of
+                        view, uncalibrated against a real room count. The
+                        sensor's own display already says "In view now" for
+                        exactly this reason (main.py display loop), and a
+                        venue owner quoting an occupancy figure to a fire
+                        marshal is the conversation that copy was going to
+                        start. SLOP rule 5: never claim more than the build
+                        measures. */}
+                    <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>In View Now</p>
                     <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0', lineHeight: 1 }}>~{sd.thermal_headcount}</p>
                   </div>
                   <div>
