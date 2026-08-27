@@ -32,9 +32,13 @@ const { sw } = require('../components/ui/Icons');
 // The profile and settings screen (the You tab) left App.js on 2026-08-27 for
 // screens/ProfileSettings.js, and the "icon: Icons.ban" block-mark row went with
 // it, so that file is read here too.
+// The admin costs and revenue console left on 2026-08-27 too, for
+// screens/RevenueScreen.js, and the adminTabs array this file scans went with
+// it, so that file is read here as well.
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'VenueDashboard.js'), 'utf8')
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'RevenueScreen.js'), 'utf8');
 const ICONS_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'components', 'ui', 'Icons.js'),
   'utf8'
