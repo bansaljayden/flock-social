@@ -2227,5 +2227,33 @@ export function trackAppOpened(shell) {
   track('app_opened', { shell: shell === 'native' ? 'native' : 'web', signed_in: isLoggedIn() });
 }
 
+/* THE EMAIL-VERIFICATION OUTCOME. A password signup lands email_verified false,
+   and joining a flock is refused until it is true, so this step is a wall, not
+   a formality. The backend redirects to /?email_verified=<outcome>, App.js
+   reads and strips it (readEmailVerifiedOutcome) and calls this. '1' is the
+   wall coming down; 'expired', 'invalid' and 'error' are the confirmation link
+   failing, which is the drop most likely to be silently killing activation, so
+   this event is a success and a failure event at once for the step no other
+   event could see. An allowlist, not a pass-through: an outcome the build does
+   not know is still a failed confirmation, so it clamps to 'error'. No token,
+   no email, no id rides. */
+const EMAIL_VERIFIED_OUTCOMES = ['1', 'expired', 'invalid', 'error'];
+export function trackEmailVerified(outcome) {
+  track('email_verified', { outcome: EMAIL_VERIFIED_OUTCOMES.includes(outcome) ? outcome : 'error' });
+}
+
+/* ARRIVAL AT THE SIGN-IN AND SIGN-UP FORMS. screen_viewed is the in-app
+   denominator, but it fires from an App.js effect that only mounts inside the
+   authed shell, so the two screens a logged-out person sees first, the ones the
+   product's biggest drop sits between, had no arrival event and rode on
+   $pageview alone. This is that arrival, fired from each screen's own mount so
+   it counts a form that was shown and not a returning person who was signed in
+   before either rendered. 'signup' or 'login', clamped; nothing about the
+   person rides. */
+const AUTH_SCREENS = ['signup', 'login'];
+export function trackAuthScreen(screen) {
+  track('auth_screen_viewed', { screen: AUTH_SCREENS.includes(screen) ? screen : 'unknown' });
+}
+
 export { getToken, BASE_URL };
 export default request;

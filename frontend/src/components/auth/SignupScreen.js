@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { signup, resendVerificationEmail } from '../../services/api';
+import React, { useState, useEffect } from 'react';
+import { signup, resendVerificationEmail, trackAuthScreen } from '../../services/api';
 import useGoogleAuth, { isGoogleSignInAvailable } from './useGoogleAuth';
 import AppleSignInButton from './AppleSignInButton';
 import AuthShell, { AUTH, AuthError, AuthRule, GoogleG, PasswordEye } from './AuthShell';
@@ -18,6 +18,11 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // The arrival event for the signup form. screen_viewed only fires inside
+  // the authed shell, so this screen, shown before it, had no denominator of
+  // its own and the land-to-submit drop was invisible.
+  useEffect(() => { trackAuthScreen('signup'); }, []);
   // Signup now sends a confirmation link, and the account cannot do much until
   // it is clicked. Landing straight in the app and meeting a bare 403 on the
   // first real action is a bad first five minutes, so the screen says what
