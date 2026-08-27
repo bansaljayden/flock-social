@@ -8160,7 +8160,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   useEffect(() => {
     if (reconnectTick) runCatchUp();
   }, [reconnectTick, runCatchUp]);
-
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState === 'visible' && catchUpPendingRef.current) runCatchUp();
@@ -10407,6 +10406,41 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       .catch((err) => setDmsError(err?.message || 'Your messages are not loading right now.'))
       .finally(() => setDmsLoading(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // THE OTHER HALF OF RECOVERY, and the half the 2026-08-27 deploy blip
+  // proved missing. The socket retries itself forever and runCatchUp above
+  // refetches the OPEN conversation, but nothing ever re-ran a LIST load that
+  // had failed: a mount that hit a five-second gap left "Couldn't reach
+  // Flock" cards on the home and Messages tabs until a human tapped, while
+  // the socket underneath came back by itself. The half-alive app, photographed.
+  //
+  // A failed list now retries on every signal that means the world may be
+  // back: the socket reconnecting, the browser regaining network, the tab
+  // becoming visible again (a hidden tab's timers are frozen, so recovery has
+  // to fire on the return, not during the absence), and, for the case where
+  // none of those ever moves (one 502 at the gateway while the socket never
+  // dropped), a slow tick. Everything is gated on an error actually being
+  // present, so a healthy list is never refetched on any of these, and the
+  // tick stops mattering the moment a load succeeds because the error it is
+  // gated on clears.
+  useEffect(() => {
+    const recoverLists = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      if (flocksError) loadFlocks();
+      if (dmsError) loadDmConversations();
+    };
+    if (reconnectTick) recoverLists();
+    const onOnline = () => recoverLists();
+    const onVisible = () => { if (document.visibilityState === 'visible') recoverLists(); };
+    window.addEventListener('online', onOnline);
+    document.addEventListener('visibilitychange', onVisible);
+    const tick = setInterval(recoverLists, 20000);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      document.removeEventListener('visibilitychange', onVisible);
+      clearInterval(tick);
+    };
+  }, [reconnectTick, flocksError, dmsError, loadFlocks, loadDmConversations]);
 
   useEffect(() => { loadDmConversations(); }, [loadDmConversations]);
 
@@ -18861,10 +18895,13 @@ const FlockApp = () => {
     // it, which left a 15s interval and an 'online' listener running forever.
     let retryTimer = null;
     let retryHandler = null;
+    let retryOnVisible = null;
     const stopRetrying = () => {
       if (retryHandler) window.removeEventListener('online', retryHandler);
+      if (retryOnVisible) document.removeEventListener('visibilitychange', retryOnVisible);
       if (retryTimer) clearInterval(retryTimer);
       retryHandler = null;
+      retryOnVisible = null;
       retryTimer = null;
     };
 
@@ -18909,9 +18946,23 @@ const FlockApp = () => {
                 setBootUnreachable(false);
                 endSession(bootSessionCopy(e));
                 stopRetrying();
+                return;
               }
+              // Every other failure keeps the loop alive, and now says so.
+              // The 2026-08-27 stuck-screen incident produced ZERO console
+              // evidence because this catch swallowed every attempt; one warn
+              // per tick is what makes the next incident diagnosable from a
+              // screenshot of the console instead of from guesswork.
+              console.warn('[boot] still unreachable, retrying:', e?.status || 'network', e?.message || '');
             });
         };
+        // The interval alone was the whole promise behind "It keeps trying on
+        // its own", and a hidden tab's intervals are frozen by the browser, so
+        // the promise was false for exactly the minutes a tab sat in the
+        // background. Fire the moment the tab is visible again instead of
+        // waiting out one more silent interval.
+        retryOnVisible = () => { if (document.visibilityState === 'visible') retryHandler(); };
+        document.addEventListener('visibilitychange', retryOnVisible);
         window.addEventListener('online', retryHandler);
         retryTimer = setInterval(retryHandler, 15000);
       })
