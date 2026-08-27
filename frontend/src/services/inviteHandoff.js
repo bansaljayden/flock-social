@@ -87,6 +87,9 @@ const looksLikeToken = (t) =>
  * Stash the invite this person is trying to accept. Called from the invite page
  * immediately before it sends them to signup or login.
  */
+const looksLikeGuestToken = (t) =>
+  typeof t === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(t);
+
 export function rememberInvite(token, extra = {}) {
   if (!looksLikeToken(token)) return false;
   write({
@@ -96,6 +99,10 @@ export function rememberInvite(token, extra = {}) {
     // Never used to decide anything: the server is the authority on which
     // flock this token belongs to.
     flockName: typeof extra.flockName === 'string' ? extra.flockName.slice(0, 80) : null,
+    // The guest identity this person used on the invite page, if they RSVPed
+    // by name before joining. The join presents it so the server can retire
+    // that row instead of counting the same person twice. A UUID or nothing.
+    guestToken: looksLikeGuestToken(extra.guestToken) ? extra.guestToken : null,
   });
   return true;
 }
@@ -115,7 +122,11 @@ export function pendingInvite() {
     forgetInvite();
     return null;
   }
-  return { token: saved.token, flockName: saved.flockName || null };
+  return {
+    token: saved.token,
+    flockName: saved.flockName || null,
+    guestToken: looksLikeGuestToken(saved.guestToken) ? saved.guestToken : null,
+  };
 }
 
 /**
@@ -169,7 +180,7 @@ export async function redeemPendingInvite() {
   if (!saved) return null;
 
   try {
-    const result = await joinFlockByInviteToken(saved.token);
+    const result = await joinFlockByInviteToken(saved.token, saved.guestToken || undefined);
     forgetInvite();
     const flockId = Number(result && result.flockId);
     if (!Number.isInteger(flockId) || flockId <= 0) return null;

@@ -192,6 +192,13 @@ const NEW_GUESTS_PER_IP_PER_FLOCK = 3;
 const NEW_GUEST_WINDOW_MS = 60 * 60 * 1000;
 const NEW_GUEST_MAX_KEYS = 5000;
 
+// The guest-rsvps ledger cap per flock. Counts EVERY row, hidden included, on
+// purpose: hidden rows keep their slot so a takedown cannot be farmed for
+// fresh capacity. Named here because two places have to agree on it, the RSVP
+// door that enforces it and the GET preview that warns the page before a
+// guest types a name into a form whose submit can only 409.
+const GUEST_ROWS_CAP = 50;
+
 const newGuestCounter = createGuestCounter({
   name: 'guest-identity',
   limit: NEW_GUESTS_PER_IP_PER_FLOCK,
@@ -557,7 +564,8 @@ router.get('/:token',
         pool.query(
           `SELECT
              (SELECT COUNT(*) FROM flock_members WHERE flock_id = $1 AND status = 'accepted')::int AS members,
-             (SELECT COUNT(*) FROM guest_rsvps WHERE flock_id = $1 AND status = 'in' AND COALESCE(is_hidden, false) = false)::int AS guests`,
+             (SELECT COUNT(*) FROM guest_rsvps WHERE flock_id = $1 AND status = 'in' AND COALESCE(is_hidden, false) = false)::int AS guests,
+             (SELECT COUNT(*) FROM guest_rsvps WHERE flock_id = $1)::int AS guest_rows`,
           [link.flock_id]
         ),
         rosterFor(link.flock_id),
@@ -593,6 +601,13 @@ router.get('/:token',
         // and their own table, so the answer section below the join band keeps
         // working on a full plan and the page stays free of dead ends.
         full: going.rows[0].members >= LINK_JOIN_MEMBER_CAP,
+        // The guest ledger's own ceiling, told to the page for the same reason
+        // `full` is: without it the page drew a live name field on a capped
+        // plan and the guest learned about the cap from a 409 after typing
+        // their name. Counts every row, hidden included, because that is what
+        // the RSVP door counts (GUEST_ROWS_CAP above it explains why). A
+        // boolean, not the count, for the reason `full` is one.
+        guestsFull: going.rows[0].guest_rows >= GUEST_ROWS_CAP,
         // Who those people are, and what each of them said. The exact fields,
         // and the ones deliberately withheld, are on rosterFor above.
         people,
@@ -743,7 +758,7 @@ router.post('/:token/rsvp',
         await client.query("SELECT pg_advisory_xact_lock(hashtext('guest_rsvp:' || $1::text))", [String(link.flock_id)]);
 
         const count = await client.query('SELECT COUNT(*)::int AS n FROM guest_rsvps WHERE flock_id = $1', [link.flock_id]);
-        if (count.rows[0].n >= 50) {
+        if (count.rows[0].n >= GUEST_ROWS_CAP) {
           await client.query('ROLLBACK');
           // 409, NOT 429. This is a capacity cap on the plan, not a rate on the
           // caller: hidden rows count toward it deliberately, nothing ages out
@@ -1057,6 +1072,15 @@ router.post('/:token/join',
         [link.flock_id, req.user.id]
       );
 
+      // The guest identity this account used before it was an account, if the
+      // page carried one through signup. Shape-checked here rather than by a
+      // validator, because an unusable value means "hide nothing", never "the
+      // join fails": the membership is the point and the cleanup is riding.
+      const rawGuestToken = req.body && req.body.guestToken;
+      const guestUuid = (typeof rawGuestToken === 'string'
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawGuestToken))
+        ? rawGuestToken : null;
+
       // BLOCKS HOLD ON THE LINK DOOR TOO (security round 5, 2026-08-20).
       //
       // Until this check, the header above claimed "blocks (the join fan-out
@@ -1163,6 +1187,26 @@ router.post('/:token/join',
             [link.flock_id, req.user.id]
           );
           joined = ins.rowCount > 0;
+          // The convert-and-count-twice hole. A guest who RSVPed by name and
+          // then made the account this route exists to sell was on the plan
+          // twice, forever: the membership landed and nothing anywhere touched
+          // the guest_rsvps row, so "5 going" stood over 4 people and the same
+          // name sat in the roster twice, on every member's app and on the
+          // invite page every other invitee opens. The page stashes the guest
+          // identity's UUID through signup (services/inviteHandoff.js) and
+          // presents it here; the UUID proves the row is theirs, so hide it in
+          // the same transaction the membership commits in. HIDE, not delete:
+          // hidden rows keep their cap slot by the ledger's own rule, and
+          // every read already filters is_hidden. A stale or garbage token
+          // matches nothing and must never fail the join, which is why this is
+          // a best-effort UPDATE and not a validator refusal.
+          if (guestUuid) {
+            await client.query(
+              `UPDATE guest_rsvps SET is_hidden = TRUE
+                WHERE flock_id = $1 AND guest_token = $2 AND COALESCE(is_hidden, false) = false`,
+              [link.flock_id, guestUuid]
+            );
+          }
           await client.query('COMMIT');
         }
       } catch (txErr) {

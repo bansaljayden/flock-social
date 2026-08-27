@@ -492,9 +492,9 @@ describe('two lists, two verdicts', () => {
 
     await renderConsole();
 
-    expect(screen.getByText(/Sign in to the app as an admin account first/)).toBeInTheDocument();
+    expect(screen.getByText(/Sign in to the app at flockcorp\.com\/app as the admin account/)).toBeInTheDocument();
     // Exactly one banner carries it: the one that actually saw a 403.
-    expect(screen.getAllByText(/Sign in to the app as an admin account first/)).toHaveLength(1);
+    expect(screen.getAllByText(/Sign in to the app at flockcorp\.com\/app as the admin account/)).toHaveLength(1);
   });
 
   test('the signed-out arrival gets the hint too, not just the 403', async () => {
@@ -506,7 +506,7 @@ describe('two lists, two verdicts', () => {
       routes[REPORTS] = () => respond({ error: msg }, { ok: false, status: 401 });
       routes[ACTIONS] = () => respond({ error: msg }, { ok: false, status: 401 });
       const view = await renderConsole();
-      expect(screen.getAllByText(/Sign in to the app as an admin account first/)).toHaveLength(1);
+      expect(screen.getAllByText(/Sign in to the app at flockcorp\.com\/app as the admin account/)).toHaveLength(1);
       view.unmount();
     }
   });
@@ -515,7 +515,7 @@ describe('two lists, two verdicts', () => {
     routes[REPORTS] = () => respond({ error: 'Failed to fetch reports' }, { ok: false, status: 500 });
     routes[ACTIONS] = () => respond({ error: 'Failed to fetch audit log' }, { ok: false, status: 500 });
     await renderConsole();
-    expect(screen.queryByText(/Sign in to the app as an admin account first/)).toBeNull();
+    expect(screen.queryByText(/Sign in to the app at flockcorp\.com\/app as the admin account/)).toBeNull();
   });
 
   test('one failure that takes out both reads is stated once, not keyed twice', async () => {
