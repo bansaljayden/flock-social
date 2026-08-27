@@ -784,8 +784,12 @@ describe('CommunityGuidelines: the reporting instructions survive being read alo
     // What gets read instead, and it has to match the button's real name in
     // the app or the instruction sends a screen-reader user hunting for a
     // control that announces itself differently.
+    // The DM "More options" button moved to screens/DmDetail.js on 2026-08-27,
+    // so its aria-label is read from there alongside App.js.
     const app = fs.readFileSync(
       path.join(__dirname, '..', 'App.js'), 'utf8'
+    ) + fs.readFileSync(
+      path.join(__dirname, '..', 'screens', 'DmDetail.js'), 'utf8'
     );
     const dmMenu = /<button aria-label="([^"]+)"[^>]*onClick=\{\(\) => setShowDmMenu/.exec(app);
     expect(dmMenu).not.toBeNull();

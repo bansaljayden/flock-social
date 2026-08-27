@@ -65,16 +65,18 @@ const read = (p) => fs.readFileSync(path.join(SRC, p), 'utf8');
 // is simply in two files, so both are read, in the order they used to be one.
 // The flock chat screen left App.js in the same sweep, on the same day
 // (screens/ChatDetail.js), and the message list, the composer, the reaction
-// row and the report entry went with it. Same treatment: nothing asserted
-// below changed, the app source is simply in three files now, and all three
-// are read in the order they used to be one.
+// row and the report entry went with it. The one-to-one DM thread followed on
+// 2026-08-27 (screens/DmDetail.js), carrying the DM composer, the DM vote panel
+// and the DM report entry. Same treatment: nothing asserted below changed, the
+// app source is simply in more files now, and all of them are read in the order
+// they used to be one.
 // Three more pieces left App.js on 2026-08-26, in the remount fix: the Edit
 // Profile form, the New Message sheet and the confirm-your-email sheet. Each
 // was declared inside FlockAppInner's render and mounted as an element, which
 // rebuilt its component type on every render and remounted it. Item 5 above is
 // about the labels on the Edit Profile form, and that form is one of them, so
 // the three files are read here too. Nothing asserted below changed.
-const app = read('App.js') + read('screens/ChatDetail.js') + read('screens/VenueDashboard.js') + read('screens/AddFriends.js')
+const app = read('App.js') + read('screens/ChatDetail.js') + read('screens/DmDetail.js') + read('screens/VenueDashboard.js') + read('screens/AddFriends.js')
   + read('components/EditProfileForm.js') + read('components/NewDmModal.js') + read('components/VerifyEmailSheet.js');
 const css = read('index.css');
 const paywall = read('components/PaywallSheet.js');
@@ -503,7 +505,7 @@ const stripComments = (src) => {
 };
 
 const APP_FILES = [
-  'App.js', 'screens/ChatDetail.js', 'screens/VenueDashboard.js', 'screens/AddFriends.js',
+  'App.js', 'screens/ChatDetail.js', 'screens/DmDetail.js', 'screens/VenueDashboard.js', 'screens/AddFriends.js',
   'components/EditProfileForm.js', 'components/NewDmModal.js', 'components/VerifyEmailSheet.js',
 ];
 const code = APP_FILES.map((f) => stripComments(read(f))).join('\n');
