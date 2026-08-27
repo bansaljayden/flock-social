@@ -72,9 +72,12 @@
  */
 import React from 'react';
 import { sendFriendRequest, trackDmVenueVote } from '../services/api';
-import { dmReact, dmRemoveReact, dmStopSharingLocation, dmVoteVenue } from '../services/socket';
+import { dmReact, dmRemoveReact, dmStopSharingLocation, dmVoteVenue, getSocket } from '../services/socket';
 import { groupReactions } from './ChatDetail';
 import Icons from '../components/ui/Icons';
+
+// Same cadence the flock header samples at (ChatDetail SOCKET_SAMPLE_MS).
+const DM_SOCKET_SAMPLE_MS = 2000;
 
 export default function DmDetail({
   // Module-level helpers, constants and components that live in App.js and
@@ -100,8 +103,6 @@ export default function DmDetail({
   deletedDmUserIds,
   dmAtTop,
   dmBlocked,
-  dmCashPool,
-  dmCashPoolAmount,
   dmChatEndRef,
   dmChatSearch,
   dmChatSearchRef,
@@ -143,8 +144,6 @@ export default function DmDetail({
   setCurrentTab,
   setDeletedDmUserIds,
   setDirectMessages,
-  setDmCashPool,
-  setDmCashPoolAmount,
   setDmChatSearch,
   setDmMemberLocation,
   setDmNavOpen,
@@ -157,7 +156,6 @@ export default function DmDetail({
   setPickingVenueForCreate,
   setPickingVenueForDm,
   setShowDeleteDmConfirm,
-  setShowDmCashPool,
   setShowDmChatSearch,
   setShowDmImagePreview,
   setShowDmMenu,
@@ -166,7 +164,6 @@ export default function DmDetail({
   setShowDmVotePanel,
   setVenueDetailReturnTo,
   showDeleteDmConfirm,
-  showDmCashPool,
   showDmChatSearch,
   showDmImagePreview,
   showDmMenu,
@@ -175,12 +172,60 @@ export default function DmDetail({
   showDmVotePanel,
   showToast,
 }) {
+  // LEAVING THIS SCREEN, WRITTEN ONCE. The composer ref and its armed flag
+  // are shared with the flock side (App.js chatInputRef), so a draft left
+  // behind here rides into the NEXT thread anybody opens: the input remounts
+  // visually empty, the Send button is still armed, and one tap sends the
+  // abandoned draft, written for one person, to another. c7563c6 shut exactly
+  // this class on the flock side with leaveChatScreen() and an AST guard that
+  // counts every navigation against a call to the clear; this is the DM half,
+  // which that commit never touched, pinned the same way by
+  // __tests__/dmComposerLeave.test.js. Location sharing ends here too: the
+  // back arrow used to be the only exit that stopped it, so leaving through
+  // Map or a venue card kept the GPS emit loop running with no indicator
+  // anywhere else in the app.
+  const leaveDmScreen = () => {
+    setChatInput('');
+    setShowDmMenu(false);
+    setShowDeleteDmConfirm(false);
+    setShowDmChatSearch(false);
+    setDmChatSearch('');
+    setShowDmVotePanel(false);
+    setShowDmVenueSearch(false);
+    setDmReplyingTo(null);
+    setDmNavOpen(false);
+    if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); }
+  };
+
+  // Three states, not two, with the same sampling and the same words as the
+  // flock header. 9d87b73 fixed the hardcoded "online" in ChatDetail only;
+  // this screen was extracted with the old literal frozen in, so a dead
+  // socket kept a green dot and the word online over it.
+  const readConnection = () => {
+    if (getSocket()?.connected) return 'online';
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'offline';
+    return 'reconnecting';
+  };
+  const [connectionState, setConnectionState] = React.useState(readConnection);
+  React.useEffect(() => {
+    const sample = () => setConnectionState(readConnection());
+    sample();
+    const id = setInterval(sample, DM_SOCKET_SAMPLE_MS);
+    window.addEventListener('online', sample);
+    window.addEventListener('offline', sample);
+    return () => {
+      clearInterval(id);
+      window.removeEventListener('online', sample);
+      window.removeEventListener('offline', sample);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   return currentScreen === 'dmDetail' && selectedDm && (
     <div key="dm-detail-screen" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
       {/* Header */}
       <div style={{ padding: '6px 10px 5px 4px', background: colors.navyBg, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <button aria-label="Back" className="hit44" onClick={() => { setCurrentScreen('main'); setChatInput(''); setShowDmMenu(false); setShowDeleteDmConfirm(false); setShowDmChatSearch(false); setDmChatSearch(''); setShowDmVotePanel(false); setShowDmVenueSearch(false); setDmReplyingTo(null); setDmNavOpen(false); if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); } }} style={{ width: '34px', height: '34px', borderRadius: '17px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
+          <button aria-label="Back" className="hit44" onClick={() => { setCurrentScreen('main'); leaveDmScreen(); }} style={{ width: '34px', height: '34px', borderRadius: '17px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
           {/* The avatar opens the person card. The overflow menu already carries
               report/block for this thread, but the face is where people reach
               first, and it is the same control the roster now has.
@@ -204,7 +249,6 @@ export default function DmDetail({
             <div style={{ display: 'flex', gap: '4px', overflow: 'hidden', maxWidth: dmNavOpen ? '114px' : '0px', opacity: dmNavOpen ? 1 : 0, visibility: dmNavOpen ? undefined : 'hidden', transition: `max-width 0.3s ease, opacity 0.25s ease, visibility 0s linear ${dmNavOpen ? '0s' : '0.3s'}` }}>
               <button aria-label="Venue voting" className="hit44 glass-btn" onClick={() => { setDmNavOpen(false); setShowDmVotePanel(!showDmVotePanel); if (!showDmVotePanel) loadPopularVenues(); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 14)}</button>
               <button aria-label="Search" className="hit44 glass-btn" onClick={() => { setDmNavOpen(false); setShowDmChatSearch(!showDmChatSearch); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: showDmChatSearch ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 15)}</button>
-              <button aria-label="Split the bill" className="hit44 glass-btn" onClick={() => { setDmNavOpen(false); setShowDmCashPool(true); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.dollar('white', 15)}</button>
             </div>
             <button aria-label="Features" aria-expanded={dmNavOpen} className="hit44" onClick={() => setDmNavOpen(!dmNavOpen)} style={{ height: '34px', minWidth: dmNavOpen ? '34px' : 'auto', width: dmNavOpen ? '34px' : 'auto', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: dmNavOpen ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: dmNavOpen ? '0' : '0 12px', fontSize: 'var(--t-meta)', fontWeight: '600', flexShrink: 0, transition: 'all 0.3s ease', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)' }}>{dmNavOpen ? Icons.x('white', 14) : <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500' }}>Features</span>}</button>
           </div>
@@ -223,7 +267,7 @@ export default function DmDetail({
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '5px', paddingLeft: '74px', marginTop: '2px' }}>
-          {dmIsTyping ? <span style={{ fontSize: 'var(--t-meta)', color: '#86EFAC', fontWeight: '500' }}>{dmTypingUser || selectedDm.name} is typing...</span> : dmSharingLocation ? <span style={{ fontSize: 'var(--t-meta)', color: '#34d399', fontWeight: '500', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>{Icons.mapPin('#34d399', 12)}sharing location</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: '#22c55e', boxShadow: 'none' }} /><span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>online</span></>}
+          {dmIsTyping ? <span style={{ fontSize: 'var(--t-meta)', color: '#86EFAC', fontWeight: '500' }}>{dmTypingUser || selectedDm.name} is typing...</span> : dmSharingLocation ? <span style={{ fontSize: 'var(--t-meta)', color: '#34d399', fontWeight: '500', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>{Icons.mapPin('#34d399', 12)}sharing location</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: connectionState === 'online' ? '#22c55e' : connectionState === 'offline' ? '#9CA3AF' : '#F59E0B', boxShadow: 'none' }} /><span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>{connectionState === 'online' ? 'online' : connectionState === 'offline' ? 'offline' : 'reconnecting...'}</span></>}
         </div>
       </div>
 
@@ -270,6 +314,7 @@ export default function DmDetail({
               <button
                 className="hit44 glass-btn glass-navy"
                 onClick={() => {
+                  leaveDmScreen();
                   setVenueDetailReturnTo({ tab: 'chat', screen: 'dmDetail', dmId: selectedDmId });
                   setCurrentTab('explore');
                   setCurrentScreen('main');
@@ -285,14 +330,14 @@ export default function DmDetail({
               >
                 {Icons.mapPin('white', 12)} Map
               </button>
-              <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForDm(true); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '8px 10px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, background: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
+              <button className="hit44 glass-btn glass-secondary" onClick={() => { leaveDmScreen(); setPickingVenueForDm(true); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '8px 10px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, background: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
                 Change
               </button>
             </div>
           </div>
         </div>
       ) : (
-        <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForDm(true); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ margin: '0', padding: '10px 14px', background: `linear-gradient(135deg, var(--bg-primary), var(--bg-card-solid))`, borderBottom: `1px solid ${colors.creamDark}`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', width: '100%', flexShrink: 0 }}>
+        <button className="hit44 glass-btn glass-secondary" onClick={() => { leaveDmScreen(); setPickingVenueForDm(true); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ margin: '0', padding: '10px 14px', background: `linear-gradient(135deg, var(--bg-primary), var(--bg-card-solid))`, borderBottom: `1px solid ${colors.creamDark}`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', width: '100%', flexShrink: 0 }}>
           <div style={{ width: '40px', height: '40px', borderRadius: '12px', border: `2px dashed ${colors.steel}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin(colors.steel, 18)}</div>
           <div style={{ flex: 1, textAlign: 'left' }}>
             <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>Add a Venue</p>
@@ -300,26 +345,6 @@ export default function DmDetail({
           </div>
           <div style={{ color: colors.steel, fontWeight: '700', fontSize: 'var(--t-title)' }}>+</div>
         </button>
-      )}
-
-      {/* Cash Pool Display */}
-      {dmCashPool && (
-        <div style={{ padding: '10px 14px', borderBottom: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-            <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>Cash Pool</h3>
-            <span style={{ fontSize: 'var(--t-meta)', padding: '2px 8px', borderRadius: '10px', fontWeight: '500', backgroundColor: dmCashPool.collected >= dmCashPool.total ? 'var(--accent-green-bg)' : 'var(--accent-amber-bg)', color: dmCashPool.collected >= dmCashPool.total ? 'var(--accent-green-text)' : 'var(--accent-amber-text)' }}>
-              ${dmCashPool.collected}/${dmCashPool.total}
-            </span>
-          </div>
-          <div style={{ width: '100%', height: '8px', backgroundColor: 'var(--pill-bg)', borderRadius: '4px', marginBottom: '8px', overflow: 'hidden' }}>
-            <div style={{ height: '100%', width: `${(dmCashPool.collected / dmCashPool.total) * 100}%`, background: colors.navyMidBg, borderRadius: '4px', transition: 'width 0.6s ease-out', boxShadow: dmCashPool.collected >= dmCashPool.total ? 'none' : 'none' }} />
-          </div>
-          {!dmCashPool.paid.includes('You') ? (
-            <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); setDmCashPool(prev => ({ ...prev, paid: [...prev.paid, 'You'], collected: prev.collected + prev.perPerson })); sendDmMessage({ text: `I paid $${dmCashPool.perPerson} to the pool!`, noReply: true }); }} style={{ width: '100%', padding: '8px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Pay ${dmCashPool.perPerson}</button>
-          ) : (
-            <div style={{ textAlign: 'center', padding: '4px', color: colors.steel, fontWeight: '500', fontSize: 'var(--t-meta)' }}>Paid</div>
-          )}
-        </div>
       )}
 
       {/* Vote panel — identical to flock with optimistic local updates */}
@@ -520,7 +545,16 @@ export default function DmDetail({
 
             <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Or select a different venue:</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              {allVenues.map(venue => (
+              {allVenues.length === 0 ? (
+                /* Venue search down = an empty list under "Or select a
+                   different venue", the blank dead end B3 fixed on the flock
+                   sheet (ChatDetail). Same honesty here: say why, offer the
+                   one real exit. */
+                <div style={{ padding: '16px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', textAlign: 'center' }}>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: '1.5' }}>No venues to show here. Venue search is unavailable right now, so there is nothing to pick from yet.</p>
+                  <button className="hit44 glass-btn glass-secondary" onClick={() => setShowDmVenueSearch(false)} style={{ padding: '10px 20px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
+                </div>
+              ) : allVenues.map(venue => (
                 <button className="hit44"
                   key={venue.id}
                   onClick={(e) => {
@@ -563,31 +597,6 @@ export default function DmDetail({
         </div>
       )}
 
-      {/* Cash Pool Creation Modal */}
-      {showDmCashPool && (
-        <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
-            <DialogBehavior onClose={() => setShowDmCashPool(false)} label="Cash pool" />
-          <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', width: '100%' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-              <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>Cash Pool</h2>
-              <button aria-label="Close" className="hit44" onClick={() => setShowDmCashPool(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '16px', marginBottom: '16px' }}>
-              <button aria-label="Decrease amount by $5" className="hit44 glass-btn glass-secondary" onClick={() => setDmCashPoolAmount(prev => Math.max(5, prev - 5))} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', cursor: 'pointer', fontSize: 'var(--t-title)' }}>−</button>
-              <span style={{ fontSize: 'var(--t-display)', fontWeight: '600', width: '100px', textAlign: 'center', color: colors.navy }}>${dmCashPoolAmount}</span>
-              <button aria-label="Increase amount by $5" className="hit44 glass-btn glass-secondary" onClick={() => setDmCashPoolAmount(prev => prev + 5)} style={{ width: '44px', height: '44px', borderRadius: '22px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '700', cursor: 'pointer', fontSize: 'var(--t-title)' }}>+</button>
-            </div>
-            <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', textAlign: 'center', marginBottom: '20px' }}>Per person • Total: ${dmCashPoolAmount * 2}</p>
-            <button className="hit44 glass-btn glass-navy" onClick={(e) => {
-              confirmClick(e);
-              setDmCashPool({ perPerson: dmCashPoolAmount, total: dmCashPoolAmount * 2, collected: 0, paid: [] });
-              sendDmMessage({ text: `Cash Pool: $${dmCashPoolAmount}/person. Let's split it!`, noReply: true });
-              setShowDmCashPool(false);
-                         }} style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Create Pool</button>
-          </div>
-        </div>
-      )}
-
       {/* Delete DM Confirmation Modal */}
       {showDeleteDmConfirm && (
         <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: '16px' }}>
@@ -606,8 +615,7 @@ export default function DmDetail({
                 const updated = [...deletedDmUserIds, dmUserId];
                 setDeletedDmUserIds(updated);
                 try { localStorage.setItem('flock_deleted_dms', JSON.stringify(updated)); } catch {}
-                setShowDeleteDmConfirm(false);
-                setShowDmMenu(false);
+                leaveDmScreen();
                 setCurrentScreen('main');
                              }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', backgroundColor: '#EF4444', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' }}>Delete</button>
             </div>
@@ -733,6 +741,7 @@ export default function DmDetail({
                       const vd = m.venue_data;
                       const pid = vd.place_id;
                       if (pid) {
+                        leaveDmScreen();
                         setVenueDetailReturnTo({ tab: 'chat', screen: 'dmDetail', dmId: selectedDmId });
                         setCurrentTab('explore');
                         setCurrentScreen('main');
