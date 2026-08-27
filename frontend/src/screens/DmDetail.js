@@ -639,7 +639,7 @@ export default function DmDetail({
       )}
 
       {/* Messages area */}
-      <div onScroll={() => document.activeElement?.blur()} style={{ flex: 1, padding: '16px', overflowY: 'auto', overflowX: 'hidden', background: `linear-gradient(180deg, ${colors.cream} 0%, ${colors.cream}cc 100%)`, scrollBehavior: 'smooth' }}>
+      <div onScroll={() => { const el = document.activeElement; if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) el.blur(); }} style={{ flex: 1, padding: '16px', overflowY: 'auto', overflowX: 'hidden', background: `linear-gradient(180deg, ${colors.cream} 0%, ${colors.cream}cc 100%)`, scrollBehavior: 'smooth' }}>
         {showDmChatSearch && dmChatSearch.trim() && selectedDm.messages.filter(m => {
           const q = dmChatSearch.toLowerCase();
           return m.text?.toLowerCase().includes(q) || m.sender?.toLowerCase().includes(q);
@@ -768,9 +768,12 @@ export default function DmDetail({
                   </div>
                 ) : m.message_type === 'image' && m.image_url ? (
                   /* Image message */
-                  <div onClick={() => setShowDmReactionPicker(showDmReactionPicker === m.id ? null : m.id)} style={{ borderRadius: '18px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.1)', borderTopRightRadius: m.sender === 'You' ? '4px' : '18px', borderTopLeftRadius: m.sender === 'You' ? '18px' : '4px', cursor: 'pointer', lineHeight: 0 }}>
-                    <img src={m.image_url} alt="" loading="lazy" style={{ width: '100%', maxWidth: '260px', maxHeight: '340px', objectFit: 'cover', display: 'block' }} />
-                  </div>
+                  <button type="button" onClick={() => setShowDmReactionPicker(showDmReactionPicker === m.id ? null : m.id)} style={{ borderRadius: '18px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.1)', borderTopRightRadius: m.sender === 'You' ? '4px' : '18px', borderTopLeftRadius: m.sender === 'You' ? '18px' : '4px', cursor: 'pointer', lineHeight: 0, padding: 0, border: 'none', background: 'none', display: 'block' }}>
+                    {/* alt was the empty string, which told VoiceOver this
+                        message had no content at all: an empty bubble where a
+                        photo should be. */}
+                    <img src={m.image_url} alt={`From ${m.sender}`} loading="lazy" style={{ width: '100%', maxWidth: '260px', maxHeight: '340px', objectFit: 'cover', display: 'block' }} />
+                  </button>
                 ) : (
                   /* Text message */
                   /* overflowWrap: 'anywhere' is load-bearing, not polish. The
@@ -779,13 +782,13 @@ export default function DmDetail({
                      has nowhere to break, so the bubble grew past the phone and
                      took the chat's horizontal scrollbar with it. SLOP-AUDIT
                      H19: nothing cut off at 320-390px. */
-                  <div onClick={() => setShowDmReactionPicker(showDmReactionPicker === m.id ? null : m.id)} style={{ borderRadius: '16px', padding: '10px 14px', fontSize: 'var(--t-label)', overflowWrap: 'anywhere', backgroundColor: m.sender === 'You' ? (isDark ? '#1e3a5c' : colorsLight.navy) : 'var(--msg-received-bg)', color: m.sender === 'You' ? 'white' : 'var(--msg-received-text)', borderTopRightRadius: m.sender === 'You' ? '4px' : '16px', borderTopLeftRadius: m.sender === 'You' ? '16px' : '4px', boxShadow: 'var(--card-shadow-sm)', cursor: 'pointer' }}>
+                  <button type="button" onClick={() => setShowDmReactionPicker(showDmReactionPicker === m.id ? null : m.id)} style={{ borderRadius: '16px', padding: '10px 14px', fontSize: 'var(--t-label)', overflowWrap: 'anywhere', backgroundColor: m.sender === 'You' ? (isDark ? '#1e3a5c' : colorsLight.navy) : 'var(--msg-received-bg)', color: m.sender === 'You' ? 'white' : 'var(--msg-received-text)', borderTopRightRadius: m.sender === 'You' ? '4px' : '16px', borderTopLeftRadius: m.sender === 'You' ? '16px' : '4px', boxShadow: 'var(--card-shadow-sm)', cursor: 'pointer', textAlign: 'left', font: 'inherit', display: 'inline-block', border: 'none' }}>
                     {showDmChatSearch && dmChatSearch.trim() && m.text?.toLowerCase().includes(dmChatSearch.toLowerCase()) ? (
                       m.text.split(new RegExp(`(${dmChatSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')).map((part, pi) =>
                         part.toLowerCase() === dmChatSearch.toLowerCase() ? <mark key={pi} style={{ background: 'var(--search-highlight)', color: 'inherit', borderRadius: '2px', padding: '0 1px' }}>{part}</mark> : part
                       )
                     ) : m.text}
-                  </div>
+                  </button>
                 )}
                 {/* Reactions display. groupReactions, the same helper the flock
                     side uses, so a DM reaction read back from history keeps the
@@ -801,7 +804,15 @@ export default function DmDetail({
                     {groupReactions(m.reactions).map((g) => {
                       const mine = g.userIds.some((id) => String(id) === String(authUser?.id));
                       return (
-                        <span key={g.emoji} onClick={() => { const otherUser = selectedDmId; if (mine) { dmRemoveReact(m.id, g.emoji, otherUser); } else { dmReact(m.id, g.emoji, otherUser); } }} style={{ fontSize: 'var(--t-meta)', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', borderRadius: '12px', padding: '2px 6px', cursor: 'pointer', boxShadow: 'var(--card-shadow-sm)' }}>{g.emoji} {g.count > 1 ? g.count : ''}</span>
+                        <button
+                          key={g.emoji}
+                          type="button"
+                          className="reaction-pop hit44"
+                          aria-pressed={mine}
+                          aria-label={`${g.emoji} ${g.count}${mine ? ', including you. Tap to remove your reaction' : '. Tap to react'}`}
+                          onClick={() => { const otherUser = selectedDmId; if (mine) { dmRemoveReact(m.id, g.emoji, otherUser); } else { dmReact(m.id, g.emoji, otherUser); } }}
+                          style={{ fontSize: 'var(--t-meta)', backgroundColor: 'var(--bg-card-solid)', border: mine ? `1px solid ${colors.steel}` : '1px solid var(--border-default)', borderRadius: '12px', padding: '2px 6px', cursor: 'pointer', boxShadow: 'var(--card-shadow-sm)', display: 'inline-flex', alignItems: 'center', gap: '3px', minHeight: 'auto' }}
+                        >{g.emoji} {g.count > 1 ? g.count : ''}</button>
                       );
                     })}
                   </div>

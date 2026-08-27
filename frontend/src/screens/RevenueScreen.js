@@ -251,8 +251,8 @@ export default function RevenueScreen({
 
               {/* Number of Venues */}
               <div style={{ marginBottom: '12px' }}>
-                <label style={labelStyle}>Number of Venues</label>
-                <input
+                <label style={labelStyle} htmlFor="rev-venues">Number of Venues</label>
+                <input id="rev-venues"
                   type="number"
                   value={numVenues}
                   onChange={(e) => setNumVenues(Math.max(0, parseInt(e.target.value) || 0))}
@@ -264,10 +264,10 @@ export default function RevenueScreen({
 
               {/* Subscription Price */}
               <div style={{ marginBottom: '12px' }}>
-                <label style={labelStyle}>Monthly Subscription</label>
+                <label style={labelStyle} htmlFor="rev-subscription">Monthly Subscription</label>
                 <div style={{ position: 'relative' }}>
                   <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', fontWeight: '600' }}>$</span>
-                  <input
+                  <input id="rev-subscription"
                     type="number"
                     value={subscriptionPrice}
                     onChange={(e) => setSubscriptionPrice(Math.max(0, parseInt(e.target.value) || 0))}
@@ -280,8 +280,8 @@ export default function RevenueScreen({
 
               {/* Events Per Venue */}
               <div style={{ marginBottom: '12px' }}>
-                <label style={labelStyle}>Events Per Venue/Month</label>
-                <input
+                <label style={labelStyle} htmlFor="rev-events">Events Per Venue/Month</label>
+                <input id="rev-events"
                   type="number"
                   value={eventsPerVenue}
                   onChange={(e) => setEventsPerVenue(Math.max(0, parseInt(e.target.value) || 0))}
@@ -293,10 +293,10 @@ export default function RevenueScreen({
 
               {/* Average Spend */}
               <div style={{ marginBottom: '12px' }}>
-                <label style={labelStyle}>Avg Group Spend</label>
+                <label style={labelStyle} htmlFor="rev-spend">Avg Group Spend</label>
                 <div style={{ position: 'relative' }}>
                   <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', fontWeight: '600' }}>$</span>
-                  <input
+                  <input id="rev-spend"
                     type="number"
                     value={avgSpend}
                     onChange={(e) => setAvgSpend(Math.max(0, parseInt(e.target.value) || 0))}
@@ -309,9 +309,9 @@ export default function RevenueScreen({
 
               {/* Take Rate */}
               <div style={{ marginBottom: '12px' }}>
-                <label style={labelStyle}>Transaction Take Rate</label>
+                <label style={labelStyle} htmlFor="rev-takerate">Transaction Take Rate</label>
                 <div style={{ position: 'relative' }}>
-                  <input
+                  <input id="rev-takerate"
                     type="number"
                     value={takeRate}
                     onChange={(e) => setTakeRate(Math.max(0, parseFloat(e.target.value) || 0))}
@@ -326,10 +326,10 @@ export default function RevenueScreen({
 
               {/* Operating Costs */}
               <div style={{ marginBottom: '12px' }}>
-                <label style={labelStyle}>Monthly Operating Costs</label>
+                <label style={labelStyle} htmlFor="rev-costs">Monthly Operating Costs</label>
                 <div style={{ position: 'relative' }}>
                   <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', fontWeight: '600' }}>$</span>
-                  <input
+                  <input id="rev-costs"
                     type="number"
                     value={operatingCosts}
                     onChange={(e) => setOperatingCosts(Math.max(0, parseInt(e.target.value) || 0))}

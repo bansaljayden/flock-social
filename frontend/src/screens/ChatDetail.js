@@ -744,7 +744,7 @@ export default function ChatDetail({
           </div>
         )}
 
-        <div onScroll={() => document.activeElement?.blur()} style={{ flex: 1, padding: '16px', overflowY: 'auto', overflowX: 'hidden', background: `linear-gradient(180deg, ${colors.cream} 0%, ${colors.cream}cc 100%)`, scrollBehavior: 'smooth' }}>
+        <div onScroll={() => { const el = document.activeElement; if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) el.blur(); }} style={{ flex: 1, padding: '16px', overflowY: 'auto', overflowX: 'hidden', background: `linear-gradient(180deg, ${colors.cream} 0%, ${colors.cream}cc 100%)`, scrollBehavior: 'smooth' }}>
           {showChatSearch && chatSearch.trim() && flock.messages.filter(m => {
             const q = chatSearch.toLowerCase();
             return (m.text || '').toLowerCase().includes(q) || (m.sender || '').toLowerCase().includes(q);
@@ -867,12 +867,18 @@ export default function ChatDetail({
                     and keep their own shape. Tapping still opens the reaction
                     and report row, which is a 1.2 requirement. */}
                 {m.image && (
-                  <div
+                  /* A button, not a div-with-onClick: the tap opens the
+                     reaction and report row (a 1.2 requirement), and a
+                     pointer-only door locks VoiceOver and keyboard users out
+                     of reacting to and reporting this exact message. The
+                     button's accessible name is the img alt. */
+                  <button
+                    type="button"
                     onClick={() => setShowReactionPicker(showReactionPicker === m.id ? null : m.id)}
-                    style={{ borderRadius: '18px', overflow: 'hidden', boxShadow: '0 4px 15px rgba(0,0,0,0.1)', marginBottom: '4px', cursor: 'pointer', lineHeight: 0 }}
+                    style={{ borderRadius: '18px', overflow: 'hidden', boxShadow: '0 4px 15px rgba(0,0,0,0.1)', marginBottom: '4px', cursor: 'pointer', lineHeight: 0, padding: 0, border: 'none', background: 'none', display: 'block' }}
                   >
-                    <img src={m.image} alt="Shared" loading="lazy" style={{ width: '100%', maxWidth: '260px', maxHeight: '340px', objectFit: 'cover', display: 'block' }} />
-                  </div>
+                    <img src={m.image} alt={`From ${m.sender}`} loading="lazy" style={{ width: '100%', maxWidth: '260px', maxHeight: '340px', objectFit: 'cover', display: 'block' }} />
+                  </button>
                 )}
 
                 {/* Venue Card message. Wrapped in the same tap target the text
@@ -927,12 +933,19 @@ export default function ChatDetail({
 
                 {/* Regular text message */}
                 {m.text && m.message_type !== 'venue_card' && (
-                  <div
+                  /* Same conversion as the photo above: the reactions and the
+                     per-message report live behind this tap. No aria-label on
+                     purpose: a button's name is its content, and the content
+                     is the message. */
+                  <button
+                    type="button"
                     onClick={() => setShowReactionPicker(showReactionPicker === m.id ? null : m.id)}
                     style={{
                       borderRadius: '18px',
                       padding: '8px 12px',
                       display: 'inline-block',
+                      textAlign: 'left',
+                      font: 'inherit',
                       background: m.sender === 'You' ? (isDark ? '#2d5a87' : colorsLight.navy) : 'var(--msg-received-bg)',
                       color: m.sender === 'You' ? 'white' : 'var(--msg-received-text)',
                       borderBottomRightRadius: m.sender === 'You' ? '4px' : '18px',
@@ -958,7 +971,7 @@ export default function ChatDetail({
                         It said the same thing on every row and cost a line of
                         height each time, so it is gone from all three places.
                         A send that fails still says so, once, in a toast. */}
-                  </div>
+                  </button>
                 )}
 
                 {/* Reaction picker */}
@@ -1174,7 +1187,7 @@ export default function ChatDetail({
                     {ctx && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 14px' }}>For {ctx}</p>}
                     <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
                       {presets.map(p => (
-                        <button key={p} className="hit44 glass-btn glass-secondary" onClick={() => { setBudgetAmount(p); setBudgetCustom(''); }}
+                        <button key={p} className="hit44 glass-btn glass-secondary" aria-pressed={budgetAmount === p} onClick={() => { setBudgetAmount(p); setBudgetCustom(''); }}
                           style={{ flex: 1, padding: '12px 4px', borderRadius: '12px', border: budgetAmount === p ? `2px solid ${colors.steel}` : '1.5px solid var(--border-color)', backgroundColor: budgetAmount === p ? `${colors.steel}12` : 'var(--bg-card-solid)', fontSize: 'var(--t-body)', fontWeight: '600', color: budgetAmount === p ? colors.steel : colors.navy, cursor: 'pointer' }}>
                           ${p}{p === presets[presets.length - 1] ? '+' : ''}
                         </button>
@@ -1334,7 +1347,7 @@ export default function ChatDetail({
                       <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '6px' }}>Who paid?</label>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
                         {[{ id: authUser?.id, name: 'Me' }, ...(flock.members || []).filter(m => typeof m === 'object' && m.id && String(m.id) !== String(authUser?.id)).map(m => ({ id: m.id, name: m.name || m }))].map(m => (
-                          <button key={m.id || m.name} className="hit44 glass-btn glass-secondary" onClick={() => setBillPaidBy(m.id || authUser?.id)}
+                          <button key={m.id || m.name} className="hit44 glass-btn glass-secondary" aria-pressed={(billPaidBy || authUser?.id) === m.id} onClick={() => setBillPaidBy(m.id || authUser?.id)}
                             style={{ padding: '8px 14px', borderRadius: '20px', border: (billPaidBy || authUser?.id) === m.id ? `2px solid ${colors.steel}` : '1.5px solid var(--border-color)', backgroundColor: (billPaidBy || authUser?.id) === m.id ? `${colors.steel}12` : 'var(--bg-card-solid)', fontSize: 'var(--t-meta)', fontWeight: '600', color: (billPaidBy || authUser?.id) === m.id ? colors.steel : colors.navy, cursor: 'pointer' }}>
                             {m.name}
                           </button>
@@ -1352,7 +1365,7 @@ export default function ChatDetail({
                       <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '6px' }}>Add tip?</label>
                       <div style={{ display: 'flex', gap: '6px' }}>
                         {[0, 15, 18, 20, 25].map(t => (
-                          <button key={t} className="hit44 glass-btn glass-secondary" onClick={() => setBillTip(t)}
+                          <button key={t} className="hit44 glass-btn glass-secondary" aria-pressed={billTip === t} onClick={() => setBillTip(t)}
                             style={{ flex: 1, padding: '8px 2px', borderRadius: '10px', border: billTip === t ? `2px solid ${colors.steel}` : '1.5px solid var(--border-color)', backgroundColor: billTip === t ? `${colors.steel}12` : 'var(--bg-card-solid)', fontSize: 'var(--t-meta)', fontWeight: '600', color: billTip === t ? colors.steel : colors.navy, cursor: 'pointer' }}>
                             {t === 0 ? 'None' : `${t}%`}
                           </button>
@@ -1414,7 +1427,7 @@ export default function ChatDetail({
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                               <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>${s.amount?.toFixed(2)}</span>
                               {s.settled ? (
-                                <span style={{ color: '#22C55E', fontSize: 'var(--t-body)' }}>{Icons.check('#22C55E', 16)}</span>
+                                <span style={{ color: '#22C55E', fontSize: 'var(--t-body)' }}>{Icons.check('#22C55E', 16)}<span className="sr-only">Paid</span></span>
                               ) : (
                                 <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>Owes</span>
                               )}
