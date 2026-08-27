@@ -216,9 +216,16 @@ describe('every type the app declares has somewhere to go', () => {
     expect((APP.match(/setSafetyAlert\(\{/g) || []).length).toBeGreaterThanOrEqual(2);
   });
 
-  test('the admin intent is role-checked, and waits for the account to load', () => {
+  test('the admin intent is role-checked, waits for the account, and opens the queue itself', () => {
     expect(APP).toMatch(/if \(!pushAdminIntent \|\| !authUser\) return;/);
-    expect(APP).toMatch(/if \(authUser\.role === 'admin'\) setCurrentScreen\('adminRevenue'\);/);
+    // The destination is the moderation console, not the analytics dashboard.
+    // adminRevenue is where this tap used to land, and on iOS its only pointer
+    // onward was a span that could be neither tapped nor copied, so a
+    // child-safety alert's tap could not reach the queue on the one device
+    // that receives it. The backend link agrees, so a web push with no open
+    // client lands on the console directly.
+    expect(APP).toMatch(/if \(authUser\.role === 'admin'\) window\.location\.assign\('\/admin\/moderation'\);/);
+    expect(FIREBASE_SERVICE).toContain("if (type === 'moderation_report') return '/admin/moderation';");
   });
 
   test('both halves of a friend request answer to the same tab', () => {
