@@ -67,7 +67,7 @@ var TAB_TYPES = {
   friend_accepted: '/?tab=you',
   attendance_marked: '/?tab=you',
   availability_pulse: '/?tab=home',
-  moderation_report: '/?admin=true',
+  moderation_report: '/admin/moderation',
 };
 
 function targetUrl(data) {

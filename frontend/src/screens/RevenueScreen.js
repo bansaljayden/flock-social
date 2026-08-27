@@ -191,40 +191,31 @@ export default function RevenueScreen({
             <BirdieStill size={44} eager style={{ flexShrink: 0 }} />
             <div>
               <h1 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', margin: 0 }}>Admin Dashboard</h1>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', margin: 0 }}>Manage your Flock platform</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', margin: 0 }}>Analytics, revenue and moderation</p>
             </div>
           </div>
-          {/* The moderation console, which nothing in the app linked to. It is
-              the Guideline 1.2 operator surface (reports queue, takedowns, the
-              audit log) and the only way in was typing /admin/moderation into
-              a URL bar.
-
-              It is a link on the WEB and a printed address inside the iOS
-              shell, and that split is not timidity. The native WebView is
-              served from capacitor://localhost, and the console reads its
-              bearer token from localStorage on whatever origin it loads on.
-              Opening https://www.flockcorp.com/admin/moderation from inside
-              the app hands it to Safari, which is a different origin with no
-              token, and the console has no signed-out state at all: every
-              request 401s and the page sits there empty. Navigating the
-              WebView to the path in place does authenticate, but the console
-              has no link back to the app and index.js reads the URL once at
-              boot, so the admin is stranded until they force-quit. A button
-              that lands on either of those is a button that does not work, so
-              on iOS this says where the console is instead of pretending to
-              open it. Rendering the console inside this screen is the real
-              fix; it is a bigger change than this pass owns. */}
+          {/* Where the reports queue actually lives. /admin/moderation is a
+              PAGES route index.js matches BEFORE the native-shell fallback,
+              so navigating the WebView there IN PLACE renders the
+              authenticated console with the app's own localStorage token, and
+              the console's Back to Flock link boots the app again. The
+              previous iOS branch printed the URL in a span that could be
+              neither tapped nor copied, on the strength of a comment claiming
+              the admin would be stranded there; that premise was wrong, and
+              the routing above is why. What WOULD strand the token is an
+              external open into Safari (different origin, no token), which is
+              why the native branch navigates in place instead of using
+              target="_blank". */}
           {(() => {
             const isNative = typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true;
             const boxStyle = { marginTop: '12px', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(255,255,255,0.12)', display: 'flex', alignItems: 'center', gap: '8px' };
             if (isNative) {
               return (
-                <div style={boxStyle}>
-                  {Icons.shield('rgba(255,255,255,0.75)', 16)}
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.75)', lineHeight: 1.4 }}>
-                    Reports and takedowns live at flockcorp.com/admin/moderation. Open it in a browser where you are signed in.
-                  </span>
-                </div>
+                <button type="button" className="hit44" onClick={() => window.location.assign('/admin/moderation')} style={{ ...boxStyle, width: '100%', border: 'none', cursor: 'pointer', textAlign: 'left', font: 'inherit' }}>
+                  {Icons.shield('white', 16)}
+                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: 'white' }}>Moderation console</span>
+                  <span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', marginLeft: 'auto' }}>Reports and takedowns</span>
+                </button>
               );
             }
             return (

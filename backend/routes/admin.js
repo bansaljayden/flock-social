@@ -780,22 +780,19 @@ router.get('/reports/:id/content', async (req, res) => {
 // card and never refetches, so a taken-down review or promotion stayed on every
 // open card for as long as the app stayed open.
 //
-// THE CLIENT STILL OWES TWO THINGS, and neither is in this file's gift. Until
-// they land, the room emit below is addressed at an empty room — which is a
-// server that is ready rather than a server that is guessing, and is the same
-// order the flock and DM emits shipped in:
+// BOTH CLIENT LEGS HAVE LANDED (verified 2026-08-27; this paragraph used to
+// say the client still owed them, which was true when written and then kept
+// reading as a to-do long after both shipped, which is how landed work gets
+// re-implemented):
 //
-//   1. join_venue_content / leave_venue_content, fired with the venue detail
-//      card. Nothing joins the room yet. socket.js's registry replays room
-//      joins on reconnect, so this rides for free once it is wired.
-//   2. venue_promotion has to DROP from `venueDetailPromos` as well as mark in
-//      `promotions`. App.js's venue_promotion branch only calls
-//      setModerationHidden on the owner's own list today, which is right for
-//      the owner (routes/venueDashboard.js keeps a hidden promotion visible and
-//      marked, so silently dropping it would explain nothing) and wrong for a
-//      viewer, who must simply stop seeing it. Both calls, unconditionally:
-//      neither list contains the other's rows. venue_review already does the
-//      viewer half (dropContentById on venueDetailReviews).
+//   1. join_venue_content / leave_venue_content fire with the venue detail
+//      card (frontend/src/services/socket.js registers venue_content room
+//      joins and replays them on reconnect).
+//   2. venue_promotion drops from `venueDetailPromos` for a viewer (App.js's
+//      venue_content effect calls dropContentById there) and stays
+//      marked-not-dropped on the owner's own list, which
+//      routes/venueDashboard.js keeps visible on purpose so the owner is told
+//      rather than mystified.
 //
 // THE ROOM. The venue-viewer room did not exist and reusing the crowd room was
 // not an option, which is why round 20 stopped here. `venue:{placeId}` is
