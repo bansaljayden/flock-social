@@ -1270,6 +1270,17 @@ const normalizeVotes = (raw, me, previous = []) => {
 // Members who voted plus guest-link votes, which have no identities.
 const voteTotal = (v) => (v?.voters?.length || 0) + (v?.guestCount || 0);
 
+// Has the person reading this screen already voted in this flock?
+//
+// normalizeVotes above rewrites the caller's own name to the literal 'You' on
+// every row it produces, and both vote surfaces already find the reader's pick
+// that way. This asks the same question of a whole flock, so a card addressed
+// to YOU can stop demanding something you have already done. `votes` is `[]`
+// on a flock the app has not opened this session, which reads as "not voted"
+// and is the honest answer: nothing on the client knows otherwise until the
+// tallies are fetched.
+const hasCastMyVote = (flock) => (flock?.votes || []).some(v => (v?.voters || []).includes('You'));
+
 // "1 members" was on screen in three places. One label, counted once.
 const memberCountLabel = (flock) => {
   const n = (Array.isArray(flock?.members) && flock.members.length) || flock?.memberCount || flock?.member_count || 0;
@@ -5089,21 +5100,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
   }, [flockInviteSelected, selectedFlockId, showToast]);
 
-  // Accept a flock invite
-  const handleAcceptFlockInvite = useCallback(async (flockId) => {
-    try {
-      await acceptFlockInvite(flockId);
-      const invite = pendingFlockInvites.find(f => f.id === flockId);
-      if (invite) {
-        setPendingFlockInvites(prev => prev.filter(f => f.id !== flockId));
-        setFlocks(prev => [...prev, { ...invite, memberStatus: 'accepted' }]);
-      }
-      showToast(`Joined ${invite?.name || 'flock'}!`);
-    } catch (err) {
-      if (needsEmailVerification(err, 'join a flock')) return;
-      showToast(err.message || 'Failed to accept invite', 'error');
-    }
-  }, [pendingFlockInvites, showToast, needsEmailVerification]);
+  // Accepting a flock invite is declared further down this component, beside
+  // loadFlocks, because it has to call it. See the note there.
 
   // Decline a flock invite
   const handleDeclineFlockInvite = useCallback(async (flockId) => {
@@ -5468,6 +5466,46 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Mount only: loadFlocks holds no reactive value, so its identity never
   // changes and this cannot become a refetch loop.
   useEffect(() => { loadFlocks(); }, [loadFlocks]);
+
+  // Accept a flock invite.
+  //
+  // Declared HERE, next to loadFlocks rather than beside the rest of the invite
+  // handlers, because it calls it and naming loadFlocks in a dependency list
+  // any earlier is a temporal dead zone throw.
+  //
+  // AN INVITE ROW IS A PREVIEW, NOT A FLOCK. GET /api/flocks collapses a flock
+  // you have only been invited to down to a name, a venue, a time and two
+  // counts, on purpose: membership is not acceptance and an invitee is not
+  // shown the inside of a plan. So the object sitting in pendingFlockInvites
+  // carries no budget_enabled, no ghost mode, no coordinates and no budget
+  // context, and promoting it straight into `flocks` produced an accepted
+  // flock that was missing all of it. A budget flock showed "Split the Bill"
+  // where the budget form belongs, until the next full reload, which is the
+  // one screen a lot of people accept an invite in order to reach.
+  //
+  // The optimistic insert stays, so the flock is on the list the instant the
+  // tap lands and the toast is not describing a change nobody can see. The
+  // refetch lands a moment later with the real row. loadFlocks only draws its
+  // skeleton while the list is EMPTY, and the optimistic row means it is not,
+  // so nothing flashes.
+  const handleAcceptFlockInvite = useCallback(async (flockId) => {
+    try {
+      await acceptFlockInvite(flockId);
+      const invite = pendingFlockInvites.find(f => f.id === flockId);
+      if (invite) {
+        setPendingFlockInvites(prev => prev.filter(f => f.id !== flockId));
+        setFlocks(prev => [...prev, { ...invite, memberStatus: 'accepted' }]);
+      }
+      showToast(`Joined ${invite?.name || 'flock'}!`);
+      // Deliberately not awaited before the toast, and its failure is
+      // loadFlocks's own to report. The join already happened server side, so
+      // a refetch that misses must not read as a join that did not.
+      loadFlocks();
+    } catch (err) {
+      if (needsEmailVerification(err, 'join a flock')) return;
+      showToast(err.message || 'Failed to accept invite', 'error');
+    }
+  }, [pendingFlockInvites, showToast, needsEmailVerification, loadFlocks]);
 
   // ── Past flocks ────────────────────────────────────────────────────────
   // Completed and cancelled flocks, fetched when the Past screen opens.
@@ -11862,7 +11900,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
         {/* Needs your attention — clean card (previous form), steel chip, no yellow */}
         {(() => {
-          const needsAction = flocks.filter(f => f.status === 'voting');
+          // A flock still voting AND still waiting on this reader. The second
+          // half was missing, so the first thing on the home screen told
+          // somebody who had just voted that their vote was still needed, and
+          // kept telling them for as long as the flock stayed open. The card
+          // is addressed to YOU, it names one flock and it opens it, so being
+          // wrong about the one fact the app certainly knows is the whole of
+          // its content being wrong.
+          const needsAction = flocks.filter(f => f.status === 'voting' && !hasCastMyVote(f));
           if (needsAction.length === 0) return null;
           return (
             <button className="hit44"
