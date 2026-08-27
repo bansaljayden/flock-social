@@ -6415,6 +6415,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       // The role check is the same one renderScreen and the redirect effect
       // apply. A non-admin tap is not an error, it just has nowhere to go.
       setPushAdminIntent(true);
+    } else if (intent.screen === 'safety') {
+      // A tapped SOS. The alert modal is a top-level overlay that does not
+      // depend on the current screen or on any loaded list, and the intent
+      // already carries everyone it names and places, so it opens straight from
+      // the tap with no server round trip. Without this branch a safety_alert
+      // fell through to the home screen and drew nothing, which is the one
+      // notification this router may not drop: the member who was offline when
+      // the socket fired is exactly who taps it, and a socket emit is never
+      // replayed to a socket that was not there. Same shape onSafetyAlert
+      // builds from the live event, so the modal reads a tap identically.
+      setSafetyAlert({
+        userId: intent.userId != null ? String(intent.userId) : null,
+        name: String(intent.name || 'Someone on your plan').slice(0, 80),
+        lat: Number.isFinite(intent.lat) ? intent.lat : null,
+        lng: Number.isFinite(intent.lng) ? intent.lng : null,
+        at: intent.at || new Date().toISOString(),
+      });
     }
   }), []);
 
