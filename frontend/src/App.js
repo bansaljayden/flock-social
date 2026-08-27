@@ -7,7 +7,7 @@ import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
-import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled } from './services/socket';
+import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onReliabilityUpdated, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled } from './services/socket';
 import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
@@ -8810,6 +8810,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return unsub;
   }, []);
 
+  // The server pushes the fresh score when a host marks attendance; the
+  // payload carries it, so no refetch. Without this the profile showed the
+  // boot-time number until the next relaunch.
+  useEffect(() => {
+    const unsub = onReliabilityUpdated((data) => {
+      if (data && data.reliabilityScore !== undefined) setReliabilityScore(data.reliabilityScore || null);
+    });
+    return unsub;
+  }, []);
+
   // Listen for flock member left
   useEffect(() => {
     const unsub = onFlockMemberLeft((data) => {
@@ -14879,12 +14889,38 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       {Icons.eye(colors.navyMid, 14)} Details
                     </button>
                   )}
-                  {flock.venueLat && flock.venueLng && (
-                    <button className="hit44 glass-btn glass-navy" onClick={() => openExternal(`https://maps.google.com/?q=${flock.venueLat},${flock.venueLng}`)} style={{ flex: 1, padding: '10px', background: colors.navyBg, border: 'none', borderRadius: '10px', color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                  {(flock.venueId || (flock.venueLat && flock.venueLng)) && (
+                    /* By place id when there is one: the coordinate form
+                       dropped people at a bare lat,lng pin with no name,
+                       hours, or entrance, on the one tap whose whole job is
+                       getting them in the door. Coordinates stay as the
+                       fallback for a venue with no id. */
+                    <button className="hit44 glass-btn glass-navy" onClick={() => openExternal(flock.venueId
+                      ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(flock.venue || 'venue')}&query_place_id=${flock.venueId}`
+                      : `https://maps.google.com/?q=${flock.venueLat},${flock.venueLng}`)} style={{ flex: 1, padding: '10px', background: colors.navyBg, border: 'none', borderRadius: '10px', color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                       {Icons.mapPin('white', 14)} Directions
                     </button>
                   )}
                 </div>
+                {/* Check In, on the plan itself, during the night itself. The
+                    check-in that feeds the crowd signal lived only behind
+                    Explore and venue detail, four taps from the place a
+                    person actually is at 9 PM: their plan. Same endpoint and
+                    same two-hour done state as the venue page button, read
+                    from the same flock_checkin_ key handleCheckIn writes. */}
+                {flock.venueId && flock.status === 'confirmed' && (() => {
+                  const et = flock.eventTime ? new Date(flock.eventTime).getTime() : NaN;
+                  if (!Number.isFinite(et)) return null;
+                  const now = Date.now();
+                  if (now < et - 3 * 3600 * 1000 || now > et + 6 * 3600 * 1000) return null;
+                  const ts = parseInt(localStorage.getItem('flock_checkin_' + flock.venueId) || '0', 10);
+                  const checkedIn = ts > 0 && now - ts < 2 * 60 * 60 * 1000;
+                  return (
+                    <button className="hit44 glass-btn glass-secondary" disabled={checkedIn || checkinSaving} onClick={() => handleCheckIn(flock.venueId)} style={{ width: '100%', marginTop: '8px', padding: '10px', background: 'var(--icon-bg)', border: `1.5px solid ${colors.navyMid}`, borderRadius: '10px', color: colors.navyMid, fontSize: 'var(--t-label)', fontWeight: '600', cursor: checkedIn ? 'default' : 'pointer', opacity: checkedIn ? 0.7 : 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                      {Icons.check(colors.navyMid, 14)} {checkedIn ? 'Checked In' : checkinSaving ? 'Checking in…' : 'Check In'}
+                    </button>
+                  );
+                })()}
               </div>
             </div>
           ) : (
@@ -14919,6 +14955,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               </span>
               {Icons.chevronRight('var(--text-tertiary)', 14)}
             </button>
+          )}
+
+          {/* A finished plan's strongest next action is the same plan again.
+              The Past screen already offers this; the detail screen a person
+              actually lands on from Messages did not, so a completed flock
+              read as a dead end. Same handler and same shape the Past card
+              sends. */}
+          {(flock.status === 'completed' || flock.status === 'cancelled') && (
+            <button
+              className="hit44 glass-btn glass-navy"
+              aria-label={`Do ${flock.name} again`}
+              disabled={rerunningFlockId === flock.id}
+              onClick={() => handleRerunFlock({ id: flock.id, event_time: flock.eventTime, name: flock.name })}
+              style={{ width: '100%', padding: '12px', marginBottom: '12px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: rerunningFlockId === flock.id ? 'wait' : 'pointer', opacity: rerunningFlockId === flock.id ? 0.6 : 1 }}
+            >{rerunningFlockId === flock.id ? 'Starting…' : 'Do it again'}</button>
           )}
 
           {/* Post-hangout feedback prompt — only after flock is marked done */}

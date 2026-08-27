@@ -2145,10 +2145,13 @@ async function boot() {
   // twelve hours and why a swept flock can still have its attendance marked.
   const { runFlockCompletionSweep, flockSweepEnabled, FLOCK_SWEEP_INTERVAL_MS } = require('./services/flockSweep');
   if (flockSweepEnabled()) {
-    flockSweepInterval = setInterval(runFlockCompletionSweep, FLOCK_SWEEP_INTERVAL_MS);
+    // `io` rides along so a swept flock's members hear about it live; the
+    // sweep treats it as optional and never lets a fan-out failure reach the
+    // timer.
+    flockSweepInterval = setInterval(() => runFlockCompletionSweep(io), FLOCK_SWEEP_INTERVAL_MS);
     // Last in the kickoff stagger (30s, 45s, 60s, 75s), same pool-contention
     // reason as its neighbours.
-    flockSweepKickoff = setTimeout(runFlockCompletionSweep, 90 * 1000);
+    flockSweepKickoff = setTimeout(() => runFlockCompletionSweep(io), 90 * 1000);
   }
 
   // The money watch. Registered LAST because it reads what the others spend,
