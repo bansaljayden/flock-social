@@ -48,15 +48,28 @@ authMod.authenticate = (req, _res, next) => { req.user = { id: 7, name: 'Ava' };
 
 // Google, faked. `googleAnswer` is what the next Places call resolves to, so a
 // test can put an error body or a transport failure in front of the route.
+// `googleStatus` and `googleThrow` were added when the round-27 pass found that
+// this fixture could only ever produce a 200 with a well-formed body, which is
+// precisely the half of the upstream that was already handled. The two failure
+// shapes it could not reach are the two that reached the user as "No venues
+// found": a non-2xx carrying a body that is not `{error:...}`, and a fetch that
+// rejects (an upstreamSignal timeout, or a proxy's HTML page failing json()).
 let googleAnswer = null;
+let googleStatus = 200;
+let googleThrow = null;
 let googleCalls = 0;
 const realFetch = global.fetch;
 global.fetch = (url, opts) => {
   const u = String(url);
   if (u.startsWith('https://places.googleapis.com/')) {
     googleCalls += 1;
+    if (googleThrow) return Promise.reject(googleThrow);
     const answer = googleAnswer || { places: [] };
-    return Promise.resolve({ ok: true, status: 200, json: async () => answer });
+    return Promise.resolve({
+      ok: googleStatus >= 200 && googleStatus < 300,
+      status: googleStatus,
+      json: async () => answer,
+    });
   }
   return realFetch(url, opts);
 };
@@ -82,6 +95,8 @@ test.beforeEach(() => {
   __resetPlacesBudget();
   venueSearchRouter.__test.clearVenueCache();
   googleAnswer = null;
+  googleStatus = 200;
+  googleThrow = null;
   googleCalls = 0;
 });
 
@@ -92,6 +107,13 @@ async function get(pathname) {
   try { body = JSON.parse(text); } catch { body = text; }
   return { status: res.status, body, text };
 }
+
+// frontend/src/services/api.js RETRYABLE_STATUSES, which is the client's own
+// list of statuses it re-requests automatically on a GET. Retyped rather than
+// imported, because a backend suite cannot reach the frontend package. The
+// case that reads it says what it is for: any status in this list costs a
+// second and third paid Google call when the route answers it.
+const RETRYABLE_STATUSES = [502, 503, 504];
 
 // The search cache and the in-flight map are module-level and no beforeEach
 // reaches the second one, so every test uses a query nothing else has asked.
@@ -242,4 +264,171 @@ test('a card photo and a detail photo of the same venue are ONE cache key', asyn
   // And the two sizes the route DOES distinguish stay distinguished, so the
   // thumbnail tier is not silently merged into the card tier either.
   assert.notStrictEqual(photoCacheKey(ref, 400), photoCacheKey(ref, 160));
+});
+
+// ---------------------------------------------------------------------------
+// 7. An outage is not an empty result, and was being reported as one
+// ---------------------------------------------------------------------------
+// `response.ok` was never read on the text-search path. Google's `{error:{...}}`
+// body is only one of the shapes a non-answer arrives in: a 5xx from Google's
+// edge, from Railway's egress or from any intermediary in between carries
+// whatever JSON that hop feels like, and every one of those walked past the
+// error-body check into `data.places || []`. The route answered 200 with an
+// empty list, which is the ONE answer frontend/src/App.js is allowed to print
+// "No venues found. Try a different search." for. So the user's spelling was
+// blamed for our outage through the half of the path nobody had guarded, while
+// the copy in section 2 above was busy being careful about the other half.
+//
+// services/placeDetailsCache.js closed exactly this for Place Details and wrote
+// the finding up in its own header; it never crossed to Text Search.
+
+test('a Google 5xx carrying a non-error body is a failure, not "no venues found"', async () => {
+  googleStatus = 503;
+  googleAnswer = { message: 'backend unavailable' };
+  const res = await get(`/api/venues/search?query=${uniq()}`);
+
+  assert.notStrictEqual(res.status, 200,
+    'an upstream 503 was answered 200, so the client renders it as "No venues found"');
+  assert.strictEqual(res.status, 502, res.text);
+  assert.strictEqual(res.body.error, 'Venue search is not answering right now. Try again in a moment.');
+  assert.ok(!('venues' in (res.body || {})), 'a failure must not carry a venues list at all');
+});
+
+test('a 200 whose `places` is a FALSY non-list is a failure, not an empty result', async () => {
+  // The quiet member of the same class, and the one worth choosing the fixture
+  // for. `(data.places || [])` turns null, 0, '' and false into an empty array,
+  // so a 200 carrying `{"places": null}` was mapped to {venues: [], total: 0}
+  // and printed as "No venues found" with nothing anywhere saying otherwise.
+  // A non-list that is TRUTHY ('not a list', {}) throws inside .map and lands
+  // in the catch below, which already answers 502 with this same sentence, so
+  // it does not exercise the guard at all. This fixture is the one a removed
+  // guard actually changes the answer to.
+  googleStatus = 200;
+  googleAnswer = { places: null };
+  const res = await get(`/api/venues/search?query=${uniq()}`);
+  assert.strictEqual(res.status, 502, res.text);
+  assert.strictEqual(res.body.error, 'Venue search is not answering right now. Try again in a moment.');
+  assert.ok(!('venues' in (res.body || {})),
+    'a malformed upstream body was answered as an empty venue list');
+});
+
+test('a truthy non-list `places` is also a failure, by whichever guard reaches it', async () => {
+  googleStatus = 200;
+  googleAnswer = { places: 'not a list' };
+  const res = await get(`/api/venues/search?query=${uniq()}`);
+  assert.strictEqual(res.status, 502, res.text);
+  assert.strictEqual(res.body.error, 'Venue search is not answering right now. Try again in a moment.');
+});
+
+test('a genuinely empty answer is STILL a 200, so the guard did not eat the real case', async () => {
+  // The half that must not regress. Google omits `places` entirely when nothing
+  // matched; it does not send an empty array. If the guard above read a missing
+  // key as a bad body, every honest "nothing matched" would become a 502 and
+  // the client would print an outage sentence for a misspelled bar name.
+  googleStatus = 200;
+  googleAnswer = {};
+  const res = await get(`/api/venues/search?query=${uniq()}`);
+  assert.strictEqual(res.status, 200, res.text);
+  assert.deepStrictEqual(res.body, { venues: [], total: 0 });
+});
+
+// ---------------------------------------------------------------------------
+// 8. A timeout says it timed out
+// ---------------------------------------------------------------------------
+// upstreamSignal('places') is a 6-second AbortSignal.timeout and it REJECTS the
+// fetch. That landed in the same catch as everything else and was answered
+// `500 Failed to search venues`, which is wrong on both halves. Google did
+// not answer and this server worked fine, and the sentence reads to the
+// person typing as though their search had been rejected.
+
+test('an upstream timeout says it timed out, and stays off the client retry path', async () => {
+  const timeout = new Error('The operation was aborted due to timeout');
+  timeout.name = 'TimeoutError';
+  googleThrow = timeout;
+
+  const res = await get(`/api/venues/search?query=${uniq()}`);
+  assert.match(res.body.error, /took too long/i,
+    'a timeout is answered with a sentence that does not say a timeout happened');
+  assert.ok(!/Failed to search venues/i.test(res.text),
+    'a timeout is still being reported as a failed search');
+
+  // THE STATUS IS THE MONEY HALF, and it is why this is not the 504 the event
+  // plainly is. frontend/src/services/api.js retries every GET answering 502,
+  // 503 or 504 twice, with backoff. A retry of this route is a fresh Places
+  // budget charge and a fresh PAID Google call, because a failure is never
+  // cached, and utils/upstream.js is explicit that a request Google already
+  // received is billed whether or not we hung up on it. A 504 here would turn
+  // one timeout into three invoices and about twenty-one seconds of spinner.
+  // It would also lose the sentence asserted above, which buildHttpError
+  // replaces on exactly those three statuses.
+  assert.ok(!RETRYABLE_STATUSES.includes(res.status),
+    `a timeout answered ${res.status}, which the client auto-retries into a second and third paid Google call`);
+  assert.strictEqual(res.status, 500, res.text);
+});
+
+test('a non-JSON body from a proxy is a 502, and neither is cached', async () => {
+  const q = uniq();
+  const syntax = new SyntaxError('Unexpected token < in JSON at position 0');
+  googleThrow = syntax;
+  const failed = await get(`/api/venues/search?query=${q}`);
+  assert.strictEqual(failed.status, 502, failed.text);
+  assert.strictEqual(failed.body.error, 'Venue search is not answering right now. Try again in a moment.');
+
+  // Same rule as the Places-error case above: a pinned failure would answer for
+  // the whole 5-minute TTL and there would be no way to retry out of a blip.
+  googleThrow = null;
+  const recovered = await get(`/api/venues/search?query=${q}`);
+  assert.strictEqual(recovered.status, 200, recovered.text);
+});
+
+// ---------------------------------------------------------------------------
+// 9. No failure body may carry an internal string
+// ---------------------------------------------------------------------------
+// The sweep, rather than one assertion per branch, because the branch somebody
+// adds next is the one nobody writes an assertion for. Every failure this file
+// can reach is checked against the same list, and the list is what the browser
+// pass actually saw on a phone: "Google Places API key not configured" rendered
+// verbatim in the search dropdown.
+
+test('no failure on any venue route answers with an internal string', async () => {
+  const LEAKS = [
+    'API key', 'api_key', 'not configured', 'Google', 'googleapis', 'Places API',
+    'CDN', 'quota', 'PERMISSION_DENIED', 'undefined',
+    // "Failed to ..." is not the leak of a secret, it is the leak of a stack
+    // frame into display copy. It reads as an accusation to the person typing.
+    'Failed to search', 'Failed to get venue', 'Failed to fetch photo',
+  ];
+  const failures = [];
+
+  googleStatus = 503; googleAnswer = { message: 'backend unavailable' };
+  failures.push(await get(`/api/venues/search?query=${uniq()}`));
+
+  googleStatus = 200;
+  googleAnswer = { error: { status: 'RESOURCE_EXHAUSTED', message: 'Quota exceeded for quota metric Requests' } };
+  failures.push(await get(`/api/venues/search?query=${uniq()}`));
+  failures.push(await get('/api/venues/details?place_id=ChIJBBBBBBBBBBBBBBBBBBBBBB'));
+
+  googleAnswer = null;
+  const timeout = new Error('aborted'); timeout.name = 'TimeoutError';
+  googleThrow = timeout;
+  failures.push(await get(`/api/venues/search?query=${uniq()}`));
+  googleThrow = null;
+
+  failures.push(await get('/api/venues/search'));
+  failures.push(await get(`/api/venues/search?query=${'a'.repeat(81)}`));
+  failures.push(await get('/api/venues/details?place_id=' + encodeURIComponent('not a place id')));
+  failures.push(await get('/api/venues/photo?ref=' + encodeURIComponent('places/x/photos/y?evil=1')));
+
+  // An empty sweep is indistinguishable from a broken one, so say how many.
+  assert.ok(failures.length >= 8, `the sweep collected only ${failures.length} responses`);
+  for (const f of failures) {
+    assert.ok(f.status >= 400, `a case in this sweep answered ${f.status}, so it is not a failure at all`);
+    assert.strictEqual(typeof (f.body && f.body.error), 'string',
+      `a failure answered with no error string: ${f.text}`);
+    assert.ok(f.body.error.length > 12, `too terse to be a sentence: "${f.body.error}"`);
+    for (const leak of LEAKS) {
+      assert.ok(!f.body.error.toLowerCase().includes(leak.toLowerCase()),
+        `"${f.body.error}" carries the internal string "${leak}"`);
+    }
+  }
 });
