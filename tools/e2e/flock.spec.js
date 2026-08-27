@@ -364,7 +364,7 @@ test('picking exactly one person turns Create Flock into a message, and says so 
   await typeInto(host.page.getByLabel(/what.s the plan/i), `Solo ${host.surname}`);
 
   // The create screen's own people search reaches any account, friend or not.
-  await typeInto(host.page.getByLabel(/search people by name or email/i), mate.surname);
+  await typeInto(host.page.getByLabel(/search people by name/i), mate.surname);
   await host.page.getByRole('button', { name: new RegExp(`${mate.name}[\\s\\S]*Add`) }).click({ timeout: 20_000 });
 
   // SAID BEFORE THE TAP. One person is a DM, not a flock, and the footer and

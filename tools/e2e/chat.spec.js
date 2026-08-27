@@ -223,7 +223,7 @@ const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** Put someone on the create screen's invite list, by searching for them. */
 async function inviteWhileCreating(page, personName) {
-  await page.getByRole('textbox', { name: /search people by name or email/i }).fill(personName);
+  await page.getByRole('textbox', { name: /search people by name/i }).fill(personName);
   await page.getByText(personName, { exact: true }).first().click({ timeout: 20_000 });
   // The chip carries the first name only, and the group label counts them.
   await expect(page.getByText(personName.split(' ')[0], { exact: true })).toBeVisible({ timeout: 10_000 });
@@ -270,7 +270,7 @@ async function openDmWith(page, personName) {
     await row.click();
   } else {
     await page.getByRole('button', { name: 'New message' }).click();
-    await page.getByRole('textbox', { name: /search people by name or email/i }).fill(personName);
+    await page.getByRole('textbox', { name: /search people by name/i }).fill(personName);
     await page.getByText(personName, { exact: true }).first().click({ timeout: 25_000 });
   }
   await expect(page.locator('[data-dm-input]')).toBeVisible({ timeout: 25_000 });
@@ -747,7 +747,7 @@ test.describe('direct messages, with two people watching them', () => {
     // the one input method a person cannot perform.
     await fay.page.getByRole('button', { name: 'Messages' }).click();
     await fay.page.getByRole('button', { name: 'New message' }).click();
-    const box = fay.page.getByRole('textbox', { name: /search people by name or email/i });
+    const box = fay.page.getByRole('textbox', { name: /search people by name/i });
     await box.click();
     await fay.page.keyboard.type(dee.name, { delay: 90 });
 
