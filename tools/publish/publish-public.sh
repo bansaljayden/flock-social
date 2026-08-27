@@ -116,6 +116,27 @@ STRIP=(
   # remove it from the live URL, which is a separate action: move it out of
   # public/ or block the path in vercel.json. See JAYDEN-TODO.md.
   --path frontend/public/SLOP-AUDIT.md
+  # The root copy of that same document, and the one that actually has history:
+  # eleven commits to the deployed copy's one. .gitignore keeps it tracked on
+  # purpose, because tests read it, so stripping only the public/ copy would
+  # publish the entire ledger anyway. Same reasoning as the line above. It is an
+  # internal design audit written to be blunt about which rules the product
+  # still fails, and it carries operational notes that are not public reading,
+  # among them an open question about whether the support@ and safety@ mailboxes
+  # exist at all. Useful internally, quotable against him anywhere else. Both
+  # copies stay tracked privately; neither reaches the mirror.
+  --path SLOP-AUDIT.md
+  # The end to end defect ledger: every bug the browser agents found on
+  # 2026-08-26, each with a status, seventeen of them still open when this line
+  # was written. It exists so that a finding cannot die in a chat scrollback,
+  # which makes it one of the most useful files in the repository internally and
+  # the worst one to publish. A standing list of live defects in a shipping app,
+  # written for the people fixing them, reads to a venue owner or an admissions
+  # reader as a catalogue of what is wrong with the product rather than as the
+  # ordinary engineering it is. The specs under tools/e2e stay public, candid
+  # comments and all, because a test that names the bug it pins is good work.
+  # The ledger about them does not.
+  --path tools/e2e/FINDINGS.md
   --path-glob 'ADVISOR-*.md'
   --path-glob 'SECURITY-AUDIT-*.md'
   --path-glob 'VIDEO-NOTES-*.md'
@@ -217,15 +238,29 @@ SIZE="$(git count-objects -vH | awk '/size-pack/{print $2, $3}')"
 
 echo "==> verifying nothing excluded survived"
 FAIL=0
+PROVEN=0
+# The second group is the internal-documents half of the strip list. Those paths
+# have real commits behind them, unlike the strategy docs that were never
+# committed, so a typo or a dropped line would silently publish them and the
+# filter itself would report success. Anything on the strip list that ever
+# existed in a commit belongs here, where its absence is proven rather than
+# assumed.
 for p in backend/scripts/ml/models/crowd_model.onnx backend/scripts/ml/models/model_metadata.json \
          backend/.env frontend/.env.production mobile/android/app/debug.keystore \
-         tools/publish/redactions.txt tools/publish/scan-allowlist.txt; do
+         tools/publish/redactions.txt tools/publish/scan-allowlist.txt \
+         backend/scripts/ml/MODEL-METRICS.md frontend/public/SLOP-AUDIT.md \
+         SLOP-AUDIT.md tools/e2e/FINDINGS.md; do
   n="$(git log --all --oneline -- "$p" | wc -l | tr -d ' ')"
-  if [ "$n" != "0" ]; then echo "    LEAK: $p still in $n commits" >&2; FAIL=1; fi
+  if [ "$n" != "0" ]; then echo "    LEAK: $p still in $n commits" >&2; FAIL=1
+  else PROVEN=$((PROVEN + 1)); fi
 done
 n="$(git log --all --oneline -- 'frontend/public/screenshots/appstore' | wc -l | tr -d ' ')"
 [ "$n" = "0" ] || { echo "    LEAK: appstore screenshots still in $n commits" >&2; FAIL=1; }
 [ "$FAIL" = "0" ] || { echo "REFUSING TO PUSH" >&2; exit 1; }
+# Say the number out loud. A check that only speaks when it fails is a check
+# nobody can tell apart from a check that never ran, and this loop is the only
+# proof that a path on the strip list is actually gone rather than merely typed.
+echo "    proven absent from all history: $PROVEN paths, plus the appstore screenshots"
 
 echo "    commits: $BEFORE_COMMITS -> $AFTER_COMMITS      size: $SIZE"
 
