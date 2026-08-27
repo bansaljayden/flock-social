@@ -134,10 +134,11 @@ function flockSweepEnabled() {
  * matters as much: a confirmed plan with no time on it has no night to be past,
  * and guessing one from created_at would close plans nobody has been to yet.
  */
-async function runFlockCompletionSweep() {
+async function runFlockCompletionSweep(io) {
   if (!flockSweepEnabled()) return 0;
   const hours = graceHours();
   let moved = 0;
+  const movedIds = [];
   try {
     for (let batch = 0; batch < SWEEP_MAX_BATCHES; batch++) {
       const result = await pool.query(
@@ -156,6 +157,7 @@ async function runFlockCompletionSweep() {
       );
       const n = result.rowCount || 0;
       moved += n;
+      for (const row of result.rows || []) movedIds.push(row.id);
       // A short batch means the backlog is drained. Only a FULL batch can have
       // left anything behind, so this is the one condition worth another round
       // trip for.
@@ -163,6 +165,26 @@ async function runFlockCompletionSweep() {
     }
     if (moved > 0) {
       console.log(`[flockSweep] completed ${moved} flock${moved === 1 ? '' : 's'} past ${hours}h after their time`);
+    }
+    // Tell every open app. Without this the sweep moved the row and nothing
+    // else: a person sitting on the plan at 9:05 AM still saw Locked In until
+    // their next cold reload, because flock_updated only ever fired from the
+    // host-driven PUT. Per-member user rooms, the same address every other
+    // flock event uses; no block filtering because a clock has no author to
+    // block. Guarded so a fan-out failure can never take down the timer.
+    if (io && movedIds.length > 0) {
+      try {
+        const members = await pool.query(
+          `SELECT flock_id, user_id FROM flock_members
+            WHERE flock_id = ANY($1::int[]) AND status = 'accepted'`,
+          [movedIds]
+        );
+        for (const row of members.rows || []) {
+          io.to(`user:${row.user_id}`).emit('flock_updated', { flockId: row.flock_id, status: 'completed' });
+        }
+      } catch (err) {
+        console.error('[flockSweep] completion fan-out failed:', err.message);
+      }
     }
     return moved;
   } catch (err) {

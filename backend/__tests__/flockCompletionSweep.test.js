@@ -43,11 +43,15 @@ const path = require('node:path');
 
 const pool = require('../config/database');
 
-const db = { log: [], fail: false, rowCount: 0 };
+const db = { log: [], fail: false, rowCount: 0, rowsByCall: null };
 pool.query = (sql, params) => {
   if (db.fail) return Promise.reject(new Error('connection terminated unexpectedly'));
   db.log.push({ sql: String(sql).replace(/\s+/g, ' ').trim(), params: params || [] });
-  return Promise.resolve({ rows: [], rowCount: db.rowCount });
+  // rowsByCall, when set, hands each successive query its own rows; the
+  // default recorder answers empty rows with a configurable rowCount, which
+  // every predicate test relies on.
+  const rows = db.rowsByCall ? (db.rowsByCall.shift() || []) : [];
+  return Promise.resolve({ rows, rowCount: db.rowsByCall ? rows.length : db.rowCount });
 };
 
 const sweep = require('../services/flockSweep');
@@ -57,6 +61,7 @@ function reset() {
   db.log = [];
   db.fail = false;
   db.rowCount = 0;
+  db.rowsByCall = null;
   delete process.env.FLOCK_COMPLETE_AFTER_HOURS;
   delete process.env.FLOCK_SWEEP_ENABLED;
 }
@@ -228,8 +233,8 @@ const SERVER = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
 
 test('the sweep is registered on a timer in server.js', () => {
   assert.match(SERVER, /require\('\.\/services\/flockSweep'\)/);
-  assert.match(SERVER, /flockSweepInterval = setInterval\(runFlockCompletionSweep, FLOCK_SWEEP_INTERVAL_MS\)/);
-  assert.match(SERVER, /flockSweepKickoff = setTimeout\(runFlockCompletionSweep/);
+  assert.match(SERVER, /flockSweepInterval = setInterval\(\(\) => runFlockCompletionSweep\(io\), FLOCK_SWEEP_INTERVAL_MS\)/);
+  assert.match(SERVER, /flockSweepKickoff = setTimeout\(\(\) => runFlockCompletionSweep\(io\)/);
 });
 
 test('both handles are cleared in shutdown, so no sweep fires into a closing pool', () => {
@@ -238,6 +243,39 @@ test('both handles are cleared in shutdown, so no sweep fires into a closing poo
   const body = SERVER.slice(start, SERVER.indexOf('process.on(\'SIGTERM\'', start));
   assert.match(body, /clearInterval\(flockSweepInterval\)/);
   assert.match(body, /clearTimeout\(flockSweepKickoff\)/);
+});
+
+test('a swept flock is announced to its members over their user rooms', async () => {
+  // The row move alone left every open app showing Locked In until a cold
+  // reload; flock_updated had only ever fired from the host-driven PUT. The
+  // sweep now fans out per accepted member, and treats io as optional so the
+  // predicate tests above (which pass none) run exactly as before.
+  reset();
+  db.rowsByCall = [
+    [{ id: 7 }, { id: 9 }],
+    [{ flock_id: 7, user_id: 1 }, { flock_id: 7, user_id: 2 }, { flock_id: 9, user_id: 1 }],
+  ];
+  const emits = [];
+  const io = { to: (room) => ({ emit: (event, payload) => emits.push({ room, event, payload }) }) };
+  const n = await runFlockCompletionSweep(io);
+  assert.strictEqual(n, 2);
+  const memberQuery = db.log.find((q) => q.sql.includes('FROM flock_members'));
+  assert.ok(memberQuery, 'members are read for the fan-out');
+  assert.deepStrictEqual(memberQuery.params[0], [7, 9]);
+  assert.match(memberQuery.sql, /status = 'accepted'/);
+  assert.deepStrictEqual(emits, [
+    { room: 'user:1', event: 'flock_updated', payload: { flockId: 7, status: 'completed' } },
+    { room: 'user:2', event: 'flock_updated', payload: { flockId: 7, status: 'completed' } },
+    { room: 'user:1', event: 'flock_updated', payload: { flockId: 9, status: 'completed' } },
+  ]);
+});
+
+test('a fan-out failure never reaches the timer, and the move still counts', async () => {
+  reset();
+  db.rowsByCall = [[{ id: 4 }], [{ flock_id: 4, user_id: 8 }]];
+  const io = { to: () => { throw new Error('adapter gone'); } };
+  const n = await runFlockCompletionSweep(io);
+  assert.strictEqual(n, 1, 'the committed move is reported despite the failed fan-out');
 });
 
 test('the sweep does not write a research_analytics row', () => {
