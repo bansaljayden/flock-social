@@ -876,5 +876,120 @@ class ServiceConfinement(unittest.TestCase):
         self.assertEqual(self.directives().get('NoNewPrivileges'), ['yes'])
 
 
+class ClockAndDrainRepairs(unittest.TestCase):
+    """The 2026-08-27 audit fixes: a fast clock self-repairs instead of losing
+    every reading forever, a failed pre-NTP send keeps its monotonic mark, and
+    a 429's short wait is honoured inside the cycle instead of waiting out the
+    push interval."""
+
+    def setUp(self):
+        main._pending = []
+        main._buffer_on_disk = False
+        main._throttle.clear()
+        if main.BUFFER_PATH.exists():
+            main.BUFFER_PATH.unlink()
+        self._real_post = main._post
+        self.sent = []
+
+    def tearDown(self):
+        main._post = self._real_post
+
+    def stub(self, responder):
+        def fake(payload):
+            self.sent.append(dict(payload))
+            return responder(payload, len(self.sent))
+        main._post = fake
+
+    def test_a_clock_running_fast_strips_the_stamp_and_delivers_instead_of_losing_everything(self):
+        # clock_is_sane() only checks the past, so a clock set ahead passes it
+        # and stamps every snapshot in the future. The server 400s each one,
+        # and 400 used to mean drop: every reading, forever, until a human
+        # fixed the clock. The server's own words are the detection.
+        def responder(p, n):
+            if 'recorded_at' in p:
+                return 400, '{"error":"recorded_at is in the future; check the device clock"}'
+            return 201, ''
+        self.stub(responder)
+        main._pending = [{'ir_beam_count': 3, 'thermal_headcount': 1, 'noise_db': 1.0,
+                          'recorded_at': '2099-01-01T00:00:00.000Z'}]
+        main.Pusher().flush()
+        self.assertEqual(main._pending, [], 'the reading delivered instead of being dropped')
+        self.assertEqual(len(self.sent), 2, 'one dated refusal, then one undated delivery')
+        self.assertNotIn('recorded_at', self.sent[1])
+
+    def test_any_other_400_still_drops_the_one_reading(self):
+        self.stub(lambda p, n: (400, '{"error":"noise_db is not a number"}'))
+        main._pending = [{'ir_beam_count': 0, 'thermal_headcount': 0, 'noise_db': 1.0,
+                          'recorded_at': '2026-08-14T20:00:00.000Z'}]
+        main.Pusher().flush()
+        self.assertEqual(main._pending, [])
+        self.assertEqual(len(self.sent), 1, 'no resend for a genuinely bad payload')
+
+    def test_a_failed_pre_ntp_send_keeps_its_monotonic_mark_for_the_next_attempt(self):
+        # The mark is what lets a reading taken before NTP be filed at its real
+        # time once the clock lands. Popping it on a send that then FAILED cost
+        # the reading its true time forever; now the queued entry keeps it and
+        # only the wire copy goes bare.
+        self.stub(lambda p, n: (503, 'down'))
+        real_sane = main.clock_is_sane
+        main.clock_is_sane = lambda: False
+        try:
+            main._pending = [{'ir_beam_count': 1, 'thermal_headcount': 0, 'noise_db': 1.0,
+                              '_mono': time.monotonic() - 60}]
+            main.Pusher().flush()
+            self.assertIn('_mono', main._pending[0], 'the mark survives a failed attempt')
+            self.assertNotIn('_mono', self.sent[0], 'but never goes over the wire')
+        finally:
+            main.clock_is_sane = real_sane
+
+    def test_a_throttled_drain_finishes_inside_the_cycle_not_across_fifteen(self):
+        # The backend's 429 asks for about two seconds. Scheduling that retry
+        # and then not running it until the next push interval made a fifteen
+        # minute backlog take fifteen to twenty minutes to drain; honouring the
+        # wait in-cycle makes it about a minute at production spacing, and
+        # milliseconds at this test's spacing.
+        real_min, real_interval = main.RATE_LIMIT_RETRY_MIN, main.PUSH_INTERVAL
+        main.RATE_LIMIT_RETRY_MIN, main.PUSH_INTERVAL = 0.01, 5
+        try:
+            def responder(p, n):
+                # Every third call throttled, like rows landing inside the live
+                # window during a real drain.
+                if n % 3 == 0:
+                    return 429, '{"error":"too fast","retry_after_seconds":0}'
+                return 201, ''
+            self.stub(responder)
+            main._pending = [{'ir_beam_count': i, 'thermal_headcount': 0, 'noise_db': 1.0,
+                              'recorded_at': f'2026-08-14T20:{i:02d}:00.000Z'} for i in range(20)]
+            start = time.monotonic()
+            main.Pusher().cycle()
+            elapsed = time.monotonic() - start
+            self.assertEqual(len(main._pending), 0, 'the whole backlog drained in one cycle')
+            self.assertLess(elapsed, 3.0, 'on the short waits, not on push intervals')
+        finally:
+            main.RATE_LIMIT_RETRY_MIN, main.PUSH_INTERVAL = real_min, real_interval
+
+    def test_a_real_failure_ends_the_in_cycle_drain_instead_of_pinning_the_thread(self):
+        # The drain loop is for rate limiting only. The moment the backend
+        # looks DOWN rather than busy, the cycle must end and hand the wait to
+        # the normal backoff, or an outage during a drain would spin here.
+        real_min, real_interval = main.RATE_LIMIT_RETRY_MIN, main.PUSH_INTERVAL
+        main.RATE_LIMIT_RETRY_MIN, main.PUSH_INTERVAL = 0.01, 5
+        try:
+            def responder(p, n):
+                if n == 1:
+                    return 429, '{"error":"too fast","retry_after_seconds":0}'
+                return 503, 'down'
+            self.stub(responder)
+            main._pending = [{'ir_beam_count': i, 'thermal_headcount': 0, 'noise_db': 1.0,
+                              'recorded_at': f'2026-08-14T20:{i:02d}:00.000Z'} for i in range(5)]
+            start = time.monotonic()
+            main.Pusher().cycle()
+            elapsed = time.monotonic() - start
+            self.assertGreater(len(main._pending), 0, 'the queue is kept for the backoff path')
+            self.assertLess(elapsed, 2.0, 'the 503 ended the drain loop promptly')
+        finally:
+            main.RATE_LIMIT_RETRY_MIN, main.PUSH_INTERVAL = real_min, real_interval
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -13057,7 +13057,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                     <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', marginBottom: '6px' }}>
                       <span style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: 'var(--text-primary)', letterSpacing: '-0.5px', lineHeight: 1 }}>~{sd.thermal_headcount}</span>
-                      <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>people right now</span>
+                      {/* "in view", not "right now": the count is one doorway
+                          camera's field of view, uncalibrated against the
+                          room. Same honesty rule as the noise band below,
+                          and the same words the sensor's own display uses. */}
+                      <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>people in view</span>
                     </div>
 
                     {/* The band, and only the band. The figure that used to sit
