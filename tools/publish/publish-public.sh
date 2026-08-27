@@ -116,27 +116,46 @@ STRIP=(
   # remove it from the live URL, which is a separate action: move it out of
   # public/ or block the path in vercel.json. See JAYDEN-TODO.md.
   --path frontend/public/SLOP-AUDIT.md
-  # The root copy of that same document, and the one that actually has history:
+  # The root copy of that same document, and the one that carries the history:
   # eleven commits to the deployed copy's one. .gitignore keeps it tracked on
-  # purpose, because tests read it, so stripping only the public/ copy would
-  # publish the entire ledger anyway. Same reasoning as the line above. It is an
-  # internal design audit written to be blunt about which rules the product
-  # still fails, and it carries operational notes that are not public reading,
-  # among them an open question about whether the support@ and safety@ mailboxes
-  # exist at all. Useful internally, quotable against him anywhere else. Both
-  # copies stay tracked privately; neither reaches the mirror.
+  # purpose, because it is cited from about a hundred places in the source, so
+  # stripping only the public/ copy would have published it anyway. Same
+  # reasoning as the line above. Nothing reads it from disk, so its absence
+  # breaks no test in a public clone.
   --path SLOP-AUDIT.md
-  # The end to end defect ledger: every bug the browser agents found on
-  # 2026-08-26, each with a status, seventeen of them still open when this line
-  # was written. It exists so that a finding cannot die in a chat scrollback,
-  # which makes it one of the most useful files in the repository internally and
-  # the worst one to publish. A standing list of live defects in a shipping app,
-  # written for the people fixing them, reads to a venue owner or an admissions
-  # reader as a catalogue of what is wrong with the product rather than as the
-  # ordinary engineering it is. The specs under tools/e2e stay public, candid
-  # comments and all, because a test that names the bug it pins is good work.
-  # The ledger about them does not.
+  # The end to end defect ledger. It is the working queue for the people fixing
+  # things, which is what makes it worth keeping here and wrong to publish: a
+  # running list of open items with owners reads as a description of the product
+  # rather than as the ordinary engineering it is. The specs under tools/e2e
+  # stay public, candid comments and all, because a test that names the bug it
+  # pins is good work. The queue that tracks them does not.
   --path tools/e2e/FINDINGS.md
+  # 2026-08-26. These three are why the list was reopened. All three are tracked,
+  # all three are live in the mirror as it stands right now, and the pending
+  # publish is a one-time history replace, which is the only moment at which
+  # erasing them costs nothing instead of costing another force push. Nothing
+  # reads any of them from disk; only MODERATION-LEGAL.md is read that way, and
+  # it stays.
+  #
+  # BACKUP-AND-VERIFICATION.md is a disaster recovery runbook written to Jayden
+  # in the second person. It names a personal cloud path on his own machine
+  # holding a plaintext production dump, says which account's MFA is all that
+  # protects it, and gives the offline storage plan in terms of where his
+  # irreplaceable personal documents live. The last part is his private life and
+  # the rest is a map. It stays tracked because it is the only restore procedure
+  # that exists.
+  --path BACKUP-AND-VERIFICATION.md
+  # SUBMIT-CHECKLIST.md is a task board rather than a document: a legend of who
+  # owns each row, a section of steps only Jayden can take, and a list of open
+  # risks to settle before the next submission. Its value is that it is current,
+  # which is exactly what makes it the wrong thing to hand a stranger.
+  --path SUBMIT-CHECKLIST.md
+  # VENUE-BILLING.md is the commercial working document, and the readers it
+  # would reach in a public repository are the readers it argues about. It also
+  # carries account and billing arrangements that are nobody else's business.
+  # That is a private individual's information as well as his own, and neither
+  # belongs anywhere anyone can read.
+  --path VENUE-BILLING.md
   --path-glob 'ADVISOR-*.md'
   --path-glob 'SECURITY-AUDIT-*.md'
   --path-glob 'VIDEO-NOTES-*.md'
@@ -249,7 +268,8 @@ for p in backend/scripts/ml/models/crowd_model.onnx backend/scripts/ml/models/mo
          backend/.env frontend/.env.production mobile/android/app/debug.keystore \
          tools/publish/redactions.txt tools/publish/scan-allowlist.txt \
          backend/scripts/ml/MODEL-METRICS.md frontend/public/SLOP-AUDIT.md \
-         SLOP-AUDIT.md tools/e2e/FINDINGS.md; do
+         SLOP-AUDIT.md tools/e2e/FINDINGS.md BACKUP-AND-VERIFICATION.md \
+         SUBMIT-CHECKLIST.md VENUE-BILLING.md; do
   n="$(git log --all --oneline -- "$p" | wc -l | tr -d ' ')"
   if [ "$n" != "0" ]; then echo "    LEAK: $p still in $n commits" >&2; FAIL=1
   else PROVEN=$((PROVEN + 1)); fi
