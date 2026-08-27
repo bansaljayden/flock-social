@@ -1,8 +1,13 @@
 [Unit]
 Description=Flock Venue Sensor
-Documentation=https://github.com/flock/flock-app/tree/main/flock-sensor
+Documentation=https://github.com/bansaljayden/Flock-app-/tree/main/flock-sensor
 # The device needs a network AND a correct clock: with an unset clock the TLS
 # handshake fails ("certificate is not yet valid") and every push is refused.
+# time-sync.target only ORDERS this unit after the clock services start; it
+# does not wait for an actually synced clock (that would take
+# systemd-time-wait-sync.service, off by default on Pi OS). main.py therefore
+# survives an insane clock on its own; this ordering just makes the happy path
+# likelier.
 After=network-online.target time-sync.target
 Wants=network-online.target time-sync.target
 

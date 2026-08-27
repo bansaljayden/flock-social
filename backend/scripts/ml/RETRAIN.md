@@ -337,8 +337,13 @@ prod, in order of value:
    each feedback row as a realtime training row (crowd_level -> busyness_pct
    at that venue/day/hour, with the REAL DATE — which unlocks holiday-eve
    learning, see below).
-2. **`venue_sensor_data`** — Pi sensor headcounts where deployed: the highest
-   quality ground truth (flock-sensor pipeline is proven).
+2. **`venue_sensor_data`**: Pi sensor headcounts where deployed. Would be the
+   highest quality ground truth, but nothing exports this table into training
+   yet and no sensor has ever run on real hardware. The pipeline is written and
+   software-tested (flock-sensor/test_main.py, in CI), which is not the same
+   claim as proven; the 2026-05-02 "proven" referred to a curl test of the
+   ingest route. Building this exporter requires the provenance review
+   prepare_features.py demands for a new source.
 3. **`venue_checkins`** — check-in counts as a weak busyness proxy.
 4. **BestTime realtime re-pulls** — paid; see ml_besttime_limits memory before
    ANY run (quota rules).
