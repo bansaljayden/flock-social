@@ -303,7 +303,9 @@ test('the app map keeps every user-facing name and every tool enum', () => {
     ['**Nest**', '(tab: home)'],
     ['**Discover**', '(tab: explore)'],
     ['**Plans**', '(tab: calendar)'],
-    ['**Messages**', '(tab: chats)'],
+    // 'chat', not 'chats', since 2026-08-27: the plural was a tab id the app
+    // never had, so Birdie's Take-me-there for Messages landed on the Nest.
+    ['**Messages**', '(tab: chat)'],
     ['**You**', '(tab: profile)'],
     ['**Create a flock**', '(screen: create)'],
     ['**Add friends**', '(screen: addFriends)'],

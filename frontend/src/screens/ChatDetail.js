@@ -277,6 +277,7 @@ export default function ChatDetail({
   typingUser,
   updateFlockVenue,
   updateFlockVotes,
+  userLocation,
 }) {
     // TWO PIECES OF STATE, AND WHY THEY ARE HERE RATHER THAN IN App.js.
     //
@@ -1672,7 +1673,20 @@ export default function ChatDetail({
                   </div>
                 ) : (
                   <div style={{ padding: '20px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px', marginBottom: '16px' }}>
-                    <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>No votes yet. Be the first to suggest a venue!</p>
+                    {userLocation ? (
+                      <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>No votes yet. Be the first to suggest a venue!</p>
+                    ) : (
+                      /* The instruction used to have no way to be followed: a
+                         fresh install with no location got "be the first to
+                         suggest a venue" over an empty panel (the nearby list
+                         is location-fed), and the only other door claimed
+                         venue search was down. Name the actual next step and
+                         open the door to it. */
+                      <>
+                        <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: '0 0 12px', fontWeight: '500' }}>No votes yet. To see places to suggest, Flock needs your location.</p>
+                        <button className="hit44 glass-btn glass-secondary" onClick={() => { leaveChatScreen(); setShowVotePanel(false); setPickingVenueForCreate(true); setPickingVenueForFlockId(flock.id); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '10px 18px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Browse venues on Discover</button>
+                      </>
+                    )}
                   </div>
                 )}
 
@@ -1754,7 +1768,12 @@ export default function ChatDetail({
                      that could not refill it; the honest action is to close and
                      use the venue map instead. */
                   <div style={{ padding: '16px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', textAlign: 'center' }}>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: '1.5' }}>No venues to show here. Venue search is unavailable right now, so there is nothing to pick from yet.</p>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: '1.5' }}>{userLocation
+                      ? 'No venues to show here. Venue search is unavailable right now, so there is nothing to pick from yet.'
+                      /* Blaming search when the app simply never had a
+                         coordinate told a fresh account a working feature was
+                         broken. Say the true reason and the fix. */
+                      : "No venues to show yet, because Flock doesn't have your location. Turn it on from the Discover tab and this list fills in."}</p>
                     <button className="hit44 glass-btn glass-secondary" onClick={() => setShowVenueShareModal(false)} style={{ padding: '10px 20px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
                   </div>
                 ) : budgetFilteredVenues.map(venue => (
