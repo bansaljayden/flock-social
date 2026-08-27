@@ -481,6 +481,47 @@ describe('the invite sheet offers no send until somebody is picked', () => {
 });
 
 // ---------------------------------------------------------------------------
+// The Share a Venue sheet is never a blank dead end (ledger B3).
+//
+// When venue search is down, budgetFilteredVenues comes back empty. The sheet
+// used to render its "Or select a different venue" heading over nothing, which
+// is the blank panel tools/e2e/venue.spec.js forbids: a sheet that says "pick
+// one below" and then lists nothing, with no reason and no exit. The empty
+// state now says why and carries a real way out.
+// ---------------------------------------------------------------------------
+describe('the Share a Venue sheet when nothing loaded', () => {
+  const openShare = (over) => chatProps({ showVenueShareModal: true, ...over });
+
+  test('an empty venue list says why, instead of a blank panel', () => {
+    render(React.createElement(ChatDetail, openShare({ budgetFilteredVenues: [] })));
+    // The sentence a person can read and act on, not silence.
+    expect(screen.getByText(/no venues to show here/i)).toBeTruthy();
+    expect(screen.getByText(/unavailable/i)).toBeTruthy();
+  });
+
+  test('the empty state offers a way out beyond the corner close', () => {
+    // venue.spec.js accepts the sheet only if it offers more than one control OR
+    // explains itself. The empty state does both: the sentence above and a
+    // second, labelled exit here.
+    render(React.createElement(ChatDetail, openShare({ budgetFilteredVenues: [] })));
+    const sheet = screen.getByText(/share a venue/i).closest('.modal-content');
+    const buttons = sheet.querySelectorAll('button');
+    // The corner X plus the empty-state Close: more than one control.
+    expect(buttons.length).toBeGreaterThan(1);
+  });
+
+  test('a non-empty list renders the venues and drops the empty sentence', () => {
+    // The counter-example: a permanently-shown empty state would pass the test
+    // above and hide every real venue. This is what keeps the branch honest.
+    render(React.createElement(ChatDetail, openShare({
+      budgetFilteredVenues: [{ id: 1, name: 'The Basement', type: 'Bar' }],
+    })));
+    expect(screen.getByText('The Basement')).toBeTruthy();
+    expect(screen.queryByText(/no venues to show here/i)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The invite sheet, second half: what App.js does when the button is pressed.
 //
 // `handleSendFlockInvites` is a useCallback inside FlockAppInner. It is not
