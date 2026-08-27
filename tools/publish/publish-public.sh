@@ -81,6 +81,7 @@ STRIP=(
   # privately, because a fresh clone with no redactions file would silently skip
   # the redaction step and the guard would have nothing to check.
   --path tools/publish/redactions.txt
+  --path tools/publish/message-redactions.txt
   # scan-allowlist.txt holds salted fingerprints, never plaintext, but a salted
   # hash of a short human-chosen password is one dictionary run from the
   # password, so it stays private for the same reason redactions.txt does. A
@@ -225,6 +226,34 @@ if [ -s "$REDACTIONS" ]; then
   echo "    redaction verified: every literal absent from all history"
 fi
 
+# COMMIT MESSAGES get the same treatment as blob content, and for the same
+# person: the public history is read by non-engineers, and a message carrying
+# raw funnel numbers, internal model figures, or a limitation phrased as a
+# live defect hands a stranger a quote the code itself does not. The pairs
+# live in message-redactions.txt (stripped from the mirror like its siblings).
+# Verified the same way content redaction is: every left-hand side must be
+# absent from every message afterwards, or the push is refused.
+MSG_REDACTIONS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/message-redactions.txt"
+if [ -f "$MSG_REDACTIONS" ]; then
+  echo "==> redacting commit messages"
+  python "$FILTER_REPO" --force --replace-message "$MSG_REDACTIONS" >/dev/null
+  MSG_FAILS=0
+  while IFS= read -r line; do
+    case "$line" in "#"*|"") continue ;; esac
+    lhs="${line%%==>*}"
+    [ -n "$lhs" ] || continue
+    if git log --all --format=%B | grep -qF -- "$lhs"; then
+      echo "    STILL PRESENT in a message: $lhs" >&2
+      MSG_FAILS=$((MSG_FAILS+1))
+    fi
+  done < "$MSG_REDACTIONS"
+  if [ "$MSG_FAILS" -gt 0 ]; then
+    echo "REFUSING TO PUSH: $MSG_FAILS message redaction(s) did not take." >&2
+    exit 1
+  fi
+  echo "    message redaction verified: every listed phrase absent from all messages"
+fi
+
 # ---------------------------------------------------------------------------
 # SCAN FOR SECRETS NOBODY HAS LISTED YET.
 # ---------------------------------------------------------------------------
@@ -295,5 +324,16 @@ git remote add public "$PUBLIC_REMOTE_HTTPS"
 # list changed and the whole public history was renumbered. Do not reach for
 # --force without understanding why: it breaks every existing clone and every
 # permalink anyone has to the public repo.
-git push public HEAD:main
+# PUBLISH_FORCE_RENUMBERED=1 is the sanctioned exception for exactly one
+# situation: the strip list or a redaction changed, the whole public history is
+# renumbered by construction, and Jayden has said to replace it. 2026-08-26 is
+# that situation, on his instruction. force-with-lease against the tip we just
+# fetched, never bare --force, so a push racing somebody else's still fails.
+if [ "${PUBLISH_FORCE_RENUMBERED:-}" = "1" ]; then
+  echo "==> RENUMBERED HISTORY: replacing public main (force-with-lease)"
+  git fetch public main
+  git push --force-with-lease=main public HEAD:main
+else
+  git push public HEAD:main
+fi
 echo "==> done"
