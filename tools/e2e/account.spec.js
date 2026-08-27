@@ -181,22 +181,13 @@ test('the bio you saved is still in the box when you come back', async ({ page }
   expect(errors).toEqual([]);
 });
 
-test('the Username box on Edit Profile keeps what you type into it', async ({ page }) => {
-  const { errors } = await enterApp(page, 'Handle Tester');
-  await openEditProfile(page);
-
-  await page.getByLabel('Username').fill('handle-i-picked');
-  await page.getByRole('textbox', { name: 'Current password' }).fill(PASSWORD);
-  await page.getByRole('button', { name: 'Save Changes' }).click();
-  await page.waitForResponse((r) => r.url().includes('/api/users/profile') && r.request().method() === 'PUT', { timeout: 15_000 });
-
-  // Either the app keeps it or the app says it cannot. Accepting it, reporting
-  // nothing, and quietly throwing it away is the one thing a box may not do.
-  await page.reload();
-  await openSettings(page);
-  await expect(page.getByText('@handle-i-picked')).toBeVisible({ timeout: 15_000 });
-  expect(errors).toEqual([]);
-});
+// The Edit Profile "no editable Username box" guard lived here. It was a stale
+// spec (57661bb) that filled a Username box and expected the value to survive;
+// A8 (68a29f5) deleted that dead control, because there is no username column.
+// signup.spec.js "the profile has no Username field, because there is no column
+// behind one" now defends the absence from the same screen and also checks the
+// fields that DO persist, so a second copy here was pure duplication and was
+// removed on 2026-08-27 rather than kept as a weaker twin.
 
 /* ═══ BLOCKING ═════════════════════════════════════════════════════════════ */
 
