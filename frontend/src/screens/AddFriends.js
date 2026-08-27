@@ -70,6 +70,7 @@ export default function AddFriends({
   SearchInputLocal,
   // Everything else is declared in FlockAppInner and stays declared there.
   BottomNav,
+  addFriendsError,
   addFriendsResults,
   addFriendsSearch,
   addFriendsSearching,
@@ -232,7 +233,15 @@ export default function AddFriends({
                 </div>
               )}
 
-              {!addFriendsSearching && addFriendsSearch.trim().length >= 1 && addFriendsResults.length === 0 && (
+              {/* A network or server failure, in the server's own words, rather
+                  than "No users found" drawn over a search that never ran. The
+                  value is set in App.js's handleAddFriendsSearch catch and
+                  arrives through addFriendsProps. */}
+              {!addFriendsSearching && addFriendsError && (
+                <p role="status" style={{ fontSize: 'var(--t-label)', color: 'var(--accent-red-text, #b91c1c)', textAlign: 'center', padding: '24px 8px', margin: 0, lineHeight: 1.5 }}>{addFriendsError}</p>
+              )}
+
+              {!addFriendsSearching && !addFriendsError && addFriendsSearch.trim().length >= 1 && addFriendsResults.length === 0 && (
                 <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '24px 0', margin: 0 }}>No users found for "{addFriendsSearch}"</p>
               )}
 
