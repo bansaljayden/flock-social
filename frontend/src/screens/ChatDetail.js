@@ -293,7 +293,7 @@ export default function ChatDetail({
     //   silence. That is the dead control SLOP-AUDIT rule C1 bans, on the
     //   most-used button in the product.
     //
-    //   socketLive. The header printed "online" beside a green dot as a
+    //   connectionState. The header printed "online" beside a green dot as a
     //   hardcoded literal wired to nothing. It said online with the socket
     //   dead, on the one screen a person opens to work out why nothing is
     //   arriving.
@@ -338,7 +338,6 @@ export default function ChatDetail({
         window.removeEventListener('offline', sample);
       };
     }, []);
-    const socketLive = connectionState === 'online';
 
     // LEAVING THIS SCREEN, WRITTEN ONCE.
     //
