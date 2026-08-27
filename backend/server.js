@@ -315,7 +315,7 @@ const server = http.createServer(app);
 //
 // It does NOT sit ahead of Socket.IO: the engine intercepts /socket.io/ on the
 // raw http.Server before Express is reached. That transport has its own
-// ceiling (socketConnections, 10 handshakes/minute/IP, further down).
+// ceiling (socketConnections, SOCKET_HANDSHAKES_PER_MINUTE/IP, further down).
 //
 // Same MemoryStore caveat as every other limiter in this file: it resets on
 // deploy and divides by the instance count.
@@ -1653,7 +1653,29 @@ const io = new Server(server, {
 });
 app.set('io', io);
 
-// Rate limit WebSocket connections: 10 per minute per IP
+// Rate limit WebSocket connections, per client IP.
+//
+// 200 per minute, not 10, and the number is chosen against who actually uses
+// this app rather than against a single phone. The key is the client's public
+// address (last X-Forwarded-For hop), and Flock's audience sits behind shared
+// school, dorm and bar NATs, so one bucket is a whole venue. The failure the
+// old ceiling produced was collective and silent: venue wifi blips, every phone
+// in the room reconnects at once (the client retries forever, 1s backoff), the
+// first ten win, and the bucket refills at ten a minute, so a fifty-person bar
+// waits most of five minutes for chat to come back and nothing on any screen
+// says why. 200/minute clears a full venue's reconnect burst inside one window.
+//
+// It is not weaker as protection in any way that matters. 200 handshakes a
+// minute from one IP is trivial load; the DoS answer is the global backstop and
+// the infrastructure, and per-ACCOUNT abuse is already capped separately by
+// MAX_SOCKETS_PER_USER. 200/min also matches the main API limiter's rate
+// (3000 per 15 minutes), which is the consistency that was missing: opening a
+// socket was two hundred times scarcer than calling the REST API.
+//
+// Dev bypasses it entirely, exactly like every express limiter above (isDev).
+// It never did, and that asymmetry was found the hard way: five local test
+// browsers sharing 127.0.0.1 starved each other out of realtime.
+const SOCKET_HANDSHAKES_PER_MINUTE = 200;
 const socketConnections = new Map();
 
 // Behind Railway's proxy every socket reports the same handshake.address (the
@@ -1693,10 +1715,11 @@ io.use((socket, next) => {
 });
 
 io.use((socket, next) => {
+  if (isDev) return next();
   const ip = socketClientIp(socket);
   const now = Date.now();
   const windowMs = 60 * 1000;
-  const maxConnections = 10;
+  const maxConnections = SOCKET_HANDSHAKES_PER_MINUTE;
 
   if (socketConnections.size > 10000) {
     for (const [k, v] of socketConnections) {
