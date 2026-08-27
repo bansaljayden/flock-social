@@ -835,7 +835,10 @@ export default function ChatDetail({
                     return imgUrl ? <img src={imgUrl} alt="" style={{ width: '34px', height: '34px', borderRadius: '17px', objectFit: 'cover' }} /> : m.sender[0];
                   })()}
                 </div>
-                {m.sender !== 'You' && idx === 0 && <div style={{ position: 'absolute', bottom: '-1px', right: '-1px', width: '10px', height: '10px', borderRadius: '5px', backgroundColor: '#22C55E', border: '2px solid var(--bg-card-solid)' }} />}
+                {/* The green dot that sat here was painted on whichever
+                    message happened to be first in the loaded page, wired to
+                    no presence data at all. A fabricated online claim is the
+                    header lie 9d87b73 removed, in miniature. */}
               </div>
               {/* Dimmed while in flight, same as the DM bubble. */}
               <div style={{ maxWidth: '72%', display: 'inline-flex', flexDirection: 'column', alignItems: m.sender === 'You' ? 'flex-end' : 'flex-start', opacity: m.pending ? 0.6 : 1, transition: 'opacity 0.2s ease' }}>
