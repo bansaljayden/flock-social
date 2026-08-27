@@ -149,7 +149,11 @@ describe('a calendar event that did not save', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('the friend request sent on the way into a new chat', () => {
-  const dm = () => region(APP, 'const startNewDmWithUser = useCallback', 'const NewDmModal');
+  // The New Message sheet that used to close this region left App.js on
+  // 2026-08-26 (components/NewDmModal.js), so the region now ends at the next
+  // declaration after startNewDmWithUser. The handler itself did not move: it
+  // is still FlockAppInner's, and the sheet receives it as a prop.
+  const dm = () => region(APP, 'const startNewDmWithUser = useCallback', 'const selectedDm =');
 
   test('a refusal is reported rather than dropped', () => {
     const fn = dm();

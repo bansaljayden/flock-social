@@ -68,7 +68,14 @@ const read = (p) => fs.readFileSync(path.join(SRC, p), 'utf8');
 // row and the report entry went with it. Same treatment: nothing asserted
 // below changed, the app source is simply in three files now, and all three
 // are read in the order they used to be one.
-const app = read('App.js') + read('screens/ChatDetail.js') + read('screens/VenueDashboard.js') + read('screens/AddFriends.js');
+// Three more pieces left App.js on 2026-08-26, in the remount fix: the Edit
+// Profile form, the New Message sheet and the confirm-your-email sheet. Each
+// was declared inside FlockAppInner's render and mounted as an element, which
+// rebuilt its component type on every render and remounted it. Item 5 above is
+// about the labels on the Edit Profile form, and that form is one of them, so
+// the three files are read here too. Nothing asserted below changed.
+const app = read('App.js') + read('screens/ChatDetail.js') + read('screens/VenueDashboard.js') + read('screens/AddFriends.js')
+  + read('components/EditProfileForm.js') + read('components/NewDmModal.js') + read('components/VerifyEmailSheet.js');
 const css = read('index.css');
 const paywall = read('components/PaywallSheet.js');
 const birdieBird = read('components/ui/BirdieBird.js');
