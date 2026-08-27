@@ -193,9 +193,6 @@ export default function ChatDetail({
   handleChatInputChange,
   handleFlockInviteSearch,
   handleSendFlockInvites,
-  handleTouchEnd,
-  handleTouchMove,
-  handleTouchStart,
   isDark,
   isLoading,
   isTyping,
@@ -213,7 +210,6 @@ export default function ChatDetail({
   popularVenues,
   profilePic,
   renderFlockInviteRow,
-  replyingTo,
   retryFailedMessage,
   selectedFlockId,
   sendChatMessage,
@@ -242,7 +238,6 @@ export default function ChatDetail({
   setPendingImage,
   setPickingVenueForCreate,
   setPickingVenueForFlockId,
-  setReplyingTo,
   setShowChatPool,
   setShowChatSearch,
   setShowCreateBill,
@@ -273,7 +268,6 @@ export default function ChatDetail({
   startSharingLocation,
   stopLocationSharing,
   styles,
-  swipeState,
   typingUser,
   updateFlockVenue,
   updateFlockVotes,
@@ -357,7 +351,6 @@ export default function ChatDetail({
     const leaveChatScreen = () => {
       setChatInput('');
       setComposerHasRealText(false);
-      setReplyingTo(null);
       setShowFlockMenu(false);
       setShowLeaveConfirm(false);
       setShowChatSearch(false);
@@ -817,26 +810,15 @@ export default function ChatDetail({
           {visibleMessages.map((m, idx) => (
             <div
               key={m.id}
-              onTouchStart={(e) => handleTouchStart(m.id, e)}
-              onTouchMove={(e) => handleTouchMove(m.id, e)}
-              onTouchEnd={(e) => handleTouchEnd(m.id, m, e)}
               style={{
                 display: 'flex',
                 gap: '10px',
                 marginBottom: '16px',
                 flexDirection: m.sender === 'You' ? 'row-reverse' : 'row',
                 position: 'relative',
-                transform: swipeState.id === m.id ? `translateX(${swipeState.x}px)` : 'translateX(0)',
-                transition: swipeState.id === m.id ? 'none' : 'transform 0.2s ease-out',
                 animation: 'fadeIn 0.3s ease-out'
               }}
             >
-              {/* Swipe hint icon */}
-              {swipeState.id === m.id && swipeState.x > 20 && (
-                <div style={{ position: 'absolute', left: '-30px', top: '50%', transform: 'translateY(-50%)', opacity: Math.min(swipeState.x / 50, 1), transition: 'opacity 0.2s ease' }}>
-                  {Icons.reply(colors.navy, 20)}
-                </div>
-              )}
               <div style={{ position: 'relative', flexShrink: 0 }}>
                 <div style={{ width: '34px', height: '34px', borderRadius: '17px', background: m.sender === 'You' ? colors.navyBg : 'white', border: m.sender === 'You' ? 'none' : '2px solid rgba(13,40,71,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: m.sender === 'You' ? 'white' : colors.navy, boxShadow: m.sender === 'You' ? '0 3px 10px rgba(13,40,71,0.10)' : '0 2px 6px rgba(0,0,0,0.06)', overflow: 'hidden' }}>
                   {(() => {
@@ -1015,7 +997,6 @@ export default function ChatDetail({
                         }}
                       >{r}</button>
                     ))}
-                    <button aria-label="Reply" className="hit44" onClick={(e) => { e.stopPropagation(); setReplyingTo(m); setShowReactionPicker(null); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }}>{Icons.reply(colors.textSecondary, 18)}</button>
                     {m.sender !== 'You' && (
                       <button aria-label="Report" className="hit44" onClick={(e) => { e.stopPropagation(); setShowReactionPicker(null); setModerationTarget({ userId: m.senderId, userName: m.sender, contentType: 'flock_message', contentId: m.id }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: 'var(--t-body)', color: '#EF4444' }} title="Report">{Icons.flag('#EF4444', 15)}</button>
                     )}
@@ -1089,16 +1070,9 @@ export default function ChatDetail({
         </div>
 
         {/* Reply bar */}
-        {replyingTo && (
-          <div style={{ padding: '10px 16px', backgroundColor: 'var(--bg-tertiary)', borderTop: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', gap: '10px', animation: 'slideUp 0.2s ease-out' }}>
-            <div style={{ width: '3px', height: '36px', backgroundColor: colors.navyBg, borderRadius: '2px' }} />
-            <div style={{ flex: 1 }}>
-              <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>Replying to {replyingTo.sender}</p>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{messagePreview(replyingTo)}</p>
-            </div>
-            <button aria-label="Cancel reply" className="hit44" onClick={() => setReplyingTo(null)} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background-color 0.2s ease' }}>{Icons.x(colors.textSecondary, 16)}</button>
-          </div>
-        )}
+        {/* The "Replying to" bar sat here until 2026-08-27. It was the
+            sender-facing half of a reply feature whose other half never
+            existed on the flock side; see the removal note in App.js. */}
 
         {/* Image preview bar */}
         {showImagePreview && pendingImage && (
@@ -1160,7 +1134,7 @@ export default function ChatDetail({
               refused to shrink, and the overflow was pushed onto the only
               flex item that could still shrink: the send button. It measured
               20px wide with its right edge 7px off-screen. */}
-          <input key="chat-input" id="chat-input" aria-label="Message" type="text" defaultValue="" onChange={(e) => { setComposerHasRealText(e.target.value.trim().length > 0); handleChatInputChange(e); }} onKeyDown={(e) => { if (e.key === 'Enter' && canSendComposerText) sendChatMessage(); }} placeholder={replyingTo ? 'Reply...' : 'Type a message...'} style={{ flex: '1 1 0%', minWidth: 0, padding: '15px 18px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '16px', outline: 'none', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
+          <input key="chat-input" id="chat-input" aria-label="Message" type="text" defaultValue="" onChange={(e) => { setComposerHasRealText(e.target.value.trim().length > 0); handleChatInputChange(e); }} onKeyDown={(e) => { if (e.key === 'Enter' && canSendComposerText) sendChatMessage(); }} placeholder="Type a message..." style={{ flex: '1 1 0%', minWidth: 0, padding: '15px 18px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '16px', outline: 'none', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
           {/* The mic button that lived here only toasted "coming soon" (dead
               button, SLOP-AUDIT.md C1). The send button now stays put and
               disables when there is nothing sendable in the input. Spaces are
