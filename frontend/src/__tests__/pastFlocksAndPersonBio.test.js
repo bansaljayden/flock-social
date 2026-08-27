@@ -92,8 +92,20 @@ describe('api.js wrappers', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('own bio editing', () => {
-  const form = region('const EditProfileForm = () =>', "{profileScreen === 'safety'");
+  // The form left App.js on 2026-08-26. It was declared inside ProfileScreen,
+  // which is declared inside FlockAppInner, and mounted as an element, so
+  // React rebuilt its component type on every render of the shell and threw
+  // away the DOM holding whatever had been typed, this textarea included. It
+  // is components/EditProfileForm.js now, so the whole file is the region.
+  const form = fs.readFileSync(
+    path.join(__dirname, '..', 'components', 'EditProfileForm.js'),
+    'utf8'
+  );
   const formCode = codeOnly(form);
+
+  it('the form is still mounted from App.js, so this file is not scanning dead code', () => {
+    expect(APP).toContain('<EditProfileForm {...editProfileFormProps} />');
+  });
 
   it('the fabricated placeholder bio is gone from the whole app', () => {
     expect(APP).not.toContain('Love exploring new places!');

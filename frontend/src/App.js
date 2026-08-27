@@ -11,7 +11,7 @@ import {
   formatCurrency,
   calculateProfitMargin
 } from './lib/finance';
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, updateProfile, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, getBudgetStatus, getBillSplit, updatePaymentMethods, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, getBudgetStatus, getBillSplit, updatePaymentMethods, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, createVenueProfile, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, deleteAccount, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery } from './services/api';
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
@@ -72,6 +72,18 @@ import AddFriends from './screens/AddFriends';
 // exists to show, every user opens it and most open it more than once a
 // session. The measurement is in the header of the file it moved to.
 import ChatDetail from './screens/ChatDetail';
+// Three components that were declared INSIDE FlockAppInner's render and
+// mounted as elements. That combination is the remount defect written up
+// beside `numVenues` below: a function rebuilt on every render is a new
+// component type to React, and a new type is unmounted and rebuilt rather than
+// reconciled, so typed text, focus and a pending debounce all died on every
+// unrelated render of the shell. Each file's header says what that looked like
+// on the screen it broke. They are static imports for the same reason
+// AddFriends is: all three are opened seconds into an ordinary session and
+// none of them is big enough for a chunk fetch to pay for itself.
+import EditProfileForm from './components/EditProfileForm';
+import NewDmModal from './components/NewDmModal';
+import VerifyEmailSheet from './components/VerifyEmailSheet';
 // maplibre-gl's OWN STYLESHEET IS NOT IMPORTED HERE, and that is the same
 // decision as the library itself, applied to the half of it that was missed.
 // The engine is fetched by `import('maplibre-gl')` inside MapLibreMapView, so
@@ -9707,38 +9719,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // The one thing a 403 with emailVerificationRequired needs: say what is
   // blocked, say it is fixable, and offer the fix. Never a generic failure.
-  const VerifyEmailSheet = () => verifyPrompt && (
-    <div
-      onClick={() => setVerifyPrompt(null)}
-      style={{ position: 'fixed', inset: 0, zIndex: 300, backgroundColor: 'var(--modal-backdrop)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
-    >
-      {/* The one sheet in the file that was missing this: no Escape, no focus
-          trap, and Tab walked straight out into the screen behind it. */}
-      <DialogBehavior onClose={() => setVerifyPrompt(null)} label="Confirm your email" />
-      <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '22px 20px calc(22px + var(--safe-bottom))' }}>
-        <h3 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '0 0 8px' }}>Confirm your email first</h3>
-        <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>
-          We sent a link to {authUser?.email || 'your inbox'} when you signed up. Open it and you can {verifyPrompt} right away.
-        </p>
-        {verifyNote && <p role="status" style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', margin: '0 0 12px' }}>{verifyNote}</p>}
-        <button
-          className="hit44"
-          onClick={resendVerification}
-          disabled={verifyCooldown > 0}
-          style={{ width: '100%', height: '48px', borderRadius: '14px', border: 'none', background: isDark ? '#f1ede0' : '#1e293b', color: isDark ? '#1e293b' : '#ffffff', fontSize: 'var(--t-body)', fontWeight: '600', cursor: verifyCooldown > 0 ? 'not-allowed' : 'pointer', opacity: verifyCooldown > 0 ? 0.5 : 1 }}
-        >
-          {verifyCooldown > 0 ? `Send it again in ${verifyCooldown}s` : 'Send the link again'}
-        </button>
-        <button
-          className="hit44"
-          onClick={() => setVerifyPrompt(null)}
-          style={{ width: '100%', height: '44px', marginTop: '8px', borderRadius: '14px', border: 'none', background: 'none', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}
-        >
-          Not now
-        </button>
-      </div>
-    </div>
-  );
+  // Confirm your email lives in ./components/VerifyEmailSheet.js now. It was
+  // declared here and mounted as an element, which rebuilt its type on every
+  // render and made DialogBehavior grab focus again each time. Its props are
+  // built in the object below the render helpers.
 
 
   // SOS Modal — extracted to components/safety/EmergencySheet.js (2026-08-14
@@ -9951,65 +9935,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     setCurrentScreen('dmDetail');
   }, [directMessages, deletedDmUserIds, showToast]);
 
-  const NewDmModal = () => {
-    const usersToShow = dmSearchText.trim() ? dmModalResults : suggestedUsers;
-
-    return showNewDmModal && (
-      <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
-            <DialogBehavior onClose={() => setShowNewDmModal(false)} label="New message" />
-        <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px 24px 0 0', width: '100%', height: '70%', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ padding: '16px', borderBottom: '1px solid var(--divider)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>New Message</h2>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>Search for someone to message</p>
-            </div>
-            <button aria-label="Close" className="hit44" onClick={() => { setShowNewDmModal(false); setDmSearchText(''); setDmModalResults([]); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'var(--icon-bg)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {Icons.x(colors.navy, 16)}
-            </button>
-          </div>
-          <div style={{ padding: '12px' }}>
-            <SearchInputLocal aria-label="Search people by name or email" type="text" initialValue={dmSearchText} onCommit={handleDmSearch} placeholder="Search by name or email..." style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: `1.5px solid ${dmSearchText ? colors.navy : colors.creamDark}`, fontSize: 'var(--t-body)', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
-          </div>
-          <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 12px' }}>
-            {!dmSearchText.trim() && usersToShow.length > 0 && (
-              <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', padding: '4px 4px 8px', margin: 0 }}>Suggested</p>
-            )}
-            {dmModalSearching && (
-              <div style={{ textAlign: 'center', padding: '20px 0' }}>
-                <div style={{ display: 'inline-block', width: '18px', height: '18px', border: `2px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginLeft: '8px' }}>Searching...</span>
-              </div>
-            )}
-            {!dmModalSearching && usersToShow.length === 0 && dmSearchText.trim() && (
-              <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-secondary)' }}>
-                <p style={{ fontSize: 'var(--t-label)', margin: 0 }}>No users found for "{dmSearchText}"</p>
-              </div>
-            )}
-            {!dmModalSearching && usersToShow.length === 0 && !dmSearchText.trim() && (
-              <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-secondary)' }}>
-                <p style={{ fontSize: 'var(--t-label)', margin: 0 }}>Type a name to find people</p>
-              </div>
-            )}
-            {!dmModalSearching && usersToShow.map(user => (
-              <button className="hit44" key={user.id} onClick={() => startNewDmWithUser(user)} style={{ width: '100%', textAlign: 'left', padding: '10px 8px', borderRadius: '12px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '4px', transition: 'background-color 0.15s' }}
-                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.cream; }}
-                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
-              >
-                <div style={{ width: '44px', height: '44px', borderRadius: '22px', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-body)', fontWeight: '600', color: 'white', flexShrink: 0, overflow: 'hidden' }}>
-                  {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '44px', height: '44px', borderRadius: '22px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <h3 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0 }}>{user.name}</h3>
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</p>
-                </div>
-                <span style={{ fontSize: 'var(--t-body)', color: 'var(--text-tertiary)' }}>›</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  };
+  // The New Message sheet lives in ./components/NewDmModal.js now. It was
+  // declared here and mounted as an element, so every render rebuilt its type
+  // and remounted it: SearchInputLocal lost its pending debounce, which is why
+  // search results never arrived, and DialogBehavior pulled focus onto the
+  // Close button mid word. Its props are built in the object below the render
+  // helpers.
 
   // DM Detail Screen - Inline JSX to prevent focus loss on input
   const selectedDm = directMessages.find(d => d.userId === selectedDmId);
@@ -15284,189 +15215,36 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           </div>
           <div style={{ flex: 1, padding: '16px', overflowY: 'auto' }}>
             {profileScreen === 'edit' && (() => {
-              const EditProfileForm = () => {
-                const [editName, setEditName] = React.useState(profileName);
-                const [editEmail, setEditEmail] = React.useState(authUser?.email || '');
-                const [editPhone, setEditPhone] = React.useState(profilePhone);
-                const [editHandle, setEditHandle] = React.useState(profileHandle);
-                const [editBio, setEditBio] = React.useState(profileBio);
-                const [currentPw, setCurrentPw] = React.useState('');
-                const [newPw, setNewPw] = React.useState('');
-                const [confirmPw, setConfirmPw] = React.useState('');
-                const [showCurrentPw, setShowCurrentPw] = React.useState(false);
-                const [showNewPw, setShowNewPw] = React.useState(false);
-                const [editError, setEditError] = React.useState('');
-                const [editSuccess, setEditSuccess] = React.useState('');
-                const [editLoading, setEditLoading] = React.useState(false);
-
-                const EyeSvg = ({ show }) => (
-                  <svg aria-hidden="true" focusable="false" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    {show ? (
-                      <>
-                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
-                        <line x1="1" y1="1" x2="23" y2="23" />
-                      </>
-                    ) : (
-                      <>
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                        <circle cx="12" cy="12" r="3" />
-                      </>
-                    )}
-                  </svg>
-                );
-
-                const handleSaveProfile = async () => {
-                  setEditError('');
-                  setEditSuccess('');
-
-                  if (!editName.trim()) { setEditError('Name is required'); return; }
-                  if (!editEmail.trim()) { setEditError('Email is required'); return; }
-                  if (!currentPw) { setEditError('Current password is required to save changes'); return; }
-                  if (newPw && newPw.length < 8) { setEditError('New password must be at least 8 characters'); return; }
-                  if (newPw && newPw !== confirmPw) { setEditError('New passwords do not match'); return; }
-
-                  setEditLoading(true);
-                  // Optimistic: the bio shows everywhere it renders the moment
-                  // Save is tapped, and rolls back if the server says no.
-                  const trimmedBio = editBio.trim().slice(0, 200);
-                  const prevBio = profileBio;
-                  setProfileBio(trimmedBio);
-                  try {
-                    const payload = {
-                      name: editName.trim(),
-                      email: editEmail.trim(),
-                      bio: trimmedBio,
-                      current_password: currentPw,
-                    };
-                    // Left out entirely when the field is blank: undefined
-                    // falls out of JSON.stringify, and the server reads an
-                    // absent phone as "leave the column alone". Sending '' on
-                    // every save would do the same thing, but only by accident.
-                    if (editPhone.trim()) payload.phone = editPhone.trim();
-                    if (newPw) payload.new_password = newPw;
-
-                    const data = await updateProfile(payload);
-                    setProfileName(data.user.name);
-                    setProfileHandle(data.user.email.split('@')[0]);
-                    // Keep the server's word for the bio when it gives one; a
-                    // backend that has not learned the field yet answers
-                    // without it, and the optimistic value stands.
-                    if (typeof data.user.bio === 'string') setProfileBio(data.user.bio);
-                    // The row of record, not what was typed, so the switch
-                    // under Safety and privacy reads what actually got stored.
-                    if ('phone' in data.user) setProfilePhone(data.user.phone || '');
-                    setEditSuccess('Profile updated successfully!');
-                    setCurrentPw('');
-                    setNewPw('');
-                    setConfirmPw('');
-                                     } catch (err) {
-                    setProfileBio(prevBio);
-                    setEditError(err.message);
-                  } finally {
-                    setEditLoading(false);
-                  }
-                };
-
-                const pwFieldStyle = { position: 'relative' };
-                const eyeBtnStyle = { position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', display: 'flex', alignItems: 'center' };
-
-                return (
-                  <div>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '16px' }}>
-                      <button aria-label="Change your profile photo" className="hit44" onClick={() => setShowPicModal(true)} style={{ width: '80px', height: '80px', borderRadius: '40px', background: colors.navyBg, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative' }}>
-                        {profilePic ? <img src={profilePic} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : Icons.user('white', 32)}
-                      </button>
-                      <button className="hit44" onClick={() => { if (profilePic) { setCropImageSrc(profilePic); setCropZoom(1); setCropOffset({ x: 0, y: 0 }); } else { setShowPicModal(true); } }} style={{ marginTop: '6px', padding: '4px 12px', borderRadius: '8px', border: 'none', backgroundColor: 'transparent', color: colors.steel, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
-                        Edit Photo
-                      </button>
-                    </div>
-
-                    {editError && (
-                      <div role="alert" style={{ backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '10px', padding: '10px 14px', marginBottom: '14px', color: colors.redText, fontSize: 'var(--t-label)', fontWeight: '600' }}>{editError}</div>
-                    )}
-                    {editSuccess && (
-                      <div role="status" style={{ backgroundColor: 'rgba(45,90,135,0.10)', border: '1px solid rgba(45,90,135,0.35)', borderRadius: '10px', padding: '10px 14px', marginBottom: '14px', color: colors.steel, fontSize: 'var(--t-label)', fontWeight: '600' }}>{editSuccess}</div>
-                    )}
-
-                    <div style={{ marginBottom: '12px' }}>
-                      <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }} htmlFor="profile-name-input">Display Name *</label>
-                      <input id="profile-name-input" type="text" value={editName} onChange={(e) => setEditName(e.target.value)} style={styles.input} autoComplete="off" />
-                    </div>
-                    <div style={{ marginBottom: '12px' }}>
-                      <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }} htmlFor="profile-handle-input">Username</label>
-                      <input id="profile-handle-input" type="text" value={editHandle} onChange={(e) => setEditHandle(e.target.value)} style={styles.input} autoComplete="off" />
-                    </div>
-                    <div style={{ marginBottom: '12px' }}>
-                      <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }} htmlFor="profile-email-input">Email *</label>
-                      <input id="profile-email-input" type="email" value={editEmail} onChange={(e) => setEditEmail(e.target.value)} style={styles.input} autoComplete="off" />
-                    </div>
-                    {/* Signup does not accept a phone number, on purpose, so
-                        this field is the only way one ever reaches an account.
-                        Without it "Let friends find me by my phone number"
-                        could never be turned on by anybody, and every contact
-                        check in the app would answer nobody forever. */}
-                    <div style={{ marginBottom: '12px' }}>
-                      <label htmlFor="profile-phone-input" style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }}>Phone</label>
-                      <input id="profile-phone-input" type="tel" inputMode="tel" value={editPhone} maxLength={20} onChange={(e) => setEditPhone(e.target.value)} placeholder="(555) 555-0123" style={styles.input} autoComplete="tel" />
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0', lineHeight: '1.4' }}>Used only to let friends who already have your number find you, and only while that switch is on under Safety and privacy. Leave it blank and nothing changes.</p>
-                    </div>
-                    <div style={{ marginBottom: '12px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '4px' }}>
-                        <label htmlFor="profile-bio-input" style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>Bio</label>
-                        <span aria-hidden style={{ fontSize: 'var(--t-meta)', color: editBio.length >= 200 ? colors.red : 'var(--text-tertiary)', fontWeight: '500' }}>{editBio.length}/200</span>
-                      </div>
-                      <textarea
-                        id="profile-bio-input"
-                        value={editBio}
-                        maxLength={200}
-                        rows={3}
-                        onChange={(e) => setEditBio(e.target.value.slice(0, 200))}
-                        placeholder="A line or two about you. Friends see it on your card."
-                        style={{ ...styles.input, width: '100%', resize: 'none', lineHeight: 1.4, fontFamily: 'inherit' }}
-                        autoComplete="off"
-                      />
-                    </div>
-
-                    <div style={{ borderTop: `1px solid ${colors.creamDark}`, marginTop: '16px', paddingTop: '16px' }}>
-                      <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, marginBottom: '12px' }}>Security</p>
-
-                      <div style={{ marginBottom: '12px' }}>
-                        <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }}>Current Password *</label>
-                        <div style={pwFieldStyle}>
-                          <input aria-label="Current password" type={showCurrentPw ? 'text' : 'password'} value={currentPw} onChange={(e) => setCurrentPw(e.target.value)} placeholder="Required to save changes" style={{ ...styles.input, paddingRight: '40px' }} autoComplete="off" />
-                          <button className="hit44" type="button" aria-label={showCurrentPw ? 'Hide current password' : 'Show current password'} onClick={() => setShowCurrentPw(!showCurrentPw)} style={eyeBtnStyle}><EyeSvg show={showCurrentPw} /></button>
-                        </div>
-                      </div>
-                      <div style={{ marginBottom: '12px' }}>
-                        <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }}>New Password <span style={{ fontWeight: 'normal', color: 'var(--text-secondary)' }}>(optional)</span></label>
-                        <div style={pwFieldStyle}>
-                          <input aria-label="New password" type={showNewPw ? 'text' : 'password'} value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="Min 8 characters" style={{ ...styles.input, paddingRight: '40px' }} autoComplete="off" />
-                          <button className="hit44" type="button" aria-label={showNewPw ? 'Hide new password' : 'Show new password'} onClick={() => setShowNewPw(!showNewPw)} style={eyeBtnStyle}><EyeSvg show={showNewPw} /></button>
-                        </div>
-                      </div>
-                      {newPw && (
-                        <div style={{ marginBottom: '12px' }}>
-                          <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '4px' }}>Confirm New Password</label>
-                          <input aria-label="Confirm new password" type="password" value={confirmPw} onChange={(e) => setConfirmPw(e.target.value)} placeholder="Re-enter new password" style={styles.input} autoComplete="off" />
-                          {confirmPw && newPw !== confirmPw && (
-                            <p style={{ fontSize: 'var(--t-meta)', color: colors.redText, margin: '4px 0 0' }}>Passwords do not match</p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    <button
-                      className="hit44 glass-btn glass-primary"
-                      onClick={(e) => { confirmClick(e); handleSaveProfile(); }}
-                      disabled={editLoading}
-                      style={{ ...styles.gradientButton, marginTop: '8px', opacity: editLoading ? 0.7 : 1, position: 'relative', overflow: 'hidden' }}
-                    >
-                      {editLoading ? 'Saving...' : 'Save Changes'}
-                    </button>
-                  </div>
-                );
+              // Edit Profile lives in ./components/EditProfileForm.js now. It
+              // was declared right here, inside this render, and mounted as an
+              // element, so React rebuilt its type on every render of the shell
+              // and threw away the DOM holding whatever had been typed. Every
+              // value it reads is named once, in this object, in shorthand, so
+              // a name here and the matching parameter over there cannot drift
+              // apart. Built inside this branch for the same reason
+              // addFriendsProps is: several of these are declared further down
+              // this component and reading them any earlier is a temporal dead
+              // zone throw.
+              const editProfileFormProps = {
+                authUser,
+                colors,
+                confirmClick,
+                profileBio,
+                profileHandle,
+                profileName,
+                profilePhone,
+                profilePic,
+                setCropImageSrc,
+                setCropOffset,
+                setCropZoom,
+                setProfileBio,
+                setProfileHandle,
+                setProfileName,
+                setProfilePhone,
+                setShowPicModal,
+                styles,
               };
-              return <EditProfileForm />;
+              return <EditProfileForm {...editProfileFormProps} />;
             })()}
             {profileScreen === 'safety' && (
               <div>
@@ -19811,6 +19589,38 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     </div>
   );
 
+  // The two overlays that used to be declared inside this render, and the
+  // values each one reads. Object shorthand throughout, so the name here and
+  // the parameter in the component file cannot drift apart, and built here
+  // rather than beside the imports because everything below is declared
+  // further down this component.
+  const verifyEmailSheetProps = {
+    DialogBehavior,
+    authUser,
+    isDark,
+    resendVerification,
+    setVerifyPrompt,
+    verifyCooldown,
+    verifyNote,
+    verifyPrompt,
+  };
+
+  const newDmModalProps = {
+    DialogBehavior,
+    SearchInputLocal,
+    colors,
+    dmModalResults,
+    dmModalSearching,
+    dmSearchText,
+    handleDmSearch,
+    setDmModalResults,
+    setDmSearchText,
+    setShowNewDmModal,
+    showNewDmModal,
+    startNewDmWithUser,
+    suggestedUsers,
+  };
+
   return (
     <div style={fullBleed
       // Real device: the wrapper IS the screen. No padding, no centering, no
@@ -20292,7 +20102,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       <div role="status" aria-live={toast && toast.type === 'error' ? 'assertive' : 'polite'}>
         <Toast />
       </div>
-      <VerifyEmailSheet />
+      <VerifyEmailSheet {...verifyEmailSheetProps} />
 
       {/* Camera Viewfinder */}
       {showCameraViewfinder && (
@@ -20961,7 +20771,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       {CropModal()}
       {aiAssistantModal}
       {adminPromptModal}
-      <NewDmModal />
+      <NewDmModal {...newDmModalProps} />
       <style>{`
         /* CrowdBar component now drives its own height via useState + CSS
            transition — no global keyframe needed. */
