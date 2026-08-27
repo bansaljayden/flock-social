@@ -6479,8 +6479,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // cannot run at the moment the tap arrives.
   useEffect(() => {
     if (!pushAdminIntent || !authUser) return;
-    if (authUser.role === 'admin') setCurrentScreen('adminRevenue');
     setPushAdminIntent(false);
+    // The only type that produces this intent is moderation_report, and the
+    // queue it announces lives at /admin/moderation, a PAGES route index.js
+    // matches BEFORE the native-shell fallback. Navigating there in place
+    // renders the authenticated console inside the shell's own WebView with
+    // the app's token, and the console's Back to Flock link boots the app
+    // again. This used to open adminRevenue, the analytics dashboard, whose
+    // only pointer to the console on iOS was a span that could be neither
+    // tapped nor copied: a child-safety alert whose tap could not reach the
+    // queue on the one device that receives it.
+    if (authUser.role === 'admin') window.location.assign('/admin/moderation');
   }, [pushAdminIntent, authUser]);
   // UGC moderation (Apple 1.2): null = closed, else { userId, userName, contentType, contentId }
   const [moderationTarget, setModerationTarget] = useState(null);
@@ -11455,7 +11464,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               <button className="hit44 glass-btn glass-secondary" onClick={() => selectMode('admin')} style={modeBtn}>
                 <div style={{ flex: 1 }}>
                   <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', margin: '0 0 2px', textShadow: '0 1px 3px rgba(0,0,0,0.4)' }}>Admin Dashboard</h3>
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', margin: 0, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>Platform analytics & revenue</p>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', margin: 0, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>Analytics, revenue and moderation</p>
                 </div>
                 <span style={{ fontSize: 'var(--t-title)', color: 'rgba(255,255,255,0.5)' }}>›</span>
               </button>

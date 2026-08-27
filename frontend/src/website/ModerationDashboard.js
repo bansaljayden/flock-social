@@ -175,6 +175,15 @@ const VENUE_LIST_LIMIT = 200;
 // How long a request has been sitting, in whole days, from the timestamp the
 // server sent. Derived, never invented: an unparseable or future value returns
 // nothing at all rather than a confident "0 days".
+// The "how long has this sat" line for report cards. Venue claims always
+// printed it; reports, the surface Apple's "act promptly" language is about,
+// showed only the filing date and left the arithmetic to the moderator.
+const reportAge = (t) => {
+  const d = daysWaiting(t);
+  if (d == null || d < 1) return '';
+  return `  \u00b7  waiting ${d} ${d === 1 ? 'day' : 'days'}`;
+};
+
 const daysWaiting = (t) => {
   if (!t) return null;
   const then = new Date(t).getTime();
@@ -394,6 +403,20 @@ export default function ModerationDashboard() {
   // replace-not-append read cannot have. The rows already on screen come back
   // in the same order (unhandled work is oldest-first, which does not shuffle
   // under load), so nobody loses their place.
+  // A report filed while the queue was already open used to be invisible
+  // until a manual Refresh: nothing anywhere registers the moderation_report
+  // socket event and this page opens no socket. Poll in the background
+  // instead, which the refresh path already makes safe (it preserves scroll,
+  // open evidence, and typed drafts). Skipped while the tab is hidden so an
+  // abandoned tab does not poll all night, and while a load is running.
+  useEffect(() => {
+    const t = setInterval(() => {
+      if (document.hidden || loading || refreshing) return;
+      load({ background: true });
+    }, 60000);
+    return () => clearInterval(t);
+  }, [load, loading, refreshing]);
+
   const loadMore = async () => {
     if (more.busy) return;
     setMore({ busy: true, error: '' });
@@ -581,9 +604,20 @@ export default function ModerationDashboard() {
       // moderator watching nine rows disappear deserves to be told why rather
       // than left to wonder what the click did.
       const swept = Number(result && result.alsoResolved) || 0;
+      // A sentence for EVERY action, not only the sweep. The card dims and
+      // re-sorts on the background reload, and at 1AM "did that take?" should
+      // be answered in words rather than by diffing the list.
+      const did = {
+        hide: 'Content hidden.',
+        unhide: 'Content restored.',
+        warn: 'Warning sent.',
+        ban: 'User banned.',
+        unban: 'User unbanned.',
+        dismiss: 'Report dismissed.',
+      }[action] || 'Done.';
       setNote(swept > 0
-        ? `Content hidden. ${swept} other ${swept === 1 ? 'report' : 'reports'} about the same content ${swept === 1 ? 'was' : 'were'} closed with it.`
-        : '');
+        ? `${did} ${swept} other ${swept === 1 ? 'report' : 'reports'} about the same content ${swept === 1 ? 'was' : 'were'} closed with it.`
+        : did);
       // Sent and recorded; a stale draft must not attach itself to the NEXT
       // action on this card.
       setReasons((p) => {
@@ -665,6 +699,16 @@ export default function ModerationDashboard() {
     <div style={S.page}>
       <div style={S.wrap}>
         <h1 style={S.h1}>Moderation</h1>
+        {typeof window !== 'undefined' && window.Capacitor?.isNativePlatform?.() === true ? (
+          // In the native shell this page IS the app's WebView, navigated here
+          // by a report notification tap or the dashboard's console button.
+          // index.js reads the URL once at boot, so a plain link back to '/'
+          // boots the app again; without this the only way home was
+          // force-quitting.
+          <p style={{ margin: '0 0 10px' }}>
+            <a href="/" style={{ color: '#6cb8ff', fontSize: 14, textDecoration: 'none' }}>&larr; Back to Flock</a>
+          </p>
+        ) : null}
         <p style={S.sub}>
           Report queue. Act promptly. Hide content and/or ban the user. Every action is logged.
           <button
@@ -689,7 +733,7 @@ export default function ModerationDashboard() {
             list, so saying it twice says nothing extra. */}
         {Array.from(new Set([queue.error, log.error, venues.error].filter(Boolean))).map((m) => (
           <div key={m} style={S.err} role="alert">
-            {m}{needsSignIn(m) ? '. Sign in to the app as an admin account first, then reload this page.' : ''}
+            {m}{needsSignIn(m) ? '. Sign in to the app at flockcorp.com/app as the admin account, then reload this page.' : ''}
           </div>
         ))}
 
@@ -773,6 +817,7 @@ export default function ModerationDashboard() {
                       Reported user: <b>{r.reported_user_name || '—'}</b>
                       {r.reported_user_banned ? <span style={S.banned}>BANNED</span> : null}
                       {'  ·  '}reporter: {r.reporter_name || '—'}{'  ·  '}{fmt(r.created_at)}
+                      {reportAge(r.created_at)}
                     </div>
                     <ReportRecord report={r} unhandled={unhandled} />
                     {r.details ? <div style={S.details}>Reporter wrote: “{r.details}”</div> : null}
