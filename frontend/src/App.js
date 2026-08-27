@@ -4870,8 +4870,35 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
     // Load each independently so one failure doesn't block the rest
     getPendingRequests().then(d => setPendingRequests(d.requests || [])).catch(e => console.error('[AddFriends] Pending:', e.message));
-    getOutgoingRequests().then(d => setOutgoingRequests(d.requests || [])).catch(e => console.error('[AddFriends] Outgoing:', e.message));
+    getOutgoingRequests().then(d => {
+      const requests = d.requests || [];
+      setOutgoingRequests(requests);
+      // Seed the search rows too: a request you have already sent must read
+      // "Pending", not a fresh Add button that would send a second one.
+      if (requests.length) {
+        setFriendStatuses(prev => {
+          const next = { ...prev };
+          for (const r of requests) if (!next[r.id]) next[r.id] = 'pending';
+          return next;
+        });
+      }
+    }).catch(e => console.error('[AddFriends] Outgoing:', e.message));
     getFriendSuggestions().then(d => setFriendSuggestions(d.suggestions || [])).catch(e => console.error('[AddFriends] Suggestions:', e.message));
+    // friendStatuses is otherwise written only by sending, accepting and the
+    // socket, so nothing seeded it from the server and a reload lost every
+    // existing friendship: the search row then offered an Add button for
+    // someone already on your list. The friends list is the ground truth for
+    // 'accepted', so seed from it.
+    getFriends().then(d => {
+      const friends = Array.isArray(d.friends) ? d.friends : [];
+      if (friends.length) {
+        setFriendStatuses(prev => {
+          const next = { ...prev };
+          for (const fr of friends) next[fr.id] = 'accepted';
+          return next;
+        });
+      }
+    }).catch(e => console.error('[AddFriends] Friends:', e.message));
   }, [authUser]);
 
   const handleAcceptFriendRequest = useCallback(async (userId) => {
@@ -5070,6 +5097,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // Flock invites
   const [pendingFlockInvites, setPendingFlockInvites] = useState([]);
+  // Invites this person has declined. GET /api/flocks keeps returning them with
+  // member_status 'declined' on every load, so the client already holds the
+  // data to offer a way back. Declining used to drop the flock from both the
+  // accepted list and the invite list, so a plan you said no to on Tuesday was
+  // gone with no route back when Friday freed up. These render in Messages under
+  // their own heading with a Join button, and are never mixed into the main
+  // list uninvited.
+  const [declinedFlockInvites, setDeclinedFlockInvites] = useState([]);
   const [showFlockInviteModal, setShowFlockInviteModal] = useState(false);
   const [flockInviteSearch, setFlockInviteSearch] = useState('');
   const [flockInviteSelected, setFlockInviteSelected] = useState([]);
@@ -5173,16 +5208,28 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Accepting a flock invite is declared further down this component, beside
   // loadFlocks, because it has to call it. See the note there.
 
-  // Decline a flock invite
+  // Decline a flock invite.
+  //
+  // The invite moves from the pending list into the declined list rather than
+  // vanishing, so the plan is still findable and the person can change their
+  // mind without waiting for a reload. loadFlocks would land the same declined
+  // row anyway; doing it here means the "way back" is on screen the instant the
+  // decline lands.
   const handleDeclineFlockInvite = useCallback(async (flockId) => {
     try {
       await declineFlockInvite(flockId);
+      const invite = pendingFlockInvites.find(f => f.id === flockId);
       setPendingFlockInvites(prev => prev.filter(f => f.id !== flockId));
+      if (invite) {
+        setDeclinedFlockInvites(prev => prev.some(f => f.id === flockId)
+          ? prev
+          : [...prev, { ...invite, memberStatus: 'declined' }]);
+      }
       showToast('Invite declined');
     } catch (err) {
       showToast(err.message || 'Failed to decline invite', 'error');
     }
-  }, [showToast]);
+  }, [pendingFlockInvites, showToast]);
 
   // Loading
   const [isLoading, setIsLoading] = useState(false);
@@ -5505,6 +5552,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         }));
         setFlocks(mapped.filter(f => f.memberStatus === 'accepted'));
         setPendingFlockInvites(mapped.filter(f => f.memberStatus === 'invited'));
+        // A declined membership row still comes down on every load. Keep it so
+        // the person can find the plan again and re-join, rather than silently
+        // dropping it and leaving no route back in.
+        setDeclinedFlockInvites(mapped.filter(f => f.memberStatus === 'declined'));
         // The list is in state, so the chat has something to render. This is
         // the last step of the trip that started on the invite link.
         // Three outcomes, and the middle one used to be silent. A stranger
@@ -5576,6 +5627,29 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       showToast(err.message || 'Failed to accept invite', 'error');
     }
   }, [pendingFlockInvites, showToast, needsEmailVerification, loadFlocks]);
+
+  // Change your mind after declining. POST /api/flocks/:id/join accepts a
+  // declined membership row the same as an invited one (the server flips any
+  // non-accepted status to accepted), so re-joining is the same call. The flock
+  // moves out of the declined list and into the accepted one; loadFlocks lands
+  // the full row a moment later.
+  const handleRejoinDeclinedFlock = useCallback(async (flockId) => {
+    try {
+      await acceptFlockInvite(flockId);
+      const invite = declinedFlockInvites.find(f => f.id === flockId);
+      setDeclinedFlockInvites(prev => prev.filter(f => f.id !== flockId));
+      if (invite) {
+        setFlocks(prev => prev.some(f => f.id === flockId)
+          ? prev
+          : [...prev, { ...invite, memberStatus: 'accepted' }]);
+      }
+      showToast(`Joined ${invite?.name || 'flock'}!`);
+      loadFlocks();
+    } catch (err) {
+      if (needsEmailVerification(err, 'join a flock')) return;
+      showToast(err.message || 'Failed to join', 'error');
+    }
+  }, [declinedFlockInvites, showToast, needsEmailVerification, loadFlocks]);
 
   // ── Past flocks ────────────────────────────────────────────────────────
   // Completed and cancelled flocks, fetched when the Past screen opens.
@@ -12123,6 +12197,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
           )}
           {flocks.map((f, idx) => {
+            // Faces come from member_previews: a name and an avatar for up to
+            // four accepted members, creator first, which GET /api/flocks sends
+            // and loadFlocks stores. The card never read it, so it drew from
+            // `members`, which is empty until a detail or chat screen has been
+            // opened once, and every card on a fresh Nest showed zero faces.
+            // members stays the fallback for a flock whose roster HAS been
+            // loaded this session. Both shapes are handled: preview rows are
+            // objects with a name, legacy members can be plain strings.
+            const previewSource = Array.isArray(f.memberPreviews) && f.memberPreviews.length
+              ? f.memberPreviews
+              : (f.members || []);
+            const faces = previewSource.slice(0, 4).map((m) => (typeof m === 'string'
+              ? { initial: m[0]?.toUpperCase() || '?', image: null }
+              : { initial: (m.name || '')[0]?.toUpperCase() || '?', image: m.profile_image_url || m.image || null }));
+            // going_count (accounts plus link guests) is the real headcount, so
+            // the overflow chip counts the rest from it rather than from the
+            // four-face preview, which would always read +0.
+            const extraFaces = Math.max(0, (f.memberCount || faces.length) - faces.length);
             return (
               <button className="hit44"
                 key={f.id}
@@ -12154,10 +12246,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <div style={{ display: 'flex' }}>
-                    {f.members.slice(0, 4).map((m, j) => (
-                      <div key={j} style={{ width: '24px', height: '24px', borderRadius: '50%', border: '2px solid var(--bg-card-solid)', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', marginLeft: j > 0 ? '-6px' : 0 }}>{m[0]}</div>
+                    {faces.map((face, j) => (
+                      <div key={j} style={{ width: '24px', height: '24px', borderRadius: '50%', border: '2px solid var(--bg-card-solid)', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', marginLeft: j > 0 ? '-6px' : 0 }}>
+                        {face.image ? <img src={face.image} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : face.initial}
+                      </div>
                     ))}
-                    {f.members.length > 4 && <div style={{ width: '24px', height: '24px', borderRadius: '50%', border: '2px solid var(--bg-card-solid)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, marginLeft: '-6px' }}>+{f.members.length - 4}</div>}
+                    {extraFaces > 0 && <div style={{ width: '24px', height: '24px', borderRadius: '50%', border: '2px solid var(--bg-card-solid)', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, marginLeft: '-6px' }}>+{extraFaces}</div>}
                   </div>
                   <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', padding: '2px 8px', borderRadius: '10px', backgroundColor: 'var(--icon-bg)', color: colors.navy }}>{f.time}</span>
                 </div>
@@ -14397,6 +14491,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
     const filteredDms = directMessages.filter(dm => !chatSearch || dm.name.toLowerCase().includes(chatSearch.toLowerCase()));
     const filteredFlocks = sortedFlocks.filter(f => !chatSearch || f.name.toLowerCase().includes(chatSearch.toLowerCase()));
+    const filteredDeclinedInvites = declinedFlockInvites.filter(f => !chatSearch || f.name.toLowerCase().includes(chatSearch.toLowerCase()));
 
     const moveFlockUp = (flockId) => {
       const ids = filteredFlocks.map(f => f.id);
@@ -14676,6 +14771,31 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </div>
                 );
               })}
+            </>
+          )}
+
+          {/* Declined — plans this person said no to. Kept so a no on Tuesday
+              has a way back when Friday frees up, following the server, which
+              still returns these on every load. Never folded into the main
+              flock list above: re-joining is one deliberate tap. */}
+          {filteredDeclinedInvites.length > 0 && (
+            <>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 4px 8px' }}>
+                <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Declined</span>
+                <div style={{ flex: 1, height: '1px', backgroundColor: 'var(--pill-bg)' }} />
+              </div>
+              {filteredDeclinedInvites.map((f) => (
+                <div key={`declined-${f.id}`} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '12px 14px', marginBottom: '6px', border: '1px solid var(--border-default)', display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <div style={{ width: '46px', height: '46px', borderRadius: '14px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <span aria-hidden="true" style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-secondary)', lineHeight: 1 }}>{flockTileInitial(f.name)}</span>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <h2 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</h2>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>You said you could not make it{f.host ? `. From ${f.host}` : ''}</p>
+                  </div>
+                  <button aria-label={`Join ${f.name}`} className="hit44 glass-btn glass-navy" onClick={() => handleRejoinDeclinedFlock(f.id)} style={{ padding: '8px 16px', borderRadius: '20px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0, position: 'relative', overflow: 'hidden' }}>Join</button>
+                </div>
+              ))}
             </>
           )}
 
