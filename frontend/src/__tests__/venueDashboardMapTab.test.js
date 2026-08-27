@@ -233,7 +233,15 @@ describe('dashboard map behavior', () => {
     // The venue's position is the venue's listing, not the owner's phone. A
     // geolocation prompt on a dashboard tab would be permission theater.
     expect(APP).toContain('followUser={false}');
-    expect(APP).toContain('if (!mapReady || !followUser || !navigator.geolocation) return;');
+    // The property, not the spelling, for the same reason the initialCenter
+    // line below already says so. What the dashboard needs is that a false
+    // followUser short-circuits the watch before watchPosition is reached. The
+    // exact characters of that condition were pinned here, and the Settings
+    // location switch added a third term to it on 2026-08-26, so this read as
+    // the dashboard asking for a location when nothing about the dashboard had
+    // changed. `!followUser` is still the second test in the guard and still
+    // returns; anything else in the condition is somebody else's rule.
+    expect(APP).toMatch(/if \(!mapReady \|\| !followUser \|\|[^)]*\) return;/);
     // The property, not the spelling: initialCenter has to short-circuit the
     // geolocation call. That expression gained a second skip on 2026-08-26 for
     // the Settings location switch, and pinning its exact characters made this
