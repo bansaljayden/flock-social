@@ -156,6 +156,15 @@ function deepLinkPath(data = {}) {
   // Admin only. This used to resolve to '/', so tapping a report alert did
   // nothing at all.
   if (type === 'moderation_report') return '/?admin=true';
+  // The SOS tap is routed from the data payload, not a URL. Its live fields are
+  // a person's name and their coordinates, which do not belong in a query
+  // string, so this deliberately returns no deep link: a native tap and a web
+  // tap with the app already open both carry the full payload to intentFromData
+  // (the service worker relays data by postMessage, never by navigating), and
+  // that is the path that opens the alert modal. A cold web tap with no client
+  // to relay to lands on the app itself rather than smuggling a location
+  // through the address bar. Do not "fix" this into '/?safety=...'.
+  if (type === 'safety_alert') return '/';
   // An invited flock is NOT in the accepted list the chat screen reads, so a
   // chat link for one can only ever miss. Its own parameter, its own landing.
   if (type === 'flock_invite' && /^\d+$/.test(flockId)) return `/?invite=${flockId}`;
