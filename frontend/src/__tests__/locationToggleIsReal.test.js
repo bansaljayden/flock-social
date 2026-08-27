@@ -78,6 +78,49 @@ describe('every door that can raise the OS location prompt checks the switch', (
     expect(init).toContain('locationAllowed');
   });
 
+  it('live position tracking does not start a watch when the switch is off', () => {
+    // THE THIRD DOOR, and the one the first fix missed. watchPosition asks the
+    // device exactly as getCurrentPosition does, so with the switch off this
+    // effect started the moment the map was ready and the OS prompt arrived
+    // over a map the person had already said not to locate them on. It was
+    // gated on mapReady and followUser only, and followUser is a different
+    // question: it asks whether THIS map is the one that follows you, which a
+    // venue dashboard map answers no to whatever the switch says.
+    const watch = slice(
+      'watchIdRef.current = navigator.geolocation.watchPosition(',
+      'const src = map.getSource',
+      200,
+      1200,
+    );
+    expect(watch.length).toBeGreaterThan(200);
+    // The guard sits above the call, in the same effect.
+    const guard = slice(
+      'if (!mapReady || !followUser',
+      'watchIdRef.current = navigator.geolocation.watchPosition(',
+      20,
+      600,
+    );
+    expect(guard).toContain('!locationAllowed');
+  });
+
+  it('the watch is torn down and rebuilt when the switch is flipped', () => {
+    // A gate the effect reads but does not depend on is a gate that only
+    // applies on the next unrelated re-run. Turning the switch off mid session
+    // has to stop a watch that is already running, which means the flag is in
+    // the dependency list too.
+    // The end marker is CODE, not the "venue markers" comment that follows
+    // this effect: the stripper above deletes line comments, so a comment
+    // marker finds nothing and the slice helper reports it as a missing
+    // anchor rather than as a missing dependency.
+    const deps = slice(
+      'watchIdRef.current = navigator.geolocation.watchPosition(',
+      'venuesRef.current = venues;',
+      200,
+      1600,
+    );
+    expect(deps).toContain('}, [mapReady, followUser, locationAllowed]);');
+  });
+
   it('the switch is actually handed to the map, not just accepted by it', () => {
     // A defaulted prop nobody passes is a gate that is always open.
     const render = slice('<MapLibreMapView', '/>');
