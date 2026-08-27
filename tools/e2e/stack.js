@@ -37,6 +37,16 @@
  */
 'use strict';
 
+// UTC, before anything reads a Date. Production on Railway runs in UTC, and
+// flocks.event_time is a naive TIMESTAMP, so the server's process zone is part
+// of the product's behaviour: a UTC process round-trips plan times correctly
+// and a local-zone process shifts every plan by its offset. The first run of
+// this harness ran in America/New_York and every robot reported plans four
+// hours late, which read as the worst defect of the day until the venue agent
+// checked what zone Railway actually runs in. The harness's job is to match
+// production, not to demonstrate a fragility CLAUDE.md already documents.
+process.env.TZ = 'UTC';
+
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -112,7 +122,28 @@ async function main() {
   log('starting embedded postgres (first run downloads binaries)');
   await pg.initialise();
   await pg.start();
-  await pg.createDatabase('flock_e2e');
+  // CREATE DATABASE by hand, with the encoding forced, rather than
+  // pg.createDatabase(). That helper takes only a name, and on Windows initdb
+  // defaults the cluster to WIN1252, so the database inherited an encoding in
+  // which no emoji can be stored: through the API, reacting with a heart was a
+  // 500 while a plain x was a 201, and emoji_reactions stayed empty for the
+  // stack's whole life. Railway is UTF8, so every spec that types anything
+  // outside Latin-1 was red on the harness rather than on the app. TEMPLATE
+  // template0 with the C locale is the one combination that permits an
+  // explicit encoding regardless of what the cluster defaulted to.
+  {
+    const { Client } = backendRequire('pg');
+    const admin = new Client({ connectionString: `postgresql://postgres:postgres@127.0.0.1:${PG_PORT}/postgres` });
+    await admin.connect();
+    await admin.query("CREATE DATABASE flock_e2e ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0");
+    const enc = await admin.query("SELECT pg_encoding_to_char(encoding) AS enc FROM pg_database WHERE datname = 'flock_e2e'");
+    await admin.end();
+    if (enc.rows[0].enc !== 'UTF8') {
+      log(`FAILED: flock_e2e came up ${enc.rows[0].enc}, not UTF8, so emoji cannot be stored and every spec that types one fails on the harness.`);
+      process.exit(1);
+    }
+    log('database encoding verified UTF8');
+  }
 
   process.env.DATABASE_URL = `postgresql://postgres:postgres@127.0.0.1:${PG_PORT}/flock_e2e`;
   process.env.PGHOST = '';            // trap 1
