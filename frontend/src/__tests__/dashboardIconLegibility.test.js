@@ -29,8 +29,12 @@ const { sw } = require('../components/ui/Icons');
 // loaded chunk now (screens/VenueDashboard.js), and about 2,000 lines of what
 // this file scans went with it. Nothing asserted below changed. The app source
 // is simply in two files, so both are read, in the order they used to be one.
+// The profile and settings screen (the You tab) left App.js on 2026-08-27 for
+// screens/ProfileSettings.js, and the "icon: Icons.ban" block-mark row went with
+// it, so that file is read here too.
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'VenueDashboard.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'VenueDashboard.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8');
 const ICONS_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'components', 'ui', 'Icons.js'),
   'utf8'
