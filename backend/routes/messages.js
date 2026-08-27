@@ -99,9 +99,39 @@ function messageBody(req) {
   return {
     text,
     image,
+    // The optional small twin of `image`, meaningful only alongside one, and
+    // read here so both transports and both message tables share one rule.
+    // Its whole failure mode is "no thumbnail": readImageThumb answers null
+    // for anything oversized or mis-shaped, and a null thumb costs the reader
+    // nothing but the old full-image history payload.
+    thumb: image ? readImageThumb(req.body.thumb_url) : null,
     empty: !text && !image,
     tooLarge: image !== null && Buffer.byteLength(image, 'utf8') > CHAT_IMAGE_MAX_BYTES,
   };
+}
+
+// CHAT IMAGE THUMBNAILS (2026-08-27). A chat photo is stored and served as a
+// full ~700KB base64 data URL, inline in every history page, and the app
+// draws it at most 260px wide with no zoom viewer, so nearly all of those
+// bytes are waste the reader pays for again on every thread open. The sender's
+// phone now derives a small thumbnail from the same sized-down bytes and sends
+// both; history serves the thumbnail and withholds the full image when one
+// exists (the CASE in both history queries), so a photo-heavy thread costs
+// kilobytes instead of megabytes to reopen. The full image stays stored for a
+// future full-size viewer. Legacy rows have no thumbnail and serve as before.
+//
+// TRUST RULE: the thumbnail is CLIENT-derived, so a hostile client could pair
+// an innocent full image with an unrelated thumbnail. Both are therefore
+// moderated exactly like the full image, and a thumbnail that fails shape,
+// size, or moderation is simply DROPPED, never a reason to reject the send:
+// the worst outcome of a bad thumb is the old bandwidth bill, not a lost
+// message and not an unmoderated pixel reaching a screen.
+const THUMB_MAX_BYTES = 96 * 1024;
+function readImageThumb(value) {
+  if (typeof value !== 'string') return null;
+  if (!/^data:image\//.test(value)) return null;
+  if (Buffer.byteLength(value, 'utf8') > THUMB_MAX_BYTES) return null;
+  return value;
 }
 const EMPTY_MESSAGE = 'Message is required';
 
@@ -168,7 +198,13 @@ router.get('/flocks/:id/messages',
       // and the ordering can never drift apart between copies again.
       const messagesQuery = `
           -- Giant legacy base64 avatars would be repeated on every one of up to 100 rows; drop oversized ones instead of amplifying them (REVIEW-ROUND5)
-          SELECT m.*, u.name AS sender_name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS sender_image
+          SELECT m.*, u.name AS sender_name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS sender_image,
+                 -- The bandwidth half of the thumbnail feature: when a row has
+                 -- one, history ships ONLY the thumbnail (the app draws 260px
+                 -- max and has no zoom viewer, so the full image was pure
+                 -- re-download waste). node-postgres keeps the LAST duplicate
+                 -- column name, so this CASE overrides m.image_url in the row.
+                 CASE WHEN m.thumb_url IS NOT NULL THEN NULL ELSE m.image_url END AS image_url
           FROM messages m
           LEFT JOIN users u ON u.id = m.sender_id
           WHERE m.flock_id = $1
@@ -248,6 +284,9 @@ router.post('/flocks/:id/messages',
     body('venue_data').optional({ values: 'null' }).isObject(),
     scalarOnly(body('image_url').optional({ values: 'null' }), 'image')
       .custom(isChatImageUrl).withMessage(IMAGE_FORMAT_MESSAGE),
+    // No format rejection for the thumb: readImageThumb drops anything
+    // mis-shaped, because a bad thumbnail must never cost the message.
+    scalarOnly(body('thumb_url').optional({ values: 'null' }), 'thumbnail'),
   ],
   async (req, res) => {
     try {
@@ -259,7 +298,7 @@ router.post('/flocks/:id/messages',
       // Read and settle the content BEFORE the membership query: it is the last
       // piece of validation, it costs nothing, and the validator chain it used
       // to live in ran ahead of every query too. See messageBody.
-      const { text: message_text, image: image_url, empty, tooLarge } = messageBody(req);
+      const { text: message_text, image: image_url, thumb, empty, tooLarge } = messageBody(req);
       if (empty) return res.status(400).json({ error: EMPTY_MESSAGE });
       // Ahead of every query AND ahead of moderateImage, which is a BILLED Cloud
       // Vision call: a refusal we can make for free from the byte count must
@@ -308,10 +347,19 @@ router.post('/flocks/:id/messages',
           return res.status(400).json({ error: imageRejectionMessage(verdict), moderation: verdict.reason });
         }
       }
+      // The thumb is client-derived, so it is moderated like the image it
+      // claims to shrink; one that fails anything is dropped, never fatal.
+      let safeThumb = null;
+      if (thumb) {
+        try {
+          const thumbVerdict = await moderateImage(thumb, { userId: req.user.id });
+          if (thumbVerdict.allowed) safeThumb = sanitizeStoredImage(thumb);
+        } catch { /* no thumbnail, full image serves as before */ }
+      }
 
       const result = await pool.query(
-        `INSERT INTO messages (flock_id, sender_id, message_text, message_type, venue_data, image_url)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO messages (flock_id, sender_id, message_text, message_type, venue_data, image_url, thumb_url)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          RETURNING *`,
         [
           flockId,
@@ -324,6 +372,7 @@ router.post('/flocks/:id/messages',
           // declared prefix is a client claim, and the phone's GPS block is a
           // home address nobody meant to send.
           image_url ? sanitizeStoredImage(image_url) : null,
+          safeThumb,
         ]
       );
 
@@ -665,7 +714,10 @@ router.get('/dm/:userId',
       // equivalent here — a DM cannot outlive its sender.)
       const dmQuery = `
           -- Giant legacy base64 avatars would be repeated on every one of up to 100 rows; drop oversized ones instead of amplifying them (REVIEW-ROUND5)
-          SELECT dm.*, u.name AS sender_name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS sender_image
+          SELECT dm.*, u.name AS sender_name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS sender_image,
+                 -- Same rule as the flock history: a row with a thumbnail
+                 -- ships only the thumbnail; the duplicate name overrides.
+                 CASE WHEN dm.thumb_url IS NOT NULL THEN NULL ELSE dm.image_url END AS image_url
           FROM direct_messages dm
           JOIN users u ON u.id = dm.sender_id
           WHERE ((dm.sender_id = $1 AND dm.receiver_id = $2)
@@ -754,6 +806,7 @@ router.post('/dm/:userId',
     // aimed at every recipient (round 7); the socket path already refuses them.
     scalarOnly(body('image_url').optional({ values: 'null' }), 'image')
       .custom(isChatImageUrl).withMessage(IMAGE_FORMAT_MESSAGE),
+    scalarOnly(body('thumb_url').optional({ values: 'null' }), 'thumbnail'),
     // direct_messages.reply_to_id is int4: `[5]` passed isInt and then reached
     // the reply-scope lookup as '{5}', which is 22P02 — a 500 rather than the
     // 400 an unusable reply target deserves.
@@ -771,7 +824,7 @@ router.post('/dm/:userId',
       // send the literal word "Photo" as the text of every image DM, which is
       // the only reason the old text-is-mandatory rule survived contact with the
       // client. It stopped, so an image DM now genuinely carries no text.
-      const { text: message_text, image: image_url, empty, tooLarge } = messageBody(req);
+      const { text: message_text, image: image_url, thumb, empty, tooLarge } = messageBody(req);
       if (empty) return res.status(400).json({ error: EMPTY_MESSAGE });
       // Same free-before-billed ordering as the flock twin above, and the same
       // ceiling the socket's send_dm enforces.
@@ -856,15 +909,25 @@ router.post('/dm/:userId',
           return res.status(400).json({ error: imageRejectionMessage(verdict), moderation: verdict.reason });
         }
       }
+      // Same thumb rule as the flock twin: moderated like the image, dropped
+      // on any failure, never fatal to the send.
+      let safeThumb = null;
+      if (thumb) {
+        try {
+          const thumbVerdict = await moderateImage(thumb, { userId: req.user.id });
+          if (thumbVerdict.allowed) safeThumb = sanitizeStoredImage(thumb);
+        } catch { /* no thumbnail, full image serves as before */ }
+      }
 
       const result = await pool.query(
-        `INSERT INTO direct_messages (sender_id, receiver_id, message_text, message_type, venue_data, image_url, reply_to_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO direct_messages (sender_id, receiver_id, message_text, message_type, venue_data, image_url, reply_to_id, thumb_url)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING *`,
         [req.user.id, receiverId, message_text, message_type || 'text', venueCheck.data,
           // Same re-typing as the flock twin above and both socket paths.
           image_url ? sanitizeStoredImage(image_url) : null,
-          safeReplyId]
+          safeReplyId,
+          safeThumb]
       );
 
       const message = result.rows[0];

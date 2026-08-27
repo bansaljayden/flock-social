@@ -875,7 +875,7 @@ export default function ChatDetail({
                     and bottom cut off. They now run as large as the row allows
                     and keep their own shape. Tapping still opens the reaction
                     and report row, which is a 1.2 requirement. */}
-                {m.image && (
+                {(m.image || m.thumb) && (
                   /* A button, not a div-with-onClick: the tap opens the
                      reaction and report row (a 1.2 requirement), and a
                      pointer-only door locks VoiceOver and keyboard users out
@@ -886,7 +886,11 @@ export default function ChatDetail({
                     onClick={() => setShowReactionPicker(showReactionPicker === m.id ? null : m.id)}
                     style={{ borderRadius: '18px', overflow: 'hidden', boxShadow: '0 4px 15px rgba(0,0,0,0.1)', marginBottom: '4px', cursor: 'pointer', lineHeight: 0, padding: 0, border: 'none', background: 'none', display: 'block' }}
                   >
-                    <img src={m.image} alt={`From ${m.sender}`} loading="lazy" style={{ width: '100%', maxWidth: '260px', maxHeight: '340px', objectFit: 'cover', display: 'block' }} />
+                    {/* Thumb first: history ships only the thumbnail for new
+                        rows (the full image would be re-downloaded at ~700KB
+                        to paint a 260px box). Legacy rows still carry the
+                        full image and render exactly as before. */}
+                    <img src={m.thumb || m.image} alt={`From ${m.sender}`} loading="lazy" style={{ width: '100%', maxWidth: '260px', maxHeight: '340px', objectFit: 'cover', display: 'block' }} />
                   </button>
                 )}
 

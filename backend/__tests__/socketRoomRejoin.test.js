@@ -473,6 +473,7 @@ test('sendMessage carries text and image together, and reports whether it sent',
     message_type: 'image',
     venue_data: null,
     image_url: 'data:x',
+    thumb_url: null,
   }], 'a captioned photo must go out as ONE message carrying both');
 });
 
@@ -487,6 +488,7 @@ test('sendImageMessage is the same code path and keeps a caption', () => {
     message_type: 'image',
     venue_data: null,
     image_url: 'data:y',
+    thumb_url: null,
   }]);
 });
 

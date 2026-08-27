@@ -1016,6 +1016,41 @@ const CHAT_IMAGE_MAX_CHARS = 700 * 1024;
 const CHAT_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 const dataUrlMime = (u) => (typeof u === 'string' ? ((/^data:([^;,]+)[;,]/.exec(u) || [])[1] || '') : '');
 
+// The small twin prepareChatImage's output gets at SEND time. History pages
+// used to ship the full ~700KB base64 of every photo, re-downloaded on every
+// thread open, while the app draws at most 260px and has no zoom viewer; the
+// server now stores this thumbnail alongside the full image and serves ONLY
+// the thumbnail in history (routes/messages.js documents the whole rule,
+// including why the server moderates the thumb separately). Never throws and
+// never blocks a send: null just means the old bandwidth bill for this one
+// photo. 360px covers the 260px box at retina density.
+const CHAT_THUMB_MAX_EDGE = 360;
+const CHAT_THUMB_MAX_CHARS = 88 * 1024;
+const makeChatThumb = (dataUrl) => new Promise((resolve) => {
+  try {
+    if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) { resolve(null); return; }
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const longest = Math.max(img.naturalWidth, img.naturalHeight);
+        if (!longest) { resolve(null); return; }
+        const scale = Math.min(1, CHAT_THUMB_MAX_EDGE / longest);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+        const ctx = canvas.getContext('2d');
+        if (!ctx) { resolve(null); return; }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        let out = canvas.toDataURL('image/jpeg', 0.6);
+        if (out.length > CHAT_THUMB_MAX_CHARS) out = canvas.toDataURL('image/jpeg', 0.45);
+        resolve(out.length > CHAT_THUMB_MAX_CHARS ? null : out);
+      } catch { resolve(null); }
+    };
+    img.onerror = () => resolve(null);
+    img.src = dataUrl;
+  } catch { resolve(null); }
+});
+
 const prepareChatImage = (dataUrl) => new Promise((resolve) => {
   if (typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) {
     resolve({ error: "That photo couldn't be read. Try another one." });
@@ -1133,6 +1168,7 @@ const mapDmRow = (m, myId) => ({
   message_type: m.message_type || 'text',
   venue_data: m.venue_data,
   image_url: m.image_url,
+  thumb_url: m.thumb_url || null,
   reactions: m.reactions || [],
   reply_to: m.reply_to ? { id: m.reply_to.id, text: m.reply_to.message_text, sender: m.reply_to.sender_name } : null,
 });
@@ -1146,6 +1182,7 @@ const mapFlockRow = (m, myId) => ({
   text: m.message_text,
   message_type: m.message_type || 'text',
   venue_data: m.venue_data || null,
+  thumb: m.thumb_url || null,
   // Keep the whole reaction row, not just its emoji. The server hands each
   // reaction back as { emoji, user_id, user_name } and every consumer of a
   // flock reaction reads the user_id: groupReactions to decide whose pill is
@@ -8331,6 +8368,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         venue_data: msg.venue_data || null,
         reactions: [],
         ...(msg.image_url ? { image: msg.image_url } : {}),
+        ...(msg.thumb_url ? { thumb: msg.thumb_url } : {}),
       };
       setFlocks(prev => prev.map(f => {
         if (f.id !== msg.flock_id) return f;
@@ -8813,6 +8851,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     const image = opts.image_url || null;
     const venueData = opts.venue_data || null;
     const msgType = opts.message_type || (venueData ? 'venue_card' : image ? 'image' : 'text');
+    // Derived here, once, so the socket and the HTTP fallback carry the same
+    // pair and a retry regenerates it from the same bytes. ~50ms of canvas
+    // work per photo, before the optimistic bubble, which renders the FULL
+    // image either way.
+    const thumb = image ? await makeChatThumb(image) : null;
     // Optimistic local update
     const tempId = Date.now();
     addMessageToFlock(flockId, {
@@ -8848,7 +8891,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // below cannot double-post. That window used to lose the message entirely.
     const sock = getSocket();
     const sentOverSocket = !!sock?.connected
-      && socketSendMessage(flockId, text, { message_type: msgType, image_url: image, venue_data: venueData });
+      && socketSendMessage(flockId, text, { message_type: msgType, image_url: image, thumb_url: thumb, venue_data: venueData });
     if (sentOverSocket) {
       // The socket is the normal transport, so this is where the count of
       // flock messages actually lives. api.js's copy fires only in the `else`
@@ -8876,7 +8919,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       pendingEchoRef.current.set(tempId, { flockId, text, message_type: msgType, image, venue_data: venueData, timer });
     } else {
       try {
-        const data = await apiSendMessage(flockId, text, { message_type: msgType, image_url: image || undefined, venue_data: venueData || undefined });
+        const data = await apiSendMessage(flockId, text, { message_type: msgType, image_url: image || undefined, thumb_url: thumb || undefined, venue_data: venueData || undefined });
         // The REST route returns the stored row and emits no echo, so this is
         // where the bubble stops being a temp id — without it, reacting to or
         // reporting the photo you just sent addressed a row number the server
@@ -10586,7 +10629,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // One DM transmission: optimistic bubble, then socket when connected (echo
   // reconciled) or REST when not. Both persist server-side, so exactly one of
   // them runs — sending on both stores the message twice.
-  const transmitDm = useCallback((userId, payload) => {
+  const transmitDm = useCallback(async (userId, payload) => {
+    // Same rule as the flock transmit above: one thumb, both transports, and
+    // a retry (which re-calls this with the stored payload) regenerates it.
+    const dmThumb = payload.image_url ? await makeChatThumb(payload.image_url) : null;
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const optimistic = {
       id: tempId,
@@ -10621,6 +10667,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       message_type: payload.message_type,
       venue_data: payload.venue_data,
       image_url: payload.image_url,
+      thumb_url: dmThumb,
       reply_to_id: payload.reply_to_id || null,
     });
     if (dmSentOverSocket) {
@@ -10642,6 +10689,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         message_type: payload.message_type,
         venue_data: payload.venue_data,
         image_url: payload.image_url,
+        thumb_url: dmThumb,
         reply_to_id: payload.reply_to_id || null,
       }).then((data) => {
         // The REST route returns the stored row and emits nothing, so this is
@@ -10804,6 +10852,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         message_type: msg.message_type || 'text',
         venue_data: msg.venue_data,
         image_url: msg.image_url,
+        thumb_url: msg.thumb_url || null,
         reactions: msg.reactions || [],
         // The server's reply row is { id, message_text, sender_name }; the
         // bubble reads .text and .sender. Stored raw, a reply delivered live

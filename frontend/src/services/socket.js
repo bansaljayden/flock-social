@@ -532,6 +532,7 @@ export function sendMessage(flockId, messageText, opts = {}) {
     message_type: opts.message_type || 'text',
     venue_data: opts.venue_data || null,
     image_url: opts.image_url || null,
+    thumb_url: opts.thumb_url || null,
   });
   return true;
 }
@@ -601,6 +602,7 @@ export function socketSendDm(receiverId, messageText, opts = {}) {
     message_type: opts.message_type || 'text',
     venue_data: opts.venue_data || null,
     image_url: opts.image_url || null,
+    thumb_url: opts.thumb_url || null,
     reply_to_id: opts.reply_to_id || null,
   });
   return true;
