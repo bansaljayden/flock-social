@@ -160,7 +160,7 @@ const PAGE_BLOCKS = {
     ["p", "Safety"],
     ["h2", "Getting home matters as much as getting out."],
     ["p", "Share your live location with your group while the night is on, and only while it’s on. If something goes wrong, one button tells the people you picked where you are."],
-    ["li", "One-tap SOS to your trusted contacts"],
+    ["li", "Two-tap SOS to your trusted contacts"],
     ["li", "Live location inside the flock, off by default"],
     ["li", "No background tracking, ever"],
     ["li", "Report and block on any message or profile"],
@@ -735,7 +735,7 @@ const SITE_GRAPH = [
       'Crowd level estimates for how busy a venue will be tonight',
       'Birdie, an assistant that answers plain-language questions about where to go',
       'Live location sharing inside the group, off by default',
-      'One-tap SOS to trusted contacts',
+      'Two-tap SOS to trusted contacts',
     ],
   },
 ];

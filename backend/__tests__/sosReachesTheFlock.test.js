@@ -145,3 +145,70 @@ test('the route never lets this leg change the answer the sender already got', (
   const call = src.slice(at, at + 400);
   assert.match(call, /\.catch\(/, 'an unhandled rejection here would take the process down on Node 18+');
 });
+
+// ---------------------------------------------------------------------------
+// THE STAND-DOWN'S FLOCK LEG (added 2026-08-27). The alarm above rings through
+// quiet hours onto every flockmate's phone; until this leg existed, cancelling
+// reached only the email contacts, so a flockmate could still be calling 911
+// for somebody who had already said they are OK.
+// ---------------------------------------------------------------------------
+
+const notifyFlockStandDown = __test && __test.notifyFlockStandDown;
+
+test('the stand-down helper is exposed, so the tests below drive the real code', () => {
+  assert.strictEqual(typeof notifyFlockStandDown, 'function');
+});
+
+test('a stand-down reaches each member with the OK, over socket and push', async () => {
+  reset();
+  memberRows = [{ user_id: 2 }, { user_id: 3 }];
+  const result = await notifyFlockStandDown(io, USER);
+  assert.strictEqual(result.notified, 2);
+
+  assert.deepStrictEqual(emitted.map((e) => e.room).sort(), ['user:2', 'user:3']);
+  for (const e of emitted) {
+    assert.strictEqual(e.event, 'safety_alert_cancelled');
+    assert.strictEqual(e.payload.fromUserId, '1');
+    assert.strictEqual(e.payload.fromUserName, 'Ava');
+    assert.ok(e.payload.at, 'the withdrawal is timestamped like the alarm');
+  }
+  assert.deepStrictEqual(pushes.map((x) => x.userId).sort(), [2, 3]);
+  for (const x of pushes) {
+    assert.strictEqual(x.data.type, 'safety_alert_cancelled');
+    assert.match(x.title, /Ava says they are OK/);
+  }
+});
+
+test('alarm and stand-down cannot drift apart: one audience query serves both', async () => {
+  // The stand-down must reach the SAME people the alarm reached. Both call
+  // sites share one SQL constant; this pins that they really do, byte for
+  // byte, so an edit to one query cannot silently orphan the other.
+  reset();
+  memberRows = [{ user_id: 2 }];
+  await alertFlockMembers(io, USER, null);
+  const alarmSql = queries.find((q) => /FROM flock_members fm/.test(q.sql));
+  reset();
+  memberRows = [{ user_id: 2 }];
+  await notifyFlockStandDown(io, USER);
+  const downSql = queries.find((q) => /FROM flock_members fm/.test(q.sql));
+  assert.ok(alarmSql && downSql);
+  assert.strictEqual(downSql.sql, alarmSql.sql);
+  assert.deepStrictEqual(downSql.params, alarmSql.params);
+});
+
+test('a stand-down with no qualifying flock does nothing and does not throw', async () => {
+  reset();
+  memberRows = [];
+  const result = await notifyFlockStandDown(io, USER);
+  assert.deepStrictEqual(result, { notified: 0 });
+  assert.strictEqual(pushes.length, 0);
+  assert.strictEqual(emitted.length, 0);
+});
+
+test('the all-clear rings through the night, because the alarm it withdraws did', () => {
+  const { RINGS_THROUGH_THE_NIGHT } = require('../services/pushHelper');
+  assert.ok(RINGS_THROUGH_THE_NIGHT.has('safety_alert'), 'the alarm (already pinned elsewhere)');
+  assert.ok(RINGS_THROUGH_THE_NIGHT.has('safety_alert_cancelled'),
+    'an all-clear held until morning is a night spent acting on an ended emergency');
+});
+

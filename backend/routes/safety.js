@@ -840,9 +840,11 @@ function agoPhrase(ms) {
 // SOS into a 500 that invites a frightened person to press it again.
 const SOS_FLOCK_WINDOW_HOURS = 12;
 
-async function alertFlockMembers(io, user, coords) {
-  const members = await pool.query(
-    `SELECT DISTINCT fm.user_id
+// The audience for BOTH directions of an SOS. The alarm and its stand-down
+// must reach the same people, so they share one query: a stand-down that
+// missed somebody the alarm reached leaves that person acting on a withdrawn
+// emergency, which is the failure the stand-down exists to prevent.
+const SOS_FLOCK_AUDIENCE_SQL = `SELECT DISTINCT fm.user_id
        FROM flock_members fm
        JOIN flocks f ON f.id = fm.flock_id
        JOIN flock_members me
@@ -858,9 +860,10 @@ async function alertFlockMembers(io, user, coords) {
           SELECT 1 FROM user_blocks b
           WHERE (b.blocker_id = $1 AND b.blocked_id = fm.user_id)
              OR (b.blocker_id = fm.user_id AND b.blocked_id = $1)
-        )`,
-    [user.id, SOS_FLOCK_WINDOW_HOURS]
-  );
+        )`;
+
+async function alertFlockMembers(io, user, coords) {
+  const members = await pool.query(SOS_FLOCK_AUDIENCE_SQL, [user.id, SOS_FLOCK_WINDOW_HOURS]);
 
   if (members.rows.length === 0) return { notified: 0 };
 
@@ -899,6 +902,46 @@ async function alertFlockMembers(io, user, coords) {
   return { notified };
 }
 
+// The stand-down's flock leg, and the leg /alert/cancel forgot for as long as
+// it existed: the alarm above deliberately rings through quiet hours and puts
+// a full-screen "call 911" modal on every flockmate's phone, and cancelling
+// reached only the email contacts, so a flockmate could still be calling 911
+// or leaving the venue to search for somebody who had already said they are
+// OK. Same audience query as the alarm, on purpose and by construction. The
+// window is re-evaluated at cancel time, which can only shrink the set toward
+// people whose plan is still near; anyone the alarm reached outside it holds
+// a stale alert, which the email contacts always risked too.
+async function notifyFlockStandDown(io, user) {
+  const members = await pool.query(SOS_FLOCK_AUDIENCE_SQL, [user.id, SOS_FLOCK_WINDOW_HOURS]);
+  if (members.rows.length === 0) return { notified: 0 };
+
+  const name = String(user.name || 'Someone you are out with').slice(0, 80);
+  const payload = {
+    type: 'safety_alert_cancelled',
+    fromUserId: String(user.id),
+    fromUserName: name,
+    at: new Date().toISOString(),
+  };
+  for (const row of members.rows) {
+    if (io) io.to(`user:${row.user_id}`).emit('safety_alert_cancelled', payload);
+  }
+  // pushAlways for the same reason the alarm uses it: the person this must
+  // reach may have put the phone down to go help. It also rings through quiet
+  // hours (pushHelper), because anyone it reaches was already woken by the
+  // alarm and is worrying or moving; the all-clear cannot wait for morning.
+  const results = await Promise.allSettled(
+    members.rows.map((row) => pushAlways(
+      row.user_id,
+      `${name} says they are OK`,
+      'They withdrew their SOS on Flock. If you already set out or called someone, let them know.',
+      payload
+    ))
+  );
+  const notified = results.filter((r) => r.status === 'fulfilled' && r.value && !r.value.skipped).length;
+  console.log(`[Safety] Stand-down from user ${user.id} reached ${notified} of ${members.rows.length} flock members.`);
+  return { notified };
+}
+
 router.post('/alert', authenticateAllowBanned, async (req, res) => {
   try {
     const { latitude, longitude, accuracy, includeLocation, timezone } = req.body;
@@ -924,6 +967,13 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
     let contacts;
     let userName;
     let alertId;
+    // Whether THIS send is an update to an alert already out, and which kind.
+    // Decided inside the claim transaction below and read at the email build
+    // AFTER it, which is why these live out here: declared inside the try they
+    // were out of scope at the send site, and the first version threw exactly
+    // there.
+    let updateKind = null; // 'moved' | 'location'
+    let updateAgeMs = 0;
     try {
       await client.query('BEGIN');
       await client.query("SELECT pg_advisory_xact_lock(hashtext('safety:' || $1::text))", [String(req.user.id)]);
@@ -951,6 +1001,13 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
       );
 
       const last = recent.rows[0] || null;
+      // Whether THIS send is an update to an alert already out, and which
+      // kind. Decided in the admission branches below and read at the send
+      // site, so the email can say so: a contact holding two byte-identical
+      // "Emergency Alert from Ava" messages cannot tell an update from a
+      // duplicate, and identical subjects thread in Gmail, collapsing the
+      // update under the original. (The bindings live above the transaction,
+      // in the same scope as the email build that reads them.)
       if (last) {
         const ageMs = Number(last.age_ms) || 0;
         const delivered = last.contacts_alerted > 0;
@@ -959,6 +1016,7 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
         // here, so both floor refusals below answer the same question and
         // cannot drift apart.
         const locationFollowUp = isLocationFollowUp(coords, last, ageMs);
+        if (locationFollowUp) { updateKind = 'location'; updateAgeMs = ageMs; }
 
         // In flight: a claim row with nothing confirmed yet. This is the only
         // refusal that is purely about concurrency, and it lapses in 60s.
@@ -1008,6 +1066,8 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
             });
           }
           // Escalation allowed: fall through and send the updated location.
+          updateKind = 'moved';
+          updateAgeMs = ageMs;
         }
 
         // Round 17, second pass. Releasing the claim on a total failure (below)
@@ -1132,6 +1192,9 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
     // act rather than assume a parent already has it; one of five needs to
     // know that four other people are about to ring the same number. The count
     // is settled before the fan-out starts, so it costs nothing to say.
+    const updateLine = updateKind
+      ? `<p style="font-size:14px;color:#b45309;margin:0 0 10px"><strong>This is an update to the alert sent ${agoPhrase(updateAgeMs)}.</strong> ${updateKind === 'moved' ? 'Their location has changed; the map below is the newest position.' : 'Their location is now available; the first alert had none.'}</p>`
+      : '';
     const alsoLine = withEmail.length > 1
       ? `<p style="color:#6b7280;font-size:13px">You are one of ${withEmail.length} people ${safeName} asked us to alert.</p>`
       : `<p style="color:#6b7280;font-size:13px">You are the only contact ${safeName} asked us to alert.</p>`;
@@ -1143,6 +1206,7 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
           <p style="color:#991b1b;margin:0;font-size:16px"><strong>${safeName}</strong> needs help</p>
         </div>
         <p style="font-size:15px;color:#1e293b">${safeName} has triggered an emergency alert on the <strong>Flock</strong> app and may need your assistance.</p>
+        ${updateLine}
         ${locationBlock}
         ${alsoLine}
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0">
@@ -1166,7 +1230,7 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
     const settled = await Promise.allSettled(
       withEmail.map((c) => sendAlertEmail(
         c.contact_email,
-        `🚨 Emergency Alert from ${safeSubjectText(userName)}`,
+        `🚨 ${updateKind ? 'Update: ' : ''}Emergency Alert from ${safeSubjectText(userName)}`,
         htmlBody,
         // The one send in Flock that the do-not-mail list does not get a vote on.
         { category: EMERGENCY_CATEGORY }
@@ -1513,6 +1577,17 @@ router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
       message: parts.join('. '),
       contactsToldCount: told.length,
     });
+
+    // The flock leg, after the response for the same reason every push
+    // fan-out runs there: the stand-down is committed and the sender is not
+    // kept waiting on the rest of the flock finding out. Best-effort; the
+    // email leg above is the one the response reports on.
+    try {
+      await notifyFlockStandDown(req.app.get('io'), req.user);
+    } catch (fanErr) {
+      console.error('[Safety] Flock stand-down fan-out failed:', fanErr?.message);
+    }
+    return undefined;
   } catch (err) {
     console.error('[Safety] Alert cancel error:', err);
     res.status(500).json({
@@ -1655,6 +1730,7 @@ module.exports.__test = {
   // lock, the sixty second claim window and the email fan-out, none of which
   // this function is about.
   alertFlockMembers,
+  notifyFlockStandDown,
   SOS_FLOCK_WINDOW_HOURS,
   readCoords,
   EMAIL_RE,

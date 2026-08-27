@@ -46,6 +46,14 @@ const FOCUSABLE =
 
 const EmergencySheet = ({
   contactCount,
+  // The contact READ failed or has not landed, so contactCount is not a fact.
+  // The distinction is the whole sheet in that state: telling somebody with
+  // three contacts "No trusted contacts set up" over a dead Alert button, at
+  // the panic moment, because a GET failed on bar wifi, was the worst sentence
+  // this surface could produce. When this is true the sheet says it could not
+  // check and LEAVES THE BUTTONS LIVE: the server is the authority on the
+  // list, and a genuine zero comes back as its own refusal naming 911.
+  contactsUnknown = false,
   armed,
   onArmedChange,
   sending,
@@ -155,10 +163,12 @@ const EmergencySheet = ({
     };
   }, []);
 
-  const noContacts = contactCount === 0;
-  const contactLine = noContacts
-    ? 'No trusted contacts set up'
-    : `${contactCount} trusted contact${contactCount === 1 ? '' : 's'} will be notified`;
+  const noContacts = !contactsUnknown && contactCount === 0;
+  const contactLine = contactsUnknown
+    ? "Couldn't check your contacts. You can still send the alert."
+    : noContacts
+      ? 'No trusted contacts set up'
+      : `${contactCount} trusted contact${contactCount === 1 ? '' : 's'} will be notified`;
 
   return (
     <div className="es-backdrop">

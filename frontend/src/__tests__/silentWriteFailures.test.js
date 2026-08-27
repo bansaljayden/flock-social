@@ -247,16 +247,26 @@ describe('the safety screen, which is the one that matters most', () => {
     expect(APP).toMatch(/Trusted Contacts\{trustedContactsLoaded \? ` \(\$\{trustedContacts\.length\}\)` : ''\}/);
   });
 
-  test('an emergency send does not tell someone to add contacts they may already have', () => {
+  test('an emergency send is only refused on a zero that was actually measured', () => {
+    // The 2026-08-27 safety audit moved this a step further than the pin it
+    // replaces: the old code answered an UNKNOWN list (read failed) with a
+    // toast and no request, so a failed GET stood between a person in trouble
+    // and a POST the server might have accepted. Now only a MEASURED zero is
+    // refused locally; an unknown list attempts the alert and lets the server,
+    // the authority on the list, answer (its zero-contact refusal names 911).
     const alert = region(APP, 'const handleEmergencyAlert = useCallback', 'cancelSosLocationFollowUp();');
-    expect(alert).toMatch(/if \(!trustedContactsLoaded\)/);
-    expect(alert).toMatch(/couldn't be loaded, so nobody has been alerted/);
-    // The old sentence survives, for the zero that was actually measured.
+    expect(alert).toMatch(/trustedContacts\.length === 0 && trustedContactsLoaded/);
     expect(alert).toMatch(/Add trusted contacts in Safety settings first/);
+    expect(alert).not.toMatch(/return;\s*\}\s*\}/);
   });
 
-  test('opening the emergency sheet re-reads a list that never loaded', () => {
-    expect(APP).toMatch(/if \(showSOS && !trustedContactsLoaded && !safetyLoading\) loadTrustedContacts\(\);/);
+  test('opening the emergency sheet re-reads a list that never loaded, boundedly', () => {
+    // Still re-reads on open, but the retry is capped per open: fully offline
+    // the old effect refired at microtask speed for as long as the sheet was
+    // up. Three tries with a widening gap, then the sheet's contactsUnknown
+    // state carries it (the buttons stay live either way).
+    expect(APP).toMatch(/sosContactRetryRef\.current >= 3/);
+    expect(APP).toMatch(/setTimeout\(\(\) => loadTrustedContacts\(\), attempt === 0 \? 0 : 2000 \* attempt\)/);
   });
 
   test('the sheet is still handed the same count prop it was extracted with', () => {
