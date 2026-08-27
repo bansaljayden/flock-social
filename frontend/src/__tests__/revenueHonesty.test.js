@@ -33,7 +33,14 @@ import {
   formatCurrency,
 } from '../lib/finance';
 
-const app = fs.readFileSync(path.resolve(__dirname, '..', 'App.js'), 'utf8');
+// The revenue simulator and the whole admin console left App.js on 2026-08-27
+// for screens/RevenueScreen.js and its own lazily loaded chunk. The simulator
+// state (the seeds this suite pins) stayed in FlockAppInner, so App.js still
+// carries it; the render, the labels and the break-even copy moved. Both files
+// are read and joined so every string this suite pins is in view, in the order
+// they used to be one file.
+const app = fs.readFileSync(path.resolve(__dirname, '..', 'App.js'), 'utf8')
+  + fs.readFileSync(path.resolve(__dirname, '..', 'screens', 'RevenueScreen.js'), 'utf8');
 
 // Strip JSX comments, block comments and line comments: what remains is what
 // can reach a screen.
