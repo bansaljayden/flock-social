@@ -313,9 +313,20 @@ describe('a stranger who signs up from a texted invite', () => {
   });
 
   test('VerifyEmailSheet reads as a sentence with that prompt in it', () => {
-    const sheet = region(APP, 'const VerifyEmailSheet =', 'const SOSModal');
+    // The sheet left App.js on 2026-08-26. It was declared inside
+    // FlockAppInner's render and mounted as an element, so its component type
+    // was rebuilt on every render and DialogBehavior grabbed focus again each
+    // time. It is components/VerifyEmailSheet.js now, so the whole file is the
+    // region rather than a slice between two neighbours in App.js.
+    const sheet = fs.readFileSync(
+      path.join(__dirname, '..', 'components', 'VerifyEmailSheet.js'),
+      'utf8'
+    );
     expect(sheet).toContain('Open it and you can {verifyPrompt} right away.');
     expect(sheet).toContain('resendVerification');
+    // Mounted from App.js with the props it now takes, so a file nothing
+    // renders cannot pass the two assertions above.
+    expect(APP).toContain('<VerifyEmailSheet {...verifyEmailSheetProps} />');
   });
 
   test('the stash is kept, so the next boot after they click the link finishes the join', () => {
