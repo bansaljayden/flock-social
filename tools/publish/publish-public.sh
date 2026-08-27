@@ -48,6 +48,10 @@ set -euo pipefail
 # has already configured git's credential helper to authenticate that way.
 PUBLIC_REMOTE="https://github.com/bansaljayden/flock-social.git"
 REDACTIONS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/redactions.txt"
+# Resolved HERE, before the cd into the throwaway mirror below, for the same
+# reason REDACTIONS is: BASH_SOURCE is a relative path, so a $(cd dirname)
+# evaluated after the cd would resolve against the mirror and silently miss.
+MSG_REDACTIONS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/message-redactions.txt"
 PUBLIC_REMOTE_HTTPS="https://github.com/bansaljayden/flock-social.git"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DRY_RUN=0
@@ -233,7 +237,6 @@ fi
 # live in message-redactions.txt (stripped from the mirror like its siblings).
 # Verified the same way content redaction is: every left-hand side must be
 # absent from every message afterwards, or the push is refused.
-MSG_REDACTIONS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/message-redactions.txt"
 if [ -f "$MSG_REDACTIONS" ]; then
   echo "==> redacting commit messages"
   python "$FILTER_REPO" --force --replace-message "$MSG_REDACTIONS" >/dev/null
