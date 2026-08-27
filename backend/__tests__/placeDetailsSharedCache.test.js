@@ -533,11 +533,23 @@ test('a Google error body is a 502 and is NOT cached — the next request retrie
   assert.strictEqual(charged(), 2, 'two real upstream attempts are two real charges');
 });
 
-test('an unreachable upstream is a 500 on the detail card and a 502 on the crowd card, as before', async () => {
-  // The two routes have always disagreed about this deliberately: venueSearch
-  // reports its own failure as a 500 and crowd turns every failure into a 502.
-  // The shared module returns a discriminated result rather than one null so
-  // that both behaviours survive.
+test('an unreachable upstream says real words on the detail card, and stays off the retry path', async () => {
+  // The two routes disagree about the STATUS on purpose and still do:
+  // venueSearch answers 500 and crowd answers 502, which is why the shared
+  // module returns a discriminated result rather than one null.
+  //
+  // WHAT CHANGED on 2026-08-26 is the WORDS. This answered 'Failed to get
+  // venue details', which is a stack frame wearing display copy, on a route
+  // whose strings frontend/src/App.js renders.
+  //
+  // WHAT DELIBERATELY DID NOT CHANGE is the 500, even though 502 describes an
+  // upstream that did not answer far better. services/placeDetailsCache.js
+  // reports a timeout and a bad body under one 'unreachable' kind, and
+  // frontend/src/services/api.js auto-retries every GET answering 502, 503 or
+  // 504. A retried Place Details timeout is a second and third invoice for a
+  // request Google already metered (utils/upstream.js), so the whole class
+  // keeps the conservative status until the client opts this call out of the
+  // retry loop.
   const placeId = uniqueId();
   const stashed = global.fetch;
   global.fetch = (url, opts) => {
@@ -551,6 +563,9 @@ test('an unreachable upstream is a 500 on the detail card and a 502 on the crowd
   try {
     const details = await get(`/api/venues/details?place_id=${placeId}`);
     assert.strictEqual(details.status, 500, details.text);
+    assert.strictEqual(details.body.error, 'That venue is not loading right now. Try again in a moment.');
+    assert.ok(!/Failed to get venue details/i.test(details.text),
+      'an upstream that never answered is still reported as a failed lookup');
 
     const crowdId = uniqueId();
     const crowd = await get(`/api/crowd/${crowdId}?localHour=20&localDay=5`);
