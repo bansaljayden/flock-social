@@ -282,7 +282,12 @@ test('FIXED V: fifty stuffed guest votes cannot outweigh a three-member roster',
   // that cap is per FLOCK, not per person, which is why this is reachable at
   // all. The sybil door is still open; what it can do here is now bounded.
   const guestSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'guest.js'), 'utf8');
-  assert.match(guestSrc, /if \(count\.rows\[0\]\.n >= 50\)/, 'the cap, read from the route');
+  // The literal 50 became the named GUEST_ROWS_CAP on 2026-08-27, when the
+  // GET preview started warning about the same ceiling and two places had to
+  // agree on it. Pin the named form AND the value, so renaming cannot
+  // silently loosen the cap either.
+  assert.match(guestSrc, /if \(count\.rows\[0\]\.n >= GUEST_ROWS_CAP\)/, 'the cap, read from the route');
+  assert.match(guestSrc, /const GUEST_ROWS_CAP = 50;/, 'and the ceiling is still fifty');
   for (let i = 0; i < 50; i += 1) world.guestVotes.push({ guest_rsvp_id: i + 1, venue_name: 'The Link Holders Pick', hidden: false });
 
   tally = await votes();
