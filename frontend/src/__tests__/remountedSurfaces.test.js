@@ -76,11 +76,25 @@ const PARSE_OPTIONS = {
 };
 const parse = (code) => parser.parse(code, PARSE_OPTIONS);
 
-/* The three, the props object each is handed, and the file it moved to. */
+/* The three, the props object each is handed, the file it moved to, and the
+ * file plus function that now HOSTS it: builds its props object and mounts it.
+ *
+ * Two of the three are still hosted by App.js, where they always were. The
+ * third is not. EditProfileForm is the one subscreen of the profile screen, so
+ * when the profile and settings screen (the You tab) left App.js for
+ * screens/ProfileSettings.js on 2026-08-27, the Edit Profile mount and the
+ * editProfileFormProps object went down a level with it. That is not a new
+ * remount risk. It is the same guarantee proved against a different host: the
+ * object is still built by hand from shorthand names, and those names are now
+ * ProfileSettings' own parameters rather than FlockAppInner's bindings, so the
+ * scope every check below resolves against is per component, not App.js flat. */
 const MOVED = [
-  { component: 'EditProfileForm', file: 'EditProfileForm.js', props: 'editProfileFormProps' },
-  { component: 'NewDmModal', file: 'NewDmModal.js', props: 'newDmModalProps' },
-  { component: 'VerifyEmailSheet', file: 'VerifyEmailSheet.js', props: 'verifyEmailSheetProps' },
+  { component: 'EditProfileForm', file: 'EditProfileForm.js', props: 'editProfileFormProps',
+    host: ['screens', 'ProfileSettings.js'], hostFn: 'ProfileSettings' },
+  { component: 'NewDmModal', file: 'NewDmModal.js', props: 'newDmModalProps',
+    host: ['App.js'], hostFn: 'FlockAppInner' },
+  { component: 'VerifyEmailSheet', file: 'VerifyEmailSheet.js', props: 'verifyEmailSheetProps',
+    host: ['App.js'], hostFn: 'FlockAppInner' },
 ];
 
 const APP_SOURCE = read('App.js');
@@ -93,18 +107,52 @@ const FILE_ASTS = Object.fromEntries(
   MOVED.map((m) => [m.component, parse(FILE_SOURCES[m.component])])
 );
 
-/* ── App.js shape: the props objects, and FlockAppInner's scope ───────────── */
+/* ── Per host: source, module bindings, the hosting function's scope, and the
+ *    props object it builds ─────────────────────────────────────────────────
+ *
+ * A host file is read and parsed once even when two components share it, which
+ * App.js does for NewDmModal and VerifyEmailSheet. */
 
-function readAppShape() {
-  const objects = {};
-  let innerPath = null;
-  traverse(APP_AST, {
+const HOST_CACHE = {};
+function hostData(hostPath) {
+  const key = hostPath.join('/');
+  if (HOST_CACHE[key]) return HOST_CACHE[key];
+  const source = read(...hostPath);
+  const ast = parse(source);
+  let moduleBindings = null;
+  traverse(ast, { Program(p) { moduleBindings = p.scope.bindings; } });
+  HOST_CACHE[key] = { source, ast, moduleBindings };
+  return HOST_CACHE[key];
+}
+
+/** The scope of the named hosting function inside a host AST. FlockAppInner is
+ *  `const FlockAppInner = (...) => {...}`; ProfileSettings is
+ *  `export default function ProfileSettings({...}) {...}`. Both are covered. */
+function hostFunctionScope(ast, name) {
+  let scope = null;
+  traverse(ast, {
     VariableDeclarator(p) {
-      const id = p.node.id;
-      if (id.type !== 'Identifier') return;
-      if (id.name === 'FlockAppInner') innerPath = p.get('init');
-      if (!MOVED.some((m) => m.props === id.name)) return;
-      objects[id.name] = p.node.init.properties.map((prop) => ({
+      if (p.node.id.type === 'Identifier' && p.node.id.name === name
+          && p.node.init && ['ArrowFunctionExpression', 'FunctionExpression'].includes(p.node.init.type)) {
+        scope = p.get('init').scope;
+      }
+    },
+    FunctionDeclaration(p) {
+      if (p.node.id && p.node.id.name === name) scope = p.scope;
+    },
+  });
+  return scope;
+}
+
+/** The `const <propsName> = { ... }` object in a host AST, described the same
+ *  way readAppShape used to describe it. */
+function propsObjectIn(ast, propsName) {
+  let out = null;
+  traverse(ast, {
+    VariableDeclarator(p) {
+      if (p.node.id.type !== 'Identifier' || p.node.id.name !== propsName) return;
+      if (!p.node.init || p.node.init.type !== 'ObjectExpression') return;
+      out = p.node.init.properties.map((prop) => ({
         key: prop.type === 'ObjectProperty' && prop.key.type === 'Identifier' ? prop.key.name : null,
         shorthand: prop.type === 'ObjectProperty' && prop.shorthand === true,
         valueName: prop.type === 'ObjectProperty' && prop.value.type === 'Identifier'
@@ -114,16 +162,32 @@ function readAppShape() {
       }));
     },
   });
-  return { objects, innerPath };
+  return out;
 }
 
-const { objects: PROPS_OBJECTS, innerPath: FLOCK_APP_INNER } = readAppShape();
+/* Everything the sections below need, per component. */
+const HOSTED = Object.fromEntries(MOVED.map((m) => {
+  const h = hostData(m.host);
+  return [m.component, {
+    hostSource: h.source,
+    moduleBindings: h.moduleBindings,
+    fnScope: hostFunctionScope(h.ast, m.hostFn),
+    propsObject: propsObjectIn(h.ast, m.props),
+  }];
+}));
 
-/** Module level bindings of App.js, by name. */
-const APP_MODULE_BINDINGS = (() => {
-  let out = null;
-  traverse(APP_AST, { Program(p) { out = p.scope.bindings; } });
-  return out;
+/** FlockAppInner's own path, kept for section 4, which is about what is still
+ *  declared inside App.js's render regardless of where these three now live. */
+const FLOCK_APP_INNER = (() => {
+  let innerPath = null;
+  traverse(APP_AST, {
+    VariableDeclarator(p) {
+      if (p.node.id.type === 'Identifier' && p.node.id.name === 'FlockAppInner') {
+        innerPath = p.get('init');
+      }
+    },
+  });
+  return innerPath;
 })();
 
 /**
@@ -160,14 +224,19 @@ function freeIdentifiers(ast) {
 /* ── 0. the file did not scan nothing ────────────────────────────────────── */
 
 describe('this suite is reading the code it claims to read', () => {
-  it('found FlockAppInner and all three props objects', () => {
+  it('found each hosting function and all three props objects', () => {
     // An anchor that misses returns undefined, and every loop below a missing
     // anchor iterates zero times and reports success. This is the assertion
-    // that stops that.
+    // that stops that. FlockAppInner is checked for section 4, which is still
+    // about App.js's render; each component's own host function and props
+    // object are checked here, because they are what sections 1 and 2 resolve
+    // against and one of them is no longer in App.js.
     expect(FLOCK_APP_INNER).not.toBeNull();
-    expect(Object.keys(PROPS_OBJECTS).sort()).toEqual(MOVED.map((m) => m.props).sort());
-    MOVED.forEach(({ props }) => {
-      expect(PROPS_OBJECTS[props].length).toBeGreaterThan(0);
+    MOVED.forEach(({ component }) => {
+      const H = HOSTED[component];
+      expect(H.fnScope).not.toBeNull();
+      expect(H.propsObject).not.toBeNull();
+      expect(H.propsObject.length).toBeGreaterThan(0);
     });
   });
 
@@ -183,23 +252,27 @@ describe('this suite is reading the code it claims to read', () => {
 
 describe('the three are stable component types now', () => {
   MOVED.forEach(({ component, props }) => {
-    it(`${component} is imported at App.js module scope, not declared in the render`, () => {
+    it(`${component} is imported at its host's module scope, not declared in the render`, () => {
       // THE FIX ITSELF. A module binding has one identity for the life of the
-      // page. A binding inside FlockAppInner is rebuilt on every render, which
-      // is what unmounted these three under people's hands.
-      expect(Object.keys(APP_MODULE_BINDINGS)).toContain(component);
+      // page. A binding inside the hosting render function is rebuilt on every
+      // render, which is what unmounted these three under people's hands. The
+      // host is App.js for two of them and screens/ProfileSettings.js for
+      // EditProfileForm, and each must import the component at ITS module scope
+      // and not redeclare it in its render.
+      const H = HOSTED[component];
+      expect(Object.keys(H.moduleBindings)).toContain(component);
       // Compared as a list of NAMES, not as the binding object. A Babel
       // Binding holds the scope graph, so handing one to `expect` and letting
       // it fail makes jest try to serialise the whole AST, and the run dies
       // with a heap out of memory instead of printing the failure. That was
       // measured, not guessed: the first mutation run of this suite OOMed at
       // 4 GB rather than saying which component had moved back.
-      expect(Object.keys(FLOCK_APP_INNER.scope.bindings).filter((n) => n === component))
+      expect(Object.keys(H.fnScope.bindings).filter((n) => n === component))
         .toEqual([]);
     });
 
     it(`${component} is mounted as an element with a spread props object`, () => {
-      expect(APP_SOURCE).toContain(`<${component} {...${props}} />`);
+      expect(HOSTED[component].hostSource).toContain(`<${component} {...${props}} />`);
     });
   });
 });
@@ -209,7 +282,7 @@ describe('the three are stable component types now', () => {
 describe('what App.js hands over is exactly what the component takes', () => {
   MOVED.forEach(({ component, props }) => {
     it(`${component} declares every name ${props} passes, and no others`, () => {
-      const passedNames = PROPS_OBJECTS[props].map((p) => p.key).sort();
+      const passedNames = HOSTED[component].propsObject.map((p) => p.key).sort();
       const paramNames = componentParameters(FILE_ASTS[component], component)
         .map((p) => p.name)
         .sort();
@@ -234,7 +307,7 @@ describe('what App.js hands over is exactly what the component takes', () => {
       // impossible to drift apart, and it rules out the shapes that CAN go
       // stale: `foo: someRef.current` freezes a ref read at build time,
       // `foo: bar.baz` freezes a lookup.
-      const notShorthand = PROPS_OBJECTS[props]
+      const notShorthand = HOSTED[component].propsObject
         .filter((p) => !p.shorthand)
         .map((p) => `${p.key} (line ${p.line})`);
       expect(notShorthand).toEqual([]);
@@ -243,13 +316,17 @@ describe('what App.js hands over is exactly what the component takes', () => {
     it(`every name in ${props} binds to something that is never reassigned`, () => {
       // A closure read a live binding. An object literal reads it once, at the
       // instant the object is built. Those are the same answer for a const and
-      // can differ for anything else, so anything else is refused.
+      // can differ for anything else, so anything else is refused. The scope
+      // resolved against is the component's own host: FlockAppInner for two of
+      // them, ProfileSettings for EditProfileForm, whose prop values are that
+      // screen's parameters (kind `param`) rather than App.js bindings.
+      const H = HOSTED[component];
       const bad = [];
-      for (const prop of PROPS_OBJECTS[props]) {
+      for (const prop of H.propsObject) {
         const name = prop.valueName || prop.key;
-        const binding = FLOCK_APP_INNER.scope.getBinding(name);
+        const binding = H.fnScope.getBinding(name);
         if (!binding) {
-          bad.push(`${name}: no binding found in App.js`);
+          bad.push(`${name}: no binding found in the host`);
           continue;
         }
         if (!['const', 'module', 'param'].includes(binding.kind)) {

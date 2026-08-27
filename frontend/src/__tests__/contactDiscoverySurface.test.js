@@ -34,8 +34,12 @@ const read = (...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8');
 // FlockAppInner's render and mounted as an element, so React rebuilt its type
 // on every render and threw away whatever had been typed into it. The phone
 // field this suite checks for went with it, so both files are read as one.
+// The profile and settings screen (the You tab) left App.js on 2026-08-27 for
+// screens/ProfileSettings.js, and the phone-discovery subscreen and its
+// settings row went with it, so that file is read into `app` as well.
 const app = read('frontend', 'src', 'App.js')
-  + read('frontend', 'src', 'components', 'EditProfileForm.js');
+  + read('frontend', 'src', 'components', 'EditProfileForm.js')
+  + read('frontend', 'src', 'screens', 'ProfileSettings.js');
 // The Add Friends screen, and with it the whole Contacts tab, left App.js for
 // screens/AddFriends.js. The handlers behind it did not move, so this file now
 // reads two sources: each assertion points at whichever one holds the line it

@@ -35,7 +35,13 @@ import { pullSettings } from '../services/userSettings';
 const fs = require('fs');
 const path = require('path');
 
-const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+// The crowd-alerts settings row lives on the profile and settings screen (the
+// You tab), which left App.js on 2026-08-27 for screens/ProfileSettings.js. The
+// crowdAlertsOn initializer this suite compiles and runs stayed in App.js, so
+// both files are read: the initializer resolves in the first, the row in the
+// second.
+const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8');
 const SETTINGS = fs.readFileSync(
   path.join(__dirname, '..', 'services', 'userSettings.js'),
   'utf8'

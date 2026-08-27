@@ -29,7 +29,11 @@ import {
 const fs = require('fs');
 const path = require('path');
 
-const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+// The "Get a copy of my data" control and its sheet live on the profile and
+// settings screen (the You tab), which left App.js on 2026-08-27 for
+// screens/ProfileSettings.js, so both files are read as one.
+const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8');
 const API = fs.readFileSync(path.join(__dirname, '..', 'services', 'api.js'), 'utf8');
 
 const PAYLOAD = { generated_at: '2026-08-26T00:00:00.000Z', flocks: [{ name: 'Friday' }] };

@@ -23,9 +23,13 @@ const read = (...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8');
 // them) went with them. Nothing asserted below changed. The app source is
 // simply in three files, so all three are read, in the order they used to be
 // one.
+// The profile and settings screen (the You tab) left App.js on 2026-08-27 for
+// screens/ProfileSettings.js, and the "Get a copy of my data" export control the
+// privacy policy points at went with it, so that file is read here too.
 const APP_SOURCE = read('frontend', 'src', 'App.js')
   + read('frontend', 'src', 'screens', 'ChatDetail.js')
-  + read('frontend', 'src', 'screens', 'DmDetail.js');
+  + read('frontend', 'src', 'screens', 'DmDetail.js')
+  + read('frontend', 'src', 'screens', 'ProfileSettings.js');
 const exists = (...p) => fs.existsSync(path.join(REPO, ...p));
 
 const privacy = read('frontend', 'src', 'website', 'PrivacyPolicy.js');

@@ -64,10 +64,14 @@ const {
 // row and the report entry went with it. Same treatment: nothing asserted
 // below changed, the app source is simply in three files now, and all three
 // are read in the order they used to be one.
+// The profile and settings screen (the You tab) left App.js on 2026-08-27 for
+// screens/ProfileSettings.js, and the blocked-accounts empty and failed-read
+// states, each with their bird, went with it, so it is read here too.
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatDetail.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'VenueDashboard.js'), 'utf8')
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'AddFriends.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'AddFriends.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8');
 const BIRD_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'components', 'ui', 'BirdieBird.js'),
   'utf8'

@@ -57,8 +57,14 @@ const path = require('path');
 // screen, which left App.js for screens/DmDetail.js on 2026-08-27; its source is
 // concatenated so those call-site checks still find them. The handlers behind
 // them (loadDmVenueVotes, onDmNewVote, startNewDmWithUser) did not move.
+// The safety screen and its trusted-contacts list left App.js on 2026-08-27
+// with the profile and settings screen (the You tab), now
+// screens/ProfileSettings.js. Its handlers (loadTrustedContacts, handleSaveContact
+// and the rest) stayed in App.js, so that file is concatenated for the call-site
+// checks the same way DmDetail is.
 const APP_SRC = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'DmDetail.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'DmDetail.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8');
 
 /**
  * Comments dropped, so prose describing a fix cannot pass for the fix. Line

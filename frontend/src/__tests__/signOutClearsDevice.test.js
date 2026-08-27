@@ -71,7 +71,14 @@ const fs = require('fs');
 const path = require('path');
 
 const API = fs.readFileSync(path.join(__dirname, '..', 'services', 'api.js'), 'utf8');
-const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+// The delete-account flow lives on the profile and settings screen (the You
+// tab), which left App.js on 2026-08-27 for screens/ProfileSettings.js. Its
+// `await deleteAccount(...)` handler and the onLogout it calls went with it,
+// while endSession, beginSession and the session-expired wiring stayed in
+// App.js, so both files are read: App.js offsets are unchanged because the
+// screen is appended after them.
+const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8');
 
 function jsonRes(body, status = 200) {
   return {
