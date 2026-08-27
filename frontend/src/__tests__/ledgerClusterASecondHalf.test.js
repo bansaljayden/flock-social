@@ -35,6 +35,9 @@ function codeOnly(src) {
 
 const APP = codeOnly(readRaw('App.js'));
 const CHAT = codeOnly(readRaw('screens', 'ChatDetail.js'));
+// The DM thread left App.js for screens/DmDetail.js on 2026-08-27; the DM
+// reaction pill A1 fixed went with it, so the A1 assertions read this now.
+const DM = codeOnly(readRaw('screens', 'DmDetail.js'));
 const ADD_FRIENDS = codeOnly(readRaw('screens', 'AddFriends.js'));
 const NEW_DM = codeOnly(readRaw('components', 'NewDmModal.js'));
 const EDIT_PROFILE = codeOnly(readRaw('components', 'EditProfileForm.js'));
@@ -65,8 +68,9 @@ describe('the comment stripper and the reads are real', () => {
   });
 
   it('every file read is a real file, not an empty string', () => {
-    [['App.js', APP], ['ChatDetail.js', CHAT], ['AddFriends.js', ADD_FRIENDS],
-      ['NewDmModal.js', NEW_DM], ['EditProfileForm.js', EDIT_PROFILE],
+    [['App.js', APP], ['ChatDetail.js', CHAT], ['DmDetail.js', DM],
+      ['AddFriends.js', ADD_FRIENDS], ['NewDmModal.js', NEW_DM],
+      ['EditProfileForm.js', EDIT_PROFILE],
     ].forEach(([name, src]) => {
       expect(`${name}:${src.length > 2000}`).toBe(`${name}:true`);
     });
@@ -79,14 +83,14 @@ describe('A1: a DM reaction can be taken back after a reload', () => {
     // groupReactions keeps who left each reaction; the old inline reduce keyed
     // on emoji alone and threw the user_id away, so after a reload the pill knew
     // it existed but not that it was yours.
-    expect(APP).toMatch(/import ChatDetail, \{ groupReactions \} from '\.\/screens\/ChatDetail'/);
-    expect(APP).toContain('groupReactions(m.reactions)');
+    expect(DM).toMatch(/import \{ groupReactions \} from '\.\/ChatDetail'/);
+    expect(DM).toContain('groupReactions(m.reactions)');
   });
 
   it('ownership is compared as a string, because the two read paths disagree on type', () => {
     // REST history hands user_id back as a number, the live socket as a string.
     // The block that decides whether a DM reaction is yours must coerce both.
-    const block = between(APP, 'groupReactions(m.reactions).map((g)', 'dmRemoveReact(m.id', 120, 1200);
+    const block = between(DM, 'groupReactions(m.reactions).map((g)', 'dmRemoveReact(m.id', 120, 1200);
     expect(block).toContain('String(id) === String(authUser?.id)');
     // And the strict, un-coerced comparison that broke reload is gone.
     expect(block).not.toMatch(/r\.user_id === authUser\?\.id/);

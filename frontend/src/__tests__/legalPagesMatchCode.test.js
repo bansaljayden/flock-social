@@ -17,13 +17,15 @@ const path = require('path');
 const REPO = path.resolve(__dirname, '..', '..', '..');
 const read = (...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8');
 
-// The flock chat screen left App.js on 2026-08-26: it lives in
-// screens/ChatDetail.js now, and the message list, the composer, the reaction
-// row and the report entry went with it. Nothing asserted below changed. The
-// app source is simply in two files, so both are read, in the order they used
-// to be one.
+// The flock chat screen left App.js on 2026-08-26 and the one-to-one DM thread
+// left on 2026-08-27: they live in screens/ChatDetail.js and screens/DmDetail.js
+// now, and the report entry points (the dm and profile report surfaces among
+// them) went with them. Nothing asserted below changed. The app source is
+// simply in three files, so all three are read, in the order they used to be
+// one.
 const APP_SOURCE = read('frontend', 'src', 'App.js')
-  + read('frontend', 'src', 'screens', 'ChatDetail.js');
+  + read('frontend', 'src', 'screens', 'ChatDetail.js')
+  + read('frontend', 'src', 'screens', 'DmDetail.js');
 const exists = (...p) => fs.existsSync(path.join(REPO, ...p));
 
 const privacy = read('frontend', 'src', 'website', 'PrivacyPolicy.js');

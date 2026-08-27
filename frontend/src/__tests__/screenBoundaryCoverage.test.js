@@ -329,10 +329,10 @@ describe('ScreenSlot is what makes the boundary able to catch anything', () => {
   });
 
   test('a screen that answers with nothing is not itself an error', () => {
-    // dmDetailScreen is a && chain and the role-gated screens return null
-    // while their redirect effect runs. Returning undefined from a component
-    // is a React error in its own right, which would turn a no-op screen into
-    // a crash the moment it went through a component.
+    // DmDetail's own && chain can resolve to nothing and the role-gated screens
+    // return null while their redirect effect runs. Returning undefined from a
+    // component is a React error in its own right, which would turn a no-op
+    // screen into a crash the moment it went through a component.
     const { container } = render(
       <ErrorBoundary label="empty">
         <ScreenSlot render={() => undefined} />
@@ -381,12 +381,16 @@ describe('App.js routes every screen through a boundary', () => {
     expect(APP_CODE).not.toMatch(/\{ExploreScreen\(\)\}/);
   });
 
-  test('the DM thread is a builder, not a tree built on every render', () => {
-    // As a value its whole JSX was constructed during the component's own
-    // render, on every screen — i.e. outside the boundary, where a throw is
-    // still fatal.
-    expect(APP_CODE).toMatch(/const dmDetailScreen = \(\) =>/);
-    expect(APP_CODE).toMatch(/if \(currentScreen === 'dmDetail'\) return dmDetailScreen\(\);/);
+  test('the DM thread is a mounted component, not a tree built on every render', () => {
+    // It was a builder called from the switch. On 2026-08-27 it became a
+    // component in screens/DmDetail.js, mounted only when its screen is active
+    // and only from inside renderScreen, so its whole JSX tree is constructed
+    // in the boundary's subtree rather than during the shell's own render. The
+    // props object is built in that same branch, so a throw while assembling it
+    // is caught too.
+    expect(APP_CODE).not.toMatch(/const dmDetailScreen = \(\) =>/);
+    expect(APP_CODE).toContain('<DmDetail {...dmDetailProps} />');
+    expect(APP_CODE).toMatch(/if \(currentScreen === 'dmDetail'\) \{/);
   });
 
   test('a screen added to the switch later is boundaried without anyone remembering', () => {

@@ -42,8 +42,9 @@
  *   of what the failed read left on screen.
  *
  * Source-scanning, not rendering, like every other App.js suite in this folder:
- * each fact under test is a call-site choice inside a 20,000-line file, and the
- * screens that draw these states mount inside the same monolith.
+ * each fact under test is a call-site choice inside a 20,000-line file. Most of
+ * the screens that draw these states mount inside the same monolith; the DM
+ * thread left it for screens/DmDetail.js on 2026-08-27 and is read alongside.
  *
  * HOW TO RUN
  *   cd frontend && CI=true npx react-scripts test --watchAll=false
@@ -52,7 +53,12 @@
 const fs = require('fs');
 const path = require('path');
 
-const APP_SRC = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+// The venue-vote panel and its "not connected" copy below are drawn by the DM
+// screen, which left App.js for screens/DmDetail.js on 2026-08-27; its source is
+// concatenated so those call-site checks still find them. The handlers behind
+// them (loadDmVenueVotes, onDmNewVote, startNewDmWithUser) did not move.
+const APP_SRC = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'DmDetail.js'), 'utf8');
 
 /**
  * Comments dropped, so prose describing a fix cannot pass for the fix. Line

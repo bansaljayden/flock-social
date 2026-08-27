@@ -34,13 +34,15 @@ const capConfigTs = read('frontend', 'capacitor.config.ts');
 const pbxproj = read('frontend', 'ios', 'App', 'App.xcodeproj', 'project.pbxproj');
 const codemagic = read('codemagic.yaml');
 
-// The flock chat screen left App.js on 2026-08-26: it lives in
-// screens/ChatDetail.js now, and the message list, the composer, the reaction
-// row and the report entry went with it. Nothing asserted below changed. The
-// app source is simply in two files, so both are read, in the order they used
-// to be one.
+// The flock chat screen left App.js on 2026-08-26 and the one-to-one DM thread
+// left on 2026-08-27: they live in screens/ChatDetail.js and screens/DmDetail.js
+// now, and the message lists, the composers, the reaction rows and the report
+// entries went with them, along with the DM camera and photo-library inputs.
+// Nothing asserted below changed. The app source is simply in three files, so
+// all three are read, in the order they used to be one.
 const app = read('frontend', 'src', 'App.js')
-  + read('frontend', 'src', 'screens', 'ChatDetail.js');
+  + read('frontend', 'src', 'screens', 'ChatDetail.js')
+  + read('frontend', 'src', 'screens', 'DmDetail.js');
 // The only file that touches the address book. The contacts purpose string is
 // asserted against THIS rather than against App.js, because App.js calls it and
 // this is where the permission is actually requested.
