@@ -505,24 +505,6 @@ router.post('/:flockId/submit',
         }).catch((e) => console.error('budget_updated fan-out failed:', e.message));
       }
 
-      // Push "Budget set!" on the settling submission, which happens at most
-      // once per flock because the budget is locked from here on.
-      if (settledNow && visibleCeiling) {
-        const flockNameResult = await pool.query('SELECT name FROM flocks WHERE id = $1', [flockId]);
-        const flockName = flockNameResult.rows[0]?.name || 'Flock';
-        const membersResult = await pool.query(
-          "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
-          [flockId, userId]
-        );
-        for (const m of membersResult.rows) {
-          await pushIfOffline(io, m.user_id,
-            'Budget set!',
-            `Group budget: up to $${formatMoney(visibleCeiling)} for ${flockName}`,
-            { type: 'budget_ready', flockId: String(flockId) }
-          );
-        }
-      }
-
       res.json({
         submitted: true,
         ceiling: visibleCeiling,
@@ -533,6 +515,36 @@ router.post('/:flockId/submit',
         budgetLocked: settledNow,
         userSubmitted: true,
       });
+
+      // Push "Budget set!" on the settling submission, which happens at most
+      // once per flock because the budget is locked from here on. It runs AFTER
+      // res.json, inside its own try/catch, and fans out with allSettled, for
+      // the reason billing.js records: pushIfOffline is not guaranteed to hand
+      // back a promise, so a synchronous throw here, while this sat before the
+      // response, landed in the outer catch and answered a budget that had
+      // already settled in the transaction with a 500 that a retry then refuses.
+      // The settle is committed by this point, so a delivery failure must not
+      // unwind it, and a twenty-member fan-out must not be twenty sequential
+      // Firebase round trips the submitter waits on.
+      if (settledNow && visibleCeiling) {
+        try {
+          const flockNameResult = await pool.query('SELECT name FROM flocks WHERE id = $1', [flockId]);
+          const flockName = flockNameResult.rows[0]?.name || 'Flock';
+          const membersResult = await pool.query(
+            "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+            [flockId, userId]
+          );
+          await Promise.allSettled(
+            membersResult.rows.map((m) => pushIfOffline(io, m.user_id,
+              'Budget set!',
+              `Group budget: up to $${formatMoney(visibleCeiling)} for ${flockName}`,
+              { type: 'budget_ready', flockId: String(flockId) }
+            ))
+          );
+        } catch (pushErr) {
+          console.error('Budget set push fan-out failed:', pushErr.message);
+        }
+      }
     } catch (err) {
       console.error('Budget submit error:', err);
       res.status(500).json({ error: 'Failed to submit budget' });

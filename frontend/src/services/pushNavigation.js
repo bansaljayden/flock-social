@@ -108,6 +108,32 @@ export function intentFromData(data) {
     // App.js refuses this for any account without the role.
     return { screen: 'admin', type };
   }
+
+  if (type === 'safety_alert') {
+    // The highest-stakes tap in the app, and until now the one that landed on
+    // the home screen showing nothing. The alert modal is a top-level overlay
+    // that needs no loaded list, and the payload already carries who and where,
+    // so the tap opens it directly. There is no server round trip: the socket
+    // emit that drives this modal for an online member is never replayed to the
+    // member who was offline when it fired, which is exactly the person a push
+    // exists to reach. Coordinates arrive as strings here (FCM data values are
+    // strings, and the service worker's cleanData stringifies), so they are
+    // coerced and dropped to null unless finite, the same rule the socket
+    // handler applies, so a missing location never renders as a pin at 0,0.
+    const userId = asId(data.fromUserId);
+    if (!userId) return null;
+    const lat = Number(data.latitude);
+    const lng = Number(data.longitude);
+    return {
+      screen: 'safety',
+      userId,
+      name: data.fromUserName ? String(data.fromUserName) : '',
+      lat: Number.isFinite(lat) ? lat : null,
+      lng: Number.isFinite(lng) ? lng : null,
+      at: data.at ? String(data.at) : null,
+      type,
+    };
+  }
   if (type === 'flock_invite') {
     // NOT { screen: 'flock' }. An invited flock is not in the accepted list the
     // chat screen resolves against, so a chat intent for one either opened an
