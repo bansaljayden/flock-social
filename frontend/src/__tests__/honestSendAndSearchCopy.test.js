@@ -133,6 +133,11 @@ describe('what the confirm screen claims about the email', () => {
       expect(utils.queryByText(/we sent a link/i)).toBeNull();
       // And it says what did happen, rather than going quiet.
       expect(utils.queryByText(/did not go out/i)).not.toBeNull();
+      // A7: the honest no-send copy must STILL name the address, so a typo in
+      // the email is recoverable and the person knows which inbox to fix. The
+      // browser signup spec asserts the address is on this screen, and the
+      // honest branch is exactly where it is easiest to drop.
+      expect(utils.getByText(/did not go out/i).textContent).toMatch(/@example\.com/);
     });
 
     test(`${label} offers to send it, not to send it "again", when nothing was sent`, async () => {
