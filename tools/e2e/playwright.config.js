@@ -21,8 +21,17 @@ module.exports = defineConfig({
   // Specs share one database, so they must not share one ACCOUNT. Every spec
   // signs up its own, keyed on a unique address (see helpers.js newEmail).
   // With that, parallel is safe and the suite finishes in a usable time.
+  //
+  // Two workers, not four. The account isolation makes parallel correct, but the
+  // two-person specs each drive two browser contexts, so at four workers eight
+  // contexts hammer one embedded Postgres and one server process at once. That
+  // starved the socket round trip in the photo-share and vote-agreement flows
+  // and false-reddened two specs on every full run, while both passed alone. The
+  // suite exists to find real breakage (retries stay 0), so the fix is to stop
+  // manufacturing contention, not to paper it over with a retry. This is the
+  // number CI already used; local now matches it. Cost is a few extra minutes.
   fullyParallel: true,
-  workers: process.env.CI ? 2 : 4,
+  workers: 2,
 
   // A flake that passes on retry is a flake nobody fixes. This suite exists to
   // find real breakage, so a failure stays a failure.
