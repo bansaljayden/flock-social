@@ -1610,6 +1610,31 @@ const crowdColorFor = (score, c) => {
   return '#22C55E';
 };
 
+// The ink twin. Same three bands, but in the text-safe tokens: the saturated
+// hues above are for dots and bars, and painted as TEXT on the app's light
+// surfaces they measure 1.8 to 3.8 to 1 (the same accent-as-text failure the
+// accessibility sweep fixed for the palette literals, reintroduced through
+// this computed hue). Words and percentages take these; the swatch beside
+// them keeps the hue.
+const crowdInkFor = (score, c) => {
+  const band = crowdBandFor(score);
+  if (!band) return null;
+  if (band === 'red') return (c && c.redText) || 'var(--accent-red-text)';
+  if (band === 'amber') return (c && c.amberText) || 'var(--accent-amber-text)';
+  return 'var(--accent-green-text)';
+};
+
+// Reduced motion, honored on the one animation CSS cannot reach: MapLibre's
+// camera. The global stylesheet collapses every CSS animation when the user
+// asks for stillness, but flyTo is a JS tween. jumpTo lands the same place
+// with no flight.
+const mapEase = (map, opts) => {
+  const still = typeof window !== 'undefined' && window.matchMedia
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (still) map.jumpTo({ center: opts.center, zoom: opts.zoom });
+  else map.flyTo(opts);
+};
+
 // The heavy weight, for a surface that fills a large area with the colour
 // rather than tinting a dot or a word with it. The crowd scale above has
 // exactly one shade per band, and a card-width block of #EF4444 reads as an
@@ -1897,6 +1922,7 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
   // same venue. No score yet means no crowd row, exactly as Birdie's cards do.
   const crowd = typeof venue.crowd === 'number' ? venue.crowd : null;
   const crowdColor = crowdColorFor(crowd);
+  const crowdInk = crowdInkFor(crowd, colors);
   return (
     <div style={{
       backgroundColor: 'var(--bg-card-solid)',
@@ -1945,7 +1971,7 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
           <div style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '10px 12px', marginBottom: '12px', border: '1px solid var(--border-default)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
               <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{crowdLabelFor(crowd)}</span>
-              <div style={{ backgroundColor: `${crowdColor}20`, color: crowdColor, padding: '2px 8px', borderRadius: '10px', fontSize: 'var(--t-meta)', fontWeight: '500' }}>{crowd}%</div>
+              <div style={{ backgroundColor: `${crowdColor}20`, color: crowdInk, padding: '2px 8px', borderRadius: '10px', fontSize: 'var(--t-meta)', fontWeight: '500' }}>{crowd}%</div>
             </div>
             <div style={{ width: '100%', height: '6px', backgroundColor: 'var(--pill-bg)', borderRadius: '3px', overflow: 'hidden' }}>
               <div style={{ height: '100%', width: `${crowd}%`, backgroundColor: crowdColor, borderRadius: '3px', transition: 'width 0.5s ease-out' }} />
@@ -2607,7 +2633,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           perm.addEventListener('change', () => {
             if (perm.state === 'granted') {
               navigator.geolocation.getCurrentPosition(
-                (pos) => map.flyTo({ center: [pos.coords.longitude, pos.coords.latitude], zoom: DEFAULT_ZOOM }),
+                (pos) => mapEase(map, { center: [pos.coords.longitude, pos.coords.latitude], zoom: DEFAULT_ZOOM }),
                 () => {},
                 { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 },
               );
@@ -2782,7 +2808,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       el.addEventListener('click', (e) => {
         e.stopPropagation();
         setActiveVenue(v);
-        map.flyTo({ center: [loc.longitude, loc.latitude], zoom: Math.max(map.getZoom(), 15), duration: 600 });
+        mapEase(map, { center: [loc.longitude, loc.latitude], zoom: Math.max(map.getZoom(), 15), duration: 600 });
       });
       const anchor = (photoCacheRef.current[v.place_id] || v.photo_url) ? 'center' : 'bottom';
       const marker = new ml.Marker({ element: el, anchor }).setLngLat([loc.longitude, loc.latitude]).addTo(map);
@@ -2915,7 +2941,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       const entry = placeId ? markersRef.current.find(e => e.venue.place_id === placeId) : null;
       if (entry) {
         const loc = entry.venue.location;
-        map.flyTo({ center: [loc.longitude, loc.latitude], zoom: 17, duration: 700 });
+        mapEase(map, { center: [loc.longitude, loc.latitude], zoom: 17, duration: 700 });
         setActiveVenue(entry.venue);
         // Bounce — animate the INNER div's top offset (outer transform is MapLibre's)
         const inner = entry.el.querySelector('.mlb-marker-inner');
@@ -2927,7 +2953,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           setTimeout(() => { inner.style.transition = 'width 0.2s ease, height 0.2s ease, box-shadow 0.2s ease'; inner.style.position = ''; inner.style.top = ''; }, 700);
         }
       } else if (!isNaN(fLat) && !isNaN(fLng)) {
-        map.flyTo({ center: [fLng, fLat], zoom: 17, duration: 700 });
+        mapEase(map, { center: [fLng, fLat], zoom: 17, duration: 700 });
         const nearby = markersRef.current.find(e => {
           const loc = e.venue.location;
           if (!loc) return false;
@@ -2967,7 +2993,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           const ml = mapLibreRef.current;
           if (ml) {
             const el = buildMarkerEl(tempVenue, true);
-            el.addEventListener('click', (e) => { e.stopPropagation(); setActiveVenue(tempVenue); map.flyTo({ center: [fLng, fLat], zoom: 17 }); });
+            el.addEventListener('click', (e) => { e.stopPropagation(); setActiveVenue(tempVenue); mapEase(map, { center: [fLng, fLat], zoom: 17 }); });
             const anchor = venuePhoto ? 'center' : 'bottom';
             const marker = new ml.Marker({ element: el, anchor }).setLngLat([fLng, fLat]).addTo(map);
             markersRef.current.push({ marker, el, venue: tempVenue });
@@ -2982,7 +3008,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       if (!map) return;
       if (userMarkerRef.current) {
         const ll = userMarkerRef.current.getLngLat();
-        map.flyTo({ center: [ll.lng, ll.lat], zoom: 15, duration: 600 });
+        mapEase(map, { center: [ll.lng, ll.lat], zoom: 15, duration: 600 });
         // Pulse the dot — box-shadow on the inner div only (transform is owned by MapLibre on the outer)
         if (userElRef.current) {
           userElRef.current.style.boxShadow = '0 0 0 12px rgba(59,130,246,0.35)';
@@ -2993,7 +3019,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         return;
       }
       const center = map.getCenter();
-      if (center) map.flyTo({ center: [center.lng, center.lat], zoom: 15 });
+      if (center) mapEase(map, { center: [center.lng, center.lat], zoom: 15 });
     };
 
     return () => { delete window.__flockOpenVenue; delete window.__flockPanToVenue; delete window.__flockGoToMyLocation; };
@@ -12888,7 +12914,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       </>
                     ) : (
                       <>
-                        <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: crowdColor, margin: 0 }}>{label} <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>{'·'} {score}</span></p>
+                        <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: crowdInkFor(score, colors) || crowdColor, margin: 0 }}>{label} <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>{'·'} {score}</span></p>
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0' }}>{waitText === 'No wait' ? 'No wait expected' : /^\d|^~/.test(waitText) ? `Est. wait: ${waitText}` : waitText}</p>
                         {(cd?.forecastAccess?.locked || bestText) && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -13928,7 +13954,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             const isTodayDate = isToday(dateStr);
             const isBusy = events.length >= 2;
             return (
-              <button className="hit44" key={day} onClick={() => setSelectedDate(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day))} style={{ height: '40px', borderRadius: '10px', border: isTodayDate && !isSelected ? `2px solid ${colors.steel}` : 'none', backgroundColor: isSelected ? colors.navyBg : isBusy ? 'var(--icon-bg)' : 'transparent', color: isSelected ? 'white' : isTodayDate ? colors.steel : 'inherit', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+              <button className="hit44" key={day} aria-pressed={isSelected} aria-label={`${day}${events.length > 0 ? ', has plans' : ''}${isTodayDate ? ', today' : ''}`} onClick={() => setSelectedDate(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day))} style={{ height: '40px', borderRadius: '10px', border: isTodayDate && !isSelected ? `2px solid ${colors.steel}` : 'none', backgroundColor: isSelected ? colors.navyBg : isBusy ? 'var(--icon-bg)' : 'transparent', color: isSelected ? 'white' : isTodayDate ? colors.steel : 'inherit', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
                 <span style={{ fontSize: 'var(--t-meta)', fontWeight: isTodayDate || isSelected ? '500' : '500' }}>{day}</span>
                 {events.length > 0 && (
                   <div style={{ display: 'flex', gap: '2px', marginTop: '2px' }}>
@@ -14407,7 +14433,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           {isPinned ? Icons.pinFilled(colors.navy, 16) : Icons.pin(colors.textTertiary, 16)}
                         </button>
                       ) : hasUnread && (
-                        <div style={{ width: '10px', height: '10px', borderRadius: '5px', backgroundColor: colors.navy, flexShrink: 0 }} />
+                        <div style={{ width: '10px', height: '10px', borderRadius: '5px', backgroundColor: colors.navy, flexShrink: 0 }}>
+                          <span className="sr-only">Unread messages</span>
+                        </div>
                       )}
                     </button>
                   </div>
@@ -17450,6 +17478,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     const prediction = crowdPredictions[venue.place_id];
                     const crowdScore = prediction ? prediction.score : venue.crowd;
                     const crowdColor = crowdColorFor(crowdScore) || 'var(--border-mid)';
+                    const crowdInk = crowdInkFor(crowdScore, colors) || 'var(--text-secondary)';
                     const crowdLabel = prediction ? prediction.label : crowdLabelFor(crowdScore);
                     // The 12 hour sparkline that used to sit here was built from a
                     // hand-written table of hour offsets applied to the current
@@ -17475,9 +17504,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                               <img src={venue.photo_url} alt="" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
                               <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 40%, rgba(0,0,0,0.6) 100%)' }} />
                               {venue.topRated && (
-                                <div style={{ position: 'absolute', top: '8px', left: '8px', padding: '3px 8px', borderRadius: '8px', backgroundColor: 'rgba(245,158,11,0.9)', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                                  {Icons.flame('#fff', 12)}
-                                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white' }}>Top Rated</span>
+                                <div style={{ position: 'absolute', top: '8px', left: '8px', padding: '3px 8px', borderRadius: '8px', backgroundColor: 'var(--accent-amber-bg)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                  {Icons.flame('var(--accent-amber-text)', 12)}
+                                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--accent-amber-text)' }}>Top Rated</span>
                                 </div>
                               )}
                               {crowdScore != null && (
@@ -17517,7 +17546,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                               </span>
                             )}
                             {!venue.photo_url && crowdScore != null && (
-                              <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdColor, backgroundColor: `${crowdColor}12`, padding: '2px 8px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                              <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdInk, backgroundColor: `${crowdColor}12`, padding: '2px 8px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '3px' }}>
                                 <div style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: crowdColor }} />
                                 {prediction?.confidenceBasis === 'owner_report' ? `${((prediction?.ownerReport?.noun || 'venue').charAt(0).toUpperCase())}${(prediction?.ownerReport?.noun || 'venue').slice(1)} says ${crowdScore}%` : `${crowdLabel} ${crowdScore}%`}
                               </span>
@@ -18293,6 +18322,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           identical and only one of them is true. */}
       {safetyAlert && (
         <div style={{ position: 'absolute', inset: 0, zIndex: 220, backgroundColor: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+          {/* This dialog arrives unprompted over a socket, and aria-modal on a
+              node no focus has entered hides the rest of the app from the VO
+              cursor while DOM focus stays outside it: the recipient of an SOS
+              could be stranded in a tree that claims everything is hidden.
+              DialogBehavior moves focus in, traps Tab, handles Escape, and
+              restores focus, like every other overlay in the stack. */}
+          <DialogBehavior onClose={() => setSafetyAlert(null)} label={`${safetyAlert.name} needs help`} />
           <div role="alertdialog" aria-modal="true" aria-label={`${safetyAlert.name} needs help`} style={{ width: '100%', maxWidth: '340px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.2)', border: '2px solid #b91c1c' }}>
             <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>{safetyAlert.name} needs help</h2>
             <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>
@@ -18328,7 +18364,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
               {attendanceMembers.map(m => (
-                <button className="hit44" key={m.id} onClick={() => setAttendanceChecks(prev => ({ ...prev, [m.id]: !prev[m.id] }))}
+                <button className="hit44" key={m.id} aria-pressed={!!attendanceChecks[m.id]} onClick={() => setAttendanceChecks(prev => ({ ...prev, [m.id]: !prev[m.id] }))}
                   style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '12px', borderRadius: '14px', border: `1.5px solid ${attendanceChecks[m.id] ? 'rgba(45,90,135,0.45)' : 'var(--border-default)'}`, background: attendanceChecks[m.id] ? 'rgba(45,90,135,0.08)' : 'var(--bg-card-solid)', cursor: 'pointer', width: '100%', textAlign: 'left' }}>
                   <div style={{ width: '36px', height: '36px', borderRadius: '18px', background: `linear-gradient(135deg, ${colors.steel}, ${colors.navy})`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: 'var(--t-body)', fontWeight: '600', flexShrink: 0 }}>
                     {(m.name || '?')[0].toUpperCase()}
@@ -18546,7 +18582,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           -moz-osx-font-smoothing: grayscale;
         }
         input:focus, textarea:focus {
-          border-color: #1e293b !important;
+          border-color: var(--focus-ring) !important;
           box-shadow: 0 0 0 3px rgba(13,40,71,0.1) !important;
         }
         button {
@@ -18640,8 +18676,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         }
         /* Enhanced focus states */
         input:focus, textarea:focus, select:focus {
-          outline: none;
-          border-color: #1e293b !important;
+          border-color: var(--focus-ring) !important;
           box-shadow: 0 0 0 4px rgba(13,40,71,0.1), 0 2px 8px rgba(13,40,71,0.1) !important;
           transition: all 0.2s ease;
         }
