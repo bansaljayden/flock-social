@@ -75,8 +75,13 @@ const readSource = (...p) =>
 // row and the report entry went with it. Nothing asserted below changed. The
 // app source is simply in two files, so both are read, in the order they used
 // to be one.
+// The profile and settings screen (the You tab) left App.js on 2026-08-27 for
+// screens/ProfileSettings.js, and the Venmo, Cash App and Zelle entry fields
+// went with it, so that file is read too. paymentRoutes, evaluated below, is
+// module scope in App.js and stayed there.
 const APP = readSource('frontend', 'src', 'App.js')
-  + readSource('frontend', 'src', 'screens', 'ChatDetail.js');
+  + readSource('frontend', 'src', 'screens', 'ChatDetail.js')
+  + readSource('frontend', 'src', 'screens', 'ProfileSettings.js');
 const BILLING = readSource('backend', 'routes', 'billing.js');
 
 // ───────────────────────────────────────────────────────────────────────────

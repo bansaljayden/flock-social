@@ -95,6 +95,7 @@ const SCREENS = [
   { component: 'AddFriends', file: 'AddFriends.js', props: 'addFriendsProps' },
   { component: 'VenueDashboard', file: 'VenueDashboard.js', props: 'venueDashboardProps' },
   { component: 'DmDetail', file: 'DmDetail.js', props: 'dmDetailProps' },
+  { component: 'ProfileSettings', file: 'ProfileSettings.js', props: 'profileSettingsProps' },
 ];
 
 const APP_SOURCE = read('App.js');
@@ -224,8 +225,14 @@ describe('no prop is a copy of something that moves', () => {
           continue;
         }
         // `param` is FlockAppInner's own two arguments, authUser and onLogout.
-        // `module` is an import. Both are as immutable as a const here.
-        if (!['const', 'module', 'param'].includes(binding.kind)) {
+        // `module` is an import. `hoisted` is a module-scope function
+        // declaration: ProfileSettings is handed sessionEndCopy, which is
+        // `function sessionEndCopy(reason)` at the bottom of App.js, and a
+        // function declaration is as immutable as a const for the purpose this
+        // check protects. It CAN be reassigned, unlike a const, so the safety
+        // is not the kind alone: the constantViolations check just below is
+        // what actually forbids a reassigned one, and it runs for every kind.
+        if (!['const', 'module', 'param', 'hoisted'].includes(binding.kind)) {
           bad.push(`${name}: declared as ${binding.kind}`);
         }
         if (binding.constantViolations.length > 0) {
