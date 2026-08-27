@@ -287,6 +287,7 @@ describe('capture-site sweep: what leaves the device is a short, named list', ()
       'login_failed',        // locked out, or uninterested
       'nfc_tap',
       'nfc_tap_action',
+      'push_opened',         // did a notification tap open the app, and to what
       'roost_question_asked',      // is the B2B advisor used, and does it answer
       'screen_viewed',       // the denominator: who ARRIVED where a step happens
       'signup',
