@@ -162,6 +162,21 @@ describe('the funnel events carry the count and never the content', () => {
     expect(sent).not.toContain('ChIJ');
   });
 
+  test('a DM venue vote is the same event as a member vote, on a third surface', async () => {
+    // App.js casts a DM vote over the socket (trackDmVenueVote); the REST
+    // helper below is the unused fallback. Both must report one venue_vote_cast
+    // with surface 'dm', and neither may carry the venue the way the member
+    // and guest votes do not.
+    respondWith(200, { ok: true });
+    await api.voteDmVenue(9, "Molly's Irish Pub", 'ChIJdmvenuevote');
+    api.trackDmVenueVote();
+    await flush();
+    expect(events('venue_vote_cast')).toEqual([{ surface: 'dm' }, { surface: 'dm' }]);
+    const sent = JSON.stringify(mockCapture.mock.calls);
+    expect(sent).not.toContain('Molly');
+    expect(sent).not.toContain('ChIJ');
+  });
+
   test('a message reports its kind and not a word of it', async () => {
     respondWith(201, { id: 1 });
     await api.sendMessage(7, 'meet me at the corner at nine', { message_type: 'venue' });
@@ -253,6 +268,7 @@ describe('a failed request never reports the step as done', () => {
   test.each([
     ['acceptFlockInvite', () => api.acceptFlockInvite(7), 'flock_rsvp'],
     ['voteForVenue', () => api.voteForVenue(7, 'Bar'), 'venue_vote_cast'],
+    ['voteDmVenue', () => api.voteDmVenue(9, 'Bar'), 'venue_vote_cast'],
     ['submitBudget', () => api.submitBudget(7, { amount: 20 }), 'budget_submitted'],
     ['sendAiChat', () => api.sendAiChat([], null, null), 'birdie_message'],
   ])('%s does not fire %s on a 500', async (_label, run, event) => {
@@ -507,5 +523,39 @@ describe('screen_viewed is an allowlist, not whatever the app was holding', () =
       }
       expect({ navigated, unlisted: unknown.length }).toEqual({ navigated, unlisted: 0 });
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PUSH-NOTIFICATION OPENS. A tap is the only thing in the funnel that reaches a
+// user who closed the app, so the value that matters is the destination bucket,
+// and it must be an allowlist rather than the id the notification carried. The
+// wiring from a real tap to this event is exercised at runtime in
+// pushOpenAnalytics.test.js; this pins what the event's one property turns out
+// to be.
+// ---------------------------------------------------------------------------
+describe('push_opened is an allowlist destination, never the id the tap carried', () => {
+  test.each([
+    ['flock', 'flock'],
+    ['flockInvite', 'flockInvite'],
+    ['flocks', 'flocks'],
+    ['dm', 'dm'],
+    ['friends', 'friends'],
+    ['home', 'home'],
+    ['admin', 'admin'],
+    ['checkout_upsell_9d3f', 'unknown'],
+    ['', 'none'],
+    [undefined, 'none'],
+    [null, 'none'],
+  ])('screen %p reports as %p', async (screen, expected) => {
+    api.trackPushOpened(screen);
+    await flush();
+    expect(events('push_opened')).toEqual([{ destination: expected }]);
+  });
+
+  test('a screen a model could invent never becomes its own category', async () => {
+    api.trackPushOpened('a'.repeat(200));
+    await flush();
+    expect(events('push_opened')).toEqual([{ destination: 'unknown' }]);
   });
 });
