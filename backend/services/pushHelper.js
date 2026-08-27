@@ -183,6 +183,10 @@ const RINGS_THROUGH_THE_NIGHT = new Set([
   'sos',
   'emergency_alert',
   'safety_alert',
+  // The withdrawal of the above. Anyone it reaches was already woken by the
+  // alarm and is worrying or moving; an all-clear held until morning is a
+  // night spent acting on an emergency that ended.
+  'safety_alert_cancelled',
   'moderation_report',
 ]);
 const DROPPED_IN_QUIET_HOURS = new Set(['crowd_alert']);
