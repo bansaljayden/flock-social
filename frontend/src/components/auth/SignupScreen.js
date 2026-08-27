@@ -23,6 +23,16 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   // first real action is a bad first five minutes, so the screen says what
   // happened and offers to send the link again.
   const [awaitingVerification, setAwaitingVerification] = useState(false);
+  // Did the mail actually go out. POST /api/auth/signup answers this in
+  // `verificationSent`, and nothing read it: the screen said "We sent a link"
+  // whatever the server had done. It is false whenever the provider is
+  // missing or erroring, and also whenever the per-IP hourly send budget is
+  // spent, which on a shared school or campus connection is an ordinary
+  // Wednesday. Telling somebody a link is in their inbox when nothing was sent
+  // leaves them refreshing mail that will never arrive, unable to start a
+  // flock or add a friend, with the only button on the screen repeating the
+  // same claim.
+  const [linkSent, setLinkSent] = useState(true);
   const [resendCooldown, setResendCooldown] = useState(0);
   const [resendNote, setResendNote] = useState('');
 
@@ -38,8 +48,15 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
     // Start the cooldown before the request, so a double tap cannot get through.
     setResendCooldown(60);
     try {
-      await resendVerificationEmail();
-      setResendNote('Sent. Check your inbox, and your spam folder.');
+      // The resend route answers with the same `verificationSent` flag, so a
+      // send that was accepted but not made does not get reported as one that
+      // was. A 200 here used to print "Sent. Check your inbox" either way.
+      const data = await resendVerificationEmail();
+      const sent = data?.verificationSent !== false;
+      setLinkSent((was) => was || sent);
+      setResendNote(sent
+        ? 'Sent. Check your inbox, and your spam folder.'
+        : 'That one did not go out either. Nothing is wrong with your account, and the link is still worth asking for.');
     } catch (err) {
       // The server words this refusal with the real window (backend
       // utils/retryAfter.js: the resend budget's longest leg is a day, not "a
@@ -158,6 +175,10 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
     try {
       const data = await signup(name, email, password, dob);
       if (data?.emailVerificationRequired) {
+        // Absent is treated as sent, because that is what an older backend
+        // that does not report the field means. Only an explicit false is a
+        // failed send.
+        setLinkSent(data.verificationSent !== false);
         setAwaitingVerification(true);
         return;
       }
@@ -183,11 +204,15 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
         <>
           <img className="auth-mark" src="/logo192.png" alt="" aria-hidden="true" />
           <h1 className="auth-h1">Confirm your email</h1>
-          <p className="auth-sub">We sent a link to {email}. Open it and you are in.</p>
+          {linkSent
+            ? <p className="auth-sub">We sent a link to {email}. Open it and you are in.</p>
+            : <p className="auth-sub">The link to {email} did not go out. Ask for it below.</p>}
         </>
       )}>
         <p className="auth-sub" style={{ margin: '0 0 18px' }}>
-          Your account exists. Clicking the link is what lets you start a flock, add friends and save a payment handle. If it has not landed in a minute, check your spam folder.
+          {linkSent
+            ? 'Your account exists. Clicking the link is what lets you start a flock, add friends and save a payment handle. If it has not landed in a minute, check your spam folder.'
+            : 'Your account exists and your password works. Our mail did not leave, so there is nothing in your inbox to look for yet. Ask for the link below, and check your spam folder once it arrives.'}
         </p>
         {resendNote && <p role="status" className="auth-hint" style={{ margin: '0 0 12px' }}>{resendNote}</p>}
         <button
@@ -197,7 +222,12 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
           className="auth-primary"
           style={{ opacity: resendCooldown > 0 ? 0.5 : 1, cursor: resendCooldown > 0 ? 'not-allowed' : 'pointer' }}
         >
-          {resendCooldown > 0 ? `Send it again in ${resendCooldown}s` : 'Send the link again'}
+          {/* "again" is a claim too. Nothing was sent the first time when
+              linkSent is false, and a button that says otherwise repeats the
+              sentence the hero has just stopped making. */}
+          {resendCooldown > 0
+            ? `Try again in ${resendCooldown}s`
+            : (linkSent ? 'Send the link again' : 'Send the link')}
         </button>
         <p className="auth-foot">
           Already confirmed?

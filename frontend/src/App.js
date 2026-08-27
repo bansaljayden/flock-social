@@ -6267,7 +6267,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   });
   // Conversations the server has refused to carry because the two accounts are
   // not connected, userId -> true. See NOT_CONNECTED_HINT: the New Message
-  // sheet searches every account by name or email, so the ordinary way to
+  // sheet searches every account by name, so the ordinary way to
   // start a DM finds strangers, and the thread it opens looks like any other
   // one until the first send comes back refused. Held here so the screen can
   // say what is wrong and offer the one thing that fixes it, instead of a two
@@ -12502,11 +12502,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
               {/* Search input */}
               <div style={{ position: 'relative' }}>
-                <input aria-label="Search people by name or email"
+                <input aria-label="Search people by name"
                   type="text"
                   value={inviteSearch}
                   onChange={(e) => handleInviteSearch(e.target.value)}
-                  placeholder="Search by name or email..."
+                  placeholder="Search by name..."
                   style={{ ...styles.input, paddingLeft: '36px', paddingRight: inviteSearch ? '36px' : '12px', fontSize: 'var(--t-meta)' }}
                   autoComplete="off"
                 />
@@ -13725,11 +13725,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {/* Search input */}
             <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border-light)', flexShrink: 0 }}>
               <div style={{ position: 'relative' }}>
-                <input aria-label="Search people by name or email"
+                <input aria-label="Search people by name"
                   type="text"
                   value={connectSearch}
                   onChange={(e) => handleConnectSearch(e.target.value)}
-                  placeholder="Search by name or email..."
+                  placeholder="Search by name..."
                   style={{ width: '100%', padding: '10px 12px 10px 34px', borderRadius: '10px', border: `1.5px solid ${connectSearch ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-label)', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', fontWeight: '500', transition: 'opacity 0.2s ease' }}
                   autoComplete="off"
                 />
@@ -13785,7 +13785,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ textAlign: 'center', padding: '24px 16px' }}>
                   <div style={{ width: '48px', height: '48px', borderRadius: '24px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>{Icons.search(colors.navy, 22)}</div>
                   <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Search for people</p>
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Find friends by name or email</p>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Find friends by name</p>
                 </div>
               )}
             </div>

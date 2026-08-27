@@ -81,6 +81,12 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
   // is clicked. The old venue screen ignored that reply and called
   // onLoginSuccess anyway, dropping the owner into a dashboard that 403s.
   const [awaitingVerification, setAwaitingVerification] = useState(false);
+  // Did the mail actually go out. POST /api/auth/signup answers this in
+  // `verificationSent` and nothing read it, so this screen said "We sent a
+  // link" whatever the server had done. It is false when the provider is
+  // missing or erroring and when the per-IP hourly send budget is spent. Same
+  // fix, same reasoning, as the consumer signup screen.
+  const [linkSent, setLinkSent] = useState(true);
   const [resendCooldown, setResendCooldown] = useState(0);
   const [resendNote, setResendNote] = useState('');
 
@@ -95,8 +101,14 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
     setResendNote('');
     setResendCooldown(60);
     try {
-      await resendVerificationEmail();
-      setResendNote('Sent. Check your inbox, and your spam folder.');
+      // The resend route answers with the same `verificationSent` flag, so a
+      // send that was accepted but not made is not reported as one that was.
+      const data = await resendVerificationEmail();
+      const sent = data?.verificationSent !== false;
+      setLinkSent((was) => was || sent);
+      setResendNote(sent
+        ? 'Sent. Check your inbox, and your spam folder.'
+        : 'That one did not go out either. Nothing is wrong with your account, and the link is still worth asking for.');
     } catch (err) {
       // The server words this refusal with the real window (backend
       // utils/retryAfter.js: the resend budget's longest leg is a day, not "a
@@ -185,6 +197,9 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
       if (isSignup) {
         const data = await signup(name, email, password, dob);
         if (data?.emailVerificationRequired) {
+          // Absent means an older backend that does not report the field, and
+          // that is treated as sent. Only an explicit false is a failed send.
+          setLinkSent(data.verificationSent !== false);
           setAwaitingVerification(true);
           return;
         }
@@ -245,12 +260,16 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
         <>
           <img className="auth-mark" src="/logo192.png" alt="" aria-hidden="true" />
           <h1 className="auth-h1">Confirm your email</h1>
-          <p className="auth-sub">We sent a link to {email}. Open it and you are in.</p>
+          {linkSent
+            ? <p className="auth-sub">We sent a link to {email}. Open it and you are in.</p>
+            : <p className="auth-sub">The link to {email} did not go out. Ask for it below.</p>}
         </>
       )}
       >
         <p className="auth-sub" style={{ margin: '0 0 18px' }}>
-          Your account exists. Clicking the link is what lets you claim your venue and reply to reviews. If it has not landed in a minute, check your spam folder.
+          {linkSent
+            ? 'Your account exists. Clicking the link is what lets you claim your venue and reply to reviews. If it has not landed in a minute, check your spam folder.'
+            : 'Your account exists and your password works. Our mail did not leave, so there is nothing in your inbox to look for yet. Ask for the link below, and check your spam folder once it arrives.'}
         </p>
         {resendNote && <p role="status" className="auth-hint" style={{ margin: '0 0 12px' }}>{resendNote}</p>}
         <button
@@ -259,7 +278,11 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
           disabled={resendCooldown > 0}
           className="auth-primary"
         >
-          {resendCooldown > 0 ? `Send it again in ${resendCooldown}s` : 'Send the link again'}
+          {/* "again" is a claim too. Nothing was sent the first time when
+              linkSent is false. */}
+          {resendCooldown > 0
+            ? `Try again in ${resendCooldown}s`
+            : (linkSent ? 'Send the link again' : 'Send the link')}
         </button>
         <p className="auth-foot">
           Already confirmed?

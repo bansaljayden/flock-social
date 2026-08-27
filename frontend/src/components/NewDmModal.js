@@ -25,8 +25,12 @@
  * scope in App.js and are not exported.
  *
  * The body below is the old block verbatim, including its original
- * indentation, so it can be diffed against the deleted lines character for
- * character. Nothing was renamed or reformatted on the way across.
+ * indentation, apart from the search box's label and placeholder. Those two
+ * said the box matched a name or an email. `GET /api/users/search` matches
+ * `users.name` and nothing else, deliberately, so that nobody can confirm
+ * somebody's address by typing it in. Offering an email there promised a
+ * lookup the server has never performed, and the person who tried one got
+ * "No users found" about a friend who is right there.
  */
 import React from 'react';
 import Icons from './ui/Icons';
@@ -62,7 +66,7 @@ const NewDmModal = ({
             </button>
           </div>
           <div style={{ padding: '12px' }}>
-            <SearchInputLocal aria-label="Search people by name or email" type="text" initialValue={dmSearchText} onCommit={handleDmSearch} placeholder="Search by name or email..." style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: `1.5px solid ${dmSearchText ? colors.navy : colors.creamDark}`, fontSize: 'var(--t-body)', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
+            <SearchInputLocal aria-label="Search people by name" type="text" initialValue={dmSearchText} onCommit={handleDmSearch} placeholder="Search by name..." style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: `1.5px solid ${dmSearchText ? colors.navy : colors.creamDark}`, fontSize: 'var(--t-body)', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
           </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 12px' }}>
             {!dmSearchText.trim() && usersToShow.length > 0 && (
