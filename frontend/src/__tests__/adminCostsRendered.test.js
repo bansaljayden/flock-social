@@ -32,7 +32,13 @@ const REPO = path.resolve(__dirname, '..', '..', '..');
 const read = (...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8').split('\r').join('');
 
 const ADMIN = read('backend', 'routes', 'admin.js');
-const APP_RAW = read('frontend', 'src', 'App.js');
+// The admin console, the only reader of GET /api/admin/costs, left App.js on
+// 2026-08-27 for screens/RevenueScreen.js and its own lazily loaded chunk. The
+// costs panel and every `d.<meter>` read in it went with it, so the panel this
+// suite scans is now in that file. Both are read and joined, in the order they
+// used to be one file, so nothing asserted below changed.
+const APP_RAW = read('frontend', 'src', 'App.js')
+  + read('frontend', 'src', 'screens', 'RevenueScreen.js');
 
 /**
  * App.js with comments removed.

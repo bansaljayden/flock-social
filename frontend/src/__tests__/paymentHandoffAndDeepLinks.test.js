@@ -123,9 +123,15 @@ const readSource = (...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8').repl
 // row and the report entry went with it. Same treatment: nothing asserted
 // below changed, the app source is simply in three files now, and all three
 // are read in the order they used to be one.
+// The admin costs and revenue console left App.js on 2026-08-27 for
+// screens/RevenueScreen.js, and the whole admin surface this file scans went
+// with it: the Research tab, the profit card, the mode toggle and the
+// moderation-console entry. It is read here as the last file, after App.js,
+// which is what the REVENUE_SCREEN_AT anchor below relies on.
 const appSource = readSource('frontend', 'src', 'App.js')
   + readSource('frontend', 'src', 'screens', 'ChatDetail.js')
-  + readSource('frontend', 'src', 'screens', 'VenueDashboard.js');
+  + readSource('frontend', 'src', 'screens', 'VenueDashboard.js')
+  + readSource('frontend', 'src', 'screens', 'RevenueScreen.js');
 const pushNavSource = readSource('frontend', 'src', 'services', 'pushNavigation.js');
 const billingSource = readSource('backend', 'routes', 'billing.js');
 const infoPlist = readSource('frontend', 'ios', 'App', 'App', 'Info.plist');
@@ -992,12 +998,15 @@ describe('pushNavigation asks for the launch URL at all', () => {
 // is what makes an assertion against raw source mean something.
 const appCount = (re) => (appSource.match(re) || []).length;
 
-// Where RevenueScreen is really declared. Anchored to the start of the line
-// rather than found with indexOf, because the comment that EXPLAINS the
-// remounting problem sits above the state it moved, and a substring search
-// finds the explanation before the declaration. Same trap as the comment
-// stripper above: prose that quotes code is the thing these scans trip on.
-const REVENUE_SCREEN_AT = appSource.search(/^ {2}const RevenueScreen = \(\) => \{/m);
+// Where the RevenueScreen source begins in the concatenation. The console is
+// its own file now and is read LAST, after App.js, so this position is the
+// boundary between FlockAppInner's state (App.js, before it) and the console's
+// render (RevenueScreen.js, after it). Anchored to the module signature, which
+// is unique, so the explanatory comments in App.js that still quote the old
+// declaration cannot be matched first. A -1 here would silently pass the
+// before/after checks below, so it is asserted non-negative once at the top of
+// the block that uses it.
+const REVENUE_SCREEN_AT = appSource.search(/^export default function RevenueScreen\(\{/m);
 
 describe('the tier gate cannot be broken by rewording a feature', () => {
   test('nothing looks a feature up by its marketing name any more', () => {
@@ -1135,10 +1144,14 @@ describe('the admin Research tab never prints an unmeasured zero', () => {
   });
 
   test('the research state survives the screen it is rendered on', () => {
-    // RevenueScreen is redeclared on every render of FlockAppInner and mounted
-    // as <RevenueScreen />, so React remounts the whole subtree whenever
-    // anything unrelated out here changes state. Anything the research panel
-    // needs to remember has to live OUTSIDE it or it is reset by a toast.
+    // RevenueScreen used to be redeclared on every render of FlockAppInner and
+    // mounted as an element, so React remounted the whole subtree whenever
+    // anything unrelated out here changed state. It is its own module-scope file
+    // now, so it no longer remounts for free, but the reason its state lives in
+    // FlockAppInner did not change: the panel is rebuilt from props, and a value
+    // it never owns cannot be reset by a toast. So these still have to be
+    // declared out here, before the console's source begins.
+    expect(REVENUE_SCREEN_AT).toBeGreaterThan(-1);
     const inner = appSource.slice(appSource.indexOf('const FlockAppInner ='), REVENUE_SCREEN_AT);
     for (const decl of [
       'const [researchLiveData, setResearchLiveData] = useState(null)',
@@ -1156,17 +1169,24 @@ describe('the revenue simulator does not reset itself mid-edit', () => {
   // useState INSIDE RevenueScreen, so a toast or a socket event out in
   // FlockAppInner remounted the subtree and snapped every field back to its
   // pitch-deck default. The adminTab line had already been moved for exactly
-  // this reason, with a comment saying so.
+  // this reason, with a comment saying so. RevenueScreen has since left App.js
+  // for its own module-scope file, which fixes the remount outright, and the
+  // fields stayed in FlockAppInner and arrive as props, so the protection now
+  // holds by both routes at once.
   const SIM_FIELDS = ['numVenues', 'subscriptionPrice', 'eventsPerVenue', 'avgSpend', 'takeRate', 'operatingCosts'];
 
-  test('RevenueScreen is still the remounting kind, so this still matters', () => {
-    // If this ever stops being true the hoist is merely harmless, but until
-    // then it is load-bearing.
-    expect(appSource).toMatch(/^ {2}const RevenueScreen = \(\) => \{/m);
-    expect(appSource).toMatch(/<RevenueScreen \/>/);
+  test('the console reads these through props, not its own state', () => {
+    // The load-bearing fact now: the console is a module-scope component,
+    // mounted with a spread props object, so it reads the simulator through
+    // props and owns none of it. A value it never owns cannot be reset by the
+    // component being rebuilt, which is what the six useState-inside declarations
+    // could not promise.
+    expect(REVENUE_SCREEN_AT).toBeGreaterThan(-1);
+    expect(appSource).toMatch(/export default function RevenueScreen\(\{/);
+    expect(appSource).toMatch(/<RevenueScreen \{\.\.\.revenueScreenProps\} \/>/);
   });
 
-  test.each(SIM_FIELDS)('%s is declared outside the remounting subtree', (name) => {
+  test.each(SIM_FIELDS)('%s is declared in FlockAppInner, before the console source', (name) => {
     const declAt = appSource.indexOf(`const [${name}, set`);
     expect(declAt).toBeGreaterThan(-1);
     expect(declAt).toBeLessThan(REVENUE_SCREEN_AT);

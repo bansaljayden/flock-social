@@ -38,11 +38,13 @@ const codemagic = read('codemagic.yaml');
 // left on 2026-08-27: they live in screens/ChatDetail.js and screens/DmDetail.js
 // now, and the message lists, the composers, the reaction rows and the report
 // entries went with them, along with the DM camera and photo-library inputs.
-// Nothing asserted below changed. The app source is simply in three files, so
-// all three are read, in the order they used to be one.
+// The admin costs and revenue console left on 2026-08-27 too, for
+// screens/RevenueScreen.js. Nothing asserted below changed. The app source is
+// simply in four files, so all four are read, in the order they used to be one.
 const app = read('frontend', 'src', 'App.js')
   + read('frontend', 'src', 'screens', 'ChatDetail.js')
-  + read('frontend', 'src', 'screens', 'DmDetail.js');
+  + read('frontend', 'src', 'screens', 'DmDetail.js')
+  + read('frontend', 'src', 'screens', 'RevenueScreen.js');
 // The only file that touches the address book. The contacts purpose string is
 // asserted against THIS rather than against App.js, because App.js calls it and
 // this is where the permission is actually requested.

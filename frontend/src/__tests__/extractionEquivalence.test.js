@@ -1,12 +1,13 @@
 /**
- * FOUR SCREENS LEFT App.js. THIS PINS WHAT THEY CAN STILL SEE.
+ * SIX SCREENS LEFT App.js. THIS PINS WHAT THEY CAN STILL SEE.
  *
  * On 2026-08-26 the venue owner dashboard, Add Friends and the flock chat
- * screen moved out of `App.js` into `src/screens/`, and on 2026-08-27 the
- * one-to-one DM thread followed them. Each was an arrow function declared
- * inside `FlockAppInner` that CLOSED OVER that component's state and was called
- * rather than mounted. Each is now a separate component that receives an
- * explicit props object built in `renderScreen`.
+ * screen moved out of `App.js` into `src/screens/`; on 2026-08-27 the
+ * one-to-one DM thread, the profile and settings screen and the admin costs and
+ * revenue console followed them. Each was an arrow function declared inside
+ * `FlockAppInner` that CLOSED OVER that component's state and was called or
+ * mounted rather than mounted at module scope. Each is now a separate component
+ * that receives an explicit props object built in `renderScreen`.
  *
  * Every one of those moves was proved byte identical against the deleted lines,
  * and that proof is real but it is not the interesting one. A byte identical
@@ -30,8 +31,9 @@
  *   3. A REMOUNT. These used to be CALLED. They are MOUNTED now, and a
  *      component whose identity is rebuilt every render is a new component
  *      TYPE to React, which unmounts and remounts the whole subtree on every
- *      unrelated state change. App.js already carries that defect on
- *      RevenueScreen and a comment beside `numVenues` explaining it. The four
+ *      unrelated state change. That is the exact defect the admin costs and
+ *      revenue console carried until it moved out on 2026-08-27; the comment
+ *      beside `numVenues` in App.js still records what it looked like. The
  *      moved screens must be bound at module scope, where the identity is
  *      fixed, and must not be declared inside `FlockAppInner`.
  *
@@ -96,6 +98,7 @@ const SCREENS = [
   { component: 'VenueDashboard', file: 'VenueDashboard.js', props: 'venueDashboardProps' },
   { component: 'DmDetail', file: 'DmDetail.js', props: 'dmDetailProps' },
   { component: 'ProfileSettings', file: 'ProfileSettings.js', props: 'profileSettingsProps' },
+  { component: 'RevenueScreen', file: 'RevenueScreen.js', props: 'revenueScreenProps' },
 ];
 
 const APP_SOURCE = read('App.js');
@@ -304,11 +307,12 @@ describe('the moved screens are stable component types', () => {
   SCREENS.forEach(({ component }) => {
     it(`${component} is bound at App.js module scope, not inside FlockAppInner`, () => {
       // The defect this rules out is written up in App.js beside numVenues:
-      // RevenueScreen is declared inside FlockAppInner and mounted as an
-      // element, so every render makes a new function, React reads a new
-      // component type, and the whole subtree unmounts and remounts. Any state
-      // or focus inside it is lost to a toast arriving. A module binding has
-      // one identity for the life of the page and cannot do that.
+      // the admin costs and revenue console was declared inside FlockAppInner
+      // and mounted as an element, so every render made a new function, React
+      // read a new component type, and the whole subtree unmounted and
+      // remounted. Any state or focus inside it was lost to a toast arriving.
+      // That console is one of the SCREENS below now; a module binding has one
+      // identity for the life of the page and cannot do that.
       expect(Object.keys(moduleBindings)).toContain(component);
       const insideInner = FLOCK_APP_INNER.scope.bindings[component];
       expect(insideInner).toBeUndefined();
