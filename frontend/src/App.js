@@ -6066,7 +6066,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [flockCashPool, setFlockCashPool] = useState(false);
   const [flockBudgetContext, setFlockBudgetContext] = useState('dinner');
   const [flockGhostMode, setFlockGhostMode] = useState(true); // default on when budget is on
-  const [joinCode, setJoinCode] = useState('');
 
   // Money layer state
   const [budgetStatus, setBudgetStatus] = useState(null);
@@ -11333,7 +11332,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                       const nav = msg.navigate;
                       if (nav.screen) setCurrentScreen(nav.screen);
                       else setCurrentScreen('main');
-                      if (nav.tab) setCurrentTab(nav.tab);
+                      // 'chats' was the tab id Birdie's tool contract taught
+                      // and no such tab exists (the real id is 'chat'), so
+                      // "take me to Messages" landed on the Nest with nothing
+                      // selected. The server strings are fixed; this clamp
+                      // keeps an already-cached model answer working too.
+                      if (nav.tab) setCurrentTab(nav.tab === 'chats' ? 'chat' : nav.tab);
                       if (nav.profile_section === 'safety') { setProfileScreen('safety'); loadTrustedContacts(); }
                       else if (nav.profile_section === 'payment') setProfileScreen('payment');
                       else if (nav.profile_section === 'edit') setProfileScreen('edit');
@@ -11768,6 +11772,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             })}
           </div>
         </div>
+        {/* The audience, stated. This is the first screen's one social
+            disclosure and nothing said who reads it: a stranger either
+            guessed it was a mood widget or hesitated to tap. 4 AM is the
+            server's own default expiry (routes/availability.js). */}
+        <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '6px 4px 0', textAlign: 'right' }}>Friends see your answer until it clears at 4 AM.</p>
       </div>
 
       {/* Scrollable Content */}
@@ -12493,7 +12502,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--divider)' }}>
                   <div style={{ minWidth: 0 }}>
                     <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 1px' }}>Ghost Mode</p>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Let members pre-commit their share before going out</p>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Members can quietly commit their share of the bill up front, before anyone pays, so the plan never waits on money</p>
                   </div>
                   <Toggle label="Ghost mode" on={flockGhostMode} onChange={() => setFlockGhostMode(!flockGhostMode)} />
                 </div>
@@ -12544,27 +12553,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   };
 
   // JOIN SCREEN
-  const JoinScreen = () => (
-    <div key="join-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
-            <DialogBehavior modal={false} onClose={() => { setCurrentScreen('main'); setJoinCode(''); }} />
-      <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-        <button aria-label="Back" className="hit44" onClick={() => { setCurrentScreen('main'); setJoinCode(''); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-title)', cursor: 'pointer' }}>←</button>
-        <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>Join a Flock</h1>
-      </div>
-      <div style={{ flex: 1, padding: '16px', backgroundColor: 'var(--bg-primary)' }}>
-        <div style={{ marginBottom: '16px' }}>
-          <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '6px' }}>Enter Code</label>
-          <SearchInputLocal aria-label="Flock join code" key="join-code-input" id="join-code-input" type="text" initialValue={joinCode} onCommit={setJoinCode} transform={(v) => v.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6)} placeholder="ABC123" maxLength={6} style={{ ...styles.input, fontSize: '20px', textAlign: 'center', letterSpacing: '8px', textTransform: 'uppercase' }} autoComplete="off" />
-        </div>
-        {/* "Scan QR" button removed: it only toasted "coming soon", and a dead
-            button that advertises itself is a named tell (SLOP-AUDIT.md C1).
-            Restore it WITH a working scanner or not at all. */}
-      </div>
-      <div style={{ padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--divider)', flexShrink: 0 }}>
-        <button className="hit44 glass-btn glass-navy" onClick={(e) => { if (joinCode.length === 6) { confirmClick(e); setJoinCode(''); setCurrentScreen('main'); } else { showToast('Enter a valid code', 'error'); }}} style={{ ...styles.gradientButton, position: 'relative', overflow: 'hidden' }}>Join Flock</button>
-      </div>
-    </div>
-  );
+  // JoinScreen was deleted 2026-08-27. It was unreachable (nothing anywhere
+  // navigated to the join screen id) and its Join button ran a
+  // checkmark animation on ANY six characters with no API call behind it: a
+  // fabricated success one future navigation away from shipping, the exact
+  // class SLOP-AUDIT H5/K1 exists to kill. Joining is real elsewhere (invite
+  // links, invite cards); restore this screen only WITH a real join route.
 
   // EXPLORE SCREEN
   // ONE venue card for every map surface. This is the card a tapped pin
@@ -16452,8 +16446,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         renderVenueNumber,
         renderVenueTime,
         setCurrentScreen,
+        setCurrentTab,
         setOperatingHours,
         setShowVenueOnboarding,
+        setUserMode,
         setVenueInfo,
         setVenueOnboardingData,
         setVenueOnboardingError,
@@ -16554,7 +16550,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
     if (currentScreen === 'create') return CreateScreen();
     if (currentScreen === 'pastFlocks') return PastFlocksScreen();
-    if (currentScreen === 'join') return JoinScreen();
     if (currentScreen === 'detail') return FlockDetailScreen();
     if (currentScreen === 'chatDetail') {
       // Every value the chat screen reads, named once and in one place. Object
@@ -16564,6 +16559,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       // them, are declared further down this component, and reading them any
       // earlier is a temporal dead zone throw.
       const chatDetailProps = {
+        userLocation,
         ChatSkeleton,
         DM_PAGE_SIZE,
         DialogBehavior,
