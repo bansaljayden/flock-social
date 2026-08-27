@@ -353,9 +353,10 @@ const APP_PATHS = [
   /^\/(?:f|flock)\/\d+$/,         // deep links, services/pushNavigation.js
   /^\/dm\/\d+$/,
   // The password reset email points here (backend/services/emailService.js).
-  // NOTHING in the frontend reads the token yet, so this currently lands on
-  // the login screen. That is a broken flow either way, but a 404 would be a
-  // worse answer than the login screen while it is being fixed.
+  // Handled by its own branch below: the standalone PasswordResetPage mounts
+  // for this path whether or not a session exists. (This comment used to say
+  // nothing read the token, which had stopped being true, and the signed-IN
+  // case genuinely broke: App.js rendered the app and the token went unread.)
   /^\/reset-password$/,
 ];
 
@@ -822,6 +823,21 @@ if (page) {
         <React.Suspense fallback={<Loading />}>
           <Page />
         </React.Suspense>
+      </ErrorBoundary>
+    </React.StrictMode>
+  );
+} else if (path === '/reset-password') {
+  // The signed-IN reset case. Signed out, the app boots and LoginScreen
+  // routes into its reset view; signed IN, App.js rendered the app and the
+  // emailed token was never read, on exactly the machine someone resets a
+  // suspect password from. PasswordResetPage is self-contained (no props,
+  // navigates by URL) and its own file spells out this branch.
+  const PasswordResetPage = React.lazy(() => import('./components/auth/PasswordReset')
+    .then((m) => ({ default: m.PasswordResetPage })));
+  root.render(
+    <React.StrictMode>
+      <ErrorBoundary label="reset-password" fallback={pageErrorFallback}>
+        <React.Suspense fallback={null}><PasswordResetPage /></React.Suspense>
       </ErrorBoundary>
     </React.StrictMode>
   );

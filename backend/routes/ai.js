@@ -531,7 +531,7 @@ const toolDeclarations = [
         tab: {
           type: 'STRING',
           description: 'The tab to switch to: "home", "explore", "chats", "calendar", "profile"',
-          enum: ['home', 'explore', 'chats', 'calendar', 'profile'],
+          enum: ['home', 'explore', 'chat', 'calendar', 'profile'],
         },
         screen: {
           type: 'STRING',
@@ -996,7 +996,10 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // gets a plain error it can act on, the same shape every other tool
       // failure in this file returns, and no button is drawn.
       const pick = (value, allowed) => (allowed.includes(value) ? value : undefined);
-      const tab = pick(toolInput.tab, ['home', 'explore', 'chats', 'calendar', 'profile']);
+      // 'chat', not 'chats': the app's real tab id. The old plural fell
+      // through App.js's tab switch to the home screen, so Birdie's "Take me
+      // there" for Messages silently misfired.
+      const tab = pick(toolInput.tab, ['home', 'explore', 'chat', 'calendar', 'profile']);
       const screen = pick(toolInput.screen, ['create', 'addFriends', 'profile']);
       const profileSection = pick(toolInput.profile_section, ['safety', 'payment', 'edit']);
       if (!tab && !screen && !profileSection) {
@@ -1125,7 +1128,7 @@ The app, as it ships today (use the user-facing names on the left; the tool enum
 - **Nest** (tab: home): home base. Tonight's status, active flocks, invites waiting on them
 - **Discover** (tab: explore): map + venue search with live crowd levels; each venue page has the crowd dial, best time, and a one-tap "reality check" where people at the venue confirm how busy it really is
 - **Plans** (tab: calendar): calendar of upcoming flocks and events
-- **Messages** (tab: chats): flock group chats and DMs; both support photos, venue cards, voting on spots, pins, and live location sharing
+- **Messages** (tab: chat): flock group chats and DMs; both support photos, venue cards, voting on spots, pins, and live location sharing
 - **You** (tab: profile): profile, settings, payment methods, appearance
 - **Create a flock** (screen: create): name the night, pick a date, invite friends; they RSVP in one tap
 - **Add friends** (screen: addFriends): search, friend code, QR, phone contacts
