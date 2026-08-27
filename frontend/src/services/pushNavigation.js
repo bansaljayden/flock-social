@@ -39,6 +39,13 @@
 // open the app on whatever screen it was already showing.
 // ---------------------------------------------------------------------------
 
+// api.js is the ONLY module that may capture (the analytics sweep enforces it),
+// so a notification tap reports through this tracker rather than reaching
+// posthog here. It is a static import because api.js is already in this chunk
+// (firebase.js, which loads this module, imports it too), and api.js pulls in
+// nothing at module scope, so there is no cycle and no new weight.
+import { trackPushOpened } from './api';
+
 const FLOCK_TYPES = new Set([
   'flock_invite', 'flock_message', 'flock_rsvp', 'flock_confirmed', 'flock_updated',
   'flock_cancelled',
@@ -204,6 +211,17 @@ export function emitPushNavigation(intent) {
   emit(intent);
 }
 
+// A notification the user TAPPED, which is the push-notification "open". Report
+// it, then route it. Kept distinct from a deep link, the OAuth redirect, the
+// launch URL and the invite handoff, none of which is a notification tap: only
+// the three notification-click sources below call this. `intent.screen` is the
+// resolved destination bucket and never the id the tap carried, and a tap that
+// resolved to no intent is still an open, reported as destination 'none'.
+function openFromNotification(intent) {
+  trackPushOpened(intent && intent.screen);
+  emit(intent);
+}
+
 export function handleNotificationData(data) {
   emit(intentFromData(data));
 }
@@ -259,13 +277,13 @@ export function startPushNavigation() {
       if (msg.type === 'NOTIFICATION_CLICK') {
         // One intent per tap: the payload is authoritative, the URL is the
         // fallback for a notification sent before deep links existed.
-        emit(intentFromData(msg.data) || intentFromUrl(msg.url));
+        openFromNotification(intentFromData(msg.data) || intentFromUrl(msg.url));
         return;
       }
       // The FCM SDK's own click relay, in case a notification shown by an
       // older worker version is tapped.
       if (msg.isFirebaseMessaging && msg.messageType === 'notification-clicked') {
-        handleNotificationData(msg.data);
+        openFromNotification(intentFromData(msg.data));
       }
     });
   }
@@ -279,7 +297,7 @@ export function startPushNavigation() {
         // no-op every other branch here degrades to.
         const p = FirebaseMessaging.addListener('notificationActionPerformed', (event) => {
           const data = event?.notification?.data || {};
-          emit(intentFromData(data) || intentFromUrl(data.link));
+          openFromNotification(intentFromData(data) || intentFromUrl(data.link));
         });
         if (p && typeof p.catch === 'function') p.catch(() => {});
       })
