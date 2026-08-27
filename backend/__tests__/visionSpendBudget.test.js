@@ -494,9 +494,14 @@ const BACKEND = path.join(__dirname, '..');
 // which authenticateSocket sets to the users row it re-read from the database.
 const VISION_CALL_SITES = {
   'routes/users.js':     { count: 1, identity: 'req.user.id', what: 'avatar upload' },
-  'routes/messages.js':  { count: 2, identity: 'req.user.id', what: 'flock photo and DM photo, REST' },
+  // Four, not two, since 2026-08-27: each chat-photo door also moderates the
+  // client-derived THUMBNAIL it now accepts (a hostile client could pair an
+  // innocent full image with an unrelated thumb, so the thumb is screened
+  // like the image and silently dropped on any refusal). Two doors times two
+  // screened payloads per door.
+  'routes/messages.js':  { count: 4, identity: 'req.user.id', what: 'flock photo and DM photo plus their thumbnails, REST' },
   'routes/stories.js':   { count: 1, identity: 'req.user.id', what: 'story' },
-  'sockets/handlers.js': { count: 2, identity: 'user.id',     what: 'flock photo and DM photo, socket' },
+  'sockets/handlers.js': { count: 4, identity: 'user.id',     what: 'flock photo and DM photo plus their thumbnails, socket' },
 };
 
 // Comments in this repo quote call sites verbatim — utils/visionBudget.js has a
@@ -550,8 +555,12 @@ test('no billed Vision call site anywhere in the backend screens without an iden
   }
   assert.deepStrictEqual(
     found.sort(),
-    ['routes/messages.js', 'routes/messages.js', 'routes/stories.js', 'routes/users.js',
-      'sockets/handlers.js', 'sockets/handlers.js'],
+    // Four per chat file since 2026-08-27: each photo door also screens the
+    // client-derived thumbnail it accepts, under the same identity. See the
+    // VISION_CALL_SITES note above.
+    ['routes/messages.js', 'routes/messages.js', 'routes/messages.js', 'routes/messages.js',
+      'routes/stories.js', 'routes/users.js',
+      'sockets/handlers.js', 'sockets/handlers.js', 'sockets/handlers.js', 'sockets/handlers.js'],
     'the set of billed Vision doors changed — re-read visionBudget.js CALL SITES and update both tables'
   );
 });
