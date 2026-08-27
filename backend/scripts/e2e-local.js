@@ -63,7 +63,17 @@ const signup = (name, email, dob, headers) =>
   console.log('Starting embedded Postgres (first run downloads binaries)...');
   await pg.initialise();
   await pg.start();
-  await pg.createDatabase('flock_e2e');
+  // Encoding forced to UTF8 (template0 + C locale), not pg.createDatabase():
+  // Windows initdb defaults the cluster to WIN1252, in which no emoji can be
+  // stored, so any check that writes one fails on the harness rather than the
+  // app. Railway is UTF8. Found by the browser suite in tools/e2e, same class.
+  {
+    const { Client } = require('pg');
+    const admin = new Client({ connectionString: 'postgresql://postgres:postgres@localhost:59595/postgres' });
+    await admin.connect();
+    await admin.query("CREATE DATABASE flock_e2e ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0");
+    await admin.end();
+  }
 
   process.env.DATABASE_URL = 'postgresql://postgres:postgres@localhost:59595/flock_e2e';
   // backend/.env carries PGHOST pointing at the PRODUCTION Railway proxy, and
