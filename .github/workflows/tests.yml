@@ -46,6 +46,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  sensor:
+    name: Sensor device suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        working-directory: flock-sensor
+        # Stdlib only, on purpose: test_main.py stubs the hardware and the
+        # network, so this needs no pip install and runs in about a second.
+        # This is the only automated gate the sensor code has. The hardware
+        # paths cannot run here, but every regression this job CAN catch
+        # (buffering, backoff, payload shape, clock handling) used to reach
+        # the repo unchecked, because the suite ran in no CI at all while
+        # its own header said it did.
+        run: python3 -m unittest -v test_main.py
+
   backend:
     name: Backend
     runs-on: ubuntu-latest

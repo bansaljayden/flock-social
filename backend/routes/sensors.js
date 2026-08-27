@@ -15,8 +15,11 @@ const router = express.Router();
 // The Pi is untrusted hardware: it sits in a bar, on someone else's wifi, and
 // anyone who walks off with it owns its API key. Everything it claims is
 // therefore clamped here, because these rows are the public "Live Occupancy"
-// figure and a ground-truth source for the crowd model. A wrong reading is a
-// wrong number shown to a user.
+// figure, and the intended ground truth for the crowd model once an exporter
+// reads them. None does yet: scripts/ml/RETRAIN.md lists this table as a
+// future source, and nothing in crowdEngine, mlPredictor or the export
+// scripts touches it today. A wrong reading is still a wrong number shown to
+// a user right now.
 // ---------------------------------------------------------------------------
 
 // One IR beam break per ~500ms is the physical ceiling of the hardware, so
@@ -255,9 +258,10 @@ router.post('/data',
       }
 
       // An installer's self test proves the key and the network work without
-      // writing a fabricated "0 people" row into the venue's live occupancy and
-      // the model's training data. Everything above has already run, so this
-      // still answers the only question the installer is asking.
+      // writing a fabricated "0 people" row into the venue's live occupancy
+      // figure (and, the day an exporter reads this table, the model's
+      // training data). Everything above has already run, so this still
+      // answers the only question the installer is asking.
       //
       // Round 21: every truthy spelling isBoolean() admits, not just the JSON
       // boolean. The validator passes the STRINGS 'true' and '1' (and the
@@ -439,9 +443,11 @@ router.get('/:placeId/current',
 
 // ---------------------------------------------------------------------------
 // GET /api/sensors/:placeId/history?hours=24 — hourly-bucketed readings for charts
-// One row per hour: thermal/noise are AVG, ir_beam_count is SUM (cumulative entries
-// per hour). Empty hours are omitted — frontends construct fixed-width slot arrays
-// and treat missing hours as gaps.
+// One row per hour: thermal/noise are AVG, ir_beam_count is SUM. The sum is
+// beam CROSSINGS per hour, not entries: the beam fires in both directions, so
+// it counts roughly two per person who comes in and leaves. Empty hours are
+// omitted; frontends construct fixed-width slot arrays and treat missing
+// hours as gaps.
 // ---------------------------------------------------------------------------
 router.get('/:placeId/history',
   authenticate,
