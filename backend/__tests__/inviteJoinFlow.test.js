@@ -161,6 +161,7 @@ async function join(user, over = {}) {
       'Content-Type': 'application/json',
       ...(user ? { Authorization: `Bearer ${tokenFor(user)}` } : {}),
     },
+    ...(over.body ? { body: JSON.stringify(over.body) } : {}),
   });
   const text = await res.text();
   let json = null;
@@ -299,6 +300,55 @@ test('a stranger with the link becomes an accepted member and is told where to g
   // INSERT is: read-then-write on a route several people hit at once.
   assert.ok(ran(/pg_advisory_xact_lock/).length > 0, 'the write is serialized per flock');
   assert.ok(log.some((q) => q.sql === 'BEGIN') && log.some((q) => q.sql === 'COMMIT'));
+});
+
+test('joining with the guest identity the page carried through signup retires its RSVP row', async () => {
+  // The convert-and-count-twice hole: RSVP by name, then join for real, and
+  // the plan said "5 going" over 4 people with the same name listed twice,
+  // forever, because nothing touched the guest row when its person became a
+  // member. The page stashes the guest UUID through signup and the join hides
+  // the row it proves ownership of, in the same transaction as the membership.
+  scriptViewer();
+  on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
+  on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [] }));
+  on(/SELECT COUNT\(\*\)::int AS n FROM flock_members/, () => ({ rows: [{ n: 4 }] }));
+  on(/INSERT INTO flock_members/, () => ({ rows: [{ id: 501 }], rowCount: 1 }));
+  on(/UPDATE guest_rsvps SET is_hidden = TRUE/, () => ({ rows: [], rowCount: 1 }));
+  scriptAnnounce();
+
+  const uuid = '11111111-2222-4333-8444-555555555555';
+  const res = await join(VIEWER, { body: { guestToken: uuid } });
+  assert.strictEqual(res.status, 200);
+  assert.deepStrictEqual(res.body, { flockId: 42, flockName: 'Dinner', joined: true });
+
+  const hide = ran(/UPDATE guest_rsvps SET is_hidden = TRUE/)[0];
+  assert.ok(hide, 'the guest row is retired');
+  assert.deepStrictEqual(hide.params, [42, uuid],
+    'scoped to this flock and the UUID that proves the row is theirs');
+  assert.match(hide.sql, /COALESCE\(is_hidden, false\) = false/,
+    'an already-hidden row (a moderator takedown) is left exactly as the moderator put it');
+  // Inside the same transaction as the membership, not after it.
+  const commitAt = log.findIndex((q) => q.sql === 'COMMIT');
+  const hideAt = log.findIndex((q) => /UPDATE guest_rsvps SET is_hidden = TRUE/.test(q.sql));
+  assert.ok(hideAt > -1 && hideAt < commitAt, 'hidden before COMMIT, so the count is never wrong');
+});
+
+test('a garbage guest token hides nothing and cannot fail the join', async () => {
+  // A stale stash, a doctored request, or a token from some other flock must
+  // never cost somebody the membership: the join is the point, the cleanup is
+  // riding along. Shape-checked to a UUID, so nothing non-UUID even reaches
+  // the database.
+  scriptViewer();
+  on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
+  on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [] }));
+  on(/SELECT COUNT\(\*\)::int AS n FROM flock_members/, () => ({ rows: [{ n: 4 }] }));
+  on(/INSERT INTO flock_members/, () => ({ rows: [{ id: 501 }], rowCount: 1 }));
+  scriptAnnounce();
+
+  const res = await join(VIEWER, { body: { guestToken: 'not-a-uuid; DROP TABLE guest_rsvps' } });
+  assert.strictEqual(res.status, 200);
+  assert.deepStrictEqual(res.body, { flockId: 42, flockName: 'Dinner', joined: true });
+  assert.strictEqual(ran(/UPDATE guest_rsvps/).length, 0, 'nothing non-UUID reaches the database');
 });
 
 test('a blocked account cannot walk into the flock through the share link', async () => {

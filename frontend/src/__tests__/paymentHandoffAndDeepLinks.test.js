@@ -1428,20 +1428,25 @@ describe('the moderation console has a way in', () => {
     expect(appSource).toMatch(/href="\/admin\/moderation" target="_blank" rel="noopener noreferrer"/);
   });
 
-  test('the native shell is told where it is instead of given a control that dies', () => {
+  test('the native shell gets a working control that navigates the WebView in place', () => {
     // capacitor://localhost and https://www.flockcorp.com are different
     // origins, and the console reads its bearer token from localStorage on
-    // whatever origin it loads on. Handing the https URL to Safari lands on a
-    // console with no token and no signed-out state, where every request 401s.
-    // Navigating the WebView in place does authenticate, but the console has
-    // no link back and index.js reads the URL once at boot, so the admin is
-    // stranded.
-    // The branch itself, not just the text inside it. Disabling the branch
-    // leaves the prose in the file and hands the native shell the link, which
-    // is the failure this split exists to prevent.
+    // whatever origin it loads on. An EXTERNAL open (Safari, target="_blank")
+    // lands on a token-less console where every request 401s, which is why the
+    // native branch must navigate IN PLACE: /admin/moderation is a PAGES route
+    // index.js matches before the native-shell fallback, so the console
+    // renders inside the shell with the app's own token, and its Back to
+    // Flock link boots the app again. This branch used to be a span PRINTING
+    // the address, defended by a comment claiming in-place navigation would
+    // strand the admin; that premise was wrong, and while it stood, a
+    // child-safety alert's tap could not reach the queue on the one device
+    // that receives it. The split itself still matters, so the branch is
+    // pinned along with what it does.
     expect(appSource).toMatch(/const isNative = typeof window !== 'undefined' && window\.Capacitor\?\.isNativePlatform\?\.\(\) === true;/);
-    expect(appSource).toMatch(/if \(isNative\) \{[\s\S]{0,900}flockcorp\.com\/admin\/moderation/);
-    expect(appSource).not.toMatch(/if \(false\) \{[\s\S]{0,900}flockcorp\.com\/admin\/moderation/);
+    expect(appSource).toMatch(/if \(isNative\) \{[\s\S]{0,1200}window\.location\.assign\('\/admin\/moderation'\)/);
+    // And the shell branch must never hand the link to Safari.
+    const nativeBranch = appSource.match(/if \(isNative\) \{[\s\S]{0,1200}?\)\;\s*\n\s*\}/);
+    expect(nativeBranch && /target="_blank"/.test(nativeBranch[0])).toBe(false);
   });
 
   test('and that path is a route the bundle actually serves', () => {

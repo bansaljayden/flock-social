@@ -333,7 +333,13 @@ test('the preview answers with a fixed allowlist and nothing else', async () => 
 
   const res = await call('GET', `/api/guest/${LEGACY_TOKEN}`);
   assert.strictEqual(res.status, 200);
-  assert.deepStrictEqual(Object.keys(res.body).sort(), ['flock', 'full', 'going', 'host', 'people', 'venues']);
+  // ── PIN UPDATE. `guestsFull` was added deliberately (2026-08-27). ────────
+  // The guest ledger has its own 50-row ceiling and the page used to learn
+  // about it from a 409 after the guest had already typed their name into a
+  // live form. Same contract as `full`: a boolean, never the count.
+  assert.deepStrictEqual(Object.keys(res.body).sort(), ['flock', 'full', 'going', 'guestsFull', 'host', 'people', 'venues']);
+  assert.strictEqual(res.body.guestsFull, false, 'nowhere near the guest ledger cap');
+  assert.strictEqual(typeof res.body.guestsFull, 'boolean', 'a yes or a no, never the count');
   assert.deepStrictEqual(Object.keys(res.body.flock).sort(), ['chosenVenue', 'name', 'status', 'when']);
   assert.strictEqual(res.body.host, 'Ava', 'host is a FIRST name only');
   assert.strictEqual(res.body.going, 3, 'going is a count, never a list');

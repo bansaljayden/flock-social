@@ -35,6 +35,9 @@ const { render, fireEvent, waitFor } = require('@testing-library/react');
 // jest.fn() before every test — behaviour is therefore set per-test with
 // mock*ValueOnce, never in this factory.
 jest.mock('../services/api', () => ({
+  // The auth screens report their own arrival (auth_screen_viewed, added
+  // 2026-08-27); a factory that omits the tracker crashes the mount effect.
+  trackAuthScreen: jest.fn(),
   signup: jest.fn(),
   login: jest.fn(),
   googleLoginWithToken: jest.fn(),

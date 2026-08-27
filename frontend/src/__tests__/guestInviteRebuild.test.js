@@ -151,7 +151,7 @@ describe('GuestInvite: the rebuilt screen', () => {
       return m[1];
     })();
     expect(goJoinBody.length).toBeLessThan(1200);
-    const stashAt = goJoinBody.indexOf('stashInvite(token, flockName);');
+    const stashAt = goJoinBody.indexOf('stashInvite(token, flockName, (fresh && fresh.guestToken) || (guest && guest.guestToken));');
     const assignAt = goJoinBody.indexOf('window.location.assign(where);');
     expect(stashAt).toBeGreaterThanOrEqual(0);
     expect(assignAt).toBeGreaterThan(stashAt);
@@ -844,7 +844,17 @@ describe('inviteHandoff: carrying the token across the auth round trip', () => {
 
   test('a remembered invite comes back, and the page and the service agree on the key', () => {
     expect(handoff.rememberInvite(NEW_TOKEN, { flockName: 'Friday Night Out' })).toBe(true);
-    expect(handoff.pendingInvite()).toEqual({ token: NEW_TOKEN, flockName: 'Friday Night Out' });
+    expect(handoff.pendingInvite()).toEqual({ token: NEW_TOKEN, flockName: 'Friday Night Out', guestToken: null });
+
+    // The guest identity rides only when it is UUID-shaped. The join uses it
+    // to retire the by-name RSVP row the membership subsumes (the
+    // convert-and-count-twice hole), and garbage must read as absent, never as
+    // a value the server is asked about.
+    const uuid = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    expect(handoff.rememberInvite(NEW_TOKEN, { flockName: 'Friday Night Out', guestToken: uuid })).toBe(true);
+    expect(handoff.pendingInvite().guestToken).toBe(uuid);
+    expect(handoff.rememberInvite(NEW_TOKEN, { flockName: 'Friday Night Out', guestToken: 'not-a-uuid' })).toBe(true);
+    expect(handoff.pendingInvite().guestToken).toBeNull();
 
     // GuestInvite writes this entry itself rather than importing the service
     // (which would drag the whole REST client into the marketing chunk), so the
@@ -883,7 +893,8 @@ describe('inviteHandoff: carrying the token across the auth round trip', () => {
     joinFlockByInviteToken.mockResolvedValue({ flockId: 42, flockName: 'Friday Night Out', joined: true });
 
     const result = await handoff.redeemPendingInvite();
-    expect(joinFlockByInviteToken).toHaveBeenCalledWith(NEW_TOKEN);
+    // No guest identity was stashed, so the second argument reads as absent.
+    expect(joinFlockByInviteToken).toHaveBeenCalledWith(NEW_TOKEN, undefined);
     expect(result).toEqual({ flockId: 42, flockName: 'Friday Night Out', joined: true });
     expect(window.localStorage.getItem(KEY)).toBeNull();
   });

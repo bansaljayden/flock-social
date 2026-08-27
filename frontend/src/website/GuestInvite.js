@@ -145,12 +145,20 @@ const trackGuest = (pick) => {
     .catch(() => { /* same */ });
 };
 
-const stashInvite = (token, flockName) => {
+const stashInvite = (token, flockName, guestToken) => {
   try {
     window.localStorage.setItem(HANDOFF_KEY, JSON.stringify({
       token,
       at: Date.now(),
       flockName: flockName ? String(flockName).slice(0, 80) : null,
+      // The guest identity this person answered under, if they answered. The
+      // join presents it so the server retires the by-name RSVP row the new
+      // membership subsumes; without it "5 going" stood over 4 people with the
+      // same name listed twice, forever, on every invitee's page. UUID-shaped
+      // or absent; services/inviteHandoff.js re-validates on the way out.
+      guestToken: (typeof guestToken === 'string'
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(guestToken))
+        ? guestToken : null,
     }));
     return true;
   } catch {
@@ -256,11 +264,9 @@ const failureText = (r, fallback, host) => {
   if (r.status === NO_REACH) return 'That did not go through. Check your connection and try again.';
   if (r.status === TOO_SLOW) return 'That took too long to come back. Try it again.';
   if (r.status === 429) {
-    // Two different 429s come out of routes/guest.js. The per-flock cap is
-    // permanent for this link, so telling someone to wait would be a lie.
-    if (serverText && /too many guest rsvps/i.test(serverText)) {
-      return `This link has hit its limit of 50 guest answers. Ask ${host || 'whoever sent it'} to add you in the app instead.`;
-    }
+    // The guest-ledger cap used to be a 429 and had its own branch here; the
+    // server moved it to a 409 with guestCapReached and its own sentence, so
+    // the only 429s left are real rate limits.
     return serverText || 'Too many tries from this network. Give it a few minutes.';
   }
   if (r.status >= 500) return 'Flock is having a problem on our end. Try that again in a second.';
@@ -605,7 +611,11 @@ export default function GuestInvite() {
   // deliberate, because the write has to happen first and a plain link would
   // race it.
   const goJoin = (where) => {
-    stashInvite(token, flockName);
+    // Read the store at TAP time, not from mount-time state: the RSVP may have
+    // happened in another tab, and stashing a null guest token here is what
+    // used to leave the by-name row alive after the join.
+    const fresh = readStore(storageKey);
+    stashInvite(token, flockName, (fresh && fresh.guestToken) || (guest && guest.guestToken));
     // Best effort, and worth being precise about why it usually works rather
     // than assuming it does. index.js already dynamic-imports services/api.js
     // on this page after load, to fire invite_link_opened, and that import
@@ -644,7 +654,12 @@ export default function GuestInvite() {
       body: JSON.stringify({
         name: typed,
         status,
-        guestToken: (guest && guest.guestToken) || undefined,
+        // State first, then the store, read at SUBMIT time: a second tab
+        // opened before the RSVP in the first still holds guest = null, and
+        // answering there minted a second identity, a duplicate roster name,
+        // and spent one of the per-network identity slots shared wifi lives
+        // on. The store is the tabs' common ground.
+        guestToken: (guest && guest.guestToken) || (readStore(storageKey) || {}).guestToken || undefined,
       }),
     });
     const body = r.body;
@@ -923,6 +938,12 @@ export default function GuestInvite() {
   // separately, so an OLD SERVER omits this key entirely, and an absent key
   // must read as "not full" rather than as anything. Same rule as hasRoster.
   const atCapacity = !!(data && data.full === true);
+  // The guest ledger's own ceiling. When it is reached and this person has not
+  // already answered, the RSVP form is replaced with the fact: a live name
+  // field whose submit can only 409 is a dead control wearing a working one's
+  // clothes (SLOP-AUDIT H5). A guest who HAS answered keeps the buttons,
+  // because changing an answer adds no row and the server allows it.
+  const guestsFull = !!(data && data.guestsFull === true);
   const showNameField = !guest || editingName;
   const shown = people.slice(0, ROSTER_SHOWN);
   const hidden = people.length - shown.length;
@@ -1141,6 +1162,13 @@ export default function GuestInvite() {
       {!closed && (
         <section className="gi-sec" aria-labelledby="gi-rsvp-h">
           <h2 id="gi-rsvp-h">Or just answer</h2>
+          {guestsFull && !answered ? (
+            <p className="gi-sub">
+              This plan already has as many guest answers as it can take. Ask{' '}
+              {host || 'whoever sent the link'} to add you in the app instead.
+            </p>
+          ) : (
+          <>
           <p className="gi-sub">
             No account needed. Your name and your answer show up here and in
             their app. It does not put you in the chat.
@@ -1206,6 +1234,8 @@ export default function GuestInvite() {
               </button>
             </div>
           </form>
+          </>
+          )}
 
           <Feedback where="rsvp" feedback={feedback} />
 
@@ -1236,7 +1266,9 @@ export default function GuestInvite() {
                 ? 'How the votes landed.'
                 : canVote
                   ? 'Pick one. You can change it.'
-                  : 'Answer above first, then you can vote.'}
+                  : guestsFull
+                    ? 'The guest list on this plan is full, so voting here is closed.'
+                    : 'Answer above first, then you can vote.'}
             </p>
             <ul className="gi-venues">
               {venues.map((v) => {

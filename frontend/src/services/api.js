@@ -973,8 +973,16 @@ export async function createFlockInviteLink(flockId, regenerate = false) {
 // The token is a bearer credential, so it is never put in a query string and
 // never sent to analytics: the event below carries whether it worked, not what
 // was redeemed. See services/inviteHandoff.js for the state machine around it.
-export async function joinFlockByInviteToken(token) {
-  const data = await request(`/api/guest/${encodeURIComponent(token)}/join`, { method: 'POST' });
+export async function joinFlockByInviteToken(token, guestToken) {
+  // guestToken is the guest identity this person used on the invite page
+  // before they had an account, carried through signup by inviteHandoff so the
+  // join can retire the by-name RSVP row that would otherwise count them
+  // twice. Optional, and never load-bearing: the server hides on a UUID match
+  // and quietly ignores anything else.
+  const data = await request(`/api/guest/${encodeURIComponent(token)}/join`, {
+    method: 'POST',
+    ...(guestToken ? { body: JSON.stringify({ guestToken }) } : {}),
+  });
   track('invite_link_joined', { already_member: data?.joined === false });
   return data;
 }
