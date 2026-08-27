@@ -229,8 +229,30 @@ async function inviteWhileCreating(page, personName) {
   await expect(page.getByText(personName.split(' ')[0], { exact: true })).toBeVisible({ timeout: 10_000 });
 }
 
+/**
+ * Step out of a full-screen chat thread if the page is sitting inside one.
+ *
+ * The flock chat and the one-to-one DM thread are full-screen by design: the
+ * composer runs along the bottom edge and the only way out is the Back arrow in
+ * the header, so neither screen carries the bottom tab bar. A person leaving one
+ * conversation to open another taps that arrow first, because there is no
+ * "Messages" tab on the screen to tap. openFlockChat and openDmWith both start
+ * from the Messages list, so when a previous spec has left the pair inside a
+ * thread this puts them back where a person would be before navigating, rather
+ * than waiting out the timeout for a tab that is not there.
+ */
+async function leaveOpenThread(page) {
+  if (await page.getByRole('button', { name: 'Messages' }).count()) return;
+  const back = page.getByRole('button', { name: 'Back', exact: true }).first();
+  if (await back.count()) {
+    await back.click();
+    await page.getByRole('button', { name: 'Messages' }).first().waitFor({ state: 'visible', timeout: 15_000 });
+  }
+}
+
 /** Open a flock's chat from the Messages list. */
 async function openFlockChat(page, flockName) {
+  await leaveOpenThread(page);
   await page.getByRole('button', { name: 'Messages' }).click();
   await page.getByRole('button', { name: new RegExp(escapeRe(flockName)) }).first().click({ timeout: 25_000 });
   await expect(page.locator('#chat-input')).toBeVisible({ timeout: 20_000 });
@@ -264,6 +286,7 @@ async function sendInFlock(page, text) {
  * key at a time does not work, which is its own spec below.
  */
 async function openDmWith(page, personName) {
+  await leaveOpenThread(page);
   await page.getByRole('button', { name: 'Messages' }).click();
   const row = page.getByRole('button', { name: new RegExp(escapeRe(personName)) }).first();
   if (await row.count()) {
@@ -782,7 +805,13 @@ test.describe('direct messages, with two people watching them', () => {
     await openDmWith(dee.page, eli.name);
     await openDmWith(eli.page, dee.name);
 
-    const said = 'meet at the corner by nine';
+    // Tagged per run for the same reason the reaction spec below tags its
+    // message: the dee and eli accounts are reused across runs from the cast
+    // file, so a fixed string accumulates in the thread and a second run finds
+    // two of it, which trips Playwright's strict mode before the socket is ever
+    // in question. A unique line each run keeps the assertion about delivery.
+    const tag = Math.random().toString(36).slice(2, 6);
+    const said = `meet at the corner by nine ${tag}`;
     await dee.page.locator('[data-dm-input]').fill(said);
     await dee.page.getByRole('button', { name: 'Send', exact: true }).click();
 
@@ -790,7 +819,7 @@ test.describe('direct messages, with two people watching them', () => {
     await expect(dee.page.getByText(said)).toBeVisible();
 
     // And back the other way, because a one-directional socket is still broken.
-    const replied = 'yes, bring the cards';
+    const replied = `yes, bring the cards ${tag}`;
     await eli.page.locator('[data-dm-input]').fill(replied);
     await eli.page.getByRole('button', { name: 'Send', exact: true }).click();
     await expect(dee.page.getByText(replied)).toBeVisible({ timeout: 25_000 });
