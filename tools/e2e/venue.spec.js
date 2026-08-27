@@ -127,7 +127,7 @@ async function createFlock(page, inviteeNames, { budget = false } = {}) {
   await page.getByRole('textbox', { name: /what's the plan/i }).fill(FLOCK_NAME);
   if (budget) await page.getByRole('switch', { name: 'Shared cash pool' }).click();
   for (const who of inviteeNames) {
-    await page.getByRole('textbox', { name: /search people by name or email/i }).fill(who);
+    await page.getByRole('textbox', { name: /search people by name/i }).fill(who);
     await expect(page.getByRole('button', { name: new RegExp(who) }).first()).toBeVisible({ timeout: 20_000 });
     await page.getByRole('button', { name: new RegExp(who) }).first().click();
   }

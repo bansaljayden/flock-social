@@ -336,7 +336,7 @@ test('the New Message search finds somebody by name', async ({ browser }) => {
     // typing a name into it has to produce that person.
     await beta.page.getByRole('button', { name: 'Messages', exact: true }).click();
     await beta.page.getByRole('button', { name: 'New message' }).click();
-    const box = beta.page.getByRole('textbox', { name: /search people by name or email/i });
+    const box = beta.page.getByRole('textbox', { name: /search people by name/i });
     await box.fill(alphaName);
     // The name has to still be in the box a moment later, or nothing can be
     // searched for from here at all.

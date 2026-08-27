@@ -270,7 +270,7 @@ export default function AddFriends({
                   bird={WARM_BIRD}
                   size={96}
                   title="Find people you know"
-                  body="Search by name, or by the email they signed up with."
+                  body="Search by the name they signed up with."
                   style={{ padding: '32px 16px 16px' }}
                 />
               )}

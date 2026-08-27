@@ -235,8 +235,8 @@ describe('claims a chat screen must not make', () => {
 
 describe('the refusal a new user actually hits', () => {
   test('"not connected" is a standing explanation, not a two second toast', () => {
-    // The New Message sheet searches every account by name or email, so the
-    // ordinary way to start a DM finds strangers and the first send is refused.
+    // The New Message sheet searches every account by name, so the ordinary
+    // way to start a DM finds strangers and the first send is refused.
     expect(NOT_CONNECTED_HINT.test("You can only do that with people you're connected with.")).toBe(true);
     expect(NOT_CONNECTED_HINT.test('Message is required')).toBe(false);
     expect(appSource).toMatch(/const \[dmNotConnected, setDmNotConnected\] = useState\(\{\}\)/);
