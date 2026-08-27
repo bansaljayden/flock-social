@@ -1,5 +1,5 @@
 /**
- * FLOCK MESSAGE REACTIONS — the feature that was a local state edit.
+ * FLOCK MESSAGE REACTIONS, the feature that was a local state edit.
  *
  * Before this, tapping a reaction on a flock message did exactly one thing:
  * it toggled an emoji into React state. It never called the server.

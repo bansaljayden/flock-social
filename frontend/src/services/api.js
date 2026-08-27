@@ -734,8 +734,8 @@ export async function deleteAccount(password) {
 // Three things this has to get right, and each is a property of THIS endpoint
 // rather than a house style:
 //
-//   retry: false. It is a GET with a server-side effect — every call spends one
-//   of the owner's export slots (exportRequests.record) — so the automatic
+//   retry: false. It is a GET with a server-side effect. Every call spends one
+//   of the owner's export slots (exportRequests.record), so the automatic
 //   502/503/504 retry would burn three of them on one tap. routes/checkin.js
 //   sets the same flag for the same reason, and the note on canRetry in
 //   request() names exactly this case.

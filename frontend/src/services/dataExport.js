@@ -27,7 +27,7 @@
  * carries references and text and never image bytes. With EXPORT_ROW_CAP at
  * 2000 rows a section, a real account's export is tens of kilobytes. If that
  * ever changes, the clipboard branch is the first thing that stops being
- * reasonable — assertNoInlineImages() below fails the moment it does.
+ * reasonable. assertNoInlineImages() below fails the moment it does.
  */
 
 export const EXPORT_FILENAME = 'flock-data-export.json';

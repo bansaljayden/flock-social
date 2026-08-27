@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 // EVERY ROUTE IS EITHER GUARDED OR ON THE LIST. THERE IS NO THIRD CATEGORY.
 // ---------------------------------------------------------------------------
-// The question this answers is not "are the public routes safe" — several of
+// The question this answers is not "are the public routes safe". Several of
 // them are public on purpose and each has a reason. It is "did anything become
 // public by ACCIDENT". A route file gains an endpoint in a hurry, the
 // authenticate middleware is left off, nothing fails, and it ships. Nothing in
@@ -257,7 +257,7 @@ test('the sensor ingest still reads the key AND resolves it to a device', () => 
   // IN_BODY_AUTH is deliberately a coarse net: it answers "does this handler do
   // auth of its own", and it is satisfied by any one of several tokens. That is
   // the right shape for the survey above and the wrong shape for proving THIS
-  // route is safe, which the mutation check showed directly — blanking the
+  // route is safe, which the mutation check showed directly: blanking the
   // header read left findDeviceByApiKey in the file and the survey never
   // noticed. Both halves are named here, because either one alone is not
   // authentication: a key nobody looks up, or a lookup with nothing to look up.
