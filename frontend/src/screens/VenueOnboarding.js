@@ -53,8 +53,10 @@ export default function VenueOnboarding({
   renderVenueNumber,
   renderVenueTime,
   setCurrentScreen,
+  setCurrentTab,
   setOperatingHours,
   setShowVenueOnboarding,
+  setUserMode,
   setVenueInfo,
   setVenueOnboardingData,
   setVenueOnboardingError,
@@ -478,7 +480,16 @@ export default function VenueOnboarding({
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             {venueOnboardingStep > 0 ? (
               <button className="hit44" onClick={() => setVenueOnboardingStep(s => s - 1)} style={{ background: 'none', border: 'none', color: 'rgba(148,163,184,0.6)', fontSize: 'var(--t-label)', cursor: 'pointer', padding: '8px 0', fontWeight: '500' }}>Back</button>
-            ) : <span />}
+            ) : (
+              /* THE EXIT (2026-08-27). A consumer who tapped "Run a venue?
+                 Log in here" out of curiosity was trapped: step 0's only
+                 control was Let's Go, advancing requires claiming a real
+                 Google Places business, and the true escapes were
+                 force-quitting the app or crashing the screen. This walks
+                 them back to the consumer app they came from; a real owner
+                 just doesn't tap it. */
+              <button className="hit44" onClick={() => { setShowVenueOnboarding(false); setUserMode('user'); try { localStorage.setItem('flockUserMode', 'user'); } catch { /* mode still flips for this session */ } setCurrentTab('home'); setCurrentScreen('main'); }} style={{ background: 'none', border: 'none', color: 'rgba(148,163,184,0.6)', fontSize: 'var(--t-label)', cursor: 'pointer', padding: '8px 0', fontWeight: '500' }}>Not a venue? Back to Flock</button>
+            )}
             {/* Visible skip on every optional step. The owner can fill any of
                 these in later from Settings, and saying so here is what stops
                 the longer form reading as a wall. */}

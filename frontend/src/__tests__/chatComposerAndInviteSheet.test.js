@@ -265,6 +265,7 @@ function chatProps(over = {}) {
     typingUser: '',
     updateFlockVenue: fn(),
     updateFlockVotes: fn(),
+    userLocation: null,
     ...over,
   };
 }
@@ -493,10 +494,22 @@ describe('the Share a Venue sheet when nothing loaded', () => {
   const openShare = (over) => chatProps({ showVenueShareModal: true, ...over });
 
   test('an empty venue list says why, instead of a blank panel', () => {
-    render(React.createElement(ChatDetail, openShare({ budgetFilteredVenues: [] })));
+    // With a location on record, an empty list really does mean venue search
+    // is down, so that is the sentence.
+    render(React.createElement(ChatDetail, openShare({ budgetFilteredVenues: [], userLocation: { latitude: 40, longitude: -75 } })));
     // The sentence a person can read and act on, not silence.
     expect(screen.getByText(/no venues to show here/i)).toBeTruthy();
     expect(screen.getByText(/unavailable/i)).toBeTruthy();
+  });
+
+  test('with no location, the panel names the real reason instead of blaming search', () => {
+    // The 2026-08-27 onboarding audit: a fresh account that never granted
+    // location saw "venue search is unavailable", which was false, and the
+    // actual next step (Discover, location prompt) was never named.
+    render(React.createElement(ChatDetail, openShare({ budgetFilteredVenues: [] })));
+    expect(screen.getByText(/doesn't have your location/i)).toBeTruthy();
+    expect(screen.getByText(/Discover tab/i)).toBeTruthy();
+    expect(screen.queryByText(/unavailable/i)).toBeNull();
   });
 
   test('the empty state offers a way out beyond the corner close', () => {
