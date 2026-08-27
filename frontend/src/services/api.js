@@ -1759,12 +1759,17 @@ export async function deleteTrustedContact(id) {
 // Safety endpoints get double the default leash. The server fans the alert
 // out to trusted contacts before answering, and an SOS is the one request
 // that must not give up early on a weak connection.
-export async function sendEmergencyAlert({ latitude, longitude, includeLocation }) {
+export async function sendEmergencyAlert({ latitude, longitude, accuracy, includeLocation }) {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  // accuracy is the phone's own radius for the fix, in metres. The server has
+  // labelled coarse fixes honestly since round 23 ("treat it as the area to
+  // search rather than the spot"), and until this field was sent that whole
+  // layer was dead code: a cell-tower fix wrong by two kilometres mailed a
+  // parent six decimal places and a pin.
   return request('/api/safety/alert', {
     method: 'POST',
     timeout: 30000,
-    body: JSON.stringify({ latitude, longitude, includeLocation, timezone }),
+    body: JSON.stringify({ latitude, longitude, accuracy, includeLocation, timezone }),
   });
 }
 

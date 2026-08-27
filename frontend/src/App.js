@@ -7,7 +7,7 @@ import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
-import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onGuestRsvp, onSafetyAlert } from './services/socket';
+import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled } from './services/socket';
 import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
@@ -4221,7 +4221,18 @@ function getSosPosition(timeoutMs, maximumAge) {
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         clearTimeout(guard);
-        finish({ coords: { latitude: pos.coords.latitude, longitude: pos.coords.longitude }, denied: false });
+        // accuracy rides along: the server has carried a whole honesty layer
+        // for coarse fixes ("treat it as the area to search") since round 23,
+        // and it was dead code in production because this extraction dropped
+        // the one field that feeds it.
+        finish({
+          coords: {
+            latitude: pos.coords.latitude,
+            longitude: pos.coords.longitude,
+            accuracy: Number.isFinite(pos.coords.accuracy) ? pos.coords.accuracy : undefined,
+          },
+          denied: false,
+        });
       },
       (err) => {
         clearTimeout(guard);
@@ -8650,6 +8661,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return unsub;
   }, []);
 
+  // The other half of the alarm. Until 2026-08-27 a cancelled SOS reached the
+  // email contacts and NOBODY in the flock: the full-screen alarm above stayed
+  // up on every flockmate's phone after the person had already stood down, and
+  // a flockmate acting on it had no way to learn it was withdrawn. The server
+  // now tells the same audience the alarm reached; this clears the modal for
+  // that sender and says so in a toast that does not frighten anyone twice.
+  useEffect(() => {
+    const unsub = onSafetyAlertCancelled((data) => {
+      if (!data || !data.fromUserId) return;
+      setSafetyAlert((prev) => (prev && prev.userId === String(data.fromUserId) ? null : prev));
+      showToast(`${String(data.fromUserName || 'They').slice(0, 80)} says they are OK`);
+    });
+    return unsub;
+  }, [showToast]);
+
   // Listen for flock deleted
   useEffect(() => {
     const unsub = onFlockDeleted((data) => {
@@ -9686,8 +9712,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // landed. The sheet counts contacts to decide what it can offer, so the
   // moment it is opened is the moment that count has to be true. Nothing
   // happens on a list that loaded fine.
+  //
+  // BOUNDED, which the first version was not: fully offline, request() throws
+  // immediately, safetyLoading flips back, and this effect refired at
+  // microtask speed for as long as the sheet stayed open. Three tries with a
+  // widening gap per open; past that the sheet's contactsUnknown state has
+  // already made the buttons live anyway, so more reads buy nothing.
+  const sosContactRetryRef = useRef(0);
   useEffect(() => {
-    if (showSOS && !trustedContactsLoaded && !safetyLoading) loadTrustedContacts();
+    if (!showSOS) { sosContactRetryRef.current = 0; return undefined; }
+    if (trustedContactsLoaded || safetyLoading) return undefined;
+    if (sosContactRetryRef.current >= 3) return undefined;
+    const attempt = sosContactRetryRef.current;
+    sosContactRetryRef.current += 1;
+    const t = setTimeout(() => loadTrustedContacts(), attempt === 0 ? 0 : 2000 * attempt);
+    return () => clearTimeout(t);
   }, [showSOS, trustedContactsLoaded, safetyLoading, loadTrustedContacts]);
 
   const handleEditContact = useCallback((contact) => {
@@ -9726,6 +9765,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }, [newContact, editingContact, showToast, loadTrustedContacts]);
 
   const handleDeleteContact = useCallback(async (contactId) => {
+    // One mis-tap must not remove an emergency contact; Unblock has this
+    // confirm and the stakes here are strictly higher.
+    if (typeof window !== 'undefined' && !window.confirm('Remove this trusted contact? They will no longer get your emergency alerts.')) return;
     try {
       await deleteTrustedContact(contactId);
       setTrustedContacts(prev => prev.filter(c => c.id !== contactId));
@@ -9763,7 +9805,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         sosFollowUpRef.current.timer = null;
         if (sosFollowUpRef.current.gen !== gen) return;
         try {
-          await sendEmergencyAlert({ latitude: coords.latitude, longitude: coords.longitude, includeLocation: true });
+          await sendEmergencyAlert({ latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy, includeLocation: true });
           showToast('Your location has been sent to your contacts');
         } catch (err) {
           // The alert itself was delivered, so this is a smaller failure than
@@ -9775,19 +9817,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }, [showToast]);
 
   const handleEmergencyAlert = useCallback(async () => {
-    if (trustedContacts.length === 0) {
-      // Two different zeros, and in an emergency the difference is the whole
-      // message: nobody added, or nobody could be read. Telling somebody to go
-      // add contacts they already have is the worst sentence this screen could
-      // say, so a failed load says so and retries instead.
-      if (!trustedContactsLoaded) {
-        showToast("Your trusted contacts couldn't be loaded, so nobody has been alerted. Call 911 if you need help now.", 'error');
-        loadTrustedContacts();
-        return;
-      }
+    if (trustedContacts.length === 0 && trustedContactsLoaded) {
       showToast('Add trusted contacts in Safety settings first', 'error');
       return;
     }
+    // An EMPTY list because the read failed is not the same zero as nobody
+    // added, and it used to block the send entirely: a failed GET stood
+    // between a person in trouble and a POST the server might well have
+    // accepted. The server is the authority on the contact list and answers a
+    // genuine zero with its own refusal naming 911, so when the read never
+    // landed the alert is attempted rather than refused locally. This is the
+    // backend's own rule ("never be the reason an alert did not go out")
+    // finally applied to the client.
     // A fresh press supersedes any location follow-up still chasing the last one.
     cancelSosLocationFollowUp();
     setSosAlertSending(true);
@@ -9801,6 +9842,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       const data = await sendEmergencyAlert({
         latitude: loc?.latitude,
         longitude: loc?.longitude,
+        accuracy: loc?.accuracy,
         includeLocation: !!loc,
       });
       // There is now something to withdraw. Recorded before the toast so a
@@ -9816,11 +9858,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       // or a permission the user has already refused.
       if (!loc && !first.denied && navigator.geolocation) startSosLocationFollowUp();
     } catch (err) {
-      showToast(err.message || 'Failed to send alert', 'error');
+      // A 429 carrying alreadySent is the server confirming a live alert is
+      // out and this device just did not know (a second phone, cleared
+      // storage), so the stand-down band arms off the server's word.
+      if (err?.status === 429 && err?.data?.alreadySent === true) rememberSosAlert(Date.now());
+      const line = err?.message || 'Failed to send alert';
+      // The offline and timeout failures are client-authored and were the
+      // only SOS failures that did not name 911; every server refusal does.
+      // The most likely 1am failure gets the same guidance as the rest.
+      showToast((err?.isNetworkError || err?.isTimeout)
+        ? `${line} Nobody has been alerted. Call 911 if you need help now.`
+        : line, 'error');
     } finally {
       setSosAlertSending(false);
     }
-  }, [trustedContacts, trustedContactsLoaded, loadTrustedContacts, showToast, startSosLocationFollowUp, cancelSosLocationFollowUp, rememberSosAlert]);
+  }, [trustedContacts, trustedContactsLoaded, showToast, startSosLocationFollowUp, cancelSosLocationFollowUp, rememberSosAlert]);
 
   /* THE STAND-DOWN.
      The server does the hard part: it finds the most recent alert that
@@ -10154,6 +10206,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const SOSModal = () => showSOS && (
     <EmergencySheet
       contactCount={trustedContacts.length}
+      contactsUnknown={!trustedContactsLoaded}
       armed={sosArmed}
       onArmedChange={setSosArmed}
       sending={sosAlertSending}
@@ -18221,6 +18274,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>
               They pressed SOS on a plan you are both on. Their trusted contacts have already been emailed.
               {safetyAlert.lat === null ? ' They did not share their location.' : ''}
+              {/* The alarm's own time. A push tapped at 9am used to read as a
+                  live 9am alarm; the hour it actually fired changes what the
+                  reader should do. */}
+              {(() => { const t = new Date(safetyAlert.at).getTime(); return Number.isFinite(t) ? ` As of ${new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.` : ''; })()}
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <a className="hit44" href="tel:911" style={{ minHeight: '48px', borderRadius: '10px', backgroundColor: '#b91c1c', color: '#ffffff', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', textDecoration: 'none' }}>

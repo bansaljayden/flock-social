@@ -794,6 +794,10 @@ export function onFlockReactionRemoved(callback) {
 // The payload carries fromUserId, fromUserName, an ISO `at`, and latitude and
 // longitude ONLY when the sender chose to share them. Absent rather than null,
 // so a consumer cannot mistake "did not share" for "shared nothing".
+export function onSafetyAlertCancelled(callback) {
+  return register('safety_alert_cancelled', callback);
+}
+
 export function onSafetyAlert(callback) {
   return register('safety_alert', callback);
 }

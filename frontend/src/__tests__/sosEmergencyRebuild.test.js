@@ -98,6 +98,21 @@ describe('the sheet is a real alertdialog', () => {
     expect(line(3)).toBe('3 trusted contacts will be notified');
     expect(line(0)).toBe('No trusted contacts set up');
   });
+
+  it('a failed contact read is not a zero: says it could not check, keeps the buttons live', () => {
+    // The P0 from the 2026-08-27 safety audit: a failed GET on bar wifi told
+    // a person WITH contacts "No trusted contacts set up" over a dead Alert
+    // button, at the panic moment. Unknown is its own state now: honest line,
+    // live buttons (the server is the authority and its own zero-contact
+    // refusal names 911), and no setup homework for a list nobody has read.
+    renderSheet({ contactCount: 0, contactsUnknown: true });
+    const dialog = screen.getByRole('alertdialog');
+    const desc = document.getElementById(dialog.getAttribute('aria-describedby'));
+    expect(desc).toHaveTextContent("Couldn't check your contacts");
+    expect(screen.getByRole('button', { name: /alert contacts/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: /share location/i })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: /add trusted contacts/i })).toBeNull();
+  });
 });
 
 describe('focus management', () => {

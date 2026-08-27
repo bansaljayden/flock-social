@@ -235,10 +235,17 @@ export default function ProfileSettings({
                 <div style={styles.card}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
-                      <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>Safety Features</p>
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>Quick exit & check-ins. Saves as you switch it.</p>
+                      <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>SOS button</p>
+                      {/* What this toggle ACTUALLY gates is the emergency
+                          button itself, and the old copy ("Quick exit &
+                          check-ins") described two features that do not exist
+                          while hiding what turning it off really does: remove
+                          the only way to open the emergency sheet. Say the
+                          true thing, on the one screen where a wrong sentence
+                          costs the most. */}
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>Turning this off hides the emergency SOS button everywhere in the app. Saves as you switch it.</p>
                     </div>
-                    <Toggle label="Safety check-ins" on={safetyOn} onChange={() => setSafetyEnabled(!safetyOn)} />
+                    <Toggle label="SOS button" on={safetyOn} onChange={() => setSafetyEnabled(!safetyOn)} />
                   </div>
                 </div>
 
@@ -334,6 +341,7 @@ export default function ProfileSettings({
 
                       <div style={{ marginBottom: '10px' }}>
                         <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', marginBottom: '4px' }}>Phone Number *</label>
+                        <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '0 0 4px' }}>So you can tell your contacts apart. Alerts go out by email; Flock never texts or calls this number.</p>
                         <SearchInputLocal aria-label="Phone number" type="tel" initialValue={newContact.phone} onCommit={(v) => setNewContact(prev => ({ ...prev, phone: v }))} placeholder="+1 234 567 8900" style={{ ...styles.input, width: '100%' }} autoComplete="off" />
                       </div>
 

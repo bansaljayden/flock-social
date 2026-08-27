@@ -803,12 +803,12 @@ export default function LandingPage() {
                 <p className="lp-sos-link">View location on map</p>
                 <p className="lp-sos-fine">Sent 11:42 PM, exact coordinates included</p>
               </div>
-              <p className="lp-sos-cap">The actual email. It goes out the moment you tap SOS.</p>
+              <p className="lp-sos-cap">The actual email. Two taps to send, so a pocket can't fire it.</p>
             </div>
           </div>
 
           <ul className="lp-list lp-safety-rules">
-            <li>One-tap SOS to your trusted contacts</li>
+            <li>Two-tap SOS to your trusted contacts</li>
             <li>Live location inside the flock, off by default</li>
             <li>No background tracking, ever</li>
             <li>Report and block on any message or profile</li>
