@@ -1338,7 +1338,14 @@ router.put('/:id',
             "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
             [flockId, req.user.id]
           );
-          const timeStr = updated.event_time ? new Date(updated.event_time).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : '';
+          // No time string on purpose. event_time is a naive TIMESTAMP and
+          // this process runs in UTC, so the old string rendered the wrong
+          // hour and often the wrong weekday on every lock screen ("Sat,
+          // 1:00 AM" for a Friday 9 PM plan) while the app itself showed the
+          // correct client-local time one tap away. Until the venue's
+          // timezone is threaded here (ml_venues.timezone, the
+          // routes/safety.js pattern), the honest body names the plan and
+          // not the hour.
           // SLOP-AUDIT rule 1: this used to join the three parts on ' — ' and
           // land an em dash on a lock screen. Restructured rather than swapped
           // for another separator, because the parts are not a list: the venue
@@ -1346,7 +1353,7 @@ router.put('/:id',
           // formatted time already contains a comma ("Fri, 7:00 PM"), so a
           // comma-joined version would have read as one long stutter.
           const where = [updated.name, updated.venue_name].filter(Boolean).join(' at ');
-          const bodyText = [where, timeStr].filter(Boolean).join('. ');
+          const bodyText = where ? `${where} is on.` : 'Your plan is on.';
           // Concurrent fan-out: a 20-member confirm was 20 sequential Firebase
           // round trips. allSettled so one member's failed delivery does not
           // abort the rest. (No actor id: this push names the flock, not a user.)
@@ -1403,11 +1410,11 @@ router.put('/:id',
             title = 'Plan cancelled';
             bodyText = `${planName} is off.`;
           } else if (event_time !== undefined) {
-            const when = updated.event_time
-              ? new Date(updated.event_time).toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' })
-              : '';
             title = 'Plan updated';
-            bodyText = when ? `${planName} moved to ${when}.` : `${planName} has a new time.`;
+            // Same naive-TIMESTAMP truth as the confirm push above: the one
+            // notification whose whole job is the new time was announcing it
+            // in UTC. The app shows the correct local time on open.
+            bodyText = `${planName} has a new time. Open it to see when.`;
           } else if (venue_name !== undefined) {
             title = 'Plan updated';
             bodyText = updated.venue_name ? `${planName} is now at ${updated.venue_name}.` : `${planName} has a new spot.`;

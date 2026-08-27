@@ -1482,6 +1482,12 @@ const formatEventTime = (iso) => {
   if (!iso) return 'TBD';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return 'TBD';
+  // Weekday alone is ambiguous past one week: a Next Week plan read "Wed
+  // 9:00 PM" everywhere, identical to tonight's Wednesday. Six days keeps
+  // this week bare and dates everything past it.
+  if (d.getTime() - Date.now() > 6 * 24 * 3600 * 1000) {
+    return d.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
   return d.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 };
 
@@ -4555,7 +4561,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [crowdData, setCrowdData] = useState(null);
   const [crowdLoading, setCrowdLoading] = useState(false);
   const [crowdAlternatives, setCrowdAlternatives] = useState([]);
-  const [submittedFeedback, setSubmittedFeedback] = useState(new Set());
+  // Persisted: this was session state, so every relaunch re-asked "How was
+  // {venue}?" on every completed flock ever opened, and a re-answer past the
+  // server's dedupe window wrote another row. Same localStorage pattern as
+  // flock_checkin_* and flock_loc_dismissed.
+  const [submittedFeedback, setSubmittedFeedback] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('flock_feedback_done') || '[]')); } catch { return new Set(); }
+  });
+  const rememberFeedbackDone = useCallback((flockId) => {
+    setSubmittedFeedback(prev => {
+      const next = new Set(prev).add(flockId);
+      try { localStorage.setItem('flock_feedback_done', JSON.stringify([...next])); } catch { /* remembered for this session at least */ }
+      return next;
+    });
+  }, []);
   const [feedbackState, setFeedbackState] = useState({ crowdLevel: null, priceWorth: null, rating: null });
   const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
 
@@ -5778,7 +5797,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           messages: [],
         }));
         setFlocks(mapped.filter(f => f.memberStatus === 'accepted'));
-        setPendingFlockInvites(mapped.filter(f => f.memberStatus === 'invited'));
+        // An invite to a night that already happened is not an invitation,
+        // and accepting one dropped the person into a finished plan. The
+        // accept route has no status guard, so the card is the gate.
+        setPendingFlockInvites(mapped.filter(f => f.memberStatus === 'invited' && f.status !== 'completed' && f.status !== 'cancelled'));
         // A declined membership row still comes down on every load. Keep it so
         // the person can find the plan again and re-join, rather than silently
         // dropping it and leaving no route back in.
@@ -7452,12 +7474,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Pull the persisted tallies (members + guest-link votes) for one flock.
   // Votes used to start empty on every load and only appear once a live vote
   // arrived, so anything cast before you opened the app was invisible.
+  // Which flocks' votes have actually been read this session. The home
+  // screen's needs-your-vote card reads f.votes, which loadFlocks seeds as []
+  // and only this loader fills, so on every cold boot the card said "Needs
+  // your vote" about plans the person voted in yesterday, the exact lie its
+  // own comment says was fixed, until they happened to open the flock.
+  const votesLoadedRef = useRef(new Set());
   const loadFlockVotes = useCallback((flockId) => {
     if (typeof flockId !== 'number') return;
     getFlockVotes(flockId)
-      .then((data) => setFlocks(prev => prev.map(f => (
-        f.id === flockId ? { ...f, votes: normalizeVotes(data?.votes, meRef.current, f.votes) } : f
-      ))))
+      .then((data) => {
+        votesLoadedRef.current.add(flockId);
+        setFlocks(prev => prev.map(f => (
+          f.id === flockId ? { ...f, votes: normalizeVotes(data?.votes, meRef.current, f.votes) } : f
+        )));
+      })
       .catch(() => {});
   }, []);
 
@@ -11778,7 +11809,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           // is addressed to YOU, it names one flock and it opens it, so being
           // wrong about the one fact the app certainly knows is the whole of
           // its content being wrong.
-          const needsAction = flocks.filter(f => f.status === 'voting' && !hasCastMyVote(f));
+          // Only flocks whose votes were actually read may be accused: an
+          // unloaded [] is not evidence the person has not voted.
+          const needsAction = flocks.filter(f => f.status === 'voting' && votesLoadedRef.current.has(f.id) && !hasCastMyVote(f));
           if (needsAction.length === 0) return null;
           return (
             <button className="hit44"
@@ -11910,7 +11943,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               </button>
             </div>
           )}
-          {flocks.map((f, idx) => {
+          {/* Completed and cancelled plans leave Home: they are served by
+              Past and stay reachable from Messages, and without this filter
+              the morning after put yesterday's night next to tonight's,
+              labeled Locked In, forever, until Home was an archive of every
+              night ever. Filtered here at the render, not at the load,
+              because Messages and the completed detail screen read the same
+              array. */}
+          {flocks.filter(f => f.status !== 'completed' && f.status !== 'cancelled').map((f, idx) => {
             // Faces come from member_previews: a name and an avatar for up to
             // four accepted members, creator first, which GET /api/flocks sends
             // and loadFlocks stores. The card never read it, so it drew from
@@ -11955,7 +11995,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin(colors.textSecondary, 12)} {f.venue}</p>
                   </div>
                   <span style={{ fontSize: 'var(--t-meta)', padding: '3px 8px', borderRadius: '10px', fontWeight: '500', flexShrink: 0, whiteSpace: 'nowrap', backgroundColor: f.status === 'voting' ? 'rgba(45,90,135,0.12)' : 'var(--icon-bg)', color: f.status === 'voting' ? 'var(--accent-purple-text)' : 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                    {f.status === 'voting' ? Icons.vote('var(--accent-purple-text)', 12) : Icons.check('var(--text-secondary)', 12)} {f.status === 'voting' ? 'Needs Votes' : 'Locked In'}
+                    {f.status === 'voting' ? Icons.vote('var(--accent-purple-text)', 12) : Icons.check('var(--text-secondary)', 12)} {f.status === 'voting' ? 'Needs Votes' : f.status === 'completed' ? 'Done' : f.status === 'cancelled' ? 'Cancelled' : 'Locked In'}
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -14644,17 +14684,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 Hosted by {flock.host} {goingCount > 0 && <span style={{ marginLeft: '4px' }}>· {goingCount} going</span>}
               </div>
             </div>
-            <button onClick={(e) => {
-              confirmClick(e);
-              // Use the flock's real date. flock.time is only a display string,
-              // so this used to file every plan under today.
-              const when = flock.eventTime ? new Date(flock.eventTime) : null;
-              const eventDate = when && !isNaN(when.getTime()) ? when : new Date();
-              const eventTimeLabel = when && !isNaN(when.getTime())
-                ? when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-                : (flock.time && flock.time !== 'TBD' ? flock.time : '9 PM');
-              addEventToCalendar(flock.name, flock.venue, eventDate, eventTimeLabel);
-            }} className="hit44" aria-label="Add to your calendar" style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.16)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.calendar('white', 16)}</button>
+            {/* The add-to-calendar button that sat here wrote a manual row
+                to Flock's own Plans calendar, where this flock is ALREADY
+                auto-derived, so tapping it doubled the entry; and it never
+                reached the device calendar users actually meant. Removed
+                2026-08-27; device-calendar export is a real feature for the
+                design list, not a button that quietly does the wrong thing. */}
           </div>
 
           {/* Status badge */}
@@ -14718,7 +14753,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             below, which is already gated. This one was not, so every other
             member got a slider that flipped the status locally, was refused by
             the server, and silently reverted on the next load. */}
-        {isConfirmed && isCreator && (
+        {/* Time-gated: this used to render from the second a plan was
+            confirmed, so a Saturday plan confirmed Tuesday asked "Hangout
+            done?" for four days, and sliding it filed a night that never
+            happened as Happened. */}
+        {isConfirmed && isCreator && (!flock.eventTime || new Date(flock.eventTime) <= new Date()) && (
           <div style={{ padding: '10px 16px', flexShrink: 0, borderBottom: '1px solid var(--border-subtle)' }}>
             <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Hangout done? Slide to complete</p>
             <div
@@ -14935,7 +14974,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         rating: feedbackState.rating,
                         predicted_score: crowdPredictions[flock.venueId]?.score || null,
                       });
-                      setSubmittedFeedback(prev => new Set(prev).add(flock.id));
+                      rememberFeedbackDone(flock.id);
                       setFeedbackState({ crowdLevel: null, priceWorth: null, rating: null });
                       showToast('Thanks! This helps Flock get smarter');
                     } catch (err) {
@@ -14949,7 +14988,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 >
                   {feedbackSubmitting ? 'Submitting...' : 'Submit'}
                 </button>
-                <button className="hit44 glass-btn glass-secondary" onClick={() => setSubmittedFeedback(prev => new Set(prev).add(flock.id))} style={{ padding: '11px 18px', borderRadius: '10px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>
+                <button className="hit44 glass-btn glass-secondary" onClick={() => rememberFeedbackDone(flock.id)} style={{ padding: '11px 18px', borderRadius: '10px', border: '1.5px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>
                   Skip
                 </button>
               </div>
