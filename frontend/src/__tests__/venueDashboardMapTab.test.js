@@ -147,7 +147,7 @@ describe('owner view of the card', () => {
 
   it('consumer actions are gated out, informational sections are not', () => {
     expect(card).toContain('{!venueOwnerView && (crowdAlternatives.length > 0');
-    expect(card).toMatch(/\{!venueOwnerView && \(\s*\n\s*<motion\.div initial=\{\{ opacity: 0, y: 14 \}\} animate=\{\{ opacity: 1, y: 0 \}\} transition=\{\{ delay: 1\.1/);
+    expect(card).toMatch(/\{!venueOwnerView && \(\s*\n\s*<m\.div initial=\{\{ opacity: 0, y: 14 \}\} animate=\{\{ opacity: 1, y: 0 \}\} transition=\{\{ delay: 1\.1/);
     // The source line is the honesty label; it must carry no owner-view fork.
     const sourceLine = card.slice(card.indexOf("cd.confidenceBasis === 'owner_report'"), card.indexOf('An estimate from typical patterns'));
     expect(sourceLine).not.toContain('venueOwnerView');

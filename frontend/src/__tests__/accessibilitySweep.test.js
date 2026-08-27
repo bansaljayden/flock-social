@@ -720,8 +720,21 @@ describe('reduce motion reaches the animations CSS cannot see', () => {
     // no CSS animation and no CSS transition exists for the media query above
     // to shorten. Without this the Discover venue card still slides and
     // scales in on delays past a second for somebody who asked it not to.
-    expect(code).toMatch(/import \{ motion, AnimatePresence, MotionConfig \} from 'framer-motion';/);
+    // The import is the lean one: `m` plus LazyMotion with domAnimation, not
+    // the full `motion` component, so a regression back to the heavy bundle
+    // fails this line as well as the wrapper assertion below.
+    expect(code).toMatch(/import \{ m, AnimatePresence, MotionConfig, LazyMotion, domAnimation \} from 'framer-motion';/);
     expect(code).toMatch(/<MotionConfig reducedMotion="user">/);
+  });
+
+  it('the m component is loaded through LazyMotion with only domAnimation', () => {
+    // The full `motion` component bundles drag, pan, layout and every gesture
+    // into the boot chunk. This app animates opacity and transform on mount
+    // and exit and nothing else, so it ships `m` with the domAnimation feature
+    // set instead. `strict` makes a stray `motion` component throw rather than
+    // silently pulling the full set back in, which is what defends the saving.
+    expect(code).toMatch(/<LazyMotion features=\{domAnimation\} strict>/);
+    expect(code).not.toMatch(/import \{[^}]*\bmotion\b[^}]*\} from 'framer-motion'/);
   });
 
   it('it wraps the app rather than one screen', () => {
