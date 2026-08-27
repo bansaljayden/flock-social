@@ -36,7 +36,10 @@ const FIREBASE = read('services', 'firebase.js');
 // row and the report entry went with it. Nothing asserted below changed. The
 // app source is simply in two files, so both are read, in the order they used
 // to be one.
-const APP = read('App.js') + read('screens', 'ChatDetail.js');
+// The profile and settings screen (the You tab) left App.js on 2026-08-27 for
+// screens/ProfileSettings.js, and the Enable-notifications button in Settings,
+// one of the two taps that may prompt, went with it, so that file is read too.
+const APP = read('App.js') + read('screens', 'ChatDetail.js') + read('screens', 'ProfileSettings.js');
 
 describe('startup registers, and never asks', () => {
   it('the session watcher calls the non-prompting path', () => {

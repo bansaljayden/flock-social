@@ -45,10 +45,14 @@ const ICONS_SRC = fs.readFileSync(
   'utf8'
 );
 
-/** The flock detail screen, from its declaration to the next screen's. */
+/** The flock detail screen, from its declaration to the next screen's. The
+ *  profile screen used to be the next one, and its "// PROFILE SCREEN" comment
+ *  was the end marker. The profile and settings screen left App.js on 2026-08-27
+ *  for screens/ProfileSettings.js, so the venue dashboard is the next screen in
+ *  the file now and its comment is the marker. */
 function region() {
   const start = APP.indexOf('const FlockDetailScreen = () =>');
-  const end = APP.indexOf('// PROFILE SCREEN', start);
+  const end = APP.indexOf('// VENUE DASHBOARD SCREEN', start);
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
   return APP.slice(start, end);

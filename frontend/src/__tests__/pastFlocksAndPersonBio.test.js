@@ -30,7 +30,12 @@
 const fs = require('fs');
 const path = require('path');
 
-const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+// The Edit Profile form is mounted by the profile and settings screen (the You
+// tab), which left App.js on 2026-08-27 for screens/ProfileSettings.js. The bio
+// state it seeds from (profileBio) stayed in App.js, so both files are read: the
+// state resolves in the first, the mount in the second.
+const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8');
 const API = fs.readFileSync(
   path.join(__dirname, '..', 'services', 'api.js'),
   'utf8'
@@ -97,13 +102,15 @@ describe('own bio editing', () => {
   // React rebuilt its component type on every render of the shell and threw
   // away the DOM holding whatever had been typed, this textarea included. It
   // is components/EditProfileForm.js now, so the whole file is the region.
+  // ProfileScreen itself left App.js on 2026-08-27 for screens/ProfileSettings.js,
+  // so the Edit Profile mount is now in that screen file, which APP reads.
   const form = fs.readFileSync(
     path.join(__dirname, '..', 'components', 'EditProfileForm.js'),
     'utf8'
   );
   const formCode = codeOnly(form);
 
-  it('the form is still mounted from App.js, so this file is not scanning dead code', () => {
+  it('the form is still mounted from the profile screen, so this file is not scanning dead code', () => {
     expect(APP).toContain('<EditProfileForm {...editProfileFormProps} />');
   });
 
