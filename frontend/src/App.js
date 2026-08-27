@@ -2593,9 +2593,22 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     }
   }, [userLocation, mapReady]);
 
-  // Live position tracking
+  // Live position tracking.
+  //
+  // THE THIRD DOOR INTO THE OS LOCATION PROMPT, and the one the Settings switch
+  // did not close. watchPosition asks the device exactly as getCurrentPosition
+  // does, so with "Location services" turned off this effect ran the moment the
+  // map was ready and the prompt arrived anyway, over a map the person had
+  // already told the app not to locate them on. The init effect above and the
+  // Discover tab both check the switch; this one was written before it existed
+  // and nothing pointed it at the flag.
+  //
+  // Same gate, same name, so the three doors are one rule rather than three
+  // similar ones. followUser stays in the condition: it is the separate
+  // question of whether THIS map is the one that follows you, and a venue
+  // dashboard map answers no to it whatever the switch says.
   useEffect(() => {
-    if (!mapReady || !followUser || !navigator.geolocation) return;
+    if (!mapReady || !followUser || !locationAllowed || !navigator.geolocation) return;
     if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos) => {
@@ -2610,7 +2623,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 },
     );
     return () => { if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current); };
-  }, [mapReady, followUser]);
+  }, [mapReady, followUser, locationAllowed]);
 
   // ---------- venue markers ----------
   useEffect(() => {
@@ -8307,7 +8320,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const typingActiveRef = useRef(false);
   const handleChatInputChange = useCallback((e) => {
     chatInputRef.current = e.target.value;
-    const hasText = !!e.target.value;
+    // TRIMMED, and that word is the whole fix. This boolean is the only thing
+    // arming the Send button on both chat screens, and every send path trims
+    // the text before it decides whether there is any. So a box holding three
+    // spaces lit Send up, the tap reached `if (!text) return`, and nothing
+    // happened at all: no bubble, no error, no cleared box, no way to tell a
+    // dead button from a dropped message. Whitespace is not a message, so it
+    // does not arm the button.
+    const hasText = !!e.target.value.trim();
     setChatInputHasText(prev => prev !== hasText ? hasText : prev);
     if (selectedFlockId) {
       if (!typingActiveRef.current) {
@@ -10434,7 +10454,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // DM input change with typing indicator
   const handleDmInputChange = useCallback((e) => {
     chatInputRef.current = e.target.value;
-    const hasText = !!e.target.value;
+    // Same rule as handleChatInputChange above, and this is the handler the DM
+    // composer actually calls. Fixing only the flock one would have left the
+    // DM Send button armed by whitespace, since both handlers write the one
+    // chatInputHasText that both Send buttons read.
+    const hasText = !!e.target.value.trim();
     setChatInputHasText(prev => prev !== hasText ? hasText : prev);
     if (selectedDmId) {
       dmStartTyping(selectedDmId);
