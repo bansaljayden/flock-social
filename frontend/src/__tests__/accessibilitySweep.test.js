@@ -367,8 +367,10 @@ describe('icon-only controls on the hot paths are named', () => {
   it('labels copy-pasted from other controls are gone', () => {
     // The cash pool stepper wore the map zoom buttons' labels, and the venue
     // detail CTA said "Back" while printing "Add to Flock".
-    expect(app).toContain('aria-label="Decrease amount by $5"');
-    expect(app).toContain('aria-label="Increase amount by $5"');
+    // The two cash-pool stepper labels that used to be asserted here left
+    // with the DM cash pool itself (2026-08-27): the pool was client-only
+    // theater with no backend, so the whole control came out rather than
+    // keep claiming a feature that did not exist.
     expect(app).not.toMatch(/aria-label="Zoom out" className="hit44 glass-btn/);
     expect(app).not.toMatch(/aria-label="Back" onClick=\{\(e\) => \{ confirmClick\(e\);/);
   });

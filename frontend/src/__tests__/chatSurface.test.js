@@ -384,9 +384,15 @@ describe('a message that leaves the composer arrives, fails, or says which', () 
     // Eight seconds. Long enough not to fire on a slow echo, short enough that
     // the retry is still the same thought. A number large enough to outlive
     // the session is the same defect as no timer at all.
-    const [, ms] = transmit.match(/\}, (\d+)\);\s*\r?\n\s*pendingEchoRef\.current\.set/) || [];
-    expect(Number(ms)).toBeGreaterThan(2000);
-    expect(Number(ms)).toBeLessThanOrEqual(15000);
+    // Text stays on the short timer; a photo gets a longer leash, because a
+    // 700KB image on venue wifi can still be honestly uploading at 8s and
+    // failing it mid-flight is how a retry tap makes duplicates. The
+    // late-echo reclaim self-heals either way.
+    const [, imgMs, txtMs] = transmit.match(/\}, image \? (\d+) : (\d+)\);/) || [];
+    expect(Number(txtMs)).toBeGreaterThan(2000);
+    expect(Number(txtMs)).toBeLessThanOrEqual(15000);
+    expect(Number(imgMs)).toBeGreaterThan(Number(txtMs));
+    expect(Number(imgMs)).toBeLessThanOrEqual(60000);
   });
 
   test('the HTTP branch says out loud that a send was refused', () => {

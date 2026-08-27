@@ -6643,9 +6643,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const dmGalleryInputRef = useRef(null);
   const [dmSharingLocation, setDmSharingLocation] = useState(null); // userId we're sharing with
   const [dmMemberLocation, setDmMemberLocation] = useState(null); // { lat, lng, name, timestamp }
-  const [showDmCashPool, setShowDmCashPool] = useState(false);
-  const [dmCashPoolAmount, setDmCashPoolAmount] = useState(20);
-  const [dmCashPool, setDmCashPool] = useState(null); // { perPerson, total, collected, paid: [] }
+  // The DM cash pool state lived here until 2026-08-27. It was pure client
+  // theater: no route, no table, no socket event, a Paid status that existed
+  // on one phone and died on reload, behind a first-class header button. The
+  // flock bill split is the real, server-backed feature; the DM UI came out
+  // rather than keep claiming one that did not exist (SLOP rule 5).
   const [dmPinnedVenue, setDmPinnedVenue] = useState(null); // { name, addr, place_id, rating, photo_url }
   const [pickingVenueForDm, setPickingVenueForDm] = useState(false);
 
@@ -8255,7 +8257,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             if (f.id !== msg.flock_id) return f;
             return {
               ...f,
-              messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, id: msg.id, pending: false, failed: false } : m)),
+              messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, id: msg.id, pending: false, failed: false, time: new Date(msg.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) } : m)),
             };
           }));
           return;
@@ -8830,7 +8832,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, pending: false, failed: true } : m)) };
         }));
         persistFailedFlockMessage(flockId, { id: tempId, sender: 'You', senderId: authUser?.id, time: 'Now', text, reactions: [], message_type: msgType, ...(image ? { image } : {}), ...(venueData ? { venue_data: venueData } : {}), failed: true });
-      }, 8000);
+        // 8s suits a sentence; a 700KB photo on venue wifi can still be
+        // honestly uploading at 8s, and marking it failed mid-flight is how a
+        // retry tap makes duplicates. The late-echo reclaim self-heals either
+        // way; the longer leash just stops the fail-then-unfail theater.
+      }, image ? 30000 : 8000);
       pendingEchoRef.current.set(tempId, { flockId, text, message_type: msgType, image, venue_data: venueData, timer });
     } else {
       try {
@@ -10584,7 +10590,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         if (!dmEchoRef.current.has(tempId)) return;
         dmEchoRef.current.delete(tempId);
         settle({ pending: false, failed: true });
-      }, 8000);
+        // Same image leash as the flock timer above, same reason.
+      }, payload.image_url ? 30000 : 8000);
       dmEchoRef.current.set(tempId, { userId, payload, timer });
     } else {
       apiSendDM(userId, payload.text, {
@@ -10780,10 +10787,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           matchedTempId = entry[0];
         }
       }
+      // A thread you deleted comes back the moment THEY write again, and
+      // STAYS back. The live handler below already re-creates it in state,
+      // but nothing removed the id from the deleted list, so the next
+      // relaunch filtered the conversation out again while the iOS badge
+      // kept counting its unread. Same three lines startNewDmWithUser runs;
+      // functional update, because this effect closes over [authUser] only.
+      if (!isYou) {
+        setDeletedDmUserIds(prevDeleted => {
+          if (!prevDeleted.includes(otherUserId)) return prevDeleted;
+          const revived = prevDeleted.filter(id => id !== otherUserId);
+          try { localStorage.setItem('flock_deleted_dms', JSON.stringify(revived)); } catch {}
+          return revived;
+        });
+      }
       setDirectMessages(prev => {
         const existing = prev.find(d => d.userId === otherUserId);
         if (existing) {
-          return prev.map(d => {
+          const next = prev.map(d => {
             if (d.userId !== otherUserId) return d;
             if (d.messages.some(m => m.id === msg.id)) return d;
             // If own message, replace the optimistic temp message. Matching on
@@ -10804,6 +10825,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             }
             return { ...d, messages: [...d.messages, mapped], lastMessage: previewText, lastMessageIsYou: isYou, lastMessageTime: msg.created_at, unread: (isYou || threadOpen) ? d.unread : d.unread + 1 };
           });
+          // The conversation that just spoke belongs at the top. Mapping in
+          // place left the list in stale order all session: a thread three
+          // rows down stayed three rows down however many messages arrived.
+          const at = next.findIndex(d => d.userId === otherUserId);
+          if (at > 0) {
+            const [row] = next.splice(at, 1);
+            next.unshift(row);
+          }
+          return next;
         }
         return [{
           userId: otherUserId,
@@ -16600,8 +16630,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         deletedDmUserIds,
         dmAtTop,
         dmBlocked,
-        dmCashPool,
-        dmCashPoolAmount,
         dmChatEndRef,
         dmChatSearch,
         dmChatSearchRef,
@@ -16643,8 +16671,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         setCurrentTab,
         setDeletedDmUserIds,
         setDirectMessages,
-        setDmCashPool,
-        setDmCashPoolAmount,
         setDmChatSearch,
         setDmMemberLocation,
         setDmNavOpen,
@@ -16657,7 +16683,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         setPickingVenueForCreate,
         setPickingVenueForDm,
         setShowDeleteDmConfirm,
-        setShowDmCashPool,
         setShowDmChatSearch,
         setShowDmImagePreview,
         setShowDmMenu,
@@ -16666,7 +16691,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         setShowDmVotePanel,
         setVenueDetailReturnTo,
         showDeleteDmConfirm,
-        showDmCashPool,
         showDmChatSearch,
         showDmImagePreview,
         showDmMenu,
