@@ -672,3 +672,54 @@ test('a guest RSVP that never reached Flock is not reported back as done', async
   await strangerCtx.close();
   await host.context.close();
 });
+
+// ---------------------------------------------------------------------------
+// THE BACKEND COMES BACK, AND NOBODY TOUCHES ANYTHING
+//
+// 2026-08-27: two real deploy blips stranded a signed-in person twice, once on
+// the boot screen and once behind the flock list's failure card, and in both
+// cases the app only recovered when a human acted. The boot screen literally
+// says "It keeps trying on its own" and the list card implies a moment's
+// patience is enough, so these hold both to their word: the server returns,
+// and the app must come back with zero clicks, zero reloads, zero tab
+// switches. The boot spec rides the 15s auth retry interval; the list spec
+// rides the error-gated recovery tick, because in its scenario the socket
+// never dropped and no reconnect, online or visibility signal is ever coming.
+// ---------------------------------------------------------------------------
+
+test('the boot screen recovers by itself when the server comes back', async ({ browser }) => {
+  test.slow();
+  test.setTimeout(120_000);
+  const ada = await newPerson(browser, 'boot-recover');
+
+  await cutTheWire(ada.page);
+  await ada.page.reload();
+  await expect(ada.page.getByText(/couldn.t reach flock/i).first()).toBeVisible({ timeout: 20_000 });
+
+  // The server returns. Nothing else happens.
+  await ada.page.unroute('**/api/**');
+
+  await expect(ada.page.getByText(/hey, ada/i).first()).toBeVisible({ timeout: 40_000 });
+  await ada.context.close();
+});
+
+test('a flock list that failed to load heals itself once the server is back', async ({ browser }) => {
+  test.slow();
+  test.setTimeout(120_000);
+  const ada = await newPerson(browser, 'list-recover');
+
+  // One bad gateway on exactly the list request, socket untouched. The
+  // request wrapper retries a 502 twice in-layer, so the route stays bad
+  // until unrouted or the card could never appear at all.
+  await ada.page.route('**/api/flocks', (route) => route.fulfill({
+    status: 502, contentType: 'application/json', body: JSON.stringify({ error: 'Bad gateway' }),
+  }));
+  await ada.page.reload();
+  await expect(ada.page.getByText(/failing to load/i).first()).toBeVisible({ timeout: 30_000 });
+
+  await ada.page.unroute('**/api/flocks');
+
+  // No clicks. The card leaves on its own or this stays red.
+  await expect(ada.page.getByText(/failing to load/i)).toHaveCount(0, { timeout: 45_000 });
+  await ada.context.close();
+});
