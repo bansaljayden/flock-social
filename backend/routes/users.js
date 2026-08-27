@@ -1657,6 +1657,36 @@ router.get('/search',
         return res.status(400).json({ error: errors.array()[0].msg });
       }
 
+      // ---------------------------------------------------------------------
+      // NORMALISE BEFORE CHARGING, because a term that cannot match is not a
+      // probe and should not cost the caller a unit or the database a scan.
+      //
+      // Three spellings of the same question were three different searches:
+      //
+      //   * NFKC folds compatibility variants. An iOS keyboard set to a
+      //     full-width layout types "Ｊａｙｄｅｎ", which is a different string
+      //     from "Jayden" at every byte and matched nobody.
+      //   * \s+ collapses whitespace RUNS. "John  Smith" pasted out of a
+      //     message, or a "John Smith" carrying the U+00A0 non-breaking space an
+      //     iOS autocorrect inserts, both failed against a stored "John Smith"
+      //     while looking identical on screen.
+      //   * trim() again afterwards, because the validator's trim ran before
+      //     NFKC and NFKC can produce a leading or trailing space of its own
+      //     (U+2000 and friends fold to U+0020).
+      //
+      // Case needs nothing here: the match is ILIKE and the ranking below uses
+      // lower(), so "jayden", "Jayden" and "JAYDEN" were already one search.
+      // Diacritics are NOT folded and this is the one thing left undone: "Jose"
+      // does not find "José". Folding it properly wants the `unaccent`
+      // extension, which this database does not have (no migration issues a
+      // CREATE EXTENSION), and folding it in SQL with translate() puts a
+      // per-row function call on the one query in this backend that already
+      // scans every row. That is a schema decision, not a copy fix.
+      const term = String(req.query.q).normalize('NFKC').replace(/\s+/g, ' ').trim();
+      // Only reachable when normalisation emptied a string the validator had
+      // already accepted. Same body as "nobody matched", which is what it is.
+      if (!term) return res.json({ users: [] });
+
       // R4-I1. Charged per request, hit or miss, BEFORE the query — and unlike
       // /card this route returns early rather than querying anyway.
       //
@@ -1693,7 +1723,9 @@ router.get('/search',
       // name, avatar) per request, and patterns like `a%` / `_` let a caller
       // walk the whole user directory a slice at a time. Escaping turns the
       // query back into a literal substring search.
-      const searchTerm = `%${String(req.query.q).replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+      const escaped = term.replace(/[\\%_]/g, (c) => `\\${c}`);
+      const searchTerm = `%${escaped}%`;
+      const prefixTerm = `${escaped}%`;
 
       // Mutual invisibility: blocked pairs never rediscover each other here.
       //
@@ -1710,6 +1742,37 @@ router.get('/search',
       // banned account is byte-identical to a name nobody has rather than a
       // distinguishable refusal. It also still costs a probe unit above, so
       // withholding cannot be counted for free.
+      // ---------------------------------------------------------------------
+      // TWENTY MATCHES IN NO PARTICULAR ORDER IS NOT A SEARCH RESULT.
+      // ---------------------------------------------------------------------
+      // This was `LIMIT 20` with no ORDER BY, so the twenty rows were whatever
+      // the sequential scan happened to reach first, which is physical row
+      // order and therefore roughly signup order. Typing a friend's EXACT name
+      // could return twenty other people and not them: "ann" matched Anna,
+      // Joanna, Roseanne and Ann, and Ann is the one the person was looking
+      // for. On a search box whose whole job is "find the person I already
+      // know", that is the failure that matters.
+      //
+      // Three buckets, most specific first: the whole name, then a name that
+      // STARTS with what was typed, then a name that merely contains it. Inside
+      // a bucket the shorter name wins, because a shorter name containing the
+      // term is a closer match to it, and then name and id, so the order is
+      // total and the same query twice gives the same twenty rows.
+      //
+      // COST. `name ILIKE '%…%'` is unindexable, so this query already reads
+      // every row in `users` to evaluate its predicate. What the ORDER BY costs
+      // on top is that Postgres can no longer stop early once it has found
+      // twenty matches, plus a top-N heapsort over the matches. That is paid
+      // only by broad terms, it is bounded by searchProbeBudget above (90/hour
+      // per account), and it buys the difference between a search box that
+      // works and one that does not. If `users` ever grows to where this hurts,
+      // the answer is a trigram index (pg_trgm), not going back to a random
+      // twenty.
+      //
+      // `lower(name) = lower($3)` rather than `name ILIKE $3`: $3 is the raw
+      // typed term, and ILIKE would read a `%` in it as a wildcard. Equality on
+      // lower() has no pattern semantics, so it needs no escaping and cannot be
+      // turned into a match-everything by what somebody types.
       const result = await pool.query(
         `SELECT id, name, profile_image_url
          FROM users
@@ -1720,8 +1783,17 @@ router.get('/search',
              WHERE (b.blocker_id = $2 AND b.blocked_id = users.id)
                 OR (b.blocker_id = users.id AND b.blocked_id = $2)
            )
+         ORDER BY
+           CASE
+             WHEN lower(name) = lower($3) THEN 0
+             WHEN name ILIKE $4 THEN 1
+             ELSE 2
+           END,
+           length(name),
+           name ASC,
+           id ASC
          LIMIT 20`,
-        [searchTerm, req.user.id]
+        [searchTerm, req.user.id, term, prefixTerm]
       );
 
       res.json({ users: result.rows });
