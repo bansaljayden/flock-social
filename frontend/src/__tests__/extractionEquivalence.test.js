@@ -2,10 +2,11 @@
  * FOUR SCREENS LEFT App.js. THIS PINS WHAT THEY CAN STILL SEE.
  *
  * On 2026-08-26 the venue owner dashboard, Add Friends and the flock chat
- * screen moved out of `App.js` into `src/screens/`. Each was an arrow function
- * declared inside `FlockAppInner` that CLOSED OVER that component's state and
- * was called rather than mounted. Each is now a separate component that
- * receives an explicit props object built in `renderScreen`.
+ * screen moved out of `App.js` into `src/screens/`, and on 2026-08-27 the
+ * one-to-one DM thread followed them. Each was an arrow function declared
+ * inside `FlockAppInner` that CLOSED OVER that component's state and was called
+ * rather than mounted. Each is now a separate component that receives an
+ * explicit props object built in `renderScreen`.
  *
  * Every one of those moves was proved byte identical against the deleted lines,
  * and that proof is real but it is not the interesting one. A byte identical
@@ -30,7 +31,7 @@
  *      component whose identity is rebuilt every render is a new component
  *      TYPE to React, which unmounts and remounts the whole subtree on every
  *      unrelated state change. App.js already carries that defect on
- *      RevenueScreen and a comment beside `numVenues` explaining it. The three
+ *      RevenueScreen and a comment beside `numVenues` explaining it. The four
  *      moved screens must be bound at module scope, where the identity is
  *      fixed, and must not be declared inside `FlockAppInner`.
  *
@@ -87,12 +88,13 @@ const PARSE_OPTIONS = {
 };
 const parse = (code) => parser.parse(code, PARSE_OPTIONS);
 
-/* The three screens, the props object each one is handed, and the component
-   name it exports. Adding a fourth screen means adding a row here. */
+/* The four screens, the props object each one is handed, and the component
+   name it exports. Adding a fifth screen means adding a row here. */
 const SCREENS = [
   { component: 'ChatDetail', file: 'ChatDetail.js', props: 'chatDetailProps' },
   { component: 'AddFriends', file: 'AddFriends.js', props: 'addFriendsProps' },
   { component: 'VenueDashboard', file: 'VenueDashboard.js', props: 'venueDashboardProps' },
+  { component: 'DmDetail', file: 'DmDetail.js', props: 'dmDetailProps' },
 ];
 
 const APP_SOURCE = read('App.js');
