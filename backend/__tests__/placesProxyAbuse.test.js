@@ -385,7 +385,14 @@ test('a Google error fans out as 502 to every concurrent waiter, charged once, a
   assert.strictEqual(searchCalls().length, 2, 'the retry never went back upstream');
 });
 
-test('a non-JSON upstream body is a clean 500, not a crash, and is not cached', async () => {
+test('a non-JSON upstream body is a clean 502, not a crash, and is not cached', async () => {
+  // Was pinned at 500 until 2026-08-26. An HTML error page from a proxy is
+  // Google, or something between us and it, failing to answer. It is not this
+  // server failing to work, so it is a gateway status. The route's catch now
+  // separates a timeout (504) from every other transport failure (502), and
+  // this fixture is the second of those. The 'not cached' half is unchanged
+  // and is the part that matters most: a pinned failure would answer for the
+  // whole 5-minute TTL and nobody could retry out of a blip.
   googleImpl = (u) => {
     if (u.includes(':searchText')) {
       return { ok: false, status: 502, json: async () => { throw new Error('<html>bad gateway</html> is not JSON'); } };
@@ -394,7 +401,9 @@ test('a non-JSON upstream body is a clean 500, not a crash, and is not cached', 
   };
   const q = `htmlerr ${uniq()}`;
   const res = await get(`/api/venues/search?query=${encodeURIComponent(q)}`);
-  assert.strictEqual(res.status, 500, res.text);
+  assert.strictEqual(res.status, 502, res.text);
+  assert.ok(!/Failed to search venues/i.test(res.text),
+    'an upstream that answered HTML is still reported as a failed search');
 
   googleImpl = null;
   const retry = await get(`/api/venues/search?query=${encodeURIComponent(q)}`);
