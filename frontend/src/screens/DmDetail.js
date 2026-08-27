@@ -766,13 +766,13 @@ export default function DmDetail({
                     }}
                   />
                   </div>
-                ) : m.message_type === 'image' && m.image_url ? (
+                ) : m.message_type === 'image' && (m.image_url || m.thumb_url) ? (
                   /* Image message */
                   <button type="button" onClick={() => setShowDmReactionPicker(showDmReactionPicker === m.id ? null : m.id)} style={{ borderRadius: '18px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.1)', borderTopRightRadius: m.sender === 'You' ? '4px' : '18px', borderTopLeftRadius: m.sender === 'You' ? '18px' : '4px', cursor: 'pointer', lineHeight: 0, padding: 0, border: 'none', background: 'none', display: 'block' }}>
                     {/* alt was the empty string, which told VoiceOver this
                         message had no content at all: an empty bubble where a
                         photo should be. */}
-                    <img src={m.image_url} alt={`From ${m.sender}`} loading="lazy" style={{ width: '100%', maxWidth: '260px', maxHeight: '340px', objectFit: 'cover', display: 'block' }} />
+                    <img src={m.thumb_url || m.image_url} alt={`From ${m.sender}`} loading="lazy" style={{ width: '100%', maxWidth: '260px', maxHeight: '340px', objectFit: 'cover', display: 'block' }} />
                   </button>
                 ) : (
                   /* Text message */
