@@ -181,6 +181,41 @@ describe('every type the app declares has somewhere to go', () => {
     expect(intentFromUrl('/?admin=true')).toEqual({ screen: 'admin', type: 'link' });
   });
 
+  test('an SOS tap opens the alert modal from its own payload, with the location it carries', () => {
+    // The one notification that may not land on the home screen: the member who
+    // was offline when the socket fired is exactly who taps it, and the socket
+    // emit is never replayed to them. The payload carries who and where, so the
+    // tap resolves with no server round trip. Coordinates arrive as STRINGS on
+    // the wire (FCM data values are strings, and the service worker stringifies
+    // on relay), so this passes strings on purpose and expects finite numbers
+    // back, dropped to null when absent so a missing location is never a pin at
+    // 0,0.
+    expect(intentFromData({
+      type: 'safety_alert', fromUserId: '7', fromUserName: 'Ava',
+      latitude: '40.05', longitude: '-75.12', at: '2026-08-27T04:00:00.000Z',
+    })).toEqual({
+      screen: 'safety', userId: 7, name: 'Ava',
+      lat: 40.05, lng: -75.12, at: '2026-08-27T04:00:00.000Z', type: 'safety_alert',
+    });
+    // No shared location: the two coordinate keys are absent from the payload,
+    // and the intent reports them as null rather than as some default place.
+    expect(intentFromData({ type: 'safety_alert', fromUserId: '7', fromUserName: 'Ava', at: 'x' }))
+      .toEqual({ screen: 'safety', userId: 7, name: 'Ava', lat: null, lng: null, at: 'x', type: 'safety_alert' });
+    // No sender id is not a usable alert.
+    expect(intentFromData({ type: 'safety_alert', fromUserName: 'Ava' })).toBeNull();
+    // Its live fields are a name and a location, so it deliberately gets NO
+    // deep-link URL: a cold web tap lands on the app, never a coordinate in the
+    // address bar. The backend records that decision explicitly.
+    expect(FIREBASE_SERVICE).toMatch(/if \(type === 'safety_alert'\) return '\/';/);
+  });
+
+  test('the App.js safety branch feeds the same modal the live socket handler does', () => {
+    expect(APP).toContain("intent.screen === 'safety'");
+    // Both the tap branch and the onSafetyAlert socket handler build the modal
+    // object, so both must set it through the same setter.
+    expect((APP.match(/setSafetyAlert\(\{/g) || []).length).toBeGreaterThanOrEqual(2);
+  });
+
   test('the admin intent is role-checked, and waits for the account to load', () => {
     expect(APP).toMatch(/if \(!pushAdminIntent \|\| !authUser\) return;/);
     expect(APP).toMatch(/if \(authUser\.role === 'admin'\) setCurrentScreen\('adminRevenue'\);/);
@@ -206,7 +241,7 @@ describe('every type the app declares has somewhere to go', () => {
   });
 
   test('App.js has a branch for every screen the intent parser can produce', () => {
-    for (const screen of ['flockInvite', 'flocks', 'home', 'admin']) {
+    for (const screen of ['flockInvite', 'flocks', 'home', 'admin', 'safety']) {
       expect(APP).toContain(`intent.screen === '${screen}'`);
     }
   });
