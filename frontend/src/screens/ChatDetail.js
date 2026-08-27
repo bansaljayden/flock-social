@@ -408,7 +408,28 @@ export default function ChatDetail({
               </div>
             )}
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: chatNavOpen ? 1 : 'none', justifyContent: chatNavOpen ? 'center' : 'flex-end', flexShrink: 0 }}>
-              <div style={{ display: 'flex', gap: '6px', overflow: 'hidden', maxWidth: chatNavOpen ? '300px' : '0px', opacity: chatNavOpen ? 1 : 0, transition: 'max-width 0.3s ease, opacity 0.25s ease' }}>
+              {/* COLLAPSED MEANS GONE, NOT NARROW. `maxWidth: 0` with
+                  `overflow: hidden` paints nothing and leaves all four
+                  buttons focusable, so Tab from the back arrow landed on
+                  "Vote on a venue", "Invite friends", "Search messages" and
+                  "Group cash pool" while the screen showed a "Features"
+                  pill, and VoiceOver read four controls nobody could see.
+                  `visibility: hidden` is what takes a subtree out of the
+                  accessibility tree AND out of the tab order in one
+                  property. The 0.3s delay on the way out is so the slide
+                  still reads; on the way in it is 0s so the buttons are
+                  focusable the instant they start moving.
+
+                  THE OPEN STATE IS `undefined`, NOT `'visible'`, and that is
+                  not a style choice. `visibility` inherits, and an explicit
+                  `visible` on a child BEATS a `hidden` ancestor. The first
+                  version of this fix wrote `'visible'`, and because the
+                  whole Discover screen is held at `visibility: hidden` while
+                  another tab is on screen, the same pattern over there put
+                  three Discover buttons back into the tab order of every
+                  other screen in the app. Leaving the property unset lets
+                  the ancestor win. */}
+              <div style={{ display: 'flex', gap: '6px', overflow: 'hidden', maxWidth: chatNavOpen ? '300px' : '0px', opacity: chatNavOpen ? 1 : 0, visibility: chatNavOpen ? undefined : 'hidden', transition: `max-width 0.3s ease, opacity 0.25s ease, visibility 0s linear ${chatNavOpen ? '0s' : '0.3s'}` }}>
                 <button aria-label="Vote on a venue" className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowVotePanel(true); loadPopularVenues(); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: flock.status === 'voting' ? colors.steel : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 15)}</button>
                 <button aria-label="Invite friends" className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('white', 15)}</button>
                 <button aria-label="Search messages" className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowChatSearch(!showChatSearch); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 15)}</button>
@@ -1017,7 +1038,11 @@ export default function ChatDetail({
           ))}
 
           {/* Enhanced typing indicator with user name — fixed height to prevent layout shift */}
-          <div style={{ height: '58px', overflow: 'hidden', opacity: isTyping ? 1 : 0, transition: 'opacity 0.2s ease', pointerEvents: isTyping ? 'auto' : 'none' }}>
+          {/* `visibility` as well as opacity, because opacity 0 still leaves
+              the name and the bubble in the accessibility tree: VoiceOver
+              read a phantom "Someone" at the bottom of every quiet chat. The
+              58px box stays reserved either way, so nothing shifts. */}
+          <div style={{ height: '58px', overflow: 'hidden', opacity: isTyping ? 1 : 0, visibility: isTyping ? undefined : 'hidden', transition: `opacity 0.2s ease, visibility 0s linear ${isTyping ? '0s' : '0.2s'}`, pointerEvents: isTyping ? 'auto' : 'none' }}>
             <div style={{ display: 'flex', gap: '10px' }}>
               <div style={{ width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'var(--bg-card-solid)', border: '2px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{typingUser?.[0] || 'A'}</div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
