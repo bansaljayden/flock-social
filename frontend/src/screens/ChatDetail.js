@@ -1714,7 +1714,21 @@ export default function ChatDetail({
 
               <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Or select a different venue:</p>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {budgetFilteredVenues.map(venue => (
+                {budgetFilteredVenues.length === 0 ? (
+                  /* When venue search is down, budgetFilteredVenues (derived from
+                     the nearby venue list) comes back empty and this list used to
+                     render nothing under "Or select a different venue", which is
+                     the blank dead end tools/e2e/venue.spec.js forbids: a sheet
+                     that says "Pick one below" and lists nothing. Say why it is
+                     empty and give a real exit. There is no prop here that
+                     reloads the nearby list, so this does not fake a "Try again"
+                     that could not refill it; the honest action is to close and
+                     use the venue map instead. */
+                  <div style={{ padding: '16px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', textAlign: 'center' }}>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: '1.5' }}>No venues to show here. Venue search is unavailable right now, so there is nothing to pick from yet.</p>
+                    <button className="hit44 glass-btn glass-secondary" onClick={() => setShowVenueShareModal(false)} style={{ padding: '10px 20px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
+                  </div>
+                ) : budgetFilteredVenues.map(venue => (
                   <button className="hit44"
                     key={venue.id}
                     onClick={(e) => { confirmClick(e); shareVenueToChat(selectedFlockId, venue); }}

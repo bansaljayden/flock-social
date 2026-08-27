@@ -516,10 +516,21 @@ function buildHttpError(res, data, endpoint, hadToken) {
     : data;
   // A gateway 502/503/504 body is an HTML error page, not display copy.
   if (typeof message === 'string' && message.trim().startsWith('<')) message = null;
+  // Every unhandled 500 in the backend answers with the literal "Server error"
+  // (the route pattern's catch block, CLAUDE.md). That is an internal
+  // placeholder, not a sentence written for a person, so it is dropped the same
+  // way the gateway HTML is, and the honest fallback at the bottom speaks
+  // instead. Only the exact catch-all string is matched: a 500 that carries a
+  // real hand-written sentence (venue search says "hit a problem on our side")
+  // keeps it.
+  if (res.status === 500 && message === 'Server error') message = null;
   const expired = res.status === 401 && handleSessionExpiry(endpoint, hadToken, data);
   if (expired) {
     message = SESSION_EXPIRED_COPY;
-  } else if (RETRYABLE_STATUSES.includes(res.status)) {
+  } else if (RETRYABLE_STATUSES.includes(res.status) && !message) {
+    // A gateway status with nothing usable of its own gets the generic line.
+    // When our own app authored the 502/503/504 body with a real sentence,
+    // that sentence is kept rather than thrown away for the generic one.
     message = "Flock's servers are having a moment. Try again in a minute.";
   }
   // Carry the machine-readable bits: callers key off err.code (e.g.
@@ -1525,7 +1536,12 @@ function resolvePhotoUrl(url) {
 export async function searchVenues(query, location) {
   let endpoint = `/api/venues/search?query=${encodeURIComponent(query)}`;
   if (location) endpoint += `&location=${encodeURIComponent(location)}`;
-  const data = await request(endpoint);
+  // retry: false. This is a GET, but every call bills a paid Google Places
+  // request server-side (backend/routes/venues.js), so the automatic
+  // 502/503/504 retry would spend two more paid searches on one flaky tap. A
+  // failed search surfaces its error once and the user decides whether to try
+  // again, the same reason exportMyData and the NFC check-in opt out.
+  const data = await request(endpoint, { retry: false });
   if (data.venues) {
     data.venues = data.venues.map(v => ({ ...v, photo_url: resolvePhotoUrl(v.photo_url) }));
   }
@@ -1533,7 +1549,10 @@ export async function searchVenues(query, location) {
 }
 
 export async function getVenueDetails(placeId) {
-  const data = await request(`/api/venues/details?place_id=${encodeURIComponent(placeId)}`);
+  // retry: false, same reason as searchVenues: /api/venues/details is a paid
+  // Google Places Details call, so an automatic retry buys a duplicate bill,
+  // not a better answer.
+  const data = await request(`/api/venues/details?place_id=${encodeURIComponent(placeId)}`, { retry: false });
   if (data.venue && data.venue.photos) {
     data.venue.photos = data.venue.photos.map(url => resolvePhotoUrl(url));
   }
