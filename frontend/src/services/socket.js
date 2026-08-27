@@ -818,6 +818,14 @@ export function onFlockMemberLeft(callback) {
   return register('flock_member_left', callback);
 }
 
+// routes/flocks.js POST /:id/attendance emits this to each scored member's
+// user room, carrying the fresh score. Until this listener existed the emit
+// reached the client and fell on the floor: the profile's reliability number
+// stayed whatever it was at boot until the next full relaunch.
+export function onReliabilityUpdated(callback) {
+  return register('reliability_updated', callback);
+}
+
 // Guest RSVPs come in from the public share link, so they never originate in a
 // member's client. The socket is the only way they reach the host live. The
 // server fans this out to each accepted member's personal room rather than the

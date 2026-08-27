@@ -370,6 +370,29 @@ export default function ChatDetail({
     // a few pages of history times a full roster is thousands of string
     // comparisons on every app-level state change while the chat is open. One
     // filtered list, one name-to-image Map, both O(n) once.
+    // The share-location banner belongs to the night itself. It used to
+    // render from the second a plan was confirmed, so a Saturday plan
+    // confirmed on Tuesday asked for live location for four days; and a
+    // dismissal was stored as a flat true, silencing the flock forever,
+    // including the rescheduled night where the ask is right again. The
+    // window is three hours before the plan to six hours after, matching
+    // when knowing where everyone is actually helps; a confirmed plan with
+    // no time keeps the old always-ask, there being no night to gate by.
+    // Dismissals store the eventTime they were for, so a new time re-asks
+    // once (a legacy flat true from the old scheme re-asks once too, then
+    // stores per-night from there on).
+    const locBannerAsk = (() => {
+      if (flock.status !== 'confirmed' || sharingLocationForFlock) return false;
+      if (flock.eventTime) {
+        const et = new Date(flock.eventTime).getTime();
+        if (Number.isFinite(et)) {
+          const now = Date.now();
+          if (now < et - 3 * 3600 * 1000 || now > et + 6 * 3600 * 1000) return false;
+        }
+      }
+      return locationBannerDismissed[flock.id] !== (flock.eventTime || true);
+    })();
+
     const visibleMessages = showChatSearch && chatSearch.trim()
       ? flock.messages.filter(m => {
           const q = chatSearch.toLowerCase();
@@ -660,7 +683,7 @@ export default function ChatDetail({
         )}
 
         {/* Live location sharing banner */}
-        {flock.status === 'confirmed' && !sharingLocationForFlock && !locationBannerDismissed[flock.id] && (
+        {locBannerAsk && (
           <div style={{ padding: '10px 14px', background: 'linear-gradient(135deg, #ecfdf5, #d1fae5)', borderBottom: '1px solid #a7f3d0', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '10px', animation: 'fadeIn 0.3s ease-out' }}>
             <div style={{ width: '36px', height: '36px', borderRadius: '18px', background: 'linear-gradient(135deg, #10b981, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(16,185,129,0.3)' }}>
               {Icons.mapPin('white', 18)}
@@ -670,7 +693,7 @@ export default function ChatDetail({
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--accent-green-text)', margin: '1px 0 0' }}>Members can see where everyone is on the map</p>
             </div>
             <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); startSharingLocation(flock.id); }} style={{ padding: '6px 12px', borderRadius: '14px', border: 'none', background: '#10b981', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0, position: 'relative', overflow: 'hidden' }}>Share</button>
-            <button aria-label="Dismiss" className="hit44" onClick={() => { setLocationBannerDismissed(prev => { const next = { ...prev, [flock.id]: true }; localStorage.setItem('flock_loc_dismissed', JSON.stringify(next)); return next; }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', flexShrink: 0 }}>{Icons.x(colors.textSecondary, 14)}</button>
+            <button aria-label="Dismiss" className="hit44" onClick={() => { setLocationBannerDismissed(prev => { const next = { ...prev, [flock.id]: flock.eventTime || true }; localStorage.setItem('flock_loc_dismissed', JSON.stringify(next)); return next; }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', flexShrink: 0 }}>{Icons.x(colors.textSecondary, 14)}</button>
           </div>
         )}
 
