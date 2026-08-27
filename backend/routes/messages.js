@@ -1160,8 +1160,8 @@ router.put('/dm/:messageId/read', param('messageId').isInt({ min: 1, max: INT4_M
     // Both halves of the fix, because either alone leaves a gap: the predicate
     // stops hidden rows being touched at all, and the narrowed RETURNING means
     // a route whose entire job is "flip a boolean" can never be a content read
-    // again. No caller reads anything but the ack (frontend has no caller at
-    // all today), so nothing client-side depends on the wide row.
+    // again. No caller reads anything but the ack (App.js calls this for live
+    // arrivals while the thread is open; the ack is all it uses).
     const result = await pool.query(
       `UPDATE direct_messages SET read_status = TRUE
        WHERE id = $1 AND receiver_id = $2
