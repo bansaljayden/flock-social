@@ -54,7 +54,7 @@ RestartSec=10
 # level, so every device above is unaffected. What it stops is the thing this
 # box is actually exposed to: it sits in a venue, on someone else's wifi, in a
 # room full of strangers, and the one file that matters is
-# /etc/flock-sensor/flock_sensor.env — owned by the service user so that the
+# /etc/flock-sensor/flock_sensor.env, owned by the service user so that the
 # service can read it, which also meant the service could REWRITE it. A process
 # that got a shell here could repoint FLOCK_API_URL at its own collector and
 # hand it the venue's device key, and the unit did nothing to prevent that.
