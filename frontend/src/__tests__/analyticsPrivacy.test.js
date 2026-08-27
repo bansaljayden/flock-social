@@ -269,10 +269,12 @@ describe('capture-site sweep: what leaves the device is a short, named list', ()
     expect(names).toEqual([
       'app_opened',          // did anyone come back, and on which shell
       'attendance_marked',   // did the people who said yes turn up
+      'auth_screen_viewed',  // arrival at the sign-up / sign-in form, the pre-auth denominator
       'birdie_message',      // is the assistant used, and how deep
       'budget_submitted',    // is budget matching used or skipped
       'crowd_feedback',      // is the crowd report submitted
       'dm_sent',
+      'email_verified',      // the verification wall: coming down, or the link failing
       'flock_created',
       'flock_message_sent',
       'flock_rerun',
