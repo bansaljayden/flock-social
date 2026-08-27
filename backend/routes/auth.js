@@ -2553,7 +2553,13 @@ router.post('/login', loginValidation, async (req, res) => {
 router.get('/me', authenticate, async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT id, email, name, phone, interests, role, profile_image_url, venmo_username, cashapp_cashtag, zelle_identifier, email_verified, created_at, updated_at
+      // bio is selected here because the app boots authUser from this route,
+      // and profileBio seeds from authUser.bio. Left off, a saved bio comes
+      // back to an empty Edit Profile box after a reload, which reads to the
+      // person who wrote it exactly like a bio that never saved. It is content
+      // the user typed about themselves, not a secret, so it belongs in the
+      // response for the same reason /api/users/profile returns it.
+      `SELECT id, email, name, phone, interests, role, profile_image_url, bio, venmo_username, cashapp_cashtag, zelle_identifier, email_verified, created_at, updated_at
        FROM users WHERE id = $1`,
       [req.user.id]
     );
