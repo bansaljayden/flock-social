@@ -63,7 +63,7 @@ test('reconstruction is integer 0..100 for any finite input', () => {
 });
 
 // ---------------------------------------------------------------------------
-// THE SCORE QUANTILE MAP (2026-08-20). UNARMED — CROWD_QMAP_ENABLED, default
+// THE SCORE QUANTILE MAP (2026-08-20). ARMED 2026-08-28 — CROWD_QMAP_ENABLED, default
 // off. It is a monotone 40-knot lookup fitted on the earliest 30% of gate dates
 // from the shipped 2.6.0-starling artifacts and measured forward on 46,101 rows:
 // within-10 20.84% -> 29.22% (+8.38pp CI [+7.17, +9.69]) at MAE 29.976 -> 33.126
@@ -167,6 +167,10 @@ test('the qmap records the artifact it was fitted on and its own measurement', (
 });
 
 test('the flag is OFF by default', () => {
-  assert.notEqual(process.env.CROWD_QMAP_ENABLED, 'true',
-    'CROWD_QMAP_ENABLED must not be set in a test run — the map is unarmed');
+  // ARMED 2026-08-28: the default flipped to ON (unset serves the mapped
+  // number; 'false' is the kill switch). What this assertion now protects is
+  // the opposite hygiene: a test run must not force the kill switch either
+  // way, so the suite exercises exactly what production defaults to.
+  assert.notEqual(process.env.CROWD_QMAP_ENABLED, 'false',
+    'CROWD_QMAP_ENABLED=false must not leak into a test run — the map is armed by default');
 });
