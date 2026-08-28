@@ -451,6 +451,73 @@ router.post('/flocks/:id/messages',
 );
 
 // POST /api/messages/:id/react - Add emoji reaction to a message
+// -------------------------------------------------------------------------
+// FULL-SIZE PHOTO, ON DEMAND
+// -------------------------------------------------------------------------
+// History deliberately ships only the thumbnail for image messages (the CASE
+// in both history SELECTs above); the full image stays in the row exactly for
+// this. One authenticated, membership-gated read returns it when a person
+// actually taps the photo, so the 95 percent bandwidth saving on history
+// survives while full quality stays one tap away. Same visibility rules as
+// history: a hidden (taken down) message serves nothing.
+router.get('/flocks/:id/messages/:messageId/image',
+  [
+    param('id').isInt({ min: 1, max: INT4_MAX }),
+    param('messageId').isInt({ min: 1, max: INT4_MAX }),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+      const flockId = req.params.id;
+      if (!(await verifyFlockMember(flockId, req.user.id))) {
+        return res.status(403).json({ error: 'Not a member of this flock' });
+      }
+      const row = await pool.query(
+        `SELECT image_url FROM messages
+          WHERE id = $1 AND flock_id = $2 AND COALESCE(is_hidden, false) = false`,
+        [req.params.messageId, flockId]
+      );
+      if (row.rows.length === 0 || !row.rows[0].image_url) {
+        return res.status(404).json({ error: 'Photo not found' });
+      }
+      res.json({ image: row.rows[0].image_url });
+    } catch (err) {
+      console.error('Get full-size image error:', err);
+      res.status(500).json({ error: 'Server error' });
+    }
+  }
+);
+
+router.get('/dm/messages/:id/image',
+  [param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid message ID')],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+      const dm = await pool.query(
+        `SELECT sender_id, receiver_id, image_url FROM direct_messages
+          WHERE id = $1 AND COALESCE(is_hidden, false) = false`,
+        [req.params.id]
+      );
+      if (dm.rows.length === 0) return res.status(404).json({ error: 'Photo not found' });
+      if (dm.rows[0].sender_id !== req.user.id && dm.rows[0].receiver_id !== req.user.id) {
+        // 404, not 403: a stranger must not learn the message id exists.
+        return res.status(404).json({ error: 'Photo not found' });
+      }
+      if (!dm.rows[0].image_url) return res.status(404).json({ error: 'Photo not found' });
+      res.json({ image: dm.rows[0].image_url });
+    } catch (err) {
+      console.error('Get DM full-size image error:', err);
+      res.status(500).json({ error: 'Server error' });
+    }
+  }
+);
+
 router.post('/messages/:id/react',
   [
     param('id').isInt({ min: 1, max: INT4_MAX }),

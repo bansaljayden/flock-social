@@ -89,7 +89,7 @@
  * Send button armed over whitespace, and the "online" literal wired to nothing.
  */
 import React from 'react';
-import { leaveFlock as apiLeaveFlock, BASE_URL, createBillSplit, createFlockInviteLink, getPaymentLinks, ghostCommit, lockBudget, sendBudgetReminder, settleShare, submitBudget, unsettleShare } from '../services/api';
+import { leaveFlock as apiLeaveFlock, BASE_URL, createBillSplit, createFlockInviteLink, getFlockMessageImage, getPaymentLinks, ghostCommit, lockBudget, sendBudgetReminder, settleShare, submitBudget, unsettleShare } from '../services/api';
 import { getSocket, leaveFlock } from '../services/socket';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
@@ -295,6 +295,20 @@ export default function ChatDetail({
     //
     // Both are declared above the `!flock` return below, because a hook after
     // a conditional return is a hook that does not always run.
+    // Full-size photo viewer. A history row carries only the thumbnail, so
+    // opening one fetches the original through the membership-gated endpoint;
+    // a live row still holds the full image and opens instantly. Reached from
+    // the message's reaction row, because the bubble's own tap is already the
+    // accessibility door to react and report and may not be nested inside.
+    const [imageViewer, setImageViewer] = React.useState(null);
+    const openImageViewer = (m) => {
+      if (m.image) { setImageViewer({ src: m.image }); return; }
+      setImageViewer({ loading: true });
+      getFlockMessageImage(flock.id, m.id)
+        .then((d) => setImageViewer((prev) => (prev && prev.loading ? { src: d.image } : prev)))
+        .catch(() => setImageViewer((prev) => (prev && prev.loading ? { error: "Couldn't load the full photo. Try again." } : prev)));
+    };
+
     const [composerHasRealText, setComposerHasRealText] = React.useState(false);
     // Sampled rather than subscribed to, for the reason App.js's reconnect
     // catch-up gives at length: socket.io's 'connect' fires on the INSTANCE,
@@ -683,6 +697,18 @@ export default function ChatDetail({
         )}
 
         {/* Live location sharing banner */}
+        {imageViewer && (
+          <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, zIndex: 400, backgroundColor: 'rgba(6,16,31,0.92)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <DialogBehavior onClose={() => setImageViewer(null)} label="Photo" />
+            <button aria-label="Close photo" className="hit44" onClick={() => setImageViewer(null)} style={{ position: 'absolute', top: 'calc(env(safe-area-inset-top, 0px) + 14px)', right: '14px', width: '40px', height: '40px', borderRadius: '20px', border: 'none', background: 'rgba(255,255,255,0.16)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>{Icons.x('white', 18)}</button>
+            {imageViewer.src ? (
+              <img src={imageViewer.src} alt="Full size" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '10px' }} />
+            ) : (
+              <p role="status" style={{ color: 'white', fontSize: 'var(--t-body)', textAlign: 'center' }}>{imageViewer.error || 'Loading the full photo\u2026'}</p>
+            )}
+          </div>
+        )}
+
         {locBannerAsk && (
           <div style={{ padding: '10px 14px', background: 'linear-gradient(135deg, #ecfdf5, #d1fae5)', borderBottom: '1px solid #a7f3d0', flexShrink: 0, display: 'flex', alignItems: 'center', gap: '10px', animation: 'fadeIn 0.3s ease-out' }}>
             <div style={{ width: '36px', height: '36px', borderRadius: '18px', background: 'linear-gradient(135deg, #10b981, #059669)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(16,185,129,0.3)' }}>
@@ -1020,6 +1046,9 @@ export default function ChatDetail({
                         }}
                       >{r}</button>
                     ))}
+                    {(m.image || m.thumb) && (
+                      <button aria-label="View photo full size" className="hit44" onClick={(e) => { e.stopPropagation(); setShowReactionPicker(null); openImageViewer(m); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }} title="View photo">{Icons.eye(colors.textSecondary, 15)}</button>
+                    )}
                     {m.sender !== 'You' && (
                       <button aria-label="Report" className="hit44" onClick={(e) => { e.stopPropagation(); setShowReactionPicker(null); setModerationTarget({ userId: m.senderId, userName: m.sender, contentType: 'flock_message', contentId: m.id }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: 'var(--t-body)', color: '#EF4444' }} title="Report">{Icons.flag('#EF4444', 15)}</button>
                     )}

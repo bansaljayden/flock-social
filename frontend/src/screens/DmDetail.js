@@ -71,7 +71,7 @@
  * new row rather than changed here.
  */
 import React from 'react';
-import { sendFriendRequest, trackDmVenueVote } from '../services/api';
+import { sendFriendRequest, trackDmVenueVote, getDmMessageImage } from '../services/api';
 import { dmReact, dmRemoveReact, dmStopSharingLocation, dmVoteVenue, getSocket } from '../services/socket';
 import { groupReactions } from './ChatDetail';
 import Icons from '../components/ui/Icons';
@@ -206,6 +206,17 @@ export default function DmDetail({
     if (typeof navigator !== 'undefined' && navigator.onLine === false) return 'offline';
     return 'reconnecting';
   };
+  // Full-size photo viewer, the same shape ChatDetail carries: history rows
+  // hold only the thumbnail, the original is one gated fetch away.
+  const [imageViewer, setImageViewer] = React.useState(null);
+  const openImageViewer = (m) => {
+    if (m.image_url) { setImageViewer({ src: m.image_url }); return; }
+    setImageViewer({ loading: true });
+    getDmMessageImage(m.id)
+      .then((d) => setImageViewer((prev) => (prev && prev.loading ? { src: d.image } : prev)))
+      .catch(() => setImageViewer((prev) => (prev && prev.loading ? { error: "Couldn't load the full photo. Try again." } : prev)));
+  };
+
   const [connectionState, setConnectionState] = React.useState(readConnection);
   React.useEffect(() => {
     const sample = () => setConnectionState(readConnection());
@@ -639,6 +650,18 @@ export default function DmDetail({
       )}
 
       {/* Messages area */}
+      {imageViewer && (
+        <div className="modal-backdrop" style={{ position: 'fixed', inset: 0, zIndex: 400, backgroundColor: 'rgba(6,16,31,0.92)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+        <DialogBehavior onClose={() => setImageViewer(null)} label="Photo" />
+          <button aria-label="Close photo" className="hit44" onClick={() => setImageViewer(null)} style={{ position: 'absolute', top: 'calc(env(safe-area-inset-top, 0px) + 14px)', right: '14px', width: '40px', height: '40px', borderRadius: '20px', border: 'none', background: 'rgba(255,255,255,0.16)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>{Icons.x('white', 18)}</button>
+          {imageViewer.src ? (
+            <img src={imageViewer.src} alt="Full size" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '10px' }} />
+          ) : (
+            <p role="status" style={{ color: 'white', fontSize: 'var(--t-body)', textAlign: 'center' }}>{imageViewer.error || 'Loading the full photo\u2026'}</p>
+          )}
+        </div>
+      )}
+
       <div onScroll={() => { const el = document.activeElement; if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) el.blur(); }} style={{ flex: 1, padding: '16px', overflowY: 'auto', overflowX: 'hidden', background: `linear-gradient(180deg, ${colors.cream} 0%, ${colors.cream}cc 100%)`, scrollBehavior: 'smooth' }}>
         {showDmChatSearch && dmChatSearch.trim() && selectedDm.messages.filter(m => {
           const q = dmChatSearch.toLowerCase();
@@ -826,6 +849,9 @@ export default function DmDetail({
                         onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
                       >{emoji}</button>
                     ))}
+                    {m.message_type === 'image' && (m.image_url || m.thumb_url) && (
+                      <button aria-label="View photo full size" className="hit44" onClick={(e) => { e.stopPropagation(); setShowDmReactionPicker(null); openImageViewer(m); }} style={{ fontSize: 'var(--t-body)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: colors.navy, fontWeight: '600' }} title="View photo">{Icons.eye(colors.navy, 14)}</button>
+                    )}
                     <button aria-label="Reply" className="hit44" onClick={(e) => { e.stopPropagation(); setDmReplyingTo(m); setShowDmReactionPicker(null); }} style={{ fontSize: 'var(--t-body)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: colors.navy, fontWeight: '600' }} title="Reply">{Icons.reply(colors.navy, 14)}</button>
                     {m.sender !== 'You' && (
                       <button aria-label="Report" className="hit44" onClick={(e) => { e.stopPropagation(); setShowDmReactionPicker(null); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'dm', contentId: m.id }); }} style={{ fontSize: 'var(--t-body)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: '#EF4444', fontWeight: '600' }} title="Report">{Icons.flag('#EF4444', 15)}</button>
