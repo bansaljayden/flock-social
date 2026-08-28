@@ -1671,10 +1671,14 @@ export async function updateUserSettings(partial) {
 
 // Friends
 export async function sendFriendRequest(userId) {
-  return request('/api/friends/request', {
+  const data = await request('/api/friends/request', {
     method: 'POST',
     body: JSON.stringify({ user_id: userId }),
   });
+  // The graph attempted. Count only, never who: the audit's finding was that
+  // nothing measured whether the social graph grows at all.
+  track('friend_request_sent', {});
+  return data;
 }
 
 export async function getFriends() {
@@ -1682,10 +1686,14 @@ export async function getFriends() {
 }
 
 export async function acceptFriendRequest(userId) {
-  return request('/api/friends/accept', {
+  const data = await request('/api/friends/accept', {
     method: 'POST',
     body: JSON.stringify({ user_id: userId }),
   });
+  // The graph formed. An edge exists only on accept, so sent and accepted
+  // together are the funnel's two halves.
+  track('friend_request_accepted', {});
+  return data;
 }
 
 export async function declineFriendRequest(userId) {
@@ -2090,14 +2098,22 @@ export async function deleteCalendarEvent(id) {
 
 // Availability Pulse — 3-tap status: down / maybe / not
 export async function setAvailability({ status, note, expiresAt }) {
-  return request('/api/availability', {
+  const data = await request('/api/availability', {
     method: 'POST',
     body: JSON.stringify({ status, note, expires_at: expiresAt }),
   });
+  // The most-tapped control on the home screen was the one nothing measured.
+  // The status is clamped to the three the UI offers, so a forged body
+  // cannot invent product-data categories (the nfc_tap lesson).
+  track('pulse_set', { status: ['down', 'maybe', 'not'].includes(status) ? status : 'other' });
+  return data;
 }
 
 export async function clearAvailability() {
-  return request('/api/availability', { method: 'DELETE' });
+  const data = await request('/api/availability', { method: 'DELETE' });
+  // Tapping the lit status again clears it; that is a real answer too.
+  track('pulse_set', { status: 'cleared' });
+  return data;
 }
 
 export async function getMyAvailability() {
@@ -2290,6 +2306,17 @@ export function trackEmailVerified(outcome) {
    before either rendered. 'signup' or 'login', clamped; nothing about the
    person rides. */
 const AUTH_SCREENS = ['signup', 'login'];
+// The single biggest retention lever's outcome, at each of the two places the
+// app asks. Both properties are clamped: the Notification API's own vocabulary
+// is granted/denied/default, ours adds unsupported, and anything a future
+// browser invents lands as 'other' rather than as a new category.
+export function trackNotificationPermission(outcome, surface) {
+  track('notification_permission', {
+    outcome: ['granted', 'denied', 'default', 'unsupported'].includes(outcome) ? outcome : 'other',
+    surface: ['chat_banner', 'settings'].includes(surface) ? surface : 'other',
+  });
+}
+
 export function trackAuthScreen(screen) {
   track('auth_screen_viewed', { screen: AUTH_SCREENS.includes(screen) ? screen : 'unknown' });
 }

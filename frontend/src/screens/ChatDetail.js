@@ -89,7 +89,7 @@
  * Send button armed over whitespace, and the "online" literal wired to nothing.
  */
 import React from 'react';
-import { leaveFlock as apiLeaveFlock, BASE_URL, createBillSplit, createFlockInviteLink, getFlockMessageImage, getPaymentLinks, ghostCommit, lockBudget, sendBudgetReminder, settleShare, submitBudget, unsettleShare } from '../services/api';
+import { leaveFlock as apiLeaveFlock, BASE_URL, createBillSplit, createFlockInviteLink, getFlockMessageImage, getPaymentLinks, ghostCommit, lockBudget, sendBudgetReminder, settleShare, submitBudget, trackNotificationPermission, unsettleShare } from '../services/api';
 import { getSocket, leaveFlock } from '../services/socket';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
@@ -683,6 +683,7 @@ export default function ChatDetail({
                 confirmClick(e);
                 dismissNotifAsk();
                 requestNotificationPermission().then((token) => {
+                  trackNotificationPermission(token ? 'granted' : getNotificationStatus(), 'chat_banner');
                   if (token) { setNotifStatus('granted'); showToast('Notifications are on.'); }
                   else {
                     setNotifStatus(getNotificationStatus());

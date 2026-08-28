@@ -58,7 +58,7 @@
  * character. Nothing was renamed, reformatted or improved on the way across.
  */
 import React from 'react';
-import { deleteAccount, updatePaymentMethods } from '../services/api';
+import { deleteAccount, trackNotificationPermission, updatePaymentMethods } from '../services/api';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
@@ -750,6 +750,7 @@ export default function ProfileSettings({
                   </span>
                 ) : (
                     <button className="hit44 glass-btn glass-secondary" onClick={() => requestNotificationPermission().then((token) => {
+                      trackNotificationPermission(token ? 'granted' : getNotificationStatus(), 'settings');
                       // null = denied or registration failed — saying
                       // "enabled" without a registered token was a lie.
                       if (token) { setNotifStatus('granted'); showToast('Notifications enabled!'); }
