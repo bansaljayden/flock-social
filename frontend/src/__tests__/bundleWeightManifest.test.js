@@ -108,6 +108,7 @@ const USED_WITHOUT_AN_IMPORT = {
   '@capacitor/cli': 'Build-time CLI (`npx cap sync`). Belongs in devDependencies; moving it is a native-build change, not a bundle one.',
   '@capacitor-firebase/app': 'Native peer of @capacitor-firebase/messaging. Registered in the iOS project.',
   'react-scripts': 'The build and test toolchain itself.',
+  '@vercel/og': 'The per-flock share image renderer for frontend/api/invite-og.js, an edge function Vercel bundles from this same package.json. CRA never sees it, so it adds nothing to the app bundle.',
   'tailwindcss-animate': 'A plugin required by tailwind.config.js at build time, alongside tailwindcss, which is already a devDependency.',
 };
 
