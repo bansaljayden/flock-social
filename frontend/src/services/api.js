@@ -1385,6 +1385,18 @@ export async function getMessages(flockId, { before } = {}) {
   return request(`/api/flocks/${flockId}/messages${q}`);
 }
 
+// The full-size original behind a history thumbnail. History withholds
+// image_url when a thumb exists (routes/messages.js documents the saving);
+// these are the membership-gated reads that return it when a person actually
+// asks for the photo, so full quality is one tap away instead of gone.
+export async function getFlockMessageImage(flockId, messageId) {
+  return request(`/api/flocks/${flockId}/messages/${messageId}/image`);
+}
+
+export async function getDmMessageImage(messageId) {
+  return request(`/api/dm/messages/${messageId}/image`);
+}
+
 // A message carries text, an image, or both. `image_url` was missing here, so
 // the REST transport — the fallback the socket client uses while its connection
 // is down — could not send a photo at all: it posted a message_type of 'image'
