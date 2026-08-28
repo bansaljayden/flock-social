@@ -3,12 +3,12 @@ import { useTheme } from './context/ThemeContext';
 // The revenue simulator math (lib/finance.js) moved to screens/RevenueScreen.js
 // with the admin console on 2026-08-27 and is imported there now. It was the
 // only reader of it in App.js, so the import went with it.
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery } from './services/api';
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
 import { hapticTap, hapticSuccess, hapticAlarm } from './services/haptics';
-import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onReliabilityUpdated, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled } from './services/socket';
+import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled } from './services/socket';
 import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
@@ -9062,6 +9062,61 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return unsub;
   }, []);
 
+  // Unsent messages leave every open screen the moment the server confirms
+  // the tombstone. Removal, not a stub: the thread reads as if the message
+  // was never there, and history reloads agree because the server filters
+  // the same rows.
+  useEffect(() => {
+    const unsub = onFlockMessageUnsent((data) => {
+      setFlocks(prev => prev.map(f => (
+        f.id === data.flockId
+          ? { ...f, messages: (f.messages || []).filter(m => m.id !== data.messageId) }
+          : f
+      )));
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = onDmMessageUnsent((data) => {
+      setDirectMessages(prev => prev.map(d => ({
+        ...d,
+        messages: (d.messages || []).filter(m => m.id !== data.messageId),
+      })));
+    });
+    return unsub;
+  }, []);
+
+  // The confirm half of unsend, one per chat. Await, then remove: the row
+  // leaves the screen only when the tombstone is real, and a failure names
+  // itself instead of quietly resurrecting the message on reload.
+  const handleUnsendFlockMessage = useCallback(async (flockId, messageId) => {
+    try {
+      await unsendFlockMessage(flockId, messageId);
+      setFlocks(prev => prev.map(f => (
+        f.id === flockId
+          ? { ...f, messages: (f.messages || []).filter(m => m.id !== messageId) }
+          : f
+      )));
+      showToast('Message unsent.');
+    } catch (err) {
+      showToast(err.message || "That didn't unsend. Try again.", 'error');
+    }
+  }, [showToast]);
+
+  const handleUnsendDm = useCallback(async (messageId) => {
+    try {
+      await unsendDm(messageId);
+      setDirectMessages(prev => prev.map(d => ({
+        ...d,
+        messages: (d.messages || []).filter(m => m.id !== messageId),
+      })));
+      showToast('Message unsent.');
+    } catch (err) {
+      showToast(err.message || "That didn't unsend. Try again.", 'error');
+    }
+  }, [showToast]);
+
   // The server pushes the fresh score when a host marks attendance; the
   // payload carries it, so no refetch. Without this the profile showed the
   // boot-time number until the next relaunch.
@@ -16987,6 +17042,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         getSelectedFlock,
         handleChatImageSelect,
         handleChatInputChange,
+        handleUnsendFlockMessage,
         handleFlockInviteSearch,
         handleSendFlockInvites,
         isDark,
@@ -17078,6 +17134,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       // this component, and reading them any earlier is a temporal dead zone
       // throw.
       const dmDetailProps = {
+        handleUnsendDm,
         ChatSkeleton,
         DM_PAGE_SIZE,
         DialogBehavior,
