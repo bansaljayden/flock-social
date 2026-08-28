@@ -90,6 +90,78 @@ function requireAdmin(req, res, next) {
 router.use(requireAdmin);
 
 // ---------------------------------------------------------------------------
+// WAITLIST LAUNCH ANNOUNCE
+// ---------------------------------------------------------------------------
+// POST /api/admin/waitlist/announce  { dry_run?: true }
+//
+// Tells everyone still waiting that the app is out, 100 at a time, once each.
+// Idempotent by column, not by memory: a row is picked only while
+// announced_at IS NULL and it has not already converted to an account, and it
+// is stamped the moment its email is either sent or is never going to be sent
+// (suppressed by the do-not-mail list, or an invalid address). Transient
+// failures (provider error, keyless deploy, per-recipient daily cap) leave
+// the row unstamped so the next run retries it. Run it repeatedly until
+// `remaining` is zero; each call bounds its own blast radius at 100 sends.
+//
+// The emailService namespace is required lazily here rather than destructured
+// at the top of the file so the launch email can be stubbed in tests and so
+// this admin file adds no weight to deployments that never announce.
+router.post('/waitlist/announce', async (req, res) => {
+  try {
+    const emailService = require('../services/emailService');
+    const dryRun = req.body && req.body.dry_run === true;
+
+    const stats = await pool.query(
+      `SELECT COUNT(*)::int AS total,
+              COUNT(*) FILTER (WHERE converted_user_id IS NOT NULL)::int AS converted,
+              COUNT(*) FILTER (WHERE announced_at IS NOT NULL)::int AS announced,
+              COUNT(*) FILTER (WHERE announced_at IS NULL AND converted_user_id IS NULL)::int AS pending
+         FROM waitlist`
+    );
+    const summary = stats.rows[0] || { total: 0, converted: 0, announced: 0, pending: 0 };
+
+    if (dryRun) {
+      return res.json({ dry_run: true, ...summary });
+    }
+
+    const batch = await pool.query(
+      `SELECT id, email FROM waitlist
+        WHERE announced_at IS NULL AND converted_user_id IS NULL
+        ORDER BY id
+        LIMIT 100`
+    );
+
+    let sent = 0;
+    let suppressed = 0;
+    let failed = 0;
+    for (const row of batch.rows) {
+      const outcome = await emailService.sendWaitlistLaunchEmail({ to: row.email });
+      const permanent = outcome.sent
+        || outcome.suppressed
+        || (outcome.refused && outcome.error === 'invalid recipient');
+      if (outcome.sent) sent += 1;
+      else if (permanent) suppressed += 1;
+      else failed += 1;
+      if (permanent) {
+        await pool.query('UPDATE waitlist SET announced_at = NOW() WHERE id = $1', [row.id]);
+      }
+    }
+
+    res.json({
+      dry_run: false,
+      batch: batch.rows.length,
+      sent,
+      suppressed,
+      failed,
+      remaining: Math.max(0, summary.pending - sent - suppressed),
+    });
+  } catch (err) {
+    console.error('[admin] waitlist announce failed:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // WHAT THE REPORTED CONTENT ACTUALLY SAYS — one definition, two readers
 // ---------------------------------------------------------------------------
 //

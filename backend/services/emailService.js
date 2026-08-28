@@ -1048,12 +1048,73 @@ async function sendWaitlistConfirmation({ to }) {
   });
 }
 
+// The other half of the waitlist promise. sendWaitlistConfirmation tells a
+// person they are ON the list; this one tells them they are OFF it because the
+// app is out. Sent only by the admin announce route (routes/admin.js), once
+// per address, recorded in waitlist.announced_at. Same marketing category and
+// the same one-click unsubscribe as the confirmation, because it is the same
+// consent. APP_STORE_URL points the button at the store once the app is live;
+// until that env var exists the button goes to signup on the web app, which
+// is real today.
+async function sendWaitlistLaunchEmail({ to }) {
+  const getUrl = process.env.APP_STORE_URL || `${baseWebUrl()}/signup`;
+  const optOut = unsubscribeUrl(typeof to === 'string' ? to.trim() : '');
+  const optOutHtml = optOut
+    ? `<a href="${escapeHtml(optOut)}" style="color: #a0aec0;">Stop these emails</a>.`
+    : 'Reply to this message and we will take you off the list.';
+  const optOutText = optOut
+    ? `Stop these emails: ${optOut}`
+    : 'Reply to this message and we will take you off the list.';
+  return sendEmail({
+    to,
+    category: 'marketing',
+    subject: "You're off the waitlist. Flock is out.",
+    ...(optOut ? {
+      headers: {
+        'List-Unsubscribe': `<${optOut}>`,
+        'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+      },
+    } : {}),
+    text: [
+      "You're off the waitlist.",
+      '',
+      'Flock is out. You signed up early, so you are first in line: create your account with this email address and your spot counts from the day you joined the list.',
+      '',
+      `Get Flock: ${getUrl}`,
+      '',
+      'The Flock Team',
+      '',
+      `You are getting this because this address joined the Flock waitlist at ${baseWebUrl()}.`,
+      optOutText,
+    ].join('\n'),
+    html: `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 24px;">
+        <div style="text-align: center; margin-bottom: 32px;">
+          <img src="${baseWebUrl()}/flock-logo.png" alt="Flock" width="64" height="64" style="border-radius: 16px;" />
+        </div>
+        <h1 style="font-size: 24px; font-weight: 700; color: #0d2847; margin-bottom: 16px;">You're off the waitlist.</h1>
+        <p style="font-size: 16px; color: #4a5568; line-height: 1.6; margin-bottom: 24px;">
+          Flock is out. You signed up early, so you are first in line: create your account with this email address and your spot counts from the day you joined the list.
+        </p>
+        <div style="text-align: center; margin-bottom: 32px;">
+          <a href="${escapeHtml(getUrl)}" style="display: inline-block; background: #0d2847; color: #ffffff; text-decoration: none; font-weight: 600; font-size: 16px; padding: 14px 28px; border-radius: 12px;">Get Flock</a>
+        </div>
+        <p style="font-size: 14px; color: #718096; line-height: 1.6;">The Flock Team</p>
+        <p style="font-size: 12px; color: #a0aec0; line-height: 1.6; margin-top: 32px;">
+          You are getting this because this address joined the Flock waitlist at ${baseWebUrl()}. ${optOutHtml}
+        </p>
+      </div>
+    `,
+  });
+}
+
 module.exports = {
   sendEmail,
   sendVerificationEmail,
   sendPasswordResetEmail,
   sendPasswordResetOAuthEmail,
   sendWaitlistConfirmation,
+  sendWaitlistLaunchEmail,
   verificationLink,
   passwordResetLink,
   baseWebUrl,

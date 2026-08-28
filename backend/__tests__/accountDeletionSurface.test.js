@@ -181,9 +181,11 @@ const IDENTIFIER_TABLES_WITHOUT_A_USERS_KEY = {
     'the do-not-mail list. Plaintext, keyed on the address, no expiry, and it survives ' +
     'deletion on purpose: not mailing an address that bounced or reported us as spam is a ' +
     'promise to whoever holds that mailbox, not to the account. Disclosed on both pages.',
-  'waitlist.email':
-    'a launch-notification address, never linked to an account. Kept until unsubscribed ' +
-    'or removed on request. Disclosed in PrivacyPolicy.js.',
+  // waitlist.email left this list on 2026-08-27: migration 054 gave the table
+  // converted_user_id REFERENCES users(id) ON DELETE CASCADE, so a claimed row
+  // dies with its account and the survivors are only the UNCLAIMED rows, which
+  // still carry no link to any user. Same disclosure as before applies to
+  // those: kept until unsubscribed or removed on request (PrivacyPolicy.js).
 };
 
 test('no table identifies a person by address or number outside the disclosed survivors', async () => {
