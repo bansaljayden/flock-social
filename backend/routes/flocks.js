@@ -445,6 +445,26 @@ router.get('/', async (req, res) => {
                 WHERE (b.blocker_id = $1 AND b.blocked_id = f.creator_id)
                    OR (b.blocker_id = f.creator_id AND b.blocked_id = $1)
               ) THEN NULL ELSE u.name END AS creator_name,
+              -- Unread for the row badge: messages after this member's read
+              -- cursor (migration 056), counted under EXACTLY the history
+              -- read's visibility filters in routes/messages.js (hidden,
+              -- unsent, blocked either way, deleted sender, and never your
+              -- own), because a count that includes a row the chat will not
+              -- show is a badge that can never be cleared. LEAST-capped: the
+              -- client prints 99+ past that, and a fresh cursor on an old
+              -- chat should not pay for an exact count of its whole history.
+              (SELECT LEAST(COUNT(*), 100) FROM messages m
+                WHERE m.flock_id = f.id
+                  AND m.id > COALESCE(fm.last_read_message_id, 0)
+                  AND m.sender_id IS NOT NULL
+                  AND m.sender_id != $1
+                  AND m.is_hidden IS NOT TRUE
+                  AND m.sender_deleted_at IS NULL
+                  AND NOT EXISTS (
+                    SELECT 1 FROM user_blocks b
+                    WHERE (b.blocker_id = $1 AND b.blocked_id = m.sender_id)
+                       OR (b.blocker_id = m.sender_id AND b.blocked_id = $1)
+                  ))::int AS unread_count,
               fm.status AS member_status,
               -- These were FIVE scalar subqueries doing the work of two, and are
               -- now two (query-reliability round, applied). going_count is

@@ -3,7 +3,7 @@ import { useTheme } from './context/ThemeContext';
 // The revenue simulator math (lib/finance.js) moved to screens/RevenueScreen.js
 // with the admin console on 2026-08-27 and is imported there now. It was the
 // only reader of it in App.js, so the import went with it.
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery } from './services/api';
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
@@ -5805,6 +5805,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           // by" name, and it is what lets that name be reported or blocked.
           hostId: f.creator_id,
           memberStatus: f.member_status,
+          // Server truth for the row badge (the migration 056 cursor): the
+          // socket handler increments it live and opening the chat zeroes it.
+          unread: Number(f.unread_count) || 0,
           members: [],
           memberPreviews: Array.isArray(f.member_previews) ? f.member_previews : [],
           // going_count includes guests who RSVPed through the share link;
@@ -6853,6 +6856,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // fetched and that nothing has arrived in shows nothing, which is honest
   // rather than a guess. Surviving a RELOAD needs a server cursor, because
   // nothing in the database records what you have seen. See the handoff.
+  // The watermark is read only inside the setter's updater now; the badge
+  // itself is server truth, so the destructured value has no readers.
+  // eslint-disable-next-line no-unused-vars
   const [flockSeen, setFlockSeen] = useState(() => {
     try { return JSON.parse(localStorage.getItem('flock_chat_seen') || '{}'); } catch { return {}; }
   });
@@ -8162,6 +8168,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // that arrives while you are looking at it must not put a dot on the row you
   // are about to walk back to. Writing through to localStorage in the same
   // place keeps the stored copy and the state copy from ever disagreeing.
+  //
+  // The server cursor (migration 056) rides the same signal, which answers
+  // the handoff in the flockSeen comment: the mark now survives a reload.
+  // The route is monotonic (GREATEST), so a late or repeated PUT can only
+  // move the cursor forward, and the ref dedupes so one message does not
+  // cost three identical PUTs.
+  const readPutRef = useRef('');
   useEffect(() => {
     if (currentScreen !== 'chatDetail' || !selectedFlockId) return;
     const newest = newestFromOthers(selectedFlock?.messages);
@@ -8170,6 +8183,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       if ((prev[selectedFlockId] || 0) >= newest) return prev;
       const next = { ...prev, [selectedFlockId]: newest };
       try { localStorage.setItem('flock_chat_seen', JSON.stringify(next)); } catch {}
+      return next;
+    });
+    const key = `${selectedFlockId}:${newest}`;
+    if (readPutRef.current !== key) {
+      readPutRef.current = key;
+      // Best effort, same contract as markDmRead: a failed mark is a stale
+      // badge on the next load, not a lost message.
+      markFlockRead(selectedFlockId, newest).catch(() => {});
+    }
+  }, [currentScreen, selectedFlockId, selectedFlock?.messages]);
+
+  // The row badge clears the moment the chat is open, exactly like a DM row.
+  // The cursor PUT above is what keeps it cleared across reloads.
+  useEffect(() => {
+    if (currentScreen !== 'chatDetail' || !selectedFlockId) return;
+    setFlocks(prev => {
+      const fi = prev.findIndex(f => f.id === selectedFlockId && (f.unread || 0) !== 0);
+      if (fi === -1) return prev;
+      const next = [...prev];
+      next[fi] = { ...next[fi], unread: 0 };
       return next;
     });
   }, [currentScreen, selectedFlockId, selectedFlock?.messages]);
@@ -8648,11 +8681,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         ...(msg.image_url ? { image: msg.image_url } : {}),
         ...(msg.thumb_url ? { thumb: msg.thumb_url } : {}),
       };
+      // Unread rides the append: the badge is server truth on every list
+      // load and this is the live half between loads. catchUpTargetRef is
+      // written every render, so it is current here without this callback
+      // depending on screen state, the same trick the DM handler uses.
+      const target = catchUpTargetRef.current || {};
+      const chatOpen = target.screen === 'chatDetail'
+        && Number(target.flockId) === Number(msg.flock_id)
+        && (typeof document === 'undefined' || document.visibilityState === 'visible');
       setFlocks(prev => prev.map(f => {
         if (f.id !== msg.flock_id) return f;
         // Deduplicate — skip if message ID already exists
         if ((f.messages || []).some(m => m.id === msg.id)) return f;
-        return { ...f, messages: [...(f.messages || []), mapped] };
+        return { ...f, messages: [...(f.messages || []), mapped], unread: chatOpen ? (f.unread || 0) : (f.unread || 0) + 1 };
       }));
     });
     return unsub;
@@ -9878,6 +9919,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       }
     };
 
+    // One number over both chat lists: DM unread is server truth already and
+    // flock unread is the migration 056 cursor. The flocks array holds only
+    // accepted memberships (loadFlocks filters), so invites never count.
+    const messagesTabUnread = directMessages.reduce((sum, d) => sum + (Number(d.unread) || 0), 0)
+      + flocks.reduce((sum, f) => sum + (Number(f.unread) || 0), 0);
+
     return (
       // Landmark, not a bare div: this is the app's primary navigation and it
       // is how a screen-reader user jumps between the five screens.
@@ -9898,13 +9945,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         ].map(t => (
           <button className="hit44" key={t.id} onClick={() => handleTabClick(t.id)}
             aria-current={currentTab === t.id ? 'page' : undefined}
+            aria-label={t.id === 'chat' && messagesTabUnread > 0 ? `Messages, ${messagesTabUnread > 99 ? 'more than 99' : messagesTabUnread} unread` : undefined}
             style={{
               ...styles.navItem,
               backgroundColor: currentTab === t.id ? 'var(--icon-bg)' : 'transparent',
               transition: 'background-color 0.2s ease',
               borderRadius: '14px',
-              padding: '8px 14px'
+              padding: '8px 14px',
+              position: 'relative'
             }}>
+            {t.id === 'chat' && messagesTabUnread > 0 && (
+              <div aria-hidden="true" style={{ position: 'absolute', top: '2px', right: '8px', minWidth: '16px', height: '16px', borderRadius: '8px', padding: '0 4px', background: 'linear-gradient(135deg, #EF4444, #DC2626)', color: 'white', fontSize: '10px', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{messagesTabUnread > 99 ? '99+' : messagesTabUnread}</div>
+            )}
             <div className={activeTabAnimation === t.id ? 'tab-bounce' : ''} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
               <div>
                 <NavIcon id={t.id} active={currentTab === t.id} />
@@ -14811,11 +14863,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 // A photo posted to a flock has no text, so the row said
                 // "You: " and stopped. One line gets one label.
                 const lastMsgPreview = messagePreview(lastMsg);
-                // See flockSeen. `!m.read` was true for every message anybody
-                // else ever sent, because nothing writes `read` on a flock
-                // message anywhere in this app.
-                const newestFromOthersId = newestFromOthers(f.messages);
-                const hasUnread = newestFromOthersId !== null && newestFromOthersId > (flockSeen[f.id] || 0);
+                // Server-backed since migration 056: unread_count seeds this
+                // on every list load, the socket handler increments it live,
+                // and opening the chat zeroes it and advances the cursor.
+                // flockSeen is only the PUT watermark now, not the badge.
+                const hasUnread = (f.unread || 0) > 0;
                 const statusColor = f.status === 'completed' ? '#4a7ba7' : f.status === 'confirmed' ? '#22C55E' : f.status === 'voting' ? '#F59E0B' : colors.steel;
                 // statusColor is the DOT (decorative, keeps the vivid hue). The chip
                 // LABEL sits on a 8%-alpha wash of the same hue, where the vivid
@@ -14901,8 +14953,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                           {isPinned ? Icons.pinFilled(colors.navy, 16) : Icons.pin(colors.textTertiary, 16)}
                         </button>
                       ) : hasUnread && (
-                        <div style={{ width: '10px', height: '10px', borderRadius: '5px', backgroundColor: colors.navy, flexShrink: 0 }}>
-                          <span className="sr-only">Unread messages</span>
+                        <div style={{ minWidth: '20px', height: '20px', borderRadius: '10px', padding: '0 6px', background: 'linear-gradient(135deg, #EF4444, #DC2626)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                          {f.unread > 99 ? '99+' : f.unread}
+                          <span className="sr-only"> unread messages</span>
                         </div>
                       )}
                     </button>
