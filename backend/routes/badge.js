@@ -195,11 +195,16 @@ function allowBadgeMiss(req) {
 }
 
 const LABEL_COLORS = {
-  // label -> [dot, text] on the cream badge
+  // label -> [dot, text] on the cream badge. Re-cut 2026-08-28 with the
+  // ladder (crowdEngine.js getLabel): red is reserved for Packed, because
+  // under the calibrated venue-relative scale Busy is a normal good evening,
+  // not an alarm. 'Moderate' stays as a legacy alias for anything upstream
+  // still caching the old word.
   Quiet: ['#22c55e', 'Quiet right now'],
   'Not Busy': ['#22c55e', 'Quiet right now'],
-  Moderate: ['#f59e0b', 'Filling up'],
-  Busy: ['#ef4444', 'Busy right now'],
+  Steady: ['#f59e0b', 'Steady for this spot'],
+  Moderate: ['#f59e0b', 'Steady for this spot'],
+  Busy: ['#f59e0b', 'Busy for this spot'],
   Packed: ['#ef4444', 'Packed right now'],
 };
 

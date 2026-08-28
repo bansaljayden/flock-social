@@ -122,7 +122,7 @@ test('86% and Very Busy is never sold as "Now is good"', () => {
     currentScore: 86,
   });
 
-  assert.equal(getLabel(86), 'Very Busy');
+  assert.equal(getLabel(86), 'Packed');
   assert.equal(rec.hourLabel, null, 'nothing ahead is meaningfully quieter');
   assert.match(rec.text, /^Packed now/);
   assert.doesNotMatch(rec.text, /good/i);
@@ -135,13 +135,16 @@ test('no busy score ever produces enthusiastic copy, whatever the forecast', () 
     [95, 95, 95, 95, 95, 95, 95, 95],   // pinned
   ];
   for (const scores of shapes) {
-    for (const current of [65, 72, 81, 86, 95]) {
+    // 65 left this list with the 2026-08-28 reband: it labels Steady now, a
+    // normal evening, and Steady copy is allowed to be warm. The invariant
+    // guards BUSY scores, which start at 70.
+    for (const current of [72, 81, 86, 95]) {
       const rec = recommendBestTime(forecast(20, scores), { types: ['bar'], openHour: 16, closeHour: 2 },
         null, null, true, { currentHour: 20, currentScore: current });
       if (rec.hourLabel != null) continue; // it sent them to a quieter hour, fine
       assert.doesNotMatch(rec.text, /good/i,
         `score ${current} with ${scores.join(',')} produced "${rec.text}"`);
-      assert.ok(getLabel(current) === 'Busy' || getLabel(current) === 'Very Busy');
+      assert.ok(getLabel(current) === 'Busy' || getLabel(current) === 'Packed');
     }
   }
 });

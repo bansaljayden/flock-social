@@ -141,7 +141,7 @@ test('every category at every (day, hour): score and confidence are integers in 
           // getLevel is documented as derived from the label bands.
           const level = getLevel(r.score);
           const expectLevel = (r.label === 'Quiet' || r.label === 'Not Busy') ? 'calm'
-            : r.label === 'Moderate' ? 'moderate' : 'busy';
+            : r.label === 'Steady' ? 'moderate' : 'busy';
           assert.equal(level, expectLevel, `level/label band mismatch at ${at}`);
         }
       }

@@ -598,7 +598,7 @@ export default function DmDetail({
                     <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0 }}>{venue.name}</p>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type} {venue.price ? `\u2022 ${venue.price}` : ''}</p>
                   </div>
-                  {typeof venue.crowd === 'number' && <div style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: venue.crowd > 60 ? '#FEE2E2' : venue.crowd > 40 ? '#FEF3C7' : '#D1FAE5', color: venue.crowd > 60 ? colors.red : venue.crowd > 40 ? colors.amber : colors.steel, fontSize: 'var(--t-meta)', fontWeight: '500' }}>
+                  {typeof venue.crowd === 'number' && <div style={{ padding: '4px 10px', borderRadius: '12px', backgroundColor: venue.crowd > 84 ? '#FEE2E2' : venue.crowd > 39 ? '#FEF3C7' : '#D1FAE5', color: venue.crowd > 84 ? colors.red : venue.crowd > 39 ? colors.amber : colors.steel, fontSize: 'var(--t-meta)', fontWeight: '500' }}>
                     {venue.crowd}%
                   </div>}
                 </button>

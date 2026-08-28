@@ -7,12 +7,22 @@
 // Helpers
 // ---------------------------------------------------------------------------
 
+// THE LADDER, RE-CUT 2026-08-28 with the qmap arming. The 0-100 is
+// venue-relative (100 = this venue's own weekly peak, the Google and BestTime
+// semantic, never percent-full), and under the calibrated distribution a
+// score of 70+ is a normal 1-in-4-open-hours event, not an alarm. The old
+// cuts ran one notch hot: red fired at 61+, about 35% of open hours. Now the
+// middle is wide and level (Steady, 40-69), Busy starts at 70 (BestTime's own
+// busy convention, fires 22-25% of open hours), and Packed with the only red
+// is reserved for 85+, a real 6-9% event. Mirrored in
+// frontend/src/App.js crowdLabelFor and website/LiveDemo.js; a surface that
+// cuts elsewhere is a bug.
 function getLabel(score) {
   if (score <= 20) return 'Quiet';
-  if (score <= 40) return 'Not Busy';
-  if (score <= 60) return 'Moderate';
-  if (score <= 80) return 'Busy';
-  return 'Very Busy';
+  if (score <= 39) return 'Not Busy';
+  if (score <= 69) return 'Steady';
+  if (score <= 84) return 'Busy';
+  return 'Packed';
 }
 
 // ---------------------------------------------------------------------------
@@ -221,9 +231,11 @@ function publishedLabel(score, support) {
 //   red    = Busy / Very Busy   (61-100)
 // Any surface that shows a crowd colour should use these boundaries.
 function getLevel(score) {
+  // Derived from the label bands (re-cut 2026-08-28 with the ladder above):
+  // calm = Quiet and Not Busy, moderate = Steady, busy = Busy and Packed.
   const s = Number.isFinite(score) ? score : 0;
-  if (s <= 40) return 'calm';
-  if (s <= 60) return 'moderate';
+  if (s <= 39) return 'calm';
+  if (s <= 69) return 'moderate';
   return 'busy';
 }
 
@@ -1338,8 +1350,11 @@ function withDayPrefix(label, dayOffset) {
 // puts on the dial, so a packed venue can never be sold as a good time to show
 // up. No claim here reaches past the end of today.
 function nowCopy(currentScore, rushAhead) {
-  if (currentScore > 80) return 'Packed now, and it stays that way';
-  if (currentScore > 60) return "Now, but it's busy";
+  // Cuts follow the ladder (re-cut 2026-08-28): Packed talk starts where
+  // Packed starts, busy talk where Busy starts. A Steady 65 is a normal
+  // evening and may honestly be called good.
+  if (currentScore > 84) return 'Packed now, and it stays that way';
+  if (currentScore > 69) return "Now, but it's busy";
   if (rushAhead) return 'Now, before the rush';
   return 'Now is good';
 }

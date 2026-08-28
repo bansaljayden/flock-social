@@ -1608,13 +1608,16 @@ const flockTileInitial = (name) => {
 // chip and by the back-navigation snapshot check so they never disagree about
 // what counts as current.
 const CROWD_FRESH_MS = 5 * 60 * 1000;
+// Re-cut 2026-08-28 with the qmap arming; the reasoning lives on the
+// canonical copy in backend/services/crowdEngine.js getLabel, which this
+// mirrors word for word and cut for cut.
 const crowdLabelFor = (score) => {
   if (!Number.isFinite(score)) return null;
   if (score <= 20) return 'Quiet';
-  if (score <= 40) return 'Not Busy';
-  if (score <= 60) return 'Moderate';
-  if (score <= 80) return 'Busy';
-  return 'Very Busy';
+  if (score <= 39) return 'Not Busy';
+  if (score <= 69) return 'Steady';
+  if (score <= 84) return 'Busy';
+  return 'Packed';
 };
 // THE MEASURED HOUR-ORDERING FLOOR, mirrored from
 // backend/services/crowdEngine.js HOUR_ORDERING_MIN_GAP.
@@ -1634,13 +1637,15 @@ const crowdLabelFor = (score) => {
 // constant so the two cannot drift.
 const HOUR_ORDERING_MIN_GAP = 10;
 
-// Red at 61+, matching the site. One place owns the two thresholds, so a
+// Red at 85+ since 2026-08-28, matching the re-cut ladder: under the
+// calibrated venue-relative scale, Busy (70-84) is a normal good evening and
+// wears amber; only Packed alarms. One place owns the thresholds, so a
 // surface that wants a different WEIGHT of the same reading cannot drift off
 // the boundaries every other surface is drawing against.
 const crowdBandFor = (score) => {
   if (!Number.isFinite(score)) return null;
-  if (score > 60) return 'red';
-  if (score > 40) return 'amber';
+  if (score > 84) return 'red';
+  if (score > 39) return 'amber';
   return 'green';
 };
 
@@ -2013,7 +2018,7 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
         {crowd != null && (
           <div style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '10px 12px', marginBottom: '12px', border: '1px solid var(--border-default)' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-              <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{crowdLabelFor(crowd)}</span>
+              <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{crowdLabelFor(crowd)}{crowdLabelFor(crowd) ? ' for this spot' : ''}</span>
               <div style={{ backgroundColor: `${crowdColor}20`, color: crowdInk, padding: '2px 8px', borderRadius: '10px', fontSize: 'var(--t-meta)', fontWeight: '500' }}>{crowd}%</div>
             </div>
             <div style={{ width: '100%', height: '6px', backgroundColor: 'var(--pill-bg)', borderRadius: '3px', overflow: 'hidden' }}>
@@ -11642,8 +11647,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         // venue, the card simply has no crowd row; a number
                         // derived from the venue's name is a lie, not a design.
                         const crowd = typeof v.crowd === 'number' ? v.crowd : null;
-                        const crowdColor = crowd == null ? null : crowd > 70 ? 'var(--accent-red-text)' : crowd > 40 ? '#B45309' : 'var(--accent-green-text)';
-                        const crowdBar = crowd == null ? null : crowd > 70 ? '#EF4444' : crowd > 40 ? '#F59E0B' : '#22C55E';
+                        const crowdColor = crowd == null ? null : crowd > 84 ? 'var(--accent-red-text)' : crowd > 39 ? '#B45309' : 'var(--accent-green-text)';
+                        const crowdBar = crowd == null ? null : crowd > 84 ? '#EF4444' : crowd > 39 ? '#F59E0B' : '#22C55E';
                         // photo_url is a proxy ref path from the backend — the
                         // old place-id URL never resolved (proxy takes ?ref=).
                         const photoUrl = v.photo_url ? `${BASE_URL}${v.photo_url}` : null;
