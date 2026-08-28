@@ -1,0 +1,17 @@
+-- Flock chat read state, the server cursor the client's localStorage dot has
+-- been standing in for (the flockSeen comment in frontend/src/App.js is the
+-- handoff this answers: "Surviving a RELOAD needs a server cursor, because
+-- nothing in the database records what you have seen"). One column, not a
+-- table: the membership row is already per user per flock, which is exactly
+-- the cursor's shape.
+--
+-- A message id watermark rather than a timestamp on purpose: messages.created_at
+-- is a NAIVE timestamp (schema.sql), and comparing a TIMESTAMPTZ cursor
+-- against it is the four-hour restore shift all over again. Ids are SERIAL,
+-- monotone in insert order, which is all a watermark needs.
+--
+-- No backfill on purpose: migrationBootSafety replays every file over live
+-- data asserting not one row moves, so a data-moving UPDATE cannot live in a
+-- migration. Existing members therefore start at 0, each chat shows its true
+-- unread count once, and the first open advances the cursor for good.
+ALTER TABLE flock_members ADD COLUMN IF NOT EXISTS last_read_message_id INTEGER NOT NULL DEFAULT 0;

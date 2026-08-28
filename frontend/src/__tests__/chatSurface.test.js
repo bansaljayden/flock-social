@@ -126,10 +126,19 @@ describe('flock chat unread', () => {
     expect(appSource).not.toMatch(/\bread: (true|false)\b/);
   });
 
-  test('the dot is driven by a caught-up cursor that the screen writes', () => {
+  test('the badge is server truth, and the caught-up cursor writes through to it', () => {
+    // Migration 056 answered the handoff the flockSeen comment always
+    // carried: the badge is unread_count from the list (so it survives a
+    // reload), the socket handler increments it live, opening the chat
+    // zeroes it, and the same caught-up signal that writes flockSeen now
+    // PUTs the server cursor, monotonic server-side so a stale mark can
+    // never move it backwards. flockSeen stays as the PUT watermark.
     expect(appSource).toMatch(/const \[flockSeen, setFlockSeen\] = useState/);
     expect(appSource).toMatch(/flock_chat_seen/);
-    expect(appSource).toMatch(/newestFromOthersId !== null && newestFromOthersId > \(flockSeen\[f\.id\] \|\| 0\)/);
+    expect(appSource).toMatch(/unread: Number\(f\.unread_count\) \|\| 0/);
+    expect(appSource).toMatch(/const hasUnread = \(f\.unread \|\| 0\) > 0;/);
+    expect(appSource).toMatch(/markFlockRead\(selectedFlockId, newest\)\.catch\(\(\) => \{\}\)/);
+    expect(appSource).toMatch(/unread: chatOpen \? \(f\.unread \|\| 0\) : \(f\.unread \|\| 0\) \+ 1/);
   });
 
   test('newestFromOthers separates "nothing new" from "nothing known"', () => {

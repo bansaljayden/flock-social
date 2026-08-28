@@ -1414,6 +1414,15 @@ export async function unsendDm(messageId) {
   return request(`/api/dm/messages/${messageId}`, { method: 'DELETE' });
 }
 
+// Advance this member's flock read cursor (migration 056). Monotonic on the
+// server, so calling with a stale id is a harmless no-op.
+export async function markFlockRead(flockId, lastMessageId) {
+  return request(`/api/flocks/${flockId}/read`, {
+    method: 'PUT',
+    body: JSON.stringify({ lastMessageId }),
+  });
+}
+
 // A message carries text, an image, or both. `image_url` was missing here, so
 // the REST transport — the fallback the socket client uses while its connection
 // is down — could not send a photo at all: it posted a message_type of 'image'
