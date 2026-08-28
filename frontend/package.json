@@ -11,6 +11,7 @@
     "@capacitor/app": "^8.1.0",
     "@capacitor/cli": "^8.4.0",
     "@capacitor/core": "^8.4.0",
+    "@capacitor/haptics": "^8.0.2",
     "@capacitor/ios": "^8.4.0",
     "@capgo/capacitor-social-login": "^8.4.3",
     "@react-oauth/google": "^0.13.5",
