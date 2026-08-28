@@ -76,6 +76,42 @@ import { dmReact, dmRemoveReact, dmStopSharingLocation, dmVoteVenue, getSocket }
 import { groupReactions } from './ChatDetail';
 import Icons from '../components/ui/Icons';
 
+// Day separators. Long threads used to be one undifferentiated scroll where
+// last Tuesday touched tonight with nothing between them. A row draws a
+// divider when its calendar day differs from the previous row's; rows with no
+// sentAt (old cached rows, failed sends) inherit the previous day so a
+// missing timestamp can never invent a boundary. Mirrored in ChatDetail.js
+// and DmDetail.js by design; the copy vocabulary is Today / Yesterday / the
+// dated weekday.
+const dayKeyOf = (iso) => {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+};
+const dayLabelOf = (iso) => {
+  const d = new Date(iso);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const that = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diffDays = Math.round((today - that) / 86400000);
+  if (diffDays <= 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return d.toLocaleDateString([], { weekday: 'long' });
+  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+};
+const daySeparatorFor = (rows, idx) => {
+  const cur = dayKeyOf(rows[idx]?.sentAt);
+  if (!cur) return null;
+  for (let i = idx - 1; i >= 0; i--) {
+    const prev = dayKeyOf(rows[i]?.sentAt);
+    if (prev) return prev === cur ? null : dayLabelOf(rows[idx].sentAt);
+  }
+  // First dated row in the thread: label it so history opens with its day.
+  return dayLabelOf(rows[idx].sentAt);
+};
+
+
 // Same cadence the flock header samples at (ChatDetail SOCKET_SAMPLE_MS).
 const DM_SOCKET_SAMPLE_MS = 2000;
 
@@ -702,11 +738,20 @@ export default function DmDetail({
             <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{dmBlocked[String(selectedDmId)] ? 'These messages are not available.' : 'Say hi to start the conversation.'}</p>
           </div>
         ) : (
-          (showDmChatSearch && dmChatSearch.trim()
-            ? selectedDm.messages.filter(m => { const q = dmChatSearch.toLowerCase(); return m.text?.toLowerCase().includes(q) || m.sender?.toLowerCase().includes(q); })
-            : selectedDm.messages
-          ).map((m) => (
-            <div key={m.id} style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexDirection: m.sender === 'You' ? 'row-reverse' : 'row' }}>
+          (() => {
+            const dmRows = showDmChatSearch && dmChatSearch.trim()
+              ? selectedDm.messages.filter(m => { const q = dmChatSearch.toLowerCase(); return m.text?.toLowerCase().includes(q) || m.sender?.toLowerCase().includes(q); })
+              : selectedDm.messages;
+            return dmRows.map((m, idx) => {
+            const separatorLabel = daySeparatorFor(dmRows, idx);
+            return (
+            <React.Fragment key={m.id}>
+                {separatorLabel && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '4px 0 14px' }}>
+                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-tertiary)', background: 'var(--bg-hover)', padding: '3px 12px', borderRadius: '10px' }}>{separatorLabel}</span>
+                  </div>
+                )}
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexDirection: m.sender === 'You' ? 'row-reverse' : 'row' }}>
               <div style={{ width: '32px', height: '32px', borderRadius: '16px', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', color: 'white', fontWeight: '500', flexShrink: 0, overflow: 'hidden' }}>
                 {m.sender === 'You'
                   ? (profilePic ? <img src={profilePic} alt="" style={{ width: '32px', height: '32px', borderRadius: '16px', objectFit: 'cover' }} /> : 'Y')
@@ -861,7 +906,10 @@ export default function DmDetail({
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 4px 0', textAlign: m.sender === 'You' ? 'right' : 'left' }}>{m.pending ? 'Sending' : getRelativeTime(m.time)}</p>
               </div>
             </div>
-          ))
+            </React.Fragment>
+            );
+            });
+          })()
         )}
         {/* Typing indicator */}
         {/* `visibility` as well as opacity. See the same indicator in
