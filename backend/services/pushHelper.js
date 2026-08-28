@@ -697,11 +697,14 @@ function touchDeviceTokens(userId) {
 // ---------------------------------------------------------------------------
 // The unread count behind the app icon badge.
 //
-// direct_messages.read_status is the ONLY read state this database holds. Flock
-// chat has none at all, so this counts unread DMs and nothing else, and
-// firebaseService.js says so where the number is spent. Counting something the
-// app cannot clear would leave a badge nobody can get rid of, which is the one
-// badge failure worse than having none.
+// Two read states since migration 056: direct_messages.read_status for DMs,
+// and flock_members.last_read_message_id for flock chat. Both are cleared by
+// the app itself (opening a thread marks DMs read, opening a flock chat
+// advances the cursor), which is the rule this number lives by: counting
+// something the app cannot clear would leave a badge nobody can get rid of,
+// which is the one badge failure worse than having none. Every predicate here
+// mirrors the reads in routes/messages.js and routes/flocks.js, hidden and
+// unsent rows excluded, so the badge counts exactly what the screens show.
 //
 // Blocked either way is excluded, matching the conversation list in
 // routes/messages.js: a message that will never be shown must not sit in the
@@ -714,17 +717,34 @@ function touchDeviceTokens(userId) {
 async function unreadBadge(userId) {
   try {
     const r = await pool.query(
-      `SELECT COUNT(*)::int AS n
-         FROM direct_messages dm
-        WHERE dm.receiver_id = $1
-          AND dm.read_status = FALSE
-          AND COALESCE(dm.is_hidden, false) = false
-          AND dm.sender_deleted_at IS NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM user_blocks b
-             WHERE (b.blocker_id = $1 AND b.blocked_id = dm.sender_id)
-                OR (b.blocker_id = dm.sender_id AND b.blocked_id = $1)
-          )`,
+      `SELECT (
+          (SELECT COUNT(*)
+             FROM direct_messages dm
+            WHERE dm.receiver_id = $1
+              AND dm.read_status = FALSE
+              AND COALESCE(dm.is_hidden, false) = false
+              AND dm.sender_deleted_at IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM user_blocks b
+                 WHERE (b.blocker_id = $1 AND b.blocked_id = dm.sender_id)
+                    OR (b.blocker_id = dm.sender_id AND b.blocked_id = $1)
+              ))
+        + (SELECT COUNT(*)
+             FROM messages m
+             JOIN flock_members fm ON fm.flock_id = m.flock_id
+                                  AND fm.user_id = $1
+                                  AND fm.status = 'accepted'
+            WHERE m.id > COALESCE(fm.last_read_message_id, 0)
+              AND m.sender_id IS NOT NULL
+              AND m.sender_id != $1
+              AND m.is_hidden IS NOT TRUE
+              AND m.sender_deleted_at IS NULL
+              AND NOT EXISTS (
+                SELECT 1 FROM user_blocks b
+                 WHERE (b.blocker_id = $1 AND b.blocked_id = m.sender_id)
+                    OR (b.blocker_id = m.sender_id AND b.blocked_id = $1)
+              ))
+       )::int AS n`,
       [userId]
     );
     const n = r.rows.length ? Number(r.rows[0].n) : NaN;
