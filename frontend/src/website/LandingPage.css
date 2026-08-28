@@ -414,14 +414,24 @@
 }
 /* The direct door into the app. The corner block still opens the site menu,
    but opening Flock no longer requires it (Jayden, 2026-08-27: people should
-   not have to tap the hamburger and then tap again). Sized to the nav, and it
-   takes the auto margin so brand sits left, this and the menu button right. */
+   not have to tap the hamburger and then tap again). Anchored to the CORNER,
+   not to the wrap: the first version used margin-left auto inside .lp-nav-in,
+   whose right edge sits under the 64px absolute corner block on a phone, so
+   the button rendered half beneath the hamburger and, with the menu open, its
+   hit area sat on top of the X (Jayden's phone screenshot, 2026-08-27).
+   Absolute against the sticky nav puts it a fixed 14px left of the corner at
+   every width, and it hides while the menu is open because the panel carries
+   its own Open Flock CTA and nothing may fight the X. */
 .lp-nav-open {
-  margin-left: auto;
+  position: absolute;
+  right: 78px;
+  top: 50%;
+  transform: translateY(-50%);
   padding: 9px 16px;
   font-size: 14.5px;
   min-height: 40px;
 }
+.lp-nav.is-menu-open .lp-nav-open { display: none; }
 .lp-brand {
   display: flex;
   align-items: center;
@@ -946,13 +956,17 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-row {
   display: grid;
   gap: clamp(32px, 5vw, 64px);
-  /* start, not center: centering floated the split card at half-height beside
-     the taller text column and it read as misplaced (Jayden, 2026-08-27).
-     Top-aligned, both columns hang from the same line. */
   align-items: start;
 }
 @media (min-width: 900px) {
-  .lp-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  /* Half-and-half was the real bug here. At 1fr/1fr the split card, a ~420px
+     table, sat alone in a 560px column: top-aligned it left a hole under
+     itself, centered it floated, and both got reported (Jayden, 2026-08-27,
+     from the MacBook; the phone stacks and was always fine). Same cure as
+     .lp-birdie and the demo head: the card column is the card's own width,
+     the text column is the measure the words set in, space-between owns the
+     gutter, and center is correct once both blocks have deliberate sizes. */
+  .lp-row { grid-template-columns: minmax(0, 420px) minmax(0, 38rem); justify-content: space-between; align-items: center; }
   .lp-row-flip .lp-row-media { order: -1; }
 }
 .lp-row h2 { margin-bottom: 16px; }
@@ -1086,6 +1100,14 @@ html:has(.lp) body { overflow-x: clip; }
      scrolling to it. */
   grid-template-columns: repeat(auto-fit, minmax(min(300px, 100%), 1fr));
   align-items: start;
+}
+@media (min-width: 900px) {
+  /* Hierarchy, not symmetry (Jayden, 2026-08-27: "some are supposed to be
+     bigger than others"). This section's headline is "Free for your friend
+     group", so the Free card is the subject and reads wider; the venue card
+     is the aside it actually is. Equal auto-fit columns said the two
+     audiences mattered equally, which the headline itself contradicts. */
+  .lp-plans { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); }
 }
 .lp-plan {
   background: var(--plate);
@@ -1405,12 +1427,17 @@ html:has(.lp) body { overflow-x: clip; }
   align-items: start;
 }
 @media (min-width: 900px) {
-  .lp-demo-head { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); }
-  /* Centered beside the text block. This was `end`, and with a tall left
-     column (mark, kicker, h2, lead) the claims hung at the bottom with a
-     hole above them that read as a layout mistake, not a choice (Jayden,
-     2026-08-27). Center holds at every column height. */
-  .lp-demo-head .lp-list { margin-top: 0; align-self: center; }
+  /* The Birdie composition, on purpose: this ran 1.35fr/1fr for a while,
+     which handed the five claims a quarter of the page and let them float in
+     it, first bottom-aligned, then centered, and both read as misplacement
+     on a MacBook (Jayden, twice, 2026-08-27: "the weirdest orientation I've
+     seen"). Fractions were the problem, not the alignment: the text column
+     gets the measure it actually sets in (38rem, same as .lp-birdie, and the
+     lead's 56ch cap lands inside it), the claims get a fixed 340px block,
+     space-between makes the whitespace one deliberate gutter, and centering
+     two blocks of known width is composition rather than drift. */
+  .lp-demo-head { grid-template-columns: minmax(0, 38rem) minmax(0, 340px); justify-content: space-between; align-items: center; }
+  .lp-demo-head .lp-list { margin-top: 0; }
 }
 .lp-demo-head h2 { margin-bottom: 16px; }
 
