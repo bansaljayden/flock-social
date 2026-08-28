@@ -46,6 +46,21 @@ const jwksClient = require('jwks-rsa');
 const { body, validationResult } = require('express-validator');
 const { OAuth2Client } = require('google-auth-library');
 const pool = require('../config/database');
+
+// A new account claims its waitlist row, once. created_at on that row is the
+// person's original place in line, so an account made after launch still
+// carries the date they actually joined; announced_at holders stop being
+// re-announced; and the admin announce route's `converted` count is how many
+// waitlisted people actually arrived. Fire and forget: signing up must never
+// wait on, or fail because of, a marketing table.
+function linkWaitlistConversion(email, userId) {
+  if (!email || !userId) return;
+  pool.query(
+    `UPDATE waitlist SET converted_user_id = $2, converted_at = NOW()
+      WHERE LOWER(email) = LOWER($1) AND converted_user_id IS NULL`,
+    [String(email), userId]
+  ).catch((e) => console.error('[waitlist] conversion link failed:', e.message));
+}
 // signUserToken is the ONLY way tokens are minted (round 13): it stamps the
 // user's token_version into the JWT so a bump revokes every outstanding token.
 const { waitPhrase, refusalBody } = require('../utils/retryAfter');
@@ -2141,6 +2156,7 @@ router.post('/signup', signupValidation, async (req, res) => {
     );
 
     const user = result.rows[0];
+    linkWaitlistConversion(user.email, user.id);
 
     // The account exists and can sign in; it just cannot accumulate anything
     // until the link is clicked (see UNVERIFIED_DENY in middleware/auth.js).
@@ -3063,6 +3079,7 @@ router.post('/google', [
           [email, googleName, googleId, picture, googleDob, email]
         );
         user = result.rows[0];
+        linkWaitlistConversion(user.email, user.id);
       }
     }
 
@@ -3457,6 +3474,7 @@ router.post('/apple', [
         [storedEmail, fallbackName, appleId, appleDob, storedEmail]
       );
       user = result.rows[0];
+      linkWaitlistConversion(user.email, user.id);
     }
 
     if (authorizationCode) {

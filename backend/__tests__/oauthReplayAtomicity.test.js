@@ -159,6 +159,12 @@ pool.query = async (text, params = []) => {
   statements.push(sql);
   await new Promise((r) => setImmediate(r));
 
+  // linkWaitlistConversion is fire-and-forget marketing bookkeeping riding
+  // every successful signup. It takes no part in claim or release, so it is
+  // answered before the armed blip: otherwise it absorbs a failure the test
+  // aimed at the auth statement after it, and R4 asserts on the wrong world.
+  if (sql.startsWith('UPDATE waitlist SET converted_user_id')) return { rows: [], rowCount: 0 };
+
   if (queryFailures > 0) {
     queryFailures -= 1;
     throw new Error('simulated database blip');
