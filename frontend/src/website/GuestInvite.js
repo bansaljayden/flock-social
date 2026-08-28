@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import Icons from '../components/ui/Icons';
 import './GuestInvite.css';
 
-const API = process.env.REACT_APP_API_URL || 'https://flock-app-production.up.railway.app';
+const API = process.env.REACT_APP_API_URL || 'https://api.flockcorp.com';
 
 // ---------------------------------------------------------------------------
 // GUEST INVITE (/i/:token) — the growth channel's entire first impression.
