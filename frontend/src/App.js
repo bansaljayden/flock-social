@@ -5686,6 +5686,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Starts EMPTY — the empty state (Birdie himself + prompt chips) is the
   // greeting; a canned assistant bubble on top of it was double chrome.
   const [aiMessages, setAiMessages] = useState([]);
+  // One confirm at a time across every Birdie action card, so a double tap
+  // cannot create two flocks or cast two votes.
+  const [birdieActionBusy, setBirdieActionBusy] = useState(false);
   const [aiInputHasText, setAiInputHasText] = useState(false);
   const aiInputHasTextRef = useRef(false);
   const aiInputValueRef = useRef('');
@@ -5962,6 +5965,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   useEffect(() => {
     if (currentScreen === 'pastFlocks') loadPastFlocks();
   }, [currentScreen, loadPastFlocks]);
+
 
   // "Do it again": clone a past flock and land in its chat, exactly the way a
   // freshly created flock does. The new plan needs a time that has not already
@@ -7556,6 +7560,83 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       .catch(() => {});
   }, []);
 
+  // Birdie's hands, the confirm half. The model can only STAGE these cards
+  // (routes/ai.js validates and returns intent, mutating nothing); the tap
+  // here is the person acting, through the same authenticated calls every
+  // other button uses. Same success path as handleRerunFlock below: the new
+  // flock lands in state and its chat opens.
+  const confirmBirdieDraft = useCallback(async (draft) => {
+    if (birdieActionBusy || !draft?.name) return;
+    setBirdieActionBusy(true);
+    try {
+      const data = await apiCreateFlock({
+        name: draft.name,
+        venue_name: draft.venue?.name || undefined,
+        venue_id: draft.venue?.place_id || undefined,
+        venue_address: draft.venue?.address || undefined,
+        event_time: draft.event_time || undefined,
+        invited_user_ids: [],
+      });
+      const f = data.flock || data;
+      const newFlock = {
+        id: f.id,
+        name: f.name || draft.name,
+        host: authUser?.name || 'You',
+        creatorId: f.creator_id,
+        hostId: f.creator_id,
+        memberStatus: 'accepted',
+        members: [],
+        memberPreviews: [],
+        memberCount: f.going_count ?? f.member_count ?? 1,
+        time: formatEventTime(f.event_time || draft.event_time || null),
+        eventTime: f.event_time || draft.event_time || null,
+        status: f.status === 'planning' || !f.status ? 'voting' : f.status,
+        venue: f.venue_name || draft.venue?.name || 'TBD',
+        venueAddress: f.venue_address || draft.venue?.address || null,
+        venueId: f.venue_id || draft.venue?.place_id || null,
+        venueLat: f.venue_latitude || null,
+        venueLng: f.venue_longitude || null,
+        venuePhoto: resolveVenuePhoto(f.venue_photo_url),
+        venueRating: f.venue_rating || null,
+        cashPool: null,
+        budgetEnabled: f.budget_enabled || false,
+        budgetContext: f.budget_context || null,
+        budgetLocked: false,
+        budgetCeiling: null,
+        ghostModeEnabled: f.ghost_mode_enabled || false,
+        votes: [],
+        messages: [],
+      };
+      newlyCreatedFlockRef.current = f.id;
+      setFlocks(prev => [...prev, newFlock]);
+      setSelectedFlockId(f.id);
+      setCurrentScreen('chatDetail');
+      setAiChatMode('bubble');
+      showToast(`${newFlock.name} is on. Drop the invite link in your group chat.`);
+    } catch (err) {
+      if (!needsEmailVerification(err, 'start a flock')) showToast(err.message || "That didn't get set up. Try again.", 'error');
+    } finally {
+      setBirdieActionBusy(false);
+    }
+  }, [birdieActionBusy, authUser, needsEmailVerification, showToast]);
+
+  const confirmBirdieVoteStage = useCallback(async (stage) => {
+    if (birdieActionBusy || !stage?.flock_id || !stage?.venue?.name) return;
+    setBirdieActionBusy(true);
+    try {
+      await voteForVenue(stage.flock_id, stage.venue.name, stage.venue.place_id || null);
+      loadFlockVotes(stage.flock_id);
+      setSelectedFlockId(stage.flock_id);
+      setCurrentScreen('chatDetail');
+      setAiChatMode('bubble');
+      showToast(`Your vote for ${stage.venue.name} is in.`);
+    } catch (err) {
+      showToast(err.message || "That vote didn't land. Try again.", 'error');
+    } finally {
+      setBirdieActionBusy(false);
+    }
+  }, [birdieActionBusy, loadFlockVotes, showToast]);
+
   // A vote is a claim about a person: the tile puts "You" under a venue and
   // everyone else in the flock plans around it.
   //
@@ -7834,7 +7915,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         response = await sendAiChat(toAiWireMessages(outgoing), location, currentContext);
       }
       if (typeof response.remaining === 'number') setAiRemaining(response.remaining);
-      setAiMessages(prev => [...prev, { role: 'assistant', text: response.text, venues: response.venues || [], navigate: response.navigate || null }]);
+      setAiMessages(prev => [...prev, { role: 'assistant', text: response.text, venues: response.venues || [], navigate: response.navigate || null, flockDraft: response.flock_draft || null, voteStage: response.vote_stage || null }]);
     } catch (err) {
       if (err?.code === 'UPGRADE_REQUIRED') {
         // Free-tier daily meter hit — Birdie pitches Pro in character, then the
@@ -11437,6 +11518,31 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                     }} style={{ marginTop: '8px', padding: '10px 16px', borderRadius: '12px', border: 'none', background: '#1e293b', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', boxShadow: '0 2px 8px rgba(30,58,92,0.25)' }}>
                       {Icons.arrowRight ? Icons.arrowRight('white', 14) : '→'} Take me there
                     </button>
+                  )}
+                  {msg.flockDraft && (
+                    <div style={{ marginTop: '8px', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', padding: '12px 14px' }}>
+                      <p style={{ margin: 0, fontSize: 'var(--t-label)', fontWeight: '700', color: colors.navy }}>{msg.flockDraft.name}</p>
+                      <p style={{ margin: '3px 0 0', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
+                        {msg.flockDraft.event_time ? formatEventTime(msg.flockDraft.event_time) : 'Time still open'}
+                        {msg.flockDraft.venue ? ` \u00b7 ${msg.flockDraft.venue.name}` : ''}
+                      </p>
+                      {/* Nothing exists until this tap: the model only staged
+                          the card (routes/ai.js draft_flock, validation only),
+                          and this button calls the same create route the
+                          create screen calls. */}
+                      <button className="hit44" disabled={birdieActionBusy} onClick={() => confirmBirdieDraft(msg.flockDraft)} style={{ marginTop: '10px', width: '100%', padding: '10px', borderRadius: '10px', border: 'none', background: '#1e293b', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: birdieActionBusy ? 'wait' : 'pointer', opacity: birdieActionBusy ? 0.6 : 1 }}>
+                        {birdieActionBusy ? 'Starting\u2026' : 'Start this flock'}
+                      </button>
+                    </div>
+                  )}
+                  {msg.voteStage && (
+                    <div style={{ marginTop: '8px', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', padding: '12px 14px' }}>
+                      <p style={{ margin: 0, fontSize: 'var(--t-label)', fontWeight: '700', color: colors.navy }}>{msg.voteStage.venue.name}</p>
+                      <p style={{ margin: '3px 0 0', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Goes on the vote in {msg.voteStage.flock_name}</p>
+                      <button className="hit44" disabled={birdieActionBusy} onClick={() => confirmBirdieVoteStage(msg.voteStage)} style={{ marginTop: '10px', width: '100%', padding: '10px', borderRadius: '10px', border: 'none', background: '#1e293b', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: birdieActionBusy ? 'wait' : 'pointer', opacity: birdieActionBusy ? 0.6 : 1 }}>
+                        {birdieActionBusy ? 'Adding\u2026' : 'Add to the vote'}
+                      </button>
+                    </div>
                   )}
                   {msg.venues && msg.venues.length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '8px' }}>

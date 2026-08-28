@@ -71,8 +71,17 @@ let dbFlocks = [];
 let dbFriends = [];
 
 const pool = require('../config/database');
+let dbVoteMembership = [];
+let allSql = [];
 pool.query = (sql) => {
   const flat = String(sql).replace(/\s+/g, ' ').trim();
+  allSql.push(flat);
+  // add_venue_to_vote's membership read, matched BEFORE the flocks-list
+  // branch below because both join flock_members; only this one binds the
+  // caller as $2.
+  if (/fm\.user_id = \$2/.test(flat)) {
+    return Promise.resolve({ rows: dbVoteMembership, rowCount: dbVoteMembership.length });
+  }
   if (/FROM users WHERE id/.test(flat)) {
     return Promise.resolve({ rows: [{ name: FULL_NAME, date_of_birth: DOB }] });
   }
@@ -194,6 +203,8 @@ test.beforeEach(() => {
   fetchImpl = placesUp;
   dbFlocks = [];
   dbFriends = [];
+  dbVoteMembership = [];
+  allSql = [];
   CURRENT_USER = { id: ++nextUserId, name: 'Ava' };
 });
 
@@ -755,4 +766,76 @@ test('the ordinary rows are unchanged, so sanitising did not rewrite anybody pla
   assert.strictEqual(f.member_count, 5);
   assert.strictEqual(f.event_time, '2026-09-01T23:00:00Z');
   assert.strictEqual(friendsResp.functionResponse.response.friends[0].name, 'Zoë O\'Brien');
+});
+
+// ===========================================================================
+// 5. THE HANDS CANNOT ACT, ONLY STAGE.
+// ===========================================================================
+// draft_flock and add_venue_to_vote are the two tools that LOOK like writes.
+// What is pinned: the handlers validate and return intent, the response
+// carries the card for the person to confirm, and no SQL mutation of any
+// kind is issued by the turn. The membership read binds to the VERIFIED
+// user id, so a model fed hostile context cannot stage a card onto someone
+// else's plan, and clamps drop off-shape ids the same way navigate_app
+// drops off-enum screens.
+
+test('draft_flock stages a card, clamps its fields, and mutates nothing', async () => {
+  sendImpl = (_p, call) => (call === 1
+    ? { candidates: [{ content: { parts: [{ functionCall: { id: 'c1', name: 'draft_flock', args: {
+        name: '  Friday tacos  ', event_time: '2030-01-04T23:00:00.000Z',
+        venue_place_id: 'PLACE_CLEAN', venue_name: 'Oakwood', venue_address: '1 Main St',
+      } } }] } }] }
+    : { candidates: [{ content: { parts: [{ text: 'card is up' }] } }] });
+  const res = await chat();
+  assert.strictEqual(res.status, 200);
+  assert.ok(res.body.flock_draft, 'the staged draft rides the response');
+  assert.strictEqual(res.body.flock_draft.name, 'Friday tacos');
+  assert.strictEqual(res.body.flock_draft.event_time, '2030-01-04T23:00:00.000Z');
+  assert.strictEqual(res.body.flock_draft.venue.place_id, 'PLACE_CLEAN');
+  assert.ok(!allSql.some((q) => /^(INSERT|UPDATE|DELETE)/i.test(q)), 'the model turn writes nothing');
+});
+
+test('a past event time and an off-shape place id are dropped, not staged', async () => {
+  sendImpl = (_p, call) => (call === 1
+    ? { candidates: [{ content: { parts: [{ functionCall: { id: 'c1', name: 'draft_flock', args: {
+        name: 'Yesterday', event_time: '2020-01-01T00:00:00.000Z',
+        venue_place_id: 'not a place id', venue_name: 'Fake',
+      } } }] } }] }
+    : { candidates: [{ content: { parts: [{ text: 'ok' }] } }] });
+  const res = await chat();
+  assert.strictEqual(res.status, 200);
+  assert.ok(res.body.flock_draft);
+  assert.strictEqual(res.body.flock_draft.event_time, null, 'a past time is not a plan time');
+  assert.strictEqual(res.body.flock_draft.venue, null, 'an off-shape id stages no venue');
+});
+
+test("add_venue_to_vote stages only onto the caller's own votable plan", async () => {
+  dbVoteMembership = [{ name: 'Taco Tuesday', status: 'voting' }];
+  sendImpl = (_p, call) => (call === 1
+    ? { candidates: [{ content: { parts: [{ functionCall: { id: 'c1', name: 'add_venue_to_vote', args: {
+        flock_id: 42, place_id: 'PLACE_CLEAN', venue_name: 'Oakwood',
+      } } }] } }] }
+    : { candidates: [{ content: { parts: [{ text: 'card is up' }] } }] });
+  const res = await chat();
+  assert.strictEqual(res.status, 200);
+  assert.ok(res.body.vote_stage);
+  assert.strictEqual(res.body.vote_stage.flock_id, 42);
+  assert.strictEqual(res.body.vote_stage.flock_name, 'Taco Tuesday');
+  assert.ok(!allSql.some((q) => /^(INSERT|UPDATE|DELETE)/i.test(q)), 'staging casts no vote');
+});
+
+test('a plan the caller is not in, or one already finished, stages nothing', async () => {
+  dbVoteMembership = [];
+  sendImpl = (_p, call) => (call === 1
+    ? { candidates: [{ content: { parts: [{ functionCall: { id: 'c1', name: 'add_venue_to_vote', args: {
+        flock_id: 999, place_id: 'PLACE_CLEAN', venue_name: 'Oakwood',
+      } } }] } }] }
+    : { candidates: [{ content: { parts: [{ text: 'ok' }] } }] });
+  let res = await chat();
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.vote_stage, undefined, 'no membership, no card');
+
+  dbVoteMembership = [{ name: 'Old Night', status: 'completed' }];
+  res = await chat();
+  assert.strictEqual(res.body.vote_stage, undefined, 'a finished plan takes no new votes');
 });
