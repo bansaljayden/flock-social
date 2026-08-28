@@ -244,6 +244,14 @@ export default function DmDetail({
   };
   // Full-size photo viewer, the same shape ChatDetail carries: history rows
   // hold only the thumbnail, the original is one gated fetch away.
+
+  // Jump-to-latest. Scrolled deep into history, the way back down was a long
+  // manual drag and a live message arriving off-screen was invisible. The
+  // pill appears once the reader is more than ~600px from the bottom and one
+  // tap returns them to now. Sticky inside the scroll container, so it needs
+  // no coordination with the composer's layout.
+  const [showJumpPill, setShowJumpPill] = React.useState(false);
+  const dmEndRef = React.useRef(null);
   const [imageViewer, setImageViewer] = React.useState(null);
   const openImageViewer = (m) => {
     if (m.image_url) { setImageViewer({ src: m.image_url }); return; }
@@ -698,7 +706,13 @@ export default function DmDetail({
         </div>
       )}
 
-      <div onScroll={() => { const el = document.activeElement; if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) el.blur(); }} style={{ flex: 1, padding: '16px', overflowY: 'auto', overflowX: 'hidden', background: `linear-gradient(180deg, ${colors.cream} 0%, ${colors.cream}cc 100%)`, scrollBehavior: 'smooth' }}>
+      <div onScroll={(e) => {
+        const el = document.activeElement;
+        if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) el.blur();
+        const c = e.currentTarget;
+        const fromBottom = c.scrollHeight - c.scrollTop - c.clientHeight;
+        setShowJumpPill((prev) => (prev ? fromBottom > 200 : fromBottom > 600));
+      }} style={{ flex: 1, padding: '16px', overflowY: 'auto', overflowX: 'hidden', background: `linear-gradient(180deg, ${colors.cream} 0%, ${colors.cream}cc 100%)`, scrollBehavior: 'smooth' }}>
         {showDmChatSearch && dmChatSearch.trim() && selectedDm.messages.filter(m => {
           const q = dmChatSearch.toLowerCase();
           return m.text?.toLowerCase().includes(q) || m.sender?.toLowerCase().includes(q);
@@ -928,6 +942,14 @@ export default function DmDetail({
             </div>
           </div>
         </div>
+        {showJumpPill && (
+          <div style={{ position: 'sticky', bottom: '8px', display: 'flex', justifyContent: 'center', zIndex: 5, pointerEvents: 'none' }}>
+            <button className="hit44" onClick={() => dmEndRef?.current?.scrollIntoView({ behavior: 'smooth' })} style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', borderRadius: '18px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', boxShadow: '0 4px 14px rgba(0,0,0,0.14)' }}>
+              {Icons.chevronDown(colors.navy, 14)} Jump to latest
+            </button>
+          </div>
+        )}
+        <div ref={dmEndRef} />
         <div ref={dmChatEndRef} />
       </div>
 
