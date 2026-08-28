@@ -477,6 +477,60 @@ describe('venue and Roost events say whether the surface is used, never which ve
   });
 });
 
+describe('the pulse is measured, and its categories cannot be invented', () => {
+  test('the three offered statuses and the clear all record', async () => {
+    for (const status of ['down', 'maybe', 'not']) {
+      respondWith(200, { pulse: { status } });
+      // eslint-disable-next-line no-await-in-loop
+      await api.setAvailability({ status, expiresAt: '2026-08-28T08:00:00.000Z' });
+    }
+    respondWith(200, {});
+    await api.clearAvailability();
+    await flush();
+    expect(events('pulse_set').map((p) => p.status)).toEqual(['down', 'maybe', 'not', 'cleared']);
+  });
+
+  test('a status the UI does not offer lands as other, not as a new category', async () => {
+    respondWith(200, { pulse: { status: 'standbad' } });
+    await api.setAvailability({ status: 'standbad', expiresAt: '2026-08-28T08:00:00.000Z' });
+    await flush();
+    expect(events('pulse_set').map((p) => p.status)).toEqual(['other']);
+  });
+});
+
+describe('the friend graph is counted, never named', () => {
+  test('sent and accepted each record one bare event', async () => {
+    respondWith(200, { status: 'pending' });
+    await api.sendFriendRequest(41);
+    respondWith(200, { ok: true });
+    await api.acceptFriendRequest(41);
+    await flush();
+    expect(events('friend_request_sent')).toEqual([{}]);
+    expect(events('friend_request_accepted')).toEqual([{}]);
+  });
+
+  test('a refused request records nothing', async () => {
+    respondWith(403, { error: 'no' });
+    await expect(api.sendFriendRequest(41)).rejects.toBeTruthy();
+    await flush();
+    expect(events('friend_request_sent')).toEqual([]);
+  });
+});
+
+describe('the notification permission outcome is clamped on both axes', () => {
+  test('real outcomes and surfaces pass; invented ones land as other', async () => {
+    api.trackNotificationPermission('granted', 'chat_banner');
+    api.trackNotificationPermission('default', 'settings');
+    api.trackNotificationPermission('standbad', 'standbad');
+    await flush();
+    expect(events('notification_permission')).toEqual([
+      { outcome: 'granted', surface: 'chat_banner' },
+      { outcome: 'default', surface: 'settings' },
+      { outcome: 'other', surface: 'other' },
+    ]);
+  });
+});
+
 describe('inviting people to a plan that already exists', () => {
   test('reports how many, never who', async () => {
     respondWith(200, { ok: true });
