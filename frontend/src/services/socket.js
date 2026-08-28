@@ -826,6 +826,16 @@ export function onReliabilityUpdated(callback) {
   return register('reliability_updated', callback);
 }
 
+// Unsend fan-outs: the flock one respects block filtering server-side, the
+// DM one goes to exactly the two participants.
+export function onFlockMessageUnsent(callback) {
+  return register('flock_message_unsent', callback);
+}
+
+export function onDmMessageUnsent(callback) {
+  return register('dm_message_unsent', callback);
+}
+
 // Guest RSVPs come in from the public share link, so they never originate in a
 // member's client. The socket is the only way they reach the host live. The
 // server fans this out to each accepted member's personal room rather than the
