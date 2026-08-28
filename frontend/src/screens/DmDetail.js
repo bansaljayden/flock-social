@@ -207,6 +207,7 @@ export default function DmDetail({
   showDmVenueSearch,
   showDmVotePanel,
   showToast,
+  handleUnsendDm,
 }) {
   // LEAVING THIS SCREEN, WRITTEN ONCE. The composer ref and its armed flag
   // are shared with the flock side (App.js chatInputRef), so a draft left
@@ -908,6 +909,9 @@ export default function DmDetail({
                         onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
                       >{emoji}</button>
                     ))}
+                    {m.sender === 'You' && typeof m.id === 'number' && (
+                      <button aria-label="Unsend message" className="hit44" onClick={(e) => { e.stopPropagation(); setShowDmReactionPicker(null); handleUnsendDm(m.id); }} style={{ fontSize: 'var(--t-meta)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: 'var(--text-secondary)', fontWeight: '600' }} title="Unsend">Unsend</button>
+                    )}
                     {m.message_type === 'image' && (m.image_url || m.thumb_url) && (
                       <button aria-label="View photo full size" className="hit44" onClick={(e) => { e.stopPropagation(); setShowDmReactionPicker(null); openImageViewer(m); }} style={{ fontSize: 'var(--t-body)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: colors.navy, fontWeight: '600' }} title="View photo">{Icons.eye(colors.navy, 14)}</button>
                     )}

@@ -1404,6 +1404,16 @@ export async function getDmMessageImage(messageId) {
   return request(`/api/dm/messages/${messageId}/image`);
 }
 
+// Unsend. Sender-only on the server (the UPDATE's own predicate), a
+// tombstone rather than a delete so reported messages stay evidence.
+export async function unsendFlockMessage(flockId, messageId) {
+  return request(`/api/flocks/${flockId}/messages/${messageId}`, { method: 'DELETE' });
+}
+
+export async function unsendDm(messageId) {
+  return request(`/api/dm/messages/${messageId}`, { method: 'DELETE' });
+}
+
 // A message carries text, an image, or both. `image_url` was missing here, so
 // the REST transport — the fallback the socket client uses while its connection
 // is down — could not send a photo at all: it posted a message_type of 'image'
