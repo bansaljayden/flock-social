@@ -771,7 +771,7 @@ Read it before quoting any accuracy figure. Short version:
   and `mlPredictor.js` currently publishes that family of number to users as
   venue-card confidence.
 
-## The paid refresh runbook (2026-08-28, approved budget ~$205 of $500)
+## The paid refresh runbook (2026-08-28; superseded numbers below, see the $500 plan v2 that follows)
 
 Jayden approved buying two fresh collection windows. The order below is load
 bearing; the traps it guards against are pinned in
@@ -810,3 +810,48 @@ bearing; the traps it guards against are pinned in
    by-id and live), and only after `collectRealtime.js`'s PA-only default has
    shipped (it has: philly+lehigh unless `--all-cities` is passed on
    purpose).
+
+## The $500 plan, v2 (2026-08-28 late, prices VERIFIED off the live pricing page)
+
+Jayden's word: spend the full $500 on model accuracy. Tier prices below were
+read out of the pricing page's own Stripe amounts by the pricing research
+pass, not estimated. Key verified facts: Pro metered is $99/mo minimum
+CREDITED TO USAGE at $0.009/credit ($0.006 after 10K); our whole month-one
+load (1,915 by-id refreshes at 1 credit + 95 by-name adds at 2) is ~2,105
+credits, about $19, far under the minimum, so month one is $99 flat and the
+rest of the minimum buys the live pilot. Basic metered has NO live data. Pro
+Package tiers: 1/$66, 50/$96, 100/$119, 500/$149, 1K/$249, 5K/$399,
+20K/$999; by-id and live unlimited within tier; only worth it for
+high-frequency polling. Rate limits (300/min global) are irrelevant at our
+scale. Two negotiate-by-contact discounts exist: a student/nonprofit discount
+and free credits for a backlink to BestTime.app on our site.
+
+The allocation:
+
+1. **September, Pro metered, $99 flat.** Archive window 1, refresh philly and
+   lehigh by id (--only-found), add the 95 demand venues by name, then run
+   the live pilot inside the leftover minimum: nightly one evening pull on
+   the ~300 most-served PA venues (~9K credits/mo, still inside $99).
+   Commands are in the runbook above; the collector's credit ceiling and the
+   PA default both already guard the spend.
+2. **October, Pro metered, $99.** The live pilot continues and the first
+   provenance-labeled retrain measures whether live rows move the gate.
+   Mid-October decision: if live earns its keep and wants frequency, November
+   switches to the Pro Package 500 tier ($149) instead of metered.
+3. **November, Pro metered, $99** (or Package $149): window 3 refresh
+   (--suffix=w2 archive first) plus continued live.
+4. **TheSportsDB Premium, $9/mo for three months, $27.** One feature: home
+   game nights for Philadelphia pro and college teams, the rare signal that
+   varies inside a category-day-hour cell. Measured against the fresh live
+   labels after one retrain; cancelled if the feature earns nothing.
+5. **Human ground-truth audit, ~$120.** Paid head-counts at 8-10 PA venues at
+   known hours across two weekends, the only fully independent yardstick for
+   the whole program.
+6. **Buffer, ~$56** for metered overage or a fourth live month.
+
+Total: $99 x 3 + $27 + $120 + $56 = $500.
+
+Free levers riding along: a backlink to BestTime.app in the flockcorp.com
+footer (their standing free-credits offer) and one student-discount email to
+their contact address, both Jayden-cheap and worth doing before September's
+invoice.
