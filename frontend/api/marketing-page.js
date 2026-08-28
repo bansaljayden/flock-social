@@ -145,6 +145,8 @@ const PAGE_BLOCKS = {
     ["li", "An hour-by-hour read on tonight"],
     ["li", "The best time to show up"],
     ["li", "Every spot near you, scored the same way"],
+    ["li", "A quieter pick nearby when your first choice is slammed"],
+    ["li", "Check-ins from people who are actually there fold in live"],
     ["p", "Everything below is live. The map, the pins, and the numbers come from the same model that ships inside Flock, trained on 1.9 million venue-hour observations across 30 cities. Pick a pin."],
     ["h2", "“Idk, you pick.” Birdie picks."],
     ["p", "Ask Birdie the way you’d ask a friend who knows the city. It comes back with real places near you, not a list it made up."],

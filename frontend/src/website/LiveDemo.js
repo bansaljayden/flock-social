@@ -1,9 +1,21 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { BASE_URL } from '../services/api';
+
 // The rating used to be a bare "*" character. Emoji and stray Unicode glyphs
 // standing in for icons are a named tell (SLOP-AUDIT.md H14); this is the
 // product's own star, same path the app uses.
 import Icons from '../components/ui/Icons';
+
+// School and work network filters commonly block *.railway.app while allowing
+// this site's own domain, and that one difference took the whole demo down on
+// exactly the machines students browse on (Jayden's school laptop,
+// 2026-08-27). In production the demo therefore calls same-origin /relay,
+// which vercel.json rewrites to the backend server-side, so the browser only
+// ever talks to this site. Dev has no Vercel in front, so it keeps the direct
+// base.
+const DEMO_BASE = process.env.NODE_ENV === 'production'
+  ? '/relay/public'
+  : `${BASE_URL}/api/public`;
 
 // ---------------------------------------------------------------------------
 // Live crowd demo for the marketing site. A real slice of the app's Discover
@@ -165,7 +177,7 @@ async function fetchOnce(url, signal) {
         timeout.timedOut = true;
         throw timeout;
       }
-      throw demoError('Could not reach the demo. Check your connection and try again.');
+      throw demoError('Could not reach the demo. School and work networks often block it, so try a phone off the wifi. Otherwise check your connection and try again.');
     }
     // A rate limiter, a proxy or a cold container can answer with HTML. Reading
     // the body must never be the thing that decides what the visitor is told.
@@ -447,7 +459,7 @@ export default function LiveDemo() {
   }, []);
 
   const loadCard = useCallback(async (placeId, { quiet } = {}) => {
-    const url = `${BASE_URL}/api/public/demo/venue/${encodeURIComponent(placeId)}?${new URLSearchParams(clockParams())}`;
+    const url = `${DEMO_BASE}/demo/venue/${encodeURIComponent(placeId)}?${new URLSearchParams(clockParams())}`;
     if (quiet) {
       // The minute loop. It borrows no state and reports no failures: the next
       // tick tries again and the card keeps saying how old it really is.
@@ -476,7 +488,7 @@ export default function LiveDemo() {
   const venuesUrl = useCallback((center, q) => {
     const params = new URLSearchParams({ lat: center.lat.toFixed(2), lng: center.lng.toFixed(2), ...clockParams() });
     if (q) params.set('q', q);
-    return `${BASE_URL}/api/public/demo/venues?${params}`;
+    return `${DEMO_BASE}/demo/venues?${params}`;
   }, []);
 
   const loadVenues = useCallback(async (center, q) => {

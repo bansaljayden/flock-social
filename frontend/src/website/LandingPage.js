@@ -316,8 +316,9 @@ export default function LandingPage() {
       <header className={`lp-nav${menuOpen ? ' is-menu-open' : ''}`}>
         <div className="lp-wrap lp-nav-in">
           <a className="lp-brand" href="/"><Mark /> Flock</a>
+          <a className="lp-btn lp-btn-cream lp-nav-open" href="/app">Open Flock</a>
         </div>
-        {/* One navigation affordance at every width: the corner block. The
+        {/* The corner block opens the site menu; Open Flock beside it is the direct door, because reaching the app must not require a menu (Jayden, 2026-08-27). The
             inline link row used to vanish under 860px, which meant phones had
             no menu at all. */}
         <button
@@ -575,6 +576,8 @@ export default function LandingPage() {
               <li>An hour-by-hour read on tonight</li>
               <li>The best time to show up</li>
               <li>Every spot near you, scored the same way</li>
+              <li>A quieter pick nearby when your first choice is slammed</li>
+              <li>Check-ins from people who are actually there fold in live</li>
             </ul>
           </div>
 
@@ -755,7 +758,7 @@ export default function LandingPage() {
               <div className="lp-split-row"><span>Riley</span><b>$23.36</b></div>
               <div className="lp-split-row"><span>Jordan</span><b>$23.37</b></div>
               <div className="lp-split-row"><span>Alex</span><b>$23.37</b></div>
-              <div className="lp-split-note">Group budget ceiling was $25 each. Nobody saw anyone else’s number.</div>
+              <div className="lp-split-note">The ceiling came back at $25 a head. Nobody ever saw anyone else’s number.</div>
             </div>
           </div>
         </div>

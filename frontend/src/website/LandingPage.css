@@ -412,6 +412,16 @@
   gap: 20px;
   height: 64px;
 }
+/* The direct door into the app. The corner block still opens the site menu,
+   but opening Flock no longer requires it (Jayden, 2026-08-27: people should
+   not have to tap the hamburger and then tap again). Sized to the nav, and it
+   takes the auto margin so brand sits left, this and the menu button right. */
+.lp-nav-open {
+  margin-left: auto;
+  padding: 9px 16px;
+  font-size: 14.5px;
+  min-height: 40px;
+}
 .lp-brand {
   display: flex;
   align-items: center;
@@ -936,7 +946,10 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-row {
   display: grid;
   gap: clamp(32px, 5vw, 64px);
-  align-items: center;
+  /* start, not center: centering floated the split card at half-height beside
+     the taller text column and it read as misplaced (Jayden, 2026-08-27).
+     Top-aligned, both columns hang from the same line. */
+  align-items: start;
 }
 @media (min-width: 900px) {
   .lp-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
@@ -1393,9 +1406,11 @@ html:has(.lp) body { overflow-x: clip; }
 }
 @media (min-width: 900px) {
   .lp-demo-head { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); }
-  /* Bottom-aligned so the three claims finish level with the paragraph they
-     summarise, instead of starting at the kicker and leaving a hole under. */
-  .lp-demo-head .lp-list { margin-top: 0; align-self: end; }
+  /* Centered beside the text block. This was `end`, and with a tall left
+     column (mark, kicker, h2, lead) the claims hung at the bottom with a
+     hole above them that read as a layout mistake, not a choice (Jayden,
+     2026-08-27). Center holds at every column height. */
+  .lp-demo-head .lp-list { margin-top: 0; align-self: center; }
 }
 .lp-demo-head h2 { margin-bottom: 16px; }
 

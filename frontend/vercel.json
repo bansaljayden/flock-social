@@ -283,6 +283,10 @@
       ],
       "destination": "/api/marketing-page?page=:page"
     },
+    {
+      "source": "/relay/public/:path*",
+      "destination": "https://flock-app-production.up.railway.app/api/public/:path*"
+    },
     { "source": "/(.*)", "destination": "/index.html" }
   ]
 }
