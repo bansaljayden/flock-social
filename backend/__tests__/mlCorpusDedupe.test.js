@@ -655,6 +655,11 @@ test('collectWeekly re-runs against the finished schema: refreshed in place, nev
 });
 
 test('collectRealtime re-runs against the finished schema: the second pull of an hour is dropped, not stacked', async () => {
+  // PA-scoped by default since 2026-08-28 (besttimeRefreshPrep.test.js); this
+  // suite's fixture city is its own, and what is under test is dedupe, not
+  // scope, so the global sweep is opted into for this test.
+  process.argv.push('--all-cities');
+
   const before = await pool.query(
     `SELECT COUNT(*)::int AS n FROM ml_training_data WHERE venue_id = $1 AND collection_mode = 'realtime'`,
     [venueIds.collect]

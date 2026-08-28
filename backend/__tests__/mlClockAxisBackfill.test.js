@@ -537,7 +537,15 @@ test('the fixed collectors run for real, land on one clock, and the corpus accep
       `hour ${r.hour} carries the busyness of slot ${r.hour}: the collector wrote the array index as the hour`);
   }
 
-  await collectRealtime.run();
+  // collectRealtime is PA-scoped by default since 2026-08-28 (the cron-bomb
+  // guard in besttimeRefreshPrep.test.js); this venue is in austin, so the
+  // scope is named the same way the weekly call above names it.
+  process.argv.push('--city=austin');
+  try {
+    await collectRealtime.run();
+  } finally {
+    process.argv.pop();
+  }
 
   const { rows: rt } = await pool.query(
     `SELECT day_of_week, hour, hour_axis, busyness_pct, baseline_busyness FROM ml_training_data
