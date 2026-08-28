@@ -1165,6 +1165,9 @@ const mapDmRow = (m, myId) => ({
   senderId: m.sender_id,
   text: m.message_text,
   time: new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+  // Raw instant beside the formatted time: the day separators need a date,
+  // and a formatted "9:41 PM" cannot say which night it belongs to.
+  sentAt: m.created_at || null,
   message_type: m.message_type || 'text',
   venue_data: m.venue_data,
   image_url: m.image_url,
@@ -1179,6 +1182,7 @@ const mapFlockRow = (m, myId) => ({
   senderId: m.sender_id,
   senderImage: m.sender_image || null,
   time: new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+  sentAt: m.created_at || null,
   text: m.message_text,
   message_type: m.message_type || 'text',
   venue_data: m.venue_data || null,
@@ -8588,7 +8592,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             if (f.id !== msg.flock_id) return f;
             return {
               ...f,
-              messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, id: msg.id, pending: false, failed: false, time: new Date(msg.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) } : m)),
+              messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, id: msg.id, pending: false, failed: false, time: new Date(msg.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), sentAt: msg.created_at || m.sentAt || null } : m)),
             };
           }));
           return;
@@ -8621,6 +8625,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         senderId: msg.sender_id,
         senderImage: msg.sender_image || null,
         time: new Date(msg.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+        sentAt: msg.created_at || null,
         text: msg.message_text,
         message_type: msg.message_type || 'text',
         venue_data: msg.venue_data || null,
@@ -11117,6 +11122,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         senderId: msg.sender_id,
         text: msg.message_text,
         time: new Date(msg.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+        sentAt: msg.created_at || null,
         message_type: msg.message_type || 'text',
         venue_data: msg.venue_data,
         image_url: msg.image_url,
