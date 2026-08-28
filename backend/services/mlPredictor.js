@@ -1209,10 +1209,12 @@ async function getUserFeedback(placeId, userId) {
 
 function getLabel(score) {
   if (score <= 20) return 'Quiet';
-  if (score <= 40) return 'Not Busy';
-  if (score <= 60) return 'Moderate';
-  if (score <= 80) return 'Busy';
-  return 'Very Busy';
+  // Re-cut 2026-08-28 with the qmap arming; the reasoning lives on the
+  // canonical copy in crowdEngine.js getLabel, which this must mirror.
+  if (score <= 39) return 'Not Busy';
+  if (score <= 69) return 'Steady';
+  if (score <= 84) return 'Busy';
+  return 'Packed';
 }
 
 function groupWeatherCode(code) {
@@ -2792,7 +2794,7 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
     // A model output that is not a finite number must not reach the arithmetic
     // below: NaN (or an empty output tensor's undefined, or an int64 head's
     // BigInt) sails through clamp-and-round as NaN, getLabel(NaN) falls through
-    // every band to 'Very Busy', and the response ships score:null with
+    // every band to 'Packed', and the response ships score:null with
     // predictionMethod 'ml'. verifyModelShape can only check the head shape
     // when onnxruntime exposes outputMetadata, so this is the runtime backstop:
     // throw, and the catch below answers with the rule engine, honestly labelled.

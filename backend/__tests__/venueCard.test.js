@@ -38,7 +38,7 @@ function forecast(startHour, scores) {
 
 // The colour the demo card paints, mirrored from LiveDemo.js. If these two ever
 // drift again the test fails here rather than on someone's phone.
-const CARD_COLOR = (score) => (score > 60 ? 'red' : score > 40 ? 'amber' : 'green');
+const CARD_COLOR = (score) => (score > 84 ? 'red' : score > 39 ? 'amber' : 'green');
 
 // ---------------------------------------------------------------------------
 // 1. the number, the word and the colour are one decision
@@ -49,7 +49,12 @@ test('every score from 0 to 100 gets exactly one word and one colour', () => {
   for (let s = 0; s <= 100; s++) {
     const word = getLabel(s);
     const color = CARD_COLOR(s);
-    assert.equal(color, { calm: 'green', moderate: 'amber', busy: 'red' }[getLevel(s)],
+    // Re-cut 2026-08-28: the level 'busy' spans Busy (amber, a normal good
+    // evening) and Packed (the only red), so busy maps to two colours by
+    // design; the boundary-coherence test below still guarantees the colour
+    // only ever changes where the word does.
+    const allowed = { calm: ['green'], moderate: ['amber'], busy: ['amber', 'red'] }[getLevel(s)];
+    assert.ok(allowed.includes(color),
       `score ${s}: the card paints ${color}, the engine says ${getLevel(s)}`);
     if (colorByWord.has(word)) {
       assert.equal(colorByWord.get(word), color,
@@ -58,10 +63,13 @@ test('every score from 0 to 100 gets exactly one word and one colour', () => {
       colorByWord.set(word, color);
     }
   }
-  // The bug this replaces: 65 printed "Busy" in amber, 75 printed "Busy" in red.
-  assert.equal(getLabel(65), 'Busy');
-  assert.equal(getLabel(75), 'Busy');
-  assert.equal(CARD_COLOR(65), CARD_COLOR(75));
+  // The bug this replaces: one WORD wearing two colours on one card. The
+  // 2026-08-28 reband moved the example scores (65 is Steady now, 75 is
+  // Busy); the invariant is the same word never changes colour, held above
+  // by colorByWord and here at the pair that used to break.
+  assert.equal(getLabel(70), 'Busy');
+  assert.equal(getLabel(84), 'Busy');
+  assert.equal(CARD_COLOR(70), CARD_COLOR(84));
 });
 
 test('the colour changes exactly where the word changes, at the exact boundary', () => {
@@ -70,10 +78,10 @@ test('the colour changes exactly where the word changes, at the exact boundary',
     const colorChanged = CARD_COLOR(s) !== CARD_COLOR(s - 1);
     assert.ok(!colorChanged || wordChanged, `colour moved at ${s} but the word did not`);
   }
-  // The five cut points, checked on both sides.
-  assert.deepEqual([20, 21, 40, 41, 60, 61, 80, 81].map(getLabel),
-    ['Quiet', 'Not Busy', 'Not Busy', 'Moderate', 'Moderate', 'Busy', 'Busy', 'Very Busy']);
-  assert.deepEqual([40, 41, 60, 61].map(CARD_COLOR), ['green', 'amber', 'amber', 'red']);
+  // The five cut points, checked on both sides (re-cut 2026-08-28).
+  assert.deepEqual([20, 21, 39, 40, 69, 70, 84, 85].map(getLabel),
+    ['Quiet', 'Not Busy', 'Not Busy', 'Steady', 'Steady', 'Busy', 'Busy', 'Packed']);
+  assert.deepEqual([39, 40, 84, 85].map(CARD_COLOR), ['green', 'amber', 'amber', 'red']);
 });
 
 test('the dial score and the first bar are the same prediction', () => {
@@ -300,9 +308,13 @@ test('an hour named by the recommendation is the entry it points at', () => {
 });
 
 test('every hour of the night tonight being identical is not sold as a good time', () => {
-  const flat = forecast(20, Array(12).fill(84));
+  // 84 -> 86 with the 2026-08-28 reband: Packed talk now starts where the
+  // Packed band starts (85), and a flat-84 night honestly reads "busy", not
+  // "packed". The invariant under test, a flat night names no hour and sells
+  // nothing, is unchanged.
+  const flat = forecast(20, Array(12).fill(86));
   const rec = recommendBestTime(flat, { types: ['bar'], openHour: 16, closeHour: 2 }, null, null, true, {
-    currentHour: 20, currentDay: 5, currentScore: 84,
+    currentHour: 20, currentDay: 5, currentScore: 86,
   });
   assert.equal(rec.hourLabel, null, 'nothing ahead is quieter, so no hour is named');
   assert.equal(rec.index, 0, 'the card marks now, not an arbitrary tie');

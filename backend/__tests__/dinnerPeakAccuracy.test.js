@@ -509,7 +509,7 @@ test('verified reporters are evidence, and lift the hedge', () => {
   const three = describePredictionSupport('rule_engine_no_baseline', crowdEngine.MIN_CALIBRATION_REPORTERS);
   assert.equal(three.basis, 'user_reports');
   assert.equal(three.supported, true);
-  assert.equal(publishedLabel(85, three), 'Very Busy', 'an observed venue states its band');
+  assert.equal(publishedLabel(85, three), 'Packed', 'an observed venue states its band');
   // Reports still do not turn the confidence ladder into an accuracy figure.
   assert.equal(three.confidenceMeans, 'input_completeness');
   assert.ok(publishedConfidence(60, three, 9) > publishedConfidence(60, three, 0),
@@ -541,7 +541,7 @@ test('the model does not claim a measurement while its weights predate the axis 
     assert.equal(ml.basis, 'model_holdout');
     assert.equal(ml.supported, true);
     assert.equal(ml.confidenceMeans, 'measured_accuracy');
-    assert.equal(publishedLabel(85, ml), 'Very Busy');
+    assert.equal(publishedLabel(85, ml), 'Packed');
   } else {
     assert.equal(ml.basis, 'model_unverified_axis');
     assert.equal(ml.supported, false);
