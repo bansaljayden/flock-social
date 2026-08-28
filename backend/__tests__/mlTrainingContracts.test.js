@@ -346,8 +346,10 @@ test('the score quantile map is one table in two languages, and both default OFF
     'the shipped artifact is not the one this table was fitted on — refit it or do not enable it');
 
   // One flag name, read the same way on both sides, defaulting off.
-  assert.match(PREDICTOR_JS, /process\.env\.CROWD_QMAP_ENABLED !== 'false'/,
-    'the serve path must gate on CROWD_QMAP_ENABLED === true, so unset means off');
+  assert.match(PREDICTOR_JS,
+    /String\(process\.env\.CROWD_QMAP_ENABLED \|\| ''\)\.toLowerCase\(\) !== 'false'/,
+    'the serve path reads the flag case-insensitively, exactly as quick_eval.py '
+      + 'does, so CROWD_QMAP_ENABLED=FALSE cannot disarm one side only');
   assert.match(QUICK_EVAL_PY, /os\.environ\.get\('CROWD_QMAP_ENABLED', 'true'\)\.lower\(\) != 'false'/,
     'the gate must read the same variable the same way');
   assert.match(QUICK_EVAL_PY, /'score_qmap_enabled': bool\(QMAP_ENABLED\)/,

@@ -69,6 +69,11 @@ test('collectRealtime refuses to outspend its credit ceiling', () => {
 
 test('collectWeekly says the bill out loud before the first call', () => {
   assert.match(WEEKLY, /estCredits = venues\.reduce/);
+  // 2026-08-28 review finding: the weekly side printed its estimate but could
+  // not refuse one. The ceiling is the guard; the printout is a receipt.
+  assert.match(WEEKLY, /--max-credits=/);
+  assert.match(WEEKLY, /if \(estCredits > maxCredits\)/,
+    'collectWeekly must refuse an over-ceiling run, not just announce the bill');
   assert.match(WEEKLY, /v\.besttime_venue_id \? 1 : 2/, 'by-id is 1 credit, by-name is 2');
   assert.match(WEEKLY, /Estimated credits this run/);
 });

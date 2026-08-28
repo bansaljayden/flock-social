@@ -198,14 +198,15 @@ const LABEL_COLORS = {
   // label -> [dot, text] on the cream badge. Re-cut 2026-08-28 with the
   // ladder (crowdEngine.js getLabel): red is reserved for Packed, because
   // under the calibrated venue-relative scale Busy is a normal good evening,
-  // not an alarm. 'Moderate' stays as a legacy alias for anything upstream
-  // still caching the old word.
+  // not an alarm. 'Moderate' and 'Very Busy' stay as legacy aliases for
+  // anything upstream still caching the old words.
   Quiet: ['#22c55e', 'Quiet right now'],
   'Not Busy': ['#22c55e', 'Quiet right now'],
   Steady: ['#f59e0b', 'Steady for this spot'],
   Moderate: ['#f59e0b', 'Steady for this spot'],
   Busy: ['#f59e0b', 'Busy for this spot'],
   Packed: ['#ef4444', 'Packed right now'],
+  'Very Busy': ['#ef4444', 'Packed right now'],
 };
 
 // Google Places v1 returns price as an enum; the crowd model and the rule

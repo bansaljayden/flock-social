@@ -217,6 +217,30 @@ async function collectWeekly() {
   const estCredits = venues.reduce((sum, v) => sum + (v.besttime_venue_id ? 1 : 2), 0);
   console.log(`[ML:Weekly] Estimated credits this run: ~${estCredits} `
     + `(Basic metered ~$${(estCredits * 0.04).toFixed(2)}, Pro metered ~$${(estCredits * 0.009).toFixed(2)}).`);
+
+  // The same hard ceiling collectRealtime has, because an estimate printed a
+  // moment before the money leaves is a receipt, not a guard. A full PA
+  // by-id refresh is ~1,915 credits, so the default admits the real job and
+  // refuses the accident.
+  const maxCreditsArg = process.argv.find((a) => a.startsWith('--max-credits='));
+  const maxCredits = maxCreditsArg ? parseInt(maxCreditsArg.split('=')[1], 10) : 2500;
+  if (!Number.isInteger(maxCredits) || maxCredits <= 0) {
+    console.error('[ML:Weekly] --max-credits must be a positive integer.');
+    await pool.end();
+    return;
+  }
+  if (estCredits > maxCredits) {
+    console.error(
+      `[ML:Weekly] REFUSED: this run would spend ~${estCredits} credits `
+      + `against a ceiling of ${maxCredits}. On Basic metered that is `
+      + `$${(estCredits * 0.04).toFixed(2)}; on Pro metered about `
+      + `$${(estCredits * 0.009).toFixed(2)}. Narrow the scope (--city=..., `
+      + `--only-found, --limit=...) or raise the ceiling on purpose with `
+      + `--max-credits=${estCredits}.`
+    );
+    await pool.end();
+    return;
+  }
   console.log(`[ML:Weekly] Starting weekly collection for ${venues.length} venues${cityFilter ? ` (city: ${cityFilter})` : ''}${limitFilter ? ` (limit: ${limitFilter})` : ''}...`);
 
   let totalRows = 0;

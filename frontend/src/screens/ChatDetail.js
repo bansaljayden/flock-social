@@ -1109,7 +1109,7 @@ export default function ChatDetail({
                     {(m.image || m.thumb) && (
                       <button aria-label="View photo full size" className="hit44" onClick={(e) => { e.stopPropagation(); setShowReactionPicker(null); openImageViewer(m); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }} title="View photo">{Icons.eye(colors.textSecondary, 15)}</button>
                     )}
-                    {m.sender === 'You' && typeof m.id === 'number' && (
+                    {m.sender === 'You' && typeof m.id === 'number' && m.id <= 2147483647 && (
                       <button aria-label="Unsend message" className="hit44" onClick={(e) => { e.stopPropagation(); setShowReactionPicker(null); handleUnsendFlockMessage(flock.id, m.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '600' }} title="Unsend">Unsend</button>
                     )}
                     {m.sender !== 'You' && (
