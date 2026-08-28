@@ -163,15 +163,23 @@ describe('CSP covers the hosts the code actually talks to', () => {
 
   it('connect-src covers the API origin, over https and over the socket', () => {
     // The default in api.js is what ships whenever REACT_APP_API_URL is unset,
-    // and it is the value the deployed build uses today. socket.js reuses
+    // and it is the value the deployed build uses today: api.flockcorp.com
+    // since 2026-08-27, because school and work filters block *.railway.app
+    // wholesale (the api.js comment carries the story). socket.js reuses
     // BASE_URL, so the wss:// form of the same host has to be allowed too.
-    const base = firstUrl(API, /https:\/\/flock-app-production\.up\.railway\.app/);
+    const base = firstUrl(API, /https:\/\/api\.flockcorp\.com/);
     expect(base).toBeTruthy();
     const connect = directive('connect-src');
     expect(allows(connect, base)).toBe(true);
     expect(allows(connect, base.replace('https://', 'wss://'))).toBe(true);
     // Venue photos and uploaded avatars are served from the same origin.
     expect(allows(directive('img-src'), base)).toBe(true);
+    // Builds shipped BEFORE the flip still carry the railway default, so the
+    // old origin must stay allowed until no such build is out in the world.
+    const legacy = 'https://flock-app-production.up.railway.app';
+    expect(allows(connect, legacy)).toBe(true);
+    expect(allows(connect, legacy.replace('https://', 'wss://'))).toBe(true);
+    expect(allows(directive('img-src'), legacy)).toBe(true);
   });
 
   it('covers PostHog on both of its hosts', () => {
@@ -402,12 +410,18 @@ describe('the meta CSP that ships inside the iOS binary', () => {
     // misses either, the app launches and then does nothing, which is the
     // failure mode a meta CSP produces instead of an error anyone reads.
     const APISRC = read('src', 'services', 'api.js');
-    const base = (APISRC.match(/https:\/\/flock-app-production\.up\.railway\.app/) || [])[0];
+    const base = (APISRC.match(/https:\/\/api\.flockcorp\.com/) || [])[0];
     expect(base).toBeTruthy();
     const connect = metaDirective('connect-src');
     expect(allows(connect, base)).toBe(true);
     expect(allows(connect, base.replace('https://', 'wss://'))).toBe(true);
     expect(allows(metaDirective('img-src'), base)).toBe(true);
+    // The build in App Store review predates the flip and talks to the
+    // railway origin; the meta CSP must keep answering for it too.
+    const legacy = 'https://flock-app-production.up.railway.app';
+    expect(allows(connect, legacy)).toBe(true);
+    expect(allows(connect, legacy.replace('https://', 'wss://'))).toBe(true);
+    expect(allows(metaDirective('img-src'), legacy)).toBe(true);
   });
 
   it('keeps MapLibre and the push worker alive on both origins', () => {

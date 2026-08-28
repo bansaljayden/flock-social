@@ -16,7 +16,7 @@ import frauncesUrl from '../fonts/Fraunces-var.woff2';
    the map does not touch the network until you are within a screen of it. */
 const LiveDemo = React.lazy(() => import('./LiveDemo'));
 
-const API = process.env.REACT_APP_API_URL || 'https://flock-app-production.up.railway.app';
+const API = process.env.REACT_APP_API_URL || 'https://api.flockcorp.com';
 
 /* Fraunces sets the h1, which is this page's largest contentful element. Left
    to itself the browser does not discover the face until layout runs, i.e.

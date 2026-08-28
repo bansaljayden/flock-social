@@ -166,7 +166,7 @@ const ELLIPSIS = String.fromCharCode(0x2026);
 // REACT_APP_API_URL is currently unset in the Vercel project, so the fallback is
 // what actually runs today.
 const API_BASE = String(
-  process.env.REACT_APP_API_URL || 'https://flock-app-production.up.railway.app'
+  process.env.REACT_APP_API_URL || 'https://api.flockcorp.com'
 ).replace(/\/+$/, '');
 
 // ---------------------------------------------------------------------------

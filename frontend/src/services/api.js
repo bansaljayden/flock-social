@@ -1,4 +1,11 @@
-const BASE_URL = process.env.REACT_APP_API_URL || 'https://flock-app-production.up.railway.app';
+// api.flockcorp.com, not the up.railway.app domain, since 2026-08-27: school
+// and work network filters block *.railway.app wholesale while allowing this
+// brand's own domain, which took the entire app down on exactly the machines
+// students use (Jayden's school laptop). Same Railway service behind both
+// names; the old domain stays valid so builds shipped before the flip keep
+// working. The Apple sign-in redirectURI deliberately still uses the railway
+// domain because that exact URI is registered in the Apple portal.
+const BASE_URL = process.env.REACT_APP_API_URL || 'https://api.flockcorp.com';
 
 // Analytics — a tracking failure must never break a real request. Users are
 // identified by their id only; no email or name goes to PostHog.
