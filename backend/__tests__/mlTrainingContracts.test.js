@@ -315,7 +315,7 @@ test('the clamp used in training is the one the server will apply', () => {
 });
 
 test('the score quantile map is one table in two languages, and both default OFF', () => {
-  // The qmap (2026-08-20, unarmed behind CROWD_QMAP_ENABLED) is a post-hoc
+  // The qmap (2026-08-20, armed by default since 2026-08-28) is a post-hoc
   // recalibration of the PUBLISHED number. It has the same failure mode the
   // clamp had before it was pinned: if the gate scores one table and production
   // serves another, the gate's verdict describes a product nobody shipped. So
@@ -346,9 +346,9 @@ test('the score quantile map is one table in two languages, and both default OFF
     'the shipped artifact is not the one this table was fitted on — refit it or do not enable it');
 
   // One flag name, read the same way on both sides, defaulting off.
-  assert.match(PREDICTOR_JS, /process\.env\.CROWD_QMAP_ENABLED === 'true'/,
+  assert.match(PREDICTOR_JS, /process\.env\.CROWD_QMAP_ENABLED !== 'false'/,
     'the serve path must gate on CROWD_QMAP_ENABLED === true, so unset means off');
-  assert.match(QUICK_EVAL_PY, /os\.environ\.get\('CROWD_QMAP_ENABLED', ''\)\.lower\(\) == 'true'/,
+  assert.match(QUICK_EVAL_PY, /os\.environ\.get\('CROWD_QMAP_ENABLED', 'true'\)\.lower\(\) != 'false'/,
     'the gate must read the same variable the same way');
   assert.match(QUICK_EVAL_PY, /'score_qmap_enabled': bool\(QMAP_ENABLED\)/,
     'a gate run must record which reconstruction produced its numbers');

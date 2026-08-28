@@ -2515,7 +2515,18 @@ function reconstructScore(rawDelta, baseline) {
 }
 
 // ---------------------------------------------------------------------------
-// SCORE-QMAP — BUILT, MEASURED, AND UNARMED. Flag: CROWD_QMAP_ENABLED.
+// SCORE-QMAP — ARMED 2026-08-28, BY JAYDEN'S DECISION. Flag: CROWD_QMAP_ENABLED.
+//
+// The decision this block used to wait for has been made: within-10 is the
+// primary accuracy metric, because the one number on the card is the product
+// ("I'm really big on the one number"), and the number being roughly right is
+// what a person experiences. The map is ON unless CROWD_QMAP_ENABLED=false,
+// which remains the instant kill switch. GATE-B in quick_eval.py armed the
+// same day, so future retrains are judged under the arithmetic production
+// actually serves. The production evidence that forced the call: of every
+// score ever served, 57% sat in the 41-80 middle against a reality that puts
+// 26% there, and a score of 5 or less had never been served once while 21% of
+// real venue-hours are exactly that.
 //
 // WHAT IT IS. A 41-knot monotone quantile lookup that rewrites the published
 // score so its DISTRIBUTION matches the distribution of real busyness, instead
@@ -2590,7 +2601,9 @@ const QMAP_MEASURED = Object.freeze({
 });
 
 function qmapEnabled() {
-  return process.env.CROWD_QMAP_ENABLED === 'true';
+  // Default ON since 2026-08-28. 'false' is the kill switch; any other value,
+  // including unset, serves the mapped number.
+  return process.env.CROWD_QMAP_ENABLED !== 'false';
 }
 
 // np.interp semantics, deliberately: constant extrapolation at both ends, linear
@@ -2796,7 +2809,7 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
       score = Math.max(0, Math.min(100, Math.round(rawOutput)));
     }
 
-    // score-qmap, OFF unless CROWD_QMAP_ENABLED=true. After the reconstruction,
+    // score-qmap, ON unless CROWD_QMAP_ENABLED=false. After the reconstruction,
     // before getLabel, so the band never describes a different number than the
     // one shown. The version check is not defensive padding: the table is one
     // artifact's quantile grid and would be meaningless applied to another's.
