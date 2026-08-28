@@ -313,7 +313,18 @@ function describe(payload) {
   if (venue) bits.push(venue);
   if (goingLabel) bits.push(goingLabel);
 
-  return composed(title, bits.join(' ' + DOT + ' '));
+  // The card fields for the per-flock og:image (/api/invite-og). Only the
+  // LIVE branch carries them: a cancelled or completed plan keeps the static
+  // banner, for the same reason its title stops selling the night. These are
+  // the same three facts the title and description above already publish, and
+  // the token is deliberately not among them.
+  const out = composed(title, bits.join(' ' + DOT + ' '));
+  out.card = {
+    name: name || 'A night out',
+    when: when || 'Time not set yet',
+    going: Number.isFinite(going) && going > 0 ? going : 0,
+  };
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -350,6 +361,17 @@ const PAGE_CSS = ''
 function renderPage(opts) {
   const title = esc(opts.title);
   const description = esc(opts.description);
+  // Per-flock image when the copy carries a card, the static banner
+  // otherwise. Assembled from the card's three display fields and NOTHING
+  // else; the token must never enter an image URL (rule 3 above).
+  const ogImage = opts.card
+    ? CANONICAL_HOST + '/api/invite-og?' + new URLSearchParams({
+        n: opts.card.name,
+        w: opts.card.when,
+        g: String(opts.card.going),
+      }).toString()
+    : OG_IMAGE;
+  const ogImageAlt = opts.card ? opts.card.name + ' on Flock' : OG_IMAGE_ALT;
   const url = opts.token ? esc(CANONICAL_HOST + '/i/' + opts.token) : '';
   // Relative so it stays on whichever host served the page (www, or a preview
   // deployment). ?open=1 exists so this anchor cannot land back on this same
@@ -373,15 +395,15 @@ function renderPage(opts) {
     + '<meta property="og:title" content="' + title + '">\n'
     + '<meta property="og:description" content="' + description + '">\n'
     + (url ? '<meta property="og:url" content="' + url + '">\n' : '')
-    + '<meta property="og:image" content="' + OG_IMAGE + '">\n'
+    + '<meta property="og:image" content="' + esc(ogImage) + '">\n'
     + '<meta property="og:image:width" content="1200">\n'
     + '<meta property="og:image:height" content="630">\n'
     + '<meta property="og:image:type" content="image/png">\n'
-    + '<meta property="og:image:alt" content="' + esc(OG_IMAGE_ALT) + '">\n'
+    + '<meta property="og:image:alt" content="' + esc(ogImageAlt) + '">\n'
     + '<meta name="twitter:card" content="summary_large_image">\n'
     + '<meta name="twitter:title" content="' + title + '">\n'
     + '<meta name="twitter:description" content="' + description + '">\n'
-    + '<meta name="twitter:image" content="' + OG_IMAGE + '">\n'
+    + '<meta name="twitter:image" content="' + esc(ogImage) + '">\n'
     + '<meta name="twitter:image:alt" content="' + esc(OG_IMAGE_ALT) + '">\n'
     + '<style>' + PAGE_CSS + '</style>\n'
     + '</head>\n'
@@ -556,7 +578,7 @@ async function handler(req, res) {
     }
 
     const copy = describe(payload);
-    send(res, renderPage({ title: copy.title, description: copy.description, token: token }), true);
+    send(res, renderPage({ title: copy.title, description: copy.description, card: copy.card || null, token: token }), true);
   } catch (err) {
     // Aborts, DNS failures, malformed JSON, anything at all. The token is
     // deliberately absent from this line, and so is err.message: undici puts the
