@@ -469,6 +469,14 @@ function promptSafe(value, maxChars) {
 // ---------------------------------------------------------------------------
 // Tool definitions for Gemini
 // ---------------------------------------------------------------------------
+// Confirm-gated hands. The two declarations below are the only tools that
+// LOOK like writes, and neither one writes: draft_flock and add_venue_to_vote
+// validate and STAGE a card, the person taps Confirm in the app, and the tap
+// calls the same authenticated routes every button in the product calls. The
+// model gets no path to mutate anything, which is why these handlers contain
+// no INSERT and no UPDATE, and the injection suite pins that.
+const { isPlaceIdShaped } = require('../utils/places');
+
 const toolDeclarations = [
   {
     name: 'search_venues',
@@ -544,6 +552,37 @@ const toolDeclarations = [
           enum: ['safety', 'payment', 'edit'],
         },
       },
+    },
+  },
+  {
+    name: 'draft_flock',
+    description: 'Draft a new flock (a plan) for the user to confirm with one tap. Use this when they ask you to set up, start, or plan a hangout. This only PREPARES a card; nothing exists until the person taps Start, so never say the flock was created.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        name: { type: 'STRING', description: 'Short plan name, e.g. "Friday tacos"' },
+        event_time: { type: 'STRING', description: 'ISO 8601 datetime for the plan, only if the user gave a time' },
+        venue_name: { type: 'STRING', description: 'Venue name, only if the user picked one' },
+        venue_place_id: { type: 'STRING', description: 'Google place id for that venue, from search_venues' },
+        venue_address: { type: 'STRING', description: 'Venue address, for the card' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'add_venue_to_vote',
+    description: 'Stage one venue onto an existing flock\'s vote for the user to confirm with one tap. Use this when they ask to add or suggest a specific venue to one of their plans. Get flock ids from get_user_flocks and venues from search_venues. Only stages a card; never say the venue was added.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        flock_id: { type: 'NUMBER', description: 'The flock id, from get_user_flocks' },
+        place_id: { type: 'STRING', description: 'Google place id of the venue' },
+        venue_name: { type: 'STRING', description: 'Venue name' },
+        venue_address: { type: 'STRING', description: 'Venue address, for the card' },
+        rating: { type: 'NUMBER', description: 'Google rating, if known' },
+        price_level: { type: 'NUMBER', description: 'Price level 0-4, if known' },
+      },
+      required: ['flock_id', 'place_id', 'venue_name'],
     },
   },
 ];
@@ -975,6 +1014,67 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       return weather || { error: 'Weather data unavailable' };
     }
 
+    case 'draft_flock': {
+      // Validation only, never creation. The card the client draws from this
+      // executes the same POST /api/flocks the create screen calls, under the
+      // person's own token, when and only when they tap. Every field is
+      // clamped here because the declaration's schema is a request to the
+      // model, not a guarantee about its output (see navigate_app below).
+      const rawName = typeof toolInput.name === 'string' ? toolInput.name.trim() : '';
+      if (!rawName) return { error: 'A plan needs a name.' };
+      let eventTime = null;
+      if (typeof toolInput.event_time === 'string') {
+        const d = new Date(toolInput.event_time);
+        if (!Number.isNaN(d.getTime()) && d.getTime() > Date.now()) eventTime = d.toISOString();
+      }
+      let venue = null;
+      if (typeof toolInput.venue_place_id === 'string' && isPlaceIdShaped(toolInput.venue_place_id)
+          && typeof toolInput.venue_name === 'string' && toolInput.venue_name.trim()) {
+        venue = {
+          place_id: toolInput.venue_place_id,
+          name: toolInput.venue_name.trim().slice(0, 80),
+          address: typeof toolInput.venue_address === 'string' ? toolInput.venue_address.trim().slice(0, 120) : null,
+        };
+      }
+      return { drafted: true, name: rawName.slice(0, 60), event_time: eventTime, venue };
+    }
+
+    case 'add_venue_to_vote': {
+      // Validation only, and the one read this needs: the flock must be the
+      // CALLER's (accepted member) and still votable. A model fed hostile
+      // context must not be able to stage a card onto someone else's plan,
+      // so the membership check binds to userId from the verified token,
+      // never to anything the model said.
+      const flockId = parseInt(toolInput.flock_id, 10);
+      if (!Number.isInteger(flockId) || flockId <= 0 || flockId > 2147483647) return { error: 'No such plan.' };
+      if (typeof toolInput.place_id !== 'string' || !isPlaceIdShaped(toolInput.place_id)) return { error: 'That venue id is not usable.' };
+      const stagedName = typeof toolInput.venue_name === 'string' ? toolInput.venue_name.trim().slice(0, 80) : '';
+      if (!stagedName) return { error: 'The venue needs a name.' };
+      const membership = await pool.query(
+        `SELECT f.name, f.status
+           FROM flocks f
+           JOIN flock_members fm ON fm.flock_id = f.id AND fm.user_id = $2 AND fm.status = 'accepted'
+          WHERE f.id = $1`,
+        [flockId, userId]
+      );
+      if (membership.rows.length === 0) return { error: 'That plan is not one of yours.' };
+      if (membership.rows[0].status === 'completed' || membership.rows[0].status === 'cancelled') {
+        return { error: `${membership.rows[0].name} already finished.` };
+      }
+      return {
+        staged: true,
+        flock_id: flockId,
+        flock_name: membership.rows[0].name,
+        venue: {
+          place_id: toolInput.place_id,
+          name: stagedName,
+          address: typeof toolInput.venue_address === 'string' ? toolInput.venue_address.trim().slice(0, 120) : null,
+          rating: Number.isFinite(toolInput.rating) ? toolInput.rating : null,
+          price_level: Number.isInteger(toolInput.price_level) && toolInput.price_level >= 0 && toolInput.price_level <= 4 ? toolInput.price_level : null,
+        },
+      };
+    }
+
     case 'navigate_app': {
       // This is handled client-side. It is also the only tool output in this
       // file that becomes an ACTION rather than a sentence: App.js hands
@@ -1123,6 +1223,8 @@ What you can actually do (tools):
 - get_user_friends: their friends list
 - get_weather: current weather
 - navigate_app: take them straight to a screen
+- draft_flock: stage a new plan as a card they confirm with one tap
+- add_venue_to_vote: stage a venue onto one of their plans' votes, as a card they confirm
 
 The app, as it ships today (use the user-facing names on the left; the tool enums in parentheses):
 - **Nest** (tab: home): home base. Tonight's status, active flocks, invites waiting on them
@@ -1137,6 +1239,8 @@ The app, as it ships today (use the user-facing names on the left; the tool enum
 
 How to answer:
 - "How do I..." or "where is..." → one-line answer, then USE navigate_app to take them there. Don't just describe the path.
+- "Set up a plan" / "get us somewhere Saturday" → gather what you can (search_venues for the place, get_user_flocks for existing plans), then USE draft_flock. The card does the creating; you never claim the flock exists, because it does not until they tap Start.
+- "Add that to the vote" → USE add_venue_to_vote with the flock id from get_user_flocks. Same rule: the card does it, you never claim it happened.
 - Vague asks ("what's the move", "where's poppin") → they want somewhere fun nearby. Search real categories (bars, food, activities), never the slang words themselves.
 - Slang decoder: "the move" = what to do; "link"/"pull up" = meet up; "dead" = empty; "lit"/"poppin" = busy and fun; "lowkey" = quiet or casual; "bet" = ok; "no cap" = seriously.
 - Crowds: translate numbers into advice. "68% and climbing, go now or wait till 11" beats reciting the data. Mention best time when it helps.
@@ -1479,6 +1583,8 @@ router.post('/chat',
       let iterations = 0;
       const collectedVenues = []; // Track venues for card display
       let navigationAction = null; // Track navigation commands
+      let flockDraftAction = null;  // draft_flock card, at most one per turn
+      let venueVoteAction = null;   // add_venue_to_vote card, at most one
       // THE FORECAST ALLOWANCE, READ AND SPENT AS TWO SEPARATE ACTS.
       //
       // Read first, because the answer decides what the tool computes; spent
@@ -1556,6 +1662,12 @@ router.post('/chat',
             }
             if (name === 'navigate_app' && result.navigated) {
               navigationAction = { tab: result.tab, screen: result.screen, profile_section: result.profile_section };
+            }
+            if (name === 'draft_flock' && result.drafted) {
+              flockDraftAction = { name: result.name, event_time: result.event_time, venue: result.venue };
+            }
+            if (name === 'add_venue_to_vote' && result.staged) {
+              venueVoteAction = { flock_id: result.flock_id, flock_name: result.flock_name, venue: result.venue };
             }
             if (name === 'get_crowd_prediction' && result.venue_name) {
               // Enrich any matching venue with crowd data
@@ -1649,6 +1761,8 @@ router.post('/chat',
 
       const result = { text: responseText, venues: venueCards, remaining: rateCheck.remaining };
       if (navigationAction) result.navigate = navigationAction;
+      if (flockDraftAction) result.flock_draft = flockDraftAction;
+      if (venueVoteAction) result.vote_stage = venueVoteAction;
       res.json(result);
     } catch (err) {
       // The tier check up top could not find out who is asking (paywall on,
