@@ -2604,8 +2604,10 @@ const QMAP_MEASURED = Object.freeze({
 
 function qmapEnabled() {
   // Default ON since 2026-08-28. 'false' is the kill switch; any other value,
-  // including unset, serves the mapped number.
-  return process.env.CROWD_QMAP_ENABLED !== 'false';
+  // including unset, serves the mapped number. Lowercased to match how
+  // quick_eval.py reads the SAME variable, so CROWD_QMAP_ENABLED=FALSE cannot
+  // disarm the eval while leaving serving mapped.
+  return String(process.env.CROWD_QMAP_ENABLED || '').toLowerCase() !== 'false';
 }
 
 // np.interp semantics, deliberately: constant extrapolation at both ends, linear

@@ -598,7 +598,12 @@ def main():
             hold_dates_all = hold_data.get('observed_date')
             gate_dates = None
             if hold_dates_all is not None:
-                gate_dates = np.asarray(hold_dates_all)[rt_mask][rows['cmp_mask']] \
+                # cmp_mask is a FULL-length holdout mask (compare_incumbent
+                # indexes hold_y_actual with it directly), so it applies to
+                # the full-length dates array as-is. Chaining [rt_mask] first
+                # shortened the array and made this an IndexError on exactly
+                # the well-formed runs the gate exists to admit.
+                gate_dates = np.asarray(hold_dates_all)[rows['cmp_mask']] \
                     if len(np.asarray(hold_dates_all)) == len(hold_y_actual) else None
             if gate_dates is None:
                 logger.warning('GATE-B: features_holdout.pkl carries no observed_date '
