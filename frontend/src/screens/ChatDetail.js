@@ -95,6 +95,42 @@ import { getNotificationStatus, requestNotificationPermission } from '../service
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
 
+// Day separators. Long threads used to be one undifferentiated scroll where
+// last Tuesday touched tonight with nothing between them. A row draws a
+// divider when its calendar day differs from the previous row's; rows with no
+// sentAt (old cached rows, failed sends) inherit the previous day so a
+// missing timestamp can never invent a boundary. Mirrored in ChatDetail.js
+// and DmDetail.js by design; the copy vocabulary is Today / Yesterday / the
+// dated weekday.
+const dayKeyOf = (iso) => {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+};
+const dayLabelOf = (iso) => {
+  const d = new Date(iso);
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const that = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const diffDays = Math.round((today - that) / 86400000);
+  if (diffDays <= 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return d.toLocaleDateString([], { weekday: 'long' });
+  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+};
+const daySeparatorFor = (rows, idx) => {
+  const cur = dayKeyOf(rows[idx]?.sentAt);
+  if (!cur) return null;
+  for (let i = idx - 1; i >= 0; i--) {
+    const prev = dayKeyOf(rows[i]?.sentAt);
+    if (prev) return prev === cur ? null : dayLabelOf(rows[idx].sentAt);
+  }
+  // First dated row in the thread: label it so history opens with its day.
+  return dayLabelOf(rows[idx].sentAt);
+};
+
+
 /* How often the header re-reads whether the socket is actually up. The same
  * 2000ms App.js's reconnect catch-up samples on, and for the same reason: a
  * drop shorter than one sample is never drawn, and a real reconnect takes
@@ -859,9 +895,16 @@ export default function ChatDetail({
               </div>
             </div>
           )}
-          {visibleMessages.map((m, idx) => (
+          {visibleMessages.map((m, idx) => {
+            const separatorLabel = daySeparatorFor(visibleMessages, idx);
+            return (
+            <React.Fragment key={m.id}>
+                {separatorLabel && (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '4px 0 16px' }}>
+                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-tertiary)', background: 'var(--bg-hover)', padding: '3px 12px', borderRadius: '10px' }}>{separatorLabel}</span>
+                  </div>
+                )}
             <div
-              key={m.id}
               style={{
                 display: 'flex',
                 gap: '10px',
@@ -1101,7 +1144,9 @@ export default function ChatDetail({
                 )}
               </div>
             </div>
-          ))}
+            </React.Fragment>
+            );
+          })}
 
           {/* Enhanced typing indicator with user name — fixed height to prevent layout shift */}
           {/* `visibility` as well as opacity, because opacity 0 still leaves
