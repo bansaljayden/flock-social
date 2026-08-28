@@ -376,6 +376,16 @@ pool.query = async (text, params = []) => {
     return ok({ rows: hit ? [{ '?column?': 1 }] : [], rowCount: hit ? 1 : 0 });
   }
 
+  // ---- waitlist conversion (migration 054) -------------------------------
+  // Every successful signup fires linkWaitlistConversion, a fire-and-forget
+  // UPDATE that claims the person's waitlist row if they have one. It is not
+  // part of any auth decision, so the fixture recognises it as a no-op rather
+  // than letting a marketing table flunk an auth test.
+  if (sql.startsWith('UPDATE waitlist SET converted_user_id')) {
+    understoodQueries += 1;
+    return ok({ rows: [], rowCount: 0 });
+  }
+
   unknownQueries.push(sql);
   return { rows: [], rowCount: 0 };
 };
