@@ -27,6 +27,12 @@ const path = require('path');
 const META_PATH = path.join(__dirname, '..', 'scripts', 'ml', 'models', 'model_metadata.json');
 const META = JSON.parse(fs.readFileSync(META_PATH, 'utf8'));
 
+// The score quantile map is ARMED BY DEFAULT in production since 2026-08-28.
+// This suite pins the reconstruction stage BENEATH the map, whose contracts
+// are unchanged by the arming; the map itself is pinned end to end by
+// dispersionReconstruction.test.js. The kill switch keeps these fixtures
+// scoring the stage they were written to hold still.
+process.env.CROWD_QMAP_ENABLED = 'false';
 const mlPredictor = require('../services/mlPredictor');
 const { _internals } = mlPredictor;
 

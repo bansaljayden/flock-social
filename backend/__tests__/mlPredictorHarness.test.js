@@ -42,6 +42,13 @@ const path = require('path');
 // No live upstreams, no gate override: predictions must not reach Ticketmaster,
 // and the fail-closed gates must actually be armed.
 delete process.env.TICKETMASTER_API_KEY;
+// The score quantile map is ARMED BY DEFAULT in production since 2026-08-28.
+// This suite pins the reconstruction stage BENEATH the map, whose contracts
+// are unchanged by the arming; the map itself is pinned end to end by
+// dispersionReconstruction.test.js. The kill switch keeps these fixtures
+// scoring the stage they were written to hold still.
+process.env.CROWD_QMAP_ENABLED = 'false';
+
 delete process.env.ML_SHIP_GATE_OVERRIDE;
 
 const crowdEngine = require('../services/crowdEngine');

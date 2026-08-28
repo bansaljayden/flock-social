@@ -203,9 +203,20 @@ serves the rule engine instead and logs why at startup. So:
 - `ML_SHIP_GATE_OVERRIDE=true` promotes a failing artifact anyway (loudly).
   Local debugging only.
 
-## GATE-B: the two-metric alternative — DRAFTED, **UNARMED** (2026-08-20)
+## GATE-B: the two-metric alternative — **ARMED 2026-08-28**, as the either-path gate
 
-**Nothing below is in force.** `quick_eval.py` implements the four criteria
+**Jayden made the decision this section was written to wait for** (2026-08-28:
+within-10 is the primary metric, "I'm really big on the one number"), and the
+qmap serves by default the same day. The arming interpretation, since the
+draft predated the decision: the legacy arms and B1-B3 are ALTERNATIVE
+admission paths (a routine retrain that spends no MAE ships the old way; a
+deliberate dispersion-spending candidate ships the B way), the floor binds on
+both, an honest incumbent comparison is required on both, and B4 re-verifies
+the fixed table by enumeration per run. `quick_eval.py` gate_b() implements
+it and `ship_gate.admission_path` records which path admitted every artifact.
+The draft below is kept as written.
+
+**The draft (2026-08-20), as it stood before arming.** `quick_eval.py` implements the four criteria
 above and only those. GATE-B is written down so the trade it describes can be
 taken deliberately, by Jayden, in one decision, instead of being smuggled in as
 a waiver of an arm that is doing its job. Arming it is a code change in

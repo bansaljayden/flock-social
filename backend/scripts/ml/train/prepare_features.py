@@ -2119,6 +2119,12 @@ def main():
         'label_source': holdout_df['label_source'].astype('string').fillna('').values.astype(str),
         'vendor_forecast_pct': pd.to_numeric(
             holdout_df['vendor_forecast_pct'], errors='coerce').values.astype(np.float32),
+        # GATE-B's date-block bootstrap resamples observation DATES so day
+        # shocks stay intact inside each resample. quick_eval degrades to the
+        # legacy path when an older pickle lacks this key, so re-running
+        # prepare_features is required before a GATE-B admission but not
+        # before a legacy one.
+        'observed_date': holdout_df['observed_date'].astype('string').fillna('').values.astype(str),
     }
     with open(SCRIPT_DIR / 'features_holdout.pkl', 'wb') as f:
         pickle.dump(holdout_data, f)

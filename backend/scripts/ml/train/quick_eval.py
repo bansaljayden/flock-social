@@ -76,6 +76,7 @@ def metrics(y_true, y_pred):
         'within_5': round(float(np.mean(errors <= 5) * 100), 1),
         'within_10': round(float(np.mean(errors <= 10) * 100), 1),
         'within_15': round(float(np.mean(errors <= 15) * 100), 1),
+        'within_20': round(float(np.mean(errors <= 20) * 100), 1),
     }
 
 
@@ -101,15 +102,26 @@ def reconstruct(raw_delta, baseline):
     score = np.clip(score, 0, 100)
     if QMAP_ENABLED:
         score = apply_score_qmap(score)
-    return score
+    # ROUNDED since 2026-08-28, closing WITHIN-CITY-EVAL.md 10.1: production
+    # publishes Math.round()ed integers onto a corpus whose baselines are all
+    # integers and whose labels are all multiples of 5, so an unrounded float
+    # here scored a predictor that can never land exactly on the inclusive
+    # within-N boundary against a baseline that lands there on 2.3-3.8% of
+    # rows. That artifact understated the model's within-10 by about a point
+    # in every city and flipped philly's sign. Both the challenger and the
+    # incumbent flow through this same function, so the head-to-head stays
+    # internally comparable; numbers from runs before this date are about one
+    # point lower for reconstruction-artifact reasons, not model reasons.
+    return np.round(score)
 
 
 # ---------------------------------------------------------------------------
 # score-qmap — the SAME two arrays services/mlPredictor.js carries, applied with
 # the same np.interp semantics (constant at both ends, linear between knots), so
-# the gate scores the arithmetic production performs. UNARMED by default: the
-# gate is only allowed to see this when CROWD_QMAP_ENABLED=true, the same flag
-# the serve path reads, and a run with it on must be recorded as such.
+# the gate scores the arithmetic production performs. ARMED by default since
+# 2026-08-28 (Jayden: within-10 is the primary metric); CROWD_QMAP_ENABLED=false
+# is the kill switch on both sides, and a run's reconstruction is recorded
+# either way so a verdict cannot be read against the wrong arithmetic.
 #
 # The one deliberate difference is the final rounding, and it is the difference
 # that already existed between reconstructScore and this function: serving
@@ -122,7 +134,7 @@ def reconstruct(raw_delta, baseline):
 # any other model_version and so does this (QMAP_FITTED_ON below is checked by
 # __tests__/mlTrainingContracts.test.js against the JS constant).
 # ---------------------------------------------------------------------------
-QMAP_ENABLED = os.environ.get('CROWD_QMAP_ENABLED', '').lower() == 'true'
+QMAP_ENABLED = os.environ.get('CROWD_QMAP_ENABLED', 'true').lower() != 'false'
 QMAP_FITTED_ON = '2.6.0-starling'
 QMAP_X = np.array([0, 5, 8, 10, 12, 14, 16, 18, 20, 21, 23, 25, 27, 28, 29, 31,
                    32, 34, 35, 36, 37, 39, 40, 42, 43, 45, 46, 48, 50, 51, 53,
@@ -273,6 +285,15 @@ def compare_incumbent(gate_mask, hold_y_actual, challenger_pred, current_feature
     no_regression = mae_change >= 0
     result = {
         'status': 'compared',
+        # Consumed by the GATE-B evaluation in main and stripped before the
+        # metadata write: aligned per-row arrays for the head-to-head rows.
+        '_gate_rows': {
+            'y': hold_y_actual[cmp_mask],
+            'challenger': np.asarray(challenger_pred)[cmp_mask],
+            'incumbent': inc_pred[cmp_mask],
+            'cmp_mask': cmp_mask,
+        },
+        '_metrics_pair': (inc_metrics, new_metrics),
         'basis': basis,
         'comparable': comparable,
         'incumbent_version': inc_version,
@@ -295,6 +316,102 @@ def compare_incumbent(gate_mask, hold_y_actual, challenger_pred, current_feature
         logger.error('REGRESSION: the challenger is %.4f MAE WORSE than the incumbent on '
                      'the gate slice.', -mae_change)
     return result, bool(no_regression)
+
+
+def date_block_bootstrap(dates, y_true, pred_challenger, pred_incumbent,
+                         n_resamples=2000, seed=26):
+    """CI for (challenger - incumbent) deltas by resampling observation DATES
+    with replacement, the same block structure every measured qmap number used
+    (RETRAIN.md GATE-B: 2000-resample date-block bootstrap). Rows sharing a
+    date move together, so day-level weather and event shocks stay intact
+    inside each resample instead of being shuffled away."""
+    dates = np.asarray(dates)
+    uniq = np.unique(dates)
+    if len(uniq) < 5:
+        return None  # too few blocks for a CI anyone should trust
+    idx_by_date = {d: np.where(dates == d)[0] for d in uniq}
+    rng = np.random.default_rng(seed)
+    w10_deltas = np.empty(n_resamples)
+    mae_deltas = np.empty(n_resamples)
+    for i in range(n_resamples):
+        take = rng.choice(uniq, size=len(uniq), replace=True)
+        rows = np.concatenate([idx_by_date[d] for d in take])
+        ec = np.abs(y_true[rows] - pred_challenger[rows])
+        ei = np.abs(y_true[rows] - pred_incumbent[rows])
+        w10_deltas[i] = (np.mean(ec <= 10) - np.mean(ei <= 10)) * 100
+        mae_deltas[i] = np.mean(ec) - np.mean(ei)
+    return {
+        'w10_delta_ci': [round(float(np.percentile(w10_deltas, 2.5)), 2),
+                         round(float(np.percentile(w10_deltas, 97.5)), 2)],
+        'mae_delta_ci': [round(float(np.percentile(mae_deltas, 2.5)), 3),
+                         round(float(np.percentile(mae_deltas, 97.5)), 3)],
+        'resamples': n_resamples,
+        'date_blocks': int(len(uniq)),
+    }
+
+
+# ---------------------------------------------------------------------------
+# GATE-B — ARMED 2026-08-28 as the EITHER-PATH gate. RETRAIN.md drafted B1-B5
+# to replace the two MAE-protective baseline arms for a candidate that SPENDS
+# MAE to buy within-10, and Jayden took that trade when he armed the qmap. The
+# arming interpretation, recorded here because the draft predated the decision:
+#
+#   * The legacy arms (beat the popular-times baseline, no MAE regression) and
+#     GATE-B's B1-B3 are ALTERNATIVE admission paths: a routine retrain that
+#     does not spend MAE still ships the old way, and a deliberate
+#     dispersion-spending candidate ships the B way. Requiring B1's +5pp of
+#     every future incremental retrain would end shipping permanently, which
+#     the draft cannot have meant.
+#   * Arm 3 (the absolute within-10 floor, re-derived per run) and arm 4's
+#     comparability requirement bind on BOTH paths. Arm 4's no-MAE-regression
+#     clause is subsumed by B2's priced allowance on the B path, exactly as
+#     B2's own derivation prices it against the incumbent.
+#   * B4's ordering half: the fixed table was measured 2026-08-20 at zero
+#     reversals over 144,956 pairs. That measurement belongs to THIS table, so
+#     gate_b() re-verifies monotonicity by enumeration every run and fails if
+#     the table stops being the measured one, rather than re-measuring pairs
+#     it has no harness for.
+#   * B5 is a serving property (band from the mapped number, confidence from
+#     the map's own measurement); mlPredictor.js implements both and the node
+#     suites pin them. Recorded in the verdict as a pointer, not re-proved
+#     here.
+#   * mae_vs_baseline_broken is written with both figures whenever the mapped
+#     number spends MAE against the popular-times baseline, per the draft:
+#     the strongest argument against the trade appears in the verdict itself.
+# ---------------------------------------------------------------------------
+GATE_B_W10_MIN = 5.0
+GATE_B_W10_CI_LOWER_MIN = 2.5
+GATE_B_MAE_MAX = 3.5
+GATE_B_MAE_CI_UPPER_MAX = 4.0
+# The 2026-08-20 measured table, fingerprinted: B4 fails if the arrays change,
+# because the zero-reversal pair measurement belongs to these exact knots.
+GATE_B_MEASURED_TABLE = (float(np.sum(QMAP_X)), float(np.sum(QMAP_Y)), len(QMAP_X))
+
+
+def gate_b(y_true, pred_challenger, pred_incumbent, dates,
+           inc_metrics, new_metrics):
+    """Evaluate B1-B4. Returns (passed, detail dict)."""
+    w10_delta = round(new_metrics['within_10'] - inc_metrics['within_10'], 2)
+    mae_regress = round(new_metrics['mae'] - inc_metrics['mae'], 4)
+    w20_delta = round(new_metrics['within_20'] - inc_metrics['within_20'], 2)
+    ci = date_block_bootstrap(dates, y_true, pred_challenger, pred_incumbent) if dates is not None else None
+
+    b1 = w10_delta >= GATE_B_W10_MIN and ci is not None and ci['w10_delta_ci'][0] > GATE_B_W10_CI_LOWER_MIN
+    b2 = mae_regress <= GATE_B_MAE_MAX and ci is not None and ci['mae_delta_ci'][1] < GATE_B_MAE_CI_UPPER_MAX
+    b3 = w20_delta >= 0
+    mapped = apply_score_qmap(np.arange(0, 101, dtype=float))
+    monotone = bool(np.all(np.diff(mapped) >= 0))
+    table_ok = (float(np.sum(QMAP_X)), float(np.sum(QMAP_Y)), len(QMAP_X)) == GATE_B_MEASURED_TABLE
+    b4 = monotone and table_ok
+    passed = bool(b1 and b2 and b3 and b4)
+    return passed, {
+        'b1_w10_delta': w10_delta, 'b1_pass': bool(b1),
+        'b2_mae_regress': mae_regress, 'b2_pass': bool(b2),
+        'b3_w20_delta': w20_delta, 'b3_pass': bool(b3),
+        'b4_monotone': monotone, 'b4_table_is_measured': bool(table_ok), 'b4_pass': bool(b4),
+        'b5_note': 'serving property: band from mapped number, confidence from QMAP_MEASURED (mlPredictor.js, pinned by node suites)',
+        'bootstrap': ci,
+    }
 
 
 def main():
@@ -465,9 +582,44 @@ def main():
     # ============= INCUMBENT (audit finding 7) =============
     incumbent = None
     incumbent_pass = None
+    gate_b_result = None
+    gate_b_pass = False
     if rt_count >= 100:
         incumbent, incumbent_pass = compare_incumbent(
             rt_mask, hold_y_actual, hold_pred_absolute, feature_cols, X_hold, hold_baseline)
+        # GATE-B (armed 2026-08-28): evaluated whenever the mapped
+        # reconstruction is in force and the head-to-head produced aligned
+        # rows. Dates come from the holdout pickle; an older pickle without
+        # observed_date yields no bootstrap, B1/B2's CI arms cannot hold, and
+        # admission falls back to the legacy path with that fact logged.
+        if QMAP_ENABLED and incumbent and incumbent.get('_gate_rows'):
+            rows = incumbent.pop('_gate_rows')
+            inc_m, new_m = incumbent.pop('_metrics_pair')
+            hold_dates_all = hold_data.get('observed_date')
+            gate_dates = None
+            if hold_dates_all is not None:
+                gate_dates = np.asarray(hold_dates_all)[rt_mask][rows['cmp_mask']] \
+                    if len(np.asarray(hold_dates_all)) == len(hold_y_actual) else None
+            if gate_dates is None:
+                logger.warning('GATE-B: features_holdout.pkl carries no observed_date '
+                               '(re-run prepare_features.py); the CI arms cannot be '
+                               'evaluated, so only the legacy path can admit this run.')
+            gate_b_pass, gate_b_result = gate_b(
+                rows['y'], rows['challenger'], rows['incumbent'], gate_dates, inc_m, new_m)
+            logger.info('\n========== GATE-B (armed 2026-08-28) ==========')
+            logger.info('  B1 within-10 vs incumbent: %+.2fpp (need >= +%.1f, CI low > +%.1f) -> %s',
+                        gate_b_result['b1_w10_delta'], GATE_B_W10_MIN, GATE_B_W10_CI_LOWER_MIN,
+                        'PASS' if gate_b_result['b1_pass'] else 'FAIL')
+            logger.info('  B2 MAE regress vs incumbent: %+.3f (need <= +%.1f, CI high < +%.1f) -> %s',
+                        gate_b_result['b2_mae_regress'], GATE_B_MAE_MAX, GATE_B_MAE_CI_UPPER_MAX,
+                        'PASS' if gate_b_result['b2_pass'] else 'FAIL')
+            logger.info('  B3 within-20 delta: %+.2fpp (need >= 0) -> %s',
+                        gate_b_result['b3_w20_delta'], 'PASS' if gate_b_result['b3_pass'] else 'FAIL')
+            logger.info('  B4 monotone + measured table -> %s',
+                        'PASS' if gate_b_result['b4_pass'] else 'FAIL')
+        elif incumbent:
+            incumbent.pop('_gate_rows', None)
+            incumbent.pop('_metrics_pair', None)
 
     # ============= SHIP VERDICT =============
     logger.info('\n========== SHIP GATE ==========')
@@ -527,14 +679,29 @@ def main():
                 f'holdout overall {"PASS" if hold_pass else "FAIL"} '
                 f'(both dominated by rows where baseline == label)')
 
+    admission_path = None
     if rt_pass is not None:
-        overall_pass = bool(rt_pass and floor_pass and incumbent_pass)
+        # EITHER-PATH ADMISSION (GATE-B armed 2026-08-28, see the block above
+        # gate_b()): the legacy arms admit a routine retrain exactly as
+        # before; B1-B3 admit a deliberate dispersion-spending candidate. The
+        # floor (arm 3) binds on both paths, and an honest incumbent
+        # comparison is required on both, with the legacy path additionally
+        # requiring arm 4's no-MAE-regression exactly as it always has.
+        legacy_admission = bool(rt_pass and incumbent_pass)
+        if legacy_admission:
+            admission_path = 'legacy'
+        elif gate_b_pass and incumbent is not None and incumbent.get('status') == 'compared':
+            admission_path = 'gate_b'
+        overall_pass = bool(floor_pass and admission_path is not None)
         gate_basis = 'holdout_realtime_served'
         verdict = 'ship' if overall_pass else 'do_not_ship'
-        if overall_pass:
-            logger.info('VERDICT: ✅ SHIP — beats the popular_times baseline on the served '
-                        'realtime rows, clears the absolute floor, and does not regress '
-                        'against the incumbent.')
+        if overall_pass and admission_path == 'legacy':
+            logger.info('VERDICT: ✅ SHIP (legacy path) — beats the popular_times baseline on '
+                        'the served realtime rows, clears the absolute floor, and does not '
+                        'regress against the incumbent.')
+        elif overall_pass:
+            logger.info('VERDICT: ✅ SHIP (GATE-B path) — spends bounded MAE for a within-10 '
+                        'gain that clears B1-B4, and clears the absolute floor.')
         else:
             reasons = []
             if not rt_pass:
@@ -542,7 +709,10 @@ def main():
             if not floor_pass:
                 reasons.append(f'realtime within-10 below the {floor_value}% floor ({floor_basis})')
             if not incumbent_pass:
-                reasons.append('no honest incumbent comparison, or a regression against it')
+                reasons.append('no honest incumbent comparison, or a regression against it '
+                               'that GATE-B did not admit either')
+            if QMAP_ENABLED and gate_b_result is not None and not gate_b_pass:
+                reasons.append('GATE-B arms not met')
             logger.info('VERDICT: ❌ DO NOT SHIP — %s.', '; '.join(reasons))
     else:
         overall_pass = False
@@ -573,6 +743,16 @@ def main():
         # alternative in RETRAIN.md is the only gate that may read it.
         'score_qmap_enabled': bool(QMAP_ENABLED),
         'score_qmap_fitted_on': QMAP_FITTED_ON if QMAP_ENABLED else None,
+        # GATE-B record (armed 2026-08-28). The draft's own requirement: when
+        # the mapped number spends MAE against the popular-times baseline, the
+        # verdict says so with both figures, in the artifact, not in a doc.
+        'admission_path': admission_path,
+        'gate_b': gate_b_result,
+        'mae_vs_baseline_broken': bool(rt_mae_delta is not None and rt_mae_delta < 0),
+        'mae_vs_baseline_figures': ({
+            'model_mae': rt_model_metrics['mae'],
+            'popular_times_mae': rt_baseline_metrics['mae'],
+        } if rt_model_metrics else None),
         'realtime_pass': rt_pass,
         'floor_pass': floor_pass,
         'incumbent_pass': incumbent_pass,

@@ -188,9 +188,17 @@ test('quick_eval loads and scores the incumbent artifact', () => {
 });
 
 test('an absent or dishonest incumbent comparison fails the gate', () => {
-  assert.match(QUICK_EVAL, /overall_pass = bool\(rt_pass and floor_pass and incumbent_pass\)/,
-    'incumbent_pass must be ANDed into the verdict; a comparison that only prints is ' +
+  // The verdict became the either-path gate when GATE-B armed (2026-08-28):
+  // the legacy path still ANDs incumbent_pass exactly as before, the B path
+  // requires a COMPARED incumbent explicitly, and nothing ships on floor
+  // alone. The three pins below hold each of those clauses.
+  assert.match(QUICK_EVAL, /legacy_admission = bool\(rt_pass and incumbent_pass\)/,
+    'the legacy path must still AND incumbent_pass; a comparison that only prints is ' +
     'the same as no comparison');
+  assert.match(QUICK_EVAL, /gate_b_pass and incumbent is not None and incumbent\.get\('status'\) == 'compared'/,
+    'the GATE-B path may not admit without a real, compared incumbent');
+  assert.match(QUICK_EVAL, /overall_pass = bool\(floor_pass and admission_path is not None\)/,
+    'the floor binds on both paths and no admission path means no ship');
   assert.match(QUICK_EVAL, /ML_ALLOW_NO_INCUMBENT/,
     'the first-model-ever case needs an explicit, named opt-out — never a default pass');
   assert.match(QUICK_EVAL, /ML_ALLOW_APPROXIMATE_INCUMBENT/);
