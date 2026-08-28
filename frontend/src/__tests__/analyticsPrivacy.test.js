@@ -280,6 +280,8 @@ describe('capture-site sweep: what leaves the device is a short, named list', ()
       'flock_rerun',
       'flock_rsvp',          // does an invited person ever answer
       'flock_status_set',    // does a plan reach confirmed, or die in planning
+      'friend_request_accepted', // the graph formed: an edge exists only on accept
+      'friend_request_sent',     // the graph attempted; with accepted, the funnel's two halves
       'invite_handoff_started', // did the guest who answered go make an account
       'invite_link_created',
       'invite_link_joined',
@@ -289,6 +291,8 @@ describe('capture-site sweep: what leaves the device is a short, named list', ()
       'login_failed',        // locked out, or uninterested
       'nfc_tap',
       'nfc_tap_action',
+      'notification_permission', // the retention lever's outcome at each of the two asks
+      'pulse_set',           // the most-tapped control on the home screen: is Tonight used
       'push_opened',         // did a notification tap open the app, and to what
       'roost_question_asked',      // is the B2B advisor used, and does it answer
       'screen_viewed',       // the denominator: who ARRIVED where a step happens
