@@ -1826,11 +1826,16 @@ export async function getCrowdPrediction(placeId) {
   return request(`/api/crowd/${encodeURIComponent(placeId)}?localHour=${localHour}&localDay=${localDay}`);
 }
 
-export async function getCrowdBatch(venues) {
+// `clock` is optional { localHour, localDay } for scoring a moment that is
+// not now, which is what a vote for Saturday 9 PM needs. Absent or malformed,
+// the device clock rides along exactly as it always has.
+export async function getCrowdBatch(venues, clock) {
   const now = new Date();
+  const localHour = Number.isInteger(clock?.localHour) ? clock.localHour : now.getHours();
+  const localDay = Number.isInteger(clock?.localDay) ? clock.localDay : now.getDay();
   return request('/api/crowd/batch', {
     method: 'POST',
-    body: JSON.stringify({ venues, localHour: now.getHours(), localDay: now.getDay() }),
+    body: JSON.stringify({ venues, localHour, localDay }),
   });
 }
 

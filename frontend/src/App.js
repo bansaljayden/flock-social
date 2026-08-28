@@ -4820,6 +4820,46 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       .catch(err => console.error('[Crowd] Batch prediction failed:', err));
   }, []);
 
+  // Scores for a PLAN'S OWN HOUR, kept apart from crowdPredictions on
+  // purpose: that cache answers "how busy is it right now" for the map, and
+  // one key cannot hold two answers. A vote for Saturday 9 PM was being
+  // argued with whatever the map had fetched that afternoon, which is the
+  // audit's "moat not pointed at the decision" finding. Keyed
+  // flockId -> placeId -> score. The payload deliberately OMITS
+  // utcOffsetMinutes: the batch route lets a venue's own offset override the
+  // top-level clock, the right call when the question is "now", and exactly
+  // wrong when the whole point is the plan's clock.
+  const eventCrowdFetchedRef = useRef(new Set());
+  const [eventCrowdScores, setEventCrowdScores] = useState({});
+  const requestEventCrowdScores = useCallback((flock, venues) => {
+    if (!flock?.id || !flock.eventTime) return;
+    const at = new Date(flock.eventTime);
+    if (Number.isNaN(at.getTime())) return;
+    const fresh = (venues || [])
+      .filter(v => v.place_id && !eventCrowdFetchedRef.current.has(`${flock.id}:${v.place_id}`))
+      .slice(0, 20);
+    if (fresh.length === 0) return;
+    fresh.forEach(v => eventCrowdFetchedRef.current.add(`${flock.id}:${v.place_id}`));
+    getCrowdBatch(
+      fresh.map(v => ({
+        place_id: v.place_id, name: v.name, rating: v.rating,
+        user_ratings_total: v.user_ratings_total, types: v.types,
+        price_level: v.price_level, location: v.location,
+      })),
+      { localHour: at.getHours(), localDay: at.getDay() }
+    )
+      .then(res => {
+        const scored = {};
+        (res.predictions || []).forEach(pr => { if (typeof pr.score === 'number') scored[pr.placeId] = pr.score; });
+        if (Object.keys(scored).length === 0) return;
+        setEventCrowdScores(prev => ({ ...prev, [flock.id]: { ...(prev[flock.id] || {}), ...scored } }));
+      })
+      .catch(() => {
+        // A failed fetch must stay fetchable; only a landed score is final.
+        fresh.forEach(v => eventCrowdFetchedRef.current.delete(`${flock.id}:${v.place_id}`));
+      });
+  }, []);
+
   // Convert venues array to map pin format, deduplicating by place_id
   const venuesToMapPins = useCallback((venues) => {
     const seen = new Set();
@@ -6407,6 +6447,30 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [showVenueShareModal, setShowVenueShareModal] = useState(false);
   const [showVotePanel, setShowVotePanel] = useState(false);
   const [popularVenues, setPopularVenues] = useState([]);
+
+  // The vote panel is the one surface where the plan's hour outranks the
+  // map's now, so opening it fetches the suggestions' scores at that hour.
+  // popularVenues in the deps re-fires this when the list finishes loading
+  // after the panel is already open; the fetched-set ref makes that free.
+  useEffect(() => {
+    if (!showVotePanel) return;
+    const flock = flocks.find(f => f.id === selectedFlockId);
+    if (flock) requestEventCrowdScores(flock, popularVenues);
+  }, [showVotePanel, selectedFlockId, popularVenues, flocks, requestEventCrowdScores]);
+
+  // Component-scope consts, not block locals beside the props object: the
+  // extraction-equivalence contract resolves every chatDetailProps name
+  // against FlockAppInner's own scope, which is also what guarantees these
+  // are recomputed per render and never reassigned.
+  const eventCrowd = eventCrowdScores[selectedFlockId] || null;
+  const eventCrowdLabel = (() => {
+    const f = flocks.find(x => x.id === selectedFlockId);
+    if (!f?.eventTime) return null;
+    const d = new Date(f.eventTime);
+    if (Number.isNaN(d.getTime())) return null;
+    return `at ${d.toLocaleTimeString([], { hour: 'numeric' })}`;
+  })();
+
   const [pendingImage, setPendingImage] = useState(null);
   const [showImagePreview, setShowImagePreview] = useState(false);
   const [showCameraViewfinder, setShowCameraViewfinder] = useState(null); // 'flock' or 'dm'
@@ -11939,7 +12003,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             }}>
               <EmptyMark name="crowd" />
               <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-display)', fontWeight: '600', color: 'var(--text-primary)', margin: '14px 0 0', letterSpacing: '-0.005em', lineHeight: 1.15 }}>No flocks yet</h3>
-              <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 20px', maxWidth: '280px' }}>Start one and your people land right here.</p>
+              <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 20px', maxWidth: '280px' }}>Start one and drop the invite link in the group chat. Nobody needs the app to see the plan and vote.</p>
               <button className="hit44" onClick={() => setCurrentScreen('create')} style={{ width: '100%', maxWidth: '300px', height: '48px', borderRadius: '14px', border: 'none', background: isDark ? '#f1ede0' : '#1e293b', color: isDark ? '#1e293b' : '#ffffff', fontSize: 'var(--t-body)', fontWeight: '600', letterSpacing: '-0.1px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', boxShadow: isDark ? 'inset 0 1px 0 rgba(255,255,255,0.55), 0 1px 2px rgba(0,0,0,0.20)' : 'inset 0 1px 0 rgba(255,255,255,0.12), 0 1px 2px rgba(30,41,59,0.10)' }}>
                 {Icons.plus(isDark ? '#1e293b' : 'white', 16)} Start a flock
               </button>
@@ -16677,6 +16741,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         confirmFlockPlan,
         copiedInviteUrl,
         crowdPredictions,
+        eventCrowd,
+        eventCrowdLabel,
         dismissNotifAsk,
         flockAtTop,
         flockInviteAllFriends,
