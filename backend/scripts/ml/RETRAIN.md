@@ -759,3 +759,43 @@ Read it before quoting any accuracy figure. Short version:
   whose label equals the baseline by construction. It is not an accuracy claim,
   and `mlPredictor.js` currently publishes that family of number to users as
   venue-card confidence.
+
+## The paid refresh runbook (2026-08-28, approved budget ~$205 of $500)
+
+Jayden approved buying two fresh collection windows. The order below is load
+bearing; the traps it guards against are pinned in
+`__tests__/besttimeRefreshPrep.test.js`.
+
+1. **Revive the existing BestTime account** (Jayden, in the dashboard). The
+   403 is account level, and the stored `besttime_venue_id`s belong to that
+   account: a fresh account re-forecasts all 1,915 PA venues by name at 2
+   credits instead of 1, $153 per window instead of $77. Basic metered plan,
+   $0.04 per credit, $29/mo minimum. The key goes in `backend/.env` LOCALLY
+   and never onto Railway: the dead BESTTIME cron service there sweeps every
+   3 hours and would spend roughly $4,500/day on a metered key.
+2. **Archive window 1 BEFORE the first refresh call**:
+   `node scripts/ml/archiveWeeklyWindow.js` (refuses to overwrite an existing
+   archive; verifies its own row count). The weekly upsert is newest-wins, so
+   skipping this destroys the very drift signal the second window is bought
+   to create.
+3. **Window 2, now (ideally before Sept 1, so the corpus gains real summer
+   rows)**:
+   `node scripts/ml/collectWeekly.js --city=philly --only-found`
+   `node scripts/ml/collectWeekly.js --city=lehigh --only-found`
+   `--only-found` is the 1-credit by-id path and skips historical 404s that
+   would re-bill at a credit per failure. About 1,915 credits, ~$77.
+4. **The demand want-list, ~$7.60**: 95 distinct venues that real users were
+   served, voted on, or checked into and the corpus lacks (measured off
+   served_predictions/venue_votes 2026-08-28; 56.5% of all serves were such
+   venues, and 69.6% of serves fell back to category curves). Add them by
+   name via the normal collect path before breadth-by-category spends
+   anything: they are the venues users already proved they meet.
+5. **Window 3, around Nov 15**: archive again
+   (`--suffix=w2`), then the same two `--only-found` runs. Ten-plus weeks of
+   separation makes the windows statistically independent; that second
+   interval is the precondition for dropping the `month` epoch artifact
+   (see the re-admission condition above).
+6. **Optional live stream**: only on the Pro Package (fixed fee, unlimited
+   by-id and live), and only after `collectRealtime.js`'s PA-only default has
+   shipped (it has: philly+lehigh unless `--all-cities` is passed on
+   purpose).

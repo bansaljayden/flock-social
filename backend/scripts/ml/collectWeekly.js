@@ -172,6 +172,18 @@ async function collectWeekly() {
   const skipCollected = process.argv.includes('--skip-collected');
   const skipAttempted = process.argv.includes('--skip-attempted') || skipCollected;
   const retry404 = process.argv.includes('--retry-404');
+  // --only-found is the REFRESH mode: only venues whose besttime_venue_id is
+  // already stored, which bills at 1 credit by id instead of 2 by name, and
+  // which skips every historical 404 that would otherwise be re-attempted at
+  // 1 credit per failure (about $20-40 of nothing on a full PA pass). This is
+  // the flag the two paid collection windows run under. It contradicts
+  // --skip-collected (which selects the OPPOSITE set) so that pairing refuses
+  // to run rather than silently selecting zero venues.
+  const onlyFound = process.argv.includes('--only-found');
+  if (onlyFound && skipCollected) {
+    console.error('[ML:Weekly] --only-found and --skip-collected select opposite sets. Pick one.');
+    process.exit(1);
+  }
 
   let query = 'SELECT * FROM ml_venues WHERE is_active = true';
   const params = [];
@@ -185,6 +197,9 @@ async function collectWeekly() {
   }
   if (skipCollected) {
     query += ' AND besttime_venue_id IS NULL';
+  }
+  if (onlyFound) {
+    query += ' AND besttime_venue_id IS NOT NULL';
   }
   if (skipAttempted && !retry404) {
     query += ' AND besttime_attempted_at IS NULL';

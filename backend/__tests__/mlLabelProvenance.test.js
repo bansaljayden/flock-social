@@ -117,6 +117,12 @@ const { splitStatements, migrate } = require('../db/migrate');
 const exporter = require('../scripts/ml/train/export_training_data');
 const collectRealtime = require('../scripts/ml/collectRealtime');
 const { classifyReading, LABEL_LIVE, LABEL_FORECAST } = collectRealtime;
+// The realtime collector is PA-scoped by default since 2026-08-28 (the cron
+// bomb guard; see besttimeRefreshPrep.test.js). This suite's fixtures live in
+// their own throwaway cities and test provenance, not scope, so the global
+// sweep is opted into once for the whole process.
+process.argv.push('--all-cities');
+
 
 // collectRealtime.run() ends its pool, so a second run needs a fresh instance.
 // The stubs above stay in the cache.
