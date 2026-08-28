@@ -260,6 +260,8 @@ function chatProps(over = {}) {
     updateFlockVenue: fn(),
     updateFlockVotes: fn(),
     userLocation: null,
+    eventCrowd: null,
+    eventCrowdLabel: null,
     ...over,
   };
 }

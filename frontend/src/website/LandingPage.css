@@ -966,7 +966,7 @@ html:has(.lp) body { overflow-x: clip; }
      .lp-birdie and the demo head: the card column is the card's own width,
      the text column is the measure the words set in, space-between owns the
      gutter, and center is correct once both blocks have deliberate sizes. */
-  .lp-row { grid-template-columns: minmax(0, 420px) minmax(0, 38rem); justify-content: space-between; align-items: center; }
+  .lp-row { grid-template-columns: minmax(0, 500px) minmax(0, 34rem); justify-content: space-between; align-items: center; }
   .lp-row-flip .lp-row-media { order: -1; }
 }
 .lp-row h2 { margin-bottom: 16px; }
@@ -1069,24 +1069,27 @@ html:has(.lp) body { overflow-x: clip; }
   border: 1px solid var(--rule);
   border-radius: 18px;
   background: var(--plate);
-  padding: clamp(20px, 3vw, 26px);
+  /* Scaled up 2026-08-27: Jayden's read of the section was that the card sat
+     small in a lot of open space. Wider column (500px, .lp-row above), more
+     generous padding, and the rows sized to be read rather than to fit. */
+  padding: clamp(24px, 3.4vw, 34px);
 }
 .lp-split-total {
   display: flex; justify-content: space-between; align-items: baseline;
   padding-bottom: 14px; margin-bottom: 14px;
   border-bottom: 1px solid var(--rule);
 }
-.lp-split-total b { font-size: 26px; color: var(--ink); letter-spacing: -0.02em; }
+.lp-split-total b { font-size: 30px; color: var(--ink); letter-spacing: -0.02em; }
 .lp-split-row {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 9px 0; font-size: 15px;
+  padding: 11px 0; font-size: 16px;
 }
 .lp-split-row span { color: var(--ink-2); }
 .lp-split-row b { color: var(--ink); font-weight: 600; }
 .lp-split-note {
-  margin-top: 14px; padding-top: 14px;
+  margin-top: 16px; padding-top: 16px;
   border-top: 1px solid var(--rule);
-  font-size: 13px; color: var(--ink-3);
+  font-size: 14px; color: var(--ink-3);
 }
 
 /* ============ pricing ============ */
