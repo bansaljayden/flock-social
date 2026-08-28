@@ -646,6 +646,10 @@ const PLUGIN_CLASSES = {
   '@capacitor-firebase/app': 'FirebaseAppPlugin',
   '@capacitor-firebase/messaging': 'FirebaseMessagingPlugin',
   '@capacitor/app': 'AppPlugin',
+  // Haptics joined 2026-08-28 with the chat-polish pass: five call sites
+  // (pulse tap, vote, plan created, check-in, the SOS press), all through
+  // services/haptics.js, which no-ops on the web.
+  '@capacitor/haptics': 'HapticsPlugin',
   '@capgo/capacitor-social-login': 'SocialLoginPlugin',
   '@revenuecat/purchases-capacitor': 'PurchasesPlugin',
 };
