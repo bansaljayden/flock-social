@@ -5689,6 +5689,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // One confirm at a time across every Birdie action card, so a double tap
   // cannot create two flocks or cast two votes.
   const [birdieActionBusy, setBirdieActionBusy] = useState(false);
+  const [recapSharing, setRecapSharing] = useState(false);
   const [aiInputHasText, setAiInputHasText] = useState(false);
   const aiInputHasTextRef = useRef(false);
   const aiInputValueRef = useRef('');
@@ -5966,6 +5967,96 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     if (currentScreen === 'pastFlocks') loadPastFlocks();
   }, [currentScreen, loadPastFlocks]);
 
+
+  // The post-night recap card. Drawn on a canvas right here because the one
+  // moment a group is warm enough to post is the morning after, and the app
+  // had nothing to hand them (the distribution audit's share-moment finding).
+  // Typographic on brand navy, the same composition as the invite link's
+  // og:image, so the two share surfaces read as one product. Web Share with
+  // a file where the platform has it (iOS 15+), the share sheet without the
+  // file next, and a plain download last, so the button is never dead.
+  const shareNightRecap = useCallback(async (flock) => {
+    if (recapSharing || !flock) return;
+    setRecapSharing(true);
+    try {
+      const W = 1080;
+      const H = 1350;
+      const canvas = document.createElement('canvas');
+      canvas.width = W;
+      canvas.height = H;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('no canvas');
+      const CREAM = '#f7f3e8';
+      const DIM = 'rgba(247, 243, 232, 0.72)';
+      ctx.fillStyle = '#0d2847';
+      ctx.fillRect(0, 0, W, H);
+      const stack = "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+      if ('letterSpacing' in ctx) ctx.letterSpacing = '12px';
+      ctx.fillStyle = DIM;
+      ctx.font = `800 44px ${stack}`;
+      ctx.fillText('FLOCK', 90, 150);
+      if ('letterSpacing' in ctx) ctx.letterSpacing = '0px';
+      const wrapLines = (text, maxWidth) => {
+        const words = String(text || '').split(' ');
+        const lines = [];
+        let line = '';
+        for (const w of words) {
+          const trial = line ? `${line} ${w}` : w;
+          if (ctx.measureText(trial).width > maxWidth && line) { lines.push(line); line = w; }
+          else line = trial;
+        }
+        if (line) lines.push(line);
+        return lines.slice(0, 3);
+      };
+      ctx.fillStyle = CREAM;
+      ctx.font = `800 100px ${stack}`;
+      let y = 460;
+      for (const line of wrapLines(flock.name || 'A night out', W - 180)) {
+        ctx.fillText(line, 90, y);
+        y += 112;
+      }
+      const dateLabel = flock.eventTime
+        ? new Date(flock.eventTime).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })
+        : '';
+      const metaBits = [];
+      if (flock.venue && flock.venue !== 'TBD') metaBits.push(flock.venue);
+      if (dateLabel) metaBits.push(dateLabel);
+      ctx.fillStyle = DIM;
+      ctx.font = `500 46px ${stack}`;
+      if (metaBits.length) { ctx.fillText(metaBits.join(' \u00b7 '), 90, y + 26); y += 26; }
+      const count = flock.memberCount || 0;
+      ctx.fillStyle = CREAM;
+      ctx.font = `700 56px ${stack}`;
+      ctx.fillText(count > 1 ? `${count} of us were out` : 'A night on the books', 90, y + 140);
+      ctx.strokeStyle = 'rgba(247, 243, 232, 0.28)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(90, H - 170);
+      ctx.lineTo(W - 90, H - 170);
+      ctx.stroke();
+      ctx.fillStyle = DIM;
+      ctx.font = `600 40px ${stack}`;
+      ctx.fillText('flockcorp.com', 90, H - 92);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      if (!blob) throw new Error('no image');
+      const file = new File([blob], 'flock-night.png', { type: 'image/png' });
+      if (navigator.canShare && navigator.canShare({ files: [file] }) && navigator.share) {
+        await navigator.share({ files: [file], title: flock.name || 'Flock' });
+      } else if (navigator.share) {
+        await navigator.share({ title: flock.name || 'Flock', text: 'Last night ran through Flock.', url: 'https://www.flockcorp.com' });
+      } else {
+        const a = document.createElement('a');
+        a.href = canvas.toDataURL('image/png');
+        a.download = 'flock-night.png';
+        a.click();
+      }
+    } catch (err) {
+      // A person closing the share sheet is not an error and gets no toast.
+      if (err?.name !== 'AbortError') showToast("That share didn't go through. Try again.", 'error');
+    } finally {
+      setRecapSharing(false);
+    }
+  }, [recapSharing, showToast]);
 
   // "Do it again": clone a past flock and land in its chat, exactly the way a
   // freshly created flock does. The new plan needs a time that has not already
@@ -15140,6 +15231,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               onClick={() => handleRerunFlock({ id: flock.id, event_time: flock.eventTime, name: flock.name })}
               style={{ width: '100%', padding: '12px', marginBottom: '12px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: rerunningFlockId === flock.id ? 'wait' : 'pointer', opacity: rerunningFlockId === flock.id ? 0.6 : 1 }}
             >{rerunningFlockId === flock.id ? 'Starting…' : 'Do it again'}</button>
+          )}
+
+          {flock.status === 'completed' && (
+            <button
+              className="hit44 glass-btn glass-secondary"
+              disabled={recapSharing}
+              onClick={() => shareNightRecap(flock)}
+              style={{ width: '100%', padding: '12px', marginBottom: '12px', borderRadius: '12px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: recapSharing ? 'wait' : 'pointer', opacity: recapSharing ? 0.6 : 1 }}
+            >{recapSharing ? 'Making the card…' : 'Share the night'}</button>
           )}
 
           {/* Post-hangout feedback prompt — only after flock is marked done */}
