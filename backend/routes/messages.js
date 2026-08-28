@@ -210,6 +210,7 @@ router.get('/flocks/:id/messages',
           WHERE m.flock_id = $1
             AND ($2::int IS NULL OR m.id < $2)
             AND m.is_hidden IS NOT TRUE
+            AND m.sender_deleted_at IS NULL
             AND (m.sender_id IS NULL OR NOT (m.sender_id = ANY($4::int[])))
           ORDER BY m.id DESC
           LIMIT $3`;
@@ -477,7 +478,7 @@ router.get('/flocks/:id/messages/:messageId/image',
       }
       const row = await pool.query(
         `SELECT image_url FROM messages
-          WHERE id = $1 AND flock_id = $2 AND COALESCE(is_hidden, false) = false`,
+          WHERE id = $1 AND flock_id = $2 AND COALESCE(is_hidden, false) = false AND sender_deleted_at IS NULL`,
         [req.params.messageId, flockId]
       );
       if (row.rows.length === 0 || !row.rows[0].image_url) {
@@ -501,7 +502,7 @@ router.get('/dm/messages/:id/image',
       }
       const dm = await pool.query(
         `SELECT sender_id, receiver_id, image_url FROM direct_messages
-          WHERE id = $1 AND COALESCE(is_hidden, false) = false`,
+          WHERE id = $1 AND COALESCE(is_hidden, false) = false AND sender_deleted_at IS NULL`,
         [req.params.id]
       );
       if (dm.rows.length === 0) return res.status(404).json({ error: 'Photo not found' });
@@ -513,6 +514,80 @@ router.get('/dm/messages/:id/image',
       res.json({ image: dm.rows[0].image_url });
     } catch (err) {
       console.error('Get DM full-size image error:', err);
+      res.status(500).json({ error: 'Server error' });
+    }
+  }
+);
+
+// -------------------------------------------------------------------------
+// UNSEND
+// -------------------------------------------------------------------------
+// A sent message could never be taken back. The tombstone
+// (sender_deleted_at, migration 055) is a sender-owned retirement, NOT a
+// delete: a reported message is evidence and the one person with a motive to
+// destroy it must not be able to (the owner-deleted promotions rule,
+// migration 020, applied to chat). Authorization lives in the UPDATE's own
+// predicate, sender_id = the verified caller, so there is no
+// check-then-act window and a non-sender learns only 404.
+router.delete('/flocks/:id/messages/:messageId',
+  [
+    param('id').isInt({ min: 1, max: INT4_MAX }),
+    param('messageId').isInt({ min: 1, max: INT4_MAX }),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+      const flockId = parseInt(req.params.id);
+      const result = await pool.query(
+        `UPDATE messages SET sender_deleted_at = NOW()
+          WHERE id = $1 AND flock_id = $2 AND sender_id = $3
+            AND sender_deleted_at IS NULL
+          RETURNING id`,
+        [req.params.messageId, flockId, req.user.id]
+      );
+      if (result.rows.length === 0) return res.status(404).json({ error: 'Message not found' });
+      const io = req.app.get('io');
+      if (io) {
+        emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_message_unsent', {
+          flockId, messageId: result.rows[0].id,
+        }).catch((e) => console.error('unsend fan-out failed:', e.message));
+        io.to(`user:${req.user.id}`).emit('flock_message_unsent', { flockId, messageId: result.rows[0].id });
+      }
+      res.json({ success: true });
+    } catch (err) {
+      console.error('Unsend flock message error:', err);
+      res.status(500).json({ error: 'Server error' });
+    }
+  }
+);
+
+router.delete('/dm/messages/:id',
+  [param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid message ID')],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+      const result = await pool.query(
+        `UPDATE direct_messages SET sender_deleted_at = NOW()
+          WHERE id = $1 AND sender_id = $2 AND sender_deleted_at IS NULL
+          RETURNING id, receiver_id`,
+        [req.params.id, req.user.id]
+      );
+      if (result.rows.length === 0) return res.status(404).json({ error: 'Message not found' });
+      const io = req.app.get('io');
+      if (io) {
+        const payload = { messageId: result.rows[0].id, senderId: req.user.id };
+        io.to(`user:${result.rows[0].receiver_id}`).emit('dm_message_unsent', payload);
+        io.to(`user:${req.user.id}`).emit('dm_message_unsent', payload);
+      }
+      res.json({ success: true });
+    } catch (err) {
+      console.error('Unsend DM error:', err);
       res.status(500).json({ error: 'Server error' });
     }
   }
@@ -543,7 +618,7 @@ router.post('/messages/:id/react',
       // content nobody is allowed to see. Removing a reaction stays possible
       // (see the DELETE twin): cleanup after a takedown is not interaction.
       const msgResult = await pool.query(
-        'SELECT flock_id FROM messages WHERE id = $1 AND is_hidden IS NOT TRUE',
+        'SELECT flock_id FROM messages WHERE id = $1 AND is_hidden IS NOT TRUE AND sender_deleted_at IS NULL',
         [messageId]
       );
       if (msgResult.rows.length === 0) {
@@ -699,7 +774,7 @@ router.get('/dm', async (req, res) => {
                   CASE WHEN dm.sender_id = $1 THEN dm.receiver_id ELSE dm.sender_id END AS other_id
            FROM direct_messages dm
            WHERE (dm.sender_id = $1 OR dm.receiver_id = $1)
-             AND COALESCE(dm.is_hidden, false) = false
+             AND COALESCE(dm.is_hidden, false) = false AND dm.sender_deleted_at IS NULL
          ) mine
          WHERE NOT (other_id = ANY($2::int[]))
          ORDER BY other_id, created_at DESC, id DESC
@@ -723,7 +798,7 @@ router.get('/dm', async (req, res) => {
         `SELECT sender_id, COUNT(*)::int AS unread_count
          FROM direct_messages
          WHERE receiver_id = $1 AND read_status = FALSE
-           AND COALESCE(is_hidden, false) = false
+           AND COALESCE(is_hidden, false) = false AND sender_deleted_at IS NULL
            AND sender_id = ANY($2::int[])
          GROUP BY sender_id`,
         [req.user.id, partnerIds]
@@ -789,7 +864,7 @@ router.get('/dm/:userId',
           JOIN users u ON u.id = dm.sender_id
           WHERE ((dm.sender_id = $1 AND dm.receiver_id = $2)
               OR (dm.sender_id = $2 AND dm.receiver_id = $1))
-            AND COALESCE(dm.is_hidden, false) = false
+            AND COALESCE(dm.is_hidden, false) = false AND dm.sender_deleted_at IS NULL
             AND ($3::int IS NULL OR dm.id < $3)
           ORDER BY dm.id DESC
           LIMIT $4`;
@@ -828,7 +903,7 @@ router.get('/dm/:userId',
           `SELECT dm.id, dm.message_text, u.name AS sender_name
            FROM direct_messages dm JOIN users u ON u.id = dm.sender_id
            WHERE dm.id = ANY($1)
-             AND COALESCE(dm.is_hidden, false) = false
+             AND COALESCE(dm.is_hidden, false) = false AND dm.sender_deleted_at IS NULL
              AND ((dm.sender_id = $2 AND dm.receiver_id = $3) OR (dm.sender_id = $3 AND dm.receiver_id = $2))`,
           [replyIds, req.user.id, otherUserId]
         );
@@ -957,7 +1032,7 @@ router.post('/dm/:userId',
         const replyCheck = await pool.query(
           `SELECT id FROM direct_messages
            WHERE id = $1
-             AND COALESCE(is_hidden, false) = false
+             AND COALESCE(is_hidden, false) = false AND sender_deleted_at IS NULL
              AND ((sender_id = $2 AND receiver_id = $3) OR (sender_id = $3 AND receiver_id = $2))`,
           [reply_to_id, req.user.id, receiverId]
         );
@@ -1092,7 +1167,7 @@ router.post('/dm/messages/:id/react',
       // reach across it.
       const dm = await pool.query(
         `SELECT sender_id, receiver_id FROM direct_messages
-         WHERE id = $1 AND COALESCE(is_hidden, false) = false`,
+         WHERE id = $1 AND COALESCE(is_hidden, false) = false AND sender_deleted_at IS NULL`,
         [dmId]
       );
       if (dm.rows.length === 0) return res.status(404).json({ error: 'Message not found' });
@@ -1280,7 +1355,7 @@ router.put('/dm/:messageId/read', param('messageId').isInt({ min: 1, max: INT4_M
     const messageId = parseInt(req.params.messageId);
 
     // A6 takedown: every OTHER read path on this table filters
-    // `COALESCE(is_hidden, false) = false` (the thread reads above, the socket
+    // `COALESCE(is_hidden, false) = false AND sender_deleted_at IS NULL` (the thread reads above, the socket
     // twin, the reply lookup). This one did not, and `RETURNING *` handed back
     // message_text, image_url and venue_data — so the recipient of a
     // moderator-hidden DM could re-read the taken-down content verbatim,
@@ -1295,7 +1370,7 @@ router.put('/dm/:messageId/read', param('messageId').isInt({ min: 1, max: INT4_M
     const result = await pool.query(
       `UPDATE direct_messages SET read_status = TRUE
        WHERE id = $1 AND receiver_id = $2
-         AND COALESCE(is_hidden, false) = false
+         AND COALESCE(is_hidden, false) = false AND sender_deleted_at IS NULL
        RETURNING id, read_status`,
       [messageId, req.user.id]
     );

@@ -260,6 +260,7 @@ function chatProps(over = {}) {
     updateFlockVenue: fn(),
     updateFlockVotes: fn(),
     userLocation: null,
+    handleUnsendFlockMessage: fn(),
     eventCrowd: null,
     eventCrowdLabel: null,
     ...over,
