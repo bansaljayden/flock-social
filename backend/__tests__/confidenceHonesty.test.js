@@ -50,6 +50,14 @@ const path = require('path');
 // override itself.
 delete process.env.TICKETMASTER_API_KEY;
 delete process.env.ML_SHIP_GATE_OVERRIDE;
+// The score quantile map is ARMED BY DEFAULT in production since 2026-08-28.
+// This suite pins the reconstruction stage BENEATH the map (clamp, push,
+// rounding, confidence provenance), whose contracts are unchanged by the
+// arming; the map itself, its default, and its published-figure switch are
+// pinned end to end by dispersionReconstruction.test.js. The kill switch here
+// keeps these fixtures scoring the stage they were written to hold still.
+process.env.CROWD_QMAP_ENABLED = 'false';
+
 
 const crowdEngine = require('../services/crowdEngine');
 const mlPredictor = require('../services/mlPredictor');
