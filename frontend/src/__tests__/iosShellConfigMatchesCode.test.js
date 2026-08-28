@@ -351,8 +351,33 @@ describe('the permissions that are absent are absent for a reason', () => {
     const savers = files.filter((f) => SAVE.test(fs.readFileSync(f, 'utf8')))
       .map((f) => path.relative(REPO, f).split(path.sep).join('/'));
 
-    // Exactly one file may save anything, and what it saves is asserted below.
-    expect(savers).toEqual(['frontend/src/services/dataExport.js']);
+    // Exactly two files may save anything, and each is held to what it saves.
+    // App.js joined 2026-08-28 with the night recap card. The key fact that
+    // keeps the Info.plist claim below true: an anchor download goes to the
+    // BROWSER'S download manager (on iOS, the Files-backed download list),
+    // never to the photo library. NSPhotoLibraryAddUsageDescription is owed
+    // for PHAsset writes by native code, which nothing here performs; when a
+    // person taps Save to Photos inside the SHARE SHEET, that is the sheet's
+    // own permission, not the app's. So the recap saver must stay the LAST
+    // rung of the share ladder, behind both navigator.share gates, which is
+    // asserted structurally here.
+    expect(savers.sort()).toEqual(['frontend/src/App.js', 'frontend/src/services/dataExport.js']);
+
+    const app = read('frontend', 'src', 'App.js');
+    const recapStart = app.indexOf('const shareNightRecap');
+    expect(recapStart).toBeGreaterThan(-1);
+    const recap = app.slice(recapStart, app.indexOf('}, [recapSharing, showToast]);', recapStart));
+    // Every download-attribute write in the app lives inside the recap ladder.
+    expect((app.match(/\bdownload\s*=/g) || []).length).toBe(1);
+    expect((recap.match(/\bdownload\s*=/g) || []).length).toBe(1);
+    // And it sits in the final else, after file-share and sheet-share both
+    // declined, so a platform with a share sheet never reaches it.
+    const ladder = recap.indexOf('navigator.canShare && navigator.canShare({ files: [file] })');
+    const sheet = recap.indexOf('} else if (navigator.share) {', ladder);
+    const fallback = recap.indexOf('a.download', sheet);
+    expect(ladder).toBeGreaterThan(-1);
+    expect(sheet).toBeGreaterThan(ladder);
+    expect(fallback).toBeGreaterThan(sheet);
 
     // The one saver is JSON and only JSON. An image MIME here would mean
     // picture data reaching the device, which is the thing the missing
