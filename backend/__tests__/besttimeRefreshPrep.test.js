@@ -58,6 +58,21 @@ test('collectWeekly has the refresh mode and refuses the contradictory pairing',
   assert.match(WEEKLY, /if \(onlyFound\) \{\s*query \+= ' AND besttime_venue_id IS NOT NULL';/);
 });
 
+test('collectRealtime refuses to outspend its credit ceiling', () => {
+  // On a metered plan there is no rate limit, only a bill: one venue is one
+  // live credit. The run must know its own price and refuse above the
+  // ceiling unless the caller raises it by name.
+  assert.match(REALTIME, /--max-credits=/);
+  assert.match(REALTIME, /maxCredits = maxCreditsArg \? parseInt\(maxCreditsArg\.split\('='\)\[1\], 10\) : 2500;/);
+  assert.match(REALTIME, /REFUSED: this run would spend/);
+});
+
+test('collectWeekly says the bill out loud before the first call', () => {
+  assert.match(WEEKLY, /estCredits = venues\.reduce/);
+  assert.match(WEEKLY, /v\.besttime_venue_id \? 1 : 2/, 'by-id is 1 credit, by-name is 2');
+  assert.match(WEEKLY, /Estimated credits this run/);
+});
+
 test('collectRealtime is PA-scoped by default and global only on purpose', () => {
   assert.match(REALTIME, /\['philly', 'lehigh'\]/);
   assert.match(REALTIME, /--all-cities/);
