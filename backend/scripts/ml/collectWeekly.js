@@ -212,6 +212,11 @@ async function collectWeekly() {
 
   const { rows: venues } = await pool.query(query, params);
 
+  // The bill, said out loud before the first call: by-id refreshes are 1
+  // credit, by-name first-time lookups are 2, and a 404 still bills 1.
+  const estCredits = venues.reduce((sum, v) => sum + (v.besttime_venue_id ? 1 : 2), 0);
+  console.log(`[ML:Weekly] Estimated credits this run: ~${estCredits} `
+    + `(Basic metered ~$${(estCredits * 0.04).toFixed(2)}, Pro metered ~$${(estCredits * 0.009).toFixed(2)}).`);
   console.log(`[ML:Weekly] Starting weekly collection for ${venues.length} venues${cityFilter ? ` (city: ${cityFilter})` : ''}${limitFilter ? ` (limit: ${limitFilter})` : ''}...`);
 
   let totalRows = 0;

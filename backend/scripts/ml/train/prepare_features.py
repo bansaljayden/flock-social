@@ -98,7 +98,21 @@ EXPORTER_PATH = SCRIPT_DIR / 'export_training_data.js'
 # exporter writes for NULL. 'unknown' is NOT here: it is what the EXPORTER says
 # about a row that never declared itself, never a value any collector may write,
 # so seeing it in the raw column means something wrote past the constraint.
-LABEL_SOURCE_VALUES = {'', 'live', 'forecast'}
+# 'owner_report' admitted 2026-08-28, lifting the interlock ownerLabelExport.js
+# holds its side of: the value enters the domain in the SAME change that gives
+# the weight ladder its tier below, because the half-done version (domain
+# widened, ladder ignorant) would put a single self-interested reporter's tap
+# in the weight-1.0 pool above live BestTime observations. 'user_report' stays
+# OUT on purpose: its export path still carries the lookahead leak audit
+# finding 13 documents, and mlFeedbackLabels.test.js pins that pair.
+LABEL_SOURCE_VALUES = {'', 'live', 'forecast', 'owner_report'}
+
+# The argued tier (ownerLabelExport.js handoff): above a weekly snapshot
+# (0.05, not about the moment at all), below the 0.15 argued for three
+# verified strangers agreeing, because this is ONE reporter whose incentives
+# point at the number, with only the owner-median anchor between them and the
+# label.
+OWNER_LABEL_WEIGHT = 0.10
 
 
 def require_export_columns(df: pd.DataFrame, csv_path: Path, label: str) -> None:
@@ -666,7 +680,7 @@ def enforce_dead_slot_contract(constant_cols: List[str],
 # ---------------------------------------------------------------------------
 def derive_label_provenance(is_realtime: pd.Series, source: pd.Series) -> pd.Series:
     """The exact mapping export_training_data.labelProvenance() implements."""
-    named = source.where(source.isin(['live', 'forecast']), 'unknown')
+    named = source.where(source.isin(['live', 'forecast', 'owner_report']), 'unknown')
     return named.where(pd.to_numeric(is_realtime, errors='coerce') == 1, 'weekly')
 
 
@@ -1902,17 +1916,21 @@ def main():
     # regime the shipped v2.5 model was trained under without anyone noticing.
     train_df['label_provenance'] = train_df['label_provenance'].fillna('unknown')
     is_forecast_label = (train_df['is_realtime'] == 1) & (train_df['label_provenance'] == 'forecast')
+    is_owner_label = (train_df['is_realtime'] == 1) & (train_df['label_provenance'] == 'owner_report')
     train_df['sample_weight'] = np.where(
         train_df['is_realtime'] != 1, 0.05,
-        np.where(is_forecast_label, 0.3, 1.0),
+        np.where(is_owner_label, OWNER_LABEL_WEIGHT,
+                 np.where(is_forecast_label, 0.3, 1.0)),
     )
     n_rt = int((train_df['is_realtime'] == 1).sum())
     n_fc = int(is_forecast_label.sum())
+    n_ow = int(is_owner_label.sum())
     total_w = float(train_df['sample_weight'].sum())
     rt_w = float(train_df.loc[train_df['is_realtime'] == 1, 'sample_weight'].sum())
     logger.info(
         f'v2.3.1 blend: {before_filter} -> {len(train_df)} rows with baseline>0 '
-        f'({n_rt} realtime of which {n_fc} vendor-forecast @ weight 0.3, '
+        f'({n_rt} realtime of which {n_fc} vendor-forecast @ weight 0.3 and '
+        f'{n_ow} owner-report @ weight {OWNER_LABEL_WEIGHT}, '
         f'{len(train_df) - n_rt} weekly @ weight 0.05; '
         f'effective realtime share of loss: {rt_w / total_w * 100:.0f}%)'
     )

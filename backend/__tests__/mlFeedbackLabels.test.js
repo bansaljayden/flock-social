@@ -567,6 +567,27 @@ test('runExport is dormant by default and refuses a flag without a mapping', asy
 // no third state.
 // ===========================================================================
 
+test('owner_report labels are accepted AND weighted, the armed half of the same pair', () => {
+  // The interlock ownerLabelExport.js held was lifted 2026-08-28: the domain
+  // gained 'owner_report' and the ladder gained OWNER_LABEL_WEIGHT (0.10) in
+  // one change. This pin holds the pair the same way the user_report test
+  // below holds its (still-interlocked) pair: accepted-and-unweighted is the
+  // one forbidden state, because it would put a single self-interested
+  // reporter's tap in the weight-1.0 pool above live BestTime observations.
+  const domain = PREPARE_SRC.match(/^LABEL_SOURCE_VALUES\s*=\s*\{([^}]*)\}/m);
+  assert.ok(domain);
+  assert.ok(domain[1].includes("'owner_report'"),
+    'owner_report left LABEL_SOURCE_VALUES; the export path is interlocked again');
+  const ladder = PREPARE_SRC.match(/train_df\['sample_weight'\]\s*=\s*np\.where\(([\s\S]*?)\n\s*\)/);
+  assert.ok(ladder);
+  assert.ok(ladder[1].includes('is_owner_label'),
+    'the sample-weight ladder no longer names the owner tier');
+  assert.match(PREPARE_SRC, /OWNER_LABEL_WEIGHT = 0\.10/,
+    'the argued 0.10 tier moved without its argument moving with it');
+  // The derivation matches the exporter for the armed value.
+  assert.equal(exporter.labelProvenance({ collection_mode: 'realtime', label_source: 'owner_report' }), 'owner_report');
+});
+
 test('prepare_features.py cannot accept user_report labels without weighting them', () => {
   const domain = PREPARE_SRC.match(/^LABEL_SOURCE_VALUES\s*=\s*\{([^}]*)\}/m);
   assert.ok(domain, 'LABEL_SOURCE_VALUES is no longer a set literal in prepare_features.py');

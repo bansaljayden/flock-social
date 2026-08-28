@@ -522,10 +522,18 @@ test('an owner reading can never fit a mean that scores other venues', () => {
 
   const sourceSet = prep.match(/LABEL_SOURCE_VALUES\s*=\s*\{([^}]*)\}/);
   assert.ok(sourceSet, 'prepare_features.py must still define LABEL_SOURCE_VALUES');
-  assert.ok(!sourceSet[1].includes(ownerExport.OWNER_LABEL_SOURCE),
-    'until the weight ladder gains the OWNER_LABEL_WEIGHT tier, an owner_report row must '
-    + 'stop the run by name — adding it here without the tier drops these rows into the '
-    + 'weight-1.0 pool, which is 10x what the handoff argues for');
+  // The interlock LIFTED 2026-08-28: the domain and the tier landed in one
+  // change, which was always this pin's condition for standing down ("until
+  // the weight ladder gains the OWNER_LABEL_WEIGHT tier"). What it holds now
+  // is the armed pair: present in the domain AND named by the ladder at the
+  // argued 0.10, never one without the other, because the half-done state
+  // drops a self-interested reporter's tap into the weight-1.0 pool.
+  assert.ok(sourceSet[1].includes(ownerExport.OWNER_LABEL_SOURCE),
+    'owner_report left LABEL_SOURCE_VALUES; the cohort path is interlocked again');
+  assert.ok(prep.includes('is_owner_label'),
+    'the sample-weight ladder no longer names the owner tier');
+  assert.match(prep, /OWNER_LABEL_WEIGHT = 0\.10/,
+    'the 0.10 tier moved without its argument moving with it');
 });
 
 test('the export path never writes — no INSERT, UPDATE or DELETE in the module', () => {

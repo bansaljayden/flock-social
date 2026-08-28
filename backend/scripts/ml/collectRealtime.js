@@ -191,6 +191,32 @@ async function collectRealtime() {
   );
   console.log(`[ML:Realtime] City scope: ${cityScope ? cityScope.join(', ') : 'ALL CITIES (explicit --all-cities)'}`);
 
+  // THE CREDIT BUDGET. The old Railway cron's mental model was "run until the
+  // rate limit"; on a metered BestTime plan there is no rate limit, only a
+  // bill (one live credit per venue per pull, so a 3-hourly sweep of the PA
+  // corpus alone is ~15,000 credits a day). Every run therefore refuses
+  // above a per-run credit ceiling unless the caller raises it on purpose:
+  // one venue here is one credit, so the ceiling is a venue count.
+  const maxCreditsArg = process.argv.find((a) => a.startsWith('--max-credits='));
+  const maxCredits = maxCreditsArg ? parseInt(maxCreditsArg.split('=')[1], 10) : 2500;
+  if (!Number.isInteger(maxCredits) || maxCredits <= 0) {
+    console.error('[ML:Realtime] --max-credits must be a positive integer.');
+    await pool.end();
+    return;
+  }
+  if (venues.length > maxCredits) {
+    console.error(
+      `[ML:Realtime] REFUSED: this run would spend ~${venues.length} live credits `
+      + `against a ceiling of ${maxCredits}. On Basic metered that is `
+      + `$${(venues.length * 0.04).toFixed(2)}; on Pro metered about `
+      + `$${(venues.length * 0.009).toFixed(2)}. Narrow the scope (--cities=...) `
+      + `or raise the ceiling on purpose with --max-credits=${venues.length}.`
+    );
+    await pool.end();
+    return;
+  }
+  console.log(`[ML:Realtime] Credit budget: ~${venues.length} of ${maxCredits} allowed this run.`);
+
   if (venues.length === 0) {
     console.log('[ML:Realtime] No venues with besttime_venue_id. Run weekly collection first.');
     await pool.end();
