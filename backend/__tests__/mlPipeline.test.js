@@ -197,15 +197,40 @@ test('category encoding covers the default guess', () => {
 // --- 3. honest scores through the real model ---------------------------------
 
 test('a venue with a baseline is scored by the model, inside the delta clamp', async () => {
-  const result = await mlPredictor.predictBusyness(venueWithBaseline(), WEATHER_CAMEL, new Date());
-  assert.equal(result.predictionMethod, 'ml');
-  assert.equal(result.modelVersion, META.model_version);
-  assert.ok(result.score >= 0 && result.score <= 100, `score ${result.score}`);
+  // The clamp is a property of the RAW reconstruction, so the calibration map
+  // is disarmed for the clamp assertion: the map's whole job is to undo the
+  // compression the clamp band describes, so with the map armed by default
+  // (2026-08-28) the served score may legitimately leave the band. Asserting
+  // the band on the mapped number made this test pass or fail by the hour of
+  // day the suite ran at; five runs went green the same night before the
+  // 4 AM run landed on an hour whose mapped score left the band.
+  const prevQmap = process.env.CROWD_QMAP_ENABLED;
+  process.env.CROWD_QMAP_ENABLED = 'false';
+  let raw;
+  try {
+    raw = await mlPredictor.predictBusyness(venueWithBaseline(), WEATHER_CAMEL, new Date());
+  } finally {
+    if (prevQmap === undefined) delete process.env.CROWD_QMAP_ENABLED;
+    else process.env.CROWD_QMAP_ENABLED = prevQmap;
+  }
+  assert.equal(raw.predictionMethod, 'ml');
+  assert.equal(raw.modelVersion, META.model_version);
+  assert.ok(raw.score >= 0 && raw.score <= 100, `score ${raw.score}`);
   const [lo, hi] = META.delta_clamp_range || [-30, 30];
-  assert.ok(result.score >= 50 + lo && result.score <= 50 + hi,
-    `delta model with baseline 50 must stay within the clamp; got ${result.score}`);
-  assert.equal(result.label, mlPredictor.getLabel(result.score));
-  assert.ok(result.confidence > 0 && result.confidence <= 100);
+  assert.ok(raw.score >= 50 + lo && raw.score <= 50 + hi,
+    `delta model with baseline 50 must stay within the clamp; got ${raw.score}`);
+  assert.equal(raw.label, mlPredictor.getLabel(raw.score));
+  assert.ok(raw.confidence > 0 && raw.confidence <= 100);
+
+  // With the map armed (the serve default) the score may leave the naive
+  // band, and that is the map doing its job. It must still be a SERVED
+  // score: bounded, labelled from the same number the card shows, with a
+  // real confidence.
+  const mapped = await mlPredictor.predictBusyness(venueWithBaseline(), WEATHER_CAMEL, new Date());
+  assert.equal(mapped.predictionMethod, 'ml');
+  assert.ok(mapped.score >= 0 && mapped.score <= 100, `mapped score ${mapped.score}`);
+  assert.equal(mapped.label, mlPredictor.getLabel(mapped.score));
+  assert.ok(mapped.confidence > 0 && mapped.confidence <= 100);
 });
 
 test('no baseline at all falls back to the rule engine, honestly labelled', async () => {

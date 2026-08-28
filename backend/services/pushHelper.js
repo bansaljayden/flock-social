@@ -705,7 +705,10 @@ function touchDeviceTokens(userId) {
 //
 // Blocked either way is excluded, matching the conversation list in
 // routes/messages.js: a message that will never be shown must not sit in the
-// count forever. Returns null rather than 0 on any failure, because aps.badge
+// count forever. Unsent rows (sender_deleted_at, migration 055) are excluded
+// for the same reason with a sharper edge: every read filters them, so the
+// recipient can never mark one read, and counting it would inflate the badge
+// permanently. Returns null rather than 0 on any failure, because aps.badge
 // of 0 CLEARS the icon and "we could not count" is not "you have nothing".
 // ---------------------------------------------------------------------------
 async function unreadBadge(userId) {
@@ -716,6 +719,7 @@ async function unreadBadge(userId) {
         WHERE dm.receiver_id = $1
           AND dm.read_status = FALSE
           AND COALESCE(dm.is_hidden, false) = false
+          AND dm.sender_deleted_at IS NULL
           AND NOT EXISTS (
             SELECT 1 FROM user_blocks b
              WHERE (b.blocker_id = $1 AND b.blocked_id = dm.sender_id)

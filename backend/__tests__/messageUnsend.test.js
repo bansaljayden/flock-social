@@ -145,6 +145,27 @@ test('every hidden-row filter pairs with the tombstone filter', () => {
     `every is_hidden filter must carry the tombstone twin: ${hiddenCount} filters, ${pairCount} tombstone predicates`);
 });
 
+test('the tombstone filter rides beyond routes/messages.js', () => {
+  // 2026-08-28 adversarial review: the pair count above scans only
+  // routes/messages.js, and three reads live elsewhere.
+  //   1. pushHelper.unreadBadge counts unread DMs for the app icon badge. A
+  //      tombstoned row can never be opened or marked read, so counting one
+  //      inflates the recipient's badge permanently, on every future push.
+  //   2. The socket send_dm reply lookup SELECTs message_text and fans the
+  //      row out verbatim; without the twin, replying to an unsent message
+  //      re-broadcasts the unsent words into the live thread.
+  //   3. Socket dm_react accepted reactions on rows the REST twin 404s.
+  const PUSH = fs.readFileSync(path.join(__dirname, '..', 'services', 'pushHelper.js'), 'utf8');
+  const badgeFn = PUSH.slice(PUSH.indexOf('async function unreadBadge'), PUSH.indexOf('async function deliver'));
+  assert.match(badgeFn, /sender_deleted_at IS NULL/,
+    'the badge count must exclude tombstoned rows the app can never clear');
+
+  const SOCK = fs.readFileSync(path.join(__dirname, '..', 'sockets', 'handlers.js'), 'utf8');
+  const sockPairs = (SOCK.match(/sender_deleted_at IS NULL/g) || []).length;
+  assert.ok(sockPairs >= 2,
+    `the socket transport must carry the tombstone twin on the reply lookup and dm_react (found ${sockPairs})`);
+});
+
 test('the migration carries both columns', () => {
   const mig = fs.readFileSync(path.join(__dirname, '..', 'migrations', '055_message_unsend.sql'), 'utf8');
   assert.match(mig, /ALTER TABLE messages ADD COLUMN IF NOT EXISTS sender_deleted_at TIMESTAMPTZ;/);
