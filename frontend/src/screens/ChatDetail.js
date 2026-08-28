@@ -172,6 +172,8 @@ export default function ChatDetail({
   confirmFlockPlan,
   copiedInviteUrl,
   crowdPredictions,
+  eventCrowd,
+  eventCrowdLabel,
   dismissNotifAsk,
   flockAtTop,
   flockInviteAllFriends,
@@ -1854,16 +1856,28 @@ export default function ChatDetail({
                           venue row in the file already guards it this way. */}
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{venue.type}{venue.price ? ` • ${venue.price}` : ''}</p>
                     </div>
-                    {typeof venue.crowd === 'number' && <div style={{
-                      padding: '4px 10px',
-                      borderRadius: '12px',
-                      backgroundColor: venue.crowd > 60 ? '#FEE2E2' : venue.crowd > 40 ? '#FEF3C7' : '#D1FAE5',
-                      color: crowdColorFor(venue.crowd, colors),
-                      fontSize: 'var(--t-meta)',
-                      fontWeight: '500'
-                    }}>
-                      {venue.crowd}%
-                    </div>}
+                    {(() => {
+                      /* The plan's own hour first. venue.crowd is the map's
+                         "right now" number, and a vote for Saturday 9 PM was
+                         being argued with Thursday afternoon's crowd. The
+                         event-hour score arrives per flock (App.js
+                         requestEventCrowdScores) and carries its hour, so the
+                         number says which question it is answering. */
+                      const ev = eventCrowd ? eventCrowd[venue.place_id] : undefined;
+                      const score = typeof ev === 'number' ? ev : (typeof venue.crowd === 'number' ? venue.crowd : null);
+                      if (score === null) return null;
+                      return <div style={{
+                        padding: '4px 10px',
+                        borderRadius: '12px',
+                        backgroundColor: score > 60 ? '#FEE2E2' : score > 40 ? '#FEF3C7' : '#D1FAE5',
+                        color: crowdColorFor(score, colors),
+                        fontSize: 'var(--t-meta)',
+                        fontWeight: '500',
+                        whiteSpace: 'nowrap'
+                      }}>
+                        {score}%{typeof ev === 'number' && eventCrowdLabel ? ` ${eventCrowdLabel}` : ''}
+                      </div>;
+                    })()}
                   </button>
                 ))}
               </div>
