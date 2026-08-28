@@ -909,7 +909,7 @@ export default function DmDetail({
                         onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
                       >{emoji}</button>
                     ))}
-                    {m.sender === 'You' && typeof m.id === 'number' && (
+                    {m.sender === 'You' && typeof m.id === 'number' && m.id <= 2147483647 && (
                       <button aria-label="Unsend message" className="hit44" onClick={(e) => { e.stopPropagation(); setShowDmReactionPicker(null); handleUnsendDm(m.id); }} style={{ fontSize: 'var(--t-meta)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: 'var(--text-secondary)', fontWeight: '600' }} title="Unsend">Unsend</button>
                     )}
                     {m.message_type === 'image' && (m.image_url || m.thumb_url) && (

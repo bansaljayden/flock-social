@@ -1943,7 +1943,10 @@ function registerHandlers(io, socket) {
       // Round 16: normalized like every other id on this handler. The REST
       // twin runs `body('reply_to_id').optional().isInt()`; here a non-numeric
       // value threw inside the query and dropped the whole message with no
-      // explanation to the sender.
+      // explanation to the sender. The tombstone twin rides with is_hidden
+      // here exactly as it does on the REST route: this SELECT returns
+      // message_text and the row is fanned out verbatim, so a reply to an
+      // unsent message would re-broadcast the words unsend just removed.
       const replyToId = reply_to_id === undefined || reply_to_id === null ? null : asId(reply_to_id);
       let replyRow = null;
       if (reply_to_id !== undefined && reply_to_id !== null && replyToId === null) return;
@@ -1953,6 +1956,7 @@ function registerHandlers(io, socket) {
            FROM direct_messages dm JOIN users u ON u.id = dm.sender_id
            WHERE dm.id = $1
              AND COALESCE(dm.is_hidden, false) = false
+             AND dm.sender_deleted_at IS NULL
              AND ((dm.sender_id = $2 AND dm.receiver_id = $3) OR (dm.sender_id = $3 AND dm.receiver_id = $2))`,
           [replyToId, user.id, receiverId]
         );
@@ -2053,7 +2057,8 @@ function registerHandlers(io, socket) {
 
       const dm = await pool.query(
         `SELECT sender_id, receiver_id FROM direct_messages
-         WHERE id = $1 AND COALESCE(is_hidden, false) = false`,
+         WHERE id = $1 AND COALESCE(is_hidden, false) = false
+           AND sender_deleted_at IS NULL`,
         [dmId]
       );
       if (dm.rows.length === 0) return;

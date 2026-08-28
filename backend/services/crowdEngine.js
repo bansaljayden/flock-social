@@ -226,9 +226,9 @@ function publishedLabel(score, support) {
 // venue at 65 printed "Busy" in amber and one at 75 printed "Busy" in red: same
 // word, two colours, from the same card component. The colour bands are derived
 // from the label bands here so a band can never be edited in one place only.
-//   green  = Quiet / Not Busy   (0-40)
-//   amber  = Moderate           (41-60)
-//   red    = Busy / Very Busy   (61-100)
+//   green  = Quiet / Not Busy   (0-39)
+//   amber  = Steady / Busy      (40-84)
+//   red    = Packed             (85-100)  (re-cut 2026-08-28 with the ladder)
 // Any surface that shows a crowd colour should use these boundaries.
 function getLevel(score) {
   // Derived from the label bands (re-cut 2026-08-28 with the ladder above):
@@ -989,8 +989,8 @@ function estimateWait(score, types, priceLevel) {
   // Steakhouses — reservation culture, long waits without one
   if (isSteakhouseLike(types)) {
     if (score < 40) return 'Walk-in OK';
-    if (score <= 60) return '10-20 min';
-    if (score <= 80) return '30-45 min';
+    if (score <= 69) return '10-20 min';
+    if (score <= 84) return '30-45 min';
     return '45+ min — reserve ahead';
   }
 
@@ -1002,38 +1002,38 @@ function estimateWait(score, types, priceLevel) {
   // (routes/crowd.js) have always passed venue.price_level here.
   if (isFineDining(types, priceLevel)) {
     if (score < 40) return 'Walk-in likely';
-    if (score <= 60) return '15-25 min';
-    if (score <= 80) return '30-60 min';
+    if (score <= 69) return '15-25 min';
+    if (score <= 84) return '30-60 min';
     return 'Reservation needed';
   }
 
   if (isBarLike(types)) {
     if (score < 50) return 'No wait';
-    if (score <= 70) return '~5 min';
-    if (score <= 85) return '5-10 min';
+    if (score <= 69) return '~5 min';
+    if (score <= 84) return '5-10 min';
     return '10-15 min';
   }
 
   if (hasType(types, 'night_club')) {
     if (score < 40) return 'No wait';
-    if (score <= 60) return '5-10 min';
-    if (score <= 80) return '15-30 min';
+    if (score <= 69) return '5-10 min';
+    if (score <= 84) return '15-30 min';
     return '30-60 min';
   }
 
   // Cafes, juice shops, smoothie shops — quick service
   if (isCafeLike(types)) {
     if (score < 50) return 'No wait';
-    if (score <= 70) return '~3 min';
-    if (score <= 85) return '5-10 min';
+    if (score <= 69) return '~3 min';
+    if (score <= 84) return '5-10 min';
     return '10-15 min';
   }
 
   // Fast food — quick turnover
   if (isFastFoodLike(types)) {
     if (score < 40) return 'No wait';
-    if (score <= 60) return '~3 min';
-    if (score <= 80) return '5-10 min';
+    if (score <= 69) return '~3 min';
+    if (score <= 84) return '5-10 min';
     return '10-15 min';
   }
 
@@ -1041,16 +1041,16 @@ function estimateWait(score, types, priceLevel) {
   if (isDinerLike(types)) {
     if (score < 40) return 'No wait';
     if (score <= 55) return '~5 min';
-    if (score <= 70) return '5-15 min';
-    if (score <= 85) return '15-25 min';
+    if (score <= 69) return '5-15 min';
+    if (score <= 84) return '15-25 min';
     return '25+ min';
   }
 
   // Dessert / ice cream — line based
   if (isDessertLike(types)) {
     if (score < 40) return 'No line';
-    if (score <= 60) return '~3 min';
-    if (score <= 80) return '5-10 min';
+    if (score <= 69) return '~3 min';
+    if (score <= 84) return '5-10 min';
     return '10-20 min';
   }
 
@@ -1058,40 +1058,40 @@ function estimateWait(score, types, priceLevel) {
   if (hasType(types, 'shopping_mall')) {
     if (score < 30) return 'Uncrowded';
     if (score <= 50) return 'Light crowds';
-    if (score <= 70) return 'Moderate crowds';
-    if (score <= 85) return 'Crowded';
+    if (score <= 69) return 'Moderate crowds';
+    if (score <= 84) return 'Crowded';
     return 'Very crowded';
   }
 
   // Gyms — equipment wait
   if (hasType(types, 'gym', 'fitness_center')) {
     if (score < 40) return 'Equipment open';
-    if (score <= 60) return 'Some equipment in use';
-    if (score <= 80) return 'Most equipment busy';
+    if (score <= 69) return 'Some equipment in use';
+    if (score <= 84) return 'Most equipment busy';
     return 'Packed — expect waits';
   }
 
   // Libraries, museums — space availability
   if (hasType(types, 'library', 'museum')) {
     if (score < 40) return 'Plenty of space';
-    if (score <= 60) return 'Some seats taken';
-    if (score <= 80) return 'Getting full';
+    if (score <= 69) return 'Some seats taken';
+    if (score <= 84) return 'Getting full';
     return 'Very full';
   }
 
   // Movie theaters — ticket line
   if (hasType(types, 'movie_theater')) {
     if (score < 40) return 'No line';
-    if (score <= 60) return 'Short line';
-    if (score <= 80) return '10-15 min line';
+    if (score <= 69) return 'Short line';
+    if (score <= 84) return '10-15 min line';
     return '15-30 min line';
   }
 
   // Generic restaurants: table waits
   if (score < 40) return 'No wait';
   if (score <= 55) return '~5 min';
-  if (score <= 70) return '10-20 min';
-  if (score <= 85) return '20-35 min';
+  if (score <= 69) return '10-20 min';
+  if (score <= 84) return '20-35 min';
   return '35+ min';
 }
 
@@ -1501,7 +1501,9 @@ function recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOp
   if (openToday.length) return stayPut(true);
 
   // Open now and nothing open after this hour: it is this hour or another day.
-  if (currentScore <= 60) {
+  // Steady (<= 69 under the 2026-08-28 ladder) is a normal evening and still
+  // worth going now; only Busy and Packed defer to another day here.
+  if (currentScore <= 69) {
     return {
       text: 'Now, they close soon', hourLabel: null, index: Math.max(0, nowIdx), dayOffset: 0,
       orderingBasis: axis.basis, orderingMinGap: HOUR_ORDERING_MIN_GAP,

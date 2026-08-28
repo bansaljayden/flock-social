@@ -8132,12 +8132,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // read that as new traffic and threw the reader straight back down to the
   // newest message the instant they asked for scrollback.
   const chatTailRef = useRef(null);
+  const chatLenRef = useRef(0);
   useEffect(() => {
     if (currentScreen === 'chatDetail' && chatEndRef.current) {
       const msgs = selectedFlock?.messages || [];
       const tail = msgs.length ? String(msgs[msgs.length - 1].id) : 'empty';
+      const prevLen = chatLenRef.current;
+      chatLenRef.current = msgs.length;
       if (tail !== chatTailRef.current) {
+        const entering = chatTailRef.current === null;
         chatTailRef.current = tail;
+        // An unsend can remove the newest message, which changes the tail
+        // without being traffic. A shrinking list must not yank a reader who
+        // is deep in history down to the bottom.
+        if (!entering && msgs.length < prevLen) return;
         // Always instant scroll when entering the chat
         chatEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
         setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' }), 50);
@@ -8145,6 +8153,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     } else {
       // Reset when leaving chat so re-entering triggers instant scroll
       chatTailRef.current = null;
+      chatLenRef.current = 0;
     }
   }, [selectedFlock?.messages, currentScreen]);
 
@@ -9079,10 +9088,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   useEffect(() => {
     const unsub = onDmMessageUnsent((data) => {
-      setDirectMessages(prev => prev.map(d => ({
-        ...d,
-        messages: (d.messages || []).filter(m => m.id !== data.messageId),
-      })));
+      setDirectMessages(prev => {
+        // The takedown helper, not a bare filter: it also nulls reply quotes
+        // that would keep the unsent words on screen, and clears a preview
+        // that a removal just emptied.
+        const cleaned = applyTakedownToDms(prev, { contentType: 'dm', contentId: data.messageId });
+        // A thread not loaded this session keeps only a stored lastMessage,
+        // and nothing local can tell whether that preview IS the unsent
+        // message. Clear it rather than leak: an empty preview until the
+        // next list load beats unsent words sitting on the inbox screen.
+        return cleaned.map(d => (
+          d.userId === data.senderId && (!d.messages || d.messages.length === 0) && (d.lastMessage || d.lastMessageTime)
+            ? { ...d, lastMessage: '', lastMessageTime: null, lastMessageIsYou: false }
+            : d
+        ));
+      });
     });
     return unsub;
   }, []);
@@ -9107,10 +9127,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const handleUnsendDm = useCallback(async (messageId) => {
     try {
       await unsendDm(messageId);
-      setDirectMessages(prev => prev.map(d => ({
-        ...d,
-        messages: (d.messages || []).filter(m => m.id !== messageId),
-      })));
+      // Same helper the takedown path uses: removal plus reply-quote nulling
+      // plus preview clearing, so the unsent words leave every surface at
+      // once instead of only the thread.
+      setDirectMessages(prev => applyTakedownToDms(prev, { contentType: 'dm', contentId: messageId }));
       showToast('Message unsent.');
     } catch (err) {
       showToast(err.message || "That didn't unsend. Try again.", 'error');
@@ -9198,6 +9218,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       senderId: authUser?.id,
       senderImage: profilePic,
       time: 'Now',
+      sentAt: new Date().toISOString(),
       text,
       reactions: [],
       message_type: msgType,
@@ -9268,7 +9289,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         const savedId = data?.message?.id;
         setFlocks(prev => prev.map(f => {
           if (f.id !== flockId) return f;
-          return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, ...(isServerId(savedId) ? { id: savedId } : {}), pending: false } : m)) };
+          return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, ...(isServerId(savedId) ? { id: savedId } : {}), ...(data?.message?.created_at ? { sentAt: data.message.created_at } : {}), pending: false } : m)) };
         }));
       } catch (err) {
         // The server words a moderation refusal ("that image can't be sent")
@@ -10975,6 +10996,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       senderId: authUser?.id,
       text: payload.text,
       time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+      sentAt: new Date().toISOString(),
       message_type: payload.message_type,
       venue_data: payload.venue_data || null,
       image_url: payload.image_url || null,
@@ -11031,7 +11053,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         // the only reconciliation the bubble gets. Without the real id its
         // reactions and reports would address a temp id the server never had.
         const saved = data?.message;
-        settle(saved?.id ? { id: saved.id, pending: false } : { pending: false });
+        settle({
+          ...(saved?.id ? { id: saved.id } : {}),
+          // The separator helper dates rows by sentAt; without this a
+          // REST-confirmed send stayed undated all session and a day
+          // boundary at it silently disappeared.
+          ...(saved?.created_at ? { sentAt: saved.created_at } : {}),
+          pending: false,
+        });
         setDmNotConnected(prev => {
           if (!prev[userId]) return prev;
           const next = { ...prev };
@@ -11436,13 +11465,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Auto-scroll DM chat to bottom
   // Tail, not length. See the flock twin above, same reason.
   const dmTailRef = useRef(null);
+  const dmLenRef = useRef(0);
   useEffect(() => {
     const msgs = selectedDm?.messages || [];
-    if (currentScreen !== 'dmDetail') { dmTailRef.current = null; return; }
-    if (msgs.length === 0) return;
+    if (currentScreen !== 'dmDetail') { dmTailRef.current = null; dmLenRef.current = 0; return; }
+    if (msgs.length === 0) { dmLenRef.current = 0; return; }
     const tail = String(msgs[msgs.length - 1].id);
+    const prevLen = dmLenRef.current;
+    dmLenRef.current = msgs.length;
     if (tail === dmTailRef.current) return;
+    const entering = dmTailRef.current === null;
     dmTailRef.current = tail;
+    // Same shrink guard as the flock twin: an unsend is not new traffic.
+    if (!entering && msgs.length < prevLen) return;
     requestAnimationFrame(() => dmChatEndRef.current?.scrollIntoView({ behavior: 'auto' }));
   }, [currentScreen, selectedDm?.messages]); // eslint-disable-line react-hooks/exhaustive-deps
 
