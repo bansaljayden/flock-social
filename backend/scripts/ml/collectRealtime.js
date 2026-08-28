@@ -165,9 +165,31 @@ async function collectRealtime() {
   // filters on collected_at, which Postgres fills from NOW(); reading the same
   // clock means host skew cannot make the audit miss rows this run wrote.
   const { rows: [{ started_at: runStartedAt }] } = await pool.query('SELECT NOW() AS started_at');
+  // PA-ONLY BY DEFAULT since 2026-08-28. This sweep used to select every
+  // venue with a BestTime id, about 14,000 across 34 cities, and the Railway
+  // cron ran it every 3 hours: on a metered key that is roughly 112,000
+  // credits a day, about $4,500/day, for cities with zero users. The paid
+  // plan's users are in eastern Pennsylvania, so philly and lehigh are the
+  // default scope; --cities=a,b picks a different set, and --all-cities
+  // restores the old global sweep as a deliberate act rather than a default.
+  // Both spellings: --cities=a,b (this script) and --city=x (the singular
+  // collectWeekly has always taken, which the clock-axis suite and muscle
+  // memory both use). Either one overrides the PA default.
+  const citiesArg = process.argv.find((a) => a.startsWith('--cities='));
+  const cityArg = process.argv.find((a) => a.startsWith('--city='));
+  const allCities = process.argv.includes('--all-cities');
+  const cityScope = allCities
+    ? null
+    : (citiesArg ? citiesArg.split('=')[1].split(',').map((c) => c.trim()).filter(Boolean)
+      : cityArg ? [cityArg.split('=')[1].trim()]
+      : ['philly', 'lehigh']);
   const { rows: venues } = await pool.query(
-    `SELECT * FROM ml_venues WHERE is_active = true AND besttime_venue_id IS NOT NULL ORDER BY city, id`
+    `SELECT * FROM ml_venues WHERE is_active = true AND besttime_venue_id IS NOT NULL`
+    + (cityScope ? ' AND city = ANY($1)' : '')
+    + ' ORDER BY city, id',
+    cityScope ? [cityScope] : []
   );
+  console.log(`[ML:Realtime] City scope: ${cityScope ? cityScope.join(', ') : 'ALL CITIES (explicit --all-cities)'}`);
 
   if (venues.length === 0) {
     console.log('[ML:Realtime] No venues with besttime_venue_id. Run weekly collection first.');

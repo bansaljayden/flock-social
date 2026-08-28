@@ -292,16 +292,15 @@ function allowEventFetch(userId, opts) {
 // path in the API, and a retention policy, to answer a question a restart-scoped
 // tally already answers. Read it, do not gate on it.
 //
-// AND IT IS NOT VISIBLE YET, WHICH IS THE HALF THIS FILE CANNOT FINISH.
-// The paragraph above says these counters make the split visible. As of
-// 2026-08-26 they do not: predictionCoverage is exported and read by nothing
-// except __tests__/predictionCoverage.test.js. eventBudgetStatus, which this
-// comment compares itself to, has two call sites in routes/admin.js and one in
-// server.js's money watch, and that difference is the whole difference between
-// a number somebody sees and a number somebody could see. The remaining step is
-// one read in the admin cost panel beside the eventBudgetStatus rows. Said out
-// loud rather than left implied, because a counter with no reader looks exactly
-// like a counter with one from inside this file.
+// VISIBLE SINCE 2026-08-26, AND THE WIRE HAS ITS OWN GUARD. GET
+// /api/admin/costs serves this block (routes/admin.js, through
+// meterBlockOrNull, after the meterOrNull null-bug costModel.test.js
+// documents), and the admin Revenue screen renders it
+// (frontend/src/screens/RevenueScreen.js, the predictionCoverage panel). The
+// paragraph that stood here said the counter was read by nothing but its own
+// test; that was true on the morning of 2026-08-26 and false by that evening,
+// and it kept saying it for two more days, which is its own small lesson in
+// comments that describe wiring.
 //
 // NOTE ON WHAT IT COUNTS. predictHourlyForecast calls predictBusyness once per
 // hour of the strip, so `total` is scored VENUE-HOURS, not cards. A single card
