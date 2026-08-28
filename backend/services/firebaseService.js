@@ -329,10 +329,10 @@ function buildFcmMessage(token, title, body, data = {}) {
   // this app has ever sent.
   //
   // WHAT THE NUMBER MEANS, stated here because a badge that means something
-  // vague is worse than no badge. It is the recipient's unread DIRECT MESSAGE
-  // count, and only that, because direct_messages.read_status is the only read
-  // state the database actually holds. Flock chat has none, so a badge claiming
-  // to count "everything unread" would be a number the server cannot compute.
+  // vague is worse than no badge. It is the recipient's unread direct messages
+  // plus, since migration 056, flock messages past each membership's read
+  // cursor: the two read states the database holds, and both are cleared by
+  // the app itself the moment the thread or the chat is opened.
   // services/pushHelper.js computes it and passes it on every push it sends.
   //
   // WHY IT IS SAFE TO SEND ON EVERY TYPE: aps.badge is ABSOLUTE, not an

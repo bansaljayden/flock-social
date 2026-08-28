@@ -593,6 +593,44 @@ router.delete('/dm/messages/:id',
   }
 );
 
+// -------------------------------------------------------------------------
+// READ CURSOR
+// -------------------------------------------------------------------------
+// Flock chat's first read state (migration 056). The cursor is a message id
+// watermark on flock_members rather than a timestamp because
+// messages.created_at is a NAIVE timestamp and a TIMESTAMPTZ comparison
+// against it is the four-hour restore shift again; ids are SERIAL and
+// monotone, which is all a watermark needs. GREATEST makes the route
+// idempotent and order-proof: a late or repeated PUT can only ever move the
+// cursor forward. Membership is the UPDATE's own predicate, the same shape as
+// unsend above, so a non-member learns only 404.
+router.put('/flocks/:id/read',
+  [
+    param('id').isInt({ min: 1, max: INT4_MAX }),
+    body('lastMessageId').isInt({ min: 1, max: INT4_MAX }),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+      const result = await pool.query(
+        `UPDATE flock_members
+            SET last_read_message_id = GREATEST(COALESCE(last_read_message_id, 0), $3)
+          WHERE flock_id = $1 AND user_id = $2
+          RETURNING last_read_message_id`,
+        [parseInt(req.params.id), req.user.id, parseInt(req.body.lastMessageId)]
+      );
+      if (result.rows.length === 0) return res.status(404).json({ error: 'Flock not found' });
+      res.json({ success: true, lastReadMessageId: result.rows[0].last_read_message_id });
+    } catch (err) {
+      console.error('Mark flock read error:', err);
+      res.status(500).json({ error: 'Server error' });
+    }
+  }
+);
+
 router.post('/messages/:id/react',
   [
     param('id').isInt({ min: 1, max: INT4_MAX }),

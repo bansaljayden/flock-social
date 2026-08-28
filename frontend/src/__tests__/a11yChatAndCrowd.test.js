@@ -130,8 +130,11 @@ describe('small state announcements', () => {
     expect(APP).toMatch(/aria-pressed=\{isSelected\}/);
   });
 
-  test('the flock-row unread dot has words, and the bill paid check does too', () => {
-    expect(APP).toContain('<span className="sr-only">Unread messages</span>');
+  test('the flock-row unread badge has words, and the bill paid check does too', () => {
+    // The dot became a count pill with the migration 056 server cursor: the
+    // visible number plus this sr-only suffix read together as, say,
+    // "3 unread messages", which is more announcement, not less.
+    expect(APP).toContain('<span className="sr-only"> unread messages</span>');
     expect(CHAT).toContain('<span className="sr-only">Paid</span>');
   });
 
