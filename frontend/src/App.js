@@ -7,6 +7,7 @@ import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
+import { hapticTap, hapticSuccess, hapticAlarm } from './services/haptics';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onReliabilityUpdated, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled } from './services/socket';
 import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
@@ -5631,6 +5632,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     setCheckinSaving(true);
     try {
       const res = await checkInManual(placeId);
+      hapticSuccess();
       const ts = Date.now();
       localStorage.setItem('flock_checkin_' + placeId, String(ts));
       setCheckinDoneAt(ts);
@@ -5649,6 +5651,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   const handleSetPulse = useCallback(async (status) => {
     if (pulseSaving) return;
+    hapticTap();
     setPulseSaving(true);
     try {
       // Expire at 4am local tomorrow (i.e. "tonight")
@@ -6121,6 +6124,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       };
       // Same success path as handleCreate: remember it is brand new, put it in
       // the list, open its chat.
+      hapticSuccess();
       newlyCreatedFlockRef.current = f.id;
       setFlocks(prev => [...prev, newFlock]);
       setSelectedFlockId(f.id);
@@ -7707,6 +7711,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         votes: [],
         messages: [],
       };
+      hapticSuccess();
       newlyCreatedFlockRef.current = f.id;
       setFlocks(prev => [...prev, newFlock]);
       setSelectedFlockId(f.id);
@@ -7757,6 +7762,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // One vote per person per flock. Posting a new pick replaces the old row
     // server side, and dropping your pick has to be sent as a delete or the
     // un-vote never left the browser.
+    hapticTap();
     const myVote = optimistic.find(v => (v.voters || []).includes('You'));
     const sync = myVote
       ? voteForVenue(flockId, myVote.venue, myVote.place_id || null)
@@ -10203,6 +10209,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       // indoors meant a quarter of a minute in which nobody had been told
       // anything at all. Nothing is worth that in an emergency. Wait a few
       // seconds for a fix, send either way, and chase the location afterwards.
+      hapticAlarm();
       const first = navigator.geolocation ? await getSosPosition(SOS_FIRST_FIX_MS, 60000) : { coords: null, denied: false };
       const loc = first.coords;
       const data = await sendEmergencyAlert({
@@ -12547,7 +12554,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', creatorId: f.creator_id, members: invitedNames, memberCount: 1 + invitedIds.length, time: formatEventTime(f.event_time || capturedEventTime), eventTime: f.event_time || capturedEventTime, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, venueLat: venueLat, venueLng: venueLng, cashPool: null, budgetEnabled: f.budget_enabled || capturedBudget, budgetContext: f.budget_context || capturedBudgetCtx, budgetLocked: false, budgetCeiling: null, ghostModeEnabled: f.ghost_mode_enabled || capturedGhostMode, votes: [], messages: initialMessages };
 
         // Batch all state updates together — navigate immediately
-        newlyCreatedFlockRef.current = f.id;
+        hapticSuccess();
+      newlyCreatedFlockRef.current = f.id;
         setFlocks(prev => [...prev, newFlock]);
         setSelectedFlockId(f.id);
         setCurrentScreen('chatDetail');
