@@ -103,8 +103,8 @@ describe('the week is drawn in the deep weight of the shared crowd bands', () =>
     // crowdBandFor, and only crowdBandFor names the numbers.
     const band = APP.match(/const crowdBandFor = \(score\) => \{[\s\S]*?\n\};/);
     expect(band).not.toBeNull();
-    expect(band[0]).toMatch(/score > 60/);
-    expect(band[0]).toMatch(/score > 40/);
+    expect(band[0]).toMatch(/score > 84/);
+    expect(band[0]).toMatch(/score > 39/);
 
     for (const name of ['crowdColorFor', 'crowdColorDeepFor']) {
       const fn = APP.match(new RegExp(`const ${name} = \\([^)]*\\) => \\{[\\s\\S]*?\\n\\};`));
