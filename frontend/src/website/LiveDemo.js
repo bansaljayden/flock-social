@@ -50,7 +50,10 @@ const MAP_BOOT_TIMEOUT_MS = 15_000; // no style by then and the basemap is not c
 // backend's getLabel cuts at 60, so a venue at 65 printed "Busy" in amber and
 // one at 75 printed "Busy" in red: the same word, two colours, on the same card
 // component. Bands here mirror crowdEngine.getLevel exactly.
-//   green 0-40 (Quiet, Not Busy) | amber 41-60 (Moderate) | red 61+ (Busy, Very Busy)
+//   green 0-39 (Quiet, Not Busy) | amber 40-84 (Steady, Busy) | red 85+ (Packed)
+// Re-cut 2026-08-28 with the qmap arming: under the calibrated
+// venue-relative scale, Busy is a normal good evening and wears amber; only
+// Packed alarms. Same reasoning as crowdEngine.js getLabel.
 const CROWD_GREEN = '#22C55E';
 const CROWD_AMBER = '#F59E0B';
 const CROWD_RED = '#EF4444';
@@ -85,9 +88,9 @@ const wrapLng = (lng) => (((lng + 180) % 360) + 360) % 360 - 180;
 // comma, are worse than a plain stand-in.
 const venueName = (v) => (v && typeof v.name === 'string' && v.name.trim()) || 'This spot';
 
-const crowdColor = (score) => (score > 60 ? CROWD_RED : score > 40 ? CROWD_AMBER : CROWD_GREEN);
+const crowdColor = (score) => (score > 84 ? CROWD_RED : score > 39 ? CROWD_AMBER : CROWD_GREEN);
 const crowdTextColor = (score) =>
-  (score > 60 ? CROWD_RED_TEXT : score > 40 ? CROWD_AMBER_TEXT : CROWD_GREEN_TEXT);
+  (score > 84 ? CROWD_RED_TEXT : score > 39 ? CROWD_AMBER_TEXT : CROWD_GREEN_TEXT);
 const isShut = (v) => v && v.is_open === false;
 
 // The visitor's clock: predictions are for THEIR hour, not the server's UTC.
@@ -1196,8 +1199,8 @@ function emptySentence(q) {
 // crowdEngine.getLabel so the word can never disagree with the colour.
 function crowdWord(s) {
   if (s <= 20) return 'Quiet';
-  if (s <= 40) return 'Not Busy';
-  if (s <= 60) return 'Moderate';
-  if (s <= 80) return 'Busy';
-  return 'Very Busy';
+  if (s <= 39) return 'Not Busy';
+  if (s <= 69) return 'Steady';
+  if (s <= 84) return 'Busy';
+  return 'Packed';
 }

@@ -1870,7 +1870,7 @@ export default function ChatDetail({
                       return <div style={{
                         padding: '4px 10px',
                         borderRadius: '12px',
-                        backgroundColor: score > 60 ? '#FEE2E2' : score > 40 ? '#FEF3C7' : '#D1FAE5',
+                        backgroundColor: score > 84 ? '#FEE2E2' : score > 39 ? '#FEF3C7' : '#D1FAE5',
                         color: crowdColorFor(score, colors),
                         fontSize: 'var(--t-meta)',
                         fontWeight: '500',
