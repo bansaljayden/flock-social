@@ -140,6 +140,7 @@ export default function DmDetail({
   dmAtTop,
   dmBlocked,
   dmChatEndRef,
+  dmNearBottomRef,
   dmChatSearch,
   dmChatSearchRef,
   dmGalleryInputRef,
@@ -712,7 +713,13 @@ export default function DmDetail({
         if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) el.blur();
         const c = e.currentTarget;
         const fromBottom = c.scrollHeight - c.scrollTop - c.clientHeight;
-        setShowJumpPill((prev) => (prev ? fromBottom > 200 : fromBottom > 600));
+        setShowJumpPill((prev) => {
+          const next = prev ? fromBottom > 200 : fromBottom > 600;
+          // Same hysteresis band, read by App.js's tail-follow effect. See
+          // the flock twin in ChatDetail.js.
+          dmNearBottomRef.current = !next;
+          return next;
+        });
       }} style={{ flex: 1, padding: '16px', overflowY: 'auto', overflowX: 'hidden', background: `linear-gradient(180deg, ${colors.cream} 0%, ${colors.cream}cc 100%)`, scrollBehavior: 'smooth' }}>
         {showDmChatSearch && dmChatSearch.trim() && selectedDm.messages.filter(m => {
           const q = dmChatSearch.toLowerCase();

@@ -6528,6 +6528,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   }, []);
   const [showChatPool, setShowChatPool] = useState(false);
   const chatEndRef = useRef(null);
+  // Written by ChatDetail's onScroll, the same handler that drives the jump
+  // pill: true whenever the reader is within the pill's own hysteresis band
+  // of the bottom. Read by the tail-follow effect below, so a message
+  // arriving while someone is deep in history defers to the pill instead of
+  // yanking them down. Starts true: a freshly opened chat has not scrolled.
+  const chatNearBottomRef = useRef(true);
   const aiInputRef = useRef(null);
   const aiChatEndRef = useRef(null);
   // Always-fresh snapshot for Birdie context (sendAiMessage useCallback would otherwise capture stale values)
@@ -6884,6 +6890,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const [dmTypingUser, setDmTypingUser] = useState('');
   const dmTypingTimeoutRef = useRef(null);
   const dmChatEndRef = useRef(null);
+  // Same contract as chatNearBottomRef, written by DmDetail's onScroll.
+  const dmNearBottomRef = useRef(true);
   const [dmChatSearch, setDmChatSearch] = useState('');
   const [showDmChatSearch, setShowDmChatSearch] = useState(false);
   const dmChatSearchRef = useRef(null);
@@ -8152,6 +8160,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         // without being traffic. A shrinking list must not yank a reader who
         // is deep in history down to the bottom.
         if (!entering && msgs.length < prevLen) return;
+        // Jayden, 2026-08-29: a message arriving while the reader is
+        // scrolled up is exactly what the jump pill exists for. Force-
+        // scrolling here would yank them off whatever they were reading;
+        // only entering the chat, or already being near the bottom, follows
+        // the tail automatically.
+        if (!entering && !chatNearBottomRef.current) return;
         // Always instant scroll when entering the chat
         chatEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
         setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' }), 50);
@@ -8160,6 +8174,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       // Reset when leaving chat so re-entering triggers instant scroll
       chatTailRef.current = null;
       chatLenRef.current = 0;
+      chatNearBottomRef.current = true;
     }
   }, [selectedFlock?.messages, currentScreen]);
 
@@ -11520,7 +11535,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const dmLenRef = useRef(0);
   useEffect(() => {
     const msgs = selectedDm?.messages || [];
-    if (currentScreen !== 'dmDetail') { dmTailRef.current = null; dmLenRef.current = 0; return; }
+    if (currentScreen !== 'dmDetail') { dmTailRef.current = null; dmLenRef.current = 0; dmNearBottomRef.current = true; return; }
     if (msgs.length === 0) { dmLenRef.current = 0; return; }
     const tail = String(msgs[msgs.length - 1].id);
     const prevLen = dmLenRef.current;
@@ -11530,6 +11545,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     dmTailRef.current = tail;
     // Same shrink guard as the flock twin: an unsend is not new traffic.
     if (!entering && msgs.length < prevLen) return;
+    // Same jump-pill deference as the flock twin (Jayden, 2026-08-29): only
+    // entering, or already being near the bottom, follows a new message down.
+    if (!entering && !dmNearBottomRef.current) return;
     requestAnimationFrame(() => dmChatEndRef.current?.scrollIntoView({ behavior: 'auto' }));
   }, [currentScreen, selectedDm?.messages]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -17102,6 +17120,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         chatGalleryInputRef,
         chatInputHasText,
         chatNavOpen,
+        chatNearBottomRef,
         chatSearch,
         chatSearchRef,
         colors,
@@ -17250,6 +17269,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         dmMemberLocation,
         dmMessagesLoading,
         dmNavOpen,
+        dmNearBottomRef,
         dmNotConnected,
         dmPendingImage,
         dmPinnedVenue,
