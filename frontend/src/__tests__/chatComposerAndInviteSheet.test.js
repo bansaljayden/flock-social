@@ -153,6 +153,7 @@ function chatProps(over = {}) {
     chatGalleryInputRef: { current: null },
     chatInputHasText: false,
     chatNavOpen: false,
+    chatNearBottomRef: { current: true },
     chatSearch: '',
     chatSearchRef: { current: null },
     colors: {},

@@ -198,6 +198,7 @@ export default function ChatDetail({
   budgetStatus,
   budgetSubmitting,
   chatEndRef,
+  chatNearBottomRef,
   chatGalleryInputRef,
   chatInputHasText,
   chatNavOpen,
@@ -853,7 +854,14 @@ export default function ChatDetail({
           if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) el.blur();
           const c = e.currentTarget;
           const fromBottom = c.scrollHeight - c.scrollTop - c.clientHeight;
-          setShowJumpPill((prev) => (prev ? fromBottom > 200 : fromBottom > 600));
+          setShowJumpPill((prev) => {
+            const next = prev ? fromBottom > 200 : fromBottom > 600;
+            // Same hysteresis band, read by App.js's tail-follow effect so a
+            // message arriving off-screen does not force a scroll the pill
+            // was just built to make optional.
+            chatNearBottomRef.current = !next;
+            return next;
+          });
         }} style={{ flex: 1, padding: '16px', overflowY: 'auto', overflowX: 'hidden', background: `linear-gradient(180deg, ${colors.cream} 0%, ${colors.cream}cc 100%)`, scrollBehavior: 'smooth' }}>
           {showChatSearch && chatSearch.trim() && flock.messages.filter(m => {
             const q = chatSearch.toLowerCase();
