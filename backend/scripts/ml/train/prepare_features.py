@@ -2105,9 +2105,15 @@ def main():
     # Round 25: events_observed rides along too, so the question "how much of
     # this holdout's event signal was ever measured" is answerable from the
     # pickles rather than from another two-hour export.
+    # observed_date rides along for GATE-B's date-block bootstrap. The dump
+    # below has read it since 2026-08-28, but this keep list never carried it,
+    # so the first real run after the gate was armed crashed at the dump: the
+    # arming edit was never executed until 2026-08-30. A carried column, not a
+    # feature, same as the others here.
     keep_extra = ['busyness_pct', 'delta_label', 'baseline_busyness', 'city',
                   'label_provenance', 'venue_category',
-                  'label_source', 'vendor_forecast_pct', 'events_observed']
+                  'label_source', 'vendor_forecast_pct', 'events_observed',
+                  'observed_date']
     holdout_df = holdout_df[feature_cols + keep_extra]
 
     logger.info(f'Feature count: {len(feature_cols)}')
@@ -2236,6 +2242,12 @@ def main():
         'vendor_forecast_pct': pd.to_numeric(
             train_df['vendor_forecast_pct'], errors='coerce').values.astype(np.float32),
         'label_type': 'delta',
+        # 2026-08-30: dates ride the TRAIN pickle too. The sports ablation
+        # needs a forward-in-time split evaluated on PA rows, because the
+        # geographic holdout (miami, tokyo, barcelona) is exactly where the
+        # market-gated sports features are all zero by design; the holdout
+        # has carried this key since GATE-B for the same class of reason.
+        'observed_date': train_df['observed_date'].astype('string').fillna('').values.astype(str),
         # Round 14: raw material for a per-fold refit of the two category
         # label-means. Not features, not applied to any row here.
         'category_cell_stats': cell_stats,

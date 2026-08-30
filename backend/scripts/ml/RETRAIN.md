@@ -1008,6 +1008,42 @@ ablation proves the feature real, not before:**
 - Birdie or Roost mentioning game nights conversationally while planning. A
   nice-to-have, not urgent — last in line.
 
+**MEASURED 2026-08-30, the free ablation ran and the answer is NO on this
+corpus.** Full pipeline: 540 games pulled (five pro teams plus Lehigh and
+Lafayette football, verified live), six-column feature family in
+prepare_features (market-gated at 60km), one feature build, two fits with
+the shipped hyperparameters, evaluated on the PA forward slice past the
+house prequential cutoff (22,533 rows, 7,544 on game nights), GATE-B's own
+date-block bootstrap as judge, qmap disarmed for both sides. Result:
+within-10 dead flat (CI -0.25 to +0.19pp), MAE +0.250 WORSE with sports and
+the CI (+0.152 to +0.357) says the worsening is real; on game nights
+specifically MAE is a full point worse; the trees ranked the six columns
+85th to 95th of 101 used features with one never used; the no-harm check on
+the geo holdout passed (32.000 to 31.960). Verdict line, verbatim: "no lift
+distinguishable from day noise."
+
+**The honest caveat, recorded so October can re-decide:** the fit side held
+only ~19 days of in-market game signal (the cutoff is 2026-03-28 and the
+Phillies season began 03-26), so the trees learned game nights from a thin
+late-winter slice and were scored on a Phillies-dominated spring window.
+The corpus that could measure this feature properly, a fall window with
+Eagles and college football plus fresh live labels, does not exist yet and
+only starts existing once BestTime collection resumes. Per the
+pre-registered rule (item 4 of the plan: cancelled if it earns nothing):
+recommend CANCELLING the $9/mo at renewal. The 540 games through Apr 2027
+are already pulled and stay in ml_sports_events either way; the collector
+and features stay in the tree, market-gated to zeros unless the CSV is
+present; re-subscribing for a October re-test against fall live data is one
+click and the same key. The explainability badge and the Birdie mention do
+NOT ship, per their own gate.
+
+**Also fixed by running this pipeline, worth more than the ablation cost:**
+the first real prepare_features run since GATE-B was armed crashed at the
+holdout dump because observed_date was never added to the projection's keep
+list on 2026-08-28, meaning GATE-B's CI arms sat on a line that could never
+execute; and the train pickle now carries observed_date too, which any
+future within-market forward eval needs.
+
 **Explicitly ruled out:** player-level signals (injuries, star-power buzz)
 are too granular for this tier and this product; not worth chasing. This is
 one orthogonal feature, not a substitute for BestTime's actual crowd
