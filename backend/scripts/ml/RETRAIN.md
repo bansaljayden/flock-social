@@ -911,6 +911,54 @@ footer (their standing free-credits offer) and one student-discount email to
 their contact address, both Jayden-cheap and worth doing before September's
 invoice.
 
+## Prep status (2026-08-29 evening): everything staged, NOTHING spends until Jayden says go
+
+Jayden's standing order, verbatim intent: get everything ready for SportsDB
+and BestTime, but do not use BestTime yet. The rule in force: NO BestTime
+API call of any kind without a fresh, unambiguous yes from him. State:
+
+- **Account**: Package-100 is LIVE ($119/mo). The original "FLock" key
+  (Mar 9) is dead; resubscribing did not revive it. The working key is the
+  Aug 29 "MCP" key set, now in `backend/.env`. Observed and important:
+  despite the dashboard's warning that venue data is tied to key sets, the
+  new key resolved an old-corpus venue BY ID and refreshed it (168 rows),
+  so the corpus is reachable. The usage panel then showed "Unique venues: 1"
+  for that call; per the Package docs (unlimited by-id on admitted venues)
+  that panel reads as an activity log, not a cap meter, and on a fixed-price
+  plan a wrong reading costs nothing. Unresolved on purpose; the month-one
+  test in the v3 plan settles it empirically.
+- **BestTime usage so far, total**: 10 venues touched (1 test + 9 of 843
+  when the philly refresh was stopped seconds after Jayden paused usage).
+  All by-id refreshes of already-owned venues. Partial refresh is harmless:
+  the collector upserts, and the full run redoes it.
+- **Archive: DONE.** 3,454,955 weekly rows copied to
+  `ml_training_data_weekly_w1` BEFORE any refresh touched the live table.
+- **Want-list: validated, staged, not yet committed.** addDemandVenues.js
+  (new) derives demand from served_predictions + venue_votes +
+  venue_checkins, PA-only by geometry, dry-run by default. First validation
+  pass: 96 candidates, 47 confirmed real and in-area, 8 out of area (demo
+  serves), rest unresolved because the backend Places key rate-limited
+  (429), which the script now treats as stop-and-resume, never as
+  venue-dead. Finish the dry run when the Places quota window resets, then
+  `--commit`, then admission waits for the BestTime go.
+- **SportsDB: READY and verified live.** Migration 057 (`ml_sports_events`,
+  pure CREATE) + collectSportsSchedules.js (new): resolves the five teams
+  by name at runtime, pulls league season schedules, keeps games home AND
+  away, arena coordinates resolved via lookupvenue.php strMap (probed live:
+  Sixers arena 39.901111,-75.171944). `--verify` proved the key with one
+  call and zero writes. Full pull + the free corpus ablation are the next
+  moves and cost nothing but the flat $9/mo already paid.
+
+The armed sequence, in order, once Jayden says go on BestTime:
+1. finish addDemandVenues dry run, review, `--commit`
+2. `node scripts/ml/collectWeekly.js --city=philly --only-found` (843)
+3. `node scripts/ml/collectWeekly.js --city=lehigh --only-found`
+4. `--skip-attempted` runs to admit the committed want-list by name
+5. arm the nightly live pilot (infrastructure decision rides with him:
+   this machine sleeps, so nightly means either his PC on a schedule or a
+   deliberately created Railway cron, which is his call, not an autonomous
+   one)
+
 ## SportsDB feature scope, expanded (2026-08-29)
 
 Jayden asked to exhaust the options before any of this gets built. The
