@@ -449,8 +449,10 @@ hand-curated party-nights YAML (~30 rows/yr).
    rank-in-cluster)
 
 **Cheap paid / enrichment:**
-7. TheSportsDB $9/mo Patreon tier (commercial OK, attribution): home-game
-   nights x is_sports_bar x arena distance — documented +21-70% sports-bar lifts
+7. TheSportsDB $9/mo Single Developer tier (dedicated key, commercial OK,
+   attribution): game nights x venue proximity x category — documented
+   +21-70% sports-bar lifts. Scope expanded 2026-08-29 below; read that
+   section before building this, the original one-liner here undersold it.
 8. Anchor proximity (stadium/theater/campus <=1km) via Overture Maps Places
    (CDLA-P 2.0, clean commercial license) — also late-close/hours-shape flags
    and chain-vs-independent from FSQ OS Places/Overture
@@ -840,10 +842,13 @@ The allocation:
    switches to the Pro Package 500 tier ($149) instead of metered.
 3. **November, Pro metered, $99** (or Package $149): window 3 refresh
    (--suffix=w2 archive first) plus continued live.
-4. **TheSportsDB Premium, $9/mo for three months, $27.** One feature: home
-   game nights for Philadelphia pro and college teams, the rare signal that
-   varies inside a category-day-hour cell. Measured against the fresh live
-   labels after one retrain; cancelled if the feature earns nothing.
+4. **TheSportsDB Single Developer, $9/mo for three months, $27.** Key
+   acquired 2026-08-29 (`SPORTSDB_API_KEY` in `backend/.env`, confirmed a
+   dedicated production key, not the shared test key). Game nights for
+   Philadelphia pro and college teams, the rare signal that varies inside a
+   category-day-hour cell. Scope expanded 2026-08-29 below; measured against
+   the EXISTING frozen corpus first, for free, before spending a second month
+   on it — cancelled if the feature earns nothing.
 5. **Human ground-truth audit, ~$120.** Paid head-counts at 8-10 PA venues at
    known hours across two weekends, the only fully independent yardstick for
    the whole program.
@@ -855,3 +860,59 @@ Free levers riding along: a backlink to BestTime.app in the flockcorp.com
 footer (their standing free-credits offer) and one student-discount email to
 their contact address, both Jayden-cheap and worth doing before September's
 invoice.
+
+## SportsDB feature scope, expanded (2026-08-29)
+
+Jayden asked to exhaust the options before any of this gets built. The
+sequencing decision he made: **BestTime first.** Nothing below starts until
+that's sorted; this section is the plan waiting for him, not a queue.
+
+The one-liner above (item 7, item 4) undersold what this actually is. Full
+breakdown:
+
+**The features, strongest to weakest:**
+1. Game-night flag, broadened past the original scope. "Home game nights"
+   was too narrow: sports bars pack for road games on TV too, sometimes
+   harder than for a mediocre home matchup. The real feature is "is this
+   team playing at all tonight," home or away. Philadelphia carries five
+   major pro teams (Eagles, Sixers, Phillies, Flyers, Union), so on most
+   nights across a full year something is live — more signal than the
+   home-only version this section used to describe.
+2. Distance decay, not a binary. The lift is sharpest next to the arena and
+   fades with distance, so this is a continuous feature, not on/off.
+3. Beyond `is_sports_bar`. Restaurants near the stadium see pre-game and
+   post-game traffic too; the original scope limited the proximity effect
+   to bars alone.
+4. Lehigh corridor. Our other real sub-corpus is college-town PA. Campus
+   bars spike on football/basketball game days the same mechanism as pro
+   teams. NCAA depth on the Single Developer tier is unverified until we're
+   actually pulling data.
+5. Free stadium coordinates. SportsDB's own venue records carry arena
+   lat/lng, so the proximity feature does not need a hand-curated stadium
+   list separately from item 8 in the enrichment list above.
+
+**The sequencing that matters most:** SportsDB carries historical schedules,
+not just future ones, so the game-night flag can be backfilled onto the
+EXISTING frozen corpus's rows and ablated against the same harness GATE-B
+already uses — zero new BestTime credits, no waiting for a season, a real
+MAE number in days. If it's zero lift, cancel the $9/mo immediately, per
+item 4 above. Only if it's real does the live daily-refresh collector and
+the serving-path wiring get built. Building the live pipeline before running
+this free test would be spending engineering time to find out something a
+one-off backfill script answers for nothing.
+
+**Two product uses, approved by Jayden 2026-08-29, sequenced after the
+ablation proves the feature real, not before:**
+- An explainability badge: "Busier than usual, Eagles play tonight" next to
+  the crowd score. Near-free once the schedule pull exists, and it directly
+  serves the whole point of the calibration workstream: making the one
+  number legible, not just accurate.
+- Birdie or Roost mentioning game nights conversationally while planning. A
+  nice-to-have, not urgent — last in line.
+
+**Explicitly ruled out:** player-level signals (injuries, star-power buzz)
+are too granular for this tier and this product; not worth chasing. This is
+one orthogonal feature, not a substitute for BestTime's actual crowd
+observations. Schedules shift (rain delays, TV-driven time changes), so past
+the free historical test, a live feature needs a daily refresh, not a
+one-time pull.
