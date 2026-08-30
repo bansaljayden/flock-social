@@ -50,11 +50,22 @@ const BASE = 'https://www.thesportsdb.com/api/v1/json';
 // exact string handed to searchteams.php; league is a sanity pin so a
 // same-named team in some other competition cannot slip in.
 const TRACKED = [
-  { key: 'eagles', search: 'Philadelphia Eagles', league: 'NFL' },
-  { key: 'sixers', search: 'Philadelphia 76ers', league: 'NBA' },
-  { key: 'phillies', search: 'Philadelphia Phillies', league: 'MLB' },
-  { key: 'flyers', search: 'Philadelphia Flyers', league: 'NHL' },
-  { key: 'union', search: 'Philadelphia Union', league: 'American Major League Soccer' },
+  { key: 'eagles', search: 'Philadelphia Eagles', league: 'NFL', code: 'NFL' },
+  { key: 'sixers', search: 'Philadelphia 76ers', league: 'NBA', code: 'NBA' },
+  { key: 'phillies', search: 'Philadelphia Phillies', league: 'MLB', code: 'MLB' },
+  { key: 'flyers', search: 'Philadelphia Flyers', league: 'NHL', code: 'NHL' },
+  // league is SportsDB's exact strLeague for matching; code is what the
+  // table stores. The full MLS string is 28 characters against a
+  // VARCHAR(16) column, which killed the first pull's insert.
+  { key: 'union', search: 'Philadelphia Union', league: 'American Major League Soccer', code: 'MLS' },
+  // The Lehigh corridor's fall signal, verified on this tier 2026-08-30:
+  // both schools carry NCAA Division 1 football (their rivalry is the
+  // biggest sports event in that market). College BASKETBALL coverage is
+  // patchy on this tier (no Villanova hoops at all), so it stays out until
+  // it can be verified the way these were. searchteams matches the short
+  // names, not the mascot forms.
+  { key: 'lehigh_fb', search: 'Lehigh', league: 'NCAA Division 1', code: 'NCAAF' },
+  { key: 'lafayette_fb', search: 'Lafayette', league: 'NCAA Division 1', code: 'NCAAF' },
 ];
 
 // Seasons whose games can overlap the corpus (Mar 10 to Aug 29 2026 weekly
@@ -66,6 +77,9 @@ const DEFAULT_SEASONS = {
   MLB: ['2026'],
   NHL: ['2025-2026', '2026-2027'],
   'American Major League Soccer': ['2026'],
+  // One big league-wide fetch, filtered to the two tracked schools locally.
+  // 2026 only: the 2025 college season predates the corpus window entirely.
+  'NCAA Division 1': ['2026'],
 };
 
 async function get(pathAndQuery) {
@@ -93,10 +107,10 @@ async function resolveTeam(t) {
     try {
       const vd = await get(`lookupvenue.php?id=${encodeURIComponent(hit.idVenue)}`);
       const venue = (vd.venues || [])[0];
-      const m = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/.exec(venue?.strMap || '');
-      if (m) {
-        stadiumLat = parseFloat(m[1]);
-        stadiumLon = parseFloat(m[2]);
+      const parsed = parseStrMap(venue?.strMap);
+      if (parsed) {
+        stadiumLat = parsed.lat;
+        stadiumLon = parsed.lon;
       }
     } catch (err) {
       // A missing venue record costs the distance feature for this team's
@@ -112,6 +126,24 @@ async function resolveTeam(t) {
     stadiumLat,
     stadiumLon,
   };
+}
+
+// strMap arrives in TWO formats across SportsDB's own venue records,
+// probed live 2026-08-30: decimal ("39.901111, -75.171944", the Sixers and
+// Flyers arena) and degrees-minutes-seconds ("39°54′21″N 75°9′59″W",
+// the other three). Both parse; anything else returns null and costs the
+// distance feature, never the run.
+function parseStrMap(raw) {
+  const str = String(raw || '').trim();
+  let m = /^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/.exec(str);
+  if (m) return { lat: parseFloat(m[1]), lon: parseFloat(m[2]) };
+  m = /^(\d+)°(\d+)′(?:(\d+(?:\.\d+)?)″)?([NS])\s+(\d+)°(\d+)′(?:(\d+(?:\.\d+)?)″)?([EW])$/.exec(str);
+  if (m) {
+    const lat = (parseInt(m[1], 10) + parseInt(m[2], 10) / 60 + (parseFloat(m[3]) || 0) / 3600) * (m[4] === 'S' ? -1 : 1);
+    const lon = (parseInt(m[5], 10) + parseInt(m[6], 10) / 60 + (parseFloat(m[7]) || 0) / 3600) * (m[8] === 'W' ? -1 : 1);
+    return { lat, lon };
+  }
+  return null;
 }
 
 function eventInstant(ev) {
@@ -166,7 +198,7 @@ async function main() {
     // are fetched once and written once per team perspective.
     const byLeague = new Map();
     for (const t of resolved) {
-      if (!byLeague.has(t.leagueId)) byLeague.set(t.leagueId, { league: t.league, teams: [] });
+      if (!byLeague.has(t.leagueId)) byLeague.set(t.leagueId, { league: t.league, code: t.code, teams: [] });
       byLeague.get(t.leagueId).teams.push(t);
     }
 
@@ -196,6 +228,9 @@ async function main() {
                  event_utc = EXCLUDED.event_utc,
                  event_local_date = EXCLUDED.event_local_date,
                  event_local_time = EXCLUDED.event_local_time,
+                 venue_name = EXCLUDED.venue_name,
+                 venue_lat = EXCLUDED.venue_lat,
+                 venue_lon = EXCLUDED.venue_lon,
                  raw_status = EXCLUDED.raw_status,
                  collected_at = NOW()`,
               [
@@ -203,7 +238,7 @@ async function main() {
                 // suffix keeps one row per team perspective without
                 // inventing a second real event.
                 `${ev.idEvent}:${t.key}`,
-                entry.league,
+                entry.code,
                 season,
                 t.key,
                 isHome,

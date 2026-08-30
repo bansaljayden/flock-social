@@ -1053,6 +1053,123 @@ def add_holiday_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# Sports game-night features (2026-08-30, TheSportsDB). The scope doc in
+# ../RETRAIN.md is the contract: the flag is "is a tracked team playing at
+# all tonight", home or away, because sports bars fill for road games on TV;
+# home-ness and arena distance are separate features layered on top, and the
+# lift is expected to decay with distance rather than be a binary.
+SPORTS_DIST_CAP_KM = 60.0
+SPORTS_LOCAL_KM = 60.0
+SPORTS_HOME_NEAR_KM = 10.0
+
+
+def add_sports_features(df: pd.DataFrame) -> pd.DataFrame:
+    """Game-night context from sports_events.csv (exportSportsEvents.js).
+
+    Three zero cases, each the truth rather than a fallback:
+      * the CSV is absent (the schedule pull has not run) - every column is
+        zero and the distance sits at its cap, so an old export trains
+        exactly as before;
+      * weekly rows - no observed_date, and a synthetic "typical Tuesday"
+        has no game night, same rule the holiday features follow;
+      * rows farther than SPORTS_LOCAL_KM from every tracked arena - a
+        Phillies game is not a feature of a Tokyo Tuesday. Without this
+        gate the date-keyed flags would light up worldwide and hand the
+        trees a calendar correlate, the same class of leak latitude and
+        longitude are dropped for.
+
+    Distances are derived from latitude/longitude, which stay available on
+    the frame here and are excluded from the FEATURE list; derived-not-raw
+    is the same pattern the astronomy features use.
+    """
+    cols_zero = ['sports_game_today', 'sports_games_count', 'sports_evening_game',
+                 'sports_home_game_today', 'sports_home_within_10km']
+    path = SCRIPT_DIR / 'sports_events.csv'
+    if not path.exists():
+        for c in cols_zero:
+            df[c] = 0
+        df['sports_home_dist_km'] = SPORTS_DIST_CAP_KM
+        logger.info('Sports features: sports_events.csv absent, all-zero columns (run exportSportsEvents.js to arm)')
+        return df
+
+    ev = pd.read_csv(path, dtype={'event_local_date': str, 'event_local_time': str})
+
+    # The tracked arenas are a handful of fixed points; every distance in
+    # this family is a min over them, so one small matrix covers the frame.
+    home = ev[(ev['is_home'] == 1) & ev['venue_lat'].notna() & ev['venue_lon'].notna()]
+    arenas = home[['venue_lat', 'venue_lon']].drop_duplicates().to_numpy(dtype=float)
+
+    lat = df['latitude'].to_numpy(dtype=float)
+    lon = df['longitude'].to_numpy(dtype=float)
+    if len(arenas):
+        lat_r = np.radians(lat)[:, None]
+        lon_r = np.radians(lon)[:, None]
+        a_lat = np.radians(arenas[:, 0])[None, :]
+        a_lon = np.radians(arenas[:, 1])[None, :]
+        h = (np.sin((a_lat - lat_r) / 2) ** 2
+             + np.cos(lat_r) * np.cos(a_lat) * np.sin((a_lon - lon_r) / 2) ** 2)
+        dist_all = 2 * 6371.0 * np.arcsin(np.sqrt(h))  # rows x arenas, km
+        with np.errstate(invalid='ignore'):
+            nearest_any = np.nanmin(dist_all, axis=1)
+    else:
+        dist_all = np.zeros((len(df), 0))
+        nearest_any = np.full(len(df), np.inf)
+    local = np.nan_to_num(nearest_any, nan=np.inf) <= SPORTS_LOCAL_KM
+
+    def hour_of(t):
+        t = str(t or '')
+        return int(t[:2]) if len(t) >= 2 and t[:2].isdigit() else -1
+
+    by_date = {}
+    arena_index = {(round(la, 6), round(lo, 6)): i for i, (la, lo) in enumerate(arenas)}
+    for r in ev.itertuples():
+        d = by_date.setdefault(r.event_local_date, {'count': 0, 'evening': 0, 'home_idx': set()})
+        d['count'] += 1
+        if 17 <= hour_of(r.event_local_time) <= 23:
+            d['evening'] = 1
+        if r.is_home == 1 and pd.notna(r.venue_lat) and pd.notna(r.venue_lon):
+            idx = arena_index.get((round(float(r.venue_lat), 6), round(float(r.venue_lon), 6)))
+            if idx is not None:
+                d['home_idx'].add(idx)
+
+    n = len(df)
+    game_today = np.zeros(n, dtype=np.int8)
+    games_count = np.zeros(n, dtype=np.int16)
+    evening = np.zeros(n, dtype=np.int8)
+    home_today = np.zeros(n, dtype=np.int8)
+    home_dist = np.full(n, SPORTS_DIST_CAP_KM, dtype=float)
+
+    dates = df['observed_date'].fillna('').astype(str).to_numpy()
+    for date_str in pd.unique(dates):
+        if not date_str or date_str not in by_date:
+            continue
+        info = by_date[date_str]
+        rows = (dates == date_str) & local
+        if not rows.any():
+            continue
+        game_today[rows] = 1
+        games_count[rows] = info['count']
+        evening[rows] = info['evening']
+        if info['home_idx'] and dist_all.shape[1]:
+            idx = sorted(info['home_idx'])
+            d = np.nanmin(dist_all[np.ix_(rows.nonzero()[0], idx)], axis=1)
+            home_today[rows] = 1
+            home_dist[rows.nonzero()[0]] = np.minimum(
+                np.nan_to_num(d, nan=SPORTS_DIST_CAP_KM), SPORTS_DIST_CAP_KM)
+
+    df['sports_game_today'] = game_today
+    df['sports_games_count'] = games_count
+    df['sports_evening_game'] = evening
+    df['sports_home_game_today'] = home_today
+    df['sports_home_dist_km'] = home_dist
+    df['sports_home_within_10km'] = ((home_dist <= SPORTS_HOME_NEAR_KM) & (home_today == 1)).astype(np.int8)
+
+    lit = int(game_today.sum())
+    logger.info(f'Sports features: {len(ev)} events, {len(arenas)} arenas, {lit} game-night rows '
+                f'({int(home_today.sum())} with a home game in market)')
+    return df
+
+
 def add_venue_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
     """Add venue-derived features and encode categories."""
     # Category encoding
@@ -1825,6 +1942,8 @@ def main():
     train_df = add_neighbor_features(train_df)
     # v2.5: special-night calendar features from observed_date
     train_df = add_holiday_features(train_df)
+    # 2026-08-30: game-night context, zeros unless sports_events.csv exists
+    train_df = add_sports_features(train_df)
     venue_metadata['temp_norms'] = {
         f"{int(r.lat_band)}_{int(r.month)}": round(float(r.temp_norm), 2)
         for r in temp_norms.itertuples() if not pd.isna(r.month)
@@ -1860,6 +1979,7 @@ def main():
         holdout_df, _ = add_climate_anomaly(holdout_df, norms=temp_norms)  # TRAIN norms — no holdout leakage
         holdout_df = add_neighbor_features(holdout_df)
         holdout_df = add_holiday_features(holdout_df)
+        holdout_df = add_sports_features(holdout_df)
 
     # Compute delta label: y_delta = busyness_pct - baseline_busyness
     # Model predicts the delta; production reconstructs absolute as baseline + clamp(delta, -30, 30).
