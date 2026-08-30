@@ -90,6 +90,38 @@ test('the sports event instant comes from the UTC timestamp, never the local pai
     'deriving an instant from the local date pair would move evening games across nights');
 });
 
+test('the feature builder derives game nights with three honest zero cases', () => {
+  const PREP = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'train', 'prepare_features.py'), 'utf8');
+  assert.match(PREP, /def add_sports_features/);
+  assert.match(PREP, /sports_events\.csv absent, all-zero columns/,
+    'a missing schedule file trains exactly as before, never crashes');
+  assert.match(PREP, /SPORTS_LOCAL_KM = 60\.0/,
+    'the market gate: a Phillies game is not a feature of a Tokyo Tuesday');
+  assert.match(PREP, /same class of leak latitude and/,
+    'the gate exists for the geo-leak reason, and the comment says so');
+});
+
+test('the ablation is one feature build compared against itself, params pinned to the shipped model', () => {
+  const ABL = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'train', 'sports_ablation.py'), 'utf8');
+  assert.match(ABL, /os\.environ\['CROWD_QMAP_ENABLED'\] = 'false'/,
+    'the map was fitted on the incumbent; applying it to fresh fits measures the map, not the features');
+  assert.match(ABL, /never across two/,
+    'both fits come from ONE pickle generation, so rows and split are identical by construction');
+  // The fixed hyperparameters must be the shipped model's own, so the
+  // ablation measures the features, not a config drift.
+  const META = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'models', 'model_metadata.json'), 'utf8'));
+  for (const [k, v] of Object.entries(META.hyperparameters.params)) {
+    const re = new RegExp(`'${k}': ${String(v).replace('.', '\.')}`);
+    assert.match(ABL, re, `ablation params must carry the shipped ${k}=${v}`);
+  }
+});
+
+test('the exporter bridges database to file and touches no external API', () => {
+  const EXP = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'train', 'exportSportsEvents.js'), 'utf8');
+  assert.match(EXP, /FROM ml_sports_events/);
+  assert.ok(!/thesportsdb|https:/i.test(EXP), 'the exporter reads the table the collector filled, never the API');
+});
+
 test('migration 057 is a pure CREATE, replay-safe by construction', () => {
   assert.match(MIG, /CREATE TABLE IF NOT EXISTS ml_sports_events/);
   assert.match(MIG, /sportsdb_event_id VARCHAR\(32\) NOT NULL UNIQUE/, 'the upsert has a real conflict target');
