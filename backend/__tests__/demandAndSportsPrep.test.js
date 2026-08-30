@@ -62,7 +62,12 @@ test('a Places 429 is rate limiting, never a dead venue', () => {
 
 test('the sports collector reads its key from the environment and tracks both sides', () => {
   assert.match(SPORTS, /process\.env\.SPORTSDB_API_KEY/);
-  assert.ok(!/REDACTED_SPORTSDB_KEY/.test(SPORTS), 'no literal key in source, ever');
+  // Generic on purpose: an earlier version of this assertion embedded the
+  // actual key digits inside the forbidding regex, which put the secret in
+  // the repo to ban the secret from the repo. SportsDB keys are long numeric
+  // ids and nothing else in this script legitimately carries one, so any
+  // standalone run of nine-plus digits is a smuggled credential.
+  assert.ok(!/\d{9,}/.test(SPORTS), 'no literal numeric key in source, ever');
   assert.match(SPORTS, /ev\.idHomeTeam === t\.teamId/);
   assert.match(SPORTS, /ev\.idAwayTeam === t\.teamId/,
     'home or away is the point: the flag is "is this team playing at all tonight"');
