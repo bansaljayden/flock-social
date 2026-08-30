@@ -813,35 +813,72 @@ bearing; the traps it guards against are pinned in
    shipped (it has: philly+lehigh unless `--all-cities` is passed on
    purpose).
 
-## The $500 plan, v2 (2026-08-28 late, prices VERIFIED off the live pricing page)
+## The $500 plan, v3 (2026-08-29, Package beats metered — see below)
 
-Jayden's word: spend the full $500 on model accuracy. Tier prices below were
-read out of the pricing page's own Stripe amounts by the pricing research
-pass, not estimated. Key verified facts: Pro metered is $99/mo minimum
-CREDITED TO USAGE at $0.009/credit ($0.006 after 10K); our whole month-one
-load (1,915 by-id refreshes at 1 credit + 95 by-name adds at 2) is ~2,105
-credits, about $19, far under the minimum, so month one is $99 flat and the
-rest of the minimum buys the live pilot. Basic metered has NO live data. Pro
-Package tiers: 1/$66, 50/$96, 100/$119, 500/$149, 1K/$249, 5K/$399,
-20K/$999; by-id and live unlimited within tier; only worth it for
-high-frequency polling. Rate limits (300/min global) are irrelevant at our
-scale. Two negotiate-by-contact discounts exist: a student/nonprofit discount
-and free credits for a backlink to BestTime.app on our site.
+Jayden's word: spend on model accuracy, budget is a guideline not a wall
+("I'm ok with any... use it to the max"). Tier prices VERIFIED off the live
+pricing page. Basic metered has NO live data. Pro metered is $99/mo minimum
+credited to usage at $0.009/credit ($0.006 after 10K) — our month-one load
+(1,915 by-id refreshes + 95 by-name adds) is ~2,105 credits, ~$19, so month
+one bills the $99 floor flat and the rest buys a live pilot capped by that
+floor to roughly 300 venues/night. Two negotiate-by-contact discounts exist
+regardless of tier: a student/nonprofit discount and free credits for a
+backlink to BestTime.app on our site.
+
+**v2 (below, superseded) planned metered-first with a mid-October maybe-switch
+to Package. That was caution earned by not knowing what a Package tier's
+monthly cap actually counts. Research on 2026-08-29 resolved it: BestTime's
+own API documentation states plainly that Package plans have "unlimited
+forecast, live, query and venue API calls" and the monthly "unique venues"
+cap governs only NEW venue admissions — a venue already on the account can be
+polled by id, live-observed, and historical-queried without limit, forever,
+regardless of tier size. The pricing page's own line items agree: "by ID" and
+"live data" show Unlimited\* on every tier, unscaled, while only "by name"
+(first-time admission) and "search by query" scale with the tier's price.
+Metered has no such ceiling-free tier — its $99 floor caps usable volume at
+roughly 11,500 credits/month before real marginal cost starts, and polling
+the FULL 2,010-venue corpus nightly instead of a 300-venue sample would cost
+metered ~$375/mo forever. The same full-corpus nightly coverage is INCLUDED
+in a $119/mo Package tier at no extra charge, once a venue is admitted.**
+
+Pro Package tiers, monthly, no lock-in (cancel or downgrade any time,
+effective at the next cycle boundary, confirmed in their ToS — no annual
+commitment anywhere): 1/$66, 50/$96, **100/$119**, 500/$149, 1K/$249,
+5K/$399, 20K/$999.
+
+**The one real unknown, worth a $119 test rather than a guess:** whether a
+venue admitted under the EXISTING metered account carries its "already known"
+status across a switch to Package, or whether Package treats every venue as
+new on first touch under the new plan — undocumented publicly either way.
 
 The allocation:
 
-1. **September, Pro metered, $99 flat.** Archive window 1, refresh philly and
-   lehigh by id (--only-found), add the 95 demand venues by name, then run
-   the live pilot inside the leftover minimum: nightly one evening pull on
-   the ~300 most-served PA venues (~9K credits/mo, still inside $99).
-   Commands are in the runbook above; the collector's credit ceiling and the
-   PA default both already guard the spend.
-2. **October, Pro metered, $99.** The live pilot continues and the first
-   provenance-labeled retrain measures whether live rows move the gate.
-   Mid-October decision: if live earns its keep and wants frequency, November
-   switches to the Pro Package 500 tier ($149) instead of metered.
-3. **November, Pro metered, $99** (or Package $149): window 3 refresh
-   (--suffix=w2 archive first) plus continued live.
+1. **September, Pro Package 100, $119.** Switch from metered (or subscribe
+   fresh if metered was never completed) to the 100-tier. Immediately call
+   "by id" on one already-admitted venue and check the account's usage
+   dashboard for whether the new-venues-this-month counter moved:
+   - **Did not move (the documented, expected reading):** admit the 95-venue
+     demand want-list by name (well inside the 100/mo cap), then switch the
+     nightly pilot from ~300 sampled venues to the FULL corpus, all 2,010
+     venues, live-observed and historical-refreshed every night, at no
+     marginal cost. This is the single biggest upgrade available in the
+     whole $500 program — it removes the sampling bias that has left ~85% of
+     the corpus with zero nightly observation since the pilot was scoped.
+   - **Did move (the undocumented, unfavorable case):** admit only the
+     highest-priority slice of the want-list this month within the 100-venue
+     room, then October becomes a one-month bulk-readmit on Package 5K
+     ($399) to re-admit the full 2,010-venue corpus in one cycle (well under
+     its 5,000 cap), then downgrade back to Package 100 for every month
+     after.
+2. **October, Pro Package 100, $119** (favorable branch) **or Package 5K,
+   $399, one month only** (unfavorable branch, then downgrade). Full-corpus
+   nightly live pilot continues either way; the first provenance-labeled
+   retrain measures whether the wider live coverage moves the gate.
+3. **November, Pro Package 100, $119.** Steady state. Reassess the tier size
+   once real new-venue admission volume is observed post-backlog — ongoing
+   organic demand (users searching for venues not yet in the corpus) is
+   likely well under 100/mo, so Package 50 ($96, cheaper than metered's own
+   floor) may cover steady state just as well; downgrading costs nothing.
 4. **TheSportsDB Single Developer, $9/mo for three months, $27.** Key
    acquired 2026-08-29 (`SPORTSDB_API_KEY` in `backend/.env`, confirmed a
    dedicated production key, not the shared test key). Game nights for
@@ -852,9 +889,22 @@ The allocation:
 5. **Human ground-truth audit, ~$120.** Paid head-counts at 8-10 PA venues at
    known hours across two weekends, the only fully independent yardstick for
    the whole program.
-6. **Buffer, ~$56** for metered overage or a fourth live month.
+6. **Buffer, ~$56** for a fourth Package month or an unplanned upgrade.
 
-Total: $99 x 3 + $27 + $120 + $56 = $500.
+Total: $119 x 3 + $27 + $120 + $56 = **$560** favorable branch, **$840** if
+the unfavorable case hits and a Package 5K bulk-readmit month is needed
+($119+$399+$119 across September-November instead of $119 x 3). Both exceed
+the original $500 line by design — the corpus-wide nightly coverage this
+buys was not available on the metered plan at any price point near $500, and
+Jayden's word this round was value over the ceiling. Confirm with BestTime
+support before relying on it long-term: (a) whether admitted-venue status
+survives a metered-to-package switch (self-answering via the September test
+above, cheaper than asking and waiting), and (b) the literal fair-use limit
+behind the "Unlimited\*" asterisk (their documented rate limits, 300
+req/min or 200 req/10s depending which doc page, clear our whole corpus in
+well under 10 minutes of wall-clock time either way — not a practical
+constraint at our scale, but worth having in writing before treating it as a
+permanent ceiling).
 
 Free levers riding along: a backlink to BestTime.app in the flockcorp.com
 footer (their standing free-credits offer) and one student-discount email to
