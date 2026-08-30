@@ -469,6 +469,19 @@ test('a date column survives the trip whatever side of UTC the dumping machine i
   }
 });
 
+test('a time column survives the trip, including the edges only postgres accepts', async () => {
+  // Migration 057's ml_sports_events.event_local_time is the schema's first
+  // plain time column (game start on the venue's wall clock, stored as-is
+  // per the naive-timestamp doctrine). pg hands time back as a string and no
+  // zone applies to the type, so the trap here is not a shift but coverage:
+  // midnight, microsecond precision, and 24:00:00, which postgres accepts
+  // and renders as itself and which a naive normalizer would mangle.
+  for (const seed of [`'19:30:00'`, `'00:00:00'`, `'23:59:59.999999'`, `'24:00:00'`]) {
+    const r = await dumpAndRestore('time', seed);
+    assert.equal(r.after, r.before, `a time moved: ${r.before} -> ${r.after} via ${r.literal}`);
+  }
+});
+
 test('a float that is not finite keeps its value, and every other type still refuses to emit invalid SQL', async () => {
   // This test used to assert the opposite, on the argument that NaN and
   // Infinity "have no representation an integer column will take". True, and
@@ -551,7 +564,7 @@ test('the remaining column types this schema holds survive the trip', async () =
 // rather than what a caller happens to write today.
 const ROUND_TRIPPED = new Set([
   '_text', 'bool', 'bytea', 'date', 'float4', 'float8', 'int2', 'int4', 'int8',
-  'json', 'jsonb', 'numeric', 'text', 'timestamp', 'timestamptz', 'uuid', 'varchar',
+  'json', 'jsonb', 'numeric', 'text', 'time', 'timestamp', 'timestamptz', 'uuid', 'varchar',
 ]);
 
 test('every column type the migration chain produces has a case in this file', async () => {
