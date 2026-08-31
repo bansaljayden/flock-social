@@ -8,6 +8,7 @@ const crowdEngine = require('../services/crowdEngine');
 // them, at SEND TIME, so the crowd cache stores the model's answer and an
 // expired reading falls back on its own whatever the cache's clock says.
 const ownerReports = require('../services/ownerReports');
+const gameNights = require('../services/gameNights');
 const { buildHoursByDay } = crowdEngine;
 const mlPredictor = require('../services/mlPredictor');
 const { upstreamSignal } = require('../utils/upstream');
@@ -857,6 +858,12 @@ router.get('/:placeId',
       // block's whole job is to describe the number that actually shipped.
       const cardConfidence = crowdEngine.publishedConfidence(crowdResult.confidence, support, feedbackConfidenceBoost);
 
+      // Game-night FACT for the card, never a crowd claim: the 2026-08-30
+      // ablation measured no lift the model could stand behind, so this
+      // ships as a schedule fact and nothing else (see services/gameNights.js).
+      // Null on any failure; the card owes nothing to this garnish.
+      const gameNight = await gameNights.gameNightFor(lat, lon, now);
+
       const result = {
         placeId,
         name: venue.name,
@@ -979,6 +986,9 @@ router.get('/:placeId',
             distance: crowdResult.eventAlert.distance,
           }
           : null,
+        // A schedule fact from services/gameNights.js, market-gated the same
+        // 60km the training features used. Facts only; the ablation is why.
+        gameNight: gameNight || null,
         lastUpdated: now.toISOString(),
         // The clock this card was scored on, so the client labels its bars
         // with the venue's hours rather than the phone's. Sending it makes the
