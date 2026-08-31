@@ -13358,19 +13358,38 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                 return (
               <m.div initial={{ opacity: 0, y: 20, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ delay: 0.15, type: 'spring', damping: 20, stiffness: 300 }} style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '6px 10px 8px', marginBottom: '6px', border: '1px solid var(--border-subtle)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', marginBottom: '4px', gap: '4px' }}>
-                  {crowdLoading ? (
-                    <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Loading...</span>
-                  ) : (
-                    <>
-                      {/* The dot is decorative so it keeps the vivid hue; the LABEL
-                          has to be readable on the pale card. #22C55E measured
-                          1.85:1 and colors.amber 1.64:1 on --bg-tertiary. The
-                          accent-*-text tokens are theme-aware and clear 4.5:1. */}
-                      <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: isLiveNow ? '#22C55E' : colors.amber, animation: isLiveNow ? 'pulse 2s ease-in-out infinite' : 'none' }} />
-                      <span style={{ fontSize: 'var(--t-meta)', color: isLiveNow ? 'var(--accent-green-text)' : 'var(--accent-amber-text)', fontWeight: '500' }}>{isLiveNow ? 'LIVE' : 'ESTIMATED'}</span>
-                    </>
-                  )}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px', gap: '8px' }}>
+                  {/* Game night, sharing the row with the LIVE chip (Jayden,
+                      2026-08-30: in line with it, chip stays in the right
+                      corner). A schedule FACT, never a crowd claim: the
+                      same-day ablation measured no lift the model could stand
+                      behind, so this states who plays and stops. The server
+                      applies the same 60km market gate the training features
+                      used and decides everything; this only prints. The empty
+                      span keeps the chip right-aligned on non-game days. */}
+                  {cd?.gameNight?.teams?.length > 0 ? (
+                    <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-primary)', fontWeight: '600', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {cd.gameNight.homeGame && cd.gameNight.homeGame.distanceKm <= 10 && cd.gameNight.homeGame.venueName
+                        ? `${cd.gameNight.homeGame.team} home game tonight at ${cd.gameNight.homeGame.venueName}`
+                        : `${cd.gameNight.teams.length === 1
+                            ? cd.gameNight.teams[0]
+                            : cd.gameNight.teams.slice(0, -1).join(', ') + ' and ' + cd.gameNight.teams[cd.gameNight.teams.length - 1]} play tonight`}
+                    </span>
+                  ) : <span />}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
+                    {crowdLoading ? (
+                      <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Loading...</span>
+                    ) : (
+                      <>
+                        {/* The dot is decorative so it keeps the vivid hue; the LABEL
+                            has to be readable on the pale card. #22C55E measured
+                            1.85:1 and colors.amber 1.64:1 on --bg-tertiary. The
+                            accent-*-text tokens are theme-aware and clear 4.5:1. */}
+                        <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: isLiveNow ? '#22C55E' : colors.amber, animation: isLiveNow ? 'pulse 2s ease-in-out infinite' : 'none' }} />
+                        <span style={{ fontSize: 'var(--t-meta)', color: isLiveNow ? 'var(--accent-green-text)' : 'var(--accent-amber-text)', fontWeight: '500' }}>{isLiveNow ? 'LIVE' : 'ESTIMATED'}</span>
+                      </>
+                    )}
+                  </div>
                 </div>
                 {/* The venue's own number. When the published score IS the
                     owner's live reading, the user must be able to tell — "the

@@ -1022,6 +1022,22 @@ specifically MAE is a full point worse; the trees ranked the six columns
 the geo holdout passed (32.000 to 31.960). Verdict line, verbatim: "no lift
 distinguishable from day noise."
 
+**Jayden challenged the verdict and the challenge was RIGHT about the
+world (measured 2026-08-30, an hour after the ablation).** A direct
+label-level probe, no model in the way, weekday-hour matched: PA game
+nights run +7.1 points busier than the same weekday and hour without a
+game, +8.9 in the evenings. The effect is real and sits in our own labels.
+The reconciliation: the ablation measured whether a model trained on the
+~19 days of games before the cutoff could USE the flag, and it could not,
+it mislearned it. A real effect tested negative because the fit window was
+data-starved, which upgrades the October retest from courtesy to expected
+win and adds one more reason the BestTime resume matters (a fall corpus is
+a full Eagles and college season). Probe honesty notes: the near-arena
+band is unmeasurable today (213 of 30,420 PA rows sit within 3km of the
+stadium complex), and sports_home_dist_km is cap-valued on non-game days
+by construction, so the +7.1 is the DIFFUSE market-wide effect, TV bars
+included, not the stadium-proximity effect, which remains unmeasured.
+
 **The honest caveat, recorded so October can re-decide:** the fit side held
 only ~19 days of in-market game signal (the cutoff is 2026-03-28 and the
 Phillies season began 03-26), so the trees learned game nights from a thin
