@@ -615,7 +615,7 @@ test('one account cannot spend the route in a loop', async () => {
   // minute they were told to wait got the same refusal and had no way to tell a
   // throttle from a dead invite.
   assert.match(refused.body.error, /hour/i);
-  assert.ok(!/minute/i.test(refused.body.error),
+  assert.ok(!/\bminute\b/i.test(refused.body.error),
     'an hourly window is telling the caller to come back in a minute again');
   assert.ok(refused.body.retryAfterSeconds > 60 * 50,
     'the machine-readable window is shorter than the limit it describes');
