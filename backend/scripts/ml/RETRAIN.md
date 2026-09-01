@@ -959,6 +959,41 @@ The armed sequence, in order, once Jayden says go on BestTime:
    deliberately created Railway cron, which is his call, not an autonomous
    one)
 
+## The BESTTIME cron service: what it is and how it breaks (audited 2026-09-01)
+
+The nightly pull runs on Railway service BESTTIME (project trustworthy-spirit,
+`node scripts/ml/collectRealtime.js`, cron `0 2 * * *`, restart NEVER). An
+audit hours before its first real run found two faults that would have wasted
+the whole five months quietly, both fixed the same evening:
+
+1. **It was pinned five commits behind main.** Its last deploy carried the
+   240-calls-a-minute pacing that had already earned two key blocks that day,
+   without the 60-second 503 cooldown or the event-provenance columns. A
+   nightly run on that build aborts in about twenty seconds against a throttle
+   wall and writes nothing.
+2. **It never auto-deployed, which is why.** Its root directory was
+   `/backend` with a leading slash where the main service uses `backend`, and
+   the path never matched, so it sat on an August build through two weeks of
+   backend pushes. Corrected to `backend`. If a future collector fix does not
+   appear in the service's deploy list, check this first.
+
+What the audit cleared, so nobody re-investigates it: the 2,500 credit
+ceiling does not bind (the PA selection is 1,408 venues, and the corpus
+ceiling is about 2,010 even fully admitted), so the start command needs no
+arguments; a full run takes 47 to 60 minutes at one call a second, and
+Railway imposes no execution timeout, only skipping an occurrence while one
+is still running; `PGSSLMODE` is correctly absent because the internal
+DATABASE_URL carries no sslmode and pg keeps its permissive default; and
+production really does have the migration 045 provenance columns, so the
+insert cannot throw on them.
+
+Two residuals worth knowing rather than fixing tonight. A refusal (over the
+ceiling, or zero venues selected) exits 0, so Railway reports SUCCESS and
+only the collection heartbeat would notice. And the clock and weather are
+read once per city before the loop, so every row in a run carries the same
+hour and temperature, which is consistent and legal but means five months of
+observations all sit at one hour of the night.
+
 ## The five-month commitment and the capture-everything rule (2026-09-01)
 
 Jayden's word, the day collection restarted: keep BestTime about five months
