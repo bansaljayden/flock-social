@@ -58,7 +58,13 @@ const APP_SRC = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
   // control, the attendance-owed derivation and the vote rows live in
   // screens/FlockDetail.js now. It is appended last so every marker pair
   // above still spans what it spanned when the source was one file.
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'FlockDetail.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'FlockDetail.js'), 'utf8')
+  // The create screen followed on the same day: the one-friend read-back, the
+  // handleCreate path and the footer that names the direct message live in
+  // screens/CreateScreen.js now. Appended after FlockDetail for the same
+  // reason FlockDetail was appended after ChatDetail, so no marker pair above
+  // spans a boundary it did not span when the source was one file.
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'CreateScreen.js'), 'utf8');
 const API_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'services', 'api.js'),
   'utf8'

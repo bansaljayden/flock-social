@@ -74,13 +74,17 @@ const {
 // The flock plan detail screen left on 2026-09-01 for screens/FlockDetail.js,
 // and the warm bird beside the just-you roster and the cobalt Birdie in its
 // no-venue-yet empty state went with it, so it is read here too.
+// The create screen left on the same day for screens/CreateScreen.js, and it
+// draws three birds: the one that opens the screen, the warm bird for a
+// search that found nobody, and the one for having nobody to suggest yet.
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatDetail.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'VenueDashboard.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'AddFriends.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'RevenueScreen.js'), 'utf8')
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'FlockDetail.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'FlockDetail.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'CreateScreen.js'), 'utf8');
 const BIRD_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'components', 'ui', 'BirdieBird.js'),
   'utf8'

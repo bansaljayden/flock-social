@@ -198,11 +198,14 @@ function codeOnly(src) {
     .join('\n');
 }
 
-// Every file that draws a people search box or describes one.
+// Every file that draws a people search box or describes one. The flock
+// invite field is in screens/CreateScreen.js since 2026-09-01, so that file
+// is one of them now.
 const SEARCH_FILES = [
   ['App.js', read('App.js')],
   ['components/NewDmModal.js', read('components', 'NewDmModal.js')],
   ['screens/AddFriends.js', read('screens', 'AddFriends.js')],
+  ['screens/CreateScreen.js', read('screens', 'CreateScreen.js')],
 ];
 
 describe('the comment stripper is doing its job', () => {
@@ -235,10 +238,12 @@ describe('nothing offers an email lookup the server cannot do', () => {
   });
 
   it('all three people search boxes are still labelled, by name', () => {
-    // Two in App.js (the flock invite field and the Find Your People panel)
-    // and one in the New Message sheet. Counted, so removing a label rather
-    // than fixing it does not read as a pass.
-    const app = codeOnly(read('App.js'));
+    // One in App.js (the Find Your People panel), one in the create screen
+    // (the flock invite field, which went to screens/CreateScreen.js on
+    // 2026-09-01) and one in the New Message sheet. Counted over the two
+    // files the first two now live in, so the total is still two and removing
+    // a label rather than fixing it does not read as a pass.
+    const app = codeOnly(read('App.js')) + codeOnly(read('screens', 'CreateScreen.js'));
     const dm = codeOnly(read('components', 'NewDmModal.js'));
     expect((app.match(/aria-label="Search people by name"/g) || []).length).toBe(2);
     expect((app.match(/placeholder="Search by name\.\.\."/g) || []).length).toBe(2);
