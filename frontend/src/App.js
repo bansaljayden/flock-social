@@ -8147,8 +8147,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // newest message the instant they asked for scrollback.
   const chatTailRef = useRef(null);
   const chatLenRef = useRef(0);
+  // Which flock the tail refs describe. A push notification can swap
+  // selectedFlockId while the screen stays chatDetail, and without this the
+  // old thread's tail id and near-bottom flag leaked into the new one: its
+  // first render read as non-entering traffic and the entry scroll was
+  // suppressed (Codex review, 2026-09-01).
+  const chatThreadRef = useRef(null);
   useEffect(() => {
     if (currentScreen === 'chatDetail' && chatEndRef.current) {
+      if (chatThreadRef.current !== selectedFlockId) {
+        chatThreadRef.current = selectedFlockId;
+        chatTailRef.current = null;
+        chatLenRef.current = 0;
+        chatNearBottomRef.current = true;
+      }
       const msgs = selectedFlock?.messages || [];
       const tail = msgs.length ? String(msgs[msgs.length - 1].id) : 'empty';
       const prevLen = chatLenRef.current;
@@ -8172,11 +8184,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       }
     } else {
       // Reset when leaving chat so re-entering triggers instant scroll
+      chatThreadRef.current = null;
       chatTailRef.current = null;
       chatLenRef.current = 0;
       chatNearBottomRef.current = true;
     }
-  }, [selectedFlock?.messages, currentScreen]);
+  }, [selectedFlock?.messages, currentScreen, selectedFlockId]);
 
   // Having the chat open IS reading it, so the caught-up mark follows the
   // messages while you are in there rather than only on the way out: a message
@@ -8189,9 +8202,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // The route is monotonic (GREATEST), so a late or repeated PUT can only
   // move the cursor forward, and the ref dedupes so one message does not
   // cost three identical PUTs.
+  // Visibility as STATE, not a read at effect time, so the two read effects
+  // below re-fire when the user comes back. Codex review, 2026-09-01: a tab
+  // left on chatDetail and then hidden kept advancing the server cursor as
+  // messages arrived, while onNewMessage was simultaneously counting those
+  // same messages unread because IT checks visibility. The recipient never
+  // saw the message, but every badge stopped counting it.
+  const [docVisible, setDocVisible] = useState(() => (
+    typeof document === 'undefined' || document.visibilityState === 'visible'
+  ));
+  useEffect(() => {
+    if (typeof document === 'undefined') return undefined;
+    const onVis = () => setDocVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+
   const readPutRef = useRef('');
   useEffect(() => {
-    if (currentScreen !== 'chatDetail' || !selectedFlockId) return;
+    if (currentScreen !== 'chatDetail' || !selectedFlockId || !docVisible) return;
     const newest = newestFromOthers(selectedFlock?.messages);
     if (newest === null) return;
     setFlockSeen((prev) => {
@@ -8207,12 +8236,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       // badge on the next load, not a lost message.
       markFlockRead(selectedFlockId, newest).catch(() => {});
     }
-  }, [currentScreen, selectedFlockId, selectedFlock?.messages]);
+  }, [currentScreen, selectedFlockId, selectedFlock?.messages, docVisible]);
 
   // The row badge clears the moment the chat is open, exactly like a DM row.
   // The cursor PUT above is what keeps it cleared across reloads.
   useEffect(() => {
-    if (currentScreen !== 'chatDetail' || !selectedFlockId) return;
+    // Same visibility gate as the cursor PUT above, for the same reason: a
+    // hidden tab is not reading anything.
+    if (currentScreen !== 'chatDetail' || !selectedFlockId || !docVisible) return;
     setFlocks(prev => {
       const fi = prev.findIndex(f => f.id === selectedFlockId && (f.unread || 0) !== 0);
       if (fi === -1) return prev;
@@ -8220,7 +8251,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       next[fi] = { ...next[fi], unread: 0 };
       return next;
     });
-  }, [currentScreen, selectedFlockId, selectedFlock?.messages]);
+  }, [currentScreen, selectedFlockId, selectedFlock?.messages, docVisible]);
 
   // Load suggested users when opening Create screen
   useEffect(() => {
@@ -11533,9 +11564,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Tail, not length. See the flock twin above, same reason.
   const dmTailRef = useRef(null);
   const dmLenRef = useRef(0);
+  // Same thread-change reset as the flock twin above, same Codex finding.
+  const dmThreadRef = useRef(null);
   useEffect(() => {
     const msgs = selectedDm?.messages || [];
-    if (currentScreen !== 'dmDetail') { dmTailRef.current = null; dmLenRef.current = 0; dmNearBottomRef.current = true; return; }
+    if (currentScreen !== 'dmDetail') { dmThreadRef.current = null; dmTailRef.current = null; dmLenRef.current = 0; dmNearBottomRef.current = true; return; }
+    if (dmThreadRef.current !== selectedDmId) {
+      dmThreadRef.current = selectedDmId;
+      dmTailRef.current = null;
+      dmLenRef.current = 0;
+      dmNearBottomRef.current = true;
+    }
     if (msgs.length === 0) { dmLenRef.current = 0; return; }
     const tail = String(msgs[msgs.length - 1].id);
     const prevLen = dmLenRef.current;
@@ -11549,7 +11588,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // entering, or already being near the bottom, follows a new message down.
     if (!entering && !dmNearBottomRef.current) return;
     requestAnimationFrame(() => dmChatEndRef.current?.scrollIntoView({ behavior: 'auto' }));
-  }, [currentScreen, selectedDm?.messages]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentScreen, selectedDm?.messages, selectedDmId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keep DM chat search focused
   useEffect(() => {

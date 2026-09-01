@@ -141,6 +141,18 @@ async function main() {
     process.exitCode = 1;
     return pool.end();
   }
+  // Two ceilings, deliberately separate (Codex review, 2026-09-01): maxNew
+  // counts VENUES ACTUALLY STAGED, so a skipped candidate (out of area,
+  // permanently closed, dead place id) cannot eat an admission slot and
+  // permanently shadow the valid venue ranked below it. maxProbe bounds the
+  // Places Details spend the walk itself costs.
+  const maxProbeArg = process.argv.find((a) => a.startsWith('--max-probe='));
+  const maxProbe = maxProbeArg ? parseInt(maxProbeArg.split('=')[1], 10) : maxNew * 3;
+  if (!Number.isInteger(maxProbe) || maxProbe <= 0) {
+    console.error('[ML:Demand] --max-probe must be a positive integer.');
+    process.exitCode = 1;
+    return pool.end();
+  }
 
   // Every demand signal, weighted by how much intent it carries: a check-in
   // is a person standing in the room, a vote is a plan considering it, a
@@ -175,17 +187,21 @@ async function main() {
 
   console.log(`[ML:Demand] ${candidates.length} distinct demanded venues are missing from ml_venues.`);
   if (candidates.length === 0) return pool.end();
-  if (candidates.length > maxNew) {
-    console.log(`[ML:Demand] Taking the top ${maxNew} by signal (the Package tier admits 100 new venues a month; raise on purpose with --max-new=N).`);
-  }
-  const take = candidates.slice(0, maxNew);
+  console.log(`[ML:Demand] Walking by signal until ${maxNew} are staged or ${maxProbe} probed (the Package tier admits 100 new venues a month; --max-new= and --max-probe= raise on purpose).`);
 
   let inserted = 0;
   let outOfArea = 0;
   let gone = 0;
   let rateLimited = 0;
-  for (let i = 0; i < take.length; i++) {
-    const c = take[i];
+  let probed = 0;
+  for (let i = 0; i < candidates.length; i++) {
+    if (inserted >= maxNew) break;
+    if (probed >= maxProbe) {
+      console.log(`  PROBE CEILING reached (${maxProbe}); ${inserted} staged. Raise --max-probe to walk further.`);
+      break;
+    }
+    probed++;
+    const c = candidates[i];
     const details = await fetchDetails(c.place_id);
     await sleep(400);
     if (!details.ok) {
@@ -254,7 +270,7 @@ async function main() {
     console.log(`  ADDED ${label}`);
   }
 
-  console.log(`\n[ML:Demand] ${commit ? 'Inserted' : 'Would insert'} ${inserted}. Skipped: ${outOfArea} out of area, ${gone} gone or unresolvable${rateLimited ? ', stopped early on rate limiting' : ''}.`);
+  console.log(`\n[ML:Demand] ${commit ? 'Inserted' : 'Would insert'} ${inserted}. Skipped: ${outOfArea} out of area, ${gone} gone or unresolvable${rateLimited ? ', stopped early on rate limiting' : ''} (${probed} probed).`);
   if (commit && inserted > 0) {
     console.log('[ML:Demand] Next: admit them through the collector, which prices the run first:');
     console.log('  node scripts/ml/collectWeekly.js --city=philly --skip-attempted');

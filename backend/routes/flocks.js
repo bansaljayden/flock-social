@@ -450,21 +450,27 @@ router.get('/', async (req, res) => {
               -- read's visibility filters in routes/messages.js (hidden,
               -- unsent, blocked either way, deleted sender, and never your
               -- own), because a count that includes a row the chat will not
-              -- show is a badge that can never be cleared. LEAST-capped: the
-              -- client prints 99+ past that, and a fresh cursor on an old
-              -- chat should not pay for an exact count of its whole history.
-              (SELECT LEAST(COUNT(*), 100) FROM messages m
-                WHERE m.flock_id = f.id
-                  AND m.id > COALESCE(fm.last_read_message_id, 0)
-                  AND m.sender_id IS NOT NULL
-                  AND m.sender_id != $1
-                  AND m.is_hidden IS NOT TRUE
-                  AND m.sender_deleted_at IS NULL
-                  AND NOT EXISTS (
-                    SELECT 1 FROM user_blocks b
-                    WHERE (b.blocker_id = $1 AND b.blocked_id = m.sender_id)
-                       OR (b.blocker_id = m.sender_id AND b.blocked_id = $1)
-                  ))::int AS unread_count,
+              -- show is a badge that can never be cleared. Capped INSIDE the
+              -- subquery: LEAST(COUNT(*), 100) computed the full count first
+              -- and only then clamped it, so a far-behind cursor still paid
+              -- for a scan of the whole history (Codex review, 2026-09-01).
+              -- The LIMIT stops the scan at 100 rows; the client prints 99+
+              -- past that anyway.
+              (SELECT COUNT(*) FROM (
+                 SELECT 1 FROM messages m
+                  WHERE m.flock_id = f.id
+                    AND m.id > COALESCE(fm.last_read_message_id, 0)
+                    AND m.sender_id IS NOT NULL
+                    AND m.sender_id != $1
+                    AND m.is_hidden IS NOT TRUE
+                    AND m.sender_deleted_at IS NULL
+                    AND NOT EXISTS (
+                      SELECT 1 FROM user_blocks b
+                      WHERE (b.blocker_id = $1 AND b.blocked_id = m.sender_id)
+                         OR (b.blocker_id = m.sender_id AND b.blocked_id = $1)
+                    )
+                  LIMIT 100
+               ) capped)::int AS unread_count,
               fm.status AS member_status,
               -- These were FIVE scalar subqueries doing the work of two, and are
               -- now two (query-reliability round, applied). going_count is

@@ -900,7 +900,7 @@ describe('copy rules (SLOP-AUDIT)', () => {
       // Present tense. A heading that frames the business model is fine
       // ("Why venues pay (and users never do)"); asserting that venues pay FOR
       // or TO something is a statement about money that has never changed hands.
-      [/venues (pay|are paying) (for|to)/i, 'venues paying, which none does'],
+      [/venues (pay|are paying) (for|to)\b/i, 'venues paying, which none does'],
     ];
 
     const hits = [];

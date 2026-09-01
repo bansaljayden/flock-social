@@ -146,6 +146,19 @@ function parseStrMap(raw) {
   return null;
 }
 
+// The stored date and time are the MARKET's (America/New_York), derived
+// from the UTC instant whenever one exists. The API's dateEventLocal is the
+// HOST venue's wall clock, and a late West Coast start crosses Eastern
+// midnight: gameNights queries an Eastern date and the feature builder joins
+// Pennsylvania observation dates, so a host-local date lands that game on
+// the wrong market night (Codex review, 2026-09-01). The API fields remain
+// the fallback when no instant is available.
+const MARKET_DATE_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' });
+const MARKET_TIME_FMT = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'America/New_York', hour12: false,
+  hour: '2-digit', minute: '2-digit', second: '2-digit',
+});
+
 function eventInstant(ev) {
   // strTimestamp is the UTC instant when present. The date/time pair is the
   // LOCAL wall clock of the event and stays stored as-is; deriving the
@@ -218,6 +231,8 @@ async function main() {
             const isAway = ev.idAwayTeam === t.teamId;
             if (!isHome && !isAway) continue;
             const instant = eventInstant(ev);
+            const marketDate = instant ? MARKET_DATE_FMT.format(instant) : (ev.dateEventLocal || ev.dateEvent || null);
+            const marketTime = instant ? MARKET_TIME_FMT.format(instant) : (ev.strTimeLocal || ev.strTime || null);
             await pool.query(
               `INSERT INTO ml_sports_events
                  (sportsdb_event_id, league, season, team_key, is_home, opponent,
@@ -244,8 +259,8 @@ async function main() {
                 isHome,
                 isHome ? ev.strAwayTeam : ev.strHomeTeam,
                 instant,
-                ev.dateEventLocal || ev.dateEvent || null,
-                ev.strTimeLocal || ev.strTime || null,
+                marketDate,
+                marketTime,
                 ev.strVenue || (isHome ? t.stadium : null),
                 isHome ? t.stadiumLat : null,
                 isHome ? t.stadiumLon : null,

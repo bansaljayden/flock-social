@@ -121,7 +121,11 @@ function unreadCountBlock(src, startMarker) {
 }
 
 test('the list unread_count uses the history read filter set, capped', () => {
-  const block = unreadCountBlock(FLOCKS, 'SELECT LEAST(COUNT(*), 100) FROM messages m');
+  // The cap lives INSIDE the subquery as a LIMIT so the scan stops at 100
+  // rows; LEAST(COUNT(*), 100) computed the full count first (Codex review,
+  // 2026-09-01).
+  const block = unreadCountBlock(FLOCKS, 'SELECT COUNT(*) FROM (');
+  assert.match(block, /LIMIT 100/, 'the cap must stop the scan, not decorate the count');
   assert.match(block, /m\.id > COALESCE\(fm\.last_read_message_id, 0\)/);
   assert.match(block, /m\.sender_id IS NOT NULL/, 'a deleted sender row must under-count, never strand the badge');
   assert.match(block, /m\.sender_id != \$1/, 'your own messages are not unread');
@@ -136,6 +140,10 @@ test('the icon badge flock count mirrors the same filters and only accepted memb
   const badgeFn = PUSH.slice(i, j);
   assert.match(badgeFn, /fm\.status = 'accepted'/,
     'an invitation you never accepted must not put a number on the app icon');
+  assert.match(badgeFn, /fm\.last_read_message_id > 0/,
+    'the flock half counts only cursors the client has proven it can move: '
+      + 'installed builds without the read call would otherwise carry a badge '
+      + 'they can never clear (Codex review, 2026-09-01)');
   assert.match(badgeFn, /m\.id > COALESCE\(fm\.last_read_message_id, 0\)/);
   assert.match(badgeFn, /m\.sender_id IS NOT NULL/);
   assert.match(badgeFn, /m\.is_hidden IS NOT TRUE/);

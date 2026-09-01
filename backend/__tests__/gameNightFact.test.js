@@ -43,9 +43,10 @@ function resetWorld() {
     { venue_lat: XFINITY.lat, venue_lon: XFINITY.lon },
     { venue_lat: 39.905833, venue_lon: -75.166389 },
   ];
+  const upcoming = new Date(Date.now() + 3 * 3600 * 1000).toISOString();
   gamesRows = [
-    { team_key: 'sixers', is_home: true, venue_name: 'Xfinity Mobile Arena', venue_lat: XFINITY.lat, venue_lon: XFINITY.lon },
-    { team_key: 'flyers', is_home: false, venue_name: null, venue_lat: null, venue_lon: null },
+    { team_key: 'sixers', is_home: true, venue_name: 'Xfinity Mobile Arena', venue_lat: XFINITY.lat, venue_lon: XFINITY.lon, event_utc: upcoming, raw_status: 'NS' },
+    { team_key: 'flyers', is_home: false, venue_name: null, venue_lat: null, venue_lon: null, event_utc: upcoming, raw_status: 'NS' },
   ];
 }
 
@@ -64,6 +65,38 @@ test('a Tokyo venue never carries the line, whatever the schedule says', async (
   resetWorld();
   const r = await gameNights.gameNightFor(35.6762, 139.6503);
   assert.strictEqual(r, null, 'the market gate is the same 60km the training features used');
+});
+
+test('a game that ended hours ago is not tonight', async () => {
+  // Codex review, 2026-09-01: the date-only query kept a 1 PM final on the
+  // card until midnight. Start plus four hours is the over line.
+  resetWorld();
+  gamesRows = [{
+    team_key: 'phillies', is_home: false, venue_name: null, venue_lat: null, venue_lon: null,
+    event_utc: new Date(Date.now() - 9 * 3600 * 1000).toISOString(), raw_status: 'FT',
+  }];
+  const r = await gameNights.gameNightFor(39.9526, -75.1652);
+  assert.strictEqual(r, null, 'an afternoon final must not read as play tonight at 10 PM');
+});
+
+test('a canceled or postponed game never counts', async () => {
+  resetWorld();
+  gamesRows = [{
+    team_key: 'sixers', is_home: true, venue_name: 'Xfinity Mobile Arena', venue_lat: XFINITY.lat, venue_lon: XFINITY.lon,
+    event_utc: new Date(Date.now() + 3 * 3600 * 1000).toISOString(), raw_status: 'Postponed',
+  }];
+  const r = await gameNights.gameNightFor(39.9526, -75.1652);
+  assert.strictEqual(r, null);
+});
+
+test('a game with no recorded instant stays visible rather than guessed away', async () => {
+  resetWorld();
+  gamesRows = [{
+    team_key: 'union', is_home: false, venue_name: null, venue_lat: null, venue_lon: null,
+    event_utc: null, raw_status: null,
+  }];
+  const r = await gameNights.gameNightFor(39.9526, -75.1652);
+  assert.ok(r && r.teams.includes('Union'), 'no instant means include, never invent an end time');
 });
 
 test('no games today means null, not an empty object', async () => {

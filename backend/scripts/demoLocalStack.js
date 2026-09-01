@@ -22,16 +22,16 @@ const { Pool } = require('pg');
 const EP = require('embedded-postgres');
 const EmbeddedPostgres = EP.default || EP;
 const {
-  createEmbeddedPostgres, startEmbeddedPostgres,
+  pickEmbeddedPgPort, createEmbeddedPostgres, startEmbeddedPostgres,
 } = require('../__tests__/helpers/embeddedPgPort');
 
 const MIGRATIONS_DIR = path.join(__dirname, '..', 'migrations');
 
 async function main() {
-  // A fixed high port, not the test helper's slot registry: this is a demo
-  // stack, not a suite, and registering it there would put demo concerns
-  // inside test infrastructure. Nothing else on this machine claims 55943.
-  const port = 55943;
+  // Registered in the helper's slot registry after all: 55943 sat inside
+  // Windows' dynamic client-port range, the exact collision the helper's own
+  // header warns about (Codex review, 2026-09-01).
+  const port = pickEmbeddedPgPort('demoLocalStack');
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flock-demo-pg-'));
   const pg = createEmbeddedPostgres(EmbeddedPostgres, {
     suite: 'demoLocalStack', port, databaseDir: dataDir,

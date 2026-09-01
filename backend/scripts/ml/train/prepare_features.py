@@ -1847,6 +1847,19 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
         # class of leak latitude and longitude are dropped for.
         'events_observed',
     }
+    # The sports game-night family is ABLATION-ONLY until mlPredictor.js
+    # computes it at serving time (Codex review, 2026-09-01): unconditionally
+    # featurised, a normal retrain either aborted on the dead-slot contract
+    # (no sports_events.csv, six constant columns) or produced an artifact the
+    # server refuses to load (metadata names sports_* fields inference cannot
+    # build). The ablation opts in with FLOCK_SPORTS_FEATURES=1; everything
+    # else trains exactly as before, with the columns computed on the frame
+    # but never in feature_cols.
+    if os.environ.get('FLOCK_SPORTS_FEATURES') != '1':
+        exclude |= {
+            'sports_game_today', 'sports_games_count', 'sports_evening_game',
+            'sports_home_game_today', 'sports_home_dist_km', 'sports_home_within_10km',
+        }
     exclude |= DROPPED_FEATURES
     feature_cols = [c for c in df.columns if c not in exclude]
     return sorted(feature_cols)

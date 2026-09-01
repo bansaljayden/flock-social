@@ -27,6 +27,11 @@ const pool = require('../config/database');
 const MARKET_KM = 60;
 const HOME_NEAR_KM = 10;
 const GAMES_CACHE_MS = 15 * 60 * 1000;
+// A game stops being "tonight" once it is plausibly over: start plus four
+// hours covers every league we track, extra innings included. Canceled and
+// postponed games never count at all (Codex review, 2026-09-01: a date-only
+// query kept a 1 PM final on the card until midnight).
+const GAME_OVER_MS = 4 * 60 * 60 * 1000;
 const ARENAS_CACHE_MS = 12 * 60 * 60 * 1000;
 
 // team_key (ml_sports_events) to the name a card prints.
@@ -74,7 +79,7 @@ async function gamesForToday(now) {
     return gamesCache.rows;
   }
   const { rows } = await pool.query(
-    `SELECT team_key, is_home, venue_name, venue_lat, venue_lon
+    `SELECT team_key, is_home, venue_name, venue_lat, venue_lon, event_utc, raw_status
        FROM ml_sports_events
       WHERE event_local_date = $1`,
     [date]
@@ -91,7 +96,18 @@ async function gamesForToday(now) {
 async function gameNightFor(lat, lon, now = new Date()) {
   try {
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
-    const games = await gamesForToday(now);
+    const all = await gamesForToday(now);
+    // Time and status filtering happens HERE, per call, never in the cache:
+    // the cache is keyed by date and lives 15 minutes, and "is this game
+    // over yet" changes inside that window.
+    const games = all.filter((g) => {
+      if (/cancel|postpon/i.test(String(g.raw_status || ''))) return false;
+      if (g.event_utc) {
+        const t = new Date(g.event_utc).getTime();
+        if (Number.isFinite(t) && now.getTime() > t + GAME_OVER_MS) return false;
+      }
+      return true;
+    });
     if (!games.length) return null;
 
     const arenas = await arenaSet();

@@ -587,7 +587,7 @@ test('the per-venue daily QUESTION cap bites, and it sits under the chip answer 
   assert.notStrictEqual(r.body.text, advisorFreeText.REFUSAL_VALVE);
   // No upsell, ever: there is no plan that raises this number, so offering one
   // inside the refusal would be selling a thing that does not exist.
-  assert.ok(!/upgrade|plan|pro|price|\$/i.test(r.body.text), 'a ceiling never sells a way around itself');
+  assert.ok(!/upgrade|plan|\bpro\b|price|\$/i.test(r.body.text), 'a ceiling never sells a way around itself');
 });
 
 // The other half of the same guarantee. These two refusals were one sentence

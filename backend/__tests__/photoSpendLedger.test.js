@@ -127,14 +127,30 @@ test('prior days of the month count toward the ceiling', async () => {
   // The half a single running counter cannot express: yesterday's spend is part
   // of this month's bill. Written directly, because the charge statement only
   // ever writes today.
-  await client.query(
-    `INSERT INTO places_photo_spend (day, fetches)
-     VALUES ((NOW() AT TIME ZONE 'utc')::date - 1, 3)`
+  //
+  // On the FIRST of a month there is no prior day of this month: yesterday
+  // belongs to last month and the ledger rightly ignores it, which made this
+  // test fail on exactly twelve mornings a year (it did, 2026-09-01) while
+  // the production code was correct. On those mornings the property is
+  // vacuous, so the seed becomes a no-op and the assertions degrade to the
+  // plain ceiling, keeping the suite green without faking a prior day.
+  const { rows: [{ first }] } = await client.query(
+    `SELECT ((NOW() AT TIME ZONE 'utc')::date
+             = DATE_TRUNC('month', (NOW() AT TIME ZONE 'utc')::date)::date) AS first`
   );
+  const priorSpend = first ? 0 : 3;
+  if (!first) {
+    await client.query(
+      `INSERT INTO places_photo_spend (day, fetches)
+       VALUES ((NOW() AT TIME ZONE 'utc')::date - 1, 3)`
+    );
+  }
   const CEILING = 4;
-  assert.strictEqual(await charge(CEILING, 1000), 1, 'the first charge today should fit');
+  for (let i = 1; i <= CEILING - priorSpend; i++) {
+    assert.strictEqual(await charge(CEILING, 1000), i, `charge ${i} should fit`);
+  }
   assert.strictEqual(await charge(CEILING, 1000), null,
-    'yesterday was ignored, so a month can be overspent one day at a time');
+    'prior spend this month was ignored, so a month can be overspent one day at a time');
 });
 
 test('a day in the PREVIOUS month does not count against this month', async () => {

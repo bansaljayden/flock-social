@@ -65,6 +65,11 @@ const SUITE_SLOTS = {
   accountDeletionSurface: 13,    // new in 2026-08-26; never had a hardcoded port
   dumpLiteralRestore: 14,        // new in 2026-08-26; never had a hardcoded port
   userSearchRanking: 15,         // new in 2026-08-26; never had a hardcoded port
+  demoLocalStack: 16,            // scripts/demoLocalStack.js, not a suite: the
+                                 // screenshot demo database. In this registry
+                                 // anyway because a fixed port in the dynamic
+                                 // range collides exactly the way this file's
+                                 // header warns (Codex review, 2026-09-01).
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the

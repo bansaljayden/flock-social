@@ -734,6 +734,17 @@ async function unreadBadge(userId) {
              JOIN flock_members fm ON fm.flock_id = m.flock_id
                                   AND fm.user_id = $1
                                   AND fm.status = 'accepted'
+                                  -- Only memberships whose cursor has MOVED.
+                                  -- Migration 056 starts every cursor at 0 and
+                                  -- the app builds already installed never call
+                                  -- PUT /flocks/:id/read, so counting cursor-0
+                                  -- rows put every historical flock message on
+                                  -- the icon badge of exactly the clients that
+                                  -- can never clear it (Codex review,
+                                  -- 2026-09-01). One real read arms the count
+                                  -- for good; until then the DM half still
+                                  -- carries the badge, as it always did.
+                                  AND fm.last_read_message_id > 0
             WHERE m.id > COALESCE(fm.last_read_message_id, 0)
               AND m.sender_id IS NOT NULL
               AND m.sender_id != $1

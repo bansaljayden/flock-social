@@ -129,8 +129,12 @@ test('unsend is an UPDATE; nothing in messages.js deletes a CONTENT row', () => 
   // Reactions and DM venue votes are legitimately deleted when taken back; a
   // removed reaction is not evidence of anything. The MESSAGE tables are:
   // content rows retire by tombstone, never by DELETE.
-  assert.ok(!/DELETE FROM\s+messages/i.test(SRC), 'flock messages retire, never delete');
-  assert.ok(!/DELETE FROM\s+direct_messages/i.test(SRC), 'DMs retire, never delete');
+  const DELETE_MESSAGES = /DELETE FROM\s+messages\b/i;
+  assert.ok(DELETE_MESSAGES.test('DELETE FROM messages WHERE id = 1'), 'the pattern itself must catch a delete');
+  assert.ok(!DELETE_MESSAGES.test(SRC), 'flock messages retire, never delete');
+  const DELETE_DMS = /DELETE FROM\s+direct_messages\b/i;
+  assert.ok(DELETE_DMS.test('DELETE FROM direct_messages WHERE id = 1'), 'the pattern itself must catch a delete');
+  assert.ok(!DELETE_DMS.test(SRC), 'DMs retire, never delete');
 });
 
 test('every hidden-row filter pairs with the tombstone filter', () => {
