@@ -112,7 +112,16 @@ async function fetchSeatGeekEvents(lat, lon, radiusKm = 5) {
 
 // Get the nearest event to a venue and compute features
 // Returns: { event_nearby, event_distance_km, event_size, event_type,
-//   event_hours_until, observed, reason } — observed/reason per migration 045.
+//   event_hours_until, observed, reason } per migration 045.
+//
+// The reason vocabulary EXTENDS 045's three values on purpose. That migration
+// described a backfill matcher, whose only failures were no_events_for_city,
+// no_events_on_date and no_observation_date. A live collector doing its own
+// lookups has two more: 'lookup_failed' (no provider could answer) and
+// 'events_without_coordinates' (they answered, but nothing they returned can
+// be measured against a venue). The column is TEXT with no CHECK, and
+// inventing one of the migration's three would be a lie about which failure
+// happened.
 async function getNearestEvent(venueLat, venueLon, radiusKm = 5) {
   const [tmEvents, sgEvents] = await Promise.all([
     fetchTicketmasterEvents(venueLat, venueLon, radiusKm),
@@ -128,8 +137,11 @@ async function getNearestEvent(venueLat, venueLon, radiusKm = 5) {
   // corpus became an unquantifiable negative-event leak.
   const answered = [tmEvents, sgEvents].filter((r) => Array.isArray(r));
   if (answered.length === 0) {
+    // NULL, not false: migration 045's contract is that the event columns
+    // beside events_observed=false carry NULL, because a false there is the
+    // fabricated negative the migration exists to end.
     return {
-      event_nearby: false, event_distance_km: null, event_size: null,
+      event_nearby: null, event_distance_km: null, event_size: null,
       event_type: null, event_hours_until: null,
       observed: false, reason: 'lookup_failed',
     };
@@ -159,8 +171,14 @@ async function getNearestEvent(venueLat, venueLon, radiusKm = 5) {
   }
 
   if (!nearest) {
-    return { event_nearby: false, event_distance_km: null, event_size: null,
-             event_type: null, event_hours_until: null, observed: true, reason: null };
+    // Events came back but not one carried usable coordinates, so distance
+    // could not be computed for any of them. That is an unmeasurable answer,
+    // not a quiet night: reporting observed=true here would turn real nearby
+    // events into a measured absence, the same fabrication in a subtler
+    // shape (2026-09-01 review).
+    return { event_nearby: null, event_distance_km: null, event_size: null,
+             event_type: null, event_hours_until: null,
+             observed: false, reason: 'events_without_coordinates' };
   }
 
   // Calculate hours until event

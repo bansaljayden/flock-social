@@ -267,6 +267,8 @@ async function collectWeekly() {
   };
 
   let consecutiveErrors = 0;
+  // Throttles are counted apart from errors: see the catch block below.
+  let consecutiveThrottles = 0;
   for (let i = 0; i < venues.length; i++) {
     const venue = venues[i];
     console.log(`[ML:Weekly] (${i + 1}/${venues.length}) ${venue.name} [${venue.city}]`);
@@ -352,6 +354,11 @@ async function collectWeekly() {
             // date a one-off event could attach to, so the honest stamp is
             // false with no_observation_date, never an ambiguous NULL.
             false, 'no_observation_date',
+            // And the event columns themselves NULL, explicitly. Their
+            // defaults are false, false, 0 and 0, so leaving them out wrote a
+            // measured absence beside that false, the fabricated negative
+            // migration 045 exists to end (2026-09-01 review).
+            null, null, null, null,
           ];
           const base = params.length;
           params.push(...rowParams);
@@ -395,7 +402,8 @@ async function collectWeekly() {
                venue_category, price_level, rating, review_count,
                temperature, humidity, wind_speed, weather_condition, weather_condition_code,
                is_raining, busyness_pct, besttime_epoch,
-               events_observed, events_unavailable_reason)
+               events_observed, events_unavailable_reason,
+               event_nearby, has_nearby_event, total_nearby_events, total_nearby_attendance)
              VALUES ${valueRows.join(', ')}
              ON CONFLICT (venue_id, day_of_week, hour)
                WHERE collection_mode = 'weekly' AND hour_axis = 'venue_local'
@@ -460,6 +468,21 @@ async function collectWeekly() {
         console.error(`  [FATAL] ${err.message} — aborting run immediately`);
         break;
       }
+      // A 503 is BestTime asking for space, so it gets its OWN budget. The
+      // first cooldown counted a throttle as a per-venue error before
+      // waiting, so ten throttles still ended the run, just nine minutes
+      // later (2026-09-01 review).
+      const throttled = err && /503/.test(String(err.message || ''));
+      if (throttled) {
+        consecutiveThrottles++;
+        console.error(`  [THROTTLED ${consecutiveThrottles}/40] waiting 60s`);
+        if (consecutiveThrottles >= 40) {
+          console.error('  40 consecutive throttles, BestTime is not letting us in, bailing');
+          break;
+        }
+        await sleep(60000);
+        continue;
+      }
       // Per-venue errors must NOT kill the run. Log, count, sleep, continue.
       consecutiveErrors++;
       console.error(`  [PER-VENUE ERROR ${consecutiveErrors}] ${err.message}`);
@@ -467,11 +490,7 @@ async function collectWeekly() {
         console.error('  10 consecutive errors — bailing to avoid burning slots');
         break;
       }
-      // A 503 is BestTime asking for space, not a venue problem: take a
-      // 60 second cooldown so one throttle burst cannot cascade into the
-      // consecutive-error abort that ended both 2026-09-01 runs early.
-      const throttled = err && /503/.test(String(err.message || ''));
-      await sleep(throttled ? 60000 : 2000);
+      await sleep(2000);
     }
   }
 
