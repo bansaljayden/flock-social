@@ -413,7 +413,10 @@ async function collectRealtime() {
         console.error(`  Insert error for ${venue.name}:`, err.message);
       }
 
-      await sleep(100);
+      // 250ms, not 100: BestTime's global limit is 300 requests a minute, and
+      // 100ms pacing is 600. The 2026-09-01 philly refresh proved it: 169
+      // venues succeeded and then a burst of 503s tripped the error guard.
+      await sleep(250);
     }
   }
 

@@ -1,8 +1,25 @@
 @echo off
-setlocal
+setlocal enabledelayedexpansion
 cd /d C:\Users\Jayden\flock-app\backend
 set LOG=scripts\ml\go_chain.log
 echo [CHAIN] start %date% %time% > %LOG%
+
+echo [CHAIN] STAGE 0: waiting out the BestTime 403 block (probe every 10 min) >> %LOG%
+set UNBLOCKED=0
+for /l %%i in (1,1,36) do (
+  if "!UNBLOCKED!"=="0" (
+    node scripts/ml/collectWeekly.js --city=philly --only-found --limit=1 --max-credits=5 > scripts\ml\probe.log 2>&1
+    findstr /C:"FATAL" scripts\ml\probe.log >nul 2>&1
+    if errorlevel 1 (
+      set UNBLOCKED=1
+      echo [CHAIN] probe %%i succeeded, block lifted >> %LOG%
+    ) else (
+      echo [CHAIN] probe %%i still blocked >> %LOG%
+      powershell -NoProfile -Command "Start-Sleep -Seconds 600"
+    )
+  )
+)
+if "!UNBLOCKED!"=="0" (echo [CHAIN] FATAL: still blocked after 6 hours of probes >> %LOG% & exit /b 1)
 
 echo [CHAIN] STAGE 1: philly weekly refresh by id >> %LOG%
 node scripts/ml/collectWeekly.js --city=philly --only-found >> %LOG% 2>&1
@@ -22,9 +39,10 @@ powershell -NoProfile -Command "while ((Get-Date).Hour -lt 3 -or ((Get-Date).Hou
 echo [CHAIN] STAGE 5: staging the demand want-list (3 tries, 10 min apart) >> %LOG%
 set STAGED=0
 for %%i in (1 2 3) do (
-  if "%STAGED%"=="0" (
-    node scripts/ml/addDemandVenues.js --commit >> %LOG% 2>&1
-    findstr /C:"Inserted 0." %LOG% >nul 2>&1
+  if "!STAGED!"=="0" (
+    node scripts/ml/addDemandVenues.js --commit > scripts\ml\stage5.log 2>&1
+    type scripts\ml\stage5.log >> %LOG%
+    findstr /C:"Inserted 0." scripts\ml\stage5.log >nul 2>&1
     if errorlevel 1 (set STAGED=1) else (powershell -NoProfile -Command "Start-Sleep -Seconds 600")
   )
 )
