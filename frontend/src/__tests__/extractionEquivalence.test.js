@@ -1,11 +1,11 @@
 /**
- * EIGHT SCREENS LEFT App.js. THIS PINS WHAT THEY CAN STILL SEE.
+ * NINE SCREENS LEFT App.js. THIS PINS WHAT THEY CAN STILL SEE.
  *
  * On 2026-08-26 the venue owner dashboard, Add Friends and the flock chat
  * screen moved out of `App.js` into `src/screens/`; on 2026-08-27 the
  * one-to-one DM thread, the profile and settings screen, the admin costs and
  * revenue console and the venue signup onboarding followed them; the flock
- * plan detail screen followed on 2026-09-01. Each was an
+ * plan detail screen and the create screen followed on 2026-09-01. Each was an
  * arrow function declared inside
  * `FlockAppInner` that CLOSED OVER that component's state and was called or
  * mounted rather than mounted at module scope. Each is now a separate component
@@ -92,7 +92,7 @@ const PARSE_OPTIONS = {
 };
 const parse = (code) => parser.parse(code, PARSE_OPTIONS);
 
-/* The eight screens, the props object each one is handed, and the component
+/* The nine screens, the props object each one is handed, and the component
    name it exports. Adding another screen means adding a row here. */
 const SCREENS = [
   { component: 'ChatDetail', file: 'ChatDetail.js', props: 'chatDetailProps' },
@@ -103,6 +103,7 @@ const SCREENS = [
   { component: 'RevenueScreen', file: 'RevenueScreen.js', props: 'revenueScreenProps' },
   { component: 'VenueOnboarding', file: 'VenueOnboarding.js', props: 'venueOnboardingProps' },
   { component: 'FlockDetail', file: 'FlockDetail.js', props: 'flockDetailProps' },
+  { component: 'CreateScreen', file: 'CreateScreen.js', props: 'createScreenProps' },
 ];
 
 const APP_SOURCE = read('App.js');

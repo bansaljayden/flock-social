@@ -64,7 +64,12 @@ const path = require('path');
 // checks the same way DmDetail is.
 const APP_SRC = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'DmDetail.js'), 'utf8')
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8')
+  // The venue card posted into the chat by a brand new flock is written by the
+  // create screen, which left App.js for screens/CreateScreen.js on 2026-09-01;
+  // its source is appended so the pending / failed contract on that card is
+  // still read at the call site that writes it.
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'CreateScreen.js'), 'utf8');
 
 /**
  * Comments dropped, so prose describing a fix cannot pass for the fix. Line

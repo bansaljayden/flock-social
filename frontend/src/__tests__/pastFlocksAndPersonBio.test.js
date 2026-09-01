@@ -189,7 +189,12 @@ describe('person card bio', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('past flocks screen', () => {
-  const screen = region('const PastFlocksScreen = () =>', '// CREATE SCREEN');
+  // The end marker was `// CREATE SCREEN`, the banner over the next
+  // declaration in App.js. The create screen left for screens/CreateScreen.js
+  // on 2026-09-01 and took its banner with it, so the region ends at the first
+  // line of the comment that records the move, which begins at the offset the
+  // banner began at.
+  const screen = region('const PastFlocksScreen = () =>', '// The create screen was declared here');
   const screenCode = codeOnly(screen);
   const loader = region('const [pastFlocks, setPastFlocks] = useState(null)', 'const handleRerunFlock');
   const rerun = region('const handleRerunFlock = useCallback', '// Load trusted contacts on mount');
