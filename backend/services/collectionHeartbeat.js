@@ -31,6 +31,12 @@ const { sendEmail } = require('./emailService');
 
 const WINDOW_HOURS = 26;
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+// A run that aborts after twenty venues leaves rows behind, so a bare
+// "any rows at all" test stays silent through exactly the failure the
+// collector's own throttle wall produces. The PA selection is about 1,400
+// venues and each writes one row a night, so anything under this floor is a
+// night that started and died (2026-09-01 review).
+const MIN_HEALTHY_ROWS = 200;
 
 function alertAddresses() {
   return String(process.env.MODERATION_ALERT_EMAIL || '')
@@ -56,11 +62,8 @@ async function runCollectionHeartbeat() {
       [WINDOW_HOURS]
     );
     const fresh = rows[0]?.n ?? 0;
-    if (fresh > 0) {
-      // Healthy. Reset nothing: lastAlertDate only gates repeats within a
-      // day, and a recovery followed by a new failure deserves a new email.
-      return;
-    }
+    if (fresh >= MIN_HEALTHY_ROWS) return;
+    const partial = fresh > 0;
 
     const to = alertAddresses();
     if (to.length === 0) {
@@ -76,20 +79,36 @@ async function runCollectionHeartbeat() {
        RETURNING sent_on`
     );
     if (claim.rows.length === 0) return;
-    await sendEmail({
-      to: to[0],
-      subject: 'Flock data collection has stopped',
-      text: [
-        `No live crowd observations have landed in ml_training_data in the last ${WINDOW_HOURS} hours.`,
-        '',
-        'The nightly BestTime pull (Railway service BESTTIME, cron 0 2 * * *) has likely failed.',
-        'Check, in order: the Railway service logs, the BestTime subscription state,',
-        'and whether the last deploy changed scripts/ml/collectRealtime.js.',
-        '',
-        'This alert repeats at most once a day while collection stays stopped.',
-      ].join('\n'),
-    });
-    console.error(`[HEARTBEAT] Collection stopped: no realtime rows in ${WINDOW_HOURS}h. Alert mailed.`);
+    try {
+      await sendEmail({
+        to: to[0],
+        subject: partial
+          ? 'Flock data collection is failing partway'
+          : 'Flock data collection has stopped',
+        text: [
+          partial
+            ? `Only ${fresh} live crowd observations landed in ml_training_data in the last ${WINDOW_HOURS} hours, against roughly 1,400 expected. The nightly run is starting and dying partway.`
+            : `No live crowd observations have landed in ml_training_data in the last ${WINDOW_HOURS} hours.`,
+          '',
+          'The nightly BestTime pull (Railway service BESTTIME, cron 0 2 * * *) has likely failed.',
+          'Check, in order: the Railway service logs, the BestTime subscription state,',
+          'and whether the last deploy changed scripts/ml/collectRealtime.js.',
+          '',
+          'This alert repeats at most once a day while collection stays broken.',
+        ].join('\n'),
+      });
+    } catch (sendErr) {
+      // Release the claim. Holding it after a failed send would buy a full
+      // day of silence from the one service whose entire job is to break
+      // silence, and a duplicate email costs nothing by comparison
+      // (2026-09-01 review).
+      await pool.query(
+        `DELETE FROM ops_alert_ledger
+          WHERE alert_key = 'collection_heartbeat' AND sent_on = CURRENT_DATE`
+      ).catch(() => {});
+      throw sendErr;
+    }
+    console.error(`[HEARTBEAT] Collection ${partial ? 'failing partway' : 'stopped'}: ${fresh} realtime rows in ${WINDOW_HOURS}h. Alert mailed.`);
   } catch (err) {
     // The heartbeat must never take the app down with it.
     console.error('[HEARTBEAT] sweep failed:', err && err.message ? err.message : err);
