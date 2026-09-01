@@ -67,7 +67,13 @@ test('the sports collector reads its key from the environment and tracks both si
   // the repo to ban the secret from the repo. SportsDB keys are long numeric
   // ids and nothing else in this script legitimately carries one, so any
   // standalone run of nine-plus digits is a smuggled credential.
-  assert.ok(!/\d{9,}/.test(SPORTS), 'no literal numeric key in source, ever');
+  // The boundary tokens here were once literal backspace bytes (a heredoc
+  // escaping casualty), which made this pin match nothing and pass forever.
+  // The positive fixture below exists so a dead pattern can never sit here
+  // quietly again.
+  const NUMERIC_KEY = /\b\d{9,}\b/;
+  assert.ok(NUMERIC_KEY.test('key 123456789 end'), 'the pattern itself must catch a numeric credential');
+  assert.ok(!NUMERIC_KEY.test(SPORTS), 'no literal numeric key in source, ever');
   assert.match(SPORTS, /ev\.idHomeTeam === t\.teamId/);
   assert.match(SPORTS, /ev\.idAwayTeam === t\.teamId/,
     'home or away is the point: the flag is "is this team playing at all tonight"');

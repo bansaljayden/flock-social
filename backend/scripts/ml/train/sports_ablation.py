@@ -6,8 +6,11 @@ measures?
 
     python sports_ablation.py          (from backend/scripts/ml/train/)
 
-Prerequisites: prepare_features.py has been re-run AFTER sports_events.csv
-existed, so the pickles carry the sports_* columns and observed_date. This
+Prerequisites: prepare_features.py has been re-run with
+FLOCK_SPORTS_FEATURES=1 in the environment AFTER sports_events.csv existed,
+so the pickles carry the sports_* columns and observed_date. The flag exists
+because the sports family is ablation-only: a normal retrain must never
+featurise columns serving cannot compute. This
 script fits the SAME model twice on the SAME rows, identical fixed
 hyperparameters (the v2.3.0 search values every shipped model has carried
 since), differing only in whether the sports columns are visible.
@@ -88,8 +91,9 @@ def main():
     if missing:
         raise SystemExit(
             f'Pickles lack {missing}. Re-run prepare_features.py with '
-            'sports_events.csv present (exportSportsEvents.js writes it); the '
-            'ablation compares columns inside ONE feature build, never across two.')
+            'FLOCK_SPORTS_FEATURES=1 set and sports_events.csv present '
+            '(exportSportsEvents.js writes it); the ablation compares columns '
+            'inside ONE feature build, never across two.')
     if 'observed_date' not in tr:
         raise SystemExit('train pickle lacks observed_date; re-run prepare_features.py (2026-08-30 dump).')
     if 'is_realtime' not in cols:
