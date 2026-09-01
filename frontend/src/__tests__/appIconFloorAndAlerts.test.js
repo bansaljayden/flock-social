@@ -39,11 +39,14 @@ const path = require('path');
 // to be one.
 // The profile and settings screen (the You tab) left App.js on 2026-08-27 for
 // screens/ProfileSettings.js, carrying its sized icon calls, so it is read too.
+// The flock plan detail screen left on 2026-09-01 for screens/FlockDetail.js,
+// carrying its own sized icon calls, so it is read too.
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatDetail.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'VenueDashboard.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'AddFriends.js'), 'utf8')
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'FlockDetail.js'), 'utf8');
 
 /** Comment lines dropped, so prose naming a retired pattern cannot fail the
  *  test the fix was written to pass (same exclusion, and same reason, as

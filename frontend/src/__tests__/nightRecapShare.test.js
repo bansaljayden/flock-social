@@ -12,6 +12,14 @@ import fs from 'fs';
 import path from 'path';
 
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+// The flock detail screen, where the share button lives, left App.js on
+// 2026-09-01 for screens/FlockDetail.js. The canvas function stayed behind
+// in FlockAppInner, so the ladder is read from App.js and the button from
+// the screen file.
+const DETAIL = fs.readFileSync(
+  path.join(__dirname, '..', 'screens', 'FlockDetail.js'),
+  'utf8'
+);
 const start = APP.indexOf('const shareNightRecap');
 const fn = APP.slice(start, APP.indexOf('}, [recapSharing, showToast]);', start));
 
@@ -46,9 +54,9 @@ describe('the share ladder has all three rungs', () => {
 
 describe('the button lives on the completed detail only', () => {
   test('completed plans get it, cancelled plans do not', () => {
-    const btn = APP.indexOf("onClick={() => shareNightRecap(flock)}");
+    const btn = DETAIL.indexOf("onClick={() => shareNightRecap(flock)}");
     expect(btn).toBeGreaterThan(-1);
-    const gate = APP.lastIndexOf("{flock.status === 'completed' && (", btn);
+    const gate = DETAIL.lastIndexOf("{flock.status === 'completed' && (", btn);
     expect(gate).toBeGreaterThan(-1);
     expect(btn - gate).toBeLessThan(400);
   });
