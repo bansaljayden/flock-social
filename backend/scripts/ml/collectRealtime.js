@@ -329,7 +329,10 @@ async function collectRealtime() {
       } catch (_) {}
 
       // Fetch nearby event data (graceful — nulls if no API key or error)
-      let eventData = { event_nearby: false, event_distance_km: null, event_size: null, event_type: null, event_hours_until: null };
+      // observed/reason ride the lookup itself (migration 045 applied at the
+      // source): a thrown lookup and a measured quiet night must never write
+      // the same row. The default covers the throw path.
+      let eventData = { event_nearby: false, event_distance_km: null, event_size: null, event_type: null, event_hours_until: null, observed: false, reason: 'lookup_failed' };
       try {
         eventData = await getNearestEvent(venue.latitude, venue.longitude);
       } catch (err) {
@@ -368,6 +371,8 @@ async function collectRealtime() {
         ['event_size', eventData.event_size],
         ['event_type', eventData.event_type],
         ['event_hours_until', eventData.event_hours_until],
+        ['events_observed', eventData.observed === true],
+        ['events_unavailable_reason', eventData.observed === true ? null : (eventData.reason || 'lookup_failed')],
         ['baseline_busyness', baseline],
         ['busyness_pct', clampPct(busyness)],
         ['observed_date', local.dateStr],
