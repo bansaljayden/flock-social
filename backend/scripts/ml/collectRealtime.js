@@ -247,6 +247,8 @@ async function collectRealtime() {
   // them, 250ms apart) and the summary line cheerfully reported them as
   // "skipped". Transient errors bail after 10 in a row; fatal bails instantly.
   let consecutiveErrors = 0;
+  // Throttles are counted apart from errors: see the catch block below.
+  let consecutiveThrottles = 0;
   let aborted = false;
 
   for (const [cityKey, cityVenues] of Object.entries(byCity)) {
@@ -268,24 +270,40 @@ async function collectRealtime() {
       try {
         live = await fetchLiveBusyness(venue.besttime_venue_id);
         consecutiveErrors = 0;
+        consecutiveThrottles = 0;
       } catch (err) {
         if (err.fatal) {
           console.error(`[ML:Realtime] FATAL: ${err.message} — aborting run`);
           aborted = true;
           break;
         }
+        // A 503 is BestTime asking for space, not a venue problem, so it
+        // gets its OWN budget. The first version of this cooldown counted
+        // a throttle as a transient error before waiting, so ten throttles
+        // still ended the run, just nine minutes later than before
+        // (2026-09-01 review). A throttle wall now has to last forty
+        // minutes to stop a night, and a genuinely broken venue still
+        // trips the ten-error abort exactly as it always did.
+        const throttled = err && /503/.test(String(err.message || ''));
+        if (throttled) {
+          consecutiveThrottles++;
+          console.error(`[ML:Realtime] Throttled ${consecutiveThrottles}/40 at ${venue.name}, waiting 60s`);
+          if (consecutiveThrottles >= 40) {
+            console.error('[ML:Realtime] 40 consecutive throttles, BestTime is not letting us in, aborting run');
+            aborted = true;
+            break;
+          }
+          await sleep(60000);
+          continue;
+        }
         consecutiveErrors++;
         console.error(`[ML:Realtime] Transient error ${consecutiveErrors}/10 for ${venue.name}: ${err.message}`);
         if (consecutiveErrors >= 10) {
-          console.error('[ML:Realtime] 10 consecutive errors — BestTime looks down, aborting run');
+          console.error('[ML:Realtime] 10 consecutive errors, BestTime looks down, aborting run');
           aborted = true;
           break;
         }
-        // A 503 is BestTime asking for space, not a venue problem: take a
-      // 60 second cooldown so one throttle burst cannot cascade into the
-      // consecutive-error abort that ended both 2026-09-01 runs early.
-      const throttled = err && /503/.test(String(err.message || ''));
-      await sleep(throttled ? 60000 : 2000);
+        await sleep(2000);
         continue;
       }
       if (!live) {
@@ -336,7 +354,7 @@ async function collectRealtime() {
       // observed/reason ride the lookup itself (migration 045 applied at the
       // source): a thrown lookup and a measured quiet night must never write
       // the same row. The default covers the throw path.
-      let eventData = { event_nearby: false, event_distance_km: null, event_size: null, event_type: null, event_hours_until: null, observed: false, reason: 'lookup_failed' };
+      let eventData = { event_nearby: null, event_distance_km: null, event_size: null, event_type: null, event_hours_until: null, observed: false, reason: 'lookup_failed' };
       try {
         eventData = await getNearestEvent(venue.latitude, venue.longitude);
       } catch (err) {
@@ -376,6 +394,16 @@ async function collectRealtime() {
         ['event_type', eventData.event_type],
         ['event_hours_until', eventData.event_hours_until],
         ['events_observed', eventData.observed === true],
+        // The six enrichment columns are written EXPLICITLY, because their
+        // defaults are false, false, 0 and 0: omitting them wrote a measured
+        // absence beside an events_observed of false, which is exactly the
+        // fabricated negative migration 045 exists to end. A 2026-09-01
+        // review found 132,432 rows already carrying it.
+        ['has_nearby_event', eventData.observed === true ? (eventData.event_nearby === true) : null],
+        ['total_nearby_events', eventData.observed === true ? (eventData.event_nearby === true ? 1 : 0) : null],
+        ['total_nearby_attendance', eventData.observed === true ? (eventData.event_size || 0) : null],
+        ['nearest_event_distance_km', eventData.event_distance_km],
+        ['nearest_event_type', eventData.event_type],
         ['events_unavailable_reason', eventData.observed === true ? null : (eventData.reason || 'lookup_failed')],
         ['baseline_busyness', baseline],
         ['busyness_pct', clampPct(busyness)],
