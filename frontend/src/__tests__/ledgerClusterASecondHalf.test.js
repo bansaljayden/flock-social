@@ -39,6 +39,10 @@ const CHAT = codeOnly(readRaw('screens', 'ChatDetail.js'));
 // reaction pill A1 fixed went with it, so the A1 assertions read this now.
 const DM = codeOnly(readRaw('screens', 'DmDetail.js'));
 const ADD_FRIENDS = codeOnly(readRaw('screens', 'AddFriends.js'));
+// The create screen left App.js for screens/CreateScreen.js on 2026-09-01,
+// and the flock invite search field went with it, so the A11 invite
+// assertions read this rather than App.js.
+const CREATE = codeOnly(readRaw('screens', 'CreateScreen.js'));
 const NEW_DM = codeOnly(readRaw('components', 'NewDmModal.js'));
 const EDIT_PROFILE = codeOnly(readRaw('components', 'EditProfileForm.js'));
 
@@ -70,7 +74,7 @@ describe('the comment stripper and the reads are real', () => {
   it('every file read is a real file, not an empty string', () => {
     [['App.js', APP], ['ChatDetail.js', CHAT], ['DmDetail.js', DM],
       ['AddFriends.js', ADD_FRIENDS], ['NewDmModal.js', NEW_DM],
-      ['EditProfileForm.js', EDIT_PROFILE],
+      ['EditProfileForm.js', EDIT_PROFILE], ['CreateScreen.js', CREATE],
     ].forEach(([name, src]) => {
       expect(`${name}:${src.length > 2000}`).toBe(`${name}:true`);
     });
@@ -186,12 +190,15 @@ describe('A11: a failed people search shows the error, not "No users found"', ()
     HANDLERS.forEach((h) => expect(APP).toContain(`const ${h} = useCallback`));
   });
 
-  it('App.js renders the invite and connect errors and gates the empty state behind them', () => {
-    expect(APP).toContain('{inviteSearchError}');
+  it('the create screen and App.js render the invite and connect errors and gate the empty states behind them', () => {
+    // The invite field draws in screens/CreateScreen.js since 2026-09-01 and
+    // the Find Your People connect field is still in App.js, so each half of
+    // the rule is asserted against the file that now draws the control.
+    expect(CREATE).toContain('{inviteSearchError}');
     expect(APP).toContain('{connectSearchError}');
     // The "Nobody by that name" / "No users found" empty states do not draw
     // over an error.
-    expect(APP).toContain('!inviteSearchError && inviteSearch');
+    expect(CREATE).toContain('!inviteSearchError && inviteSearch');
     expect(APP).toContain('!connectSearchError && connectSearch');
   });
 

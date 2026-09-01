@@ -44,6 +44,21 @@
  * remount would destroy. Seven of them are left and all seven are safe today.
  * An eighth that is not goes red here rather than in somebody's hands.
  *
+ * WHERE SECTION 4 LOOKS, AND WHY IT IS TWO WALKS. It was one: every JSX tag
+ * inside FlockAppInner whose binding is also inside FlockAppInner. Nine
+ * screens have left App.js for `src/screens/` and each is handed an explicit
+ * props object, so a component declared in the render can now be MOUNTED in
+ * another file entirely, where that walk cannot see it. Toggle is the case
+ * that forced this: it drew the two switches on the create screen, and when
+ * that screen moved out on 2026-09-01 the only mounts of it left App.js with
+ * it. The hazard did not move. The binding is still rebuilt on every render
+ * of the shell, so the element the screen returns is still a new component
+ * type on every render. The second walk reads the props objects instead and
+ * takes any capitalised shorthand name whose binding is inside FlockAppInner
+ * and whose initialiser is a function, which also pulled in BottomNav,
+ * MissingFlockPanel and SafetyButton. Those three had been out of every
+ * sweep since the screens that mount them moved.
+ *
  * ON THE PARSER. `@babel/parser` and `@babel/traverse` arrive with
  * react-scripts and are required without a fallback, which is the same
  * decision `extractionEquivalence.test.js` records: if an install ever moves
@@ -408,6 +423,45 @@ function componentsDeclaredInRenderAndMounted() {
   return [...names].sort();
 }
 
+/**
+ * Every component whose binding lives inside `FlockAppInner` and which
+ * FlockAppInner HANDS to a screen rather than mounting itself. The screen
+ * mounts it, so the walk above cannot see it, and the rule still applies for
+ * the reason the header gives. Found by reading the `<name>Props` objects:
+ * a capitalised shorthand key, bound inside FlockAppInner, whose initialiser
+ * is a function. The initialiser test is what keeps a capitalised constant
+ * such as VENUE_MAX_ANCHORS out of a set that is about components.
+ */
+function componentsHandedToAScreen() {
+  const names = new Set();
+  FLOCK_APP_INNER.traverse({
+    VariableDeclarator(p) {
+      const id = p.node.id;
+      if (id.type !== 'Identifier' || !/Props$/.test(id.name)) return;
+      if (!p.node.init || p.node.init.type !== 'ObjectExpression') return;
+      for (const prop of p.node.init.properties) {
+        if (prop.type !== 'ObjectProperty' || prop.key.type !== 'Identifier') continue;
+        const name = prop.key.name;
+        if (!/^[A-Z]/.test(name)) continue;
+        const binding = p.scope.getBinding(name);
+        if (!binding) continue;
+        let scope = binding.scope;
+        let insideInner = false;
+        while (scope) {
+          if (scope.path.node === FLOCK_APP_INNER.node) { insideInner = true; break; }
+          scope = scope.parent;
+        }
+        if (!insideInner) continue;
+        const init = binding.path.node.init;
+        if (init && ['ArrowFunctionExpression', 'FunctionExpression'].includes(init.type)) {
+          names.add(name);
+        }
+      }
+    },
+  });
+  return [...names].sort();
+}
+
 /** The declaration path of a name bound anywhere inside FlockAppInner. */
 function declarationInsideInner(name) {
   let found = null;
@@ -431,7 +485,9 @@ const STATEFUL_CHILDREN = new Set(['SearchInputLocal', 'DialogBehavior']);
 const UNCONTROLLED_FIELDS = new Set(['input', 'textarea', 'select']);
 
 describe('nothing still declared in the render owns anything a remount destroys', () => {
-  const mounted = componentsDeclaredInRenderAndMounted();
+  const mountedHere = componentsDeclaredInRenderAndMounted();
+  const handedOver = componentsHandedToAScreen();
+  const mounted = [...new Set([...mountedHere, ...handedOver])].sort();
 
   it('the scan found components, so the rule below is being applied to something', () => {
     // The trap this closes: a walk that matches nothing reports every rule as
@@ -439,6 +495,11 @@ describe('nothing still declared in the render owns anything a remount destroys'
     // only ever moves by one or two, so a run that finds none has broken its
     // traversal rather than fixed the code.
     expect(mounted.length).toBeGreaterThan(3);
+    // Both halves separately, because a union hides a half that has stopped
+    // matching: the count staying above the floor says nothing about which
+    // walk produced it, and each of the two can break on its own.
+    expect(mountedHere.length).toBeGreaterThan(0);
+    expect(handedOver.length).toBeGreaterThan(0);
   });
 
   it('none of the three fixed ones is in that set any more', () => {

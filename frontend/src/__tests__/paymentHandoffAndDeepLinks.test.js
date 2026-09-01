@@ -131,6 +131,12 @@ const readSource = (...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8').repl
 const appSource = readSource('frontend', 'src', 'App.js')
   + readSource('frontend', 'src', 'screens', 'ChatDetail.js')
   + readSource('frontend', 'src', 'screens', 'VenueDashboard.js')
+  // The create screen left App.js on 2026-09-01 for screens/CreateScreen.js,
+  // taking the fourth keyed-Fragment star row with it. It is read BEFORE the
+  // revenue console rather than after it, because the console has to stay the
+  // last file for REVENUE_SCREEN_AT to keep meaning "everything declared out
+  // in FlockAppInner comes first".
+  + readSource('frontend', 'src', 'screens', 'CreateScreen.js')
   + readSource('frontend', 'src', 'screens', 'RevenueScreen.js');
 const pushNavSource = readSource('frontend', 'src', 'services', 'pushNavigation.js');
 const billingSource = readSource('backend', 'routes', 'billing.js');
