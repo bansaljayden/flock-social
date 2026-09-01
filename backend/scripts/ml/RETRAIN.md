@@ -959,6 +959,21 @@ The armed sequence, in order, once Jayden says go on BestTime:
    deliberately created Railway cron, which is his call, not an autonomous
    one)
 
+## user_report interlock: what actually lifts it (scoped 2026-09-01)
+
+The queue has carried "fix the user_report lookahead leak" since 2026-08-28.
+Scoped against the code, the real shape is mlFeedbackLabels.test.js's three
+interlocks: (1) the crowd_level to busyness_pct MAPPING must be measured,
+not defaulted, and nothing in the repo could justify one; (2) the WEIGHT
+TIER must land in the same change that widens the domain; (3) the CLOCK
+check (finding 13's fourth clock) on pre-021 bucket keys. The unlock for
+(1) is data that starts existing the day the live pilot runs: a feedback
+row paired with a same-venue same-hour live observation is a direct
+measurement of what a 1, 2, or 3 means in vendor percentage terms. So this
+work is sequenced AFTER two to four weeks of live pilot accumulation, as a
+measurement first and an export change second. Do not lift it by guess; the
+locks exist because a wrong mapping trains worse than no rows.
+
 ## SportsDB feature scope, expanded (2026-08-29)
 
 Jayden asked to exhaust the options before any of this gets built. The
