@@ -6,7 +6,7 @@ echo [CHAIN] start %date% %time% > %LOG%
 
 echo [CHAIN] STAGE 0: waiting out the BestTime 403 block (probe every 10 min) >> %LOG%
 set UNBLOCKED=0
-for /l %%i in (1,1,36) do (
+for /l %%i in (1,1,72) do (
   if "!UNBLOCKED!"=="0" (
     node scripts/ml/collectWeekly.js --city=philly --only-found --limit=1 --max-credits=5 > scripts\ml\probe.log 2>&1
     findstr /C:"FATAL" scripts\ml\probe.log >nul 2>&1
@@ -19,7 +19,7 @@ for /l %%i in (1,1,36) do (
     )
   )
 )
-if "!UNBLOCKED!"=="0" (echo [CHAIN] FATAL: still blocked after 6 hours of probes >> %LOG% & exit /b 1)
+if "!UNBLOCKED!"=="0" (echo [CHAIN] FATAL: still blocked after 12 hours of probes >> %LOG% & exit /b 1)
 
 echo [CHAIN] STAGE 1: philly weekly refresh by id >> %LOG%
 node scripts/ml/collectWeekly.js --city=philly --only-found >> %LOG% 2>&1
