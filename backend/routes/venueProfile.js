@@ -293,14 +293,6 @@ const placeIdRule = scalarOnly(body('googlePlaceId').optional({ nullable: true }
 // claim, waiting for an admin to verify it into a 500. Answer 409 at claim
 // time, and translate the index's own 23505 the same way for the case where a
 // verification lands between this check and the write.
-// Capacity: how many people the room holds, the owner's own number. The
-// column shipped in migration 030 and services/advisorFacts.js has read it
-// ever since, but NO route accepted it, so it was NULL on every profile
-// (verified in prod 2026-09-01: one profile, zero capacities). Bounds match
-// the events intake in routes/venueDashboard.js: int4 with a floor of 1.
-const capacityRule = scalarOnly(body('capacity').optional({ nullable: true }), 'capacity')
-  .isInt({ min: 1, max: 2147483647 }).withMessage('Capacity must be a whole number of people');
-
 const CLAIMED_MSG = 'That business is already claimed by a verified owner. Contact support if it is yours.';
 
 async function claimedByAnother(placeId, userId) {
@@ -509,7 +501,6 @@ router.post('/', requireVerified, [
   // quiet on that subject instead of guessing (SLOP-AUDIT §C — never demand a
   // pile of fields at onboarding).
   ...intakeRules,
-  capacityRule,
   // tier and verified are intentionally NOT accepted here either — see the PUT.
 ], async (req, res) => {
   try {
@@ -527,15 +518,14 @@ router.post('/', requireVerified, [
 
     // Upsert venue profile
     const result = await pool.query(
-      `INSERT INTO venue_profiles (user_id, business_name, category, location, description, goals, capacity, google_place_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO venue_profiles (user_id, business_name, category, location, description, goals, google_place_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (user_id) DO UPDATE SET
          business_name = EXCLUDED.business_name,
          category = EXCLUDED.category,
          location = EXCLUDED.location,
          description = EXCLUDED.description,
          goals = EXCLUDED.goals,
-         capacity = COALESCE(EXCLUDED.capacity, venue_profiles.capacity),
          google_place_id = COALESCE(EXCLUDED.google_place_id, venue_profiles.google_place_id),
          -- Verification binds to the place: re-claiming with a different place
          -- id resets it (round 3: this reset existed only on the PUT path)
@@ -551,8 +541,7 @@ router.post('/', requireVerified, [
                          THEN NULL ELSE venue_profiles.verification_requested_at END,
          updated_at = NOW()
        RETURNING *`,
-      [req.user.id, businessName, category || null, location || null, description || null, goals || [],
-       req.body.capacity ?? null, googlePlaceId || null]
+      [req.user.id, businessName, category || null, location || null, description || null, goals || [], googlePlaceId || null]
     );
 
     // forceCorpus: a claim is the moment the place id is captured, so whatever
@@ -836,7 +825,6 @@ router.put('/', [
   // changed its hours or its story had no way to say so after signup — the
   // fuller form would have inherited exactly that bug.
   ...intakeRules,
-  capacityRule,
   // tier is intentionally NOT accepted from the client — it maps to paid
   // plans and is set server-side only (audit 2026-08-12: clients could
   // PATCH themselves to 'pro'). `verified` is admin-only for the same
@@ -894,7 +882,6 @@ router.put('/', [
         verification_requested_at = CASE WHEN $9 IS NOT NULL AND $9 IS DISTINCT FROM google_place_id
                         THEN NULL ELSE verification_requested_at END,
         photo_url = COALESCE($10, photo_url),
-        capacity = COALESCE($12, capacity),
         updated_at = NOW()
       WHERE user_id = $11
       RETURNING *`,
@@ -906,8 +893,7 @@ router.put('/', [
        // venue-card paths store. The validator above guarantees this is non-null
        // for any non-empty photoUrl that got this far.
        photoUrl ? safeVenuePhotoUrl(photoUrl) : null,
-       req.user.id,
-       req.body.capacity ?? null]
+       req.user.id]
     );
 
     if (result.rows.length === 0) {

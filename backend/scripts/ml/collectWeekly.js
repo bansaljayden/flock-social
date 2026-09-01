@@ -347,6 +347,11 @@ async function collectWeekly() {
             weather?.temp ?? null, weather?.humidity ?? null, weather?.windSpeed ?? null,
             weather?.conditions ?? null, weather?.conditionId ?? null, weather?.isRaining ?? null,
             Math.max(0, Math.min(100, busyness)), forecast.epochAnalysis,
+            // Migration 045 provenance, stamped with the vocabulary the
+            // migration itself defined for typical-week rows: they have no
+            // date a one-off event could attach to, so the honest stamp is
+            // false with no_observation_date, never an ambiguous NULL.
+            false, 'no_observation_date',
           ];
           const base = params.length;
           params.push(...rowParams);
@@ -389,7 +394,8 @@ async function collectWeekly() {
               (venue_id, collection_mode, hour_axis, day_of_week, hour, month, season,
                venue_category, price_level, rating, review_count,
                temperature, humidity, wind_speed, weather_condition, weather_condition_code,
-               is_raining, busyness_pct, besttime_epoch)
+               is_raining, busyness_pct, besttime_epoch,
+               events_observed, events_unavailable_reason)
              VALUES ${valueRows.join(', ')}
              ON CONFLICT (venue_id, day_of_week, hour)
                WHERE collection_mode = 'weekly' AND hour_axis = 'venue_local'
@@ -409,6 +415,8 @@ async function collectWeekly() {
                is_raining             = EXCLUDED.is_raining,
                busyness_pct           = EXCLUDED.busyness_pct,
                besttime_epoch         = EXCLUDED.besttime_epoch,
+               events_observed        = EXCLUDED.events_observed,
+               events_unavailable_reason = EXCLUDED.events_unavailable_reason,
                collected_at           = NOW()
              RETURNING (xmax = 0) AS inserted`,
             params

@@ -959,6 +959,29 @@ The armed sequence, in order, once Jayden says go on BestTime:
    deliberately created Railway cron, which is his call, not an autonomous
    one)
 
+## The five-month commitment and the capture-everything rule (2026-09-01)
+
+Jayden's word, the day collection restarted: keep BestTime about five months
+(September through January, roughly $595 at Package-100, plus $45 SportsDB)
+and make sure every row lands with every feature it can carry, because the
+Ticketmaster autopsy proved uncaptured context is unrecoverable. The audit
+that followed found rows already carry venue-local time (hour, axis, day,
+month, season, observed date, collection timestamp), full weather including
+condition codes, holiday and school-break and special-night calendars, venue
+attributes, label provenance with a refusal guard, and vendor forecasts.
+The one hole was events: the realtime collector measured nearby events but
+never stamped migration 045's provenance, and the event service returned
+the same empty answer for an outage as for a genuinely quiet night. Both
+fixed at the source: fetchers return null when they cannot answer (missing
+key included, and SEATGEEK_CLIENT_ID is unset everywhere today, which had
+been silently voting "answered empty"), getNearestEvent carries observed
+and reason, the realtime collector stamps both columns, and weekly rows
+stamp false with no_observation_date, the migration's own vocabulary for a
+typical week. Standing chore for the five months: re-run
+collectSportsSchedules.js monthly, because the NBA and NHL 2026-27
+schedules were only partially published at first pull and reschedules
+drift.
+
 ## Ticketmaster backfill: CLOSED, impossible (measured 2026-09-01)
 
 The backlog carried "Philly Ticketmaster event backfill + ablation" since
