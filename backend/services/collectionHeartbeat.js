@@ -18,9 +18,12 @@
 // lands within an hour of the window expiring rather than at some fixed
 // time of day.
 //
-// In-memory once-per-day dedupe, single-instance by deployment (the replica
-// warning in CLAUDE.md). A restart may repeat one email; a repeated email
-// about a stopped pipeline is noise, a swallowed one is a frozen corpus.
+// Once-per-day dedupe lives in ops_alert_ledger (migration 058), NOT in
+// process memory: the first version kept it in RAM, and two deploys on
+// 2026-09-01 mailed Jayden twice inside an hour because each restart forgot
+// it had already sent. The INSERT ... ON CONFLICT DO NOTHING is the whole
+// mutex: only the caller whose insert lands sends the email, atomically,
+// across restarts and replicas alike.
 // ---------------------------------------------------------------------------
 
 const pool = require('../config/database');
@@ -28,8 +31,6 @@ const { sendEmail } = require('./emailService');
 
 const WINDOW_HOURS = 26;
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
-
-let lastAlertDate = null;
 
 function alertAddresses() {
   return String(process.env.MODERATION_ALERT_EMAIL || '')
@@ -61,14 +62,20 @@ async function runCollectionHeartbeat() {
       return;
     }
 
-    const today = new Date().toISOString().slice(0, 10);
-    if (lastAlertDate === today) return;
     const to = alertAddresses();
     if (to.length === 0) {
       console.error(`[HEARTBEAT] No realtime rows in ${WINDOW_HOURS}h and MODERATION_ALERT_EMAIL is unset; nobody was mailed.`);
       return;
     }
-    lastAlertDate = today;
+    // Claim today's send slot durably before mailing. No row back means an
+    // earlier boot already claimed it today.
+    const claim = await pool.query(
+      `INSERT INTO ops_alert_ledger (alert_key, sent_on)
+       VALUES ('collection_heartbeat', CURRENT_DATE)
+       ON CONFLICT (alert_key, sent_on) DO NOTHING
+       RETURNING sent_on`
+    );
+    if (claim.rows.length === 0) return;
     await sendEmail({
       to: to[0],
       subject: 'Flock data collection has stopped',
@@ -94,6 +101,7 @@ module.exports = {
   heartbeatEnabled,
   SWEEP_INTERVAL_MS,
   __test: {
-    reset() { lastAlertDate = null; },
+    // Dedupe state lives in the database now; nothing in-process to reset.
+    reset() {},
   },
 };

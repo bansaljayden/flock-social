@@ -24,8 +24,19 @@ const pool = require('../config/database');
 
 let freshRows = 1;
 let queryError = null;
-pool.query = async () => {
+// The durable dedupe ledger, emulated: (alert_key, sent_on) uniqueness with
+// ON CONFLICT DO NOTHING semantics, so the suite can prove once-per-day
+// holds ACROSS process restarts, the exact bug the ledger replaced.
+const ledger = new Set();
+pool.query = async (text) => {
   if (queryError) throw queryError;
+  const sql = String(text).replace(/\s+/g, ' ');
+  if (sql.includes('INSERT INTO ops_alert_ledger')) {
+    const key = 'collection_heartbeat:' + new Date().toISOString().slice(0, 10);
+    if (ledger.has(key)) return { rows: [] };
+    ledger.add(key);
+    return { rows: [{ sent_on: key }] };
+  }
   return { rows: [{ n: freshRows }] };
 };
 
@@ -36,20 +47,25 @@ const hb = require('../services/collectionHeartbeat');
 
 test('fresh rows mean silence', async () => {
   hb.__test.reset();
+  ledger.clear();
   sent.length = 0;
   freshRows = 42;
   await hb.runCollectionHeartbeat();
   assert.strictEqual(sent.length, 0);
 });
 
-test('a stopped pipeline mails once per day, not once per sweep', async () => {
+test('a stopped pipeline mails once per day, even across restarts', async () => {
   hb.__test.reset();
+  ledger.clear();
   sent.length = 0;
   freshRows = 0;
   await hb.runCollectionHeartbeat();
+  // A deploy restarts the process; the ledger, not process memory, must be
+  // what remembers. reset() models the restart.
+  hb.__test.reset();
   await hb.runCollectionHeartbeat();
   await hb.runCollectionHeartbeat();
-  assert.strictEqual(sent.length, 1, 'hourly sweeps must not stack emails');
+  assert.strictEqual(sent.length, 1, 'a redeploy must not re-mail the same day, 2026-09-01 did exactly that twice');
   assert.match(sent[0].subject, /collection has stopped/);
   assert.strictEqual(sent[0].to, 'jayden@example.com');
   assert.match(sent[0].text, /BESTTIME/, 'the email names where to look first');
@@ -57,6 +73,7 @@ test('a stopped pipeline mails once per day, not once per sweep', async () => {
 
 test('a database failure is caught, never thrown', async () => {
   hb.__test.reset();
+  ledger.clear();
   sent.length = 0;
   queryError = new Error('database blip');
   await assert.doesNotReject(() => hb.runCollectionHeartbeat());
