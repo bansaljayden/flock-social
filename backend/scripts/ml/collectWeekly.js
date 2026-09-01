@@ -436,7 +436,10 @@ async function collectWeekly() {
       );
 
       consecutiveErrors = 0;
-      await sleep(100);
+      // 250ms, not 100: BestTime's global limit is 300 requests a minute, and
+      // 100ms pacing is 600. The 2026-09-01 philly refresh proved it: 169
+      // venues succeeded and then a burst of 503s tripped the error guard.
+      await sleep(250);
     } catch (err) {
       // Key-level failures (401 bad key / 402 out of credits / 403) are not
       // venue problems — nothing further in this run can succeed, and before
