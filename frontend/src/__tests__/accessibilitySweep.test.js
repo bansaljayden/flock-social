@@ -79,8 +79,11 @@ const read = (p) => fs.readFileSync(path.join(SRC, p), 'utf8');
 // The profile and settings screen (the You tab) left App.js on 2026-08-27 for
 // screens/ProfileSettings.js, carrying the safety, blocked-accounts, interests,
 // payment and notification rows and their labels. Read here for the same reason.
+// The flock plan detail screen left App.js on 2026-09-01 for
+// screens/FlockDetail.js, carrying the plan header, the roster, the venue
+// votes, the ruled details list and the feedback sheet, so it is read too.
 const app = read('App.js') + read('screens/ChatDetail.js') + read('screens/DmDetail.js') + read('screens/VenueDashboard.js') + read('screens/AddFriends.js')
-  + read('screens/ProfileSettings.js')
+  + read('screens/ProfileSettings.js') + read('screens/FlockDetail.js')
   + read('components/EditProfileForm.js') + read('components/NewDmModal.js') + read('components/VerifyEmailSheet.js');
 const css = read('index.css');
 const paywall = read('components/PaywallSheet.js');
@@ -512,7 +515,7 @@ const stripComments = (src) => {
 
 const APP_FILES = [
   'App.js', 'screens/ChatDetail.js', 'screens/DmDetail.js', 'screens/VenueDashboard.js', 'screens/AddFriends.js',
-  'screens/ProfileSettings.js',
+  'screens/ProfileSettings.js', 'screens/FlockDetail.js',
   'components/EditProfileForm.js', 'components/NewDmModal.js', 'components/VerifyEmailSheet.js',
 ];
 const code = APP_FILES.map((f) => stripComments(read(f))).join('\n');

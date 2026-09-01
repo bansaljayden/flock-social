@@ -959,6 +959,23 @@ The armed sequence, in order, once Jayden says go on BestTime:
    deliberately created Railway cron, which is his call, not an autonomous
    one)
 
+## Ticketmaster backfill: CLOSED, impossible (measured 2026-09-01)
+
+The backlog carried "Philly Ticketmaster event backfill + ablation" since
+2026-08-28. A research pass killed it with a clean experiment: Discovery v2
+returns ZERO events for any past window (June mid-corpus window: 0; a window
+that ended ten days ago: 0) while an identical future-window control returned
+77 events across 16 pages, so the key and query shape are proven good and
+the API simply drops events once they occur, on every tier. No call budget
+fixes unfetchable data. The intended experiment, real historical event
+signal on PA rows then ablate, is exactly what the sports pipeline already
+delivers (146 distinct game-days inside the corpus window, real schedules,
+no attendance guessing) via FLOCK_SPORTS_FEATURES=1 plus sports_ablation.py.
+The only path to real GENERAL event features is forward accumulation:
+collectEvents.js is currently wired into nothing; putting it on a cadence
+would let post-045 provenance stamp future rows honestly. That is a decision
+for when collection economics are settled, not a backfill.
+
 ## user_report interlock: what actually lifts it (scoped 2026-09-01)
 
 The queue has carried "fix the user_report lookahead leak" since 2026-08-28.
