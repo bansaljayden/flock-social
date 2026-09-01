@@ -1,48 +1,53 @@
 # Regenerate the public mirror (bansaljayden/flock-social) from this repo.
 #
-# The public repository is this one with a set of paths erased from every commit
-# that ever contained them: the trained model, the old .env files, the Android
-# debug keystore, and the App Store screenshots. Erasing a path rewrites every
-# commit after it, so the public history is a different chain of hashes and
-# there is no shared ancestor to push against.
+# THIS JOB RUNS tools/publish/publish-public.sh AND NOTHING ELSE. The first
+# version of this file duplicated the path filter inline, and by 2026-09-01
+# the duplicate had drifted fatally behind the script: it carried no
+# redaction pass and no secret scan, so dispatching it would have republished
+# the exact password literal the redaction list was created to erase after
+# the 2026-08-25 incident. One source of truth now; the script's three gates
+# (path strip, in-file redactions, the every-blob secret scan) run on every
+# publish, manual or scheduled, and the scan refusing is the job failing.
 #
-# git-filter-repo is deterministic. The same commits filtered with the same path
-# list always produce the same output hashes, so this job regenerates every old
-# commit identically and appends only what is new — which is why the push below
-# is an ordinary fast-forward and not a force. If it is ever rejected, the strip
-# list changed and the entire public history was renumbered. That is a decision
-# to make deliberately, not a failure to paper over with --force.
-#
-# The path list here and in tools/publish/publish-public.sh must stay identical.
-# The script is the manual escape hatch; this is the automatic path.
+# ENABLED ON A DAILY SCHEDULE 2026-09-01 by Jayden's decision, reversing the
+# 2026-08-20 pause: the mirror exists to show the work happening, so it
+# publishes once a day ("make sure we commit to the public repo at least once
+# a day"), plus manual dispatch for a same-day sync. The schedule publishes
+# whatever main holds; on a day with no new commits the push is a no-op
+# fast-forward and the mirror simply stays put.
 name: Publish public mirror
 
-# DISABLED 2026-08-20 by Jayden's decision: the code stays private until he
-# says otherwise. Manual dispatch only, so the mirror cannot republish on a push.
 on:
   workflow_dispatch:
+    inputs:
+      force_renumbered:
+        description: >-
+          Set to "yes" ONLY when the strip list or a redaction changed and the
+          whole public history is renumbered by construction, per the script's
+          own doctrine. Replaces public main with force-with-lease.
+        required: false
+        default: "no"
+  schedule:
+    # 03:30 UTC daily: after the US evening's work and the 02:00 collection
+    # cron, so the day's commits ride the same morning's mirror.
+    - cron: "30 3 * * *"
 
-# This job needs GITHUB_TOKEN for exactly one thing — cloning THIS repository —
-# and it pushes to the mirror with an SSH deploy key instead, so it never needs
-# a write scope anywhere. The repository default is already read-only (checked
-# 2026-08-20), but that is an account setting one click away from being changed
-# for an unrelated reason, and this file is also mirrored to a second repo where
-# nobody is watching the setting at all. State the scope in the workflow so it
-# holds regardless. .github/workflows/gitleaks.yml already does.
+# GITHUB_TOKEN clones THIS repository only; the mirror push uses an SSH deploy
+# key, so no write scope is ever needed here. Stated so it holds regardless of
+# account settings, same as .github/workflows/gitleaks.yml.
 permissions:
   contents: read
 
 concurrency:
-  # Two pushes in quick succession would otherwise race, and the loser's push
-  # fails as non-fast-forward against a mirror the winner already advanced.
-  # Queue instead of cancelling: every commit should reach the mirror.
+  # Queue rather than cancel: every commit should reach the mirror, and two
+  # racing pushes would fail the loser as non-fast-forward.
   group: publish-public-mirror
   cancel-in-progress: false
 
 jobs:
   mirror:
-    # This file is itself mirrored to flock-social. Without this guard it would
-    # run there too, find no secret, and email a failure on every sync.
+    # This file is itself mirrored to flock-social; without the guard it would
+    # run there too and email a failure on every sync.
     if: github.repository == 'bansaljayden/Flock-app-'
     runs-on: ubuntu-latest
     steps:
@@ -50,72 +55,17 @@ jobs:
         uses: actions/checkout@v4
         with:
           # filter-repo rewrites every commit, so it needs every commit. A
-          # shallow clone would silently publish a truncated history and destroy
-          # the seven-month commit record this mirror exists to show.
+          # shallow clone would silently publish a truncated history and
+          # destroy the commit record this mirror exists to show.
           fetch-depth: 0
 
       - name: Install git-filter-repo
         run: pip install git-filter-repo
 
-      - name: Erase excluded paths from all history
-        run: |
-          set -euo pipefail
-          git filter-repo --force --invert-paths --prune-empty=never \
-            --path backend/scripts/ml/models/crowd_model.onnx \
-            --path backend/scripts/ml/models/model_metadata.json \
-            --path backend/.env \
-            --path frontend/.env.production \
-            --path mobile/android/app/debug.keystore \
-            --path frontend/public/birdie/flap-src.png \
-            --path frontend/public/birdie/birdie-idle.mp4 \
-            --path-glob 'frontend/public/screenshots/appstore/*' \
-            --path VENUE-ADVISOR.md \
-            --path PAYMENTS-ROUTING.md \
-            --path MODEL-EPOCH-FINDING.md \
-            --path APPLE-2.1-REPLY.md \
-            --path OSS-SECRET-SCAN.md \
-            --path OSS-READINESS.md \
-            --path VENUE-TOS-DRAFT.md \
-            --path MAP-VISIBILITY-DECISION.md \
-            --path PRO-VS-PREMIUM.md \
-            --path ROOST-OWNER-INPUT.md \
-            --path PITCH.md \
-            --path PITCH-CRAFT.md \
-            --path VENUE-PRICING.md \
-            --path CONSUMER-VALUE-CASE.md \
-            --path PRESHIP-SWEEP.md \
-            --path-glob 'ADVISOR-*.md' \
-            --path-glob 'SECURITY-AUDIT-*.md' \
-            --path-glob 'VIDEO-NOTES-*.md' \
-            --path-glob 'REVIEW-ROUND*.md' \
-            --path-glob 'flock-walkthrough-*.mp4'
-
-      - name: Refuse to publish if anything excluded survived
-        run: |
-          set -euo pipefail
-          fail=0
-          for p in backend/scripts/ml/models/crowd_model.onnx \
-                   backend/scripts/ml/models/model_metadata.json \
-                   backend/.env \
-                   frontend/.env.production \
-                   mobile/android/app/debug.keystore; do
-            n=$(git log --all --oneline -- "$p" | wc -l)
-            if [ "$n" != "0" ]; then echo "LEAK: $p survives in $n commits"; fail=1; fi
-          done
-          n=$(git log --all --oneline -- 'frontend/public/screenshots/appstore' | wc -l)
-          if [ "$n" != "0" ]; then echo "LEAK: appstore screenshots survive in $n commits"; fail=1; fi
-          # Belt and braces: the filter is path-based, so a key pasted into a
-          # source file would pass it. gitleaks guards that on the private side;
-          # this catches the specific shape that was on GitHub before the scrub.
-          if git grep -I -q -E 'AIzaSy[A-Za-z0-9_-]{20,}' $(git rev-list --all) -- 2>/dev/null; then
-            echo "LEAK: a Google API key shape appears in the filtered history"; fail=1
-          fi
-          [ "$fail" = "0" ] || { echo "REFUSING TO PUBLISH"; exit 1; }
-          echo "clean: $(git rev-list --count HEAD) commits, $(git count-objects -vH | awk '/size-pack/{print $2, $3}')"
-
-      - name: Push to the public mirror
+      - name: Run the gated publish script
         env:
           KEY: ${{ secrets.PUBLIC_MIRROR_SSH_KEY }}
+          FORCE_INPUT: ${{ github.event.inputs.force_renumbered }}
         run: |
           set -euo pipefail
           mkdir -p ~/.ssh
@@ -123,5 +73,8 @@ jobs:
           chmod 600 ~/.ssh/mirror
           ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts 2>/dev/null
           export GIT_SSH_COMMAND="ssh -i ~/.ssh/mirror -o IdentitiesOnly=yes"
-          git remote add public git@github.com:bansaljayden/flock-social.git
-          git push public HEAD:main
+          export PUBLISH_REMOTE="git@github.com:bansaljayden/flock-social.git"
+          if [ "${FORCE_INPUT:-no}" = "yes" ]; then
+            export PUBLISH_FORCE_RENUMBERED=1
+          fi
+          bash tools/publish/publish-public.sh

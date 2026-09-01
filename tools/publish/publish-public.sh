@@ -46,13 +46,15 @@ set -euo pipefail
 # SSH form failed every time it was run and printed its error into a terminal
 # nobody was reading. The private remote is HTTPS for the same reason, and gh
 # has already configured git's credential helper to authenticate that way.
-PUBLIC_REMOTE="https://github.com/bansaljayden/flock-social.git"
+# Overridable for the workflow runner, which pushes with an SSH deploy key
+# instead of this machine's HTTPS credential helper. Default unchanged.
+PUBLIC_REMOTE="${PUBLISH_REMOTE:-https://github.com/bansaljayden/flock-social.git}"
 REDACTIONS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/redactions.txt"
 # Resolved HERE, before the cd into the throwaway mirror below, for the same
 # reason REDACTIONS is: BASH_SOURCE is a relative path, so a $(cd dirname)
 # evaluated after the cd would resolve against the mirror and silently miss.
 MSG_REDACTIONS="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/message-redactions.txt"
-PUBLIC_REMOTE_HTTPS="https://github.com/bansaljayden/flock-social.git"
+PUBLIC_REMOTE_HTTPS="$PUBLIC_REMOTE"
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
