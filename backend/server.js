@@ -2058,6 +2058,8 @@ let flockSweepInterval = null;
 let flockSweepKickoff = null;
 let moneyWatchInterval = null;
 let moneyWatchKickoff = null;
+let heartbeatInterval = null;
+let heartbeatKickoff = null;
 
 async function boot() {
   try {
@@ -2077,6 +2079,15 @@ async function boot() {
   server.listen(PORT, () => {
     console.log(`Flock API running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
   });
+
+  // Collection heartbeat — hourly, watches the DATA rather than the cron:
+  // if no realtime rows landed in ~a day, one email a day goes out until it
+  // recovers. Exists because the Railway pull exits silently on failure and
+  // the last corpus freeze went unnoticed for months. Kickoff is staggered
+  // two minutes out so boot-time sweeps do not contend for the pool.
+  const { runCollectionHeartbeat, SWEEP_INTERVAL_MS: HEARTBEAT_MS } = require('./services/collectionHeartbeat');
+  heartbeatInterval = setInterval(runCollectionHeartbeat, HEARTBEAT_MS);
+  heartbeatKickoff = setTimeout(runCollectionHeartbeat, 2 * 60 * 1000);
 
   // Proactive crowd alerts — check every 15 minutes
   const { checkCrowdAlerts } = require('./services/crowdAlerts');
@@ -2200,6 +2211,8 @@ function shutdown(signal) {
     process.exit(0);
   }, SHUTDOWN_DEADLINE_MS).unref();
 
+  if (heartbeatInterval) clearInterval(heartbeatInterval);
+  if (heartbeatKickoff) clearTimeout(heartbeatKickoff);
   if (crowdAlertsInterval) clearInterval(crowdAlertsInterval);
   if (crowdAlertsKickoff) clearTimeout(crowdAlertsKickoff);
   if (nightContextInterval) clearInterval(nightContextInterval);
