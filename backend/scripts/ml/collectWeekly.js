@@ -444,10 +444,14 @@ async function collectWeekly() {
       );
 
       consecutiveErrors = 0;
-      // 250ms, not 100: BestTime's global limit is 300 requests a minute, and
-      // 100ms pacing is 600. The 2026-09-01 philly refresh proved it: 169
-      // venues succeeded and then a burst of 503s tripped the error guard.
-      await sleep(250);
+      // One call per second, a fifth of BestTime's stated 300 a minute. The
+      // history that earned this humility, same day: 100ms pacing (600 a
+      // minute) drew a hard key block; 250ms (240 a minute, lawfully under
+      // the limit) still drew a soft 503 wall after ~475 calls and then the
+      // same 403, because a key that has offended once is not judged by the
+      // published ceiling. The full corpus at this pace is still only ~30
+      // minutes, so speed buys nothing and trust buys everything.
+      await sleep(1000);
     } catch (err) {
       // Key-level failures (401 bad key / 402 out of credits / 403) are not
       // venue problems — nothing further in this run can succeed, and before
@@ -463,7 +467,11 @@ async function collectWeekly() {
         console.error('  10 consecutive errors — bailing to avoid burning slots');
         break;
       }
-      await sleep(2000);
+      // A 503 is BestTime asking for space, not a venue problem: take a
+      // 60 second cooldown so one throttle burst cannot cascade into the
+      // consecutive-error abort that ended both 2026-09-01 runs early.
+      const throttled = err && /503/.test(String(err.message || ''));
+      await sleep(throttled ? 60000 : 2000);
     }
   }
 
