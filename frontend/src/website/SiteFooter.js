@@ -106,6 +106,11 @@ export default function SiteFooter({
           </div>
           <div className="lp-footer-base">
             <span>&copy; {year} Flock Corp.</span>
+            {/* The data credit doubles as BestTime's standing backlink offer
+                (free credits for a link). A plain factual credit in the base
+                row, the same register as the copyright beside it: crowd
+                forecasts really are built on their foot-traffic data. */}
+            <span>Crowd data by <a href="https://besttime.app" style={{ color: 'inherit' }}>BestTime.app</a></span>
             <span>Made by Jayden Bansal</span>
           </div>
         </div>
