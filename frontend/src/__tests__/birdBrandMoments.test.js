@@ -71,12 +71,16 @@ const {
 // screens/RevenueScreen.js, and the cobalt Birdie beside the "Admin Dashboard"
 // title and the two warm birds in its empty states went with it, so it is read
 // here as well.
+// The flock plan detail screen left on 2026-09-01 for screens/FlockDetail.js,
+// and the warm bird beside the just-you roster and the cobalt Birdie in its
+// no-venue-yet empty state went with it, so it is read here too.
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatDetail.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'VenueDashboard.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'AddFriends.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8')
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'RevenueScreen.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'RevenueScreen.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'FlockDetail.js'), 'utf8');
 const BIRD_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'components', 'ui', 'BirdieBird.js'),
   'utf8'

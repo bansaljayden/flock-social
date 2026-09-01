@@ -53,7 +53,12 @@ const path = require('path');
 // app source is simply in two files, so both are read, in the order they used
 // to be one.
 const APP_SRC = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatDetail.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatDetail.js'), 'utf8')
+  // The flock plan detail screen followed on 2026-09-01: the Lock it in
+  // control, the attendance-owed derivation and the vote rows live in
+  // screens/FlockDetail.js now. It is appended last so every marker pair
+  // above still spans what it spanned when the source was one file.
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'FlockDetail.js'), 'utf8');
 const API_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'services', 'api.js'),
   'utf8'

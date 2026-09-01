@@ -28,9 +28,10 @@
  *      instead of a raw arrow character, and both icon-only header buttons
  *      carry accessible names.
  *
- * Source-scanning, not rendering, for the same reason as every other App.js
- * suite here: each fact under test is a call-site choice in a 16,500-line
- * monolith, and jsdom would happily render a raw glyph or an icon chip.
+ * Source-scanning, not rendering, for the same reason as every other screen
+ * suite here: each fact under test is a call-site choice, and jsdom would
+ * happily render a raw glyph or an icon chip. The screen left App.js on
+ * 2026-09-01 for screens/FlockDetail.js, so that file is what is read now.
  *
  * HOW TO RUN
  *   cd frontend && CI=true npx react-scripts test --watchAll=false
@@ -39,23 +40,24 @@
 const fs = require('fs');
 const path = require('path');
 
-const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+const DETAIL = fs.readFileSync(
+  path.join(__dirname, '..', 'screens', 'FlockDetail.js'),
+  'utf8'
+);
 const ICONS_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'components', 'ui', 'Icons.js'),
   'utf8'
 );
 
-/** The flock detail screen, from its declaration to the next screen's. The
- *  profile screen used to be the next one, and its "// PROFILE SCREEN" comment
- *  was the end marker. The profile and settings screen left App.js on 2026-08-27
- *  for screens/ProfileSettings.js, so the venue dashboard is the next screen in
- *  the file now and its comment is the marker. */
+/** The flock detail screen. It used to be sliced out of App.js between its
+ *  declaration and the next screen's comment, and the end marker rotted
+ *  twice as screens left the file around it. The screen is its own file
+ *  now, screens/FlockDetail.js, which holds nothing but this screen, so
+ *  the region is that file from its export declaration down. */
 function region() {
-  const start = APP.indexOf('const FlockDetailScreen = () =>');
-  const end = APP.indexOf('// VENUE DASHBOARD SCREEN', start);
+  const start = DETAIL.indexOf('export default function FlockDetail(');
   expect(start).toBeGreaterThan(-1);
-  expect(end).toBeGreaterThan(start);
-  return APP.slice(start, end);
+  return DETAIL.slice(start);
 }
 
 /** Comments dropped entirely, block comments included, so prose naming a
