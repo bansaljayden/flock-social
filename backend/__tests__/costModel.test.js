@@ -492,7 +492,15 @@ test('the watchlist carries no invented numbers', () => {
   // the thing to watch. A licence question became a quota question.
   assert.ok(ids.includes('maptiler-satellite'), 'MapTiler is now the only licensed satellite source, so its cap is the exposure');
   assert.ok(!ids.includes('esri-satellite'), 'the Esri fallback is gone from App.js; it must not linger on the watchlist');
-  assert.ok(ids.includes('besttime-subscription'), 'a subscription with no code path is money for nothing');
+  // BestTime left the watchlist on 2026-09-01 by being answered rather than by
+  // being ignored. It sat here as "a subscription with no code path is money for
+  // nothing" while that was true. It stopped being true when collection
+  // restarted on a Package 100 plan behind a nightly Railway cron, so it is now
+  // a known recurring bill with a figure, and a known bill on the watchlist
+  // would be the same category error in the other direction.
+  assert.ok(!ids.includes('besttime-subscription'), 'BestTime is a known recurring bill now, so it belongs on the fixed list rather than the watchlist');
+  const besttime = cm.FIXED_MONTHLY.find((e) => e.id === 'besttime-subscription');
+  assert.ok(besttime && besttime.verified && besttime.usd > 0, 'the BestTime subscription must carry a verified figure on the fixed list');
 });
 
 // ===========================================================================
@@ -806,7 +814,10 @@ test('a free row says which kind of zero it is, and an unknown row does not say 
   // usage-based map tiles that nothing in this repo counts, and the BestTime
   // plan may still be charging for a key that is dead.
   const unknown = new Set(DEPS.unknownCostIds);
-  for (const id of ['maptiler', 'carto', 'besttime-subscription']) {
+  // BestTime came off this list on 2026-09-01: the plan and its price are known
+  // ($119 Package 100), so reading it as unknown would understate a real bill.
+  assert.ok(!unknown.has('besttime-subscription'), 'the BestTime plan has a known price now and must not read as unknown');
+  for (const id of ['maptiler', 'carto']) {
     assert.ok(unknown.has(id), `${id} has no defensible figure and must read as unknown`);
   }
 });
