@@ -33,7 +33,8 @@ function mapEventType(classification) {
 // Env: TICKETMASTER_API_KEY
 async function fetchTicketmasterEvents(lat, lon, radiusKm = 5) {
   const apiKey = process.env.TICKETMASTER_API_KEY;
-  if (!apiKey) return [];
+  // No key is a provider that cannot answer, never an empty answer.
+  if (!apiKey) return null;
 
   try {
     const params = new URLSearchParams({
@@ -49,7 +50,7 @@ async function fetchTicketmasterEvents(lat, lon, radiusKm = 5) {
     // event API must not stall the whole run (round 13).
     const response = await fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${params}`,
       { signal: AbortSignal.timeout(15000) });
-    if (!response.ok) return [];
+    if (!response.ok) return null;
 
     const data = await response.json();
     const events = data._embedded?.events || [];
@@ -64,7 +65,7 @@ async function fetchTicketmasterEvents(lat, lon, radiusKm = 5) {
     }));
   } catch (err) {
     console.error('[ML:Events] Ticketmaster error:', err.message);
-    return [];
+    return null;
   }
 }
 
@@ -73,7 +74,9 @@ async function fetchTicketmasterEvents(lat, lon, radiusKm = 5) {
 // Env: SEATGEEK_CLIENT_ID
 async function fetchSeatGeekEvents(lat, lon, radiusKm = 5) {
   const clientId = process.env.SEATGEEK_CLIENT_ID;
-  if (!clientId) return [];
+  // Same rule: SEATGEEK_CLIENT_ID is unset in every environment today,
+  // and [] here read as an answered-empty vote toward observed=true.
+  if (!clientId) return null;
 
   try {
     const radiusMi = Math.round(radiusKm * 0.621371);
@@ -88,7 +91,7 @@ async function fetchSeatGeekEvents(lat, lon, radiusKm = 5) {
 
     const response = await fetch(`https://api.seatgeek.com/2/events?${params}`,
       { signal: AbortSignal.timeout(15000) });
-    if (!response.ok) return [];
+    if (!response.ok) return null;
 
     const data = await response.json();
     const events = data.events || [];
@@ -103,22 +106,42 @@ async function fetchSeatGeekEvents(lat, lon, radiusKm = 5) {
     }));
   } catch (err) {
     console.error('[ML:Events] SeatGeek error:', err.message);
-    return [];
+    return null;
   }
 }
 
 // Get the nearest event to a venue and compute features
-// Returns: { event_nearby, event_distance_km, event_size, event_type, event_hours_until }
+// Returns: { event_nearby, event_distance_km, event_size, event_type,
+//   event_hours_until, observed, reason } — observed/reason per migration 045.
 async function getNearestEvent(venueLat, venueLon, radiusKm = 5) {
   const [tmEvents, sgEvents] = await Promise.all([
     fetchTicketmasterEvents(venueLat, venueLon, radiusKm),
     fetchSeatGeekEvents(venueLat, venueLon, radiusKm),
   ]);
 
-  // Merge and deduplicate by name similarity
-  const allEvents = [...tmEvents, ...sgEvents];
+  // Provenance travels with the answer (2026-09-01, migration 045's rule
+  // applied at the source). A fetcher returns NULL when it could not answer
+  // (no key, HTTP failure, timeout) and an ARRAY when it answered, empty
+  // included. `observed` is true only when at least one provider answered:
+  // a quiet night is a measurement, an outage is not, and before this the
+  // two produced byte-identical rows, which is exactly how 56% of the
+  // corpus became an unquantifiable negative-event leak.
+  const answered = [tmEvents, sgEvents].filter((r) => Array.isArray(r));
+  if (answered.length === 0) {
+    return {
+      event_nearby: false, event_distance_km: null, event_size: null,
+      event_type: null, event_hours_until: null,
+      observed: false, reason: 'lookup_failed',
+    };
+  }
+
+  const allEvents = answered.flat();
   if (allEvents.length === 0) {
-    return { event_nearby: false, event_distance_km: null, event_size: null, event_type: null, event_hours_until: null };
+    return {
+      event_nearby: false, event_distance_km: null, event_size: null,
+      event_type: null, event_hours_until: null,
+      observed: true, reason: null,
+    };
   }
 
   // Find nearest event
@@ -136,7 +159,8 @@ async function getNearestEvent(venueLat, venueLon, radiusKm = 5) {
   }
 
   if (!nearest) {
-    return { event_nearby: false, event_distance_km: null, event_size: null, event_type: null, event_hours_until: null };
+    return { event_nearby: false, event_distance_km: null, event_size: null,
+             event_type: null, event_hours_until: null, observed: true, reason: null };
   }
 
   // Calculate hours until event
@@ -152,6 +176,8 @@ async function getNearestEvent(venueLat, venueLon, radiusKm = 5) {
     event_size: nearest.size,
     event_type: nearest.type,
     event_hours_until: hoursUntil,
+    observed: true,
+    reason: null,
   };
 }
 
