@@ -15,15 +15,20 @@ Apps, Apple, Google, Snapchat+, BeReal, Gas). This is the honest version, not th
 >   still a blocker on the Stripe/venue side, where no account exists yet. What
 >   remains true is the *product* point: teen purchases route through a parent's
 >   card and Ask to Buy, so a $24.99 annual charge is an "ask a parent" conversation.
-> - **Venue prices are decided and FINAL as of 2026-08-14: $35/mo Premium and
->   $75/mo Pro.** `VENUE-BILLING.md` carries the decision; these are the numbers
->   the app has always displayed, and the decision resolved the old conflict in
->   the app's favor (an earlier draft of this banner pointed the other way).
->   The venue-count math below is recomputed at the real prices: clearing
->   $1,000/month takes 14 venues all on Pro ($75 x 14 = $1,050), 29 all on
->   Premium ($35 x 29 = $1,015), or about 19 at an even mix ($55 x 19 = $1,045).
+> - **Venue prices are $35/mo Premium and $99/mo Pro.** Premium was decided
+>   2026-08-14. **Pro moved from $75 to $99 on 2026-08-25**, and this banner
+>   carried the dead $75 until 2026-09-01; `VENUE-PRICING.md` holds the sourced
+>   reasoning, `VENUE-BILLING.md` the decision, and `VENUE_PLAN_PRICE` in
+>   `frontend/src/App.js` reads `{ premium: 35, pro: 99 }`, which is what a
+>   venue actually sees.
+>   The venue-count math is recomputed at $99: clearing $1,000/month takes
+>   **11 venues all on Pro** ($99 x 11 = $1,089; ten falls just short at $990),
+>   29 all on Premium ($35 x 29 = $1,015), or **15 at an even mix**
+>   ($67 x 15 = $1,005).
 >   The old "roughly ten venues" framing came from the superseded higher-price
->   proposal and understates the count at the decided prices.
+>   proposal. At $75 Pro it understated the count badly; at $99 it lands close,
+>   which is a coincidence of the price move rather than that framing being
+>   right. Use 11, and say the arithmetic out loud.
 
 > **Fact-checked again 2026-08-18, the day this repo was published under
 > PolyForm Noncommercial 1.0.0 and strangers could start reading it.** Every
@@ -64,12 +69,12 @@ users**, for three honest reasons:
 
 **So what do we do?** Keep the paywall built and **dark** — it is the right *plumbing*, and
 "ship it" here means ship the code, not flip `PAYWALL_ENABLED`. **The money you can actually
-make right now is on the venue side** — you already built the venue-owner dashboard. Fourteen
-bars on the $75 Pro tier clears your $1k/month goal (about 19 at an even $35 Premium / $75 Pro
+make right now is on the venue side** — you already built the venue-owner dashboard. Eleven
+bars on the $99 Pro tier clears your $1k/month goal (about 15 at an even $35 Premium / $99 Pro
 mix — see the banner above for the arithmetic), with *zero* consumer users required, and it
 makes the app *better* for users (deals) instead of worse (paywalls). Two honest asterisks on
 that sentence, both spelled out below: there is **no way to charge a venue yet** (no Stripe
-code exists), and the features that separate $75 Pro from $35 Premium are **not built**, so the
+code exists), and the features that separate $99 Pro from $35 Premium are **not built**, so the
 sellable product today is Premium.
 
 ---
@@ -171,12 +176,12 @@ which is not what the report measures.
    placement in vote lists and "slow-night" push offers do not exist in the code, and there is
    **no Stripe integration at all** (no checkout, no webhook, no `stripe` dependency) —
    `VENUE-BILLING.md` is a design document, not a deployed system. Those two missing features
-   are the entire difference between $75 Pro and $35 Premium, so **do not sell the Pro tier**
+   are the entire difference between $99 Pro and $35 Premium, so **do not sell the Pro tier**
    on them. ("Boost" was the name for this tier in the superseded higher-price proposal; the
    tiers are `premium` and `pro`.)
-   Fourteen Pro venues, or about 19 at an even Premium/Pro mix, covers the ~$1k/mo goal
-   with *zero* consumer scale needed (see `VENUE-BILLING.md` for the $35 / $75 tiers,
-   FINAL as of 2026-08-14, and the banner above for the arithmetic). This is the BeReal lesson:
+   Eleven Pro venues, or about 15 at an even Premium/Pro mix, covers the ~$1k/mo goal
+   with *zero* consumer scale needed (see `VENUE-BILLING.md` for the $35 / $99 tiers
+   and the banner above for the arithmetic). This is the BeReal lesson:
    Gen-Z social apps monetize the *business* side, not user subscriptions. The honest caveat
    from `PAYWALL-DECISION.md` §5: venue value depends on groups considering venues, so B2B
    does not escape the no-users problem either — it just needs users in one city.
