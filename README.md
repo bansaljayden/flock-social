@@ -232,7 +232,7 @@ was never carried forward with the app after that.
 |---|---|
 | `SLOP-AUDIT.md` | Design and copy standard, with per-rule audit status. Binds every UI or copy change |
 | `MONEY-MODEL.md` | Monetization reality: venue B2B first, consumer Pro later |
-| `VENUE-BILLING.md` | Venue subscriptions. Tier enforcement is built; the Stripe half is a design spec with no code. Authoritative on price: $35 Premium / $75 Pro, FINAL as of 2026-08-14 (matches the app) |
+| `VENUE-BILLING.md` | Venue subscriptions. Tier enforcement is built; the Stripe half is a design spec with no code. Authoritative on price: $35 Premium / $99 Pro, re-priced 2026-08-25 (matches VENUE_PLAN_PRICE in the app). This line said $75 for a week after the change |
 | `MODERATION-LEGAL.md` | Moderation and legal commitments the code must keep |
 | `BACKUP-AND-VERIFICATION.md` | Backup and restore: what is verified, what is only researched |
 | `SUBMIT-CHECKLIST.md` | App Store submission: assets, ordered steps, privacy labels |
@@ -258,8 +258,11 @@ npm install && npm start
 ```
 
 Both `.env.example` files carry the variables you need to boot it, with a
-line per variable saying what breaks when it is missing. Three fail *open*
-(image moderation, NFC trust, admin provisioning) — read those before deploying.
+line per variable saying what breaks when it is missing. Two fail *open* in a
+way that matters (NFC trust, admin provisioning) and both degrade toward
+*unverified*, which is the safe direction. Image moderation used to be the
+third and is not: it fails CLOSED in production since 2026-08-20, so a missing
+provider refuses the upload. This line claimed three until 2026-09-01.
 They are not an exhaustive index of `process.env`: a handful of tuning knobs,
 platform-injected values and destructive-operation guards are read by the code
 without appearing there.
