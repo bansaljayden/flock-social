@@ -470,63 +470,6 @@ appId: com.flockcorp.flock
     text: "Back"                                 # ChatDetail.js:487 aria-label; the chat has no tab bar
     optional: true
 
-# Shot 11b: the contacts dialog, in context, after the screen that explains
-# what is sent. "Contacts" is a tab that only renders on native
-# (AddFriends.js:131); "Check my contacts" (AddFriends.js:511) calls
-# Contacts.requestPermissions() (services/contacts.js). "Don't Allow" does
-# not match "Allow.*"; "Allow Full Access" and "Allow" do.
-- tapOn: "You"
-- scrollUntilVisible:
-    element:
-      text: "Add Friends.*"                     # ProfileSettings.js:633 row; WKWebView exposes the whole button, title plus subtitle, as one label (run 5 missed the exact text)
-    direction: DOWN
-    timeout: 8000
-    optional: true
-- tapOn:
-    text: "Add Friends.*"
-    optional: true
-- tapOn:
-    text: "Contacts"                            # AddFriends.js:131 tab label
-    optional: true
-- scrollUntilVisible:
-    element: "Check my contacts.*"                # AddFriends.js:511
-    direction: DOWN
-    timeout: 5000
-    optional: true
-- tapOn:
-    text: "Check my contacts.*"
-    optional: true
-# Run 14 (2026-09-02): with permissions left unset the tap put up something
-# that matched neither "Allow.*" nor "Back", and the logout's "You" tap
-# failed against it. iOS 18 and later ask in two shapes: an alert with
-# "Select Contacts", "Allow Full Access" and "Don't Allow", or a picker sheet
-# with "Continue", "Done" and "Cancel". Answer whichever is up, then make
-# sure the app's own screen is back before the logout.
-- extendedWaitUntil:
-    visible: "Allow.*|Select Contacts.*|Continue|OK"   # iOS dialog, NSContactsUsageDescription (Info.plist:119)
-    timeout: 15000
-    optional: true
-- tapOn:
-    text: "Allow Full Access|Allow"
-    index: 0
-    optional: true
-- tapOn:
-    text: "Allow.*"
-    index: 0
-    optional: true
-- tapOn:
-    text: "Continue|OK"
-    optional: true
-- waitForAnimationToEnd
-- tapOn:
-    text: "Done|Cancel"
-    optional: true
-- waitForAnimationToEnd
-- tapOn:
-    text: "Back"                                 # AddFriends.js:143
-    optional: true
-- runFlow: parts/logout.yaml
-
 # ---------------------------------------------------------------------------
 # B2: B accepts the flock invite (shot 8, the RSVP in this app) and posts the
 # message A will report. Optional as a block: if the invite never reached B,
@@ -742,3 +685,87 @@ appId: com.flockcorp.flock
           visible: "Welcome back"               # ProfileSettings.js:906 onLogout(sessionEndCopy('account_deleted')) -> LoginScreen
           timeout: 20000
           optional: true
+
+# ---------------------------------------------------------------------------
+# Shot 11b, LAST on purpose: the contacts screen. Runs 14 and 15 (2026-09-02)
+# both ended here: on iOS 18 and later the contacts request puts up a
+# two-step access UI, and its second step is drawn by a system process that
+# Maestro cannot read; it stayed over the app through a relaunch and a
+# clean-state reinstall. The workflow keeps contacts granted for the whole
+# recording, but a clean-state launch reinstalls the app and can wipe that
+# grant, so this shot goes at the very end where nothing depends on the
+# screen coming back: shots 8, 12, 13, 15 and 16 are already on tape.
+# "Contacts" is a tab that only renders on native (AddFriends.js:131);
+# "Check my contacts" (AddFriends.js:511) calls Contacts.requestPermissions()
+# (services/contacts.js) only when the permission is still undecided.
+# ---------------------------------------------------------------------------
+- runFlow:
+    file: parts/login.yaml
+    env:
+      EMAIL: ${REVIEW_EMAIL_A}
+      PASSWORD: ${REVIEW_PASSWORD}
+- extendedWaitUntil:
+    visible: "Nest"
+    timeout: 25000
+    optional: true
+- tapOn: "You"
+- scrollUntilVisible:
+    element:
+      text: "Add Friends.*"                     # ProfileSettings.js:633 row; WKWebView exposes the whole button, title plus subtitle, as one label (run 5 missed the exact text)
+    direction: DOWN
+    timeout: 8000
+    optional: true
+- tapOn:
+    text: "Add Friends.*"
+    optional: true
+- tapOn:
+    text: "Contacts"                            # AddFriends.js:131 tab label
+    optional: true
+- scrollUntilVisible:
+    element: "Check my contacts.*"                # AddFriends.js:511
+    direction: DOWN
+    timeout: 5000
+    optional: true
+- tapOn:
+    text: "Check my contacts.*"
+    optional: true
+# Run 14 (2026-09-02): with permissions left unset the tap put up something
+# that matched neither "Allow.*" nor "Back", and the logout's "You" tap
+# failed against it. iOS 18 and later ask in two shapes: an alert with
+# "Select Contacts", "Allow Full Access" and "Don't Allow", or a picker sheet
+# with "Continue", "Done" and "Cancel". Answer whichever is up, then make
+# sure the app's own screen is back before the logout.
+- extendedWaitUntil:
+    visible: "Allow.*|Select Contacts.*|Continue|OK"   # iOS dialog, NSContactsUsageDescription (Info.plist:119)
+    timeout: 15000
+    optional: true
+- tapOn:
+    text: "Allow Full Access|Allow"
+    index: 0
+    optional: true
+- tapOn:
+    text: "Allow.*"
+    index: 0
+    optional: true
+- tapOn:
+    text: "Continue|OK"
+    optional: true
+- waitForAnimationToEnd
+# Second step of the iOS 18+ flow, if it is readable: full access first.
+- tapOn:
+    text: "Allow Full Access|Allow.*"
+    index: 0
+    optional: true
+- tapOn:
+    text: "Select Contacts.*"
+    optional: true
+- waitForAnimationToEnd
+- tapOn:
+    text: "Done|Cancel"
+    optional: true
+- waitForAnimationToEnd
+- assertVisible:
+    text: "Contacts on Flock|No .*|.*contacts.*"   # whichever state the tab landed in, for the log
+    optional: true
+# No logout here: this is the end of the take, and a required tap against
+# a sheet that outlived the app is what ended runs 14 and 15.
