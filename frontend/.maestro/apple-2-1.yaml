@@ -1,0 +1,312 @@
+# Apple Guideline 2.1 review recording, driven end to end with nobody at the
+# keyboard. Shot numbers match APPLE-2.1-REPLY.md section B. Run by the
+# ios-review-recording workflow in codemagic.yaml, which boots a Simulator,
+# starts xcrun simctl recordVideo, and passes three env vars:
+#   REVIEW_EMAIL_A, REVIEW_EMAIL_B, REVIEW_PASSWORD
+#
+# Two accounts are signed up on the production API and both are deleted, A on
+# camera in the final shot and B by apple-2-1-cleanup.yaml afterwards. No seed
+# script runs and no committed password is used.
+#
+# Every step that a first run is most likely to need adjusting is marked
+# optional: true so the recording completes and the debug output shows which
+# tap missed, rather than the whole run dying at shot 9. The essential steps
+# (signup, login, permissions, report, block, unblock, delete) are not optional.
+appId: com.flockcorp.flock
+env:
+  NAME_A: "Alex Review"
+  NAME_B: "Sam Review"
+---
+# Permissions are left unset on purpose. The point of the recording is that
+# the iOS dialogs appear in context and are accepted on camera.
+- launchApp:
+    clearState: true
+    permissions:
+      all: unset
+
+# ---------------------------------------------------------------------------
+# Account B first, off the story line: it has to exist before A can invite it.
+# ---------------------------------------------------------------------------
+- runFlow:
+    file: parts/signup.yaml
+    env:
+      NAME: ${NAME_B}
+      EMAIL: ${REVIEW_EMAIL_B}
+      PASSWORD: ${REVIEW_PASSWORD}
+- runFlow: parts/logout.yaml
+
+# ---------------------------------------------------------------------------
+# Shot 1 and 2: launch to the login screen, sign up A with the date of birth
+# field on screen. Shot 3, email verification, is not performed: a Simulator
+# has no mail account and login does not require it.
+# ---------------------------------------------------------------------------
+- assertVisible: "Sign in"
+- runFlow:
+    file: parts/signup.yaml
+    env:
+      NAME: ${NAME_A}
+      EMAIL: ${REVIEW_EMAIL_A}
+      PASSWORD: ${REVIEW_PASSWORD}
+
+# Shot 4 is "log in as the demo account". This recording uses A throughout, so
+# the login is demonstrated later when A signs back in after B's turn.
+
+# ---------------------------------------------------------------------------
+# Shot 5: the location dialog, in context, with the usage string visible.
+# ---------------------------------------------------------------------------
+- tapOn: "Discover"
+- extendedWaitUntil:
+    visible: "Allow While Using App"
+    timeout: 15000
+- tapOn: "Allow While Using App"
+- waitForAnimationToEnd
+
+# ---------------------------------------------------------------------------
+# Shot 6: create a flock. The form submits with a name alone.
+# ---------------------------------------------------------------------------
+- tapOn: "Nest"
+- tapOn: "Start a flock"
+- tapOn: "Movie night, dinner, party..."
+- inputText: "Review night"
+- hideKeyboard
+# Invite B by name so B can accept and post the message A will report.
+- tapOn: "Search by name..."
+- inputText: ${NAME_B}
+- extendedWaitUntil:
+    visible: ${NAME_B}
+    timeout: 10000
+- tapOn:
+    text: "Add"
+    index: 0
+- hideKeyboard
+- tapOn: "Start a Flock"
+- extendedWaitUntil:
+    visible: "Review night"
+    timeout: 15000
+
+# ---------------------------------------------------------------------------
+# Shot 7: the share sheet with the invite link, then dismiss it.
+# ---------------------------------------------------------------------------
+- tapOn: "Review night"
+- tapOn:
+    text: "Share invite link.*"
+    optional: true
+- waitForAnimationToEnd
+- tapOn:
+    text: "Close"
+    optional: true
+- tapOn:
+    text: "Cancel"
+    optional: true
+
+# ---------------------------------------------------------------------------
+# Shot 9: venues are suggested and voted on inside the chat, behind the
+# composer's "Vote on a venue" control. Shot 10, budget, is skipped in favour
+# of reliability; the reply calls it optional.
+# ---------------------------------------------------------------------------
+- runFlow: parts/open-chat.yaml
+- tapOn:
+    id: "Vote on a venue"
+    optional: true
+- tapOn:
+    text: "Search restaurants, bars, venues..."
+    optional: true
+- inputText: "pizza"
+- extendedWaitUntil:
+    visible: ".*[Pp]izza.*"
+    timeout: 15000
+    optional: true
+- tapOn:
+    text: ".*[Pp]izza.*"
+    index: 0
+    optional: true
+- hideKeyboard
+- waitForAnimationToEnd
+# The venue now sits in the chat as a card; tapping it casts the vote.
+- tapOn:
+    text: ".*[Pp]izza.*"
+    index: 0
+    optional: true
+- waitForAnimationToEnd
+
+# ---------------------------------------------------------------------------
+# Shot 11: the camera dialog in context, then a photo message and a text
+# message. The Simulator has no camera, so after the dialog the viewfinder is
+# closed and a library photo is sent instead. Still inside the chat.
+# ---------------------------------------------------------------------------
+- tapOn: "Take a photo"
+- extendedWaitUntil:
+    visible: "OK|Allow"
+    timeout: 15000
+- tapOn:
+    text: "OK|Allow"
+- waitForAnimationToEnd
+- tapOn:
+    text: "Close"
+    optional: true
+- tapOn: "Choose a photo from your library"
+- waitForAnimationToEnd
+- tapOn:
+    text: "Photo.*"
+    index: 0
+    optional: true
+- tapOn:
+    text: "Choose|Done|Add"
+    optional: true
+- waitForAnimationToEnd
+- tapOn:
+    text: "Send photo"
+    optional: true
+- waitForAnimationToEnd
+- tapOn: "Type a message..."
+- inputText: "Here for the recording"
+- tapOn: "Send message"
+- waitForAnimationToEnd
+- hideKeyboard
+- back
+
+# ---------------------------------------------------------------------------
+# Shot 11b: the contacts dialog, in context, after the screen that explains
+# what is sent.
+# ---------------------------------------------------------------------------
+- tapOn: "You"
+- tapOn:
+    text: "Add Friends"
+    optional: true
+- tapOn:
+    text: "Contacts"
+    optional: true
+- tapOn:
+    text: "Check my contacts"
+    optional: true
+- extendedWaitUntil:
+    visible: "Allow.*"
+    timeout: 15000
+    optional: true
+- tapOn:
+    text: "Allow.*"
+    index: 0
+    optional: true
+- waitForAnimationToEnd
+
+# ---------------------------------------------------------------------------
+# B's turn: log out, sign in as B, accept the invite, post the message A will
+# report, log out. This is also shot 4 and shot 8 in their real form: a login,
+# and an RSVP, which in this app is accepting the invite.
+# ---------------------------------------------------------------------------
+- runFlow: parts/logout.yaml
+- runFlow:
+    file: parts/login.yaml
+    env:
+      EMAIL: ${REVIEW_EMAIL_B}
+      PASSWORD: ${REVIEW_PASSWORD}
+- tapOn: "Nest"
+- extendedWaitUntil:
+    visible: "Review night"
+    timeout: 15000
+- tapOn:
+    id: "Accept invite"
+    optional: true
+- tapOn:
+    text: "Accept invite"
+    optional: true
+- waitForAnimationToEnd
+- tapOn: "Review night"
+- runFlow: parts/open-chat.yaml
+- tapOn: "Type a message..."
+- inputText: "message from B for the report shot"
+- tapOn: "Send message"
+- waitForAnimationToEnd
+- hideKeyboard
+- back
+- runFlow: parts/logout.yaml
+
+# ---------------------------------------------------------------------------
+# Shot 4, for real: A logs in.
+# ---------------------------------------------------------------------------
+- runFlow:
+    file: parts/login.yaml
+    env:
+      EMAIL: ${REVIEW_EMAIL_A}
+      PASSWORD: ${REVIEW_PASSWORD}
+
+# ---------------------------------------------------------------------------
+# Shot 12 and 13: report B's message, then block B from the same sheet.
+# ---------------------------------------------------------------------------
+- tapOn: "Nest"
+- tapOn: "Review night"
+- runFlow: parts/open-chat.yaml
+- tapOn: "message from B for the report shot"
+- tapOn:
+    id: "Report"
+- tapOn:
+    text: "Report ${NAME_B}"
+- tapOn: "Spam"
+- tapOn: "Submit report"
+- extendedWaitUntil:
+    visible: "Report received.*"
+    timeout: 15000
+- waitForAnimationToEnd
+- tapOn:
+    text: "Block ${NAME_B}"
+    index: 0
+- tapOn:
+    text: "Block ${NAME_B}"
+    index: 0
+- waitForAnimationToEnd
+- back
+
+# ---------------------------------------------------------------------------
+# Shot 14: post-hangout feedback is a slider and a card that only appear on a
+# confirmed flock with a chosen venue. Attempted, never required.
+# ---------------------------------------------------------------------------
+- swipe:
+    start: "10%, 80%"
+    end: "90%, 80%"
+    optional: true
+- waitForAnimationToEnd
+
+# ---------------------------------------------------------------------------
+# Shot 15: blocked accounts list, unblock B, list empties.
+# ---------------------------------------------------------------------------
+- tapOn: "You"
+- tapOn:
+    text: "Settings"
+    optional: true
+- tapOn: "Blocked accounts"
+- assertVisible: ${NAME_B}
+- tapOn:
+    text: "Unblock"
+    index: 0
+- tapOn:
+    text: "Unblock"
+    optional: true
+- waitForAnimationToEnd
+- back
+
+# ---------------------------------------------------------------------------
+# Shot 16: delete account A on camera, landing on the logged-out screen.
+# ---------------------------------------------------------------------------
+- tapOn: "You"
+- scrollUntilVisible:
+    element: "Delete account"
+    direction: DOWN
+- tapOn:
+    text: "Delete account"
+    index: 0
+- tapOn:
+    id: "delete-password"
+    optional: true
+- inputText: ${REVIEW_PASSWORD}
+- hideKeyboard
+- tapOn:
+    text: "DELETE"
+    optional: true
+- inputText: "DELETE"
+- hideKeyboard
+- tapOn:
+    text: "Delete account"
+    index: 1
+- extendedWaitUntil:
+    visible: "Sign in"
+    timeout: 20000

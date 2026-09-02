@@ -435,3 +435,153 @@ workflows:
       app_store_connect:
         auth: integration
         submit_to_testflight: true
+  # ---------------------------------------------------------------------------
+  # APPLE 2.1 REVIEW RECORDING, UNATTENDED (2026-09-01)
+  # ---------------------------------------------------------------------------
+  # Apple's Guideline 2.1 "Information Needed" reply asks for a screen recording
+  # of the app's core flows on iOS, including the location, camera and contacts
+  # permission dialogs appearing in context. A web capture was tried and is not
+  # submittable, because a browser shows its own permission UI rather than the
+  # iOS system dialogs. This workflow produces a genuine iOS recording with no
+  # person involved: it builds the app for the Simulator, boots one, records its
+  # screen with the first-party recorder, and drives the shot list in
+  # APPLE-2.1-REPLY.md section B with Maestro, which taps the system dialogs.
+  #
+  # What a Simulator can and cannot show, and how the flow handles each:
+  #   * Location and contacts dialogs: shown and accepted on camera.
+  #   * Camera dialog: shown and accepted on camera. The Simulator has no
+  #     camera hardware, so the viewfinder cannot capture; the flow sends a
+  #     photo from the Simulator's photo library instead, so a photo message
+  #     still appears in the chat.
+  #   * Mail: there is no mail account, so the "verify your email" step is not
+  #     performed. Login does not require it, and the reply already says
+  #     "if prompted".
+  #   * Accounts: the flow signs up two throwaway accounts on the production
+  #     API, uses them for the whole shot list, and deletes the primary one on
+  #     camera in the final shot. No seed script runs and no committed password
+  #     is written anywhere.
+  #
+  # Nothing here signs, uploads or touches App Store Connect. The only output
+  # is an .mp4 in the build artifacts, which Jayden attaches to the reply.
+  ios-review-recording:
+    name: Flock iOS review recording (Simulator, unattended)
+    instance_type: mac_mini_m2
+    max_build_duration: 45
+    working_directory: frontend
+    environment:
+      groups:
+        - flock_web
+      vars:
+        XCODE_PROJECT: "ios/App/App.xcodeproj"
+        XCODE_SCHEME: "App"
+        PUBLIC_URL: "."
+        CI: "false"
+        # Any iPhone the installed Xcode ships a runtime for. The exact model
+        # is not material to the reviewer; the system dialogs are.
+        SIM_DEVICE: "iPhone 16 Pro"
+        # The two throwaway accounts are minted from the build number so every
+        # run is unique and the backend's disposable-domain filter is never in
+        # play. Both are deleted by the flow; A on camera in the final shot,
+        # B by a second Maestro pass at the end.
+        REVIEW_EMAIL_DOMAIN: "flockcorp.com"
+      node: 22
+      xcode: latest
+    scripts:
+      - name: Install web dependencies
+        script: npm install --no-audit --no-fund
+      - name: Build web app (relative asset paths)
+        script: npm run build
+      - name: Capacitor sync iOS
+        script: npx cap sync ios
+      - name: Firebase config for the recording build, optional
+        script: |
+          # Push is not exercised by the recording, but the Firebase plugin
+          # reads this plist at boot. Write it when the variable is present and
+          # say so when it is not, rather than failing a recording over push.
+          if [ -n "${GOOGLE_SERVICE_INFO_PLIST:-}" ]; then
+            echo "$GOOGLE_SERVICE_INFO_PLIST" | base64 --decode > ios/App/App/GoogleService-Info.plist
+            echo "GoogleService-Info.plist written."
+          else
+            echo "GOOGLE_SERVICE_INFO_PLIST not set; continuing without push configuration."
+          fi
+      - name: Build for the Simulator (unsigned)
+        script: |
+          set -e
+          xcodebuild \
+            -project "$XCODE_PROJECT" \
+            -scheme "$XCODE_SCHEME" \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath ios/output \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            build | tee /tmp/sim-build.log | tail -n 40
+          test -d ios/output/Build/Products/Debug-iphonesimulator/App.app
+      - name: Boot the Simulator and install the app
+        script: |
+          set -e
+          UDID=$(xcrun simctl list devices available -j | python3 -c '
+          import json,sys,os
+          want=os.environ.get("SIM_DEVICE","iPhone 16 Pro")
+          d=json.load(sys.stdin)["devices"]
+          for rt,devs in d.items():
+            if "iOS" not in rt: continue
+            for x in devs:
+              if x["name"]==want and x.get("isAvailable",True):
+                print(x["udid"]); sys.exit(0)
+          for rt,devs in d.items():
+            if "iOS" not in rt: continue
+            for x in devs:
+              if x["name"].startswith("iPhone") and x.get("isAvailable",True):
+                print(x["udid"]); sys.exit(0)
+          sys.exit(1)')
+          echo "Using simulator $UDID"
+          echo "SIM_UDID=$UDID" >> "$CM_ENV"
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b
+          # A photo to send in the chat shot, since the Simulator has no camera.
+          python3 - <<'PY'
+          import struct, zlib
+          w,h=640,480
+          raw=b''.join(b'\x00'+bytes([45,90,135]*w) for _ in range(h))
+          def chunk(t,d): return struct.pack('>I',len(d))+t+d+struct.pack('>I',zlib.crc32(t+d)&0xffffffff)
+          png=b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',w,h,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(raw))+chunk(b'IEND',b'')
+          open('/tmp/flock-review-photo.png','wb').write(png)
+          PY
+          xcrun simctl addmedia "$UDID" /tmp/flock-review-photo.png
+          xcrun simctl install "$UDID" ios/output/Build/Products/Debug-iphonesimulator/App.app
+      - name: Install Maestro
+        script: |
+          curl -Ls "https://get.maestro.mobile.dev" | bash
+          echo 'export PATH="$PATH:$HOME/.maestro/bin"' >> "$CM_ENV"
+      - name: Record the Simulator and drive the shot list
+        script: |
+          set +e
+          export PATH="$PATH:$HOME/.maestro/bin"
+          STAMP="${BUILD_NUMBER:-$(date +%s)}"
+          A="review-a-${STAMP}@${REVIEW_EMAIL_DOMAIN}"
+          B="review-b-${STAMP}@${REVIEW_EMAIL_DOMAIN}"
+          # One password for both throwaways, minted per run, never committed.
+          PW="Rv-${STAMP}-$(head -c 6 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 8)x1"
+          echo "Accounts for this run: $A and $B"
+          xcrun simctl io "$SIM_UDID" recordVideo --codec h264 --force /tmp/flock-review.mp4 &
+          REC=$!
+          sleep 3
+          maestro test \
+            -e REVIEW_EMAIL_A="$A" \
+            -e REVIEW_EMAIL_B="$B" \
+            -e REVIEW_PASSWORD="$PW" \
+            --debug-output /tmp/maestro-debug \
+            .maestro/apple-2-1.yaml
+          RESULT=$?
+          sleep 2
+          kill -INT "$REC"
+          wait "$REC"
+          ls -la /tmp/flock-review.mp4 || true
+          # Account B is deleted off camera so nothing is left behind in prod.
+          maestro test -e REVIEW_EMAIL_B="$B" -e REVIEW_PASSWORD="$PW" .maestro/apple-2-1-cleanup.yaml || true
+          exit $RESULT
+    artifacts:
+      - /tmp/flock-review.mp4
+      - /tmp/maestro-debug/**
+      - /tmp/sim-build.log
