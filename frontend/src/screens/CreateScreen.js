@@ -60,16 +60,78 @@
  * was widened in the same change to sweep the components FlockAppInner
  * declares and hands to a screen.
  *
- * The body below is the old block verbatim, including its original
- * four-space indentation, so it can be diffed against the deleted lines
- * character for character. Nothing was renamed, reformatted or improved on
- * the way across, and no defect was fixed in transit: this is a move.
+ * The move on 2026-09-01 carried the old block across verbatim. Later the
+ * same day the RENDER half was rebuilt (Jayden, TestFlight: "needs to be a
+ * lot more detailed and needs to look a lot better. Follow the slop MD, and
+ * I would add one or two of my bird graphics in there"), so the JSX below is
+ * no longer a character-for-character copy of the deleted lines. handleCreate,
+ * StarRating, priceLabel and dmTarget are untouched, every control is still
+ * wired to exactly the prop it was wired to, and every string a test or the
+ * Maestro flow reads is still here: the h1 "Start a Flock", the "Create
+ * Flock" submit, the "Movie night, dinner, party..." placeholder, the "Search
+ * by name..." invite field and every aria-label.
+ *
+ * WHAT THE REBUILD CHANGED, AND WHY
+ *
+ * The screen read as a settings form: four containers of equal weight, each
+ * under an uppercase micro eyebrow, with one small mascot at the top and the
+ * commit button under the budget toggle. Now:
+ *
+ *   - The warm bird opens the screen at a size that reads as a brand moment,
+ *     beside the one sentence a first-time user needs. Warm, not cobalt: in
+ *     this app cobalt Birdie is the AI (ChatDetail.js records the rule), and
+ *     starting a flock is a thing people do, not a thing Birdie does.
+ *   - Group labels sit outside their containers at the section-label size
+ *     (SLOP-AUDIT section S, rule 4). index.css caps micro eyebrows at two per
+ *     screen and there are four groups here, so the eyebrow label FormGroup
+ *     draws is not used; GroupLabel below is the same shape the You tab uses.
+ *     The label row also carries the group's current answer on the right,
+ *     the way a settings row shows its value inline (section S, rule 2).
+ *   - The venue and budget controls are rows in the shape every other list
+ *     row in the app has: a 32px icon box, a title, a one-line fact, and the
+ *     control at the right edge.
+ *   - The roster row shows the second bird while the plan is just you, the
+ *     exact composition FlockDetail uses for the same fact, and the bird
+ *     leaves the moment a person is added.
+ *   - The footer reads the whole plan back, name included, before it asks
+ *     for the tap.
+ *
+ * Nothing on the screen claims a feature that does not ship. "Invites go out
+ * as soon as the flock exists" is POST /api/flocks: a socket event to anyone
+ * online and pushInvitesToOffline for everyone else.
  */
 import React from 'react';
 import { createFlock as apiCreateFlock, sendMessage as apiSendMessage } from '../services/api';
 import { hapticSuccess } from '../services/haptics';
-import { BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
+import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
+
+// The group signpost, outside the container. Section-label size in tertiary
+// grey, with an optional right-aligned value so the label row answers "what
+// is this set to" without the eye dropping into the card. Module scope on
+// purpose: a component declared inside the screen body is a new type on
+// every render and React remounts its subtree each time.
+const GroupLabel = ({ children, aside }) => (
+  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '10px', margin: '0 4px 6px' }}>
+    <h2 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-tertiary)', margin: 0 }}>{children}</h2>
+    {aside && (
+      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{aside}</span>
+    )}
+  </div>
+);
+
+// The 32px icon box the You tab's rows lead with. One per row, never a grid
+// of them, which is the difference between a list row and the tile grid A14
+// bans.
+const IconBox = ({ children }) => (
+  <div aria-hidden="true" style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{children}</div>
+);
+
+// A small caption under a control. Tertiary, 1.5 leading, no margin above
+// the first line so it hangs off the control it explains.
+const Hint = ({ children, style }) => (
+  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0', lineHeight: 1.5, ...style }}>{children}</p>
+);
 
 export default function CreateScreen({
   // Module-level helpers, constants and components that live in App.js and
@@ -285,64 +347,63 @@ export default function CreateScreen({
       }
     };
 
+    // Read-backs the labels and the footer share. All of it is state the user
+    // set on this screen; nothing here is computed from anything else.
+    const eventAt = resolveEventTime(flockDate, flockTime);
+    const whenShort = eventAt.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+    const whenLong = eventAt.toLocaleString([], { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    const trimmedName = flockName.trim();
+    const suggestedToShow = suggestedUsers.filter(u => !flockFriends.some(f => f.id === u.id));
+    const openVenuePicker = () => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); };
+    const leave = () => { setCurrentScreen('main'); setFlockName(''); setFlockNameError(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setSelectedVenueForCreate(null); };
+
     return (
       <div key="create-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
-            <DialogBehavior modal={false} onClose={() => { setCurrentScreen('main'); setFlockName(''); setFlockNameError(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setSelectedVenueForCreate(null); }} />
+        <DialogBehavior modal={false} onClose={leave} />
         <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-          <button aria-label="Back" className="hit44" onClick={() => { setCurrentScreen('main'); setFlockName(''); setFlockNameError(''); setFlockFriends([]); setInviteSearch(''); setInviteResults([]); setSelectedVenueForCreate(null); }} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-title)', cursor: 'pointer' }}>←</button>
+          <button aria-label="Back" className="hit44" onClick={leave} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-title)', cursor: 'pointer' }}>←</button>
           <h1 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-title)', fontWeight: '600', color: colors.navy, margin: 0 }}>Start a Flock</h1>
         </div>
 
-        {/* THE SCREEN THE PRODUCT IS NAMED AFTER.
-            Rebuilt 2026-08-25 (Jayden, TestFlight build 26). It was six form
-            controls stacked in one flat column on cream: a title field, a
-            dashed Browse Venues button, four day buttons, five hour pills, a
-            search field, a toggle. Nothing said which of those decisions
-            mattered, nothing grouped the two that belong together, and the
-            green check marks and coloured glows on the selected chips were the
-            only visual event on the page.
-
-            What changed, and nothing else did. Every control below is wired to
-            exactly the state it was wired to before; this is layout, grouping
-            and chrome. The four groups are the four questions the flow asks in
-            the order it asks them, each labelled outside its container, each a
-            single surface with hairline-divided rows inside it (SLOP-AUDIT
-            section S). Selection is a filled steel chip instead of green type
-            over a glow. And the footer now reads the plan back before it asks
-            you to commit to it. */}
         <div style={{ flex: 1, padding: '16px 16px 8px', overflowY: 'auto', backgroundColor: 'var(--bg-primary)' }}>
 
-          {/* Birdie opens the screen. Not decoration for its own sake: this is
-              where a first-time user has the least idea what a flock is, and
-              one plain sentence beside the mascot is cheaper than a tour. */}
-          <BirdNote
-            layout="row"
-            size={72}
-            body="Name it and say when. The venue can wait, because everyone you invite gets to vote on where."
-            style={{ marginBottom: '18px' }}
-          />
+          {/* THE OPENER. The warm bird, feet on the same line as the words,
+              at a size that reads as the brand rather than an icon. Eager,
+              because this is the first paint of the screen and a lazy photo
+              here pops in after the form. One sentence of orientation for
+              the person who has never made a flock; nothing to scroll past
+              for the person who has. */}
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: '14px', padding: '0 2px 20px' }}>
+            <BirdieStill bird={WARM_BIRD} size={92} eager style={{ flexShrink: 0 }} />
+            <div style={{ flex: 1, minWidth: 0, paddingBottom: '8px' }}>
+              <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 4px', lineHeight: 1.3 }}>Name it and say when.</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>The venue can wait, because everyone you invite gets to vote on where.</p>
+            </div>
+          </div>
 
-          <FormGroup label="The plan">
+          <GroupLabel aside={selectedVenueForCreate ? selectedVenueForCreate.name : 'Venue optional'}>The plan</GroupLabel>
+          <FormGroup>
             <FormRow>
               <label htmlFor="flock-name-input" style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '6px' }}>What's the plan?</label>
               <SearchInputLocal aria-invalid={flockNameError ? 'true' : undefined} aria-describedby={flockNameError ? 'flock-name-error' : undefined} key="flock-name-input" id="flock-name-input" type="text" initialValue={flockName} onCommit={(v) => { setFlockName(v); if (v.trim()) setFlockNameError(''); }} placeholder="Movie night, dinner, party..." style={flockNameError ? { ...styles.input, borderColor: colors.red } : styles.input} autoComplete="off" />
-              {flockNameError && (
+              {flockNameError ? (
                 <p id="flock-name-error" role="alert" style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.redText, margin: '6px 0 0' }}>{flockNameError}</p>
+              ) : (
+                <Hint>This is the name your friends see on the invite.</Hint>
               )}
             </FormRow>
 
-            {/* VENUE PICKER, Browse on Discover tab. Now a row of the same
-                group as the name rather than a card of its own, because
-                "what is it" and "where is it" are one question and the venue
-                is the optional half of it. */}
-            <FormRow divided>
-              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px', marginBottom: '6px' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{Icons.mapPin(colors.navy, 12)} Venue</label>
-                <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', fontWeight: '600' }}>Optional</span>
-              </div>
-
-              {selectedVenueForCreate ? (
-                <div style={{ backgroundColor: 'var(--bg-primary)', borderRadius: '10px', padding: '8px', border: `1px solid ${colors.creamDark}`, display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {/* VENUE. A list row, not a dashed button: icon box, what it is,
+                what happens if you skip it, and a chevron because it goes to
+                Discover and comes back. Once a venue is picked the same row
+                holds the photo and the facts instead, with Change at the edge. */}
+            {selectedVenueForCreate ? (
+              <FormRow divided>
+                <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: '8px', marginBottom: '8px' }}>
+                  <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>Venue</span>
+                  <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', fontWeight: '600' }}>Optional</span>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   {selectedVenueForCreate.photo_url ? (
                     <img src={selectedVenueForCreate.photo_url} alt="" style={{ width: '48px', height: '48px', borderRadius: '8px', objectFit: 'cover', flexShrink: 0 }} onError={onVenuePhotoError} />
                   ) : (
@@ -357,21 +418,33 @@ export default function CreateScreen({
                     </div>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedVenueForCreate.addr}</p>
                   </div>
-                  <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '4px 10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>Change</button>
+                  <button className="hit44 glass-btn glass-secondary" onClick={openVenuePicker} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>Change</button>
                 </div>
-              ) : (
-                <>
-                  <button className="hit44 glass-btn glass-secondary" onClick={() => { setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ width: '100%', padding: '12px', borderRadius: '10px', border: `1.5px solid var(--border-default)`, backgroundColor: 'var(--bg-primary)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                    {Icons.mapPin(colors.steel, 18)} Browse venues
-                  </button>
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0', lineHeight: 1.5 }}>Leave it blank and the group votes on where to go.</p>
-                </>
-              )}
-            </FormRow>
+                <Hint style={{ marginTop: '8px' }}>It goes into the chat as the first card, and the group can still vote on somewhere else.</Hint>
+              </FormRow>
+            ) : (
+              <FormRow divided style={{ padding: 0 }}>
+                {/* Plain hit44, not glass-secondary: that class paints its own
+                    background and border with !important, which would put a
+                    box inside the card. A row is flat; the hairline above it
+                    is the frame. */}
+                <button className="hit44" onClick={openVenuePicker} style={{ width: '100%', padding: '12px', border: 'none', backgroundColor: 'transparent', cursor: 'pointer', textAlign: 'left', display: 'flex', alignItems: 'center', gap: '12px', borderBottomLeftRadius: '13px', borderBottomRightRadius: '13px' }}>
+                  <IconBox>{Icons.mapPin(colors.navy, 18)}</IconBox>
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: 'block', fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Browse venues</span>
+                    <span style={{ display: 'block', fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', lineHeight: 1.45, marginTop: '1px' }}>Leave it blank and the group votes on where to go.</span>
+                  </span>
+                  <span style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', fontWeight: '600', flexShrink: 0 }}>Optional</span>
+                  <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.chevronRight('var(--text-tertiary)', 16)}</span>
+                </button>
+              </FormRow>
+            )}
           </FormGroup>
 
-          <FormGroup label="When">
+          <GroupLabel aside={whenShort}>When</GroupLabel>
+          <FormGroup>
             <FormRow>
+              <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 8px' }}>Which day?</p>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
                 {FLOCK_DAY_CHOICES.map(d => (
                   <ChoiceChip key={d} selected={flockDate === d} onClick={() => setFlockDate(d)}>{d}</ChoiceChip>
@@ -379,27 +452,30 @@ export default function CreateScreen({
               </div>
             </FormRow>
             <FormRow divided>
+              <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 8px' }}>What time?</p>
               <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
                 {FLOCK_HOUR_CHOICES.map(t => (
                   <ChoiceChip key={t} selected={flockTime === t} onClick={() => setFlockTime(t)} style={{ flex: '1 1 auto', padding: '9px 10px', fontSize: 'var(--t-meta)' }}>{t}</ChoiceChip>
                 ))}
               </div>
             </FormRow>
-            {/* The resolved date, on its own hairline-separated row. It is the
-                answer the two rows above add up to, so it reads as a result
-                rather than as another caption. */}
-            <FormRow divided style={{ padding: '10px 12px', backgroundColor: 'var(--bg-primary)', borderBottomLeftRadius: '13px', borderBottomRightRadius: '13px' }}>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, fontWeight: '600' }}>
-                {resolveEventTime(flockDate, flockTime).toLocaleString([], { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-              </p>
+            {/* The answer the two rows above add up to, on its own row and on
+                the page background so it reads as a result, not a caption. */}
+            <FormRow divided style={{ padding: '10px 12px', backgroundColor: 'var(--bg-primary)', borderBottomLeftRadius: '13px', borderBottomRightRadius: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.calendar(colors.steel, 14)}</span>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, fontWeight: '600' }}>{whenLong}</p>
             </FormRow>
           </FormGroup>
 
-          <FormGroup label={`Who${flockFriends.length > 0 ? ` (${flockFriends.length} invited)` : ''}`}>
+          <GroupLabel aside={flockFriends.length > 0 ? `${flockFriends.length} invited` : 'Just you'}>Who</GroupLabel>
+          <FormGroup>
             <FormRow>
-              {/* Selected friends chips */}
-              {flockFriends.length > 0 && (
-                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '10px' }}>
+              {/* THE ROSTER. Picked people as chips. While it is just you, the
+                  second bird sits here beside the fact, the same composition
+                  FlockDetail uses for a plan with one accepted member, and it
+                  leaves the moment someone is added. */}
+              {flockFriends.length > 0 ? (
+                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
                   {flockFriends.map(f => (
                     <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 8px 4px 4px', borderRadius: '20px', backgroundColor: colors.navyBg, color: 'white' }}>
                       <div style={{ width: '22px', height: '22px', borderRadius: '11px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500' }}>
@@ -410,14 +486,23 @@ export default function CreateScreen({
                     </div>
                   ))}
                 </div>
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px', minWidth: 0 }}>
+                  <BirdieStill bird={WARM_BIRD} size={54} style={{ flexShrink: 0 }} />
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.45 }}>
+                    {suggestedToShow.length > 0
+                      ? 'Just you so far. Tap a name below or search for anyone on Flock.'
+                      : 'Just you so far. Search for anyone on Flock, or make the flock now and invite people from the chat.'}
+                  </p>
+                </div>
               )}
 
-              {/* Suggested friends - quick add */}
-              {suggestedUsers.filter(u => !flockFriends.some(f => f.id === u.id)).length > 0 && (
+              {/* Suggested friends, one tap to add. Meta size, not an eyebrow. */}
+              {suggestedToShow.length > 0 && (
                 <div style={{ marginBottom: '10px' }}>
-                  <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Suggested</p>
+                  <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-tertiary)', margin: '0 0 6px' }}>Suggested</p>
                   <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
-                    {suggestedUsers.filter(u => !flockFriends.some(f => f.id === u.id)).slice(0, 5).map(user => (
+                    {suggestedToShow.slice(0, 5).map(user => (
                       <button key={user.id} className="hit44 glass-btn glass-secondary" onClick={() => setFlockFriends(prev => [...prev, user])} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 10px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', flexShrink: 0, transition: 'opacity 0.15s ease' }}>
                         <div style={{ width: '24px', height: '24px', borderRadius: '12px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', overflow: 'hidden', flexShrink: 0 }}>
                           {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '24px', height: '24px', borderRadius: '12px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
@@ -490,66 +575,77 @@ export default function CreateScreen({
                   style={{ marginTop: '10px' }}
                 />
               )}
-              {/* Nothing to suggest and nothing typed: a real empty state, and
-                  the one place on this screen where the bird gets room. */}
-              {!inviteSearch.trim() && flockFriends.length === 0 && suggestedUsers.filter(u => !flockFriends.some(f => f.id === u.id)).length === 0 && (
-                <BirdNote
-                  size={72}
-                  title="No one to suggest yet"
-                  body="Search above for anyone already on Flock. You can also make the flock now and invite people from the chat."
-                  style={{ padding: '10px 0 0' }}
-                />
-              )}
             </FormRow>
+            {/* What adding someone does. A fact from POST /api/flocks: a
+                socket event to anyone online, a push to everyone else. Hidden
+                for the one-person case, where the footer explains the DM. */}
+            {!dmTarget && (
+              <FormRow divided style={{ padding: '10px 12px', backgroundColor: 'var(--bg-primary)', borderBottomLeftRadius: '13px', borderBottomRightRadius: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span aria-hidden="true" style={{ display: 'flex', flexShrink: 0 }}>{Icons.bell(colors.steel, 14)}</span>
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, fontWeight: '500' }}>Invites go out as soon as the flock exists.</p>
+              </FormRow>
+            )}
           </FormGroup>
 
-          <FormGroup label="Money">
+          <GroupLabel aside={flockCashPool ? `On, for ${flockBudgetContext}` : 'Off'}>Money</GroupLabel>
+          <FormGroup>
             <FormRow>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
-                <label style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0 }}>{Icons.dollar(colors.navy, 14)} Group budget</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                <IconBox>{Icons.dollar(colors.navy, 18)}</IconBox>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: 'block', fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Group budget</span>
+                  <span style={{ display: 'block', fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', lineHeight: 1.45, marginTop: '1px' }}>
+                    {flockCashPool ? 'Everyone sets a number nobody else can see.' : 'Turn this on and everyone sets a number nobody else can see.'}
+                  </span>
+                </div>
                 <Toggle label="Shared cash pool" on={flockCashPool} onChange={() => setFlockCashPool(!flockCashPool)} />
               </div>
-              {!flockCashPool && (
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0', lineHeight: 1.5 }}>Turn this on and everyone sets a number nobody else can see.</p>
-              )}
             </FormRow>
             {flockCashPool && (
-              <FormRow divided>
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>What's this for?</p>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '10px' }}>
-                  {['dinner', 'drinks', 'movie', 'concert', 'activity'].map(ctx => (
-                    <ChoiceChip key={ctx} selected={flockBudgetContext === ctx} onClick={() => setFlockBudgetContext(ctx)} style={{ padding: '7px 13px', fontSize: 'var(--t-meta)', textTransform: 'capitalize' }}>
-                      {ctx}
-                    </ChoiceChip>
-                  ))}
-                </div>
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Members will set their own budget anonymously after joining</p>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--divider)' }}>
-                  <div style={{ minWidth: 0 }}>
-                    <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 1px' }}>Ghost Mode</p>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Members can quietly commit their share of the bill up front, before anyone pays, so the plan never waits on money</p>
+              <>
+                <FormRow divided>
+                  <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 8px' }}>What's this for?</p>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                    {['dinner', 'drinks', 'movie', 'concert', 'activity'].map(ctx => (
+                      <ChoiceChip key={ctx} selected={flockBudgetContext === ctx} onClick={() => setFlockBudgetContext(ctx)} style={{ padding: '7px 13px', fontSize: 'var(--t-meta)', textTransform: 'capitalize' }}>
+                        {ctx}
+                      </ChoiceChip>
+                    ))}
                   </div>
-                  <Toggle label="Ghost mode" on={flockGhostMode} onChange={() => setFlockGhostMode(!flockGhostMode)} />
-                </div>
-              </FormRow>
+                  <Hint style={{ marginTop: '8px' }}>Members will set their own budget anonymously after joining</Hint>
+                </FormRow>
+                <FormRow divided>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <IconBox>{Icons.eyeOff(colors.navy, 18)}</IconBox>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ display: 'block', fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Ghost Mode</span>
+                      <span style={{ display: 'block', fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', lineHeight: 1.45, marginTop: '1px' }}>Members can quietly commit their share of the bill up front, before anyone pays, so the plan never waits on money</span>
+                    </div>
+                    <Toggle label="Ghost mode" on={flockGhostMode} onChange={() => setFlockGhostMode(!flockGhostMode)} />
+                  </div>
+                </FormRow>
+              </>
             )}
           </FormGroup>
         </div>
 
-        {/* THE READ-BACK, then the commit. The footer used to be a single blue
-            button under a form with no summary, so the last thing you saw
-            before creating a flock was the budget toggle. Every fact on this
-            line is state the screen already holds; nothing here is computed
-            from anything the user did not choose. */}
+        {/* THE READ-BACK, then the commit. Every fact on these lines is state
+            the screen already holds; nothing here is computed from anything
+            the user did not choose. The name leads when there is one, because
+            it is the thing the invite will say. */}
         <div style={{ padding: '10px 16px 16px', flexShrink: 0, backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--divider)' }}>
+          {trimmedName && (
+            <p style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{trimmedName}</p>
+          )}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: '0 0 10px', minWidth: 0 }}>
             <span style={{ fontSize: 'var(--t-meta)', fontWeight: '700', color: colors.navy, whiteSpace: 'nowrap', flexShrink: 0 }}>
-              {resolveEventTime(flockDate, flockTime).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}
+              {whenShort}
             </span>
             <span aria-hidden="true" style={{ width: '3px', height: '3px', borderRadius: '2px', backgroundColor: 'var(--text-tertiary)', flexShrink: 0 }} />
             <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}>
               {dmTarget ? `Just ${dmTarget.name}` : flockFriends.length === 0 ? 'Just you so far' : `You and ${flockFriends.length} more`}
               {selectedVenueForCreate && !dmTarget ? ` at ${selectedVenueForCreate.name}` : ''}
+              {!selectedVenueForCreate && !dmTarget ? ', venue by vote' : ''}
             </span>
           </div>
           {/* Said before the tap, not discovered after it. */}
