@@ -7325,7 +7325,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // half-typed simulator survives a trip to another screen, and it arrives in
   // the console as a prop.
   const [numVenues, setNumVenues] = useState(20);
-  const [subscriptionPrice, setSubscriptionPrice] = useState(55); // midpoint of $35 Premium and $75 Pro (was 50 with a comment calling it the average, which it is not)
+  const [subscriptionPrice, setSubscriptionPrice] = useState(67); // midpoint of $35 Premium and $99 Pro (was 55 against the retired $75, so the simulator opened on a price no venue could be charged)
   const [eventsPerVenue, setEventsPerVenue] = useState(12);
   const [avgSpend, setAvgSpend] = useState(120);
   const [takeRate, setTakeRate] = useState(2.5); // pitch deck: 2.5% transaction fee

@@ -312,6 +312,27 @@ const RATES = {
 // merely on the vendor's public pricing page. An unverified line is still
 // counted in the total, and the total says how many of its lines are unverified
 // rather than hiding them.
+//
+// `kind` SPLITS THE BILL INTO THE TWO THINGS PEOPLE ACTUALLY MEAN BY IT.
+//
+//   'infrastructure' — a bill a user causes. Serving the product needs it, and
+//                      it is the number that belongs beside a price when
+//                      anybody asks what a customer costs or how many
+//                      customers cover the running of this thing.
+//   'tooling'        — a bill the DEVELOPER causes. Claude Max and Codex are
+//                      real recurring money and they are counted, and no user
+//                      has ever caused a dollar of either. They would keep
+//                      arriving at zero users and stop arriving the day the
+//                      writing stops, which is the opposite of how
+//                      infrastructure behaves.
+//
+// The distinction was already in this file, in prose, in the note on the Claude
+// Max line: "Development tooling, not app infrastructure. It is a real
+// recurring bill so it is counted, but no user causes it." A sentence cannot
+// be added up. Quoting the combined total as the cost of service overstates it
+// by the whole tooling line, which is the largest single figure on the monthly
+// list, so the split is a field now and the panel shows both figures rather
+// than one that is wrong for both questions.
 
 const FIXED_MONTHLY = [
   {
@@ -319,6 +340,7 @@ const FIXED_MONTHLY = [
     label: 'Railway (backend and Postgres)',
     usd: 20.00,
     verified: true,
+    kind: 'infrastructure',
     checked: '2026-08-20',
     source: 'https://railway.com/pricing',
     note: 'Matches Railway Pro at $20/month, which includes $20 of usage credits. Compute and volume draw down that credit before anything is billed on top.',
@@ -328,6 +350,7 @@ const FIXED_MONTHLY = [
     label: 'Claude Max',
     usd: 125.00,
     verified: true,
+    kind: 'tooling',
     checked: '2026-08-20',
     source: null,
     note: 'Development tooling, not app infrastructure. It is a real recurring bill so it is counted, but no user causes it.',
@@ -337,6 +360,7 @@ const FIXED_MONTHLY = [
     label: 'Codex',
     usd: 20.00,
     verified: true,
+    kind: 'tooling',
     checked: '2026-08-20',
     source: null,
     note: 'Development tooling, same as above.',
@@ -346,6 +370,7 @@ const FIXED_MONTHLY = [
     label: 'BestTime.app Pro, Package 100',
     usd: 119.00,
     verified: true,
+    kind: 'infrastructure',
     checked: '2026-09-01',
     source: null,
     note: 'Live recurring cost since 2026-09-01, when collection restarted after a 106-day freeze. Package 100 is a fixed allowance rather than metered: by-id, live and query calls are unlimited on venues already admitted, and the monthly cap governs NEW admissions only. Jayden committed to roughly five months, so this line is expected through early 2027 and is cancelled by him, not by a code change. The nightly puller is a Railway cron on the BESTTIME service running scripts/ml/collectRealtime.js at 02:00 UTC.',
@@ -355,6 +380,7 @@ const FIXED_MONTHLY = [
     label: 'TheSportsDB Single Developer',
     usd: 9.00,
     verified: true,
+    kind: 'infrastructure',
     checked: '2026-09-01',
     source: null,
     note: 'Dedicated key, commercial use permitted. Bought monthly rather than at the $90 annual rate because only a three-month test was committed. Feeds scripts/ml/collectSportsSchedules.js, which is a monthly chore rather than a cron.',
@@ -364,6 +390,7 @@ const FIXED_MONTHLY = [
     label: 'Vercel (web hosting)',
     usd: 0,
     verified: false,
+    kind: 'infrastructure',
     checked: '2026-08-20',
     source: 'https://vercel.com/pricing',
     note: 'Assumed Hobby, which is free. Pro is $20/month per seat. Confirm against the Vercel billing page before quoting this to anyone.',
@@ -376,6 +403,7 @@ const FIXED_ANNUAL = [
     label: 'Apple Developer Program',
     usd: 99.00,
     verified: true,
+    kind: 'infrastructure',
     checked: '2026-08-20',
     source: 'https://developer.apple.com/support/enrollment/',
     note: 'Also covers APNs, which has no separate price.',
@@ -385,6 +413,7 @@ const FIXED_ANNUAL = [
     label: 'flockcorp.com',
     usd: 12.00,
     verified: false,
+    kind: 'infrastructure',
     checked: '2026-08-20',
     source: 'https://porkbun.com/products/domains',
     note: 'Published .com renewal prices run about $11 to $16 a year. $12 is a placeholder inside that band. Replace it with the registrar invoice figure and set verified.',
@@ -397,6 +426,7 @@ const ONE_TIME = [
     label: 'BestTime training data (the model corpus)',
     usd: 1500.00,
     verified: true,
+    kind: 'infrastructure',
     checked: '2026-08-20',
     source: null,
     note: 'The original 2026 corpus purchase, spent and finished. That key did die and this ONE_TIME line genuinely cannot grow, but the sentence that used to end it here, that the corpus is frozen, stopped being true on 2026-09-01: a new key on a $119/month Package 100 subscription restarted nightly collection, and that cost is a FIXED_MONTHLY line rather than an extension of this one.',
@@ -477,13 +507,13 @@ const WATCHLIST = [
 // dashboard is either an estimate from a meter or an arithmetic ceiling. Update
 // `asOf` and the numbers together, from the vendor's billing page, by hand.
 const RECONCILED = {
-  asOf: '2026-08-20',
+  asOf: '2026-09-01',
   lines: [
     {
       id: 'google-cloud',
       label: 'Google Cloud (Places, Vision, Gemini on one bill)',
-      usdPerMonth: 9.00,
-      note: 'Essentially all of it is Place Details Photos. Gemini has billed $0 to date on both callers.',
+      usdPerMonth: 31.19,
+      note: 'Jayden paid $31.19 on 2026-09-01, the first FULL billing cycle anyone has read off an invoice. The $9.00 that stood here from 2026-08-20 was a mid-month snapshot taken on day 20, so it was never a monthly figure and this line should not be read as a 3.5x increase. Essentially all of it is still Place Details Photos, and the size is what the photo budget is configured to allow: PHOTO_BUDGET_USD_PER_YEAR in services/photoStore.js defaults to $300, which is $25.00 a month of paid fetches on top of Google\'s 1,000 free, so a month that spends its photo allowance lands near $25 before Text Search, Place Details and Vision are added. $31.19 sits inside that envelope rather than outside it. Gemini has billed $0 to date on both callers. To lower it, lower the budget: this is a configured ceiling being used, not a leak.',
     },
   ],
   note: 'Read off the vendor billing pages by hand. Nothing in the app can verify this, so it is only as current as the date beside it.',
@@ -1578,6 +1608,23 @@ function buildFixed() {
   // and computing it here means the panel states it instead of asking a reader
   // to compare eight dates by eye.
   const checked = all.map((e) => e.checked).filter((d) => typeof d === 'string').sort();
+
+  // THE SPLIT. Recurring money a user causes, against recurring money the
+  // developer causes. Each is expressed the one way it can be compared with
+  // the other and with a price: dollars a month, with the annual bills already
+  // spread. A line with no `kind` counts as infrastructure, because the safe
+  // default for an unclassified bill is the number that is quoted as the cost
+  // of service, so forgetting the field overstates that figure rather than
+  // hiding a bill from it.
+  const perMonthOf = (list, months) => list.reduce((s, e) => s + e.usd / months, 0);
+  const isTooling = (e) => e.kind === 'tooling';
+  const infraMonthly =
+    perMonthOf(FIXED_MONTHLY.filter((e) => !isTooling(e)), 1)
+    + perMonthOf(FIXED_ANNUAL.filter((e) => !isTooling(e)), 12);
+  const toolingMonthly =
+    perMonthOf(FIXED_MONTHLY.filter(isTooling), 1)
+    + perMonthOf(FIXED_ANNUAL.filter(isTooling), 12);
+
   return {
     kind: 'fixed',
     monthly: FIXED_MONTHLY,
