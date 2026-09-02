@@ -2060,6 +2060,8 @@ let moneyWatchInterval = null;
 let moneyWatchKickoff = null;
 let heartbeatInterval = null;
 let heartbeatKickoff = null;
+let costHeartbeatInterval = null;
+let costHeartbeatKickoff = null;
 
 async function boot() {
   try {
@@ -2088,6 +2090,13 @@ async function boot() {
   const { runCollectionHeartbeat, SWEEP_INTERVAL_MS: HEARTBEAT_MS } = require('./services/collectionHeartbeat');
   heartbeatInterval = setInterval(runCollectionHeartbeat, HEARTBEAT_MS);
   heartbeatKickoff = setTimeout(runCollectionHeartbeat, 2 * 60 * 1000);
+  // The cost heartbeat watches the expense picture the same way the one above
+  // watches the corpus: a stale hand-entered invoice figure, or a photo budget
+  // near its monthly ceiling, each mails once a day. Same kill switch, same
+  // ledger, same shutdown clearing below (services/costHeartbeat.js).
+  const { runCostHeartbeat, SWEEP_INTERVAL_MS: COST_HEARTBEAT_MS } = require('./services/costHeartbeat');
+  costHeartbeatInterval = setInterval(runCostHeartbeat, COST_HEARTBEAT_MS);
+  costHeartbeatKickoff = setTimeout(runCostHeartbeat, 3 * 60 * 1000);
 
   // Proactive crowd alerts — check every 15 minutes
   const { checkCrowdAlerts } = require('./services/crowdAlerts');
@@ -2213,6 +2222,8 @@ function shutdown(signal) {
 
   if (heartbeatInterval) clearInterval(heartbeatInterval);
   if (heartbeatKickoff) clearTimeout(heartbeatKickoff);
+  if (costHeartbeatInterval) clearInterval(costHeartbeatInterval);
+  if (costHeartbeatKickoff) clearTimeout(costHeartbeatKickoff);
   if (crowdAlertsInterval) clearInterval(crowdAlertsInterval);
   if (crowdAlertsKickoff) clearTimeout(crowdAlertsKickoff);
   if (nightContextInterval) clearInterval(nightContextInterval);

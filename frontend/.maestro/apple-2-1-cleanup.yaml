@@ -1,0 +1,36 @@
+# Deletes review account B after the recording has finished, off camera, so
+# nothing from the run is left in production. Account A deletes itself on
+# camera in the last shot of apple-2-1.yaml. Passed REVIEW_EMAIL_B and
+# REVIEW_PASSWORD by the workflow.
+appId: com.flockcorp.flock
+---
+- launchApp:
+    clearState: true
+- runFlow:
+    file: parts/login.yaml
+    env:
+      EMAIL: ${REVIEW_EMAIL_B}
+      PASSWORD: ${REVIEW_PASSWORD}
+- tapOn: "You"
+- scrollUntilVisible:
+    element: "Delete account"
+    direction: DOWN
+- tapOn:
+    text: "Delete account"
+    index: 0
+- tapOn:
+    id: "delete-password"
+    optional: true
+- inputText: ${REVIEW_PASSWORD}
+- hideKeyboard
+- tapOn:
+    text: "DELETE"
+    optional: true
+- inputText: "DELETE"
+- hideKeyboard
+- tapOn:
+    text: "Delete account"
+    index: 1
+- extendedWaitUntil:
+    visible: "Sign in"
+    timeout: 20000

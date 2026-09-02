@@ -1,0 +1,27 @@
+# Open the group chat of the flock currently on screen and land on its
+# composer. Two routes in, tried in order, because the plan view reaches the
+# chat from more than one control: a plain chat entry when one is visible,
+# otherwise the "Invite" button, which the app routes through the chat screen
+# before opening the invite modal, which is then dismissed. The only assertion
+# that matters is the last one: the composer is on screen.
+appId: com.flockcorp.flock
+---
+- tapOn:
+    text: "Open Chat|Open chat|Chat|Messages|Group chat"
+    optional: true
+- waitForAnimationToEnd
+- runFlow:
+    when:
+      notVisible: "Type a message..."
+    commands:
+      - tapOn:
+          text: "Invite"
+          optional: true
+      - waitForAnimationToEnd
+      - tapOn:
+          text: "Close|Cancel|Done"
+          optional: true
+      - waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "Type a message..."
+    timeout: 15000
