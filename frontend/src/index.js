@@ -3,6 +3,9 @@ import ReactDOM from 'react-dom/client';
 import './index.css';
 import reportWebVitals from './reportWebVitals';
 import ErrorBoundary from './components/ErrorBoundary';
+// Already in the entry chunk through ErrorBoundary, so the two page-level
+// fallbacks below get their birds for free.
+import { BirdieStill, BIRDIE, WARM_BIRD } from './components/ui/BirdieBird';
 
 // Bearer tokens ride in URLs in two places. Guest invites carry one in the
 // path (/i/<token>): anyone holding it can RSVP and vote as that guest. The
@@ -560,6 +563,7 @@ function pageErrorFallback({ error, eventId, reload }) {
     <div className="page-error" role="alert">
       <style>{PAGE_ERROR_CSS}</style>
       <div className="page-error-card">
+        <BirdieStill bird={WARM_BIRD} size={72} eager style={{ margin: '0 0 12px' }} />
         <h1>{isChunkError ? "This page didn't finish loading" : "This page didn't load"}</h1>
         <p>
           {isChunkError
@@ -695,6 +699,11 @@ function NotFound() {
     <main className="page-error">
       <style>{PAGE_ERROR_CSS}</style>
       <div className="page-error-card">
+        {/* Two birds on the one page that has nothing else on it. */}
+        <div style={{ display: 'flex', alignItems: 'flex-end', gap: '4px', margin: '0 0 12px' }}>
+          <BirdieStill bird={BIRDIE} size={72} eager />
+          <BirdieStill bird={WARM_BIRD} size={56} eager />
+        </div>
         <h1>There's nothing at this address</h1>
         <p>
           The link was either mistyped or it points at a page we no longer have.

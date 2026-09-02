@@ -274,16 +274,21 @@ export default function ProfileSettings({
                       thing it may never do is show a person an empty list and
                       let them believe it. */}
                   {!safetyLoading && trustedContactsError && (
-                    <div role="alert" style={{ padding: '14px 0', textAlign: 'center' }}>
-                      <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.redText, margin: '0 0 4px' }}>{trustedContactsError}</p>
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px' }}>Nothing has been lost. Anyone you have added is still on your account.</p>
-                      <button className="hit44 glass-btn glass-navy" onClick={loadTrustedContacts} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>
-                    </div>
+                    <BirdNote
+                      layout="row"
+                      bird={WARM_BIRD}
+                      size={56}
+                      role="alert"
+                      title={trustedContactsError}
+                      body="Nothing has been lost. Anyone you have added is still on your account."
+                      style={{ padding: '14px 0' }}
+                      action={<button className="hit44 glass-btn glass-navy" onClick={loadTrustedContacts} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Try again</button>}
+                    />
                   )}
 
                   {!safetyLoading && !trustedContactsError && trustedContactsLoaded && trustedContacts.length === 0 && (
                     <div style={{ textAlign: 'center', padding: '20px 0' }}>
-                      <div style={{ marginBottom: '8px' }}>{Icons.user('var(--text-tertiary)', 36)}</div>
+                      <BirdieStill size={64} style={{ margin: '0 auto 8px' }} />
                       <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0 }}>No trusted contacts yet</p>
                     </div>
                   )}
