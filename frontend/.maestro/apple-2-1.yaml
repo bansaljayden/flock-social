@@ -496,13 +496,30 @@ appId: com.flockcorp.flock
 - tapOn:
     text: "Check my contacts.*"
     optional: true
+# Run 14 (2026-09-02): with permissions left unset the tap put up something
+# that matched neither "Allow.*" nor "Back", and the logout's "You" tap
+# failed against it. iOS 18 and later ask in two shapes: an alert with
+# "Select Contacts", "Allow Full Access" and "Don't Allow", or a picker sheet
+# with "Continue", "Done" and "Cancel". Answer whichever is up, then make
+# sure the app's own screen is back before the logout.
 - extendedWaitUntil:
-    visible: "Allow.*"                          # iOS dialog, NSContactsUsageDescription (Info.plist:119)
+    visible: "Allow.*|Select Contacts.*|Continue|OK"   # iOS dialog, NSContactsUsageDescription (Info.plist:119)
     timeout: 15000
+    optional: true
+- tapOn:
+    text: "Allow Full Access|Allow"
+    index: 0
     optional: true
 - tapOn:
     text: "Allow.*"
     index: 0
+    optional: true
+- tapOn:
+    text: "Continue|OK"
+    optional: true
+- waitForAnimationToEnd
+- tapOn:
+    text: "Done|Cancel"
     optional: true
 - waitForAnimationToEnd
 - tapOn:
