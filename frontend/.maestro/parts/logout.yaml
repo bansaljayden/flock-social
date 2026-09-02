@@ -7,6 +7,16 @@ appId: com.flockcorp.flock
 # If something native is still over the app (a permission sheet nobody
 # answered, a picker), the tab bar is not reachable. A relaunch keeps the
 # session and lands on Nest, so try that once before the required tap.
+# Screens without a tab bar (the chat, Add Friends, a settings subscreen)
+# have a "Back" control; take it first, then relaunch if that was not it.
+- runFlow:
+    when:
+      notVisible: "You"
+    commands:
+      - tapOn:
+          text: "Back"
+          optional: true
+      - waitForAnimationToEnd
 - runFlow:
     when:
       notVisible: "You"
