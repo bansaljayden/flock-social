@@ -74,7 +74,7 @@ appId: com.flockcorp.flock
       - waitForAnimationToEnd
       - runFlow:
           when:
-            visible: "Type a message..."        # ChatDetail.js:1269, so we are in the chat
+            visible: "Message"        # ChatDetail.js:1269, so we are in the chat
           commands:
             - tapOn:
                 text: "More options"            # ChatDetail.js:536 aria-label
