@@ -122,10 +122,34 @@ appId: com.flockcorp.flock
                 index: 0
                 optional: true
             - waitForAnimationToEnd
+            # Run 5 (2026-09-02): the first "Delete account" match on the You screen is
+            # not always the row, and the dialog never opened. Try the next matches
+            # until the dialog heading is on screen.
+            - runFlow:
+                when:
+                  notVisible: "Delete your account?"
+                commands:
+                  - tapOn:
+                      text: "Delete account"
+                      index: 1
+                      optional: true
+                  - waitForAnimationToEnd
+            - runFlow:
+                when:
+                  notVisible: "Delete your account?"
+                commands:
+                  - tapOn:
+                      text: "Delete account"
+                      index: 2
+                      optional: true
+                  - waitForAnimationToEnd
             - tapOn:
                 text: "Your password"           # ProfileSettings.js:861 <label htmlFor="delete-password">
                 optional: true
             - inputText: ${REVIEW_PASSWORD_C}
+            - tapOn:
+                text: "Type DELETE to confirm"  # ProfileSettings.js aria-label on the confirm input; it replaces the placeholder for matching
+                optional: true
             - tapOn:
                 text: "DELETE"                  # ProfileSettings.js:891 placeholder
                 optional: true

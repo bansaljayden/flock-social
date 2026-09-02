@@ -549,6 +549,27 @@ appId: com.flockcorp.flock
           text: "Delete account"
           index: 0                              # only the row exists before the dialog opens
       - waitForAnimationToEnd
+      # Run 5 (2026-09-02): the first "Delete account" match on the You screen is
+      # not always the row, and the dialog never opened. Try the next matches
+      # until the dialog heading is on screen.
+      - runFlow:
+          when:
+            notVisible: "Delete your account?"
+          commands:
+            - tapOn:
+                text: "Delete account"
+                index: 1
+                optional: true
+            - waitForAnimationToEnd
+      - runFlow:
+          when:
+            notVisible: "Delete your account?"
+          commands:
+            - tapOn:
+                text: "Delete account"
+                index: 2
+                optional: true
+            - waitForAnimationToEnd
       # The password input is labelled by <label htmlFor="delete-password">
       # "Your password" (ProfileSettings.js:861); index 0 is the label, which
       # focuses the input through htmlFor, so either index works.
@@ -556,6 +577,9 @@ appId: com.flockcorp.flock
           text: "Your password"
           optional: true
       - inputText: ${REVIEW_PASSWORD_C}
+      - tapOn:
+          text: "Type DELETE to confirm"          # ProfileSettings.js aria-label on the confirm input; it replaces the placeholder for matching
+          optional: true
       - tapOn:
           text: "DELETE"                        # ProfileSettings.js:891 placeholder (the empty input's value)
           optional: true
