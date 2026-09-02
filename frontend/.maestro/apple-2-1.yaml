@@ -106,8 +106,17 @@ appId: com.flockcorp.flock
     visible: "Nest"
     timeout: 25000
 - tapOn: "You"                                  # App.js tab table, label: 'You'
+- scrollUntilVisible:
+    element:
+      text: "Add Friends.*"                     # ProfileSettings.js:633 row; WKWebView exposes the whole button, title plus subtitle, as one label (run 5 missed the exact text)
+    direction: DOWN
+    timeout: 8000
+    optional: true
 - tapOn:
-    text: "Add Friends"                         # ProfileSettings.js:633 (button span)
+    text: "Add Friends.*"
+    optional: true
+- tapOn:
+    text: "Search"                              # AddFriends.js tab; the screen does not always open on it
     optional: true
 - extendedWaitUntil:
     visible: "Search by name..."                # AddFriends.js:222 placeholder, the default tab (App.js addFriendsTab 'username')
@@ -131,7 +140,9 @@ appId: com.flockcorp.flock
     index: 0
     optional: true
 - waitForAnimationToEnd
-- tapOn: "Back"                                 # AddFriends.js:143 aria-label; this screen has no tab bar
+- tapOn:
+    text: "Back"                                 # AddFriends.js:143 aria-label; this screen has no tab bar
+    optional: true
 - runFlow: parts/logout.yaml
 
 # ---------------------------------------------------------------------------
@@ -148,8 +159,14 @@ appId: com.flockcorp.flock
     visible: "Nest"
     timeout: 25000
 - tapOn: "You"
+- scrollUntilVisible:
+    element:
+      text: "Add Friends.*"                     # ProfileSettings.js:633 row; WKWebView exposes the whole button, title plus subtitle, as one label (run 5 missed the exact text)
+    direction: DOWN
+    timeout: 8000
+    optional: true
 - tapOn:
-    text: "Add Friends"                         # ProfileSettings.js:633
+    text: "Add Friends.*"
     optional: true
 - extendedWaitUntil:
     visible: "Accept friend request"            # AddFriends.js:191 aria-label
@@ -159,7 +176,9 @@ appId: com.flockcorp.flock
     text: "Accept friend request"
     optional: true
 - waitForAnimationToEnd
-- tapOn: "Back"                                 # AddFriends.js:143
+- tapOn:
+    text: "Back"                                 # AddFriends.js:143
+    optional: true
 - runFlow: parts/logout.yaml
 
 # ---------------------------------------------------------------------------
@@ -336,7 +355,9 @@ appId: com.flockcorp.flock
     text: "Send message"                        # ChatDetail.js:1276 aria-label; disabled once the text is gone, so a no-op after Enter
     optional: true
 - waitForAnimationToEnd
-- tapOn: "Back"                                 # ChatDetail.js:487 aria-label; the chat has no tab bar
+- tapOn:
+    text: "Back"                                 # ChatDetail.js:487 aria-label; the chat has no tab bar
+    optional: true
 
 # Shot 11b: the contacts dialog, in context, after the screen that explains
 # what is sent. "Contacts" is a tab that only renders on native
@@ -344,8 +365,14 @@ appId: com.flockcorp.flock
 # Contacts.requestPermissions() (services/contacts.js). "Don't Allow" does
 # not match "Allow.*"; "Allow Full Access" and "Allow" do.
 - tapOn: "You"
+- scrollUntilVisible:
+    element:
+      text: "Add Friends.*"                     # ProfileSettings.js:633 row; WKWebView exposes the whole button, title plus subtitle, as one label (run 5 missed the exact text)
+    direction: DOWN
+    timeout: 8000
+    optional: true
 - tapOn:
-    text: "Add Friends"                         # ProfileSettings.js:633
+    text: "Add Friends.*"
     optional: true
 - tapOn:
     text: "Contacts"                            # AddFriends.js:131 tab label
@@ -367,7 +394,9 @@ appId: com.flockcorp.flock
     index: 0
     optional: true
 - waitForAnimationToEnd
-- tapOn: "Back"                                 # AddFriends.js:143
+- tapOn:
+    text: "Back"                                 # AddFriends.js:143
+    optional: true
 - runFlow: parts/logout.yaml
 
 # ---------------------------------------------------------------------------
@@ -407,7 +436,9 @@ appId: com.flockcorp.flock
           text: "Send message"                  # ChatDetail.js:1276
           optional: true
       - waitForAnimationToEnd
-      - tapOn: "Back"                           # ChatDetail.js:487
+      - tapOn:
+    text: "Back"                           # ChatDetail.js:487
+    optional: true
 - runFlow: parts/logout.yaml
 
 # ---------------------------------------------------------------------------
@@ -456,7 +487,9 @@ appId: com.flockcorp.flock
     text: "Block ${NAME_B}"                     # ModerationSheet.js:256
     optional: true
 - waitForAnimationToEnd
-- tapOn: "Back"                                 # ChatDetail.js:487
+- tapOn:
+    text: "Back"                                 # ChatDetail.js:487
+    optional: true
 
 # Shot 15: blocked accounts list, unblock B, list empties. There is no
 # "Settings" control on the You tab; the row is "Blocked accounts"
