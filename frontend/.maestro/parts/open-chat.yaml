@@ -5,5 +5,5 @@
 appId: com.flockcorp.flock
 ---
 - extendedWaitUntil:
-    visible: "Type a message..."                # ChatDetail.js:1269 composer placeholder
+    visible: "Message"                # ChatDetail.js:1267 composer aria-label "Message"; on iOS the label replaces the placeholder (run 7)
     timeout: 20000

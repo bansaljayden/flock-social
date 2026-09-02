@@ -348,7 +348,7 @@ appId: com.flockcorp.flock
     text: "Send photo"
     optional: true
 - waitForAnimationToEnd
-- tapOn: "Type a message..."                    # ChatDetail.js:1269
+- tapOn: "Message"                    # ChatDetail.js:1269
 - inputText: "Here for the recording"
 - pressKey: Enter                               # ChatDetail.js:1269 onKeyDown Enter -> sendChatMessage
 - tapOn:
@@ -429,7 +429,7 @@ appId: com.flockcorp.flock
           text: "Review night ${REVIEW_RUN}"
           index: 0
       - runFlow: parts/open-chat.yaml
-      - tapOn: "Type a message..."              # ChatDetail.js:1269
+      - tapOn: "Message"              # ChatDetail.js:1269
       - inputText: "message from B for the report shot"
       - pressKey: Enter                         # ChatDetail.js:1269 onKeyDown Enter
       - tapOn:
