@@ -601,10 +601,79 @@ function priceLevelToNum(priceLevel) {
   return map[priceLevel] ?? null;
 }
 
+// ---------------------------------------------------------------------------
+// BIRDIE'S VENUE SEARCH CACHE (2026-09-01)
+// ---------------------------------------------------------------------------
+// This was the one Text Search caller in the repo with no cache in front of
+// it. routes/venueSearch.js caches the same SKU for five minutes and coalesces
+// identical in-flight requests; Birdie's tool loop re-bought the search every
+// time the model asked, with only the per-user rate limiter between it and the
+// bill. The comment on the call site already admitted a user could steer the
+// model into calling it repeatedly. Text Search bills at $35 per thousand at
+// the Enterprise field tier, the most expensive Places SKU this app uses.
+//
+// Same shape as venueSearch's cache on purpose: a Map, a five minute TTL, and
+// eviction to a low-water mark so a full cache does not pay a full scan on
+// every write. The key is the normalised query plus the location rounded to
+// two decimals, roughly a kilometre, so two people in the same neighbourhood
+// asking for the same thing share one purchase.
+//
+// The cache is consulted BEFORE the budget gate. A hit costs nothing, so it
+// must not spend a unit of anyone's allowance, which is exactly how the search
+// route treats its own hits. In-flight coalescing means a burst of identical
+// misses makes one upstream call rather than one each.
+const birdieSearchCache = new Map();
+const birdieSearchInflight = new Map();
+const BIRDIE_SEARCH_TTL_MS = 5 * 60 * 1000;
+const BIRDIE_SEARCH_CACHE_MAX = 500;
+const BIRDIE_SEARCH_LOW_WATER = Math.floor(BIRDIE_SEARCH_CACHE_MAX * 0.9);
+
+function birdieSearchKey(query, location) {
+  const q = String(query || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  let loc = '';
+  if (typeof location === 'string' && location.includes(',')) {
+    const [lat, lng] = location.split(',').map(Number);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      loc = `${lat.toFixed(2)},${lng.toFixed(2)}`;
+    }
+  }
+  return `${q}|${loc}`;
+}
+
+function birdieSearchGet(key) {
+  const entry = birdieSearchCache.get(key);
+  if (entry && Date.now() - entry.ts < BIRDIE_SEARCH_TTL_MS) return entry.data;
+  if (entry) birdieSearchCache.delete(key);
+  return null;
+}
+
+function birdieSearchSet(key, data) {
+  // Delete first so a refreshed key moves to the end of insertion order and
+  // the oldest-first eviction below cannot evict the hottest query.
+  birdieSearchCache.delete(key);
+  birdieSearchCache.set(key, { data, ts: Date.now() });
+  if (birdieSearchCache.size > BIRDIE_SEARCH_CACHE_MAX) {
+    const now = Date.now();
+    for (const [k, v] of birdieSearchCache) {
+      if (now - v.ts > BIRDIE_SEARCH_TTL_MS) birdieSearchCache.delete(k);
+    }
+    while (birdieSearchCache.size > BIRDIE_SEARCH_LOW_WATER) {
+      birdieSearchCache.delete(birdieSearchCache.keys().next().value);
+    }
+  }
+}
+
 async function executeTool(toolName, toolInput, userId, opts = {}) {
   switch (toolName) {
     case 'search_venues': {
       if (!PLACES_API_KEY) return { error: 'Google Places API not configured' };
+      // A cache hit is free and is served before the budget gate so it spends
+      // nothing. See BIRDIE'S VENUE SEARCH CACHE above.
+      const searchKey = birdieSearchKey(toolInput.query, toolInput.location);
+      const cachedVenues = birdieSearchGet(searchKey);
+      if (cachedVenues) return { venues: cachedVenues };
+      const inflight = birdieSearchInflight.get(searchKey);
+      if (inflight) return inflight;
       // Birdie was a complete bypass of every Places cost control: the tool
       // loop runs up to 5 iterations and executes every call the model emits,
       // so one free account could drive thousands of PAID Places calls a day
@@ -623,6 +692,7 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // timeout, so a Places brownout parked an Express connection for undici's
       // ~5 minute default. A user can steer the model into calling this
       // repeatedly, which makes it a cheap way to exhaust the server.
+      const work = (async () => {
       const resp = await fetch('https://places.googleapis.com/v1/places:searchText', {
         signal: upstreamSignal('places'),
         method: 'POST',
@@ -652,7 +722,18 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         lng: p.location?.longitude,
         photo_url: p.photos?.[0]?.name ? `/api/venues/photo?ref=${encodeURIComponent(p.photos[0].name)}&maxwidth=400` : null,
       }));
+      // Only a real answer is cached. An upstream error or an empty body is
+      // returned to this caller and forgotten, so a 429 or a 5xx can never pin
+      // itself for five minutes.
+      if (resp.ok && Array.isArray(data.places)) birdieSearchSet(searchKey, venues);
       return { venues };
+      })();
+      birdieSearchInflight.set(searchKey, work);
+      try {
+        return await work;
+      } finally {
+        birdieSearchInflight.delete(searchKey);
+      }
     }
 
     case 'get_crowd_prediction': {
@@ -1791,6 +1872,14 @@ router.post('/chat',
 );
 
 module.exports = router;
+// For __tests__ only. The search cache is module scope so it survives across a
+// process's requests, which also means it survives across a test file's cases:
+// birdiePromptInjection.test.js asks for "bars" in every case and would be
+// handed the first case's venues forever. A test clears it between cases.
+router.__clearBirdieSearchCache = () => {
+  birdieSearchCache.clear();
+  birdieSearchInflight.clear();
+};
 // Exposed for backend/__tests__/paidCallBudgets.test.js. The tool executor is
 // where Birdie spends money on the user's behalf (Places, and weather at
 // caller-chosen coordinates), and those charges are invisible from the route's

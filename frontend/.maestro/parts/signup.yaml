@@ -1,0 +1,52 @@
+# Sign up one account from the login screen. Env: NAME, EMAIL, PASSWORD.
+# The date of birth is an <input type="date">, which iOS renders as a native
+# picker rather than a keyboard field, so it is set by opening the picker and
+# scrolling the year wheel to 2008. That is the one step in the whole
+# recording most likely to want a first-run adjustment, and every tap in it
+# is optional so the debug output shows exactly which one missed. The step
+# after it is not optional: the signup must land on the Nest tab, which only
+# happens if the server accepted the date.
+appId: com.flockcorp.flock
+---
+- tapOn: "Create an account"
+- assertVisible: "Create your account"
+- tapOn: "What your friends call you"
+- inputText: ${NAME}
+- tapOn: "you@example.com"
+- inputText: ${EMAIL}
+- tapOn: "At least 8 characters"
+- inputText: ${PASSWORD}
+- hideKeyboard
+
+# Date of birth.
+- tapOn:
+    id: "signup-dob"
+- waitForAnimationToEnd
+# iOS opens a calendar popover; tapping its month-year header switches it to
+# wheels, where the year can be scrolled to.
+- tapOn:
+    text: ".* 20[0-9][0-9]"
+    index: 0
+    optional: true
+- scrollUntilVisible:
+    element:
+      text: "2008"
+    direction: DOWN
+    timeout: 20000
+    optional: true
+- tapOn:
+    text: "2008"
+    optional: true
+- tapOn:
+    text: "Done"
+    optional: true
+# Close the popover by tapping the heading, which is always on screen.
+- tapOn:
+    text: "Create your account"
+    optional: true
+- hideKeyboard
+
+- tapOn: "Create account"
+- extendedWaitUntil:
+    visible: "Nest"
+    timeout: 25000

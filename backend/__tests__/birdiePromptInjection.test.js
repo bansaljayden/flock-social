@@ -176,6 +176,12 @@ test.after(() => { global.fetch = realFetch; });
 
 const birdieUsage = require('../services/birdieUsage');
 const aiRouter = require('../routes/ai');
+// Every case below asks Birdie for "bars". ai.js caches that search for five
+// minutes at module scope (2026-09-01), so without this the first case's
+// venues would be served to every later case and the assertions about a
+// bounded name, stripped characters and a thrown tool would all be reading
+// stale data rather than the mocked response they set up.
+test.beforeEach(() => aiRouter.__clearBirdieSearchCache());
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
