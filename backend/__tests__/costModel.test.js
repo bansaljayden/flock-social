@@ -503,6 +503,26 @@ test('the Birdie output share matches what services/birdieUsage.js documents', (
   assert.ok(line.usd > line.usdLow, 'the headline figure is the dearer of the two');
 });
 
+test('the infrastructure and tooling split is published and adds up', () => {
+  // buildFixed() computed infraMonthly and toolingMonthly on 2026-09-01 and then
+  // left both out of the object it returned, so the panel could never show the
+  // one number a judge or a founder actually wants: what it costs to serve a
+  // venue, as distinct from what the company spends. This pins three things.
+  // The two fields exist. They sum to the effective monthly figure, so nothing
+  // is double counted or dropped between them. And the two developer-tooling
+  // lines are the ones tagged as tooling, so the split cannot quietly move a
+  // user-caused bill into the tooling bucket or vice versa.
+  const f = cm.buildFixed();
+  assert.ok(Number.isFinite(f.infrastructureMonthlyUsd), 'infrastructureMonthlyUsd must be published');
+  assert.ok(Number.isFinite(f.toolingMonthlyUsd), 'toolingMonthlyUsd must be published');
+  const sum = Math.round((f.infrastructureMonthlyUsd + f.toolingMonthlyUsd) * 100) / 100;
+  assert.equal(sum, f.effectiveMonthlyUsd, 'infrastructure plus tooling must equal the effective monthly total');
+  const tooling = cm.FIXED_MONTHLY.filter((e) => e.kind === 'tooling').map((e) => e.id).sort();
+  assert.deepEqual(tooling, ['claude-max', 'codex'], 'exactly the two developer tools are tagged as tooling');
+  assert.ok(f.toolingMonthlyUsd > 0, 'tooling is a real recurring bill and must not read as zero');
+  assert.ok(f.infrastructureMonthlyUsd > f.toolingMonthlyUsd, 'serving the product costs more than the tools used to build it');
+});
+
 test('the watchlist carries no invented numbers', () => {
   // Costs that are not on a bill today. Anything that cannot be defended with a
   // figure has to be null rather than a plausible guess.

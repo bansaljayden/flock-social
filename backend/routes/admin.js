@@ -1944,6 +1944,9 @@ router.get('/moderation-actions', async (req, res) => {
 // measured" rather than 500 the whole panel, because the fixed-cost half is
 // still worth showing when the database is unreachable.
 const costModel = require('../services/costModel');
+// boolFlag is the one reader of PAYWALL_ENABLED and VENUE_BILLING_ENABLED, so the
+// plans block below reports the same truth the entitlement gates enforce.
+const { boolFlag } = require('../services/entitlements');
 const birdieUsage = require('../services/birdieUsage');
 const { placesBudgetStatus } = require('../utils/placesBudget');
 const { visionBudgetStatus } = require('../utils/visionBudget');
@@ -2125,6 +2128,39 @@ router.get('/costs', async (req, res) => {
     return Number(r.rows[0] && r.rows[0].n) || 0;
   });
 
+  // -- WHAT THE TIERS ARE, AND WHO IS ON THEM --------------------------------
+  // Jayden asked for this because he could not answer either question from any
+  // screen: what the venue and consumer tiers actually are, and how many
+  // accounts sit on each. Both halves are read here rather than restated in the
+  // panel, because a hardcoded tier list is a list that goes stale the first
+  // time somebody edits an entitlement.
+  //
+  // A zero on any of these rows is ambiguous on its own and the flags are what
+  // disambiguate it. Nobody on a paid venue tier while VENUE_BILLING_ENABLED is
+  // off means tiers are not being enforced, not that nobody wanted one. Nobody
+  // premium while PAYWALL_ENABLED is off means nobody CAN buy, not that nobody
+  // would. The panel prints the flag beside the count for exactly that reason.
+  const venueTierCounts = await safe(async () => {
+    const r = await pool.query(
+      `SELECT tier, COUNT(*)::int AS n FROM venue_profiles GROUP BY tier`
+    );
+    const out = { free: 0, premium: 0, pro: 0 };
+    for (const row of r.rows) {
+      if (row.tier && Object.prototype.hasOwnProperty.call(out, row.tier)) {
+        out[row.tier] = Number(row.n) || 0;
+      }
+    }
+    out.total = r.rows.reduce((s, row) => s + (Number(row.n) || 0), 0);
+    return out;
+  });
+
+  const consumerPremium = await safe(async () => {
+    const r = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM users WHERE is_premium = true`
+    );
+    return Number(r.rows[0] && r.rows[0].n) || 0;
+  });
+
   // -- The advisor's own shape, read from the modules that own it -------------
   // Not restated here. The system prompt's length and the maxOutputTokens the
   // API is actually handed are what decide the input/output split, and both
@@ -2294,6 +2330,28 @@ router.get('/costs', async (req, res) => {
       priceUsd: VENUE_PRICE_USD,
       withRoostSpendThisMonth: venueSpend ? venueSpend.length : null,
       perVenue: venueSpend,
+    },
+    plans: {
+      // The venue side. Roost at VENUE_PRICE_USD is the product; the $35
+      // Premium rung was retired 2026-08-20 and survives in the app only
+      // because dropping its server-side gates is still owed work
+      // (VENUE-BILLING.md). Both are reported so the retired rung cannot hide.
+      venueTiers: venueTierCounts,
+      venuePriceUsd: VENUE_PRICE_USD,
+      venueBillingEnforced: boolFlag('VENUE_BILLING_ENABLED'),
+      // What Pro actually gates today, named by route rather than by brochure.
+      // These are the only requirePro call sites in the codebase.
+      proGates: [
+        'GET /api/advisor/questions',
+        'POST /api/advisor/ask',
+        'POST /api/advisor/question',
+        'GET /api/venue-dashboard/this-week',
+      ],
+      // The consumer side. One writer, routes/revenuecat.js, and it refuses
+      // every event while REVENUECAT_WEBHOOK_SECRET is unset.
+      consumerPremium,
+      consumerPaywallEnabled: boolFlag('PAYWALL_ENABLED'),
+      revenuecatConfigured: Boolean(process.env.REVENUECAT_WEBHOOK_SECRET),
     },
     // Said in the payload, not only in the panel, so an API reader cannot miss
     // it either.

@@ -724,6 +724,47 @@ export default function RevenueScreen({
                       </p>
                     </div>
                   </div>
+                  {/* WHICH NUMBER IS THE COST OF SERVICE. The all-in figure
+                      above carries development tooling that no user causes,
+                      and costModel.js says so on each of those lines. Quoting
+                      it as what a venue costs to serve is the wrong number,
+                      so the two halves are named here and the break-even is
+                      computed from the cost model at render time rather than
+                      typed in, so it cannot drift when a bill changes. */}
+                  {(() => {
+                    const infra = Number.isFinite(fixed.infrastructureMonthlyUsd)
+                      ? fixed.infrastructureMonthlyUsd + reconciledTotal
+                      : null;
+                    const tooling = Number.isFinite(fixed.toolingMonthlyUsd) ? fixed.toolingMonthlyUsd : null;
+                    const price = Number.isFinite(d.venues?.priceUsd) && d.venues.priceUsd > 0 ? d.venues.priceUsd : null;
+                    const venuesFor = (usd) => (price && Number.isFinite(usd) ? Math.ceil(usd / price) : null);
+                    const infraVenues = venuesFor(infra);
+                    const allVenues = venuesFor(allInMonthly);
+                    const plural = (n) => (n === 1 ? 'venue' : 'venues');
+                    return (
+                      <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--border-default)' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                          <div>
+                            <p style={kicker}>Serving venues</p>
+                            <p style={big}>{moneyOr(infra, 'Not measured', 0)}</p>
+                            <p style={{ ...sub, margin: '3px 0 0' }}>Hosting, data vendors and the reconciled Google bill. This is the number to quote as what it costs to serve.</p>
+                          </div>
+                          <div>
+                            <p style={kicker}>Development tooling</p>
+                            <p style={big}>{moneyOr(tooling, 'Not measured', 0)}</p>
+                            <p style={{ ...sub, margin: '3px 0 0' }}>Real bills that no user causes. In the all-in total, and not in the cost of service.</p>
+                          </div>
+                        </div>
+                        {price ? (
+                          <p style={{ ...sub, margin: '10px 0 0' }}>
+                            At {moneyOr(price, '', 0)} a venue, {infraVenues === null ? 'an unknown number of' : infraVenues} {plural(infraVenues)} covers serving and {allVenues === null ? 'an unknown number of' : allVenues} {plural(allVenues)} covers everything including tooling. Computed from the bills above, so it moves when they do.
+                          </p>
+                        ) : (
+                          <p style={{ ...sub, margin: '10px 0 0' }}>Break-even in venues needs a venue price on the payload, and none was served.</p>
+                        )}
+                      </div>
+                    );
+                  })()}
                   {(d.reconciled?.lines || []).map((l) => row(l.id, l.label, `${moneyOr(l.usdPerMonth)}/mo`, l.note))}
                   {(fixed.unverifiedLines || []).length > 0 && (
                     <p style={foot}>
@@ -863,6 +904,52 @@ export default function RevenueScreen({
                     </p>
                   )}
                 </div>
+
+                {/* 2b. PLANS AND TIERS. Jayden could not answer, from any
+                    screen, what the tiers are or who is on them. Every figure
+                    here is read from the payload rather than typed in, and a
+                    zero is always printed next to the flag that explains it,
+                    because nobody on a paid tier while enforcement is off is a
+                    different fact from nobody wanting one. */}
+                {d.plans && (() => {
+                  const pl = d.plans;
+                  const vt = pl.venueTiers || null;
+                  const onOff = (v) => (v ? 'on' : 'off');
+                  const n = (v) => (Number.isFinite(v) ? v : 'unknown');
+                  return (
+                    <div style={card}>
+                      <h3 style={h3}>Plans and tiers</h3>
+                      <p style={sub}>What each tier is, what it gates, and how many accounts sit on it right now.</p>
+
+                      <p style={{ ...kicker, marginTop: '10px' }}>Venue side</p>
+                      <p style={{ ...sub, margin: '2px 0 8px' }}>
+                        Roost is the product, at {moneyOr(pl.venuePriceUsd, 'an unset price', 0)} a location a month. The $35 Premium rung was retired on 2026-08-20 and still exists in the app only because dropping its server-side gates is owed work. Tier enforcement is <strong>{onOff(pl.venueBillingEnforced)}</strong>{pl.venueBillingEnforced ? '' : ', so the counts below describe what is written on each profile, not what anyone is being charged for'}.
+                      </p>
+                      {vt ? (
+                        <>
+                          {row('tier-pro', 'Pro (Roost)', `${n(vt.pro)} ${vt.pro === 1 ? 'venue' : 'venues'}`, 'The paid tier. Gates the routes listed below.')}
+                          {row('tier-premium', 'Premium', `${n(vt.premium)} ${vt.premium === 1 ? 'venue' : 'venues'}`, 'Retired rung. Nothing should be sold on it; a count here is history, not revenue.')}
+                          {row('tier-free', 'Free', `${n(vt.free)} ${vt.free === 1 ? 'venue' : 'venues'}`, 'Everything Premium used to hold now lives here.')}
+                          {row('tier-total', 'Venue profiles', `${n(vt.total)}`, 'Every profile with any tier value.')}
+                        </>
+                      ) : (
+                        <p style={foot}>Tier counts could not be read.</p>
+                      )}
+                      {row('tier-paying', 'Paying venues', `${n(d.venues?.paying)}`, 'Active, trialing or past due subscriptions granted as paid. The only row here that is money.')}
+                      {Array.isArray(pl.proGates) && pl.proGates.length > 0 && (
+                        <p style={{ ...foot, marginTop: '8px' }}>
+                          Pro gates exactly these routes and nothing else: {pl.proGates.join(', ')}. Promoted placement and slow-night offers were cut and are not gated by anything, because they do not exist.
+                        </p>
+                      )}
+
+                      <p style={{ ...kicker, marginTop: '14px' }}>Consumer side</p>
+                      <p style={{ ...sub, margin: '2px 0 8px' }}>
+                        The paywall is <strong>{onOff(pl.consumerPaywallEnabled)}</strong>{pl.consumerPaywallEnabled ? '' : ', so nobody can buy premium and a zero below means the door is shut, not that nobody knocked'}. RevenueCat webhook is <strong>{pl.revenuecatConfigured ? 'configured' : 'not configured'}</strong>{pl.revenuecatConfigured ? '' : ', and it is the only writer of the premium flag, so it cannot be set right now'}.
+                      </p>
+                      {row('consumer-premium', 'Premium users', `${n(pl.consumerPremium)}`, 'users.is_premium, written only by the RevenueCat webhook.')}
+                    </div>
+                  );
+                })()}
 
                 {/* 3. OBSERVED */}
                 <div style={card}>
