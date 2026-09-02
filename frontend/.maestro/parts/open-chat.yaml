@@ -4,6 +4,49 @@
 # so there is nothing to tap; the plan view's "Open Chat" is never on screen.
 appId: com.flockcorp.flock
 ---
+# Runs 7 and 8 (2026-09-02) tapped Create Flock and then never saw the
+# composer, so first say which screen is on camera (every probe is optional
+# and only leaves a line in the log), then recover through the plan view's
+# Open Chat, or through Nest and the flock card, before the required wait.
+- assertVisible:
+    text: "Message"
+    optional: true
+- assertVisible:
+    text: "Start a Flock"                       # still on the create screen: creation did not go through
+    optional: true
+- assertVisible:
+    text: "Open Chat|Open chat"                 # FlockDetail plan view
+    optional: true
+- assertVisible:
+    text: "Share invite link.*"                 # invite modal opened by itself
+    optional: true
+- assertVisible:
+    text: "Nest"                                # back on the tab bar
+    optional: true
+- runFlow:
+    when:
+      notVisible: "Message"
+    commands:
+      - tapOn:
+          text: "Open Chat|Open chat"
+          optional: true
+      - waitForAnimationToEnd
+- runFlow:
+    when:
+      notVisible: "Message"
+    commands:
+      - tapOn:
+          text: "Nest"
+          optional: true
+      - tapOn:
+          text: "Review night.*"
+          index: 0
+          optional: true
+      - waitForAnimationToEnd
+      - tapOn:
+          text: "Open Chat|Open chat"
+          optional: true
+      - waitForAnimationToEnd
 - extendedWaitUntil:
-    visible: "Message"                # ChatDetail.js:1267 composer aria-label "Message"; on iOS the label replaces the placeholder (run 7)
+    visible: "Message"                          # ChatDetail.js:1267 composer aria-label "Message"; on iOS the label replaces the placeholder (run 7)
     timeout: 20000
