@@ -1,27 +1,9 @@
-# Open the group chat of the flock currently on screen and land on its
-# composer. Two routes in, tried in order, because the plan view reaches the
-# chat from more than one control: a plain chat entry when one is visible,
-# otherwise the "Invite" button, which the app routes through the chat screen
-# before opening the invite modal, which is then dismissed. The only assertion
-# that matters is the last one: the composer is on screen.
+# Wait for the flock chat composer. Every route in these flows that opens a
+# flock (the create success path, the Nest card, the accepted invite) lands on
+# chatDetail directly (App.js `setSelectedFlockId(f.id); setCurrentScreen('chatDetail')`),
+# so there is nothing to tap; the plan view's "Open Chat" is never on screen.
 appId: com.flockcorp.flock
 ---
-- tapOn:
-    text: "Open Chat|Open chat|Chat|Messages|Group chat"
-    optional: true
-- waitForAnimationToEnd
-- runFlow:
-    when:
-      notVisible: "Type a message..."
-    commands:
-      - tapOn:
-          text: "Invite"
-          optional: true
-      - waitForAnimationToEnd
-      - tapOn:
-          text: "Close|Cancel|Done"
-          optional: true
-      - waitForAnimationToEnd
 - extendedWaitUntil:
-    visible: "Type a message..."
-    timeout: 15000
+    visible: "Type a message..."                # ChatDetail.js:1269 composer placeholder
+    timeout: 20000

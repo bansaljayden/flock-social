@@ -1,61 +1,136 @@
-# Sign up one account from the login screen. Env: NAME, EMAIL, PASSWORD.
-# The date of birth is an <input type="date">, which iOS renders as a native
-# picker rather than a keyboard field, so it is set by opening the picker and
-# scrolling the year wheel to 2008. That is the one step in the whole
-# recording most likely to want a first-run adjustment, and every tap in it
-# is optional so the debug output shows exactly which one missed. The step
-# after it is not optional: the signup must land on the Nest tab, which only
-# happens if the server accepted the date.
+# Sign up one account from the login screen and end on the login screen
+# again, whether or not the signup went through. Env: NAME, EMAIL, PASSWORD.
+#
+# Signup never lands on Nest. POST /api/auth/signup always answers
+# emailVerificationRequired (backend/routes/auth.js, unconditional), and
+# SignupScreen.js:182-189 then renders "Confirm your email" instead of calling
+# onSignupSuccess. That screen IS shot 3 of the reply, so it is left on camera
+# for a moment, and its "Sign in" (SignupScreen.js:239) is the way back to the
+# login form. If the signup did not go through (the date of birth is the step
+# most likely to miss, see below), the form stays put with an inline error and
+# the bottom "Sign in" (SignupScreen.js:446) is used instead. Either way the
+# caller can go on.
+#
+# Field order on the form (SignupScreen.js:264-330): Name, Email, Date of
+# birth, Password, then the submit. The date of birth is filled BEFORE the
+# password on purpose: client validation refuses to submit without it
+# (firstProblem, SignupScreen.js:151), and the password field is the last
+# keyboard field, so Enter from it submits the <form onSubmit>
+# (SignupScreen.js:264, noValidate). That is the same Enter-submit the login
+# part uses and that the 2026-09-01 Simulator run confirmed.
+#
+# Keyboard dismissal: NEVER by tapping the "Create your account" heading. On
+# the 2026-09-01 run that heading had scrolled off screen behind the keyboard
+# by the time the password was typed and the tap failed with element not
+# found. Nothing here depends on dismissing the keyboard by a tap.
+#
+# Date of birth: an <input type="date"> with no min, max or defaultValue
+# (SignupScreen.js:299-308), labelled by <label htmlFor> (:298), so on iOS it
+# is a native picker, not a keyboard field. Tapping the popover's month-year
+# header switches it to wheels. XCTest exposes a wheel as ONE element whose
+# value is the selected row, so "2008" is not something that can be scrolled
+# to and tapped; instead the year wheel is swiped upward (earlier years sit
+# above the current one) until its value reads any year of 2012 or earlier,
+# which is what the server's age check needs (MIN_AGE = 13, backend/utils/age.js).
+# UIDatePicker writes the value as the wheel settles, so nothing has to be
+# tapped to confirm it. Every step of that is optional so the debug output
+# shows which one missed.
 appId: com.flockcorp.flock
 ---
-- tapOn: "Create an account"
-- assertVisible: "Create your account"
-- tapOn: "What your friends call you"
+- tapOn: "Create an account"                    # LoginScreen.js:371
+- assertVisible: "Create your account"          # SignupScreen.js:201 <h1>
+- tapOn: "What your friends call you"           # SignupScreen.js:275 placeholder
 - inputText: ${NAME}
-- tapOn: "you@example.com"
+- tapOn: "you@example.com"                      # SignupScreen.js:289 placeholder
 - inputText: ${EMAIL}
-- tapOn: "At least 8 characters"
-- inputText: ${PASSWORD}
-# Maestro's hideKeyboard fails against WKWebView inputs on the Simulator
-# ("Couldn't hide the keyboard", first run 2026-09-01). Tapping static text is
-# the dismissal Maestro itself recommends; the heading is always on screen.
-- tapOn: "Create your account"
 
-# Date of birth.
+# Date of birth. Index 1 is the input; index 0 is the <label> element
+# (SignupScreen.js:298). Tapping the input while the email keyboard is up
+# swaps the keyboard for the date popover.
 - tapOn:
-    id: "signup-dob"
+    text: "Date of birth"
+    index: 1
+    optional: true
 - waitForAnimationToEnd
-# iOS opens a calendar popover; tapping its month-year header switches it to
-# wheels, where the year can be scrolled to.
+# If index 1 did not exist (label merged into the input), no popover is open
+# yet; tap the label, which focuses the input through htmlFor.
+- runFlow:
+    when:
+      notVisible: "[A-Z][a-z]+ 20[0-9][0-9]"    # the popover's month-year header, e.g. "September 2026"
+    commands:
+      - tapOn:
+          text: "Date of birth"
+          optional: true
+      - waitForAnimationToEnd
+# Calendar to wheels.
 - tapOn:
-    text: ".* 20[0-9][0-9]"
+    text: "[A-Z][a-z]+ 20[0-9][0-9]"
     index: 0
     optional: true
+- waitForAnimationToEnd
+# Swipe the year wheel up until it reads 2012 or earlier. direction UP moves
+# the content toward earlier years (AUDIT-2026-09-01.md, signup 31-36).
 - scrollUntilVisible:
     element:
-      text: "2008"
-    direction: DOWN
+      text: "19[0-9][0-9]|200[0-9]|201[0-2]"
+    direction: UP
     timeout: 20000
+    speed: 30
     optional: true
+- waitForAnimationToEnd
+# Close the popover by tapping outside it, in the hero area at the top of the
+# screen (AuthShell hero, above the form). Static content, nothing focuses.
 - tapOn:
-    text: "2008"
+    point: "50%,10%"
     optional: true
-- tapOn:
-    text: "Done"
-    optional: true
-# Close the popover by tapping the heading, which is always on screen.
-- tapOn:
-    text: "Create your account"
-    optional: true
+- waitForAnimationToEnd
 
-# The tap worked on the first run, but the login form's submit was lost below
-# the fold after the keyboard closed, so the same insurance applies here.
+# Password, then Enter submits the form.
 - scrollUntilVisible:
-    element: "Create account"
+    element: "At least 8 characters"            # SignupScreen.js:324 placeholder
     direction: DOWN
     timeout: 5000
     optional: true
-- tapOn: "Create account"
+- tapOn: "At least 8 characters"
+- inputText: ${PASSWORD}
+- pressKey: Enter                               # SignupScreen.js:264 <form onSubmit={handleSubmit} noValidate>
+- waitForAnimationToEnd
+# Fallback if Enter did not submit: the button is below the requirements list.
+- runFlow:
+    when:
+      notVisible: "Confirm your email"          # SignupScreen.js:211
+    commands:
+      - scrollUntilVisible:
+          element: "Create account"             # SignupScreen.js:374 submit
+          direction: DOWN
+          timeout: 5000
+          optional: true
+      - tapOn:
+          text: "Create account"
+          optional: true
 - extendedWaitUntil:
-    visible: "Nest"
+    visible: "Confirm your email"               # SignupScreen.js:211 <h1>, shot 3
     timeout: 25000
+    optional: true
+
+# Back to the login screen from wherever the signup ended.
+- runFlow:
+    when:
+      visible: "Confirm your email"
+    commands:
+      - tapOn: "Sign in"                        # SignupScreen.js:239 -> onSwitchToLogin
+- runFlow:
+    when:
+      notVisible: "Welcome back"                # LoginScreen.js:146
+    commands:
+      - scrollUntilVisible:
+          element: "Sign in"                    # SignupScreen.js:446, bottom of the form
+          direction: DOWN
+          timeout: 5000
+          optional: true
+      - tapOn:
+          text: "Sign in"
+          optional: true
+- extendedWaitUntil:
+    visible: "Welcome back"                     # LoginScreen.js:146
+    timeout: 10000
