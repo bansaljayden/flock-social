@@ -28,6 +28,7 @@ appId: com.flockcorp.flock
     clearState: true
     permissions:
       all: unset
+      contacts: allow
 - extendedWaitUntil:
     visible: "Welcome back"                     # LoginScreen.js:146
     timeout: 20000
