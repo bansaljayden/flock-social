@@ -46,6 +46,13 @@ appId: com.flockcorp.flock
     optional: true
 - hideKeyboard
 
+# The tap worked on the first run, but the login form's submit was lost below
+# the fold after the keyboard closed, so the same insurance applies here.
+- scrollUntilVisible:
+    element: "Create account"
+    direction: DOWN
+    timeout: 5000
+    optional: true
 - tapOn: "Create account"
 - extendedWaitUntil:
     visible: "Nest"
