@@ -500,6 +500,7 @@ appId: com.flockcorp.flock
 - scrollUntilVisible:
     element: "Blocked accounts.*"                 # ProfileSettings.js:675 row; its label is the title plus the count, so the whole label is matched (every cleanup pass missed the exact text)
     direction: DOWN
+    centerElement: true
     timeout: 8000
     optional: true
 - tapOn:
@@ -544,6 +545,7 @@ appId: com.flockcorp.flock
       - scrollUntilVisible:
           element: "Delete account.*"       # ProfileSettings.js:812 row; WKWebView exposes the whole button as one label (runs 5 and 7 never opened the dialog on the exact text)
           direction: DOWN
+          centerElement: true
           timeout: 15000
       - tapOn:
           text: "Delete account.*"
