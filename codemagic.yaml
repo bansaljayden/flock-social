@@ -40,7 +40,10 @@
 #                                      PAYWALL_ENABLED set on the backend
 #      REACT_APP_SENTRY_DSN            crashes inside the shell go unreported
 #      REACT_APP_POSTHOG_KEY           posthog-js is never imported, no analytics
-#      REACT_APP_API_URL               optional. Defaults to the Railway prod URL
+#      REACT_APP_API_URL               optional. Defaults to https://api.flockcorp.com
+#                                      (services/api.js). If the flock_web group
+#                                      sets this to the old Railway host, the
+#                                      group wins over the code default: check it.
 #
 #    Add ONLY vars the app reads. CRA's DefinePlugin emits the whole process.env
 #    object, so any REACT_APP_* present in the build env is published verbatim in
