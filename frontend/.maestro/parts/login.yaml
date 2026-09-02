@@ -31,9 +31,14 @@ appId: com.flockcorp.flock
       all: unset
       contacts: allow
 - waitForAnimationToEnd
+# Run 19 (2026-09-02): a relaunch after the chat session landed on a screen
+# with neither the tab bar nor the login form, so a guard keyed on "Nest"
+# never ran and the required "Welcome back" below ended the take. The
+# guard is keyed on the login form being absent instead, and logout.yaml
+# now taps Back first for screens without a tab bar.
 - runFlow:
     when:
-      visible: "Nest"
+      notVisible: "Welcome back"
     file: logout.yaml
 - assertVisible: "Welcome back"                 # LoginScreen.js:146 <h1>
 - tapOn:
