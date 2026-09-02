@@ -333,7 +333,7 @@ test('Discover hides its collapsed nav and its closed events panel from the keyb
   // and a child that names `visibility: visible` for itself overrides that,
   // which put these three into the tab order of every other screen.
   await page.getByRole('navigation', { name: 'Main' })
-    .getByRole('button', { name: 'Messages', exact: true }).click();
+    .getByRole('button', { name: /^Messages(, .* unread)?$/ }).click();
   await page.waitForTimeout(1500);
   const elsewhere = await focusableNames(page);
   for (const label of DISCOVER_NAV) {
