@@ -22,12 +22,17 @@ appId: com.flockcorp.flock
     id: "delete-password"
     optional: true
 - inputText: ${REVIEW_PASSWORD}
-- hideKeyboard
 - tapOn:
     text: "DELETE"
     optional: true
 - inputText: "DELETE"
-- hideKeyboard
+- scrollUntilVisible:
+    element:
+      text: "Delete account"
+      index: 1
+    direction: DOWN
+    timeout: 5000
+    optional: true
 - tapOn:
     text: "Delete account"
     index: 1
