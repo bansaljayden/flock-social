@@ -238,11 +238,11 @@ export default function AddFriends({
                   value is set in App.js's handleAddFriendsSearch catch and
                   arrives through addFriendsProps. */}
               {!addFriendsSearching && addFriendsError && (
-                <p role="status" style={{ fontSize: 'var(--t-label)', color: 'var(--accent-red-text, #b91c1c)', textAlign: 'center', padding: '24px 8px', margin: 0, lineHeight: 1.5 }}>{addFriendsError}</p>
+                <BirdNote layout="row" size={48} role="status" body={addFriendsError} style={{ padding: '16px 8px' }} />
               )}
 
               {!addFriendsSearching && !addFriendsError && addFriendsSearch.trim().length >= 1 && addFriendsResults.length === 0 && (
-                <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '24px 0', margin: 0 }}>No users found for "{addFriendsSearch}"</p>
+                <BirdNote size={64} title={`No users found for "${addFriendsSearch}"`} />
               )}
 
               {!addFriendsSearching && addFriendsResults.map(user => {
@@ -576,7 +576,7 @@ export default function AddFriends({
                       found by their number. The server cannot tell those two
                       apart on purpose, so neither may this line. */}
                   {!phoneLookupError && phoneLookupUsers && phoneLookupUsers.length === 0 && (
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '10px 0 0', lineHeight: '1.4' }}>Nobody on Flock has that number, or they have not turned on being found by it.</p>
+                    <BirdNote layout="row" bird={WARM_BIRD} size={48} body="Nobody on Flock has that number, or they have not turned on being found by it." style={{ marginTop: '10px' }} />
                   )}
                 </div>
 

@@ -34,6 +34,7 @@
  */
 import React from 'react';
 import Icons from './ui/Icons';
+import { BirdieStill, BirdNote, WARM_BIRD } from './ui/BirdieBird';
 
 const NewDmModal = ({
   DialogBehavior,
@@ -83,17 +84,14 @@ const NewDmModal = ({
                 users found" drawn over a lookup that never completed. Set in
                 App.js's handleDmSearch catch, arrives through newDmModalProps. */}
             {!dmModalSearching && dmSearchError && dmSearchText.trim() && (
-              <div role="status" style={{ textAlign: 'center', padding: '24px', color: 'var(--accent-red-text, #b91c1c)' }}>
-                <p style={{ fontSize: 'var(--t-label)', margin: 0, lineHeight: 1.5 }}>{dmSearchError}</p>
-              </div>
+              <BirdNote layout="row" size={48} role="status" body={dmSearchError} style={{ padding: '16px 12px' }} />
             )}
             {!dmModalSearching && !dmSearchError && usersToShow.length === 0 && dmSearchText.trim() && (
-              <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-secondary)' }}>
-                <p style={{ fontSize: 'var(--t-label)', margin: 0 }}>No users found for "{dmSearchText}"</p>
-              </div>
+              <BirdNote size={64} title={`No users found for "${dmSearchText}"`} style={{ padding: '20px 12px 12px' }} />
             )}
             {!dmModalSearching && usersToShow.length === 0 && !dmSearchText.trim() && (
               <div style={{ textAlign: 'center', padding: '24px', color: 'var(--text-secondary)' }}>
+                <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 8px' }} />
                 <p style={{ fontSize: 'var(--t-label)', margin: 0 }}>Type a name to find people</p>
               </div>
             )}

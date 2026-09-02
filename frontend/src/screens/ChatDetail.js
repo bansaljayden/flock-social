@@ -677,9 +677,7 @@ export default function ChatDetail({
           // ended in a 403 that never reached the screen. Voting is the thing
           // they can actually do, so say that instead of offering a dead button.
           <div style={{ margin: '0', padding: '10px 14px', background: `linear-gradient(135deg, var(--bg-primary), var(--bg-card-solid))`, borderBottom: `1px solid ${colors.creamDark}`, display: 'flex', alignItems: 'center', gap: '10px', width: '100%', flexShrink: 0 }}>
-            <div style={{ width: '40px', height: '40px', borderRadius: '12px', border: `2px dashed ${colors.steel}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {Icons.mapPin(colors.steel, 18)}
-            </div>
+            <BirdieStill bird={WARM_BIRD} size={48} style={{ flexShrink: 0 }} />
             <div style={{ flex: 1, textAlign: 'left' }}>
               <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>No venue yet</p>
               {/* flock.host falls back to the literal string 'Unknown' when the
@@ -1780,7 +1778,10 @@ export default function ChatDetail({
                 ) : (
                   <div style={{ padding: '20px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px', marginBottom: '16px' }}>
                     {userLocation ? (
-                      <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>No votes yet. Be the first to suggest a venue!</p>
+                      <>
+                        <BirdieStill size={64} style={{ margin: '0 auto 8px' }} />
+                        <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>No votes yet. Be the first to suggest a venue!</p>
+                      </>
                     ) : (
                       /* The instruction used to have no way to be followed: a
                          fresh install with no location got "be the first to
@@ -1789,6 +1790,7 @@ export default function ChatDetail({
                          venue search was down. Name the actual next step and
                          open the door to it. */
                       <>
+                        <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 8px' }} />
                         <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: '0 0 12px', fontWeight: '500' }}>No votes yet. To see places to suggest, Flock needs your location.</p>
                         <button className="hit44 glass-btn glass-secondary" onClick={() => { leaveChatScreen(); setShowVotePanel(false); setPickingVenueForCreate(true); setPickingVenueForFlockId(flock.id); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '10px 18px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Browse venues on Discover</button>
                       </>
@@ -1874,6 +1876,7 @@ export default function ChatDetail({
                      that could not refill it; the honest action is to close and
                      use the venue map instead. */
                   <div style={{ padding: '16px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', textAlign: 'center' }}>
+                    <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 8px' }} />
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: '1.5' }}>{userLocation
                       ? 'No venues to show here. Venue search is unavailable right now, so there is nothing to pick from yet.'
                       /* Blaming search when the app simply never had a
