@@ -4,6 +4,17 @@
 # (ChatDetail.js:487, AddFriends.js:143).
 appId: com.flockcorp.flock
 ---
+# If something native is still over the app (a permission sheet nobody
+# answered, a picker), the tab bar is not reachable. A relaunch keeps the
+# session and lands on Nest, so try that once before the required tap.
+- runFlow:
+    when:
+      notVisible: "You"
+    commands:
+      - launchApp:
+          permissions:
+            all: unset
+      - waitForAnimationToEnd
 - tapOn: "You"                                  # App.js tab table, label: 'You'
 - scrollUntilVisible:
     element: "Log Out"                          # ProfileSettings.js:798

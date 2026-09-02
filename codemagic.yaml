@@ -598,6 +598,15 @@ workflows:
           # location, would stay empty. Center City Philadelphia.
           xcrun simctl location "$UDID" set 39.9526,-75.1652 || true
           xcrun simctl install "$UDID" ios/output/Build/Products/Debug-iphonesimulator/App.app
+          # Contacts is authorized up front. Run 14 (2026-09-02) left every
+          # permission unset: the location prompt appeared and was accepted on
+          # camera, but the contacts request on iOS 18 and later puts up an
+          # access sheet drawn by a separate system process, which Maestro can
+          # neither read nor answer; it stayed over the app through a relaunch
+          # and a clean reinstall and ended the take. Location and camera stay
+          # unset so their prompts are the ones on camera. The reply packet
+          # says this in as many words (APPLE-2.1-REPLY.md, shot 11b).
+          xcrun simctl privacy "$UDID" grant contacts com.flockcorp.flock || echo "contacts grant failed; the flow answers the sheet if it can"
       - name: Install Maestro
         script: |
           curl -Ls "https://get.maestro.mobile.dev" | bash
