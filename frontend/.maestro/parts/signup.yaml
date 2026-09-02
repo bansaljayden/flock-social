@@ -68,16 +68,34 @@ appId: com.flockcorp.flock
     index: 0
     optional: true
 - waitForAnimationToEnd
-# Swipe the year wheel up until it reads 2012 or earlier. direction UP moves
-# the content toward earlier years (AUDIT-2026-09-01.md, signup 31-36).
-- scrollUntilVisible:
-    element:
-      text: "19[0-9][0-9]|200[0-9]|201[0-2]"
-    direction: UP
-    timeout: 20000
-    speed: 30
-    optional: true
-- waitForAnimationToEnd
+# Move the year wheel to an earlier year. Run 4 (2026-09-02) showed the wheel
+# exposes no row text Maestro can scroll toward: scrollUntilVisible on
+# "19xx|200x|201x" timed out and the signup was refused for the missing date.
+# So the wheel is swiped blind, finger moving DOWN, which on an iOS picker
+# brings the rows above (earlier years) into the selection. First from the
+# element that shows the selected year, if XCTest exposes one, then from the
+# right-hand column of the popover where the year wheel sits. Each swipe moves
+# roughly eight rows; three take 2026 into the early 2000s, which satisfies
+# the server's age check (MIN_AGE = 13, backend/utils/age.js) by a wide margin.
+- repeat:
+    times: 3
+    commands:
+      - swipe:
+          from:
+            text: "19[0-9][0-9]|20[0-9][0-9]"
+          direction: DOWN
+          duration: 500
+          optional: true
+      - waitForAnimationToEnd
+- repeat:
+    times: 3
+    commands:
+      - swipe:
+          start: "72%,58%"
+          end: "72%,86%"
+          duration: 500
+          optional: true
+      - waitForAnimationToEnd
 # Close the popover by tapping outside it, in the hero area at the top of the
 # screen (AuthShell hero, above the form). Static content, nothing focuses.
 - tapOn:
