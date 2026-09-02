@@ -352,12 +352,14 @@ test('every empty panel a brand new account meets explains itself', async ({ pag
 
   // Home. Zero flocks, zero friends.
   await expect(page.getByText(/no flocks yet/i)).toBeVisible();
-  await expect(page.getByText(/start one and your people land right here/i)).toBeVisible();
+  // Copy changed on 2026-08-27 (2c9565b): the empty Nest now teaches the guest
+  // link, the one motion that works with zero friends on the platform.
+  await expect(page.getByText(/start one and drop the invite link in the group chat/i)).toBeVisible();
   await expect(page.getByRole('button', { name: /start a flock/i })).toBeEnabled();
   await expect(page.getByRole('button', { name: /add friends/i })).toBeEnabled();
 
   // Messages. An empty list has to say why it is empty and where chats come from.
-  await page.getByRole('button', { name: 'Messages', exact: true }).click();
+  await page.getByRole('button', { name: /^Messages(, .* unread)?$/ }).click();
   await expect(page.getByText(/no conversations yet/i)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(/every flock gets its own chat/i)).toBeVisible();
   await expect(page.getByRole('button', { name: /start a flock/i })).toBeEnabled();
