@@ -616,8 +616,7 @@ workflows:
           # textarea carried a trailing newline, the unquoted expansion split
           # it into its own word, and Maestro read that word as a flow file.
           # Trimming first covers the paste; quoting covers everything else.
-          trim() { printf '%s' "$1" | tr -d '
-' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
+          trim() { printf '%s' "$1" | tr -d '[:cntrl:]' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
           REVIEW_EMAIL_A="$(trim "$REVIEW_EMAIL_A")"
           REVIEW_EMAIL_B="$(trim "$REVIEW_EMAIL_B")"
           REVIEW_PASSWORD="$(trim "$REVIEW_PASSWORD")"
