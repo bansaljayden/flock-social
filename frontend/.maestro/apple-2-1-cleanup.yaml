@@ -26,6 +26,8 @@ appId: com.flockcorp.flock
 ---
 - launchApp:
     clearState: true
+    permissions:
+      all: unset
 - extendedWaitUntil:
     visible: "Welcome back"                     # LoginScreen.js:146
     timeout: 20000

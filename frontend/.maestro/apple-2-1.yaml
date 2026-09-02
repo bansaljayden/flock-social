@@ -61,6 +61,8 @@ appId: com.flockcorp.flock
     clearState: true
     permissions:
       all: unset
+    permissions:
+      all: unset
 
 # ---------------------------------------------------------------------------
 # Shots 1-4, account C: launch to the login screen, sign up with the date of
@@ -366,7 +368,9 @@ appId: com.flockcorp.flock
     when:
       notVisible: "Features"
     commands:
-      - launchApp
+      - launchApp:
+          permissions:
+            all: unset
       - waitForAnimationToEnd
       - runFlow: parts/open-chat.yaml
 - extendedWaitUntil:
