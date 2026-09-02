@@ -474,9 +474,61 @@ async function sendPushNotification(token, title, body, data = {}, opts = {}) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// BADGE-ONLY PUSH (2026-09-01). aps.badge is absolute and this file is its
+// only writer, so a count that drops to zero because the user READ something
+// has no way to reach the icon unless a push carries the zero. This builds
+// the smallest payload that does that: a badge and nothing else. No
+// notification block, no alert, no sound, so nothing appears on the lock
+// screen when a read clears a count. Apple's push-type for any payload that
+// badges is "alert" (that header names the payload class, not whether text is
+// shown), at priority 5 because it can wait for the device to be awake.
+// Android launchers that support a count read it from data.badge; there is no
+// notification to attach notificationCount to, and that is the point.
+// ---------------------------------------------------------------------------
+function buildBadgeOnlyMessage(token, badge) {
+  const n = Number(badge);
+  const safe = Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+  return {
+    token,
+    data: { type: 'badge_sync', badge: String(safe) },
+    apns: {
+      headers: { 'apns-push-type': 'alert', 'apns-priority': '5' },
+      payload: { aps: { badge: safe } },
+    },
+    android: { priority: 'normal' },
+  };
+}
+
+async function sendBadgeNotification(token, badge, opts = {}) {
+  if (!senderOverride && !init()) return { success: false, stale: false };
+  const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : SEND_TIMEOUT_MS;
+  try {
+    await sendWithDeadline(buildBadgeOnlyMessage(token, badge), timeoutMs);
+    return { success: true };
+  } catch (err) {
+    const stale = isStaleError(err);
+    if (!stale) {
+      console.error('[Firebase] Badge send error:', err.code || err.message);
+    }
+    return { success: false, stale };
+  }
+}
+
 // Send push notification to all devices belonging to a user
 // Cleans up stale tokens automatically
 async function sendPushToUser(userId, title, body, data = {}) {
+  return sendToUserDevices(userId, (row) => sendPushNotification(row.token, title, body, data));
+}
+
+async function sendBadgeToUser(userId, badge) {
+  return sendToUserDevices(userId, (row) => sendBadgeNotification(row.token, badge));
+}
+
+// One send loop for every per-user push. `perToken(row)` returns the same
+// { success, stale } shape sendPushNotification does, so the stale-token prune
+// below applies to badge syncs exactly as it applies to alerts.
+async function sendToUserDevices(userId, perToken) {
   if (!senderOverride && !init()) return { sent: 0, failed: 0 };
 
   try {
@@ -499,7 +551,8 @@ async function sendPushToUser(userId, title, body, data = {}) {
     // members held the HTTP response open for twenty round trips to Google.
     const outcomes = await Promise.all(
       result.rows.map((row) =>
-        sendPushNotification(row.token, title, body, data)
+        Promise.resolve()
+          .then(() => perToken(row))
           .then((res) => ({ id: row.id, ...res }))
           .catch(() => ({ id: row.id, success: false, stale: false }))
       )
@@ -547,12 +600,14 @@ async function sendPushToUser(userId, title, body, data = {}) {
 
     return { sent, failed };
   } catch (err) {
-    console.error('[Firebase] sendPushToUser error:', err.message);
+    console.error('[Firebase] sendToUserDevices error:', err.message);
     return { sent: 0, failed: 0 };
   }
 }
 
 module.exports = {
+  sendBadgeToUser,
+  buildBadgeOnlyMessage,
   sendPushNotification,
   sendPushToUser,
   isEnabled,

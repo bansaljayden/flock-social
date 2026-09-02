@@ -2525,10 +2525,14 @@ function reconstructScore(rawDelta, baseline) {
 // what a person experiences. The map is ON unless CROWD_QMAP_ENABLED=false,
 // which remains the instant kill switch. GATE-B in quick_eval.py armed the
 // same day, so future retrains are judged under the arithmetic production
-// actually serves. The production evidence that forced the call: of every
-// score ever served, 57% sat in the 41-80 middle against a reality that puts
-// 26% there, and a score of 5 or less had never been served once while 21% of
-// real venue-hours are exactly that.
+// actually serves. The evidence that forced the call, re-measured 2026-09-01
+// against the shipped v2.6.0 artifact on the gate slice (the first figures
+// written here were wrong on all four counts and one of them, "never served
+// once", was categorically false): 51.6% of served scores sat in the 41-80
+// middle against a reality that puts 24.2% there, and a score of 5 or less
+// was served on only 2.5% of rows while 23.6% of real venue-hours are exactly
+// that. The 23.6% agrees with the figure twelve lines below, which the earlier
+// text contradicted.
 //
 // WHAT IT IS. A 41-knot monotone quantile lookup that rewrites the published
 // score so its DISTRIBUTION matches the distribution of real busyness, instead
