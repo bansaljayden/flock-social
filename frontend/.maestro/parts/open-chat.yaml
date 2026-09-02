@@ -53,6 +53,9 @@ appId: com.flockcorp.flock
           text: "Open Chat|Open chat"
           optional: true
       - waitForAnimationToEnd
+# The Send button (ChatDetail.js aria-label "Send message") sits beside the
+# composer and is a plain button, so it counts as proof the chat is open if
+# the input's own text never answers.
 - extendedWaitUntil:
-    visible: "Type a message...|Message"                          # ChatDetail.js:1267 composer aria-label "Message"; on iOS the label replaces the placeholder (run 7)
+    visible: "Type a message...|Message|Send message"                          # ChatDetail.js:1267 composer aria-label "Message"; on iOS the label replaces the placeholder (run 7)
     timeout: 20000
