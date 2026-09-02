@@ -47,12 +47,12 @@ appId: com.flockcorp.flock
     commands:
       - tapOn: "You"                            # App.js tab table, label: 'You'
       - scrollUntilVisible:
-          element: "Blocked accounts"           # ProfileSettings.js:670 row
+          element: "Blocked accounts.*"           # ProfileSettings.js:675 row; its label is the title plus the count, so the whole label is matched (every cleanup pass missed the exact text)
           direction: DOWN
           timeout: 8000
           optional: true
       - tapOn:
-          text: "Blocked accounts"
+          text: "Blocked accounts.*"
           index: 0
           optional: true
       - waitForAnimationToEnd
