@@ -779,13 +779,21 @@ Jayden approved buying two fresh collection windows. The order below is load
 bearing; the traps it guards against are pinned in
 `__tests__/besttimeRefreshPrep.test.js`.
 
-1. **Revive the existing BestTime account** (Jayden, in the dashboard). The
-   403 is account level, and the stored `besttime_venue_id`s belong to that
-   account: a fresh account re-forecasts all 1,915 PA venues by name at 2
-   credits instead of 1, $153 per window instead of $77. Basic metered plan,
-   $0.04 per credit, $29/mo minimum. The key goes in `backend/.env` LOCALLY
-   and never onto Railway: the dead BESTTIME cron service there sweeps every
-   3 hours and would spend roughly $4,500/day on a metered key.
+1. **SUPERSEDED 2026-09-01, kept for the record.** Collection restarted that
+   day on a Pro Package 100 plan ($119/month, a FIXED allowance, not metered),
+   the key lives on the Railway BESTTIME service by design, and that service
+   runs `collectRealtime.js` once a night at 02:00 UTC rather than sweeping
+   every three hours. The paragraph that follows described the state before
+   that decision and the $4,500/day figure only ever applied to a metered key
+   on the old three-hour schedule, neither of which exists now.
+   *Original text:* Revive the existing BestTime account (Jayden, in the
+   dashboard). The 403 is account level, and the stored `besttime_venue_id`s
+   belong to that account: a fresh account re-forecasts all 1,915 PA venues by
+   name at 2 credits instead of 1, $153 per window instead of $77. Basic
+   metered plan, $0.04 per credit, $29/mo minimum. The key goes in
+   `backend/.env` locally and never onto Railway: the dead BESTTIME cron
+   service there sweeps every 3 hours and would spend roughly $4,500/day on a
+   metered key.
 2. **Archive window 1 BEFORE the first refresh call**:
    `node scripts/ml/archiveWeeklyWindow.js` (refuses to overwrite an existing
    archive; verifies its own row count). The weekly upsert is newest-wins, so
@@ -1027,7 +1035,10 @@ that ended ten days ago: 0) while an identical future-window control returned
 the API simply drops events once they occur, on every tier. No call budget
 fixes unfetchable data. The intended experiment, real historical event
 signal on PA rows then ablate, is exactly what the sports pipeline already
-delivers (146 distinct game-days inside the corpus window, real schedules,
+delivers (62 distinct game-days, 119 games, inside the corpus window of
+2026-03-10 to 2026-05-18, counted from sports_events.csv on 2026-09-01; an
+earlier version of this line said 146, which no count of the file supports,
+real schedules,
 no attendance guessing) via FLOCK_SPORTS_FEATURES=1 plus sports_ablation.py.
 The only path to real GENERAL event features is forward accumulation:
 collectEvents.js is currently wired into nothing; putting it on a cadence
