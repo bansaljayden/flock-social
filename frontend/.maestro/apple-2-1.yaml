@@ -378,12 +378,12 @@ appId: com.flockcorp.flock
     text: "Contacts"                            # AddFriends.js:131 tab label
     optional: true
 - scrollUntilVisible:
-    element: "Check my contacts"                # AddFriends.js:511
+    element: "Check my contacts.*"                # AddFriends.js:511
     direction: DOWN
     timeout: 5000
     optional: true
 - tapOn:
-    text: "Check my contacts"
+    text: "Check my contacts.*"
     optional: true
 - extendedWaitUntil:
     visible: "Allow.*"                          # iOS dialog, NSContactsUsageDescription (Info.plist:119)
@@ -498,12 +498,12 @@ appId: com.flockcorp.flock
 # "Unblock" (ProfileSettings.js:466), which only exists once the dialog is up.
 - tapOn: "You"
 - scrollUntilVisible:
-    element: "Blocked accounts"                 # ProfileSettings.js:670 row
+    element: "Blocked accounts.*"                 # ProfileSettings.js:675 row; its label is the title plus the count, so the whole label is matched (every cleanup pass missed the exact text)
     direction: DOWN
     timeout: 8000
     optional: true
 - tapOn:
-    text: "Blocked accounts"
+    text: "Blocked accounts.*"
     index: 0
     optional: true
 - extendedWaitUntil:
