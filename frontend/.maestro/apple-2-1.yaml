@@ -437,8 +437,8 @@ appId: com.flockcorp.flock
           optional: true
       - waitForAnimationToEnd
       - tapOn:
-    text: "Back"                           # ChatDetail.js:487
-    optional: true
+          text: "Back"                           # ChatDetail.js:487
+          optional: true
 - runFlow: parts/logout.yaml
 
 # ---------------------------------------------------------------------------
