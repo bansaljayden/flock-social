@@ -19,6 +19,19 @@
 # harmless: they focus the same field twice and erase nothing.
 appId: com.flockcorp.flock
 ---
+# Start from an app that has just launched. Run 4 (2026-09-02) lost the
+# required login of account A because the form still held the throwaway
+# account's text from a failed attempt: tapping the <label> put the caret at
+# the START of the field, eraseText deleted nothing, and A's address was typed
+# onto C's. A relaunch resets the form's state without touching the session;
+# if a session is somehow already live (a signup that stored its token), the
+# logout part brings the login screen back before anything is typed.
+- launchApp
+- waitForAnimationToEnd
+- runFlow:
+    when:
+      visible: "Nest"
+    file: logout.yaml
 - assertVisible: "Welcome back"                 # LoginScreen.js:146 <h1>
 - tapOn:
     text: "you@example.com"                     # LoginScreen.js:261 placeholder
