@@ -8,9 +8,11 @@
  * being instructed to do something the product gave them no way to do.
  *
  * The pin that matters, and the one the backend handoff asked for: the
- * un-requested card renders the button, and the pending card does NOT. A
+ * un-requested state renders the button, and the pending state does NOT. A
  * button in the pending state would be the same dead end rebuilt, because
- * pressing it cannot change anything the owner can see.
+ * pressing it cannot change anything the owner can see. Since 2026-09-02
+ * that button lives only on the dashboard (renderVerificationAsk); the Roost
+ * card's own copy of it was dormant after 2026-09-01 and has been deleted.
  *
  * The second rule this guards is the copy one. The server owns every sentence
  * here (`reason`, `message`, `error`) and each is state-aware; the UI prints
@@ -25,7 +27,7 @@
 const fs = require('fs');
 const path = require('path');
 const React = require('react');
-const { render, screen, fireEvent, waitFor } = require('@testing-library/react');
+const { render, screen } = require('@testing-library/react');
 
 const VenueInsightCards = require('../components/VenueInsightCards').default;
 
@@ -43,8 +45,6 @@ const CARDS_SRC = fs.readFileSync(path.join(SRC_DIR, 'components', 'VenueInsight
 // routes/venueProfile.js. If these drift, the copy pin below is what notices.
 const UNREQUESTED_REASON = 'Not verified yet. Request verification and we confirm you own this venue by hand. Forecasts turn on once that clears.';
 const PENDING_REASON = 'Verification requested. We confirm ownership by hand, and forecasts turn on once that clears. Nothing more is needed from you.';
-const RECEIVED_MESSAGE = 'Request received. We confirm ownership by hand, and verified features turn on once that clears.';
-const NO_LISTING_ERROR = 'Link your Google listing in Edit Profile first. Verification confirms you own a specific listed place, and this profile does not name one yet.';
 
 const unverifiedPayload = (reason) => ({ available: false, unverified: true, reason, cards: [] });
 
@@ -52,70 +52,44 @@ const mount = (props = {}) => render(
   React.createElement(VenueInsightCards, {
     fetchCards: () => Promise.resolve(unverifiedPayload(UNREQUESTED_REASON)),
     colors: { navy: '#1B2A4A', red: '#EF4444' },
-    onRequestVerification: () => Promise.resolve(RECEIVED_MESSAGE),
     now: new Date(2026, 7, 21, 20, 0, 0),
     ...props,
   })
 );
 
-// The Roost card's button is an OPTIONAL path as of 2026-09-01: the dashboard
-// stopped handing it a handler (see "one surface presses the handler" below),
-// so in the shipping app this card draws no button and the intel card above it
-// carries the one ask. These tests still mount the card WITH a handler,
-// because the contract (button only while un-requested, server sentences
-// verbatim, error left pressable) is what any future host would rely on.
-describe('Roost card: the request button', () => {
-  test('an unverified venue gets the button, under the server reason verbatim', async () => {
-    mount({ verificationStatus: 'unverified' });
+// 2026-09-02. This block used to mount the card WITH a handler and pin a
+// button contract (button only while un-requested, server sentences verbatim,
+// error left pressable). The dashboard stopped passing that handler on
+// 2026-09-01 and nothing else ever did, so the path was dead code and has been
+// deleted from the card. What is left to pin is that the card still says the
+// server's reason, in every unavailable state, and never grows a button back.
+describe('Roost card: the reason line, and no button', () => {
+  test('an unverified venue reads the server reason verbatim, with nothing to press', async () => {
+    mount();
     expect(await screen.findByText(UNREQUESTED_REASON)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Request verification' })).toBeInTheDocument();
+    expect(screen.queryByRole('button')).toBeNull();
   });
 
-  test('a pending request gets NO button, only the pending sentence', async () => {
-    mount({
-      fetchCards: () => Promise.resolve(unverifiedPayload(PENDING_REASON)),
-      verificationStatus: 'pending',
-    });
+  test('a pending request reads the pending sentence, with nothing to press', async () => {
+    mount({ fetchCards: () => Promise.resolve(unverifiedPayload(PENDING_REASON)) });
     expect(await screen.findByText(PENDING_REASON)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Request verification' })).toBeNull();
+    expect(screen.queryByRole('button')).toBeNull();
   });
 
-  test('an unavailable state that is not the unverified one gets no button either', async () => {
+  test('an unavailable state that is not the unverified one reads its reason too', async () => {
     mount({
       fetchCards: () => Promise.resolve({ available: false, reason: 'Link your Google listing in Edit Profile to see advisor cards', cards: [] }),
-      verificationStatus: 'unverified',
     });
     expect(await screen.findByText(/Link your Google listing/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Request verification' })).toBeNull();
+    expect(screen.queryByRole('button')).toBeNull();
   });
 
-  test('pressing it calls the handler once and prints the server message in place of the reason', async () => {
-    let calls = 0;
-    mount({
-      verificationStatus: 'unverified',
-      onRequestVerification: () => { calls += 1; return Promise.resolve(RECEIVED_MESSAGE); },
-    });
-    fireEvent.click(await screen.findByRole('button', { name: 'Request verification' }));
-    expect(await screen.findByText(RECEIVED_MESSAGE)).toBeInTheDocument();
-    expect(calls).toBe(1);
-    // The button is gone: the state it exists to reach has been reached.
-    expect(screen.queryByRole('button', { name: 'Request verification' })).toBeNull();
-    // The sentence it replaced is no longer telling the owner to request.
-    expect(screen.queryByText(UNREQUESTED_REASON)).toBeNull();
-  });
-
-  test('a failure shows the server error text inline and leaves the button pressable', async () => {
-    const err = new Error(NO_LISTING_ERROR);
-    err.status = 400;
-    mount({
-      verificationStatus: 'unverified',
-      onRequestVerification: () => Promise.reject(err),
-    });
-    fireEvent.click(await screen.findByRole('button', { name: 'Request verification' }));
-    expect(await screen.findByText(NO_LISTING_ERROR)).toBeInTheDocument();
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Request verification' })).not.toBeDisabled();
-    });
+  test('the card takes no verification props and keeps no verification state', () => {
+    // The whole path (prop, state, callback, button) is gone, not just unwired.
+    expect(CARDS_SRC).not.toContain('onRequestVerification');
+    expect(CARDS_SRC).not.toContain('verificationStatus');
+    expect(CARDS_SRC).not.toMatch(/verifyNote|verifyBusy|verifyError/);
+    expect(CARDS_SRC).not.toContain('Request verification');
   });
 });
 
@@ -141,25 +115,14 @@ describe('The wiring behind the button', () => {
   // the defect. On the Analytics tab a premium unverified owner saw "Request
   // verification" on the intel card and again on the Roost card a scroll
   // below, and Jayden's TestFlight complaint was precisely that the screen
-  // said it too many times. The intel card keeps the button; the dashboard no
-  // longer hands the Roost card a handler, and the card draws no button
-  // without one (rendered below, not just read off the source).
-  test('one surface presses the handler on Analytics: the Roost card no longer duplicates it', () => {
-    expect(APP_SRC).not.toContain('onRequestVerification={requestVerificationNow}');
+  // said it too many times. The intel card keeps the button; the Roost card
+  // has no handler prop at all as of 2026-09-02, and the dashboard no longer
+  // receives `requestVerificationNow` from App.js since nothing there read it.
+  test('one surface presses the handler on Analytics: the Roost card cannot duplicate it', () => {
+    expect(APP_SRC).not.toContain('onRequestVerification=');
     expect(APP_SRC).toContain('onClick={handleRequestVerification}');
-    // The card's own path is still gated on being handed a handler at all.
-    expect(CARDS_SRC).toContain("typeof onRequestVerification === 'function' && (");
-  });
-
-  test('handed no handler, the Roost card prints the server reason and no button', async () => {
-    render(React.createElement(VenueInsightCards, {
-      fetchCards: () => Promise.resolve(unverifiedPayload(UNREQUESTED_REASON)),
-      colors: { navy: '#1B2A4A', red: '#EF4444' },
-      verificationStatus: 'unverified',
-      now: new Date(2026, 7, 21, 20, 0, 0),
-    }));
-    expect(await screen.findByText(UNREQUESTED_REASON)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Request verification' })).toBeNull();
+    const dash = fs.readFileSync(path.join(SRC_DIR, 'screens', 'VenueDashboard.js'), 'utf8');
+    expect(dash).not.toContain('requestVerificationNow');
   });
 
   // AUDIT 2026-08-26. The button above shipped inside the `venueIntel` card,

@@ -305,19 +305,13 @@ const parseWeekDays = (entries) => {
   return days;
 };
 
-const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHours, onOpenSettings, now, verificationStatus, onRequestVerification }) => {
+const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHours, onOpenSettings, now }) => {
   const navy = colors?.navy || 'var(--text-primary)';
   // 'loading' | 'ready' | 'locked' | 'error'
   const [state, setState] = useState('loading');
   const [payload, setPayload] = useState(null);
   const [lockedReason, setLockedReason] = useState(null);
   const [selectedDate, setSelectedDate] = useState(null);
-  // The verification request offered under the unverified refusal. `verifyNote`
-  // is the server's own message after a successful press and replaces the
-  // reason line, which was written for the state the press just left.
-  const [verifyBusy, setVerifyBusy] = useState(false);
-  const [verifyNote, setVerifyNote] = useState(null);
-  const [verifyError, setVerifyError] = useState(null);
   const [noteDismissed, setNoteDismissed] = useState(() => {
     try { return window.localStorage.getItem(NOTE_SEEN_KEY) === '1'; } catch { return true; }
   });
@@ -354,32 +348,6 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
   }, [fetchCards]);
 
   useEffect(() => { load(); }, [load]);
-
-  // Roost refuses an unverified venue, and the refusal used to name a next step
-  // the product did not offer anywhere. The parent owns the request and hands
-  // back the server's message; this only decides what the card says afterwards.
-  //
-  // THE DASHBOARD NO LONGER PASSES THE HANDLER (2026-09-01). It did, and the
-  // intel card at the top of the same tab pressed the same one, so an
-  // unverified premium owner saw "Request verification" twice in one scroll.
-  // Jayden's TestFlight note was that the screen said it too many times. The
-  // prop stays optional for a host with no other ask on screen; with none
-  // given, the unverified state prints the server's reason and no button.
-  const requestVerification = useCallback(async () => {
-    if (typeof onRequestVerification !== 'function' || verifyBusy) return;
-    setVerifyBusy(true);
-    setVerifyError(null);
-    try {
-      const message = await onRequestVerification();
-      if (!alive.current) return;
-      setVerifyNote(message || null);
-    } catch (err) {
-      if (!alive.current) return;
-      setVerifyError(err?.message || 'The request did not go through. Try again.');
-    } finally {
-      if (alive.current) setVerifyBusy(false);
-    }
-  }, [onRequestVerification, verifyBusy]);
 
   const clock = now instanceof Date ? now : new Date();
   const todayStr = localDateStr(clock);
@@ -472,27 +440,21 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
 
   // The route's own unavailable states (no linked listing, unverified) are a
   // designed answer, not an error: say the reason in the server's words.
+  //
+  // NO VERIFICATION BUTTON HERE. This card used to take a handler and draw
+  // its own verification ask under the unverified reason, and the intel card
+  // at the top of the same tab pressed the same handler, so an unverified
+  // owner saw the ask twice in one scroll (Jayden's TestFlight note,
+  // 2026-08-21). The dashboard stopped passing the handler on 2026-09-01 and
+  // the dormant path was deleted on 2026-09-02: the one ask lives on the
+  // dashboard (renderVerificationAsk in screens/VenueDashboard.js), and this
+  // card only prints the server's reason sentence, which is the answer to
+  // "why are there no cards".
   if (payload && payload.available === false) {
     return (
       <div style={CARD_STYLE}>
         <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 8px' }}>{FEATURE_NAME}</h3>
-        <BirdNote layout="row" bird={WARM_BIRD} size={48} body={verifyNote || payload.reason || 'Nothing to show yet.'} style={{ marginBottom: '10px' }} />
-        {/* Unverified is the one unavailable state the owner can act on, so it
-            is the one that gets a button. No button once the request is in:
-            the server has it, and pressing again cannot change the answer. */}
-        {payload.unverified === true && verificationStatus !== 'pending' && !verifyNote && typeof onRequestVerification === 'function' && (
-          <button
-            className="hit44"
-            onClick={requestVerification}
-            disabled={verifyBusy}
-            style={{ marginTop: '10px', padding: '8px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: verifyBusy ? 'default' : 'pointer', opacity: verifyBusy ? 0.55 : 1 }}
-          >
-            Request verification
-          </button>
-        )}
-        {verifyError && (
-          <p style={{ fontSize: 'var(--t-meta)', color: colors?.red || 'var(--text-secondary)', margin: '8px 0 0', lineHeight: 1.5 }}>{verifyError}</p>
-        )}
+        <BirdNote layout="row" bird={WARM_BIRD} size={48} body={payload.reason || 'Nothing to show yet.'} style={{ marginBottom: '10px' }} />
       </div>
     );
   }

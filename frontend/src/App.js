@@ -16512,7 +16512,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         renderVenueTime,
         replyText,
         replyingToReview,
-        requestVerificationNow,
         retryVenueIntel,
         savingVenueIntake,
         setActiveVenue,
