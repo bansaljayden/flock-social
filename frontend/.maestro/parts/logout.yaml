@@ -1,15 +1,16 @@
-# Log the current account out and land on the login screen.
+# Log the current account out and land on the login screen. Must be called
+# from a screen that has the tab bar (Nest, Discover, Plans, Messages, You).
+# The chat and Add Friends screens have no tab bar; tap their "Back" first
+# (ChatDetail.js:487, AddFriends.js:143).
 appId: com.flockcorp.flock
 ---
-- tapOn: "You"
+- tapOn: "You"                                  # App.js tab table, label: 'You'
 - scrollUntilVisible:
-    element: "Log Out"
+    element: "Log Out"                          # ProfileSettings.js:798
     direction: DOWN
     timeout: 15000
 - tapOn: "Log Out"
-- tapOn:
-    text: "Log Out"
-    optional: true
+# Log Out calls onLogout() directly, no confirm dialog (ProfileSettings.js:796).
 - extendedWaitUntil:
-    visible: "Sign in"
+    visible: "Welcome back"                     # LoginScreen.js:146, endSession sets authScreen to 'login'
     timeout: 15000

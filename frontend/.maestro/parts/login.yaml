@@ -1,26 +1,51 @@
-# Sign in from the login screen. Env: EMAIL, PASSWORD.
+# Fill the login form and submit it. Env: EMAIL, PASSWORD.
+#
+# This part deliberately does NOT wait for the Nest tab. The caller adds that
+# wait, required for the persistent accounts A and B and optional for the
+# throwaway account C, whose signup may not have gone through.
+#
+# Verified on the Simulator 2026-09-01 (Codemagic build 6a978bd7, iOS 26.4):
+# placeholder taps, typing and `pressKey: Enter` all completed. Enter submits
+# because the form is a real <form onSubmit> with noValidate
+# (LoginScreen.js:183), so the submit button never has to be exposed from
+# under the keyboard. No hideKeyboard anywhere: on iOS it only nudges the
+# screen centre (AUDIT-2026-09-01.md, header).
+#
+# The label taps and eraseText exist for one case: a previous login attempt
+# on this same screen left text in the fields (C's login after a signup that
+# did not stick). Then the placeholder is no longer the field's value and the
+# placeholder tap finds nothing, but the <label htmlFor> still focuses the
+# input, and eraseText clears whatever is there. On a clean screen both are
+# harmless: they focus the same field twice and erase nothing.
 appId: com.flockcorp.flock
 ---
-- assertVisible: "Sign in"
-- tapOn: "you@example.com"
+- assertVisible: "Welcome back"                 # LoginScreen.js:146 <h1>
+- tapOn:
+    text: "you@example.com"                     # LoginScreen.js:261 placeholder
+    optional: true
+- tapOn:
+    text: "Email"                               # LoginScreen.js:248 <label htmlFor="login-email">
+    optional: true
+- eraseText: 80
 - inputText: ${EMAIL}
-- tapOn: "Your password"
+- tapOn:
+    text: "Your password"                       # LoginScreen.js:291 placeholder
+    optional: true
+- tapOn:
+    text: "Password"                            # LoginScreen.js:275 <label htmlFor="login-password">
+    optional: true
+- eraseText: 80
 - inputText: ${PASSWORD}
-# First run (2026-09-01): the fields tapped and typed, the keyboard was hidden,
-# and then "Sign in" was not found in the hierarchy. The form has a submit
-# button, so Enter from the password field submits it without needing the
-# button exposed; the scroll-and-tap is a fallback, optional so it cannot fail
-# the flow after Enter has already submitted.
-- pressKey: Enter
+- pressKey: Enter                               # LoginScreen.js:183 <form onSubmit={handleSubmit} noValidate>
 - waitForAnimationToEnd
+# Fallback only. If Enter already submitted, the button is gone or busy and
+# both steps are no-ops.
 - scrollUntilVisible:
-    element: "Sign in"
+    element: "Sign in"                          # LoginScreen.js:300 submit button
     direction: DOWN
-    timeout: 5000
+    timeout: 3000
     optional: true
 - tapOn:
     text: "Sign in"
     optional: true
-- extendedWaitUntil:
-    visible: "Nest"
-    timeout: 25000
+- waitForAnimationToEnd

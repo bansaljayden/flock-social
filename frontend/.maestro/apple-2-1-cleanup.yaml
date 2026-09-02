@@ -1,41 +1,147 @@
-# Deletes review account B after the recording has finished, off camera, so
-# nothing from the run is left in production. Account A deletes itself on
-# camera in the last shot of apple-2-1.yaml. Passed REVIEW_EMAIL_B and
-# REVIEW_PASSWORD by the workflow.
+# Reset pass for the review recording, run off camera BEFORE and AFTER
+# apple-2-1.yaml by the ios-review-recording workflow. Accounts A and B are
+# persistent, so every run has to leave them in a state the next run can pass
+# from. Every step is optional: this flow reports, it never fails the build.
+#
+# What it puts back, as A:
+#   * unblocks B, in case a run died between the block (shot 13) and the
+#     unblock (shot 15);
+#   * leaves the flock created this run, which for its creator DELETES it
+#     (backend/routes/flocks.js POST /:id/leave, isCreator -> DELETE FROM flocks).
+#     The name carries the build number, so an older leftover never collides.
+# Then, as C: deletes the throwaway if the on-camera deletion did not happen.
+#
+# Friendship is NOT reset here, and it does not need to be. Blocking B
+# deletes the friendship row (backend/routes/moderation.js:558), so a run
+# that reached shot 13 leaves A and B unfriended and the next run's friend
+# shots happen again for real. A run that died earlier leaves them friends,
+# and apple-2-1.yaml tolerates that (the "Add" and "Accept friend request"
+# taps are optional). There is no in-app control for removing an accepted
+# friend: removeFriend (services/api.js:1736) is only reachable from the
+# "Sent Requests" cancel button (AddFriends.js:212, handleCancelOutgoingRequest).
+#
+# Env: REVIEW_EMAIL_A, REVIEW_PASSWORD, REVIEW_EMAIL_C, REVIEW_PASSWORD_C,
+# NAME_B, REVIEW_RUN.
 appId: com.flockcorp.flock
 ---
 - launchApp:
     clearState: true
+- extendedWaitUntil:
+    visible: "Welcome back"                     # LoginScreen.js:146
+    timeout: 20000
+    optional: true
+
+# --- A: unblock B, delete this run's flock, log out ------------------------
 - runFlow:
     file: parts/login.yaml
     env:
-      EMAIL: ${REVIEW_EMAIL_B}
+      EMAIL: ${REVIEW_EMAIL_A}
       PASSWORD: ${REVIEW_PASSWORD}
-- tapOn: "You"
-- scrollUntilVisible:
-    element: "Delete account"
-    direction: DOWN
-- tapOn:
-    text: "Delete account"
-    index: 0
-- tapOn:
-    id: "delete-password"
-    optional: true
-- inputText: ${REVIEW_PASSWORD}
-- tapOn:
-    text: "DELETE"
-    optional: true
-- inputText: "DELETE"
-- scrollUntilVisible:
-    element:
-      text: "Delete account"
-      index: 1
-    direction: DOWN
-    timeout: 5000
-    optional: true
-- tapOn:
-    text: "Delete account"
-    index: 1
 - extendedWaitUntil:
-    visible: "Sign in"
-    timeout: 20000
+    visible: "Nest"                             # App.js tab table, label: 'Nest'
+    timeout: 25000
+    optional: true
+- runFlow:
+    when:
+      visible: "Nest"
+    commands:
+      - tapOn: "You"                            # App.js tab table, label: 'You'
+      - scrollUntilVisible:
+          element: "Blocked accounts"           # ProfileSettings.js:670 row
+          direction: DOWN
+          timeout: 8000
+          optional: true
+      - tapOn:
+          text: "Blocked accounts"
+          index: 0
+          optional: true
+      - waitForAnimationToEnd
+      - tapOn:
+          text: "Unblock ${NAME_B}"             # ProfileSettings.js:447 row button aria-label
+          optional: true
+      - tapOn:
+          text: "Unblock"                       # ProfileSettings.js:466 confirm
+          optional: true
+      - waitForAnimationToEnd
+      - tapOn:
+          text: "Back"                          # ProfileSettings.js:198 subscreen back -> You tab
+          optional: true
+      - tapOn: "Nest"
+      - tapOn:
+          text: "Review night ${REVIEW_RUN}"    # App.js:14598 flock card <h2>, opens chatDetail
+          index: 0
+          optional: true
+      - waitForAnimationToEnd
+      - runFlow:
+          when:
+            visible: "Type a message..."        # ChatDetail.js:1269, so we are in the chat
+          commands:
+            - tapOn:
+                text: "More options"            # ChatDetail.js:536 aria-label
+                optional: true
+            - tapOn:
+                text: "Leave Flock"             # ChatDetail.js:540 menu item
+                optional: true
+            - tapOn:
+                text: "Leave"                   # ChatDetail.js:2202 confirm; "Leave Flock?" (:2166) is the heading and does not match
+                optional: true
+            - waitForAnimationToEnd
+            # Leaving returns to Nest (ChatDetail.js leave handler setCurrentTab('home')).
+            # If the confirm never fired we are still in the chat; leave it.
+            - tapOn:
+                text: "Back"                    # ChatDetail.js:487
+                optional: true
+      - runFlow: parts/logout.yaml
+
+# --- C: delete the throwaway if it still exists ---------------------------
+- runFlow:
+    when:
+      visible: "Welcome back"
+    commands:
+      - runFlow:
+          file: parts/login.yaml
+          env:
+            EMAIL: ${REVIEW_EMAIL_C}
+            PASSWORD: ${REVIEW_PASSWORD_C}
+      - extendedWaitUntil:
+          visible: "Nest"
+          timeout: 25000
+          optional: true
+      - runFlow:
+          when:
+            visible: "Nest"
+          commands:
+            - tapOn: "You"
+            - scrollUntilVisible:
+                element: "Delete account"       # ProfileSettings.js:812 row
+                direction: DOWN
+                timeout: 15000
+                optional: true
+            - tapOn:
+                text: "Delete account"
+                index: 0
+                optional: true
+            - waitForAnimationToEnd
+            - tapOn:
+                text: "Your password"           # ProfileSettings.js:861 <label htmlFor="delete-password">
+                optional: true
+            - inputText: ${REVIEW_PASSWORD_C}
+            - tapOn:
+                text: "DELETE"                  # ProfileSettings.js:891 placeholder
+                optional: true
+            - inputText: "DELETE"
+            - tapOn:
+                text: "Delete your account?"    # ProfileSettings.js:852 <h3>, closes the keyboard
+                optional: true
+            - tapOn:
+                text: "Delete account"          # ProfileSettings.js:923 confirm, see apple-2-1.yaml for the index
+                index: 2
+                optional: true
+            - tapOn:
+                text: "Delete account"
+                index: 3
+                optional: true
+            - extendedWaitUntil:
+                visible: "Welcome back"
+                timeout: 20000
+                optional: true
