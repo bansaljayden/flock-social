@@ -40,7 +40,11 @@ const { mintUnsubscribeToken } = require('./emailUnsubscribe');
 // scanners follow redirects inconsistently, and a fragment-borne reset token
 // has one less hop on which a client can drop it.
 const PROD_WEB_URL = 'https://www.flockcorp.com';
-const PROD_API_URL = 'https://flock-app-production.up.railway.app';
+// api.flockcorp.com, not the Railway-generated name: both answer, but the
+// Railway name is an implementation detail that changes if the service is ever
+// recreated, and a confirmation link mailed today is clicked later. The
+// custom domain is the address the app itself uses (frontend/src/services/api.js).
+const PROD_API_URL = 'https://api.flockcorp.com';
 
 // Where a reply lands. The reasoning is at safeReplyTo inside sendEmail; the
 // short version is that several of these messages ask the reader to reply, one

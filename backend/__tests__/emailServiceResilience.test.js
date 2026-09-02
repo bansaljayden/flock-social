@@ -407,7 +407,8 @@ test('copy: no em dashes, no marketing-slop words, in any subject or body', asyn
 test('links: every href points at the pinned production hosts, never localhost or a preview', async () => {
   assert.strictEqual(emailService.PROD_WEB_URL, 'https://www.flockcorp.com',
     'DOMAIN.md pins www as canonical; the apex 308s to it and an emailed link should not ride a redirect');
-  assert.strictEqual(emailService.PROD_API_URL, 'https://flock-app-production.up.railway.app');
+  assert.strictEqual(emailService.PROD_API_URL, 'https://api.flockcorp.com',
+    'the custom API domain, not the Railway-generated hostname, which is an implementation detail');
 
   const payloads = await renderAllTemplates();
   for (const { subject, html } of payloads) {

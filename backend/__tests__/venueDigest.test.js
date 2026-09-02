@@ -159,7 +159,7 @@ const RENDER_INPUT_PRO = {
   businessName: 'The Copper Still',
   cards: FIXTURE_CARDS,
   tier: 'pro',
-  optOutUrl: 'https://flock-app-production.up.railway.app/api/venue-digest/opt-out?token=TESTTOKEN',
+  optOutUrl: 'https://api.flockcorp.com/api/venue-digest/opt-out?token=TESTTOKEN',
   weekLabel: 'Aug 17 to Aug 23',
 };
 
