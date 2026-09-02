@@ -358,7 +358,18 @@ appId: com.flockcorp.flock
     text: "Send photo"
     optional: true
 - waitForAnimationToEnd
-- tapOn: "Type a message...|Message"                    # ChatDetail.js:1269
+- tapOn:
+    text: "Type a message...|Message"                    # ChatDetail.js:1269
+    optional: true
+# If the input answers to neither text, it still sits at the bottom of
+# the chat above the home indicator; tap where it is.
+- runFlow:
+    when:
+      notVisible: "Type a message...|Message"
+    commands:
+      - tapOn:
+          point: "45%,92%"
+          optional: true
 - inputText: "Here for the recording"
 - pressKey: Enter                               # ChatDetail.js:1269 onKeyDown Enter -> sendChatMessage
 - tapOn:
@@ -439,7 +450,18 @@ appId: com.flockcorp.flock
           text: "Review night ${REVIEW_RUN}"
           index: 0
       - runFlow: parts/open-chat.yaml
-      - tapOn: "Type a message...|Message"              # ChatDetail.js:1269
+      - tapOn:
+          text: "Type a message...|Message"              # ChatDetail.js:1269
+          optional: true
+      # If the input answers to neither text, it still sits at the bottom of
+      # the chat above the home indicator; tap where it is.
+      - runFlow:
+          when:
+            notVisible: "Type a message...|Message"
+          commands:
+            - tapOn:
+                point: "45%,92%"
+                optional: true
       - inputText: "message from B for the report shot"
       - pressKey: Enter                         # ChatDetail.js:1269 onKeyDown Enter
       - tapOn:
