@@ -28,7 +28,7 @@ const {
   IMAGE_TOO_LARGE_MESSAGE,
   IMAGE_FORMAT_MESSAGE,
 } = require('../sockets/handlers');
-const { pushIfOfflineDebounced } = require('../services/pushHelper');
+const { pushIfOfflineDebounced, pushBadgeSync } = require('../services/pushHelper');
 // Shape before content — see validators/shape.js.
 const { scalarOnly, freeText } = require('../validators/shape');
 
@@ -624,6 +624,11 @@ router.put('/flocks/:id/read',
       );
       if (result.rows.length === 0) return res.status(404).json({ error: 'Flock not found' });
       res.json({ success: true, lastReadMessageId: result.rows[0].last_read_message_id });
+      // The icon badge is only ever written by the server, on a push. A read
+      // that empties the unread count has to push a zero or the number stays on
+      // the icon until the next notification. Fire and forget: a push failure
+      // never fails a read (services/pushHelper.js pushBadgeSync).
+      pushBadgeSync(req.user.id).catch(() => {});
     } catch (err) {
       console.error('Mark flock read error:', err);
       res.status(500).json({ error: 'Server error' });
@@ -1420,6 +1425,7 @@ router.put('/dm/:messageId/read', param('messageId').isInt({ min: 1, max: INT4_M
     }
 
     res.json({ message: result.rows[0] });
+    pushBadgeSync(req.user.id).catch(() => {});
   } catch (err) {
     console.error('Mark read error:', err);
     res.status(500).json({ error: 'Failed to mark message as read' });

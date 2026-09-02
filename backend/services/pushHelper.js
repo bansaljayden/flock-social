@@ -1111,12 +1111,37 @@ async function pushIfOfflineDebounced(io, userId, title, body, data = {}) {
 // organizer-initiated budget reminder (routes/budget.js) and the pre-event
 // crowd alert (services/crowdAlerts.js). Not a channel for anything
 // promotional — see the 4.5.4 block at the top of this file.
+// ---------------------------------------------------------------------------
+// BADGE SYNC (2026-09-01). The icon badge is an ABSOLUTE number that only ever
+// travelled on an alert push, so it moved when a notification arrived and at
+// no other time. A user who opened the app and read everything kept whatever
+// number the last push had set, until some later push happened to carry a
+// lower one. Nothing on the client sets or clears a badge, and no badge plugin
+// is installed, so the only writer is the server. This sends a badge-only push,
+// no alert, no sound, carrying the same unreadBadge() count deliver() attaches
+// to every alert, so a read that empties the count clears the icon. Called
+// fire-and-forget from the read routes; a push failure must never fail a read.
+// ---------------------------------------------------------------------------
+async function pushBadgeSync(userId) {
+  if (disabled()) return { skipped: true, reason: 'disabled' };
+  const badge = await unreadBadge(userId);
+  if (badge === null) return { skipped: true, reason: 'unreadable' };
+  try {
+    return await firebaseService.sendBadgeToUser(userId, badge);
+  } catch (err) {
+    console.error('[Push] badge sync failed:', err && err.message ? err.message : err);
+    return { sent: 0, failed: 0 };
+  }
+}
+
 async function pushAlways(userId, title, body, data = {}) {
   if (disabled()) return { skipped: true, reason: 'disabled' };
   return deliver(userId, title, body, data);
 }
 
 module.exports = {
+  pushBadgeSync,
+  unreadBadge,
   isUserOnline,
   pushIfOffline,
   pushIfOfflineDebounced,
