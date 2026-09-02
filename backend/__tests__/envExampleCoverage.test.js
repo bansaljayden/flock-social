@@ -45,6 +45,11 @@ function readVars(extraDirs = []) {
   for (const f of files) {
     const src = fs.readFileSync(f, 'utf8');
     for (const m of src.matchAll(/process\.env\.([A-Z][A-Z0-9_]+)/g)) names.add(m[1]);
+    // Bracket form, and the `env.NAME` alias routes/ai.js uses after binding
+    // `env` to process.env. An upper-case property on something called env is
+    // an environment read by any other spelling.
+    for (const m of src.matchAll(/process\.env\[\s*['"]([A-Z][A-Z0-9_]+)['"]\s*\]/g)) names.add(m[1]);
+    for (const m of src.matchAll(/\benv\.([A-Z][A-Z0-9_]+)\b/g)) names.add(m[1]);
     // services/entitlements.js reads flags through boolFlag('NAME'), which is a
     // process.env read by any other name and must count as one.
     for (const m of src.matchAll(/boolFlag\(\s*['"]([A-Z][A-Z0-9_]+)['"]/g)) names.add(m[1]);
@@ -87,7 +92,7 @@ test('.env.example does not document variables nothing reads', () => {
   ]);
   // Scripts are swept here and only here: a variable a script reads is a
   // legitimate entry, but a script's knob is not an application variable.
-  const read = readVars(['scripts']);
+  const read = readVars(['scripts', 'seeds']);
   for (const f of fs.readdirSync(BACKEND)) {
     if (f.endsWith('.js') && !SWEPT_FILES.includes(f)) {
       const src = fs.readFileSync(path.join(BACKEND, f), 'utf8');
@@ -96,11 +101,14 @@ test('.env.example does not document variables nothing reads', () => {
   }
   const documented = documentedVars();
   const stale = [...documented].filter((n) => !read.has(n) && !INDIRECT.has(n)).sort();
-  // Reported rather than failed on the first run: the file predates this
-  // guard, and a stale entry is a lesser fault than a missing one. Tighten
-  // this to deepStrictEqual once the list below is empty.
-  if (stale.length > 0) {
-    console.error(`[envExampleCoverage] documented but read by nothing in the swept source (${stale.length}): ${stale.join(', ')}`);
-  }
-  assert.ok(stale.length < 40, 'more stale entries than a file this size should carry; the sweep or the file is wrong');
+  // This began as a report rather than a failure, because the file predated
+  // the guard and sixteen names came back the first time. Widening the read
+  // patterns to the env alias and the bracket form, and sweeping seeds and
+  // scripts, took that list to zero, so it is a failure now: a documented
+  // variable nothing reads sends a deployer to set something that does nothing.
+  const staleMsg = ['these .env.example entries are read by nothing in server.js, routes, services, utils, config, middleware, sockets, db, scripts or seeds:']
+    .concat(stale.map((n) => '  ' + n))
+    .concat(['Either the code stopped reading them, so remove the entry, or add the reading site to the sweep.'])
+    .join(String.fromCharCode(10));
+  assert.deepStrictEqual(stale, [], staleMsg);
 });
