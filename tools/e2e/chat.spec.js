@@ -171,7 +171,7 @@ async function newPerson(browser, name, errors, { live: needsLive = true } = {})
   await expect(page.getByRole('heading', { name: /confirm your email/i })).toBeVisible({ timeout: 25_000 });
   await confirmEmail(email);
   await page.goto('/app');
-  await expect(page.getByRole('button', { name: 'Messages' })).toBeVisible({ timeout: 25_000 });
+  await expect(page.getByRole('button', { name: /^Messages(, .* unread)?$/ })).toBeVisible({ timeout: 25_000 });
   if (needsLive) await waitForLive(page, live, 60_000);
   return { context, page, email, name, offences, live };
 }
@@ -187,7 +187,7 @@ async function returningPerson(browser, person, errors) {
   await page.getByRole('textbox', { name: /email/i }).fill(person.email);
   await page.getByRole('textbox', { name: /password/i }).first().fill(PASSWORD);
   await page.getByRole('button', { name: /^sign in$/i }).click();
-  await expect(page.getByRole('button', { name: 'Messages' })).toBeVisible({ timeout: 25_000 });
+  await expect(page.getByRole('button', { name: /^Messages(, .* unread)?$/ })).toBeVisible({ timeout: 25_000 });
   await waitForLive(page, live, 60_000);
   return { context, page, ...person, offences, live };
 }
@@ -242,18 +242,18 @@ async function inviteWhileCreating(page, personName) {
  * than waiting out the timeout for a tab that is not there.
  */
 async function leaveOpenThread(page) {
-  if (await page.getByRole('button', { name: 'Messages' }).count()) return;
+  if (await page.getByRole('button', { name: /^Messages(, .* unread)?$/ }).count()) return;
   const back = page.getByRole('button', { name: 'Back', exact: true }).first();
   if (await back.count()) {
     await back.click();
-    await page.getByRole('button', { name: 'Messages' }).first().waitFor({ state: 'visible', timeout: 15_000 });
+    await page.getByRole('button', { name: /^Messages(, .* unread)?$/ }).first().waitFor({ state: 'visible', timeout: 15_000 });
   }
 }
 
 /** Open a flock's chat from the Messages list. */
 async function openFlockChat(page, flockName) {
   await leaveOpenThread(page);
-  await page.getByRole('button', { name: 'Messages' }).click();
+  await page.getByRole('button', { name: /^Messages(, .* unread)?$/ }).click();
   await page.getByRole('button', { name: new RegExp(escapeRe(flockName)) }).first().click({ timeout: 25_000 });
   await expect(page.locator('#chat-input')).toBeVisible({ timeout: 20_000 });
 }
@@ -268,7 +268,7 @@ async function openFlockChat(page, flockName) {
  */
 async function reopenApp(person, budgetMs = 45_000) {
   await person.page.reload();
-  await expect(person.page.getByRole('button', { name: 'Messages' })).toBeVisible({ timeout: 25_000 });
+  await expect(person.page.getByRole('button', { name: /^Messages(, .* unread)?$/ })).toBeVisible({ timeout: 25_000 });
   await waitForLive(person.page, person.live, budgetMs);
 }
 
@@ -287,7 +287,7 @@ async function sendInFlock(page, text) {
  */
 async function openDmWith(page, personName) {
   await leaveOpenThread(page);
-  await page.getByRole('button', { name: 'Messages' }).click();
+  await page.getByRole('button', { name: /^Messages(, .* unread)?$/ }).click();
   const row = page.getByRole('button', { name: new RegExp(escapeRe(personName)) }).first();
   if (await row.count()) {
     await row.click();
@@ -347,7 +347,9 @@ test.describe('flock chat, with two people watching it', () => {
     await ada.page.locator('#flock-name-input').fill(flockName);
     await inviteWhileCreating(ada.page, bo.name);
     await inviteWhileCreating(ada.page, extra.cyName);
-    await expect(ada.page.getByText('Who (2 invited)')).toBeVisible();
+    // Since fca69ed the Who group prints its label and its answer as two
+    // texts, the count sitting at the right edge of the label row.
+    await expect(ada.page.getByText('2 invited', { exact: true })).toBeVisible();
     await ada.page.getByRole('button', { name: 'Create Flock' }).click();
     await expect(ada.page.locator('#chat-input')).toBeVisible({ timeout: 25_000 });
 
@@ -357,13 +359,13 @@ test.describe('flock chat, with two people watching it', () => {
     // happens after two people are in the same room. It is a fallback rather
     // than the first move because reloading spends Bo's live connection, and
     // the specs below need it.
-    await bo.page.getByRole('button', { name: 'Messages' }).click();
+    await bo.page.getByRole('button', { name: /^Messages(, .* unread)?$/ }).click();
     const invite = bo.page.getByText(flockName);
     try {
       await expect(invite).toBeVisible({ timeout: 20_000 });
     } catch {
       await reopenApp(bo, 60_000);
-      await bo.page.getByRole('button', { name: 'Messages' }).click();
+      await bo.page.getByRole('button', { name: /^Messages(, .* unread)?$/ }).click();
       await expect(invite).toBeVisible({ timeout: 25_000 });
     }
     await bo.page.getByRole('button', { name: 'Accept invite' }).first().click();
@@ -569,14 +571,16 @@ test.describe('flock chat, with two people watching it', () => {
     await requireLive(ada, bo);
     const photo = path.join(__dirname, '..', '..', 'frontend', 'public', 'logo192.png');
 
-    const imagesBefore = await bo.page.locator('img[alt="Shared"]').count();
+    // Since e6863f3 a photo message's alt names its sender ("From Ada"), the
+    // screen-reader fix, so the count keys on that prefix.
+    const imagesBefore = await bo.page.locator('img[alt^="From "]').count();
     await ada.page.locator('input[type="file"]').first().setInputFiles(photo);
 
     // The preview is the confirm step. If it never appears the picker is dead.
     await expect(ada.page.getByRole('button', { name: 'Send photo' })).toBeVisible({ timeout: 20_000 });
     await ada.page.getByRole('button', { name: 'Send photo' }).click();
 
-    await expect(bo.page.locator('img[alt="Shared"]')).toHaveCount(imagesBefore + 1, { timeout: 25_000 });
+    await expect(bo.page.locator('img[alt^="From "]')).toHaveCount(imagesBefore + 1, { timeout: 25_000 });
     await expect(ada.page.getByText("Didn't send. Tap to retry")).toHaveCount(0);
     expect(errors.slice(before)).toEqual([]);
   });
@@ -623,7 +627,10 @@ test.describe('flock chat, with two people watching it', () => {
     // actually lands.
     await ada.page.getByRole('button', { name: 'Features' }).click();
     await ada.page.getByRole('button', { name: 'Vote on a venue' }).click();
-    await expect(ada.page.getByText('No votes yet. Be the first to suggest a venue!')).toBeVisible({ timeout: 15_000 });
+    // Two legitimate empty sentences: one when location is known, one when
+    // the app is still without it, which is the state a denied-permission
+    // phone can be in for a moment; either proves the sheet opened empty.
+    await expect(ada.page.getByText(/^No votes yet\. (Be the first to suggest a venue!|To see places to suggest, Flock needs your location\.)$/)).toBeVisible({ timeout: 15_000 });
     await ada.page.getByRole('button', { name: 'Close', exact: true }).first().click();
     await expect(ada.page.locator('#chat-input')).toBeVisible();
 
@@ -685,7 +692,7 @@ test.describe('flock chat, with two people watching it', () => {
     // the table, rather than by the back arrow. The back arrow is the only
     // exit that clears the composer, and nothing on the screen says so.
     await ada.page.getByRole('button', { name: /add a venue/i }).first().click();
-    await expect(ada.page.getByRole('button', { name: 'Messages' })).toBeVisible({ timeout: 20_000 });
+    await expect(ada.page.getByRole('button', { name: /^Messages(, .* unread)?$/ })).toBeVisible({ timeout: 20_000 });
 
     // And opens a one-to-one conversation with one of the people in it.
     await openDmWith(ada.page, bo.name);
@@ -768,7 +775,7 @@ test.describe('direct messages, with two people watching them', () => {
     // entered a name. Every other spec in this file reaches this box with
     // fill(), which sets the whole value in a single event and is therefore
     // the one input method a person cannot perform.
-    await fay.page.getByRole('button', { name: 'Messages' }).click();
+    await fay.page.getByRole('button', { name: /^Messages(, .* unread)?$/ }).click();
     await fay.page.getByRole('button', { name: 'New message' }).click();
     const box = fay.page.getByRole('textbox', { name: /search people by name/i });
     await box.click();
@@ -842,7 +849,9 @@ test.describe('direct messages, with two people watching them', () => {
     await eli.page.getByText(said).click();
     await eli.page.getByRole('button', { name: 'React with ❤️' }).click({ timeout: 15_000 });
 
-    const pill = (page) => page.locator('span').filter({ hasText: /^❤️/ }).first();
+    // The reaction pill is a button whose accessible name leads with the
+    // emoji and the count ("❤️ 1. Tap to react"), not a bare span.
+    const pill = (page) => page.getByRole('button', { name: /^❤️ / }).first();
     await expect(pill(eli.page)).toBeVisible({ timeout: 15_000 });
     // Dee sees it without reloading.
     await expect(pill(dee.page)).toBeVisible({ timeout: 25_000 });

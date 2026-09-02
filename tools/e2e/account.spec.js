@@ -222,7 +222,7 @@ test('a block shuts the chat on the other screen while it is open, and empties s
 
     // Beta reads it, then blocks Alpha from the person card on the chat header.
     await beta.page.reload();
-    await beta.page.getByRole('button', { name: 'Messages', exact: true }).click();
+    await beta.page.getByRole('button', { name: /^Messages(, .* unread)?$/ }).click();
     await beta.page.getByText(alphaName).first().click();
     await expect(beta.page.getByText('are you out tonight')).toBeVisible({ timeout: 15_000 });
     await beta.page.getByRole('button', { name: new RegExp(`About ${alphaName}`, 'i') }).click();
@@ -325,7 +325,7 @@ test('the New Message search finds somebody by name', async ({ browser }) => {
 
     // The compose button on Messages is the front door to starting a chat, so
     // typing a name into it has to produce that person.
-    await beta.page.getByRole('button', { name: 'Messages', exact: true }).click();
+    await beta.page.getByRole('button', { name: /^Messages(, .* unread)?$/ }).click();
     await beta.page.getByRole('button', { name: 'New message' }).click();
     const box = beta.page.getByRole('textbox', { name: /search people by name/i });
     await box.fill(alphaName);

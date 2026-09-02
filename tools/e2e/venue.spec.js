@@ -139,7 +139,7 @@ async function createFlock(page, inviteeNames, { budget = false } = {}) {
 /** Accept the invite from where the product actually puts it, the Messages tab. */
 async function acceptInvite(page) {
   await page.reload();
-  await page.getByRole('button', { name: 'Messages', exact: true }).click();
+  await page.getByRole('button', { name: /^Messages(, .* unread)?$/ }).click();
   await page.getByRole('button', { name: /accept invite/i }).click({ timeout: 40_000 });
   await expect(page.getByRole('button', { name: new RegExp(FLOCK_NAME) }).first()).toBeVisible({ timeout: 25_000 });
 }
@@ -147,7 +147,7 @@ async function acceptInvite(page) {
 /** Open the flock chat from wherever we are. */
 async function openFlock(page) {
   if (await page.getByRole('button', { name: 'Features' }).count()) return;
-  await page.getByRole('button', { name: 'Messages', exact: true }).click();
+  await page.getByRole('button', { name: /^Messages(, .* unread)?$/ }).click();
   await page.getByRole('button', { name: new RegExp(FLOCK_NAME) }).first().click();
   await expect(page.getByRole('button', { name: 'Features' })).toBeVisible({ timeout: 25_000 });
 }
@@ -167,7 +167,7 @@ async function openFlock(page) {
  */
 async function reenterFlock(page) {
   await page.getByRole('button', { name: 'Back', exact: true }).click();
-  await page.getByRole('button', { name: 'Messages', exact: true }).click();
+  await page.getByRole('button', { name: /^Messages(, .* unread)?$/ }).click();
   await page.getByRole('button', { name: new RegExp(FLOCK_NAME) }).first().click();
   await expect(page.getByRole('button', { name: 'Features' })).toBeVisible({ timeout: 25_000 });
 }
@@ -702,8 +702,11 @@ test('only the host can lock the plan in, and locking it changes what everyone s
 
   await expect(alpha.page.getByText(/locked in\. everyone in the flock has been told/i))
     .toBeVisible({ timeout: 30_000 });
-  // Locking is what makes the done step exist at all, so it has to appear.
-  await expect(alpha.page.getByText(/slide to mark done/i)).toBeVisible({ timeout: 20_000 });
+  // Locking is what makes the done step exist at all, but since 43b974c
+  // (2026-08-27) it is also time-gated: a plan confirmed before its hour must
+  // not ask "Hangout done?" for days, so with tomorrow's time still ahead the
+  // slider stays hidden, and that absence is the behaviour worth defending.
+  await expect(alpha.page.getByText(/slide to mark done/i)).toHaveCount(0);
 
   // And the other person's screen agrees the next time they open the app.
   //

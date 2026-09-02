@@ -332,7 +332,9 @@ test('a group budget asked for at create time is there in the flock', async ({ b
   await page.getByRole('button', { name: /^drinks$/i }).click();
 
   // THE READ-BACK, the last thing seen before committing.
-  await expect(page.getByText(/just you so far/i)).toBeVisible();
+  // Since fca69ed the Who group also says "Just you so far" in its own note,
+  // so the footer is named by its full sentence to keep the locator strict.
+  await expect(page.getByText(/just you so far, venue by vote/i)).toBeVisible();
 
   await page.getByRole('button', { name: /create flock/i }).click();
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible({ timeout: 25_000 });
