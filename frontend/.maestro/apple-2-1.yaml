@@ -279,9 +279,15 @@ appId: com.flockcorp.flock
 # setCurrentScreen('chatDetail')). This gates every shot below.
 - runFlow: parts/open-chat.yaml
 
-# Shot 7: the share sheet with the invite link, from the chat's invite modal.
+# Shot 7: invite B from the chat's invite modal, then the share sheet.
 # The header controls are hidden until the "Features" pill is tapped
 # (ChatDetail.js:512-527 visibility: hidden until chatNavOpen).
+# Run 12 (2026-09-02) did the share sheet first: its Close closed something,
+# then nothing on the page answered (B's row, the send button, the modal's
+# Close, and finally "Features", which was required and ended the recording
+# with B never invited). So B is invited BEFORE the share sheet, the sheet is
+# last, and the block ends by getting back to a chat with "Features" on it
+# even if that takes a relaunch.
 - tapOn: "Features"                             # ChatDetail.js:533 aria-label
 - tapOn:
     text: "Invite friends"                      # ChatDetail.js:529 aria-label (nav) / :912 (empty chat), either opens the modal
@@ -290,6 +296,36 @@ appId: com.flockcorp.flock
     visible: "Share invite link (no account needed)"   # ChatDetail.js:2014
     timeout: 10000
     optional: true
+# The modal lists friends only (App.js flockInviteAllFriends from getFriends);
+# each row is one <button> whose label is the name plus its "Add" tag
+# (App.js renderFlockInviteRow), so match on the name and whatever follows.
+# Tapping a row selects it and the send button appears reading "Invite 1 Friend"
+# (ChatDetail.js:2151); the modal closes itself after the send.
+- tapOn:
+    text: "${NAME_B}.*"
+    index: 0
+    optional: true
+- waitForAnimationToEnd
+- tapOn:
+    text: "Invite 1 Friend"
+    optional: true
+- waitForAnimationToEnd
+# Reopen the modal for the share link if the send closed it.
+- runFlow:
+    when:
+      notVisible: "Share invite link (no account needed)"
+    commands:
+      - tapOn:
+          text: "Features"
+          optional: true
+      - tapOn:
+          text: "Invite friends"
+          index: 0
+          optional: true
+      - extendedWaitUntil:
+          visible: "Share invite link (no account needed)"
+          timeout: 8000
+          optional: true
 - tapOn:
     text: "Share invite link (no account needed)"       # needs POST /:id/invite-link, verified account
     optional: true
@@ -298,23 +334,36 @@ appId: com.flockcorp.flock
     text: "Close"                               # iOS share sheet close; if navigator.share was unavailable the URL is shown inline and this is a no-op
     optional: true
 - waitForAnimationToEnd
-# Invite B from the same modal. It lists friends only (App.js
-# flockInviteAllFriends from getFriends), rows are one <button> whose <p> is
-# the friend's name (App.js:5603-5625), tapping a row selects it, and the send
-# button reads "Invite 1 Friend" (ChatDetail.js:2151).
 - tapOn:
-    text: ${NAME_B}                             # App.js:5616 row <p>
-    optional: true
-- tapOn:
-    text: "Invite 1 Friend"                     # ChatDetail.js:2151
+    text: "Close"                               # ChatDetail.js:1977 the modal's own close
     optional: true
 - waitForAnimationToEnd
-# The modal closes itself after a send (App.js handleSendFlockInvites). If it
-# is still open, close it.
-- tapOn:
-    text: "Close"                               # ChatDetail.js:1974 aria-label
-    optional: true
-- waitForAnimationToEnd
+# Back to a chat with its header. A sheet that is still up takes a swipe down;
+# a page that stopped answering after the native sheet takes a relaunch, which
+# keeps the session and lands on Nest, and open-chat.yaml finds the flock again.
+- runFlow:
+    when:
+      notVisible: "Features"
+    commands:
+      - swipe:
+          start: "50%,25%"
+          end: "50%,92%"
+          duration: 400
+      - waitForAnimationToEnd
+      - tapOn:
+          text: "Close"
+          optional: true
+      - waitForAnimationToEnd
+- runFlow:
+    when:
+      notVisible: "Features"
+    commands:
+      - launchApp
+      - waitForAnimationToEnd
+      - runFlow: parts/open-chat.yaml
+- extendedWaitUntil:
+    visible: "Features"
+    timeout: 10000
 
 # Shot 9: the vote panel. There is no venue search in it (AUDIT-2026-09-01.md,
 # apple-2-1 111-122); it offers current votes, "Popular Chains Nearby" rows
@@ -647,24 +696,18 @@ appId: com.flockcorp.flock
           text: "DELETE"                        # ProfileSettings.js:891 placeholder (the empty input's value)
           optional: true
       - inputText: "DELETE"
-      # Close the keyboard by tapping the dialog's own heading, which sits
-      # above the fields inside the dialog and cannot scroll away.
+      # Return closes the keyboard (ProfileSettings.js onKeyDown blur on the
+      # confirm input, added after run 12: a tap on the heading never blurred
+      # the field, so the keyboard kept covering the buttons). The confirm
+      # button carries its own accessible name so no index guessing is needed.
+      - pressKey: Enter
+      - waitForAnimationToEnd
       - tapOn:
-          text: "Delete your account?"          # ProfileSettings.js:852 <h3>
+          text: "Delete account, permanently"   # ProfileSettings.js confirm button aria-label
           optional: true
-      # With the dialog open there are three matches in DOM order: the row
-      # (:812, behind the backdrop), the dialog node (DialogBehavior
-      # aria-label, :850) and the confirm button (:923). Index 2 is the
-      # confirm; index 3 is a fallback in case the row's inner text is exposed
-      # as its own element and shifts the order by one. Neither can hit the
-      # backdrop, which would close the dialog.
       - tapOn:
           text: "Delete account"
           index: 2
-          optional: true
-      - tapOn:
-          text: "Delete account"
-          index: 3
           optional: true
       - extendedWaitUntil:
           visible: "Welcome back"               # ProfileSettings.js:906 onLogout(sessionEndCopy('account_deleted')) -> LoginScreen

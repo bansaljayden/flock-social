@@ -156,16 +156,14 @@ appId: com.flockcorp.flock
                 text: "DELETE"                  # ProfileSettings.js:891 placeholder
                 optional: true
             - inputText: "DELETE"
+            - pressKey: Enter                   # ProfileSettings.js onKeyDown blur closes the keyboard
+            - waitForAnimationToEnd
             - tapOn:
-                text: "Delete your account?"    # ProfileSettings.js:852 <h3>, closes the keyboard
-                optional: true
-            - tapOn:
-                text: "Delete account"          # ProfileSettings.js:923 confirm, see apple-2-1.yaml for the index
-                index: 2
+                text: "Delete account, permanently"   # ProfileSettings.js confirm button aria-label
                 optional: true
             - tapOn:
                 text: "Delete account"
-                index: 3
+                index: 2
                 optional: true
             - extendedWaitUntil:
                 visible: "Welcome back"
