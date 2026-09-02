@@ -412,7 +412,9 @@ describe('the 2026-09-01 sweep: every remaining empty or error state has a bird'
       ['trusted contacts: empty', 'No trusted contacts yet</p>'],
       // Roost cards
       ['Roost: cards failed', 'body="These didn\'t load."'],
-      ['Roost: unavailable', "body={verifyNote || payload.reason || 'Nothing to show yet.'}"],
+      // 2026-09-02: the card's own verification path was deleted, so the
+      // anchor is the reason line alone.
+      ['Roost: unavailable', "body={payload.reason || 'Nothing to show yet.'}"],
     ];
     for (const [label, anchor] of anchored) {
       const found = birdNear(APP, anchor);

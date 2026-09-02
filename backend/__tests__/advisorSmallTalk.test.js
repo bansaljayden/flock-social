@@ -55,9 +55,12 @@ test('an ordinary greeting gets an ordinary, brief, in-character reply', () => {
 
 test('classify answers a greeting without any model call and without any spend', async () => {
   const route = await advisorFreeText.classify({ userId: 7, question: 'How are you' });
-  assert.strictEqual(route.mode, 'refused', 'a greeting is not a grounded or advice route');
-  assert.ok(GREETING_REPLIES.includes(route.refusal), 'the reply is the deterministic greeting');
-  assert.notStrictEqual(route.refusal, advisorFreeText.REFUSAL_BUSY,
+  // 2026-09-02: a greeting is its own mode now, not a refusal, because the
+  // chat drew "Hello, good to see you" in refusal ink when it was labeled one.
+  assert.strictEqual(route.mode, 'small_talk', 'a greeting is not a grounded, advice or refused route');
+  assert.strictEqual(route.refusal, undefined, 'small talk carries no refusal sentence');
+  assert.ok(GREETING_REPLIES.includes(route.text), 'the reply is the deterministic greeting');
+  assert.notStrictEqual(route.text, advisorFreeText.REFUSAL_BUSY,
     'the greeting never reached the (absent) model');
 });
 

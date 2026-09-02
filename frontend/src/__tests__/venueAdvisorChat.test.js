@@ -18,9 +18,10 @@
  *   2. It is the LAST thing in the card, below the suggested chips, because
  *      chips are shortcuts past the way in and not the way in.
  *   3. Typing reaches askQuestion and the answer lands in the thread.
- *   4. The three answer modes are told apart on screen: grounded carries its
+ *   4. The answer modes are told apart on screen: grounded carries its
  *      sources, advice carries its marker, a refusal carries neither and never
- *      an upsell.
+ *      an upsell, and small talk (a greeting answered in kind) reads in the
+ *      normal answer ink rather than the refusal's quieter one.
  *   5. The product name is said ONCE per screen. VenueInsightCards titles the
  *      surface; this block is titled for what it is.
  *
@@ -31,7 +32,7 @@
 const fs = require('fs');
 const path = require('path');
 const React = require('react');
-const { act, render, screen, fireEvent, waitFor } = require('@testing-library/react');
+const { act, cleanup, render, screen, fireEvent, waitFor } = require('@testing-library/react');
 
 const VenueAdvisorChat = require('../components/VenueAdvisorChat').default;
 const { clearAdvisorThread } = require('../components/VenueAdvisorChat');
@@ -65,6 +66,13 @@ const ADVICE = {
 const REFUSAL = {
   mode: 'refusal',
   text: 'That one is outside what Roost does. We do not report another business’s numbers.',
+  sources: [],
+};
+// What POST /question returns for "hello" since 2026-09-02: its own mode, so
+// the chat does not draw a greeting in refusal ink.
+const SMALL_TALK = {
+  mode: 'small_talk',
+  text: "Hello, good to see you. Ask about your venue's numbers or how to run the room, and we will take it from there.",
   sources: [],
 };
 
@@ -242,6 +250,32 @@ describe('Roost chat: the three answers are told apart', () => {
 
   test('a refusal carries no source line, no marker, and no upsell', async () => {
     await askWith(REFUSAL);
+    expect(screen.queryByText(/^From /)).toBeNull();
+    expect(screen.queryByText(/general advice/i)).toBeNull();
+    expect(screen.queryByText(/upgrade|pro plan|subscription/i)).toBeNull();
+  });
+
+  // data-ink, not style.color: jsdom drops an inline colour that is a custom
+  // property, so the attribute is the only rendered trace of which ink it is.
+  test('a refusal is drawn in the quieter ink, and a grounded answer in the primary one', async () => {
+    await askWith(REFUSAL);
+    expect(screen.getByText(REFUSAL.text).getAttribute('data-ink')).toBe('quiet');
+    cleanup();
+    clearAdvisorThread();
+    await askWith(GROUNDED);
+    expect(screen.getByText(GROUNDED.text).getAttribute('data-ink')).toBe('answer');
+    // And the only thing that picks the quiet ink is the refusal mode.
+    expect(SRC).toContain("quiet={turn.answer.mode === 'refusal'}");
+  });
+
+  // 2026-09-02. "Hello, good to see you" came back as mode 'refusal' and was
+  // drawn in refusal ink, so a warm line read as a decline. Small talk has
+  // its own mode now and takes the same ink as a real answer.
+  test('small talk reads in the normal answer ink, with no source line, no marker, and no rule', async () => {
+    await askWith(SMALL_TALK);
+    const line = screen.getByText(SMALL_TALK.text);
+    expect(line.getAttribute('data-ink')).toBe('answer');
+    expect(line.parentElement.style.borderLeftWidth).not.toBe('2px');
     expect(screen.queryByText(/^From /)).toBeNull();
     expect(screen.queryByText(/general advice/i)).toBeNull();
     expect(screen.queryByText(/upgrade|pro plan|subscription/i)).toBeNull();
@@ -842,7 +876,7 @@ describe('Roost chat: Birdie is in the room', () => {
     expect(same.querySelector('.roost-bob')).toBeNull();
   });
 
-  test('a refusal gets the same bird, in the same place, holding the same still pose', async () => {
+  test('a refusal and a greeting get the same bird, in the same place, holding the same still pose', async () => {
     const { container, unmount } = mount({ askQuestion: async () => GROUNDED });
     await askAndWait(GROUNDED);
     const grounded = avatars(container)[0];
@@ -850,19 +884,25 @@ describe('Roost chat: Birdie is in the room', () => {
     unmount();
     clearAdvisorThread();
 
-    const second = mount({ askQuestion: async () => REFUSAL });
-    await askAndWait(REFUSAL);
-    const refused = avatars(second.container)[0];
-    expect(refused).toBeTruthy();
-    expect(refused.querySelector('div[aria-hidden="true"]').style.width).toBe(groundedSize);
-    expect(refused.classList.contains('roost-pop')).toBe(false);
-    expect(refused.querySelector('.roost-bob')).toBeNull();
+    // 2026-09-02: small talk is a third mode and is held to the same bird rule.
+    for (const answer of [REFUSAL, SMALL_TALK]) {
+      const second = mount({ askQuestion: async () => answer });
+      // eslint-disable-next-line no-await-in-loop
+      await askAndWait(answer);
+      const refused = avatars(second.container)[0];
+      expect(refused).toBeTruthy();
+      expect(refused.querySelector('div[aria-hidden="true"]').style.width).toBe(groundedSize);
+      expect(refused.classList.contains('roost-pop')).toBe(false);
+      expect(refused.querySelector('.roost-bob')).toBeNull();
+      second.unmount();
+      clearAdvisorThread();
+    }
     // Nothing about him is allowed to read the answer. The only class switch
     // in the avatar is on `pending`, never on the mode.
     const avatarBlock = SRC.slice(SRC.indexOf('data-roost="avatar"') - 400, SRC.indexOf('data-roost="avatar"') + 400);
     expect(avatarBlock).toContain("className={pending ? 'roost-pop' : undefined}");
     expect(avatarBlock).toContain("className={pending ? 'roost-bob' : undefined}");
-    expect(avatarBlock).not.toMatch(/answer\.mode|refusal|advice/);
+    expect(avatarBlock).not.toMatch(/answer\.mode|refusal|advice|small_talk/);
   });
 
   test('the motion is CSS the reduced-motion rule already collapses, and the still bird only', () => {

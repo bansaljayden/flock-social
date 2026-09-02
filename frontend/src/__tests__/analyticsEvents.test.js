@@ -465,15 +465,17 @@ describe('venue and Roost events say whether the surface is used, never which ve
     expect(events('roost_question_asked')).toEqual([{ kind: 'typed', answer: 'unknown' }]);
   });
 
-  test('the four real answer modes all survive the allowlist', async () => {
-    for (const mode of ['refusal', 'template', 'phrased', 'advice']) {
+  test('the five real answer modes all survive the allowlist', async () => {
+    // 2026-09-02: small_talk joined the set so a greeting is counted as a
+    // greeting rather than padding the refusal rate or landing in unknown.
+    for (const mode of ['refusal', 'template', 'phrased', 'advice', 'small_talk']) {
       respondWith(200, { mode, text: 'x' });
       // eslint-disable-next-line no-await-in-loop
       await api.askAdvisorQuestion('anything');
     }
     await flush();
     expect(events('roost_question_asked').map((p) => p.answer))
-      .toEqual(['refusal', 'template', 'phrased', 'advice']);
+      .toEqual(['refusal', 'template', 'phrased', 'advice', 'small_talk']);
   });
 });
 

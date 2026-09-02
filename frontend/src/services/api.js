@@ -913,10 +913,13 @@ export async function getAdvisorQuestions() {
 // Both advisor routes answer with a `mode`, and it is the only field worth
 // recording: 'refusal' means Roost declined, 'template' and 'phrased' mean it
 // answered from this venue's own numbers, 'advice' means it answered from
-// general knowledge instead. A surface whose refusal rate nobody watches is a
-// surface that quietly stops working, and refusals here are the expected
-// outcome for a venue with thin data rather than a bug, so the difference has
-// to be visible.
+// general knowledge instead, and 'small_talk' means the owner said hello or
+// thanks and got a greeting back with nothing read. A surface whose refusal
+// rate nobody watches is a surface that quietly stops working, and refusals
+// here are the expected outcome for a venue with thin data rather than a bug,
+// so the difference has to be visible. Small talk is kept apart from refusal
+// for the same reason: a refusal rate padded by every "thanks" is not a
+// refusal rate.
 //
 // The allowlist is not decoration. The backend's field is `mode`, not `kind`,
 // and its values come from services/advisorPhrasing.js and
@@ -924,7 +927,7 @@ export async function getAdvisorQuestions() {
 // expect and reads as 'unknown' rather than being passed through, because a
 // property whose categories the server can invent is a property nobody can
 // build a chart on.
-const ADVISOR_ANSWER_MODES = ['refusal', 'template', 'phrased', 'advice'];
+const ADVISOR_ANSWER_MODES = ['refusal', 'template', 'phrased', 'advice', 'small_talk'];
 function advisorAnswerMode(data) {
   const mode = data && data.mode;
   return ADVISOR_ANSWER_MODES.includes(mode) ? mode : 'unknown';

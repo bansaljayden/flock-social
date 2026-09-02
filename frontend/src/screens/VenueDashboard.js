@@ -109,11 +109,6 @@ export default function VenueDashboard({
   renderVenueTime,
   replyText,
   replyingToReview,
-  // Still handed over by App.js and no longer read here: the Roost card
-  // stopped taking a verification handler on 2026-09-01 (see the
-  // <VenueInsightCards> call site). extractionEquivalence pins this list to
-  // the props object in App.js, so the name leaves both files together.
-  requestVerificationNow,
   retryVenueIntel,
   savingVenueIntake,
   setActiveVenue,
@@ -1013,7 +1008,8 @@ export default function VenueDashboard({
                is always on screen whenever this one would have been: one ask
                per screen, and it lives one card up. The card still prints
                the server's reason sentence, which is the answer to "why are
-               there no cards", and with no handler it draws no button. */
+               there no cards". Its handler prop was deleted outright on
+               2026-09-02, so there is nothing left here to pass. */
           />
           {/* Roost chat: suggested questions, plus a field the owner can type into.
               Grounded answers come from the same fact engine as the cards above;
