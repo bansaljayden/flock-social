@@ -650,7 +650,23 @@ workflows:
           # B are never deleted.
           maestro test "${MAESTRO_ARGS[@]}" --debug-output /tmp/maestro-debug/cleanup .maestro/apple-2-1-cleanup.yaml || true
           exit $RESULT
+      - name: Re-encode the recording for attachment
+        script: |
+          # The Simulator writes about 3 Mbps of H.264, which made run 4's
+          # sixteen minutes a 388 MB file. A reviewer has to read the screen,
+          # not count pixels: 720 wide, 24 fps, crf 30, no audio track (the
+          # Simulator records none). The original stays in the artifacts.
+          if ! command -v ffmpeg >/dev/null 2>&1; then
+            echo "ffmpeg is not on this image; installing it with Homebrew"
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install ffmpeg >/dev/null 2>&1 || {
+              echo "ffmpeg could not be installed; the full-size recording is still an artifact"
+              exit 0
+            }
+          fi
+          ffmpeg -y -hide_banner -loglevel error -i /tmp/flock-review.mp4             -vf "scale=720:-2,fps=24" -c:v libx264 -crf 30 -preset veryfast             -pix_fmt yuv420p -movflags +faststart -an /tmp/flock-review-720p.mp4
+          ls -la /tmp/flock-review.mp4 /tmp/flock-review-720p.mp4
     artifacts:
       - /tmp/flock-review.mp4
+      - /tmp/flock-review-720p.mp4
       - /tmp/maestro-debug/**
       - /tmp/sim-build.log
