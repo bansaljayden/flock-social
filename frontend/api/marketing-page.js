@@ -376,7 +376,7 @@ const PAGE_BLOCKS = {
     ["li", "OpenWeatherMap returns the weather for an area, which the crowd model reads as an input. No personal information is sent."],
     ["li", "Ticketmaster returns ticketed events near an area, which the crowd model also reads. We send the search area, not your account."],
     ["h3", "They receive nothing about anyone"],
-    ["li", "BestTime is where the crowd model's original training corpus came from. Collection stopped in May 2026 and the corpus is frozen. No part of the running product calls it."],
+    ["li", "BestTime is where the crowd model's training corpus comes from. Collection stopped in May 2026 and started again on 1 September 2026. It runs as a scheduled job that reads public busyness figures for venues, it sends nothing about you, and no part of the running product calls it."],
     ["li", "SeatGeek is a second event source used only by offline training scripts. No server code reads it."],
     ["li", "Venmo, Cash App and Zelle are opened as links from your phone. There is no integration and no account. Flock builds a web address and your phone opens it. No money and no payment detail moves through Flock."],
     ["li", "Codemagic builds the iOS app, GitHub Actions scans our code for leaked secrets, and the development tools we write Flock with never touch the product. None of them receives user data."],

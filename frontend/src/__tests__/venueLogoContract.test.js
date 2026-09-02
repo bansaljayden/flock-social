@@ -106,25 +106,35 @@ describe('the 2026-08-14 price sweep holds in the docs', () => {
     expect(checklist).toMatch(/resolved 2026-08-14/i);
   });
 
-  test('README names the final prices next to VENUE-BILLING.md', () => {
-    expect(readme).toMatch(/\$35 Premium \/ \$75 Pro, FINAL as of 2026-08-14/);
+  test('README names the current prices next to VENUE-BILLING.md', () => {
+    // Pro moved 75 -> 99 on 2026-08-25. This pin moved with it on 2026-09-01,
+    // which is the whole point of the pin: the README is named authoritative on
+    // price, so it is the one file that must never drift behind the app.
+    expect(readme).toMatch(/\$35 Premium \/ \$99 Pro, re-priced 2026-08-25/);
+    expect(readme).not.toMatch(/\$75 Pro, FINAL/);
   });
 
-  test('MONEY-MODEL recomputed the venue-count math instead of keeping "ten venues"', () => {
-    // ceil(1000/75) = 14, ceil(1000/35) = 29, ceil(1000/55) = 19. The doc must
-    // show its work and the work must be right.
-    expect(money).toContain('$75 x 14 = $1,050');
+  test('MONEY-MODEL recomputed the venue-count math at the current prices', () => {
+    // Recomputed at $99 Pro on 2026-09-01. ceil(1000/99) = 11, ceil(1000/35) =
+    // 29, ceil(1000/67) = 15, and 67 is the real midpoint of 35 and 99. The doc
+    // must show its work and the work must be right.
+    expect(money).toContain('$99 x 11 = $1,089');
     expect(money).toContain('$35 x 29 = $1,015');
-    expect(money).toContain('$55 x 19 = $1,045');
-    expect(75 * 14).toBe(1050);
+    expect(money).toContain('$67 x 15 = $1,005');
+    expect(99 * 11).toBe(1089);
     expect(35 * 29).toBe(1015);
-    expect(55 * 19).toBe(1045);
-    // The claim those numbers replaced was written for the higher prices.
-    expect(money).not.toMatch(/[Rr]oughly ten (paying venues|bars)/);
+    expect(67 * 15).toBe(1005);
+    expect((35 + 99) / 2).toBe(67);
+    // The dead price must not survive anywhere in the arithmetic.
+    expect(money).not.toContain('$75 x 14');
+    expect(money).not.toContain('$55 x 19');
   });
 
   test('the revenue simulator seed says what it is', () => {
-    // (35 + 75) / 2 = 55. The old line seeded 50 and called it the average.
-    expect(app).toContain('useState(55); // midpoint of $35 Premium and $75 Pro');
+    // (35 + 99) / 2 = 67. This seeded 55 against the retired $75 until
+    // 2026-09-01, so the admin revenue simulator opened on a price no venue
+    // could be charged.
+    expect(app).toContain('useState(67); // midpoint of $35 Premium and $99 Pro');
+    expect(app).not.toContain('midpoint of $35 Premium and $75 Pro');
   });
 });
