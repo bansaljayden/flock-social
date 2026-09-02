@@ -751,12 +751,17 @@ router.post('/ask', authenticate, requirePro, [
 // door, its own rate limiter (server.js), its own daily ceiling (migration
 // 039), and its own flag.
 //
-// The three modes leave here labeled, because the whole design is that an owner
+// The modes leave here labeled, because the whole design is that an owner
 // always knows which one they are reading:
 //   mode 'phrased' | 'template' | 'refusal'  a grounded answer, exactly what
 //                                            the matching chip would have said
 //   mode 'advice'                            general trade knowledge, marked
 //   mode 'refusal'                           declined, with the reason
+//   mode 'small_talk'                        a greeting, thanks or sign-off
+//                                            answered in kind, no data read
+// The client's allowlist (frontend/src/services/api.js ADVISOR_ANSWER_MODES)
+// mirrors this list; a mode added here without adding it there is recorded
+// as 'unknown' in analytics.
 const FREETEXT_OFF = advisorFreeText.UNAVAILABLE_TEXT;
 
 router.post('/question', authenticate, requirePro, async (req, res) => {
@@ -834,6 +839,14 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
     }
 
     const route = await advisorFreeText.classify({ userId, question: clean.text });
+
+    // SMALL TALK is its own label, not a refusal wearing a warmer sentence.
+    // The chat draws a refusal in quieter ink, and a greeting drawn that way
+    // read as a decline (2026-09-02). Nothing was read and nothing was spent,
+    // so there are no sources and no intent.
+    if (route.mode === 'small_talk') {
+      return res.json({ mode: 'small_talk', text: route.text, sources: [], question: clean.text });
+    }
 
     if (route.mode === 'refused') {
       return res.json({ mode: 'refusal', text: route.refusal, sources: [], question: clean.text });

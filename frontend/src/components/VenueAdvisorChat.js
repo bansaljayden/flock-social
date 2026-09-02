@@ -144,10 +144,19 @@ const sourcesLine = (sources) => {
 
 // Answer text arrives as plain sentences (phrased) or as one line per fact
 // (template). Render each line as its own paragraph either way.
-const AnswerText = ({ text, tone }) => (
+// `quiet` is the refusal ink. It is also written out as data-ink because the
+// CSS parser the test suite runs on drops an inline colour that is a custom
+// property, so the rendered tree would otherwise not say which ink it holds.
+const AnswerText = ({ text, quiet }) => (
   <>
     {String(text || '').split('\n').filter(Boolean).map((line, i) => (
-      <p key={i} style={{ fontSize: 'var(--t-label)', color: tone, margin: i === 0 ? 0 : '8px 0 0', lineHeight: 1.55 }}>{line}</p>
+      <p
+        key={i}
+        data-ink={quiet ? 'quiet' : 'answer'}
+        style={{ fontSize: 'var(--t-label)', color: quiet ? 'var(--text-secondary)' : 'var(--text-primary)', margin: i === 0 ? 0 : '8px 0 0', lineHeight: 1.55 }}
+      >
+        {line}
+      </p>
     ))}
   </>
 );
@@ -293,11 +302,11 @@ const ThreadTurn = ({ turn, first, navy, navyBg, onRetry }) => {
             <>
               {/* A refusal wears the same chrome as an answer: quieter ink, no
                   lock icon, no upsell, and the same bird beside it holding the
-                  same still pose. The text itself says what is missing. */}
-              <AnswerText
-                text={turn.answer.text}
-                tone={turn.answer.mode === 'refusal' ? 'var(--text-secondary)' : 'var(--text-primary)'}
-              />
+                  same still pose. The text itself says what is missing.
+                  Small talk ('small_talk', a greeting answered in kind) is
+                  NOT a refusal and takes the normal ink: only 'refusal' is
+                  drawn quiet. */}
+              <AnswerText text={turn.answer.text} quiet={turn.answer.mode === 'refusal'} />
               {advice && (
                 <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>
                   {ADVICE_MARKER}
