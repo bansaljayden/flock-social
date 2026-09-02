@@ -226,9 +226,19 @@ appId: com.flockcorp.flock
 - tapOn: "Movie night, dinner, party..."        # CreateScreen.js:328 placeholder
 - inputText: "Review night ${REVIEW_RUN}"
 # The name commits on a 120 ms debounce (SearchInputLocal, App.js:4071).
-# Close the keyboard by tapping the screen header, which is pinned at the top.
+# Close the keyboard by moving focus to a day chip (CreateScreen.js
+# FLOCK_DAY_CHOICES), a real button that takes focus off the name field.
+# Runs 7 and 8 (2026-09-02) tapped Create Flock with the keyboard still up:
+# the tap reported success, the request never left the app (no POST
+# /api/flocks in the Railway http log), and the heading tap that was meant
+# to close the keyboard had scrolled away, the same fault the signup part hit.
 - tapOn:
-    text: "Start a Flock"                       # CreateScreen.js:293 <h1>, static
+    text: "Tonight|Tomorrow|This\ Weekend|Next\ Week"
+    index: 0
+    optional: true
+- waitForAnimationToEnd
+- tapOn:
+    text: "Start a Flock"                       # CreateScreen.js:293 <h1>, static; harmless second chance
     optional: true
 - scrollUntilVisible:
     element: "Create Flock"                     # CreateScreen.js:573 submit; NOT "Start a Flock", which is the heading
