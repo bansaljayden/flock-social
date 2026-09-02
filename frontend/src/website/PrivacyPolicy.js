@@ -635,7 +635,7 @@ export default function PrivacyPolicy() {
 
               <h3>They receive nothing about anyone</h3>
               <ul>
-                <li><strong>BestTime</strong> is where the crowd model's original training corpus came from. Collection stopped in May 2026 and the corpus is frozen. No part of the running product calls it.</li>
+                <li><strong>BestTime</strong> is where the crowd model's training corpus comes from. Collection stopped in May 2026 and started again on 1 September 2026. It runs as a scheduled job that reads public busyness figures for venues, it sends nothing about you, and no part of the running product calls it.</li>
                 <li><strong>SeatGeek</strong> is a second event source used only by offline training scripts. No server code reads it.</li>
                 <li><strong>Venmo, Cash App and Zelle</strong> are opened as links from your phone. There is no integration and no account. Flock builds a web address and your phone opens it. No money and no payment detail moves through Flock.</li>
                 <li><strong>Codemagic</strong> builds the iOS app, <strong>GitHub Actions</strong> scans our code for leaked secrets, and the development tools we write Flock with never touch the product. None of them receives user data.</li>
