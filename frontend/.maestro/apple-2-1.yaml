@@ -61,9 +61,10 @@ appId: com.flockcorp.flock
     clearState: true
     permissions:
       all: unset
+      contacts: allow
     permissions:
       all: unset
-
+      contacts: allow
 # ---------------------------------------------------------------------------
 # Shots 1-4, account C: launch to the login screen, sign up with the date of
 # birth on screen, land on "Confirm your email", go back to the login form
@@ -371,6 +372,7 @@ appId: com.flockcorp.flock
       - launchApp:
           permissions:
             all: unset
+            contacts: allow
       - waitForAnimationToEnd
       - runFlow: parts/open-chat.yaml
 - extendedWaitUntil:
