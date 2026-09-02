@@ -68,7 +68,6 @@ env:
 - tapOn: "Start a flock"
 - tapOn: "Movie night, dinner, party..."
 - inputText: "Review night"
-- hideKeyboard
 # Invite B by name so B can accept and post the message A will report.
 - tapOn: "Search by name..."
 - inputText: ${NAME_B}
@@ -78,7 +77,11 @@ env:
 - tapOn:
     text: "Add"
     index: 0
-- hideKeyboard
+- scrollUntilVisible:
+    element: "Start a Flock"
+    direction: DOWN
+    timeout: 5000
+    optional: true
 - tapOn: "Start a Flock"
 - extendedWaitUntil:
     visible: "Review night"
@@ -120,7 +123,6 @@ env:
     text: ".*[Pp]izza.*"
     index: 0
     optional: true
-- hideKeyboard
 - waitForAnimationToEnd
 # The venue now sits in the chat as a card; tapping it casts the vote.
 - tapOn:
@@ -162,7 +164,6 @@ env:
 - inputText: "Here for the recording"
 - tapOn: "Send message"
 - waitForAnimationToEnd
-- hideKeyboard
 - back
 
 # ---------------------------------------------------------------------------
@@ -217,7 +218,6 @@ env:
 - inputText: "message from B for the report shot"
 - tapOn: "Send message"
 - waitForAnimationToEnd
-- hideKeyboard
 - back
 - runFlow: parts/logout.yaml
 
@@ -298,12 +298,17 @@ env:
     id: "delete-password"
     optional: true
 - inputText: ${REVIEW_PASSWORD}
-- hideKeyboard
 - tapOn:
     text: "DELETE"
     optional: true
 - inputText: "DELETE"
-- hideKeyboard
+- scrollUntilVisible:
+    element:
+      text: "Delete account"
+      index: 1
+    direction: DOWN
+    timeout: 5000
+    optional: true
 - tapOn:
     text: "Delete account"
     index: 1
