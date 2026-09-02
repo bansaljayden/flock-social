@@ -75,6 +75,7 @@ import { sendFriendRequest, trackDmVenueVote, getDmMessageImage } from '../servi
 import { dmReact, dmRemoveReact, dmStopSharingLocation, dmVoteVenue, getSocket } from '../services/socket';
 import { groupReactions } from './ChatDetail';
 import Icons from '../components/ui/Icons';
+import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 
 // Day separators. Long threads used to be one undifferentiated scroll where
 // last Tuesday touched tonight with nothing between them. A row draws a
@@ -484,10 +485,14 @@ export default function DmDetail({
                   it locally and would otherwise sit there under a tally of
                   zero that nobody measured. */}
               {dmVenueVotesError && (
-                <div role="alert" style={{ padding: '14px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px', marginBottom: '12px' }}>
-                  <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 10px', fontWeight: '500' }}>{dmVenueVotesError}</p>
-                  <button className="hit44 glass-btn glass-navy" onClick={() => loadDmVenueVotes(selectedDmId)} style={{ padding: '8px 14px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>
-                </div>
+                <BirdNote
+                  layout="row"
+                  size={48}
+                  role="alert"
+                  body={dmVenueVotesError}
+                  style={{ padding: '14px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px', marginBottom: '12px' }}
+                  action={<button className="hit44 glass-btn glass-navy" onClick={() => loadDmVenueVotes(selectedDmId)} style={{ padding: '8px 14px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>}
+                />
               )}
 
               {/* Current votes */}
@@ -531,6 +536,7 @@ export default function DmDetail({
                    strength of a request that never came back, is the version
                    of this panel that changes what the user does next. */
                 <div style={{ padding: '20px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px', marginBottom: '16px' }}>
+                  <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 8px' }} />
                   <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>No votes yet. Be the first to suggest a venue!</p>
                 </div>
               )}
@@ -608,6 +614,7 @@ export default function DmDetail({
                    sheet (ChatDetail). Same honesty here: say why, offer the
                    one real exit. */
                 <div style={{ padding: '16px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', textAlign: 'center' }}>
+                  <BirdieStill size={64} style={{ margin: '0 auto 8px' }} />
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: '1.5' }}>No venues to show here. Venue search is unavailable right now, so there is nothing to pick from yet.</p>
                   <button className="hit44 glass-btn glass-secondary" onClick={() => setShowDmVenueSearch(false)} style={{ padding: '10px 20px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
                 </div>
@@ -758,6 +765,7 @@ export default function DmDetail({
                 conversation with months of history landed. It must not read as
                 a fresh chat waiting for a hello. */}
             <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{dmBlocked[String(selectedDmId)] ? 'These messages are not available.' : 'Say hi to start the conversation.'}</p>
+            <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '16px auto 0' }} />
           </div>
         ) : (
           (() => {
