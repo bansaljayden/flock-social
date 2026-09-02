@@ -103,9 +103,10 @@ function reconciledFinding(reconciled, now = new Date()) {
         ? 'The reconciled Google Cloud line in services/costModel.js carries no readable date.'
         : `The reconciled Google Cloud line in services/costModel.js was last read from an invoice ${age} days ago, on ${asOf}.`,
       '',
-      'Open the Google Cloud billing page, read the latest paid invoice, and update',
-      'RECONCILED.lines[].usdPerMonth and RECONCILED.asOf together. The admin cost',
-      'panel and the DECA financial model both read from that block.',
+      'Open the Google Cloud billing page, read the latest paid invoice, then open',
+      'the admin dashboard, Revenue, and type the amount and the invoice date into',
+      'the Reconciled card. The cost panel, this heartbeat and the DECA financial',
+      'model all read that entry, so nothing in code needs editing.',
       '',
       `This alert repeats at most once a day while the date is older than ${RECONCILED_STALE_DAYS} days.`,
     ],
@@ -143,7 +144,8 @@ async function runCostHeartbeat() {
     const to = alertAddresses();
 
     const findings = [];
-    findings.push(reconciledFinding(costModel.RECONCILED));
+    // The merged block: a dashboard entry wins over the code constant.
+    findings.push(reconciledFinding(await costModel.readReconciled(pool)));
     let photo = null;
     try {
       photo = await photoStore.photoSpendStatus();
