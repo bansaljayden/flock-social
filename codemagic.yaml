@@ -651,11 +651,10 @@ workflows:
           # Reset pass, off camera: puts A back in a state the recording can
           # pass from (unblocks B, removes a leftover flock of this build
           # number) and never fails the build.
-          # The reset pass and the cleanup pass (apple-2-1-cleanup.yaml) are
-          # not run on 2026-09-02: the month's free minutes allow one more
-          # build of about fifty minutes, and the two passes cost fifteen
-          # between them. Leftovers on production are harmless; the flock
-          # name carries the build number so nothing collides.
+          # Reset pass, off camera: unblock B and delete leftovers from a failed
+          # run. It and the cleanup pass below cost about fifteen minutes
+          # between them; drop both when build minutes are short (2026-09-02).
+          maestro test "${MAESTRO_ARGS[@]}" --debug-output /tmp/maestro-debug/reset .maestro/apple-2-1-cleanup.yaml || true
           xcrun simctl io "$SIM_UDID" recordVideo --codec h264 --force /tmp/flock-review.mp4 &
           REC=$!
           sleep 3
@@ -667,6 +666,9 @@ workflows:
           kill -INT "$REC"
           wait "$REC"
           ls -la /tmp/flock-review.mp4 || true
+          # Cleanup pass, off camera: unblock B, delete this run's flock as its
+          # creator, delete C if the on-camera deletion did not happen.
+          maestro test "${MAESTRO_ARGS[@]}" --debug-output /tmp/maestro-debug/cleanup .maestro/apple-2-1-cleanup.yaml || true
           # Cleanup pass, off camera: unblock B, delete this run's flock as its
           # creator, delete C if the on-camera deletion did not happen. A and
           # B are never deleted.

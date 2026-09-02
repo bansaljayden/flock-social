@@ -397,9 +397,16 @@ appId: com.flockcorp.flock
     when:
       visible: "Review night ${REVIEW_RUN}"     # App.js:14598 flock card <h2>, card opens chatDetail (App.js:14571)
     commands:
-      - tapOn:
-          text: "Review night ${REVIEW_RUN}"
-          index: 0
+      # Accepting may already have opened the chat; then the flock's name is
+      # the chat header and tapping it is not wanted.
+      - runFlow:
+          when:
+            notVisible: "Type a message...|Message"
+          commands:
+            - tapOn:
+                text: "Review night ${REVIEW_RUN}"
+                index: 0
+                optional: true
       - runFlow: parts/open-chat.yaml
       - tapOn:
           text: "Type a message...|Message"              # ChatDetail.js:1269
