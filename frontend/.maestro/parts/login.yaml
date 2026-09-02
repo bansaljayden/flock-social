@@ -6,8 +6,21 @@ appId: com.flockcorp.flock
 - inputText: ${EMAIL}
 - tapOn: "Your password"
 - inputText: ${PASSWORD}
-- hideKeyboard
-- tapOn: "Sign in"
+# First run (2026-09-01): the fields tapped and typed, the keyboard was hidden,
+# and then "Sign in" was not found in the hierarchy. The form has a submit
+# button, so Enter from the password field submits it without needing the
+# button exposed; the scroll-and-tap is a fallback, optional so it cannot fail
+# the flow after Enter has already submitted.
+- pressKey: Enter
+- waitForAnimationToEnd
+- scrollUntilVisible:
+    element: "Sign in"
+    direction: DOWN
+    timeout: 5000
+    optional: true
+- tapOn:
+    text: "Sign in"
+    optional: true
 - extendedWaitUntil:
     visible: "Nest"
     timeout: 25000
