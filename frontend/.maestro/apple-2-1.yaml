@@ -541,6 +541,7 @@ appId: com.flockcorp.flock
 - tapOn:
     text: "Review night ${REVIEW_RUN}"          # App.js:14598 flock card <h2>
     index: 0
+    optional: true                              # open-chat.yaml retries this from Nest itself; a miss here must not end the take
 - runFlow: parts/open-chat.yaml
 # The bubble is a <button> with no aria-label whose content is the message
 # (ChatDetail.js:1053-1085); tapping it opens the reaction row with "Report".
@@ -580,6 +581,17 @@ appId: com.flockcorp.flock
 # (ProfileSettings.js:670). The row button reads "Unblock <name>"
 # (ProfileSettings.js:447 aria-label); the confirm button is the plain
 # "Unblock" (ProfileSettings.js:466), which only exists once the dialog is up.
+# The tab bar is the one thing this tap needs. If the chat's Back tap missed
+# and the chat is still up, a relaunch keeps the session and lands on Nest.
+- runFlow:
+    when:
+      notVisible: "You"
+    commands:
+      - launchApp:
+          permissions:
+            all: unset
+            contacts: allow
+      - waitForAnimationToEnd
 - tapOn: "You"
 - scrollUntilVisible:
     element: "Blocked accounts.*"                 # ProfileSettings.js:675 row; its label is the title plus the count, so the whole label is matched (every cleanup pass missed the exact text)
@@ -710,7 +722,20 @@ appId: com.flockcorp.flock
     visible: "Nest"
     timeout: 25000
     optional: true
-- tapOn: "You"
+# The tab bar is the one thing this tap needs. If the chat's Back tap missed
+# and the chat is still up, a relaunch keeps the session and lands on Nest.
+- runFlow:
+    when:
+      notVisible: "You"
+    commands:
+      - launchApp:
+          permissions:
+            all: unset
+            contacts: allow
+      - waitForAnimationToEnd
+- tapOn:
+    text: "You"
+    optional: true                              # end of the take: nothing after this may end the run
 - scrollUntilVisible:
     element:
       text: "Add Friends.*"                     # ProfileSettings.js:633 row; WKWebView exposes the whole button, title plus subtitle, as one label (run 5 missed the exact text)
