@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { BirdNote, WARM_BIRD } from './ui/BirdieBird';
 
 // Roost, the advisor's T0 surface (ADVISOR-PRODUCT-SHAPE.md sec 5), grown into
 // a screen a venue owner can poke at: a daypart-aware lead card, a tappable
@@ -442,15 +443,23 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
   if (state === 'error') {
     return (
       <div style={CARD_STYLE}>
-        <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 4px' }}>{FEATURE_NAME}</h3>
-        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px' }}>These didn't load.</p>
-        <button
-          className="hit44"
-          onClick={load}
-          style={{ padding: '8px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}
-        >
-          Try again
-        </button>
+        <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 8px' }}>{FEATURE_NAME}</h3>
+        <BirdNote
+          layout="row"
+          bird={WARM_BIRD}
+          size={48}
+          role="alert"
+          body="These didn't load."
+          action={(
+            <button
+              className="hit44"
+              onClick={load}
+              style={{ padding: '8px 14px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}
+            >
+              Try again
+            </button>
+          )}
+        />
       </div>
     );
   }
@@ -460,8 +469,8 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
   if (payload && payload.available === false) {
     return (
       <div style={CARD_STYLE}>
-        <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 4px' }}>{FEATURE_NAME}</h3>
-        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{verifyNote || payload.reason || 'Nothing to show yet.'}</p>
+        <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 8px' }}>{FEATURE_NAME}</h3>
+        <BirdNote layout="row" bird={WARM_BIRD} size={48} body={verifyNote || payload.reason || 'Nothing to show yet.'} style={{ marginBottom: '10px' }} />
         {/* Unverified is the one unavailable state the owner can act on, so it
             is the one that gets a button. No button once the request is in:
             the server has it, and pressing again cannot change the answer. */}

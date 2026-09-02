@@ -13578,8 +13578,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       )}
 
       {!locationLoading && locationEnabled && (locationError || venueLoadError) && (
-        <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ flexShrink: 0, display: 'flex' }}>{Icons.alertCircle('var(--accent-amber-text)', 16)}</span>
+        <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <BirdieStill size={48} style={{ flexShrink: 0 }} />
           <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 0, lineHeight: 1.5 }}>{locationError || venueLoadError}</p>
           <button className="hit44" onClick={() => { setLocationError(''); setVenueLoadError(''); setMapVenuesLoaded(false); requestUserLocation(true); }} style={{ flexShrink: 0, padding: '7px 12px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
         </div>
@@ -13653,15 +13653,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               search" for both, so a 500 from a missing Places key read as the
               user having spelled a bar's name wrong. */}
           {!venueSearching && venueQuery.trim().length >= 2 && venueResults.length === 0 && venueLoadError && (
-            <div style={{ padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-              {Icons.alertCircle('var(--accent-amber-text)', 15)}
-              <p role="alert" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{venueLoadError}</p>
-            </div>
+            <BirdNote layout="row" size={48} role="alert" body={venueLoadError} style={{ padding: '12px 16px' }} />
           )}
           {!venueSearching && venueQuery.trim().length >= 2 && venueResults.length === 0 && !venueLoadError && (
-            <div style={{ textAlign: 'center', padding: '16px 0' }}>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>No venues found. Try a different search.</p>
-            </div>
+            <BirdNote layout="row" bird={WARM_BIRD} size={48} body="No venues found. Try a different search." style={{ padding: '12px 16px' }} />
           )}
         </div>
       )}
@@ -13767,11 +13762,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {/* A failed search, said in the server's own words, rather than as
                   "No users found" over a lookup that never completed. */}
               {!connectSearching && connectSearchError && (
-                <p role="status" style={{ fontSize: 'var(--t-label)', color: 'var(--accent-red-text, #b91c1c)', textAlign: 'center', padding: '20px 8px', margin: 0, lineHeight: 1.5 }}>{connectSearchError}</p>
+                <BirdNote layout="row" size={48} role="status" body={connectSearchError} style={{ padding: '16px 8px' }} />
               )}
 
               {!connectSearching && !connectSearchError && connectSearch.trim().length >= 1 && connectResults.length === 0 && (
-                <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px 0', margin: 0 }}>No users found for "{connectSearch}"</p>
+                <BirdNote size={64} title={`No users found for "${connectSearch}"`} />
               )}
 
               {!connectSearching && connectResults.length > 0 && connectResults.map(user => {
@@ -13891,8 +13886,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 the retry here rather than sending the user off to search for
                 something the app never managed to ask about. */}
             {!featuredEventsLoading && featuredEventsError && (
-              <div role="alert" style={{ textAlign: 'center', padding: '48px 20px' }}>
-                {Icons.zap('var(--text-tertiary)', 36)}
+              <div role="alert" style={{ textAlign: 'center', padding: '40px 20px' }}>
+                <BirdieStill size={80} style={{ margin: '0 auto' }} />
                 <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-secondary)', margin: '12px 0 4px' }}>{featuredEventsError}</p>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 12px' }}>Nothing is wrong with your plans. This is the events list only.</p>
                 {userLocation && (
@@ -13903,15 +13898,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {/* No read has landed yet and none is running: the screen was
                 opened before there was a location to ask about. */}
             {!featuredEventsLoading && !featuredEventsError && !featuredEvents && (
-              <div style={{ textAlign: 'center', padding: '48px 20px' }}>
-                {Icons.mapPin('var(--text-tertiary)', 36)}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '40px 20px' }}>
+                <EmptyMark name="steps" height={96} />
                 <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-secondary)', margin: '12px 0 4px' }}>Events need your location</p>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Turn location on for Flock, or search for an event by name.</p>
               </div>
             )}
             {!featuredEventsLoading && !featuredEventsError && featuredEvents && featuredEvents.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '48px 20px' }}>
-                {Icons.zap('var(--text-tertiary)', 36)}
+              <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+                <BirdieStill bird={WARM_BIRD} size={80} style={{ margin: '0 auto' }} />
                 <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-secondary)', margin: '12px 0 4px' }}>No events found nearby</p>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Try searching for a specific event or artist</p>
               </div>
@@ -17979,14 +17974,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 /* A read that failed, never an empty venue. "Be the first!" is
                    a claim about everyone who has been here, and it is not this
                    card's to make when the request did not come back. */
-                <div role="alert" style={{ textAlign: 'center', padding: '12px' }}>
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>{venueDetailReviewsError}</p>
-                  <button className="hit44 glass-btn glass-secondary" onClick={() => loadVenueDetailReviews(venueDetailPlaceId)} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
-                </div>
+                <BirdNote
+                  layout="row"
+                  size={48}
+                  role="alert"
+                  body={venueDetailReviewsError}
+                  style={{ padding: '8px 4px' }}
+                  action={<button className="hit44 glass-btn glass-secondary" onClick={() => loadVenueDetailReviews(venueDetailPlaceId)} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>}
+                />
               ) : !venueDetailReviews ? (
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '12px' }}>Loading reviews...</p>
               ) : !showReviewForm && (
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '12px' }}>No reviews yet. Be the first!</p>
+                <BirdNote layout="row" bird={WARM_BIRD} size={48} body="No reviews yet. Be the first!" style={{ padding: '8px 4px' }} />
               )}
             </div>
 

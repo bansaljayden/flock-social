@@ -84,7 +84,19 @@ const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'RevenueScreen.js'), 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'FlockDetail.js'), 'utf8')
-  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'CreateScreen.js'), 'utf8');
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'CreateScreen.js'), 'utf8')
+  // The DM thread (screens/DmDetail.js) had no bird at all until the
+  // 2026-09-01 sweep; the empty thread, the votes panel and the venue sheet
+  // each carry one now, so it is read here too.
+  + fs.readFileSync(path.join(__dirname, '..', 'screens', 'DmDetail.js'), 'utf8')
+  // Two components that render their own empty and error states: the New
+  // Message sheet and the Roost insight cards.
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'NewDmModal.js'), 'utf8')
+  + fs.readFileSync(path.join(__dirname, '..', 'components', 'VenueInsightCards.js'), 'utf8');
+// The crash nets live outside the app tree and are read on their own: a bird
+// counted in APP would not prove the error page has one.
+const ERROR_BOUNDARY_SRC = fs.readFileSync(path.join(__dirname, '..', 'components', 'ErrorBoundary.js'), 'utf8');
+const INDEX_SRC = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
 const BIRD_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'components', 'ui', 'BirdieBird.js'),
   'utf8'
@@ -340,5 +352,109 @@ describe('BirdieStill source hygiene', () => {
     // The comment is load-bearing documentation: the next person who reaches
     // for the bare body PNG needs to hit the warning before the asset.
     expect(BIRD_SRC).toMatch(/BirdieStill[\s\S]{0,900}deliberately soft/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The 2026-09-01 sweep. Jayden, TestFlight 2026-08-21: "Any error page or
+// no-content page needs a bird. We have five birds, and we can add multiple
+// of them." The first pass covered the venue dashboard, blocked accounts,
+// past flocks and the friend search; this one covered what was left. Each
+// anchor below is a state that had no bird before the sweep. The point of
+// pinning the list is that it cannot shrink quietly: a refactor that drops
+// one of these falls red here rather than being noticed on a phone.
+// ---------------------------------------------------------------------------
+describe('the 2026-09-01 sweep: every remaining empty or error state has a bird', () => {
+  /** True when a bird is drawn within `before` chars ahead of, or `after`
+   *  chars past, the anchor. Row-layout BirdNotes carry the copy as a prop,
+   *  so the anchor is often INSIDE the tag and the bird is a few chars back.
+   *  Null when the anchor itself is gone, which fails the same way. */
+  const birdNear = (src, anchor, before = 700, after = 400) => {
+    const i = src.indexOf(anchor);
+    if (i === -1) return null;
+    return /<BirdNote|<BirdieStill|<EmptyMark/.test(src.slice(Math.max(0, i - before), i + after));
+  };
+
+  test('app states (App.js, screens, components)', () => {
+    const anchored = [
+      // Discover
+      ['Discover: location or venue load banner', '{locationError || venueLoadError}'],
+      ['Discover: search that failed', 'body={venueLoadError}'],
+      ['Discover: search that found nothing', 'body="No venues found. Try a different search."'],
+      ['Discover: events list failed', '{featuredEventsError}</p>'],
+      ['Discover: events need a location', 'Events need your location'],
+      ['Discover: no events nearby', 'No events found nearby</p>'],
+      ['Discover: person search failed', 'body={connectSearchError}'],
+      ['Discover: person search found nobody', 'No users found for "${connectSearch}"'],
+      // Venue detail
+      ['venue detail: reviews failed', 'body={venueDetailReviewsError}'],
+      ['venue detail: no reviews', 'body="No reviews yet. Be the first!"'],
+      // Add friends
+      ['add friends: search failed', 'body={addFriendsError}'],
+      ['add friends: search found nobody', 'No users found for "${addFriendsSearch}"'],
+      ['add friends: number matched nobody', 'Nobody on Flock has that number'],
+      // Flock chat
+      ['flock chat: no venue yet strip', 'No venue yet</p>'],
+      ['flock chat: no votes yet', 'No votes yet. Be the first to suggest a venue!'],
+      ['flock chat: no votes and no location', 'No votes yet. To see places to suggest'],
+      ['flock chat: venue sheet has nothing to pick', "? 'No venues to show here."],
+      // DMs
+      ['DM: votes failed', 'body={dmVenueVotesError}'],
+      ['DM: no votes yet', 'of this panel that changes what the user does next. */'],
+      ['DM: venue sheet has nothing to pick', 'No venues to show here. Venue search is unavailable right now, so there is nothing to pick from yet.</p>'],
+      ['DM: empty thread', 'Say hi to start the conversation.'],
+      // New message sheet
+      ['new message: search failed', 'body={dmSearchError}'],
+      ['new message: search found nobody', 'No users found for "${dmSearchText}"'],
+      ['new message: nothing typed yet', 'Type a name to find people'],
+      // You tab
+      ['trusted contacts: failed read', 'title={trustedContactsError}'],
+      ['trusted contacts: empty', 'No trusted contacts yet</p>'],
+      // Roost cards
+      ['Roost: cards failed', 'body="These didn\'t load."'],
+      ['Roost: unavailable', "body={verifyNote || payload.reason || 'Nothing to show yet.'}"],
+    ];
+    for (const [label, anchor] of anchored) {
+      const found = birdNear(APP, anchor);
+      expect([label, found]).toEqual([label, true]);
+    }
+  });
+
+  test('the crash nets: app boundary, page boundary, 404', () => {
+    expect(birdNear(ERROR_BOUNDARY_SRC, "Part of the app didn't load", 600)).toBe(true);
+    expect(birdNear(INDEX_SRC, "This page didn't finish loading", 300)).toBe(true);
+    expect(birdNear(INDEX_SRC, "There's nothing at this address", 500)).toBe(true);
+    // A crash card is the fold. A lazy bird there is the one bird that would
+    // never load, so both nets ask for it eagerly.
+    for (const src of [ERROR_BOUNDARY_SRC, INDEX_SRC]) {
+      for (const tag of src.match(/<BirdieStill\b[^>]*>/g) || []) expect(tag).toContain('eager');
+    }
+    // The 404 is the one page with nothing else on it, so it gets two.
+    const notFound = INDEX_SRC.slice(INDEX_SRC.indexOf('function NotFound'), INDEX_SRC.indexOf("There's nothing at this address"));
+    expect((notFound.match(/<BirdieStill\b/g) || []).length).toBe(2);
+  });
+
+  test('a bird beside an error never replaced its retry', () => {
+    // The surviving half of the retired rule, applied to the new sites: the
+    // failed reads that had a Try again before the sweep still have one.
+    for (const anchor of [
+      'body={venueDetailReviewsError}',
+      'body={dmVenueVotesError}',
+      'title={trustedContactsError}',
+      'body="These didn\'t load."',
+      '{locationError || venueLoadError}',
+      '{featuredEventsError}</p>',
+    ]) {
+      const i = APP.indexOf(anchor);
+      expect([anchor, i > -1]).toEqual([anchor, true]);
+      expect(APP.slice(i, i + 1200)).toContain('Try again');
+    }
+  });
+
+  test('the sweep did not spread the animated bird', () => {
+    // Still birds only. BirdieBird (the rAF loop) is pinned at two mounts
+    // above; the files added to APP for this sweep must not add a third.
+    const dm = fs.readFileSync(path.join(__dirname, '..', 'screens', 'DmDetail.js'), 'utf8');
+    for (const src of [dm, ERROR_BOUNDARY_SRC, INDEX_SRC]) expect(src).not.toMatch(/<BirdieBird\b/);
   });
 });

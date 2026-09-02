@@ -1,4 +1,5 @@
 import React from 'react';
+import { BirdieStill, BIRDIE, WARM_BIRD } from './ui/BirdieBird';
 
 /**
  * The app's crash net.
@@ -142,6 +143,11 @@ class ErrorBoundary extends React.Component {
     return (
       <div style={styles.screen} role="alert">
         <div style={styles.card}>
+          {/* Every error page carries a bird (Jayden, build 26). Eager: this
+              card IS the fold, and a lazy image on a crash screen would be
+              the one bird that never arrives. Warm for a download that died,
+              cobalt for a real crash, so the two pages do not look alike. */}
+          <BirdieStill bird={isChunkError ? WARM_BIRD : BIRDIE} size={72} eager style={{ margin: '0 0 12px' }} />
           <h1 style={styles.title}>{isChunkError ? "Part of the app didn't load" : 'The app hit an error'}</h1>
           {isChunkError ? (
             <p style={styles.body}>
