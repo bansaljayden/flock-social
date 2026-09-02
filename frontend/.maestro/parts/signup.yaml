@@ -16,7 +16,10 @@ appId: com.flockcorp.flock
 - inputText: ${EMAIL}
 - tapOn: "At least 8 characters"
 - inputText: ${PASSWORD}
-- hideKeyboard
+# Maestro's hideKeyboard fails against WKWebView inputs on the Simulator
+# ("Couldn't hide the keyboard", first run 2026-09-01). Tapping static text is
+# the dismissal Maestro itself recommends; the heading is always on screen.
+- tapOn: "Create your account"
 
 # Date of birth.
 - tapOn:
@@ -44,7 +47,6 @@ appId: com.flockcorp.flock
 - tapOn:
     text: "Create your account"
     optional: true
-- hideKeyboard
 
 # The tap worked on the first run, but the login form's submit was lost below
 # the fold after the keyboard closed, so the same insurance applies here.
