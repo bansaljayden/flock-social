@@ -287,6 +287,12 @@ const OUT_OF_SCOPE_PATTERNS = [
 // greeting and the same pointer at what Roost actually takes; genuine
 // off-topic questions keep their firm refusals below.
 //
+// IT IS NOT A REFUSAL, AND IT IS NOT LABELED AS ONE (2026-09-02). classify()
+// returns it as mode 'small_talk' and routes/advisor.js passes that label to
+// the client, so the chat draws it in answer ink rather than refusal ink and
+// the analytics refusal count is not padded by every "thanks". Every real
+// refusal keeps mode 'refused' exactly as before.
+//
 // THE REPLY IS A PERSON'S, NOT A NOTICE. The first version of these read
 // "Doing fine, thanks. Ask about your venue's numbers or about running the
 // room, and we will take it from there.", which is a greeting only in the
@@ -767,14 +773,15 @@ function parseRoute(raw) {
 
 /**
  * Route one sanitised question. Never throws, never guesses.
- * @returns {Promise<{mode: 'grounded'|'advice'|'refused', intentId: string|null, refusal?: string}>}
+ * @returns {Promise<{mode: 'grounded'|'advice'|'refused'|'small_talk', intentId: string|null, refusal?: string, text?: string}>}
  */
 async function classify({ userId, question }) {
   // A greeting is answered as a greeting, before any screen and any spend.
   // Anchored whole-message patterns only: anything carrying an actual ask
-  // falls straight through to the screens and the router.
+  // falls straight through to the screens and the router. The reply rides in
+  // `text`, not `refusal`, because it is the answer and not a decline.
   const greeting = smallTalk(question);
-  if (greeting) return { mode: 'refused', intentId: null, refusal: greeting };
+  if (greeting) return { mode: 'small_talk', intentId: null, text: greeting };
 
   const hard = screen(question);
   if (hard) return { mode: 'refused', intentId: null, refusal: hard };
