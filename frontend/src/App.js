@@ -13922,6 +13922,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               const timeStr = event.time ? new Date('2000-01-01T' + event.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
               const categoryColors = { concert: '#4a7ba7', sports: '#22C55E', arts: '#EC4899', comedy: '#F59E0B', festival: '#EF4444', film: '#3B82F6', other: colors.navy };
               const catColor = categoryColors[event.category] || colors.navy;
+              // Only an absolute http(s) URL with no quote or bracket may reach
+              // the CSS url() below, so a hostile or malformed vendor string
+              // cannot close the url() and inject a second declaration.
+              const headerArt = typeof event.image_url === 'string'
+                && /^https?:\/\//i.test(event.image_url)
+                && !/["'()\\\s]/.test(event.image_url)
+                ? event.image_url
+                : null;
               const dist = event.location && userLocation ? (() => {
                 const dLat = (event.location.latitude - userLocation.lat) * Math.PI / 180;
                 const dLng = (event.location.longitude - userLocation.lng) * Math.PI / 180;
@@ -13934,21 +13942,41 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   key={event.id}
                   style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', border: '1px solid var(--border-default)', marginBottom: '10px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.04)' }}
                 >
-                  {/* Event image */}
-                  {event.image_url && (
-                    <div style={{ position: 'relative', height: '140px' }}>
-                      <img src={event.image_url} alt="" style={{ width: '100%', height: '140px', objectFit: 'cover', display: 'block' }} onError={(e) => { e.target.style.display = 'none'; e.target.parentElement.style.height = '0'; }} />
-                      <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 50%, rgba(0,0,0,0.7) 100%)' }} />
-                      {/* Category badge */}
-                      <div style={{ position: 'absolute', top: '10px', left: '10px', padding: '4px 10px', borderRadius: '10px', backgroundColor: catColor, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'white', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{event.category}</span>
-                      </div>
-                      {/* Date badge */}
-                      <div style={{ position: 'absolute', top: '10px', right: '10px', padding: '4px 10px', borderRadius: '10px', backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)' }}>
-                        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white' }}>{dateStr}</span>
-                      </div>
-                    </div>
-                  )}
+                  {/* Event header.
+                      This used to be an <img> whose onError set the image to
+                      display:none and its own parent to height:0. The badges
+                      inside that parent were absolutely positioned, so
+                      collapsing the box did not remove them: they landed on the
+                      title underneath and clipped it. Every Ticketmaster image
+                      was failing that way, because the CDN was missing from the
+                      img-src allowlist, so the broken case was the only case
+                      anyone ever saw.
+                      A background image has no error event and no zero-height
+                      state. The box keeps its height whatever happens to the
+                      picture, an unreachable URL simply leaves the category tint
+                      showing, and the badges cannot escape their container. The
+                      header renders for every event now, with or without art,
+                      so the layout is one shape rather than two. */}
+                  <div style={{
+                    position: 'relative',
+                    height: '132px',
+                    backgroundColor: catColor,
+                    backgroundImage: headerArt
+                      ? `linear-gradient(rgba(0,0,0,0.10), rgba(0,0,0,0.62)), url("${headerArt}")`
+                      : `linear-gradient(140deg, ${catColor} 0%, ${colors.navy} 100%)`,
+                    backgroundSize: 'cover',
+                    backgroundPosition: 'center',
+                    display: 'flex',
+                    alignItems: 'flex-start',
+                    justifyContent: 'space-between',
+                    gap: '8px',
+                    padding: '10px',
+                  }}>
+                    <span style={{ padding: '4px 10px', borderRadius: '10px', backgroundColor: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)', fontSize: 'var(--t-micro)', fontWeight: '700', color: 'white', textTransform: 'uppercase', letterSpacing: '0.5px', whiteSpace: 'nowrap' }}>{event.category}</span>
+                    {dateStr && (
+                      <span style={{ padding: '4px 10px', borderRadius: '10px', backgroundColor: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'white', whiteSpace: 'nowrap' }}>{dateStr}</span>
+                    )}
+                  </div>
                   {/* Event details */}
                   <div style={{ padding: '12px 14px' }}>
                     <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px', lineHeight: '1.3' }}>{event.name}</h3>
@@ -13967,9 +13995,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, display: 'flex', alignItems: 'center', gap: '3px' }}>
                           {Icons.clock(colors.navy, 12)} {timeStr}
                         </span>
-                      )}
-                      {!event.image_url && dateStr && (
-                        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>{dateStr}</span>
                       )}
                       {event.genre && event.genre !== event.category && (
                         <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: catColor, backgroundColor: `${catColor}15`, padding: '2px 8px', borderRadius: '8px' }}>{event.genre}</span>
