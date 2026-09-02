@@ -740,6 +740,160 @@ describe('Roost chat: the keyboard behaves like a keyboard', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// BIRDIE IS IN THE ROOM.
+//
+// Jayden, TestFlight build 26 (2026-08-21): "have Birdie pop out when it's
+// talking so that it feels interactive. Like you're not just talking to a
+// blank wall. And then still have Birdie as the background. It should feel
+// like a regular chat." The component shipped that on 2026-08-25 and nothing
+// here pinned it, so a refactor could have quietly put the blank wall back.
+//
+// Three placements: the greeter before a word is said, the avatar beside every
+// answer, and the whisper behind the scrollback. The pin that matters on THIS
+// surface, which is paid and fact-gated, is the refusal one: the bird moves
+// only while an answer is in flight, and a declined question gets the same
+// bird, in the same place, holding the same still pose as a grounded answer.
+// He is company, never a claim about what the server knows.
+// ---------------------------------------------------------------------------
+describe('Roost chat: Birdie is in the room', () => {
+  const CSS = fs.readFileSync(path.resolve(__dirname, '..', 'index.css'), 'utf8');
+  const heads = (root) => Array.from(root.querySelectorAll('img[src$="birdie-head-400.png"]'));
+  const avatars = (root) => Array.from(root.querySelectorAll('[data-roost="avatar"]'));
+
+  const askAndWait = async (answer) => {
+    const input = await waitFor(field);
+    fireEvent.change(input, { target: { value: 'a question' } });
+    fireEvent.click(send());
+    await waitFor(() => expect(screen.getByText(answer.text)).toBeTruthy());
+  };
+
+  test('before a word is said Birdie greets, and nothing sits behind an empty thread', async () => {
+    const { container } = mount();
+    await waitFor(field);
+    const greeter = container.querySelector('[data-roost="greeter"]');
+    expect(greeter).not.toBeNull();
+    // One composite bird (head over body), big enough to be a photograph.
+    expect(heads(greeter).length).toBe(1);
+    const wrap = heads(greeter)[0].closest('div[aria-hidden="true"]');
+    expect(parseInt(wrap.style.width, 10)).toBeGreaterThanOrEqual(64);
+    expect(container.querySelector('[data-roost="whisper"]')).toBeNull();
+    expect(avatars(container).length).toBe(0);
+  });
+
+  test('once the conversation starts the greeter steps aside and the whisper stands behind the thread', async () => {
+    const { container } = mount();
+    await askAndWait(GROUNDED);
+    expect(container.querySelector('[data-roost="greeter"]')).toBeNull();
+    const whisper = container.querySelector('[data-roost="whisper"]');
+    expect(whisper).not.toBeNull();
+    expect(heads(whisper).length).toBe(1);
+    // Decoration, and only decoration: hidden from the tree, not pressable,
+    // and clipped to the frame so it can never grow the card.
+    expect(whisper.getAttribute('aria-hidden')).toBe('true');
+    expect(whisper.style.pointerEvents).toBe('none');
+    expect(whisper.style.overflow).toBe('hidden');
+    // Behind the thread, not inside it: he is fixed to the frame and the
+    // turns scroll past him, so the answer text must not be his descendant.
+    expect(whisper.contains(screen.getByText(GROUNDED.text))).toBe(false);
+  });
+
+  test('every answer has Birdie standing beside it, level with its first line', async () => {
+    let n = 0;
+    const { container } = mount({ askQuestion: async () => ({ ...GROUNDED, text: `answer number ${++n}` }) });
+    const input = await waitFor(field);
+    for (const q of ['one', 'two']) {
+      fireEvent.change(input, { target: { value: q } });
+      fireEvent.click(send());
+      await waitFor(() => expect(screen.getByText(`answer number ${n}`)).toBeTruthy());
+    }
+    const stands = avatars(container);
+    expect(stands.length).toBe(2);
+    for (const [i, stand] of stands.entries()) {
+      expect(heads(stand).length).toBe(1);
+      // Left of the words, in the same row, and ahead of them in the tree.
+      const answer = screen.getByText(`answer number ${i + 1}`);
+      expect(stand.compareDocumentPosition(answer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(stand.parentElement.contains(answer)).toBe(true);
+      expect(stand.parentElement.style.alignItems).toBe('flex-start');
+    }
+  });
+
+  test('he pops in and bobs only while the answer is in flight, and holds still once it lands', async () => {
+    let release;
+    const { container } = mount({ askQuestion: () => new Promise((r) => { release = () => r(GROUNDED); }) });
+    const input = await waitFor(field);
+    fireEvent.change(input, { target: { value: 'is anyone there' } });
+    fireEvent.click(send());
+
+    // In flight: he is already standing where the answer will land.
+    const stand = avatars(container)[0];
+    expect(stand).toBeTruthy();
+    expect(stand.classList.contains('roost-pop')).toBe(true);
+    expect(stand.querySelector('.roost-bob')).not.toBeNull();
+    expect(screen.getByText(/working on it/i)).toBeTruthy();
+
+    await act(async () => { release(); });
+    await waitFor(() => expect(screen.getByText(GROUNDED.text)).toBeTruthy());
+    // Landed: same bird, same place, no motion left on him.
+    const same = avatars(container)[0];
+    expect(same).toBe(stand);
+    expect(same.classList.contains('roost-pop')).toBe(false);
+    expect(same.querySelector('.roost-bob')).toBeNull();
+  });
+
+  test('a refusal gets the same bird, in the same place, holding the same still pose', async () => {
+    const { container, unmount } = mount({ askQuestion: async () => GROUNDED });
+    await askAndWait(GROUNDED);
+    const grounded = avatars(container)[0];
+    const groundedSize = grounded.querySelector('div[aria-hidden="true"]').style.width;
+    unmount();
+    clearAdvisorThread();
+
+    const second = mount({ askQuestion: async () => REFUSAL });
+    await askAndWait(REFUSAL);
+    const refused = avatars(second.container)[0];
+    expect(refused).toBeTruthy();
+    expect(refused.querySelector('div[aria-hidden="true"]').style.width).toBe(groundedSize);
+    expect(refused.classList.contains('roost-pop')).toBe(false);
+    expect(refused.querySelector('.roost-bob')).toBeNull();
+    // Nothing about him is allowed to read the answer. The only class switch
+    // in the avatar is on `pending`, never on the mode.
+    const avatarBlock = SRC.slice(SRC.indexOf('data-roost="avatar"') - 400, SRC.indexOf('data-roost="avatar"') + 400);
+    expect(avatarBlock).toContain("className={pending ? 'roost-pop' : undefined}");
+    expect(avatarBlock).toContain("className={pending ? 'roost-bob' : undefined}");
+    expect(avatarBlock).not.toMatch(/answer\.mode|refusal|advice/);
+  });
+
+  test('the motion is CSS the reduced-motion rule already collapses, and the still bird only', () => {
+    expect(CSS).toContain('@keyframes roostPop');
+    expect(CSS).toContain('@keyframes roostBob');
+    expect(CSS).toMatch(/\.roost-pop \{ animation: roostPop/);
+    expect(CSS).toMatch(/\.roost-bob \{ animation: roostBob/);
+    // The global rule: one iteration at effectively zero duration, for every
+    // element, which turns the pop into the photograph and stops the bob.
+    const reduced = CSS.slice(CSS.indexOf('@media (prefers-reduced-motion: reduce)'));
+    expect(reduced).toMatch(/\*, \*::before, \*::after \{[\s\S]*?animation-duration: 0\.001ms !important;[\s\S]*?animation-iteration-count: 1 !important;/);
+    // Still photographs. The rAF bird stays on Birdie's own consumer surface
+    // (birdBrandMoments.test.js rule 2); this is a work tool.
+    expect(SRC).not.toMatch(/<BirdieBird\b/);
+    expect(SRC).toMatch(/import \{ BirdieStill, BirdNote \} from '\.\/ui\/BirdieBird';/);
+    // And no avatar below the size where the photograph turns to a smudge.
+    expect(parseInt(SRC.match(/const AVATAR_SIZE = (\d+);/)[1], 10)).toBeGreaterThanOrEqual(40);
+  });
+
+  test('the composer Jayden verified is unchanged: grows to 132, Enter sends, Shift+Enter breaks', async () => {
+    mount();
+    const input = await waitFor(field);
+    expect(parseInt(SRC.match(/const COMPOSER_MAX_HEIGHT = (\d+);/)[1], 10)).toBe(132);
+    expect(input.style.maxHeight).toBe('132px');
+    expect(input.style.minHeight).toBe('44px');
+    // Enter and Shift+Enter are pinned in their own describe above; this only
+    // confirms the box they act on is the same one the bird was added around.
+    expect(input.tagName).toBe('TEXTAREA');
+  });
+});
+
 describe('Roost chat: SLOP pins on the source itself', () => {
   test('the product name is said once per screen: the cards title the surface, this block does not', () => {
     // Both constants still exist, so a rename is still one line each.

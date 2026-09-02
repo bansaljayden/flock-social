@@ -58,6 +58,12 @@ const mount = (props = {}) => render(
   })
 );
 
+// The Roost card's button is an OPTIONAL path as of 2026-09-01: the dashboard
+// stopped handing it a handler (see "one surface presses the handler" below),
+// so in the shipping app this card draws no button and the intel card above it
+// carries the one ask. These tests still mount the card WITH a handler,
+// because the contract (button only while un-requested, server sentences
+// verbatim, error left pressable) is what any future host would rely on.
 describe('Roost card: the request button', () => {
   test('an unverified venue gets the button, under the server reason verbatim', async () => {
     mount({ verificationStatus: 'unverified' });
@@ -130,10 +136,30 @@ describe('The wiring behind the button', () => {
     expect(button).not.toBeNull();
   });
 
-  test('both surfaces press the same handler, so one request settles both cards', () => {
-    expect(APP_SRC).toContain('onRequestVerification={requestVerificationNow}');
+  // 2026-09-01. This test used to pin the opposite: "both surfaces press the
+  // same handler, so one request settles both cards". They did, and that was
+  // the defect. On the Analytics tab a premium unverified owner saw "Request
+  // verification" on the intel card and again on the Roost card a scroll
+  // below, and Jayden's TestFlight complaint was precisely that the screen
+  // said it too many times. The intel card keeps the button; the dashboard no
+  // longer hands the Roost card a handler, and the card draws no button
+  // without one (rendered below, not just read off the source).
+  test('one surface presses the handler on Analytics: the Roost card no longer duplicates it', () => {
+    expect(APP_SRC).not.toContain('onRequestVerification={requestVerificationNow}');
     expect(APP_SRC).toContain('onClick={handleRequestVerification}');
-    expect(CARDS_SRC).toContain('onClick={requestVerification}');
+    // The card's own path is still gated on being handed a handler at all.
+    expect(CARDS_SRC).toContain("typeof onRequestVerification === 'function' && (");
+  });
+
+  test('handed no handler, the Roost card prints the server reason and no button', async () => {
+    render(React.createElement(VenueInsightCards, {
+      fetchCards: () => Promise.resolve(unverifiedPayload(UNREQUESTED_REASON)),
+      colors: { navy: '#1B2A4A', red: '#EF4444' },
+      verificationStatus: 'unverified',
+      now: new Date(2026, 7, 21, 20, 0, 0),
+    }));
+    expect(await screen.findByText(UNREQUESTED_REASON)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Request verification' })).toBeNull();
   });
 
   // AUDIT 2026-08-26. The button above shipped inside the `venueIntel` card,

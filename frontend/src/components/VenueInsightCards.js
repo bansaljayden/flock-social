@@ -356,9 +356,15 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
   useEffect(() => { load(); }, [load]);
 
   // Roost refuses an unverified venue, and the refusal used to name a next step
-  // the product did not offer anywhere. The parent owns the request (both this
-  // card and the analytics card above it press the same handler) and hands back
-  // the server's message; this only decides what the card says afterwards.
+  // the product did not offer anywhere. The parent owns the request and hands
+  // back the server's message; this only decides what the card says afterwards.
+  //
+  // THE DASHBOARD NO LONGER PASSES THE HANDLER (2026-09-01). It did, and the
+  // intel card at the top of the same tab pressed the same one, so an
+  // unverified premium owner saw "Request verification" twice in one scroll.
+  // Jayden's TestFlight note was that the screen said it too many times. The
+  // prop stays optional for a host with no other ask on screen; with none
+  // given, the unverified state prints the server's reason and no button.
   const requestVerification = useCallback(async () => {
     if (typeof onRequestVerification !== 'function' || verifyBusy) return;
     setVerifyBusy(true);

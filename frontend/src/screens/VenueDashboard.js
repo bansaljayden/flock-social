@@ -109,6 +109,10 @@ export default function VenueDashboard({
   renderVenueTime,
   replyText,
   replyingToReview,
+  // Still handed over by App.js and no longer read here: the Roost card
+  // stopped taking a verification handler on 2026-09-01 (see the
+  // <VenueInsightCards> call site). extractionEquivalence pins this list to
+  // the props object in App.js, so the name leaves both files together.
   requestVerificationNow,
   retryVenueIntel,
   savingVenueIntake,
@@ -999,12 +1003,17 @@ export default function VenueDashboard({
                to already know to act on the sentence they just read, so the
                card gets the door and this is the far side of it. */
             onOpenSettings={() => setVenueTab('settings')}
-            /* Roost refuses an unverified venue for a real reason, and until
-               now the refusal named a next step the product did not offer.
-               The card gets the same button the top card has, off the same
-               handler, so one press settles both. */
-            verificationStatus={venueProfile?.verification_status || null}
-            onRequestVerification={requestVerificationNow}
+            /* NO VERIFICATION BUTTON HERE, AS OF 2026-09-01. This card used
+               to carry a second "Request verification" off the same handler
+               as the intel card at the top of this tab, so an unverified
+               premium owner opened Analytics to the button twice within one
+               scroll. Jayden's TestFlight note (2026-08-21) was precisely
+               that the screen said it too many times. Both cards render
+               under the same `can.analytics` gate, so the intel card's copy
+               is always on screen whenever this one would have been: one ask
+               per screen, and it lives one card up. The card still prints
+               the server's reason sentence, which is the answer to "why are
+               there no cards", and with no handler it draws no button. */
           />
           {/* Roost chat: suggested questions, plus a field the owner can type into.
               Grounded answers come from the same fact engine as the cards above;

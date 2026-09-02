@@ -286,21 +286,36 @@ const OUT_OF_SCOPE_PATTERNS = [
 // valve has nothing to inspect. The scope does not widen: a greeting gets a
 // greeting and the same pointer at what Roost actually takes; genuine
 // off-topic questions keep their firm refusals below.
+//
+// THE REPLY IS A PERSON'S, NOT A NOTICE. The first version of these read
+// "Doing fine, thanks. Ask about your venue's numbers or about running the
+// room, and we will take it from there.", which is a greeting only in the
+// sense that it is not a refusal. 2026-09-01: one warm line, then the steer
+// back to the venue. No question is asked back, on purpose: an owner who
+// answered "good, you?" would land in the router with nothing routable and be
+// told we could not tell what they were asking, which is the original
+// complaint wearing a different sentence.
 const SMALL_TALK = [
   {
     // A bare greeting and nothing else.
     re: /^(hi|hiya|hey(\s+there)?|heya|hello(\s+there)?|howdy|yo|good\s+(morning|afternoon|evening)|morning|afternoon|evening)[\s!,.?]*$/i,
-    text: 'Hello. Ask about your venue\'s numbers or about running the room, and we will take it from there.',
+    text: 'Hello, good to see you. Ask about your venue\'s numbers or how to run the room, and we will take it from there.',
   },
   {
     // The polite check-in.
     re: /^(how\s+are\s+(you|ya|things)(\s+(doing|going|today|tonight)){0,2}|how('s|\s+is)\s+it\s+going|how\s+(are\s+)?you\s+doing|how('s|\s+is)\s+(everything|things|life)|you\s+(ok|okay|good|alright|all\s+right)|what('s|\s+is)\s+up|sup|wassup|whats\s+up)[\s!,.?]*$/i,
-    text: 'Doing fine, thanks. Ask about your venue\'s numbers or about running the room, and we will take it from there.',
+    text: 'Doing well, thanks for asking. Whenever you are ready, ask about your venue\'s numbers or how to run the room, and we will take it from there.',
   },
   {
     // Thanks, and nothing else.
     re: /^(thanks|thank\s+you|thankyou|ty|cheers|appreciate\s+(it|that)|(ok(ay)?,?\s+)?(great|got\s+it|perfect|nice),?\s*thanks?(\s+you)?)[\s!,.?]*$/i,
-    text: 'Any time. Ask another whenever you have one.',
+    text: 'Any time. Ask the next question whenever you have it.',
+  },
+  {
+    // A sign-off, and nothing else. Without this "goodnight" was an
+    // outside_trade refusal, which is a strange last thing to be told.
+    re: /^(bye|goodbye|bye\s+for\s+now|good\s*night|see\s+you(\s+later|\s+tomorrow)?|see\s+ya|take\s+care|have\s+a\s+good\s+(one|night|day))[\s!,.?]*$/i,
+    text: 'Take care. Roost is here whenever the next question comes up.',
   },
 ];
 
@@ -325,7 +340,13 @@ const REFUSAL_UNROUTABLE = "We can't answer that yet. We could not tell what par
 // is the worst kind of false, because it teaches the owner to rephrase a
 // question that was understood the first time and will be declined every time.
 // This is the boundary, said as a boundary, and it sells nothing.
-const REFUSAL_ROUTED_OUT = `${OUTSIDE} We take questions about your own venue's numbers and about running the room. Anything else is a better question for something that is not us.`;
+//
+// PLAIN, NOT BLUNT (2026-09-01). This and outside_trade below used to close
+// with "Anything else is a better question for something that is not us" and
+// "and that is the whole of it", which say the same true thing in the voice
+// of a door being shut. The boundary is unchanged: food and drink venues,
+// nothing else. The sentence now ends by pointing at the way back in.
+const REFUSAL_ROUTED_OUT = `${OUTSIDE} We take questions about your own venue's numbers and about running the room. Ask one of those and we will take it from there.`;
 
 // ONE REFUSAL SENTENCE FOR EVERY DECLINED QUESTION IS ITSELF A SMALL LIE. The
 // first version of the sentence above named competitors, law, pay and tax, and
@@ -356,7 +377,7 @@ const REFUSAL_BY_REASON = Object.freeze({
   private_people: `${OUTSIDE} We never report anything about the individual people who use Flock: who they are, how old they are, what they planned, or what they spent. That stays private, including from you.`,
   money_outcome: `${OUTSIDE} We do not put a figure on what a move will earn or what it will cost you. What we can show you is the pattern your room actually runs on, and you know your own margins better than we do.`,
   invented_number: `${OUTSIDE} We do not have that figure, and we will not invent one. Every number in here comes from your own venue or from a source we name.`,
-  outside_trade: `${OUTSIDE} We answer questions about running one food or drink venue, and that is the whole of it.`,
+  outside_trade: `${OUTSIDE} We answer questions about running one food or drink venue. Ask about yours and we will take it from there.`,
   // NEITHER OF THESE OPENS WITH "OUTSIDE WHAT ROOST DOES", because neither of
   // them is. Both were served that sentence until 2026-08-20, because
   // outside_trade was the only reason in the closed set wide enough to catch

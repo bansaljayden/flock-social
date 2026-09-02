@@ -251,6 +251,7 @@ const ThreadTurn = ({ turn, first, navy, navyBg, onRetry }) => {
              and a turn that has resolved. They are added when the turn opens
              and removed when it settles, whatever it settled into. */
           className={pending ? 'roost-pop' : undefined}
+          data-roost="avatar"
           aria-hidden="true"
           style={{ display: 'block', flexShrink: 0 }}
         >
@@ -902,7 +903,7 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
           to "feel like a regular chat" (build 26 review, 2026-08-21). The
           lead-in copy is unchanged: the bird adds presence, not promises. */}
       {!started && (
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '14px 0 2px' }}>
+        <div data-roost="greeter" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '14px 0 2px' }}>
           <BirdieStill size={88} eager />
           <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '10px 0 0', lineHeight: 1.5, maxWidth: '300px' }}>
             {freeText ? LEAD_IN_FREE : LEAD_IN_CHIPS}
@@ -926,6 +927,7 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
       {started && (
         <div style={{ position: 'relative', margin: '12px 0 2px' }}>
           <div
+            data-roost="whisper"
             aria-hidden="true"
             style={{ position: 'absolute', inset: 0, overflow: 'hidden', opacity: 'var(--roost-whisper, 0.05)', pointerEvents: 'none' }}
           >
