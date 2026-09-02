@@ -15,6 +15,12 @@ appId: com.flockcorp.flock
     text: "Start a Flock"                       # still on the create screen: creation did not go through
     optional: true
 - assertVisible:
+    text: ".*didn't get created.*"              # CreateScreen.js error toast: the request failed and the form came back
+    optional: true
+- assertVisible:
+    text: ".*[Vv]erif.*"                        # the verification refusal, if the server thinks the account is unverified
+    optional: true
+- assertVisible:
     text: "Open Chat|Open chat"                 # FlockDetail plan view
     optional: true
 - assertVisible:
