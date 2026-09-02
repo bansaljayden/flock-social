@@ -59,9 +59,6 @@ appId: com.flockcorp.flock
     permissions:
       all: unset
       contacts: allow
-    permissions:
-      all: unset
-      contacts: allow
 # ---------------------------------------------------------------------------
 # Shots 1-4, account C: launch to the login screen, sign up with the date of
 # birth on screen, land on "Confirm your email", go back to the login form
@@ -69,11 +66,20 @@ appId: com.flockcorp.flock
 # signup did not stick, C's login fails, the login screen stays up with C's
 # email in it, and A's login below clears the fields (parts/login.yaml).
 # ---------------------------------------------------------------------------
+- assertVisible: "Welcome back"                 # LoginScreen.js:146, fresh launch shows LoginScreen (App.js authScreen default 'login')
+- runFlow:
+    file: parts/signup.yaml
+    env:
+      NAME: ${NAME_C}
+      EMAIL: ${REVIEW_EMAIL_C}
+      PASSWORD: ${REVIEW_PASSWORD_C}
 # The sign-in check for C and the friend request and accept between A and B
 # were cut on 2026-09-02 for the one build the remaining free minutes allow:
 # none of them is a numbered shot (A logs in on camera below, and A and B
 # are already friends on the production accounts), and together they cost
 # five minutes of a fifty-minute budget. They live in git history at 193d4b0.
+# The trim that cut them (3d98245) took the signup block above with them by
+# mistake, so build 19's take has no shots 1 to 3; this restores it.
 # ---------------------------------------------------------------------------
 
 
