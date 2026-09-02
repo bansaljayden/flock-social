@@ -161,3 +161,61 @@ describe('the admin costs payload and the panel that reads it', () => {
     expect(APP).toContain('d.pushDelivery');
   });
 });
+
+/**
+ * THE FIXED-COST HALF, WHERE THE FAILURE IS NOT AN ABSENT BLOCK BUT A PRESENT
+ * ONE THAT SAYS TOO LITTLE.
+ *
+ * Every key above is either drawn or explained. `fixed` was drawn, and drawn
+ * as a label and a number, so three facts costModel.js goes to trouble to
+ * carry arrived on the screen and were thrown away: whether a human has seen
+ * the figure on an invoice, the date somebody last looked, and the reason the
+ * bill exists. Vercel's assumed $0 rendered exactly like a confirmed free
+ * tier, the domain's $12 placeholder rendered exactly like a bill, and the
+ * panel's own copy claimed every line carried a checked date above eight rows
+ * that carried none.
+ *
+ * A key-level test cannot see that, because the key was present the whole
+ * time. These pin the fields inside it.
+ */
+describe('a fixed cost is rendered with its provenance, not just its number', () => {
+  it('the unverified flag reaches both tabs that list fixed bills', () => {
+    // Costs tab: a tag beside the label, from the row builder.
+    expect(APP).toMatch(/!e\.verified\s*&&\s*<span style=\{unverifiedTag\}>Unverified<\/span>/);
+    // Projections tab: the same fact, in the terse list. A figure marked on
+    // one screen and bare on the next is not marked.
+    expect(APP).toContain('e.verified ? e.label : `${e.label} (unverified)`');
+  });
+
+  it('an unverified line is counted rather than dropped, and says how much money it is', () => {
+    // The rule the file itself states: an unverified line is still in the
+    // total, and the total says how much of itself is unverified.
+    expect(APP).toContain('fixed.unverifiedMonthlyUsd');
+    expect(APP).toContain('fixed.unverifiedAnnualUsd');
+    expect(APP).toMatch(/counted in every total above/i);
+  });
+
+  it('the checked date is on the row, since the panel claims it is', () => {
+    expect(APP).toContain('Checked ${e.checked}');
+    // And the doctrine that makes a stale date readable rather than alarming.
+    expect(APP).toContain('fixed.oldestChecked');
+    expect(APP).toMatch(/stale date means unverified rather than wrong/i);
+  });
+
+  it('monthly, annual and one-time are three separate figures', () => {
+    // One-time money must never land inside a monthly total. The panel shows
+    // it below the effective-monthly line with that said in words.
+    expect(APP).toContain('fixed.monthlyUsd');
+    expect(APP).toContain('fixed.annualUsd');
+    expect(APP).toContain('fixed.annualPerMonthUsd');
+    expect(APP).toMatch(/in no monthly figure above/i);
+  });
+
+  it('a watchlist entry keeps its severity and its unknown figure', () => {
+    // The watchlist is rendered on each vendor's own inventory row rather than
+    // as a second list of the same vendors. That is deliberate, and it dropped
+    // both the severity and the null cost until now.
+    expect(APP).toContain('SEVERITY_WORDS[w.severity]');
+    expect(APP).toMatch(/reads as unknown rather than as free/i);
+  });
+});
