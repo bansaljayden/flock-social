@@ -966,6 +966,26 @@ const INVENTORY = [
     verdict: 'SAFE',
     why: 'The last hop is what the platform appended, so a client-supplied prefix cannot move the key; rejections are counted before being recorded so a tripped client recovers within the minute.',
   },
+  {
+    file: 'routes/ai.js', name: 'birdieSearchCache', kind: 'cache',
+    key: 'normalised query text + location rounded to 2 decimals (about 1 km)',
+    callerControls: 'all of it: the model emits the query and the location from the user turn',
+    protects: 'nothing on its own; it is an optimisation in front of the paid Text Search call. The control is allowPlacesSearch, which every MISS still passes through, and a HIT is free so it spends no allowance',
+    denominator: 'n/a (not a counter)',
+    bound: '500 keys, low-water 450, oldest-first, 5 min TTL',
+    verdict: 'SAFE',
+    why: 'The caller picks the whole key, so this is an optimisation and not a control, and it is written so that it does not have to be one. A caller who defeats it by varying the query or the coordinates only buys a MISS, and every miss still passes through allowPlacesSearch exactly as it did before the cache existed, so the paid call is metered by the same per-user allowance either way. A HIT is served before that gate on purpose, because it makes no upstream call and spends nothing. The cache therefore cannot be used to spend more than the gate allows, only to spend less (2026-09-01).',
+  },
+  {
+    file: 'routes/ai.js', name: 'birdieSearchInflight', kind: 'cache',
+    key: 'same key as birdieSearchCache',
+    callerControls: 'all of it',
+    protects: 'coalesces identical concurrent misses into one upstream call; entries live only for the duration of one fetch and are deleted in a finally',
+    denominator: 'n/a (not a counter)',
+    bound: 'one entry per in-flight distinct key; cleared on settle, so it cannot grow past concurrency',
+    verdict: 'SAFE',
+    why: 'An entry exists only while one upstream fetch for that key is in flight and is deleted in a finally on every exit path, so the map is bounded by concurrent distinct misses rather than by anything the caller can accumulate, and a rejected fetch cannot leave a poisoned promise behind for the next caller to join. A caller who joins an in-flight request gets the same answer the first caller gets, which is the answer Google gave for that exact key.',
+  },
 ];
 
 // ---------------------------------------------------------------------------

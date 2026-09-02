@@ -1,0 +1,13 @@
+# Sign in from the login screen. Env: EMAIL, PASSWORD.
+appId: com.flockcorp.flock
+---
+- assertVisible: "Sign in"
+- tapOn: "you@example.com"
+- inputText: ${EMAIL}
+- tapOn: "Your password"
+- inputText: ${PASSWORD}
+- hideKeyboard
+- tapOn: "Sign in"
+- extendedWaitUntil:
+    visible: "Nest"
+    timeout: 25000

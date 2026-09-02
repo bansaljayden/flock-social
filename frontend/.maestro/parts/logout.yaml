@@ -1,0 +1,15 @@
+# Log the current account out and land on the login screen.
+appId: com.flockcorp.flock
+---
+- tapOn: "You"
+- scrollUntilVisible:
+    element: "Log Out"
+    direction: DOWN
+    timeout: 15000
+- tapOn: "Log Out"
+- tapOn:
+    text: "Log Out"
+    optional: true
+- extendedWaitUntil:
+    visible: "Sign in"
+    timeout: 15000
