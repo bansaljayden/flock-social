@@ -459,10 +459,19 @@ workflows:
   #   * Mail: there is no mail account, so the "verify your email" step is not
   #     performed. Login does not require it, and the reply already says
   #     "if prompted".
-  #   * Accounts: the flow signs up two throwaway accounts on the production
-  #     API, uses them for the whole shot list, and deletes the primary one on
-  #     camera in the final shot. No seed script runs and no committed password
-  #     is written anywhere.
+  #   * Accounts: three. A and B are FIXED, pre-verified, persistent accounts
+  #     that Jayden creates once by ordinary signup and confirms by email;
+  #     their credentials arrive as REVIEW_EMAIL_A, REVIEW_EMAIL_B and
+  #     REVIEW_PASSWORD from the flock_web env group, and the first step below
+  #     refuses to build if any is missing. Every shot that needs a verified
+  #     account (create flock, invite, friend request, chat, vote, photo,
+  #     report, block) runs on A and B, and neither is ever deleted. C is a
+  #     per-run throwaway minted from the build number, never verified, used
+  #     only for the signup shot and the on-camera account deletion.
+  #     apple-2-1-cleanup.yaml runs before AND after the recording to put A
+  #     back (unblock B, delete this run's flock) and to delete C if the
+  #     on-camera deletion did not happen. No seed script runs and no
+  #     committed password is written anywhere.
   #
   # Nothing here signs, uploads or touches App Store Connect. The only output
   # is an .mp4 in the build artifacts, which Jayden attaches to the reply.
@@ -482,14 +491,41 @@ workflows:
         # Any iPhone the installed Xcode ships a runtime for. The exact model
         # is not material to the reviewer; the system dialogs are.
         SIM_DEVICE: "iPhone 16 Pro"
-        # The two throwaway accounts are minted from the build number so every
-        # run is unique and the backend's disposable-domain filter is never in
-        # play. Both are deleted by the flow; A on camera in the final shot,
-        # B by a second Maestro pass at the end.
+        # The throwaway account C is minted from the build number so every run
+        # is unique and the backend's disposable-domain filter is never in
+        # play. It is deleted on camera in the final shot, and again by the
+        # cleanup pass if that shot did not happen. Accounts A and B are NOT
+        # minted: they come from the env group (see the first step).
         REVIEW_EMAIL_DOMAIN: "flockcorp.com"
+        # Display names the flows search for. B's must be the name account B
+        # was signed up with; override REVIEW_NAME_B in the env group if it is
+        # not "Sam Review". C's is whatever the throwaway signs up as.
+        REVIEW_NAME_C: "Casey Review"
       node: 22
       xcode: latest
     scripts:
+      - name: Check the review account variables
+        script: |
+          # Before anything is installed, built or booted: the recording cannot
+          # pass without the two persistent, pre-verified accounts, so say
+          # which variable is missing and stop here rather than 30 minutes in.
+          MISSING=""
+          for v in REVIEW_EMAIL_A REVIEW_EMAIL_B REVIEW_PASSWORD; do
+            eval "val=\${$v:-}"
+            if [ -z "$val" ]; then MISSING="$MISSING $v"; fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "ERROR: the review recording needs these variables set in the flock_web env group (secure):$MISSING"
+            echo "  REVIEW_EMAIL_A   email of persistent review account A (signed up once, verified by email)"
+            echo "  REVIEW_EMAIL_B   email of persistent review account B (signed up once, verified by email, display name 'Sam Review' or set REVIEW_NAME_B)"
+            echo "  REVIEW_PASSWORD  the password shared by A and B"
+            exit 1
+          fi
+          if [ "$REVIEW_EMAIL_A" = "$REVIEW_EMAIL_B" ]; then
+            echo "ERROR: REVIEW_EMAIL_A and REVIEW_EMAIL_B are the same address; the flow needs two accounts."
+            exit 1
+          fi
+          echo "Review accounts present: A=$REVIEW_EMAIL_A B=$REVIEW_EMAIL_B (password not printed)."
       - name: Install web dependencies
         script: npm install --no-audit --no-fund
       - name: Build web app (relative asset paths)
@@ -552,6 +588,11 @@ workflows:
           open('/tmp/flock-review-photo.png','wb').write(png)
           PY
           xcrun simctl addmedia "$UDID" /tmp/flock-review-photo.png
+          # A Simulator has no location fix until one is set. Without this the
+          # location dialog still appears (that is the shot), but the vote
+          # panel's "Popular Chains Nearby" list, which is fed by the granted
+          # location, would stay empty. Center City Philadelphia.
+          xcrun simctl location "$UDID" set 39.9526,-75.1652 || true
           xcrun simctl install "$UDID" ios/output/Build/Products/Debug-iphonesimulator/App.app
       - name: Install Maestro
         script: |
@@ -562,27 +603,34 @@ workflows:
           set +e
           export PATH="$PATH:$HOME/.maestro/bin"
           STAMP="${BUILD_NUMBER:-$(date +%s)}"
-          A="review-a-${STAMP}@${REVIEW_EMAIL_DOMAIN}"
-          B="review-b-${STAMP}@${REVIEW_EMAIL_DOMAIN}"
-          # One password for both throwaways, minted per run, never committed.
-          PW="Rv-${STAMP}-$(head -c 6 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 8)x1"
-          echo "Accounts for this run: $A and $B"
+          # The throwaway C is minted from the build number, never committed.
+          # A and B come from the env group and were checked in the first step.
+          C="review-c-${STAMP}@${REVIEW_EMAIL_DOMAIN}"
+          PW_C="Rv-${STAMP}-$(head -c 6 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 8)x1"
+          NAME_B="${REVIEW_NAME_B:-Sam Review}"
+          echo "Throwaway account for this run: $C. Persistent accounts: $REVIEW_EMAIL_A and $REVIEW_EMAIL_B ($NAME_B)."
+          # Every Maestro pass gets the same variables; the flows read the
+          # subset they need.
+          MAESTRO_ENV="-e REVIEW_EMAIL_A=$REVIEW_EMAIL_A -e REVIEW_EMAIL_B=$REVIEW_EMAIL_B -e REVIEW_PASSWORD=$REVIEW_PASSWORD -e REVIEW_EMAIL_C=$C -e REVIEW_PASSWORD_C=$PW_C -e NAME_C=$REVIEW_NAME_C -e REVIEW_RUN=$STAMP"
+          # Reset pass, off camera: puts A back in a state the recording can
+          # pass from (unblocks B, removes a leftover flock of this build
+          # number) and never fails the build.
+          maestro test $MAESTRO_ENV -e NAME_B="$NAME_B" --debug-output /tmp/maestro-debug/reset .maestro/apple-2-1-cleanup.yaml || true
           xcrun simctl io "$SIM_UDID" recordVideo --codec h264 --force /tmp/flock-review.mp4 &
           REC=$!
           sleep 3
-          maestro test \
-            -e REVIEW_EMAIL_A="$A" \
-            -e REVIEW_EMAIL_B="$B" \
-            -e REVIEW_PASSWORD="$PW" \
-            --debug-output /tmp/maestro-debug \
+          maestro test $MAESTRO_ENV -e NAME_B="$NAME_B" \
+            --debug-output /tmp/maestro-debug/recording \
             .maestro/apple-2-1.yaml
           RESULT=$?
           sleep 2
           kill -INT "$REC"
           wait "$REC"
           ls -la /tmp/flock-review.mp4 || true
-          # Account B is deleted off camera so nothing is left behind in prod.
-          maestro test -e REVIEW_EMAIL_B="$B" -e REVIEW_PASSWORD="$PW" .maestro/apple-2-1-cleanup.yaml || true
+          # Cleanup pass, off camera: unblock B, delete this run's flock as its
+          # creator, delete C if the on-camera deletion did not happen. A and
+          # B are never deleted.
+          maestro test $MAESTRO_ENV -e NAME_B="$NAME_B" --debug-output /tmp/maestro-debug/cleanup .maestro/apple-2-1-cleanup.yaml || true
           exit $RESULT
     artifacts:
       - /tmp/flock-review.mp4

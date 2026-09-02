@@ -1,21 +1,59 @@
 # Apple Guideline 2.1 review recording, driven end to end with nobody at the
 # keyboard. Shot numbers match APPLE-2.1-REPLY.md section B. Run by the
 # ios-review-recording workflow in codemagic.yaml, which boots a Simulator,
-# starts xcrun simctl recordVideo, and passes three env vars:
+# starts xcrun simctl recordVideo, and passes these env vars:
+#
 #   REVIEW_EMAIL_A, REVIEW_EMAIL_B, REVIEW_PASSWORD
+#       Two FIXED, pre-verified, persistent accounts Jayden created once by
+#       ordinary signup and confirmed by email. Everything that needs a
+#       verified account (create flock, invite, friend request, chat, vote,
+#       photo, report, block) happens on these two. They are never deleted.
+#   REVIEW_EMAIL_C, REVIEW_PASSWORD_C
+#       A per-run throwaway minted from the build number. It is never
+#       verified, and that is fine: it exists only for the signup shot and the
+#       account-deletion shot. An unverified account can log in and delete
+#       itself; it cannot create flocks, invite, or befriend
+#       (backend/middleware/auth.js UNVERIFIED_DENY).
+#   NAME_B, NAME_C
+#       Display names. NAME_B must be the name account B was signed up with,
+#       because it is what the friend search, the invite list, the block sheet
+#       and the Blocked accounts row show.
+#   REVIEW_RUN
+#       The build number. The flock is named "Review night <REVIEW_RUN>" so a
+#       leftover from a failed run can never collide with the next one.
 #
-# Two accounts are signed up on the production API and both are deleted, A on
-# camera in the final shot and B by apple-2-1-cleanup.yaml afterwards. No seed
-# script runs and no committed password is used.
+# Selector rules, from AUDIT-2026-09-01.md (read against Maestro's iOS driver):
+#   * text only. `id:` matches nothing in a WKWebView. An aria-label REPLACES
+#     the visible text for matching.
+#   * no `back`: it is a no-op on iOS. In-app "Back" controls are tapped by
+#     their aria-label instead.
+#   * no `hideKeyboard`: on iOS it only nudges the screen centre. Forms are
+#     submitted with Enter; other keyboards are closed by tapping static text
+#     that stays on screen (a screen header), never a heading that can scroll
+#     away behind the keyboard.
+#   * every source line is quoted next to the step that uses it.
 #
-# Every step that a first run is most likely to need adjusting is marked
-# optional: true so the recording completes and the debug output shows which
-# tap missed, rather than the whole run dying at shot 9. The essential steps
-# (signup, login, permissions, report, block, unblock, delete) are not optional.
+# What is required and what is optional: a step whose failure would lose one
+# shot is `optional: true`, so one stale label costs that shot and not the
+# recording. The steps that gate everything after them (the logins of A and
+# B, opening the created flock's chat) are required.
+#
+# Run order (seven sessions; the friend request has to be accepted by B before
+# A can invite B, because the chat's invite list shows friends only,
+# ChatDetail.js:2040-2060 / App.js flockInviteAllFriends):
+#   C   signup (shots 1-3), sign in (shot 4), log out
+#   A1  send friend request to B, log out
+#   B1  accept friend request, log out
+#   A2  location prompt (5), create flock (6), share invite link (7),
+#       invite B, vote (9), camera prompt + photo + text (11), contacts
+#       prompt (11b), log out
+#   B2  accept flock invite (8, the RSVP), post the message A will report,
+#       log out
+#   A3  report (12), block (13), blocked accounts + unblock (15), log out
+#   C   delete account (16)
+# Shot 10 (budget) and shot 14 (post-hangout slider) are not attempted: the
+# reply calls 10 optional, and 14 needs a confirmed flock with a chosen venue.
 appId: com.flockcorp.flock
-env:
-  NAME_A: "Alex Review"
-  NAME_B: "Sam Review"
 ---
 # Permissions are left unset on purpose. The point of the recording is that
 # the iOS dialogs appear in context and are accepted on camera.
@@ -25,163 +63,303 @@ env:
       all: unset
 
 # ---------------------------------------------------------------------------
-# Account B first, off the story line: it has to exist before A can invite it.
+# Shots 1-4, account C: launch to the login screen, sign up with the date of
+# birth on screen, land on "Confirm your email", go back to the login form
+# and sign in. Nothing in this block is allowed to end the recording: if the
+# signup did not stick, C's login fails, the login screen stays up with C's
+# email in it, and A's login below clears the fields (parts/login.yaml).
 # ---------------------------------------------------------------------------
+- assertVisible: "Welcome back"                 # LoginScreen.js:146, fresh launch shows LoginScreen (App.js authScreen default 'login')
 - runFlow:
     file: parts/signup.yaml
     env:
-      NAME: ${NAME_B}
-      EMAIL: ${REVIEW_EMAIL_B}
+      NAME: ${NAME_C}
+      EMAIL: ${REVIEW_EMAIL_C}
+      PASSWORD: ${REVIEW_PASSWORD_C}
+- runFlow:
+    file: parts/login.yaml
+    env:
+      EMAIL: ${REVIEW_EMAIL_C}
+      PASSWORD: ${REVIEW_PASSWORD_C}
+- extendedWaitUntil:
+    visible: "Nest"                             # App.js tab table, label: 'Nest'; login does not require verification (auth.js "The account exists and can sign in")
+    timeout: 25000
+    optional: true
+- runFlow:
+    when:
+      visible: "Nest"
+    commands:
+      - waitForAnimationToEnd
+      - runFlow: parts/logout.yaml
+
+# ---------------------------------------------------------------------------
+# A1: A sends B a friend request. Tolerant of "already friends" (the row then
+# shows a "Friends" pill instead of "Add", AddFriends.js:260) and of a request
+# already pending (:262).
+# ---------------------------------------------------------------------------
+- runFlow:
+    file: parts/login.yaml
+    env:
+      EMAIL: ${REVIEW_EMAIL_A}
       PASSWORD: ${REVIEW_PASSWORD}
+- extendedWaitUntil:
+    visible: "Nest"
+    timeout: 25000
+- tapOn: "You"                                  # App.js tab table, label: 'You'
+- tapOn:
+    text: "Add Friends"                         # ProfileSettings.js:633 (button span)
+    optional: true
+- extendedWaitUntil:
+    visible: "Search by name..."                # AddFriends.js:222 placeholder, the default tab (App.js addFriendsTab 'username')
+    timeout: 10000
+    optional: true
+- tapOn:
+    text: "Search by name..."
+    optional: true
+- inputText: ${NAME_B}
+# SearchInputLocal commits on a 120 ms debounce (App.js:4071), no Enter needed.
+- extendedWaitUntil:
+    visible: ${NAME_B}                          # AddFriends.js result row name
+    timeout: 10000
+    optional: true
+# Close the keyboard by tapping the screen header, which never scrolls.
+- tapOn:
+    text: "Add Friends"                         # AddFriends.js:144 <h1>
+    optional: true
+- tapOn:
+    text: "Add"                                 # AddFriends.js:264, the result row's request button
+    index: 0
+    optional: true
+- waitForAnimationToEnd
+- tapOn: "Back"                                 # AddFriends.js:143 aria-label; this screen has no tab bar
 - runFlow: parts/logout.yaml
 
 # ---------------------------------------------------------------------------
-# Shot 1 and 2: launch to the login screen, sign up A with the date of birth
-# field on screen. Shot 3, email verification, is not performed: a Simulator
-# has no mail account and login does not require it.
+# B1: B accepts the friend request. Pending requests sit at the top of Add
+# Friends on every tab (AddFriends.js:168-197). Optional: already friends
+# means nothing to accept.
 # ---------------------------------------------------------------------------
-- assertVisible: "Sign in"
 - runFlow:
-    file: parts/signup.yaml
+    file: parts/login.yaml
     env:
-      NAME: ${NAME_A}
+      EMAIL: ${REVIEW_EMAIL_B}
+      PASSWORD: ${REVIEW_PASSWORD}
+- extendedWaitUntil:
+    visible: "Nest"
+    timeout: 25000
+- tapOn: "You"
+- tapOn:
+    text: "Add Friends"                         # ProfileSettings.js:633
+    optional: true
+- extendedWaitUntil:
+    visible: "Accept friend request"            # AddFriends.js:191 aria-label
+    timeout: 10000
+    optional: true
+- tapOn:
+    text: "Accept friend request"
+    optional: true
+- waitForAnimationToEnd
+- tapOn: "Back"                                 # AddFriends.js:143
+- runFlow: parts/logout.yaml
+
+# ---------------------------------------------------------------------------
+# A2, the main session. Shot 4 for real: A logs in.
+# ---------------------------------------------------------------------------
+- runFlow:
+    file: parts/login.yaml
+    env:
       EMAIL: ${REVIEW_EMAIL_A}
       PASSWORD: ${REVIEW_PASSWORD}
+- extendedWaitUntil:
+    visible: "Nest"
+    timeout: 25000
 
-# Shot 4 is "log in as the demo account". This recording uses A throughout, so
-# the login is demonstrated later when A signs back in after B's turn.
-
-# ---------------------------------------------------------------------------
 # Shot 5: the location dialog, in context, with the usage string visible.
-# ---------------------------------------------------------------------------
-- tapOn: "Discover"
+# Tapping Discover calls requestUserLocation() (App.js `tabId === 'explore' && locationEnabled`,
+# locationEnabled defaults true, App.js:4629), which uses navigator.geolocation.
+- tapOn: "Discover"                             # App.js tab table, label: 'Discover'
 - extendedWaitUntil:
-    visible: "Allow While Using App"
+    visible: "Allow While Using App"            # iOS dialog, NSLocationWhenInUseUsageDescription (Info.plist:50)
     timeout: 15000
-- tapOn: "Allow While Using App"
+    optional: true
+- tapOn:
+    text: "Allow While Using App"
+    optional: true
+- waitForAnimationToEnd
+# WebKit may add its own per-origin prompt after the system one
+# (AUDIT-2026-09-01.md, apple-2-1 58-61).
+- tapOn:
+    text: "Allow|OK"
+    optional: true
 - waitForAnimationToEnd
 
-# ---------------------------------------------------------------------------
-# Shot 6: create a flock. The form submits with a name alone.
-# ---------------------------------------------------------------------------
+# Shot 6: create a flock. The form submits with a name alone (CreateScreen.js:160
+# is the only validation). Nobody is added on this screen: one invitee turns
+# it into a direct message (CreateScreen.js:156 dmTarget). B is invited from
+# the chat afterwards.
 - tapOn: "Nest"
-- tapOn: "Start a flock"
-- tapOn: "Movie night, dinner, party..."
-- inputText: "Review night"
-# Invite B by name so B can accept and post the message A will report.
-- tapOn: "Search by name..."
-- inputText: ${NAME_B}
+- tapOn:
+    text: "Start a flock"                       # App.js:12374 header button (flocks exist) or :12434 empty state; same text, either opens the create screen
+    index: 0
 - extendedWaitUntil:
-    visible: ${NAME_B}
+    visible: "Start a Flock"                    # CreateScreen.js:293 <h1>
     timeout: 10000
+- tapOn: "Movie night, dinner, party..."        # CreateScreen.js:328 placeholder
+- inputText: "Review night ${REVIEW_RUN}"
+# The name commits on a 120 ms debounce (SearchInputLocal, App.js:4071).
+# Close the keyboard by tapping the screen header, which is pinned at the top.
 - tapOn:
-    text: "Add"
-    index: 0
+    text: "Start a Flock"                       # CreateScreen.js:293 <h1>, static
+    optional: true
 - scrollUntilVisible:
-    element: "Start a Flock"
+    element: "Create Flock"                     # CreateScreen.js:573 submit; NOT "Start a Flock", which is the heading
     direction: DOWN
-    timeout: 5000
+    timeout: 8000
     optional: true
-- tapOn: "Start a Flock"
-- extendedWaitUntil:
-    visible: "Review night"
-    timeout: 15000
-
-# ---------------------------------------------------------------------------
-# Shot 7: the share sheet with the invite link, then dismiss it.
-# ---------------------------------------------------------------------------
-- tapOn: "Review night"
-- tapOn:
-    text: "Share invite link.*"
-    optional: true
-- waitForAnimationToEnd
-- tapOn:
-    text: "Close"
-    optional: true
-- tapOn:
-    text: "Cancel"
-    optional: true
-
-# ---------------------------------------------------------------------------
-# Shot 9: venues are suggested and voted on inside the chat, behind the
-# composer's "Vote on a venue" control. Shot 10, budget, is skipped in favour
-# of reliability; the reply calls it optional.
-# ---------------------------------------------------------------------------
+- tapOn: "Create Flock"
+# The create success path opens the chat directly (App.js newlyCreatedFlockRef,
+# setCurrentScreen('chatDetail')). This gates every shot below.
 - runFlow: parts/open-chat.yaml
+
+# Shot 7: the share sheet with the invite link, from the chat's invite modal.
+# The header controls are hidden until the "Features" pill is tapped
+# (ChatDetail.js:512-527 visibility: hidden until chatNavOpen).
+- tapOn: "Features"                             # ChatDetail.js:533 aria-label
 - tapOn:
-    id: "Vote on a venue"
-    optional: true
-- tapOn:
-    text: "Search restaurants, bars, venues..."
-    optional: true
-- inputText: "pizza"
-- extendedWaitUntil:
-    visible: ".*[Pp]izza.*"
-    timeout: 15000
-    optional: true
-- tapOn:
-    text: ".*[Pp]izza.*"
+    text: "Invite friends"                      # ChatDetail.js:529 aria-label (nav) / :912 (empty chat), either opens the modal
     index: 0
+- extendedWaitUntil:
+    visible: "Share invite link (no account needed)"   # ChatDetail.js:2014
+    timeout: 10000
+    optional: true
+- tapOn:
+    text: "Share invite link (no account needed)"       # needs POST /:id/invite-link, verified account
     optional: true
 - waitForAnimationToEnd
-# The venue now sits in the chat as a card; tapping it casts the vote.
 - tapOn:
-    text: ".*[Pp]izza.*"
-    index: 0
+    text: "Close"                               # iOS share sheet close; if navigator.share was unavailable the URL is shown inline and this is a no-op
+    optional: true
+- waitForAnimationToEnd
+# Invite B from the same modal. It lists friends only (App.js
+# flockInviteAllFriends from getFriends), rows are one <button> whose <p> is
+# the friend's name (App.js:5603-5625), tapping a row selects it, and the send
+# button reads "Invite 1 Friend" (ChatDetail.js:2151).
+- tapOn:
+    text: ${NAME_B}                             # App.js:5616 row <p>
+    optional: true
+- tapOn:
+    text: "Invite 1 Friend"                     # ChatDetail.js:2151
+    optional: true
+- waitForAnimationToEnd
+# The modal closes itself after a send (App.js handleSendFlockInvites). If it
+# is still open, close it.
+- tapOn:
+    text: "Close"                               # ChatDetail.js:1974 aria-label
     optional: true
 - waitForAnimationToEnd
 
-# ---------------------------------------------------------------------------
-# Shot 11: the camera dialog in context, then a photo message and a text
-# message. The Simulator has no camera, so after the dialog the viewfinder is
-# closed and a library photo is sent instead. Still inside the chat.
-# ---------------------------------------------------------------------------
-- tapOn: "Take a photo"
+# Shot 9: the vote panel. There is no venue search in it (AUDIT-2026-09-01.md,
+# apple-2-1 111-122); it offers current votes, "Popular Chains Nearby" rows
+# (each a button whose tap casts a vote, ChatDetail.js:1805 handleQuickVote,
+# fed by the location granted in shot 5) and "Share a venue to chat". Tapping a
+# chain row is the vote; the header then reads "1 vote cast".
+- tapOn: "Features"                             # ChatDetail.js:533
+- tapOn:
+    text: "Vote on a venue"                     # ChatDetail.js:528 aria-label
+    optional: true
 - extendedWaitUntil:
-    visible: "OK|Allow"
+    visible: "Vote for a Venue"                 # ChatDetail.js:1727 <h2>
+    timeout: 10000
+    optional: true
+- extendedWaitUntil:
+    visible: "Popular Chains Nearby"            # ChatDetail.js:1802
     timeout: 15000
+    optional: true
+- tapOn:
+    text: ".*Vote"                              # ChatDetail.js:1805-1822 chain row: name, type, then the "Vote" pill
+    index: 0
+    optional: true
+- waitForAnimationToEnd
+- tapOn:
+    text: "Close"                               # ChatDetail.js:1730 aria-label
+    optional: true
+- waitForAnimationToEnd
+
+# Shot 11: the camera dialog in context, then a photo message and a text
+# message. The Simulator has no camera: after the dialog the app either shows
+# the viewfinder (closed here) or toasts and closes it itself (App.js:9723
+# 'Could not access camera'), so the dialog wait is optional. A library photo
+# is sent instead; the workflow seeded one with simctl addmedia.
+- tapOn: "Take a photo"                         # ChatDetail.js:1255 aria-label -> openCameraViewfinder (getUserMedia)
+- extendedWaitUntil:
+    visible: "OK|Allow"                         # iOS dialog, NSCameraUsageDescription (Info.plist:73)
+    timeout: 15000
+    optional: true
 - tapOn:
     text: "OK|Allow"
-- waitForAnimationToEnd
-- tapOn:
-    text: "Close"
     optional: true
-- tapOn: "Choose a photo from your library"
 - waitForAnimationToEnd
 - tapOn:
-    text: "Photo.*"
+    text: "Close the camera"                    # App.js:17456 aria-label on the viewfinder
+    optional: true
+- waitForAnimationToEnd
+- tapOn: "Choose a photo from your library"     # ChatDetail.js:1258 aria-label -> hidden <input type=file accept="image/*">
+- waitForAnimationToEnd
+- tapOn:
+    text: "Photo Library"                       # WebKit's file action sheet
+    optional: true
+- waitForAnimationToEnd
+- extendedWaitUntil:
+    visible: "Photo,.*"                         # PHPicker cells are labelled "Photo, <date>"; the nav title "Photos" does not match
+    timeout: 15000
+    optional: true
+- tapOn:
+    text: "Photo,.*"
     index: 0
     optional: true
-- tapOn:
-    text: "Choose|Done|Add"
-    optional: true
 - waitForAnimationToEnd
+- tapOn:
+    text: "Choose|Done|Add"                     # single-select returns on its own; kept for a picker that asks
+    optional: true
+- extendedWaitUntil:
+    visible: "Send photo"                       # ChatDetail.js:1225 aria-label on the preview bar
+    timeout: 15000
+    optional: true
 - tapOn:
     text: "Send photo"
     optional: true
 - waitForAnimationToEnd
-- tapOn: "Type a message..."
+- tapOn: "Type a message..."                    # ChatDetail.js:1269
 - inputText: "Here for the recording"
-- tapOn: "Send message"
+- pressKey: Enter                               # ChatDetail.js:1269 onKeyDown Enter -> sendChatMessage
+- tapOn:
+    text: "Send message"                        # ChatDetail.js:1276 aria-label; disabled once the text is gone, so a no-op after Enter
+    optional: true
 - waitForAnimationToEnd
-- back
+- tapOn: "Back"                                 # ChatDetail.js:487 aria-label; the chat has no tab bar
 
-# ---------------------------------------------------------------------------
 # Shot 11b: the contacts dialog, in context, after the screen that explains
-# what is sent.
-# ---------------------------------------------------------------------------
+# what is sent. "Contacts" is a tab that only renders on native
+# (AddFriends.js:131); "Check my contacts" (AddFriends.js:511) calls
+# Contacts.requestPermissions() (services/contacts.js). "Don't Allow" does
+# not match "Allow.*"; "Allow Full Access" and "Allow" do.
 - tapOn: "You"
 - tapOn:
-    text: "Add Friends"
+    text: "Add Friends"                         # ProfileSettings.js:633
     optional: true
 - tapOn:
-    text: "Contacts"
+    text: "Contacts"                            # AddFriends.js:131 tab label
+    optional: true
+- scrollUntilVisible:
+    element: "Check my contacts"                # AddFriends.js:511
+    direction: DOWN
+    timeout: 5000
     optional: true
 - tapOn:
     text: "Check my contacts"
     optional: true
 - extendedWaitUntil:
-    visible: "Allow.*"
+    visible: "Allow.*"                          # iOS dialog, NSContactsUsageDescription (Info.plist:119)
     timeout: 15000
     optional: true
 - tapOn:
@@ -189,129 +367,186 @@ env:
     index: 0
     optional: true
 - waitForAnimationToEnd
+- tapOn: "Back"                                 # AddFriends.js:143
+- runFlow: parts/logout.yaml
 
 # ---------------------------------------------------------------------------
-# B's turn: log out, sign in as B, accept the invite, post the message A will
-# report, log out. This is also shot 4 and shot 8 in their real form: a login,
-# and an RSVP, which in this app is accepting the invite.
+# B2: B accepts the flock invite (shot 8, the RSVP in this app) and posts the
+# message A will report. Optional as a block: if the invite never reached B,
+# the report and block shots are lost, not the recording.
 # ---------------------------------------------------------------------------
-- runFlow: parts/logout.yaml
 - runFlow:
     file: parts/login.yaml
     env:
       EMAIL: ${REVIEW_EMAIL_B}
       PASSWORD: ${REVIEW_PASSWORD}
+- extendedWaitUntil:
+    visible: "Nest"
+    timeout: 25000
 - tapOn: "Nest"
 - extendedWaitUntil:
-    visible: "Review night"
+    visible: "Review night ${REVIEW_RUN}"       # App.js:14497 pending invite <h2>{f.name}
     timeout: 15000
-- tapOn:
-    id: "Accept invite"
     optional: true
 - tapOn:
-    text: "Accept invite"
+    text: "Accept invite"                       # App.js:14519 aria-label
     optional: true
 - waitForAnimationToEnd
-- tapOn: "Review night"
-- runFlow: parts/open-chat.yaml
-- tapOn: "Type a message..."
-- inputText: "message from B for the report shot"
-- tapOn: "Send message"
-- waitForAnimationToEnd
-- back
+- runFlow:
+    when:
+      visible: "Review night ${REVIEW_RUN}"     # App.js:14598 flock card <h2>, card opens chatDetail (App.js:14571)
+    commands:
+      - tapOn:
+          text: "Review night ${REVIEW_RUN}"
+          index: 0
+      - runFlow: parts/open-chat.yaml
+      - tapOn: "Type a message..."              # ChatDetail.js:1269
+      - inputText: "message from B for the report shot"
+      - pressKey: Enter                         # ChatDetail.js:1269 onKeyDown Enter
+      - tapOn:
+          text: "Send message"                  # ChatDetail.js:1276
+          optional: true
+      - waitForAnimationToEnd
+      - tapOn: "Back"                           # ChatDetail.js:487
 - runFlow: parts/logout.yaml
 
 # ---------------------------------------------------------------------------
-# Shot 4, for real: A logs in.
+# A3: report B's message (shot 12), block B from the same sheet (13), then
+# Blocked accounts and unblock (15).
 # ---------------------------------------------------------------------------
 - runFlow:
     file: parts/login.yaml
     env:
       EMAIL: ${REVIEW_EMAIL_A}
       PASSWORD: ${REVIEW_PASSWORD}
-
-# ---------------------------------------------------------------------------
-# Shot 12 and 13: report B's message, then block B from the same sheet.
-# ---------------------------------------------------------------------------
+- extendedWaitUntil:
+    visible: "Nest"
+    timeout: 25000
 - tapOn: "Nest"
-- tapOn: "Review night"
+- tapOn:
+    text: "Review night ${REVIEW_RUN}"          # App.js:14598 flock card <h2>
+    index: 0
 - runFlow: parts/open-chat.yaml
-- tapOn: "message from B for the report shot"
+# The bubble is a <button> with no aria-label whose content is the message
+# (ChatDetail.js:1053-1085); tapping it opens the reaction row with "Report".
 - tapOn:
-    id: "Report"
+    text: "message from B for the report shot"
+    optional: true
 - tapOn:
-    text: "Report ${NAME_B}"
-- tapOn: "Spam"
-- tapOn: "Submit report"
+    text: "Report"                              # ChatDetail.js:1124 aria-label
+    optional: true
+- tapOn:
+    text: "Report this message"                 # ModerationSheet.js:204, "Report " + NOUNS.flock_message (:42)
+    optional: true
+- tapOn:
+    text: "Spam"                                # ModerationSheet.js:24
+    optional: true
+- tapOn:
+    text: "Submit report"                       # ModerationSheet.js:245, enabled once a reason is picked
+    optional: true
 - extendedWaitUntil:
-    visible: "Report received.*"
+    visible: "Report sent"                      # ModerationSheet.js:252, the 'reported' step (a userId is present)
     timeout: 15000
-- waitForAnimationToEnd
+    optional: true
+# One tap blocks and closes the sheet (ModerationSheet.js:146-159 confirmBlock);
+# there is no second confirm. The block also removes the friendship
+# (backend/routes/moderation.js:558), which is what lets the next run's friend
+# shots happen again.
 - tapOn:
-    text: "Block ${NAME_B}"
-    index: 0
-- tapOn:
-    text: "Block ${NAME_B}"
-    index: 0
-- waitForAnimationToEnd
-- back
-
-# ---------------------------------------------------------------------------
-# Shot 14: post-hangout feedback is a slider and a card that only appear on a
-# confirmed flock with a chosen venue. Attempted, never required.
-# ---------------------------------------------------------------------------
-- swipe:
-    start: "10%, 80%"
-    end: "90%, 80%"
+    text: "Block ${NAME_B}"                     # ModerationSheet.js:256
     optional: true
 - waitForAnimationToEnd
+- tapOn: "Back"                                 # ChatDetail.js:487
 
-# ---------------------------------------------------------------------------
-# Shot 15: blocked accounts list, unblock B, list empties.
-# ---------------------------------------------------------------------------
-- tapOn: "You"
-- tapOn:
-    text: "Settings"
-    optional: true
-- tapOn: "Blocked accounts"
-- assertVisible: ${NAME_B}
-- tapOn:
-    text: "Unblock"
-    index: 0
-- tapOn:
-    text: "Unblock"
-    optional: true
-- waitForAnimationToEnd
-- back
-
-# ---------------------------------------------------------------------------
-# Shot 16: delete account A on camera, landing on the logged-out screen.
-# ---------------------------------------------------------------------------
+# Shot 15: blocked accounts list, unblock B, list empties. There is no
+# "Settings" control on the You tab; the row is "Blocked accounts"
+# (ProfileSettings.js:670). The row button reads "Unblock <name>"
+# (ProfileSettings.js:447 aria-label); the confirm button is the plain
+# "Unblock" (ProfileSettings.js:466), which only exists once the dialog is up.
 - tapOn: "You"
 - scrollUntilVisible:
-    element: "Delete account"
+    element: "Blocked accounts"                 # ProfileSettings.js:670 row
     direction: DOWN
+    timeout: 8000
+    optional: true
 - tapOn:
-    text: "Delete account"
+    text: "Blocked accounts"
     index: 0
-- tapOn:
-    id: "delete-password"
     optional: true
-- inputText: ${REVIEW_PASSWORD}
-- tapOn:
-    text: "DELETE"
-    optional: true
-- inputText: "DELETE"
-- scrollUntilVisible:
-    element:
-      text: "Delete account"
-      index: 1
-    direction: DOWN
-    timeout: 5000
-    optional: true
-- tapOn:
-    text: "Delete account"
-    index: 1
 - extendedWaitUntil:
-    visible: "Sign in"
-    timeout: 20000
+    visible: ${NAME_B}                          # ProfileSettings.js:434 row <p>
+    timeout: 10000
+    optional: true
+- tapOn:
+    text: "Unblock ${NAME_B}"                   # ProfileSettings.js:447
+    optional: true
+- tapOn:
+    text: "Unblock"                             # ProfileSettings.js:466 confirm
+    optional: true
+- waitForAnimationToEnd
+- tapOn:
+    text: "Back"                                # ProfileSettings.js:198 subscreen back -> You tab
+    optional: true
+- runFlow: parts/logout.yaml
+
+# ---------------------------------------------------------------------------
+# Shot 16: delete account C on camera, landing on the logged-out screen.
+# Unverified accounts may delete themselves. Optional as a block: if C never
+# existed the recording still ends cleanly on the login screen.
+# ---------------------------------------------------------------------------
+- runFlow:
+    file: parts/login.yaml
+    env:
+      EMAIL: ${REVIEW_EMAIL_C}
+      PASSWORD: ${REVIEW_PASSWORD_C}
+- extendedWaitUntil:
+    visible: "Nest"
+    timeout: 25000
+    optional: true
+- runFlow:
+    when:
+      visible: "Nest"
+    commands:
+      - tapOn: "You"
+      - scrollUntilVisible:
+          element: "Delete account"             # ProfileSettings.js:812 row
+          direction: DOWN
+          timeout: 15000
+      - tapOn:
+          text: "Delete account"
+          index: 0                              # only the row exists before the dialog opens
+      - waitForAnimationToEnd
+      # The password input is labelled by <label htmlFor="delete-password">
+      # "Your password" (ProfileSettings.js:861); index 0 is the label, which
+      # focuses the input through htmlFor, so either index works.
+      - tapOn:
+          text: "Your password"
+          optional: true
+      - inputText: ${REVIEW_PASSWORD_C}
+      - tapOn:
+          text: "DELETE"                        # ProfileSettings.js:891 placeholder (the empty input's value)
+          optional: true
+      - inputText: "DELETE"
+      # Close the keyboard by tapping the dialog's own heading, which sits
+      # above the fields inside the dialog and cannot scroll away.
+      - tapOn:
+          text: "Delete your account?"          # ProfileSettings.js:852 <h3>
+          optional: true
+      # With the dialog open there are three matches in DOM order: the row
+      # (:812, behind the backdrop), the dialog node (DialogBehavior
+      # aria-label, :850) and the confirm button (:923). Index 2 is the
+      # confirm; index 3 is a fallback in case the row's inner text is exposed
+      # as its own element and shifts the order by one. Neither can hit the
+      # backdrop, which would close the dialog.
+      - tapOn:
+          text: "Delete account"
+          index: 2
+          optional: true
+      - tapOn:
+          text: "Delete account"
+          index: 3
+          optional: true
+      - extendedWaitUntil:
+          visible: "Welcome back"               # ProfileSettings.js:906 onLogout(sessionEndCopy('account_deleted')) -> LoginScreen
+          timeout: 20000
+          optional: true
