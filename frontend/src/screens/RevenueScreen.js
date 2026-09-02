@@ -505,6 +505,56 @@ export default function RevenueScreen({
               </div>
             );
 
+            // The mark on a figure nobody has seen on an invoice. It sits
+            // beside the LABEL rather than the amount because the amount is
+            // the part that has to stay scannable, and a reader who takes the
+            // number without the tag has still read a marked row.
+            const unverifiedTag = {
+              fontSize: 'var(--t-micro)',
+              fontWeight: '700',
+              color: 'var(--accent-amber-text)',
+              backgroundColor: 'var(--accent-amber-bg)',
+              borderRadius: '6px',
+              padding: '1px 5px',
+              marginLeft: '6px',
+              textTransform: 'uppercase',
+              letterSpacing: '0.5px',
+              whiteSpace: 'nowrap',
+            };
+
+            // A FIXED BILL, WITH THE TWO FACTS THE OLD ROW THREW AWAY.
+            //
+            // It printed a label and a number, showed the note only when the
+            // line was unverified, and showed the checked date never. So the
+            // panel's own copy said "every line carries the date it was last
+            // checked" above eight rows that carried no date at all, Vercel's
+            // assumed $0 read exactly like a confirmed free tier, and the note
+            // on every verified line was invisible, which is where the reason
+            // for a bill lives. All three are on the row now.
+            //
+            // `verified` means a human has seen this exact number on an
+            // invoice or a dashboard, not on a vendor's public pricing page.
+            // An unverified line is still counted in the totals, and the panel
+            // says so rather than dropping it.
+            const fixedRow = (e, period) => (
+              <div key={e.id} style={{ padding: '6px 0', borderTop: '1px solid var(--border-light)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
+                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
+                    {e.label}
+                    {!e.verified && <span style={unverifiedTag}>Unverified</span>}
+                  </span>
+                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, whiteSpace: 'nowrap' }}>{moneyOr(e.usd, 'No figure')}{period}</span>
+                </div>
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0', lineHeight: 1.35 }}>
+                  {e.verified
+                    ? `Seen on an invoice. Checked ${e.checked}.`
+                    : `Not seen on an invoice. This is a published price or an assumption, counted in the totals anyway. Checked ${e.checked}.`}
+                  {e.note ? ` ${e.note}` : ''}
+                  {e.source ? ` ${e.source}` : ''}
+                </p>
+              </div>
+            );
+
             if (!d) {
               return (
                 <div style={{ ...card, border: `1px dashed ${colors.creamDark}` }}>
@@ -543,6 +593,27 @@ export default function RevenueScreen({
             const allDeps = (dep.groups || []).flatMap((g) => g.entries);
             const obsById = Object.fromEntries((obs.lines || []).map((l) => [l.id, l]));
             const watchById = Object.fromEntries((d.watchlist || []).map((w) => [w.id, w]));
+
+            // THE WATCHLIST'S OWN THREE WORDS, which reached no screen at all.
+            // The panel rendered a watchlist entry's note and dropped its
+            // severity and its figure, so seven exposures read as ordinary
+            // prose on an ordinary row. They are not the same kind of thing:
+            // a cap somebody else enforces, a bill that arrives per use with
+            // nothing counting the uses, and a line that grows on its own are
+            // three different problems with three different responses.
+            const SEVERITY_WORDS = {
+              watch: 'a cap or a licence somebody else enforces',
+              usage: 'billed per use, and nothing here counts the uses',
+              growth: 'grows on its own as the app gets used',
+            };
+            // A watchlist figure of null is the whole point of the list: no
+            // number can be defended, so it must read as unknown. Printing $0
+            // for it would say the opposite of what is known.
+            const watchCost = (w) => (
+              Number.isFinite(w.usd)
+                ? (w.usd === 0 ? 'nothing on a bill today' : `${money(w.usd)} today`)
+                : 'no figure that can be defended, so it reads as unknown rather than as free'
+            );
             const fixedById = {};
             for (const e of (fixed.monthly || [])) fixedById[e.id] = { ...e, period: '/mo' };
             for (const e of (fixed.annual || [])) fixedById[e.id] = { ...e, period: '/yr' };
@@ -607,7 +678,11 @@ export default function RevenueScreen({
                   {e.costsNothingBecause && <p style={depLine}>{e.costsNothingBecause}</p>}
                   {e.unknownAction && <p style={depLine}>{e.unknownAction}</p>}
                   {e.note && <p style={depLine}>{e.note}</p>}
-                  {w && <p style={depLine}>{w.note}</p>}
+                  {w && (
+                    <p style={depLine}>
+                      On the watchlist, {SEVERITY_WORDS[w.severity] || w.severity}: {watchCost(w)}. {w.note}
+                    </p>
+                  )}
                   {e.source && <p style={depLine}>{e.source}, checked {e.checked}.</p>}
                 </div>
               );
@@ -650,6 +725,16 @@ export default function RevenueScreen({
                     </div>
                   </div>
                   {(d.reconciled?.lines || []).map((l) => row(l.id, l.label, `${moneyOr(l.usdPerMonth)}/mo`, l.note))}
+                  {(fixed.unverifiedLines || []).length > 0 && (
+                    <p style={foot}>
+                      {moneyOr(fixed.unverifiedMonthlyUsd, '$0', 2)} a month and {moneyOr(fixed.unverifiedAnnualUsd, '$0', 2)} a year of that total sits on {fixed.unverifiedLines.length} {fixed.unverifiedLines.length === 1 ? 'line nobody' : 'lines nobody'} has seen on an invoice. They are counted rather than dropped, and every one is marked unverified where it is listed below.
+                    </p>
+                  )}
+                  {fixed.oldestChecked && (
+                    <p style={foot}>
+                      The hand-maintained half of this was last checked between {fixed.oldestChecked} and {fixed.newestChecked}. A stale date means unverified rather than wrong.
+                    </p>
+                  )}
                 </div>
 
                 {/* 1b. THE INVENTORY.
@@ -701,6 +786,11 @@ export default function RevenueScreen({
                         {dep.unknownCostIds.length} of them have no defensible figure at all and read as unknown rather than as free: {dep.unknownCostIds.map((id) => (allDeps.find((e) => e.id === id) || {}).label || id).join(', ')}. Each one says where to go and find the number.
                       </p>
                     )}
+                    {(d.watchlist || []).length > 0 && (
+                      <p style={foot}>
+                        {d.watchlist.length} of them are on the watchlist: not on a bill today, and each one could be. The exposure and how it would arrive are on that vendor's own row rather than in a second list of the same vendors.
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -714,22 +804,62 @@ export default function RevenueScreen({
                   </div>
                 ))}
 
-                {/* 2. FIXED */}
+                {/* 2. FIXED.
+                    ------------------------------------------------------------
+                    THE WHOLE STANDING BILL, in the three periods it actually
+                    arrives in. Monthly and annual used to be one undifferentiated
+                    stack of rows under a single spread figure, so the two
+                    questions a person asks here, what leaves the account this
+                    month and what is committed for the year, could only be
+                    answered by adding rows up by hand.
+
+                    Both totals are shown, and the annual one is shown twice on
+                    purpose: as the yearly figure, which is what the invoice
+                    says, and as its monthly twelfth, which is the only form
+                    that can be added to the monthly figure. The sum of those
+                    two is the effective monthly burn on the row below. */}
                 <div style={card}>
                   <h3 style={h3}>Fixed, whether anyone uses it or not</h3>
                   <p style={sub}>
-                    Maintained by hand in backend/services/costModel.js. Every line carries the date it was last checked. Update the file when a bill changes.
+                    Maintained by hand in backend/services/costModel.js. Every line below carries the date a human last checked it and whether the figure came off an invoice or a pricing page. Update the file when a bill changes.
                   </p>
-                  {(fixed.monthly || []).map((e) => row(e.id, e.label, `${moneyOr(e.usd)}/mo`, e.verified ? null : `Unverified. ${e.note || ''}`))}
-                  {(fixed.annual || []).map((e) => row(e.id, e.label, `${moneyOr(e.usd)}/yr`, e.verified ? null : `Unverified. ${e.note || ''}`))}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '4px' }}>
+                    <div>
+                      <p style={kicker}>Recurring monthly</p>
+                      <p style={big}>{moneyOr(fixed.monthlyUsd, 'None on file', 0)}</p>
+                      <p style={{ ...sub, margin: '3px 0 0' }}>
+                        {(fixed.monthly || []).length} {(fixed.monthly || []).length === 1 ? 'bill' : 'bills'} that arrive every month.
+                      </p>
+                    </div>
+                    <div>
+                      <p style={kicker}>Committed annually</p>
+                      <p style={big}>{moneyOr(fixed.annualUsd, 'None on file', 0)}</p>
+                      <p style={{ ...sub, margin: '3px 0 0' }}>
+                        {(fixed.annual || []).length} {(fixed.annual || []).length === 1 ? 'bill' : 'bills'} that arrive once a year, which is {moneyOr(fixed.annualPerMonthUsd, 'nothing')} a month once spread.
+                      </p>
+                    </div>
+                  </div>
+                  {(fixed.monthly || []).map((e) => fixedRow(e, '/mo'))}
+                  {(fixed.annual || []).map((e) => fixedRow(e, '/yr'))}
                   <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0 0', marginTop: '4px', borderTop: '1px solid var(--border-default)' }}>
-                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>Annual bills spread over twelve months</span>
+                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>Monthly bills plus the annual ones spread over twelve months</span>
                     <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{moneyOr(fixed.effectiveMonthlyUsd)}<span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>/mo</span></span>
                   </div>
-                  {(fixed.oneTime || []).map((e) => row(e.id, `${e.label}, one time`, moneyOr(e.usd, 'Not measured', 0), e.note))}
+                  {/* One-time spend sits below that line and never inside it.
+                      Money already spent and money that arrives again next
+                      month are different facts, and the only way to keep them
+                      apart on one panel is to keep the one-time figure out of
+                      every monthly total on it. */}
+                  {(fixed.oneTime || []).map((e) => fixedRow(e, ', once'))}
+                  {Number.isFinite(fixed.oneTimeUsd) && fixed.oneTimeUsd > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0 0', marginTop: '4px', borderTop: '1px solid var(--border-default)' }}>
+                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>Spent once, and in no monthly figure above</span>
+                      <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{moneyOr(fixed.oneTimeUsd, 'None on file', 0)}</span>
+                    </div>
+                  )}
                   {(fixed.unverifiedLines || []).length > 0 && (
                     <p style={foot}>
-                      {fixed.unverifiedLines.length} {fixed.unverifiedLines.length === 1 ? 'line is' : 'lines are'} a published vendor price rather than an invoice you have seen. They are counted anyway, and named above.
+                      {fixed.unverifiedLines.length} {fixed.unverifiedLines.length === 1 ? 'line is' : 'lines are'} a published vendor price or an assumption rather than an invoice you have seen: {fixed.unverifiedLines.join(', ')}. They are counted in every total above, marked unverified on their own row, and worth {moneyOr(fixed.unverifiedMonthlyUsd, '$0', 2)} a month and {moneyOr(fixed.unverifiedAnnualUsd, '$0', 2)} a year between them.
                     </p>
                   )}
                 </div>
@@ -1324,13 +1454,25 @@ export default function RevenueScreen({
                       <h4 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>Fixed expenses</h4>
                       <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{usd0(effectiveMonthly)}<span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>/mo effective</span></span>
                     </div>
-                    {(fixed.monthly || []).map((e) => row(e.label, `$${e.usd}`, '/mo'))}
-                    {(fixed.annual || []).map((e) => row(e.label, `$${e.usd}`, '/yr'))}
-                    {(fixed.oneTime || []).map((e) => row(e.label, `$${e.usd.toLocaleString()}`, ' once'))}
+                    {/* A LINE NOBODY HAS SEEN ON AN INVOICE SAYS SO HERE TOO.
+                        This list printed a label and a number and nothing
+                        else, so Vercel's assumed $0 read as a confirmed free
+                        tier and the domain's $12 placeholder read as a bill.
+                        The Costs tab carries the reason for each one; this tab
+                        carries the mark, because a figure that is marked on one
+                        screen and bare on the next is not marked. */}
+                    {(fixed.monthly || []).map((e) => row(e.verified ? e.label : `${e.label} (unverified)`, `$${e.usd}`, '/mo'))}
+                    {(fixed.annual || []).map((e) => row(e.verified ? e.label : `${e.label} (unverified)`, `$${e.usd}`, '/yr'))}
+                    {(fixed.oneTime || []).map((e) => row(e.verified ? e.label : `${e.label} (unverified)`, `$${e.usd.toLocaleString()}`, ' once'))}
                     <div style={{ display: 'flex', justifyContent: 'space-between', padding: '7px 0 0', marginTop: '3px', borderTop: '1px solid var(--border-default)' }}>
                       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>Recurring {usd0(monthlyTotal)}/mo plus {usd0(annualTotal)}/yr</span>
                       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>One-time invested: {usd0(fixed.oneTimeUsd)}</span>
                     </div>
+                    {(fixed.unverifiedLines || []).length > 0 && (
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '7px 0 0', lineHeight: 1.4 }}>
+                        {fixed.unverifiedLines.length} {fixed.unverifiedLines.length === 1 ? 'line is' : 'lines are'} a published price or an assumption rather than an invoice, marked above and counted in the burn anyway. The Costs tab says what each one assumes and where to confirm it.
+                      </p>
+                    )}
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '7px 0 0', lineHeight: 1.4 }}>
                       Vendors on free tiers, and what each meter has actually spent, are on the Costs tab.
                     </p>

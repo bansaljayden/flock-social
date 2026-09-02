@@ -319,14 +319,47 @@ test('buildFixed spreads annual bills over twelve months and names its unverifie
   // One-time spend is never in a monthly figure.
   assert.ok(fixed.oneTimeUsd > 0, 'the corpus purchase is on file');
   assert.ok(fixed.effectiveMonthlyUsd < fixed.oneTimeUsd, 'a one-time cost is not a monthly cost');
-  // And the honesty flag.
-  for (const line of [...cm.FIXED_MONTHLY, ...cm.FIXED_ANNUAL]) {
+  // And the honesty flag. ONE_TIME is in the scan now: every line on it is
+  // verified today so no number moves, and leaving a list out of the scan is
+  // how the panel's promise that an unverified figure says so would break
+  // silently the first time an unverified one-time purchase was added.
+  for (const line of [...cm.FIXED_MONTHLY, ...cm.FIXED_ANNUAL, ...cm.ONE_TIME]) {
     assert.strictEqual(typeof line.checked, 'string', `${line.id} has no checked date`);
     assert.match(line.checked, /^\d{4}-\d{2}-\d{2}$/, `${line.id} checked date is not a date`);
     if (!line.verified) {
       assert.ok(fixed.unverifiedLines.includes(line.id), `${line.id} is unverified and does not say so`);
     }
   }
+});
+
+test('buildFixed says how much money is unverified, not only how many lines are', () => {
+  // Two unverified lines worth $0 and $12 read identically to two worth $0 and
+  // $125 when the only figure available is a line count. The panel quotes both
+  // of these, so they are computed here rather than added up in a template.
+  const fixed = cm.buildFixed();
+  const unverifiedMonthly = cm.FIXED_MONTHLY.filter((e) => !e.verified).reduce((s, e) => s + e.usd, 0);
+  const unverifiedAnnual = cm.FIXED_ANNUAL.filter((e) => !e.verified).reduce((s, e) => s + e.usd, 0);
+  assert.strictEqual(fixed.unverifiedMonthlyUsd, Math.round(unverifiedMonthly * 100) / 100);
+  assert.strictEqual(fixed.unverifiedAnnualUsd, Math.round(unverifiedAnnual * 100) / 100);
+  // Unverified money is a SUBSET of the total, never an addition to it. An
+  // unverified line is counted in the totals and named, not dropped.
+  assert.ok(fixed.unverifiedMonthlyUsd <= fixed.monthlyUsd, 'unverified monthly money cannot exceed the monthly total it is part of');
+  assert.ok(fixed.unverifiedAnnualUsd <= fixed.annualUsd, 'unverified annual money cannot exceed the annual total it is part of');
+
+  // The annual bills expressed the one way they can be added to a monthly
+  // figure, so the panel does not divide by twelve in a template.
+  assert.strictEqual(fixed.annualPerMonthUsd, Math.round((fixed.annualUsd / 12) * 100) / 100);
+  assert.ok(
+    Math.abs(fixed.monthlyUsd + fixed.annualPerMonthUsd - fixed.effectiveMonthlyUsd) < 0.02,
+    'the two halves the panel shows have to add up to the effective monthly figure it shows beside them'
+  );
+
+  // Staleness is a property of the whole hand-maintained block. A stale date
+  // means unverified rather than wrong, and the panel can only say so if it is
+  // given the range.
+  assert.match(fixed.oldestChecked, /^\d{4}-\d{2}-\d{2}$/, 'no oldest checked date');
+  assert.match(fixed.newestChecked, /^\d{4}-\d{2}-\d{2}$/, 'no newest checked date');
+  assert.ok(fixed.oldestChecked <= fixed.newestChecked, 'the checked range runs backwards');
 });
 
 test('every rate on the card carries a checked date and a source', () => {
