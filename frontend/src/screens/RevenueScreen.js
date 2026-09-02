@@ -65,6 +65,46 @@ import {
   calculateTransactionRevenue,
   formatCurrency,
 } from '../lib/finance';
+import { saveAdminReconciled } from '../services/api';
+
+// One reconciled line's save form. Amount and date only; the note is optional
+// and short. Saving posts through the admin route and then the parent refetches
+// the whole costs payload, so what the card shows afterwards is what the server
+// merged, never what this form thinks it sent.
+function ReconciledLineForm({ line, onSaved, colors }) {
+  const [usd, setUsd] = React.useState(Number.isFinite(line.usdPerMonth) ? String(line.usdPerMonth) : '');
+  const [asOf, setAsOf] = React.useState(new Date().toISOString().slice(0, 10));
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState('');
+  const save = async () => {
+    setBusy(true);
+    setErr('');
+    try {
+      await saveAdminReconciled({ id: line.id, usdPerMonth: Number(usd), asOf });
+      if (onSaved) onSaved();
+    } catch (e) {
+      setErr((e && e.message) || 'Could not save');
+    } finally {
+      setBusy(false);
+    }
+  };
+  const small = { fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' };
+  const input = { padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--border-default)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', minWidth: 0 };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '8px 0' }}>
+      <span style={small}>{line.label} <span style={{ color: 'var(--text-tertiary)' }}>({line.source === 'dashboard' ? `saved ${line.asOf}` : 'from code, never recorded here'})</span></span>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+        <label style={{ ...small, display: 'flex', alignItems: 'center', gap: '6px' }}>
+          $
+          <input aria-label={`Paid amount for ${line.label}`} type="number" min="0" step="0.01" inputMode="decimal" value={usd} onChange={(e) => setUsd(e.target.value)} style={{ ...input, width: '110px' }} />
+        </label>
+        <input aria-label={`Invoice date for ${line.label}`} type="date" value={asOf} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setAsOf(e.target.value)} style={input} />
+        <button className="hit44" type="button" disabled={busy || usd === ''} onClick={save} style={{ padding: '8px 14px', borderRadius: '8px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: busy ? 'default' : 'pointer' }}>{busy ? 'Saving' : 'Save'}</button>
+      </div>
+      {err && <span style={{ ...small, color: 'var(--accent-red-text, #EF4444)' }}>{err}</span>}
+    </div>
+  );
+}
 
 export default function RevenueScreen({
   adminTab,
@@ -724,6 +764,24 @@ export default function RevenueScreen({
                       </p>
                     </div>
                   </div>
+                  {/* RECORD A PAID INVOICE HERE, NOT IN CODE. Until 2026-09-01
+                      this figure was a constant in services/costModel.js, and
+                      recording a bill meant editing that file and deploying.
+                      Each line below saves to cost_reconciled through the
+                      admin route; the panel, the cost heartbeat and the DECA
+                      financial model all read the saved entry. A line marked
+                      "from code" has never been recorded here. */}
+                  {d.reconciled && Array.isArray(d.reconciled.lines) && (
+                    <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--border-default)' }}>
+                      <p style={kicker}>Record a paid invoice</p>
+                      {d.reconciled.lines.map((l) => (
+                        <ReconciledLineForm key={l.id} line={l} colors={colors} onSaved={() => fetchCosts()} />
+                      ))}
+                      {d.reconciled.readError && (
+                        <p style={foot}>The saved entries could not be read ({d.reconciled.readError}), so the figures above are the code fallback.</p>
+                      )}
+                    </div>
+                  )}
                   {/* WHICH NUMBER IS THE COST OF SERVICE. The all-in figure
                       above carries development tooling that no user causes,
                       and costModel.js says so on each of those lines. Quoting

@@ -1362,6 +1362,17 @@ export async function getAdminCosts() {
   return request('/api/admin/costs');
 }
 
+// Record a paid vendor invoice against one reconciled cost line, from the
+// admin dashboard, so the figure never has to be edited in code again.
+// Server validates the id against costModel.RECONCILED, the amount, and the
+// date; the response carries the merged block the panel then re-renders.
+export async function saveAdminReconciled({ id, usdPerMonth, asOf, note }) {
+  return request('/api/admin/costs/reconciled', {
+    method: 'POST',
+    body: JSON.stringify({ id, usdPerMonth, asOf, note }),
+  });
+}
+
 // Venue votes — member votes carry voter identities, guest-link votes are
 // folded in as guest_count only.
 export async function getFlockVotes(flockId) {

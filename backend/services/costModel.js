@@ -434,6 +434,61 @@ const ONE_TIME = [
 ];
 
 // ---------------------------------------------------------------------------
+// READING THE RECONCILED BLOCK, DASHBOARD OVER CODE (2026-09-01)
+// ---------------------------------------------------------------------------
+// RECONCILED above is the seed and the fallback. Migration 059 adds
+// cost_reconciled, one row per line id, written from the admin dashboard, so
+// recording a paid invoice no longer means editing this file and deploying.
+// This merges the rows over the constants: a line with a row reads the row,
+// a line without one reads the constant, and every line says which. The block
+// date is the newest date across the lines that were actually used, so a fresh
+// dashboard entry moves it and a stale constant cannot hide behind a newer row
+// for a different vendor. A database failure returns the constants, marked, so
+// a panel or a heartbeat degrades to the code figure rather than to nothing.
+async function readReconciled(pool) {
+  const byId = new Map();
+  let readError = null;
+  try {
+    const r = await pool.query(
+      `SELECT line_id, usd_per_month, as_of::text AS as_of, note, updated_at
+         FROM cost_reconciled`
+    );
+    for (const row of r.rows) {
+      byId.set(row.line_id, {
+        usdPerMonth: Number(row.usd_per_month),
+        asOf: String(row.as_of).slice(0, 10),
+        note: row.note || null,
+        updatedAt: row.updated_at || null,
+      });
+    }
+  } catch (err) {
+    readError = err && err.message ? err.message : String(err);
+  }
+  const lines = RECONCILED.lines.map((l) => {
+    const row = byId.get(l.id);
+    if (row && Number.isFinite(row.usdPerMonth)) {
+      return {
+        id: l.id,
+        label: l.label,
+        usdPerMonth: row.usdPerMonth,
+        asOf: row.asOf,
+        note: row.note || l.note,
+        source: 'dashboard',
+      };
+    }
+    return { id: l.id, label: l.label, usdPerMonth: l.usdPerMonth, asOf: RECONCILED.asOf, note: l.note, source: 'code' };
+  });
+  const asOf = lines.map((l) => l.asOf).filter((d) => typeof d === 'string').sort().pop() || RECONCILED.asOf;
+  return {
+    asOf,
+    lines,
+    note: RECONCILED.note,
+    editableIds: RECONCILED.lines.map((l) => l.id),
+    readError,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // WATCHLIST — costs that are not on the bill today and could be tomorrow.
 // ---------------------------------------------------------------------------
 // A cost inventory that lists only what is currently charged is the one that
@@ -1995,6 +2050,7 @@ function buildVenueUnitEconomics(args = {}) {
 }
 
 module.exports = {
+  readReconciled,
   RATES,
   GOOGLE_QUOTAS,
   DEPENDENCIES,
