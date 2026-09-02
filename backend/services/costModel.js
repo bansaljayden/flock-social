@@ -1560,7 +1560,24 @@ function buildFixed() {
   const monthly = FIXED_MONTHLY.reduce((s, e) => s + e.usd, 0);
   const annual = FIXED_ANNUAL.reduce((s, e) => s + e.usd, 0);
   const oneTime = ONE_TIME.reduce((s, e) => s + e.usd, 0);
-  const unverified = [...FIXED_MONTHLY, ...FIXED_ANNUAL].filter((e) => !e.verified).map((e) => e.id);
+  // ONE_TIME is scanned for the verified flag too. Every line on it is
+  // verified today so this changes no number, and it is here because the
+  // promise this block makes to the panel is "an unverified figure says so".
+  // A list left out of the scan breaks that promise silently the first time
+  // somebody adds an unverified one-time purchase to it.
+  const all = [...FIXED_MONTHLY, ...FIXED_ANNUAL, ...ONE_TIME];
+  const unverified = all.filter((e) => !e.verified).map((e) => e.id);
+  // HOW MUCH of the total is unverified, not merely how many lines are. Those
+  // are different sizes of problem and the panel could only say the second
+  // one: two unverified lines worth $0 and $12 read identically to two worth
+  // $0 and $125.
+  const unverifiedMonthly = FIXED_MONTHLY.filter((e) => !e.verified).reduce((s, e) => s + e.usd, 0);
+  const unverifiedAnnual = FIXED_ANNUAL.filter((e) => !e.verified).reduce((s, e) => s + e.usd, 0);
+  // The oldest and newest dates a human last looked at any of these. Staleness
+  // is a property of the whole hand-maintained block rather than of one row,
+  // and computing it here means the panel states it instead of asking a reader
+  // to compare eight dates by eye.
+  const checked = all.map((e) => e.checked).filter((d) => typeof d === 'string').sort();
   return {
     kind: 'fixed',
     monthly: FIXED_MONTHLY,
@@ -1571,7 +1588,14 @@ function buildFixed() {
     oneTimeUsd: round(oneTime),
     // What leaves the account every month once the annual bills are spread.
     effectiveMonthlyUsd: round(monthly + annual / 12),
+    // The annual half of that on its own, so a panel showing the spread does
+    // not have to divide by twelve in a template.
+    annualPerMonthUsd: round(annual / 12),
     unverifiedLines: unverified,
+    unverifiedMonthlyUsd: round(unverifiedMonthly),
+    unverifiedAnnualUsd: round(unverifiedAnnual),
+    oldestChecked: checked[0] || null,
+    newestChecked: checked[checked.length - 1] || null,
   };
 }
 
