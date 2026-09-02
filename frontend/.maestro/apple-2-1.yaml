@@ -226,26 +226,55 @@ appId: com.flockcorp.flock
 - tapOn: "Movie night, dinner, party..."        # CreateScreen.js:328 placeholder
 - inputText: "Review night ${REVIEW_RUN}"
 # The name commits on a 120 ms debounce (SearchInputLocal, App.js:4071).
-# Close the keyboard by moving focus to a day chip (CreateScreen.js
-# FLOCK_DAY_CHOICES), a real button that takes focus off the name field.
-# Runs 7 and 8 (2026-09-02) tapped Create Flock with the keyboard still up:
-# the tap reported success, the request never left the app (no POST
-# /api/flocks in the Railway http log), and the heading tap that was meant
-# to close the keyboard had scrolled away, the same fault the signup part hit.
+# Close the keyboard for real. Runs 7 to 11 (2026-09-02) all tapped Create
+# Flock with the keyboard still up: on iOS a tap on a button does not take
+# focus from a text field, so the day-chip tap of run 10 changed nothing, and
+# the request never left the app (Railway http log). Three things that do
+# close it, each optional: the keyboard's own Done bar, the Return key (the
+# name field blurs on Return since this commit), and only then the chip.
 - tapOn:
-    text: "Tonight|Tomorrow|This\ Weekend|Next\ Week"
+    text: "Done"
+    optional: true
+- pressKey: Enter
+- waitForAnimationToEnd
+- tapOn:
+    text: "Tonight|Tomorrow|This Weekend|Next Week"
     index: 0
     optional: true
 - waitForAnimationToEnd
-- tapOn:
-    text: "Start a Flock"                       # CreateScreen.js:293 <h1>, static; harmless second chance
-    optional: true
 - scrollUntilVisible:
     element: "Create Flock"                     # CreateScreen.js:573 submit; NOT "Start a Flock", which is the heading
     direction: DOWN
     timeout: 8000
     optional: true
 - tapOn: "Create Flock"
+- waitForAnimationToEnd
+# Probes: which of these is on screen says what the tap did.
+- assertVisible:
+    text: "Name your plan first"                 # CreateScreen.js handleCreate: name state was empty
+    optional: true
+- assertVisible:
+    text: "Movie night, dinner, party..."       # placeholder visible = the field is empty
+    optional: true
+- assertVisible:
+    text: "Create Flock"                        # still on the create screen
+    optional: true
+- repeat:
+    times: 2
+    commands:
+      - runFlow:
+          when:
+            visible: "Create Flock"
+          commands:
+            - tapOn:
+                text: "Done"
+                optional: true
+            - pressKey: Enter
+            - waitForAnimationToEnd
+            - tapOn:
+                text: "Create Flock"
+                optional: true
+            - waitForAnimationToEnd
 # The create success path opens the chat directly (App.js newlyCreatedFlockRef,
 # setCurrentScreen('chatDetail')). This gates every shot below.
 - runFlow: parts/open-chat.yaml
