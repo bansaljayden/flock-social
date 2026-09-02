@@ -29,6 +29,7 @@ appId: com.flockcorp.flock
 - launchApp:
     permissions:
       all: unset
+      contacts: allow
 - waitForAnimationToEnd
 - runFlow:
     when:
