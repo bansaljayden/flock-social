@@ -2002,8 +2002,62 @@ function meterBlockOrNull(read) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// RECORD A PAID INVOICE FROM THE DASHBOARD (2026-09-01). The reconciled line
+// used to be a constant in services/costModel.js, so recording a bill meant
+// editing code and deploying, and the figure stood twelve days stale at a
+// mid-month snapshot before anyone noticed. This writes one row to
+// cost_reconciled (migration 059) for a line id the constant already names;
+// costModel.readReconciled merges it over the code figure for the panel and
+// for the cost heartbeat. Validation is by hand, like the tier route above,
+// because this router does not use express-validator.
+// ---------------------------------------------------------------------------
+router.post('/costs/reconciled', async (req, res) => {
+  try {
+    const { id, usdPerMonth, asOf, note } = req.body || {};
+    const known = costModel.RECONCILED.lines.map((l) => l.id);
+    if (typeof id !== 'string' || !known.includes(id)) {
+      return res.status(400).json({ error: 'id must be one of ' + known.join(', ') });
+    }
+    // Number(null) and Number('') are both 0, which would record a bill of
+    // nothing for a field that was simply left out. A missing amount is a
+    // refusal, and a bill of nothing has to be typed as 0 on purpose.
+    if (usdPerMonth === null || usdPerMonth === undefined || usdPerMonth === '' || typeof usdPerMonth === 'boolean') {
+      return res.status(400).json({ error: 'usdPerMonth is required' });
+    }
+    const usd = Number(usdPerMonth);
+    if (!Number.isFinite(usd) || usd < 0 || usd > 100000) {
+      return res.status(400).json({ error: 'usdPerMonth must be a number from 0 to 100000' });
+    }
+    if (typeof asOf !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(asOf) || Number.isNaN(Date.parse(asOf + 'T00:00:00Z'))) {
+      return res.status(400).json({ error: 'asOf must be a date, YYYY-MM-DD' });
+    }
+    if (asOf > new Date().toISOString().slice(0, 10)) {
+      return res.status(400).json({ error: 'asOf cannot be in the future' });
+    }
+    const cleanNote = typeof note === 'string' && note.trim() ? note.trim().slice(0, 500) : null;
+    await pool.query(
+      `INSERT INTO cost_reconciled (line_id, usd_per_month, as_of, note, updated_at, updated_by)
+       VALUES ($1, $2, $3, $4, NOW(), $5)
+       ON CONFLICT (line_id) DO UPDATE
+         SET usd_per_month = EXCLUDED.usd_per_month,
+             as_of = EXCLUDED.as_of,
+             note = EXCLUDED.note,
+             updated_at = NOW(),
+             updated_by = EXCLUDED.updated_by`,
+      [id, Math.round(usd * 100) / 100, asOf, cleanNote, req.user.id]
+    );
+    const reconciled = await costModel.readReconciled(pool);
+    res.json({ success: true, reconciled });
+  } catch (err) {
+    console.error('Record reconciled cost error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 router.get('/costs', async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
+  const reconciledBlock = await costModel.readReconciled(pool);
 
   // -- In-memory meters, turned into plain counts -----------------------------
   const birdieTokensToday = meterOrNull(() => birdieUsage.geminiSpendStatus(null).globalUsed);
@@ -2258,7 +2312,7 @@ router.get('/costs', async (req, res) => {
     fixed,
     venueUnitEconomics,
     watchlist: costModel.WATCHLIST,
-    reconciled: costModel.RECONCILED,
+    reconciled: reconciledBlock,
     // EVERY group on the rate card, not the three that happened to be named
     // here. Nine of the twelve carried a checked date and a source that no
     // screen ever showed, which is the same as not carrying one.
