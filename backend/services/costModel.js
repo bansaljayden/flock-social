@@ -1635,6 +1635,12 @@ function buildFixed() {
     oneTimeUsd: round(oneTime),
     // What leaves the account every month once the annual bills are spread.
     effectiveMonthlyUsd: round(monthly + annual / 12),
+    // THE SPLIT, published. These two were computed above and then left out of
+    // this object, so the panel could never show them. Infrastructure is the
+    // figure to quote as the cost of serving a venue; tooling is a real bill
+    // that no user causes. Together they equal effectiveMonthlyUsd.
+    infrastructureMonthlyUsd: round(infraMonthly),
+    toolingMonthlyUsd: round(toolingMonthly),
     // The annual half of that on its own, so a panel showing the spread does
     // not have to divide by twelve in a template.
     annualPerMonthUsd: round(annual / 12),
