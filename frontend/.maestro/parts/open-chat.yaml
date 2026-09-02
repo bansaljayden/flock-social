@@ -9,7 +9,7 @@ appId: com.flockcorp.flock
 # and only leaves a line in the log), then recover through the plan view's
 # Open Chat, or through Nest and the flock card, before the required wait.
 - assertVisible:
-    text: "Message"
+    text: "Type a message...|Message"
     optional: true
 - assertVisible:
     text: "Start a Flock"                       # still on the create screen: creation did not go through
@@ -31,7 +31,7 @@ appId: com.flockcorp.flock
     optional: true
 - runFlow:
     when:
-      notVisible: "Message"
+      notVisible: "Type a message...|Message"
     commands:
       - tapOn:
           text: "Open Chat|Open chat"
@@ -39,7 +39,7 @@ appId: com.flockcorp.flock
       - waitForAnimationToEnd
 - runFlow:
     when:
-      notVisible: "Message"
+      notVisible: "Type a message...|Message"
     commands:
       - tapOn:
           text: "Nest"
@@ -54,5 +54,5 @@ appId: com.flockcorp.flock
           optional: true
       - waitForAnimationToEnd
 - extendedWaitUntil:
-    visible: "Message"                          # ChatDetail.js:1267 composer aria-label "Message"; on iOS the label replaces the placeholder (run 7)
+    visible: "Type a message...|Message"                          # ChatDetail.js:1267 composer aria-label "Message"; on iOS the label replaces the placeholder (run 7)
     timeout: 20000
