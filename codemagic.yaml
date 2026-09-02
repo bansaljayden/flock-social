@@ -649,22 +649,27 @@ workflows:
           # creator, delete C if the on-camera deletion did not happen. A and
           # B are never deleted.
           maestro test "${MAESTRO_ARGS[@]}" --debug-output /tmp/maestro-debug/cleanup .maestro/apple-2-1-cleanup.yaml || true
-          exit $RESULT
-      - name: Re-encode the recording for attachment
-        script: |
-          # The Simulator writes about 3 Mbps of H.264, which made run 4's
-          # sixteen minutes a 388 MB file. A reviewer has to read the screen,
-          # not count pixels: 720 wide, 24 fps, crf 30, no audio track (the
-          # Simulator records none). The original stays in the artifacts.
+          # Re-encode for attachment, here and not in a step of its own: a
+          # later step is skipped when this one exits non-zero, and run 12
+          # (2026-09-02) produced a 464 MB recording with no 720p copy for
+          # exactly that reason. The Simulator writes about 3 Mbps of H.264;
+          # a reviewer has to read the screen, not count pixels: 720 wide,
+          # 24 fps, crf 30, no audio track (the Simulator records none). The
+          # original stays in the artifacts. Nothing here changes the exit
+          # status the shot list earned.
           if ! command -v ffmpeg >/dev/null 2>&1; then
             echo "ffmpeg is not on this image; installing it with Homebrew"
-            HOMEBREW_NO_AUTO_UPDATE=1 brew install ffmpeg >/dev/null 2>&1 || {
-              echo "ffmpeg could not be installed; the full-size recording is still an artifact"
-              exit 0
-            }
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install ffmpeg >/dev/null 2>&1 \
+              || echo "ffmpeg could not be installed; the full-size recording is still an artifact"
           fi
-          ffmpeg -y -hide_banner -loglevel error -i /tmp/flock-review.mp4             -vf "scale=720:-2,fps=24" -c:v libx264 -crf 30 -preset veryfast             -pix_fmt yuv420p -movflags +faststart -an /tmp/flock-review-720p.mp4
-          ls -la /tmp/flock-review.mp4 /tmp/flock-review-720p.mp4
+          if command -v ffmpeg >/dev/null 2>&1 && [ -s /tmp/flock-review.mp4 ]; then
+            ffmpeg -y -hide_banner -loglevel error -i /tmp/flock-review.mp4 \
+              -vf "scale=720:-2,fps=24" -c:v libx264 -crf 30 -preset veryfast \
+              -pix_fmt yuv420p -movflags +faststart -an /tmp/flock-review-720p.mp4 \
+              || echo "re-encode failed; the full-size recording is still an artifact"
+          fi
+          ls -la /tmp/flock-review.mp4 /tmp/flock-review-720p.mp4 || true
+          exit $RESULT
     artifacts:
       - /tmp/flock-review.mp4
       - /tmp/flock-review-720p.mp4

@@ -856,6 +856,11 @@ export default function ProfileSettings({
               <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '360px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif" }}>
                 <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>Delete your account?</h3>
                 <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>This permanently deletes your account, messages, friends and payment settings. <strong>Any flock you created is deleted for everyone in it</strong>, along with its chat and votes, and they are told it was cancelled. Your direct messages disappear from the other person's app too. A few things are kept, and our Privacy Policy lists them. <strong>This cannot be undone.</strong></p>
+                {/* Both inputs below close the keyboard on Return
+                    (enterKeyHint done + blur). In WKWebView a tap on a button
+                    does not blur a focused field, so without this the
+                    keyboard kept covering Cancel and the confirm button;
+                    CreateScreen.js does the same for the plan name. */}
                 {/* Proof of identity. The server requires the password for a
                     password account and a sign-in inside the last five minutes
                     for an OAuth one, so a stolen token alone can no longer
@@ -871,6 +876,8 @@ export default function ProfileSettings({
                       value={deletePassword}
                       onChange={(e) => { setDeletePassword(e.target.value); if (deleteError) setDeleteError(''); }}
                       placeholder="Password"
+                      enterKeyHint="done"
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }}
                       style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: `1px solid ${deleteError ? '#EF4444' : 'var(--border-default)'}`, backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', marginBottom: '6px' }}
                     />
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 14px' }}>Signed in with Google or Apple? Leave this blank.</p>
@@ -893,10 +900,11 @@ export default function ProfileSettings({
                 )}
 
                 <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', margin: '0 0 6px' }}>Type <strong>DELETE</strong> to confirm</p>
-                <input aria-label="Type DELETE to confirm" value={deleteConfirmText} onChange={(e) => setDeleteConfirmText(e.target.value)} placeholder="DELETE" autoCapitalize="characters" style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', outline: 'none', marginBottom: '16px', fontFamily: 'inherit' }} />
+                <input aria-label="Type DELETE to confirm" value={deleteConfirmText} onChange={(e) => setDeleteConfirmText(e.target.value)} placeholder="DELETE" autoCapitalize="characters" enterKeyHint="done" onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur(); } }} style={{ width: '100%', boxSizing: 'border-box', padding: '12px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', outline: 'none', marginBottom: '16px', fontFamily: 'inherit' }} />
                 <div style={{ display: 'flex', gap: '10px' }}>
                   <button className="hit44" onClick={() => setShowDeleteAccount(false)} disabled={deletingAccount} style={{ flex: 1, padding: '13px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
                   <button className="hit44"
+                    aria-label="Delete account, permanently"
                     disabled={deletingAccount || deleteNeedsReauth || deleteConfirmText.trim().toUpperCase() !== 'DELETE'}
                     onClick={async () => {
                       setDeletingAccount(true);
