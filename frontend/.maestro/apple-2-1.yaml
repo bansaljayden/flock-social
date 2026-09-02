@@ -297,12 +297,20 @@ appId: com.flockcorp.flock
     timeout: 10000
     optional: true
 # The modal lists friends only (App.js flockInviteAllFriends from getFriends);
-# each row is one <button> whose label is the name plus its "Add" tag
-# (App.js renderFlockInviteRow), so match on the name and whatever follows.
+# each row is one <button> holding the avatar's initial, the name and an "Add"
+# tag (App.js renderFlockInviteRow), so WKWebView's label for it starts with
+# the initial, not the name: run 13 (2026-09-02) had A and B as friends
+# (GET /api/friends confirmed it) and "${NAME_B}.*" still matched nothing.
+# Match the name anywhere in the label, and give the list time to load,
+# since the share-link section renders before getFriends returns.
 # Tapping a row selects it and the send button appears reading "Invite 1 Friend"
 # (ChatDetail.js:2151); the modal closes itself after the send.
+- extendedWaitUntil:
+    visible: ".*${NAME_B}.*"
+    timeout: 10000
+    optional: true
 - tapOn:
-    text: "${NAME_B}.*"
+    text: ".*${NAME_B}.*"
     index: 0
     optional: true
 - waitForAnimationToEnd
