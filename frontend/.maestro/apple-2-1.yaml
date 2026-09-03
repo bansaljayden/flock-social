@@ -396,13 +396,18 @@ appId: com.flockcorp.flock
 - extendedWaitUntil:
     visible: "Nest"
     timeout: 25000
-- tapOn: "Nest"
-# B's pending invite comes from the first GET /api/flocks after login and
-# renders under a "Pending invites" header on the home tab (App.js:14469,
-# tools/e2e/flock.spec.js proves it arrives). Run 21 (2026-09-02) waited only
-# 15s and never refreshed, and B's Nest had not painted the invite yet. The
-# e2e that covers this waits 30s and reloads; a relaunch is that reload and
-# re-runs loadFlocks, so wait longer and relaunch once if it is still absent.
+# B's pending invite renders on the MESSAGES tab, not Nest. The Pending
+# Invites block (App.js:14469) sits inside the conversations screen, directly
+# under the Direct Messages section, on the same screen as the conversation
+# search. Runs 21, 22 and 23 all looked on Nest and never found it, while
+# GET /api/flocks as B returned the flock with member_status "invited" the
+# whole time (checked against production each run). The tab's accessible name
+# carries an unread count, so it is matched as a pattern.
+- tapOn:
+    text: "Messages.*"
+    index: 0
+    optional: true
+- waitForAnimationToEnd
 - extendedWaitUntil:
     visible: "Review night ${REVIEW_RUN}"       # App.js:14497 pending invite <h2>{f.name}
     timeout: 30000
@@ -438,8 +443,10 @@ appId: com.flockcorp.flock
           timeout: 25000
           optional: true
       - tapOn:
-          text: "Nest"
+          text: "Messages.*"
+          index: 0
           optional: true
+      - waitForAnimationToEnd
       - extendedWaitUntil:
           visible: "Review night ${REVIEW_RUN}"
           timeout: 30000
