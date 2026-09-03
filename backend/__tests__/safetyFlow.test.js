@@ -903,6 +903,34 @@ test('contacts: editing an address moves the address date, editing a name does n
   } finally { restore(); }
 });
 
+test('contacts: re-saving a contact with a new address moves the address date too', async () => {
+  // The other write door. UNIQUE(user_id, contact_phone) makes the ON CONFLICT
+  // branch the ordinary re-save, and it used to change the address without
+  // touching email_set_at. Add a contact, raise a real SOS, re-save the same
+  // phone with a different email: the stand-down audience reads
+  // COALESCE(email_set_at, created_at) <= alert time, so the new address passed
+  // as if it had received the alarm and got the all-clear under the one
+  // category that bypasses the do-not-mail list. PUT had the CASE; POST did not.
+  const { calls, restore } = stubPool(async (sql) => {
+    if (sql.includes('SELECT COUNT(*)') && sql.includes('trusted_contacts')) return { rows: [{ n: 1 }] };
+    if (sql.includes('INSERT INTO trusted_contacts')) {
+      return { rows: [{ id: 5, contact_name: 'Mum', contact_phone: '5550100', contact_email: 'new@example.com' }], rowCount: 1 };
+    }
+    return null;
+  });
+  try {
+    const res = await call(safetyRoutes, 'POST', '/api/contacts', {
+      name: 'Mum', phone: '5550100', email: 'new@example.com',
+    });
+    assert.strictEqual(res.status, 201, JSON.stringify(res.body));
+    const insert = calls.find((c) => c.text.includes('INSERT INTO trusted_contacts'));
+    assert.ok(insert, 'the contact is written through the upsert');
+    assert.match(insert.text,
+      /email_set_at = CASE WHEN trusted_contacts\.contact_email IS DISTINCT FROM EXCLUDED\.contact_email THEN NOW\(\)/,
+      'a re-save that changes the address moves the address date; a name-only re-save keeps it');
+  } finally { restore(); }
+});
+
 test('stand-down: an attempt that reaches nobody cannot be repeated without limit', async () => {
   // The meter refunds its slot when nothing was delivered, and it should: the
   // person still needs to be able to retry. But the refund was unconditional
