@@ -1505,7 +1505,7 @@ export default function ChatDetail({
                           <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>Total</span>
                           <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.steel }}>${(parseFloat(billTotal) * (1 + billTip / 100)).toFixed(2)}</span>
                         </div>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0', textAlign: 'center' }}>Equal split · ~${(parseFloat(billTotal) * (1 + billTip / 100) / Math.max(1, flock.members?.length || flock.memberCount || 1)).toFixed(2)} each</p>
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0', textAlign: 'center' }}>Equal split · ~${(parseFloat(billTotal) * (1 + billTip / 100) / Math.max(1, flock.billableCount ?? (flock.members?.length || flock.memberCount || 1))).toFixed(2)} each</p>
                       </div>
                     )}
                     <button className="hit44 glass-btn glass-primary" disabled={!billTotal || parseFloat(billTotal) <= 0} onClick={async () => {
