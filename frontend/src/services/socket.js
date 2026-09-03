@@ -650,8 +650,17 @@ export function onDmReactionRemoved(callback) {
 }
 
 // DM venue voting
+//
+// Answers whether the vote actually left the device, the same contract
+// socketSendDm has carried since the failed-message row was added. A guarded
+// emit that returns nothing is how the DM vote panel came to flip a tile, raise
+// a count and write the voter's own name into the list over a socket that had
+// sent nothing at all: there was no answer to reconcile against, so there was
+// no rollback and no sentence. The caller needs the answer, so it gets one.
 export function dmVoteVenue(receiverId, venueName, venueId) {
-  if (socket?.connected) socket.emit('dm_vote_venue', { receiverId, venue_name: venueName, venue_id: venueId });
+  if (!socket?.connected) return false;
+  socket.emit('dm_vote_venue', { receiverId, venue_name: venueName, venue_id: venueId });
+  return true;
 }
 
 export function onDmNewVote(callback) {

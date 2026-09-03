@@ -240,6 +240,30 @@ export default function DmDetail({
     if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); }
   };
 
+  // THE VOTE, WRITTEN ONCE. This screen has three vote buttons (the panel's
+  // nearby list, the panel's un-vote, and Vote on a venue card in the thread)
+  // and all three used to do the same thing: rewrite the tally optimistically,
+  // then call dmVoteVenue and walk away.
+  //
+  // dmVoteVenue is a guarded emit. Over a dead socket it sent nothing, and it
+  // returned nothing either, so the tile flipped, the count went up, the user's
+  // own name landed in the voter list, and the server had no vote. The next
+  // loadDmVenueVotes wiped it with no explanation, which is verbatim the "tile
+  // quietly reverted on the next load" of silentWriteFailures incident 1, in a
+  // direct message instead of a flock. The comment above the panel said it was
+  // "identical to flock with optimistic local updates"; it stopped being
+  // identical the day that incident was fixed on the flock side.
+  //
+  // A tunnel, a lock screen, or the second after a resume before the socket is
+  // back are all ordinary. previousVotes is captured by the CALLER, before its
+  // optimistic write, for the same reason updateFlockVotes captures its own.
+  const commitDmVote = (venueName, venueId, previousVotes, lead) => {
+    if (dmVoteVenue(selectedDmId, venueName, venueId)) return true;
+    setDmVenueVotes(previousVotes);
+    showToast(`${lead} You're not connected right now.`, 'error');
+    return false;
+  };
+
   // Three states, not two, with the same sampling and the same words as the
   // flock header. 9d87b73 fixed the hardcoded "online" in ChatDetail only;
   // this screen was extracted with the old literal frozen in, so a dead
@@ -409,7 +433,11 @@ export default function DmDetail({
         </button>
       )}
 
-      {/* Vote panel — identical to flock with optimistic local updates */}
+      {/* Vote panel. It is NOT identical to the flock's, which is what the
+          sentence that stood here for months claimed, and that claim is how the
+          missing rollback below hid: the flock votes over REST and reconciles
+          against the response, this votes over a socket emit and reconciles
+          against whether the emit went out. See commitDmVote. */}
       {showDmVotePanel && (() => {
         const myName = authUser?.name;
         const totalVoters = new Set(dmVenueVotes.flatMap(v => v.voters || [])).size;
@@ -417,6 +445,9 @@ export default function DmDetail({
         const pinnedName = dmPinnedVenue?.name || null;
 
         const handleDmQuickVote = (venueName, venueId) => {
+          // Captured before the optimistic rewrite below, so a send that never
+          // left the device has something to put back. See commitDmVote.
+          const previousVotes = dmVenueVotes;
           const existing = dmVenueVotes.find(v => v.venue_name === venueName);
           if (existing) {
             if ((existing.voters || []).includes(myName)) return; // already voted here
@@ -443,18 +474,18 @@ export default function DmDetail({
             ];
             setDmVenueVotes(newVotes);
           }
-          dmVoteVenue(selectedDmId, venueName, venueId);
-          trackDmVenueVote();
-                 };
+          if (commitDmVote(venueName, venueId, previousVotes, "Your vote didn't save.")) trackDmVenueVote();
+        };
 
         const handleDmUnvote = () => {
+          const previousVotes = dmVenueVotes;
           const newVotes = dmVenueVotes.map(v => ({
             ...v,
             voters: (v.voters || []).filter(x => x !== myName),
             vote_count: (v.voters || []).includes(myName) ? parseInt(v.vote_count || 0) - 1 : parseInt(v.vote_count || 0),
           })).filter(v => parseInt(v.vote_count || 0) > 0);
           setDmVenueVotes(newVotes);
-          if (myVote) dmVoteVenue(selectedDmId, myVote, dmVenueVotes.find(v => v.venue_name === myVote)?.venue_id);
+          if (myVote) commitDmVote(myVote, dmVenueVotes.find(v => v.venue_name === myVote)?.venue_id, previousVotes, "Clearing your vote didn't save.");
         };
 
         const votesWithPinned = pinnedName && !dmVenueVotes.find(v => v.venue_name === pinnedName)
@@ -882,6 +913,10 @@ export default function DmDetail({
                       const vName = m.venue_data.name;
                       const vId = m.venue_data.place_id;
                       const mn = authUser?.name;
+                      // Same capture as the panel's own vote button: this card
+                      // is the third way into the same tally and it rolled back
+                      // no further than the other two did.
+                      const previousVotes = dmVenueVotes;
                       const existing = dmVenueVotes.find(v => v.venue_name === vName);
                       if (existing && (existing.voters || []).includes(mn)) return;
                       if (existing) {
@@ -889,8 +924,7 @@ export default function DmDetail({
                       } else {
                         setDmVenueVotes(prev => [...prev.map(v => ({ ...v, voters: (v.voters || []).filter(x => x !== mn), vote_count: (v.voters || []).includes(mn) ? parseInt(v.vote_count || 0) - 1 : parseInt(v.vote_count || 0) })).filter(v => parseInt(v.vote_count || 0) > 0), { venue_name: vName, venue_id: vId, vote_count: 1, voters: [mn] }]);
                       }
-                      dmVoteVenue(selectedDmId, vName, vId);
-                      trackDmVenueVote();
+                      if (commitDmVote(vName, vId, previousVotes, "Your vote didn't save.")) trackDmVenueVote();
                     }}
                   />
                   </div>

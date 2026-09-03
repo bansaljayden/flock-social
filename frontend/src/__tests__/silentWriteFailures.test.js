@@ -130,6 +130,78 @@ describe('a vote that did not save', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 1b. The same vote, in a direct message
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Incident 1 was fixed in the flock and never in the DM, and the comment above
+ * the DM panel is the reason it stayed hidden: it reads "Vote panel, identical
+ * to flock with optimistic local updates", which stopped being true the day the
+ * flock panel got its rollback.
+ *
+ * The DM does not vote over REST. It votes through dmVoteVenue, which was a
+ * guarded emit returning nothing:
+ *
+ *   export function dmVoteVenue(receiverId, venueName, venueId) {
+ *     if (socket?.connected) socket.emit('dm_vote_venue', { ... });
+ *   }
+ *
+ * Over a dead socket that sent nothing and said nothing. All three vote buttons
+ * on the screen (the panel's nearby list, the panel's un-vote, and Vote on a
+ * venue card in the thread) rewrote the tally first and called it afterwards,
+ * so the tile flipped, the count went up, the voter's own name landed in the
+ * list, and the server had no vote. loadDmVenueVotes wiped it at the next open
+ * with no explanation: "the tile quietly reverted on the next load", verbatim.
+ *
+ * A tunnel, a locked phone, or the second after a resume before the socket is
+ * back are all ordinary, so this is not an edge case. The emit now answers, and
+ * every one of the three buttons reconciles against the answer.
+ */
+describe('a DM venue vote that never left the device', () => {
+  const SOCKET = codeOnly(fs.readFileSync(path.join(__dirname, '..', 'services', 'socket.js'), 'utf8'));
+  const dmVotes = () => region(APP, 'const commitDmVote = ', 'const readConnection');
+
+  test('the emit answers whether it emitted, like every other send in socket.js', () => {
+    const fn = region(SOCKET, 'export function dmVoteVenue', 'export function onDmNewVote');
+    expect(fn).toMatch(/if \(!socket\?\.connected\) return false;/);
+    expect(fn).toMatch(/return true;/);
+  });
+
+  test('a vote that did not go out puts the tally back', () => {
+    expect(dmVotes()).toMatch(/setDmVenueVotes\(previousVotes\);/);
+  });
+
+  test('and says so, naming the action, as an error toast', () => {
+    const fn = dmVotes();
+    expect(fn).toMatch(/showToast\(.*'error'\)/);
+    expect(fn).toMatch(/You're not connected right now\./);
+    expect(APP).toMatch(/Your vote didn't save\./);
+    expect(APP).toMatch(/Clearing your vote didn't save\./);
+  });
+
+  test('all three vote buttons go through the one reconciled path', () => {
+    // The third is the Vote button on a venue card in the thread, which is a
+    // long way from the panel and was written separately. A fourth added later
+    // that calls the raw emit would put the defect straight back, so the raw
+    // emit has exactly one caller on this screen.
+    expect(APP).toMatch(/const commitDmVote = \(venueName, venueId, previousVotes, lead\) => \{/);
+    const commits = APP.match(/commitDmVote\(/g) || [];
+    expect(commits.length).toBe(3);
+    // And the raw emit is called from exactly one place, inside commitDmVote.
+    const raw = APP.match(/dmVoteVenue\(selectedDmId,/g) || [];
+    expect(raw.length).toBe(1);
+  });
+
+  test('each caller captures the tally before its optimistic write', () => {
+    // Captured by the caller, not by commitDmVote, for the same reason
+    // updateFlockVotes captures its own: by the time the emit is attempted the
+    // optimistic rewrite has already happened.
+    const captures = APP.match(/const previousVotes = dmVenueVotes;/g) || [];
+    expect(captures.length).toBe(3);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 2. A calendar event
 // ═══════════════════════════════════════════════════════════════════════════
 
