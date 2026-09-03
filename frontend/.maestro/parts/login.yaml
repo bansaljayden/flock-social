@@ -31,6 +31,18 @@ appId: com.flockcorp.flock
       all: unset
       contacts: allow
 - waitForAnimationToEnd
+# Every launch leaves permissions unset, which also resets what an earlier
+# launch granted, so a relaunch after the Discover session brings the iOS
+# location alert straight back over the app (run 20, 2026-09-02: two
+# relaunches in a row, neither the tab bar nor the login form ever visible).
+# Answer whatever alert is up before looking for anything of ours.
+- tapOn:
+    text: "Allow While Using App|Allow Once"
+    optional: true
+- tapOn:
+    text: "Allow"
+    optional: true
+- waitForAnimationToEnd
 # Run 19 (2026-09-02): a relaunch after the chat session landed on a screen
 # with neither the tab bar nor the login form, so a guard keyed on "Nest"
 # never ran and the required "Welcome back" below ended the take. The
