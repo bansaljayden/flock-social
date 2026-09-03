@@ -467,11 +467,18 @@ appId: com.flockcorp.flock
     text: "Accept invite"                       # App.js:14519 aria-label
     optional: true
 - waitForAnimationToEnd
-# Run 25 (2026-09-02) accepted the invite and then found nothing: the guard
-# below asked for the flock name immediately, and on accept the card leaves
-# the Pending Invites section and is re-rendered into the conversation list,
-# which takes a moment and can sit lower down. So B never opened the chat and
-# never posted the message A was meant to report, losing shots 12, 13 and 15.
+# Runs 25 and 26 both accepted the invite and then found nothing, and the
+# second guess about why was wrong too. handleAcceptFlockInvite (App.js:5938)
+# moves the flock out of pendingFlockInvites and into `flocks`, and `flocks` is
+# what the NEST tab draws. The Messages tab draws pending invites and direct
+# messages, so once the invite is accepted its card is gone from this screen
+# and no amount of waiting or scrolling here will find it. Go to Nest, which is
+# exactly where A's own session finds the same flock.
+- tapOn:
+    text: "Nest"
+    index: 0
+    optional: true
+- waitForAnimationToEnd
 - extendedWaitUntil:
     visible: "Review night ${REVIEW_RUN}"
     timeout: 20000
