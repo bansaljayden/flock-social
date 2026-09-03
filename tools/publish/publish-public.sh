@@ -158,10 +158,9 @@ STRIP=(
   # which is exactly what makes it the wrong thing to hand a stranger.
   --path SUBMIT-CHECKLIST.md
   # VENUE-BILLING.md is the commercial working document, and the readers it
-  # would reach in a public repository are the readers it argues about. It also
-  # carries account and billing arrangements that are nobody else's business.
-  # That is a private individual's information as well as his own, and neither
-  # belongs anywhere anyone can read.
+  # would reach in a public repository are the readers it argues about. It
+  # also carries account and billing arrangements that are nobody else's
+  # business. Withheld for that reason as well as the commercial one.
   --path VENUE-BILLING.md
   --path-glob 'ADVISOR-*.md'
   --path-glob 'SECURITY-AUDIT-*.md'

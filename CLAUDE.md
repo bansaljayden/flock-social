@@ -10,10 +10,9 @@ from it, the trained model is tracked in it, and every push goes here first.
 
 `bansaljayden/flock-social` is public. It is this repository with the model, the
 old `.env` files, the Android debug keystore, and the App Store screenshots
-erased from every commit that ever held them. It exists to be read, by anyone
-evaluating the project, so its value is the commit
-history: the full timeline from 2026-01-18 onward, dates and authorship
-preserved exactly.
+erased from every commit that ever held them. It exists to be read by anyone
+evaluating the project, so its value is the commit history: the full timeline
+from 2026-01-18 onward, dates and authorship preserved exactly.
 
 **The mirror is not the one this section used to describe, and publishing is no
 longer routine.** Two things happened after that instruction was written, and
