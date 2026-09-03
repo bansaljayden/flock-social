@@ -241,7 +241,13 @@ describe('dashboard map behavior', () => {
     // the dashboard asking for a location when nothing about the dashboard had
     // changed. `!followUser` is still the second test in the guard and still
     // returns; anything else in the condition is somebody else's rule.
-    expect(APP).toMatch(/if \(!mapReady \|\| !followUser \|\|[^)]*\) return;/);
+    //
+    // The tail is [^\n]* rather than [^)]* because the availability check is a
+    // CALL now (`!geolocationAvailable()`, the shim that keeps WKWebView from
+    // raising its own "localhost" prompt), and a term with parentheses in it
+    // broke a pattern that had assumed the condition contained none. The rest
+    // of the line is still somebody else's rule.
+    expect(APP).toMatch(/if \(!mapReady \|\| !followUser \|\|[^\n]*\) return;/);
     // The property, not the spelling: initialCenter has to short-circuit the
     // geolocation call. That expression gained a second skip on 2026-08-26 for
     // the Settings location switch, and pinning its exact characters made this
