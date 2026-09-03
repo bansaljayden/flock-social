@@ -257,7 +257,14 @@ test('the literal "bar says" appears hardcoded nowhere outside the helper tests'
     path.join(__dirname, '..'),                              // backend/
     path.join(__dirname, '..', '..', 'frontend', 'src'),     // frontend/src/
   ];
-  const skipDirs = new Set(['node_modules', '__tests__', 'build', 'dist', 'coverage', '.git']);
+  // 'backups' and 'uploads' are the same exclusions sourceHealth.test.js and
+  // entitlementGates.test.js already make, and this sweep needed them for a
+  // reason those two did not hit: it reads .sql as well as .js, and
+  // backend/backups/ holds database dumps. A real dump of this database is 2.7
+  // GB, which is past V8's maximum string length, so readFileSync(..., 'utf8')
+  // on one throws ERR_STRING_TOO_LONG and this test goes red for having a
+  // backup on disk. Nothing in that directory is source anyway.
+  const skipDirs = new Set(['node_modules', '__tests__', 'build', 'dist', 'coverage', '.git', 'backups', 'uploads']);
   const offenders = [];
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
