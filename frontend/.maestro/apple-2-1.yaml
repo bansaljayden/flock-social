@@ -457,14 +457,14 @@ appId: com.flockcorp.flock
 # renders BELOW the flock list and the DMs (App.js:14469) and a visibility
 # check does not scroll. Scroll to it.
 - scrollUntilVisible:
-    element: "Review night ${REVIEW_RUN}"
+    element: "Review night ${REVIEW_RUN}[\\s\\S]*"
     direction: DOWN
     timeout: 20000
     centerElement: true
     optional: true
 - runFlow:
     when:
-      notVisible: "Review night ${REVIEW_RUN}"
+      notVisible: "Review night ${REVIEW_RUN}[\\s\\S]*"
     commands:
       - launchApp:
           permissions:
@@ -487,11 +487,11 @@ appId: com.flockcorp.flock
           optional: true
       - waitForAnimationToEnd
       - extendedWaitUntil:
-          visible: "Review night ${REVIEW_RUN}"
+          visible: "Review night ${REVIEW_RUN}[\\s\\S]*"
           timeout: 30000
           optional: true
       - scrollUntilVisible:
-          element: "Review night ${REVIEW_RUN}"
+          element: "Review night ${REVIEW_RUN}[\\s\\S]*"
           direction: DOWN
           timeout: 20000
           centerElement: true
@@ -500,8 +500,20 @@ appId: com.flockcorp.flock
     text: "Accept invite"                       # App.js:14519 aria-label
     optional: true
 - waitForAnimationToEnd
-# Runs 25 and 26 both accepted the invite and then found nothing, and the
-# second guess about why was wrong too. handleAcceptFlockInvite (App.js:5938)
+# Runs 25, 26 and 28 all accepted the invite and then "found nothing", and the
+# reason turned out to be different each time. Run 28 settled it with the
+# hierarchy Maestro itself captured (step-214): the card was ON SCREEN, and
+# the whole card is ONE element whose accessibility label is the flock name,
+# then a newline, then TBD, then a newline, then Needs Votes, then the member
+# initials and the time. Maestro's textRegex is a FULL match and Java's "."
+# does not cross a newline, so both "Review night 28" and "Review night 28.*"
+# fail against that label while the card sits there in plain sight for over
+# thirty seconds. Every Nest-side lookup below therefore matches the tail with
+# a character class that does include newlines. The Messages-tab lookup above
+# keeps the exact name, because the pending invite exposes its heading as its
+# own element and matches exactly.
+#
+# handleAcceptFlockInvite (App.js:5938)
 # moves the flock out of pendingFlockInvites and into `flocks`, and `flocks` is
 # what the NEST tab draws. The Messages tab draws pending invites and direct
 # messages, so once the invite is accepted its card is gone from this screen
@@ -513,18 +525,18 @@ appId: com.flockcorp.flock
     optional: true
 - waitForAnimationToEnd
 - extendedWaitUntil:
-    visible: "Review night ${REVIEW_RUN}"
+    visible: "Review night ${REVIEW_RUN}[\\s\\S]*"
     timeout: 20000
     optional: true
 - scrollUntilVisible:
-    element: "Review night ${REVIEW_RUN}"
+    element: "Review night ${REVIEW_RUN}[\\s\\S]*"
     direction: DOWN
     timeout: 15000
     centerElement: true
     optional: true
 - runFlow:
     when:
-      visible: "Review night ${REVIEW_RUN}"     # App.js:14598 flock card <h2>, card opens chatDetail (App.js:14571)
+      visible: "Review night ${REVIEW_RUN}[\\s\\S]*"     # App.js:14598 flock card <h2>, card opens chatDetail (App.js:14571)
     commands:
       # Accepting may already have opened the chat; then the flock's name is
       # the chat header and tapping it is not wanted.
@@ -533,7 +545,7 @@ appId: com.flockcorp.flock
             notVisible: "Type a message...|Message"
           commands:
             - tapOn:
-                text: "Review night ${REVIEW_RUN}"
+                text: "Review night ${REVIEW_RUN}[\\s\\S]*"
                 index: 0
                 optional: true
       - runFlow: parts/open-chat.yaml
@@ -574,7 +586,7 @@ appId: com.flockcorp.flock
     timeout: 25000
 - tapOn: "Nest"
 - tapOn:
-    text: "Review night ${REVIEW_RUN}"          # App.js:14598 flock card <h2>
+    text: "Review night ${REVIEW_RUN}[\\s\\S]*"          # App.js:14598 flock card <h2>
     index: 0
     optional: true                              # open-chat.yaml retries this from Nest itself; a miss here must not end the take
 - runFlow: parts/open-chat.yaml
@@ -722,6 +734,15 @@ appId: com.flockcorp.flock
           text: "Your password"
           optional: true
       - inputText: ${REVIEW_PASSWORD_C}
+      # Blur the password field before reaching for the next one. This input
+      # blurs itself on Enter (ProfileSettings.js:880), which drops the
+      # keyboard. Run 28 skipped this and paid for it: the hierarchy Maestro
+      # aimed at was captured with the keyboard up, so the tap meant for the
+      # confirm input landed on the keyboard instead, focus never moved, and
+      # "DELETE" was appended to the PASSWORD field -- the frames show 22 dots
+      # for a 16 character password, and the confirm button stayed disabled.
+      - pressKey: Enter
+      - waitForAnimationToEnd
       # Run 26 opened this dialog, typed the password, and then never deleted
       # anything. There used to be a second tap here on the bare word
       # "DELETE"; it matched the BOLD
