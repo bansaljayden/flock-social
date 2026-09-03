@@ -7644,6 +7644,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     [calendarEvents, flockCalendarEvents],
   );
 
+  // Rows the user removed while createCalendarEvent was still in flight. The
+  // remove button has no server id to delete in that window, so the intent has
+  // to be carried across to the create's own .then, which is the only place the
+  // real id ever appears.
+  const removedTempCalendarIdsRef = useRef(new Set());
+
+  // The DELETE half of the calendar, shared by the remove button and by the
+  // create's .then. Both need the same contract: a refused DELETE puts the row
+  // back. A calendar that says an event is gone while the server still has it
+  // lies at the next launch exactly the way the add path lied at the last one
+  // (silentWriteFailures incident 2, pointed the other way).
+  const deleteSavedCalendarEvent = useCallback((row) => {
+    deleteCalendarEvent(row.id).catch((err) => {
+      setCalendarEvents(prev => (prev.some(e => e.id === row.id) ? prev : [...prev, row]));
+      if (err?.sessionExpired) return;
+      const lead = "That didn't get removed from your calendar.";
+      showToast(err?.message ? `${lead} ${err.message}` : `${lead} Try again.`, 'error');
+    });
+  }, [showToast]);
+
   // Optimistic local add; the server assigns the real id and is what makes the
   // event survive a relaunch.
   //
@@ -7658,14 +7678,38 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     const tempId = `tmp-${Date.now()}`;
     setCalendarEvents(prev => [...prev, { id: tempId, title, venue, date: dateStr, time, color: color || colors.navy, members: 1 }]);
     createCalendarEvent({ title, date: dateStr, venue, time, color: color || colors.navy })
-      .then(saved => setCalendarEvents(prev => prev.map(e => e.id === tempId ? saved : e)))
+      .then(saved => {
+        // Removed while this create was still in flight. The row is already off
+        // the list, so adopting the server id would put it back on screen; the
+        // row the server just made is what has to go instead, or the event the
+        // user deleted returns at the next launch.
+        if (removedTempCalendarIdsRef.current.delete(tempId)) {
+          if (typeof saved?.id === 'number') deleteSavedCalendarEvent(saved);
+          return;
+        }
+        setCalendarEvents(prev => prev.map(e => e.id === tempId ? saved : e));
+      })
       .catch((err) => {
+        removedTempCalendarIdsRef.current.delete(tempId);
         setCalendarEvents(prev => prev.filter(e => e.id !== tempId));
         if (err?.sessionExpired) return;
         const lead = "That didn't get added to your calendar.";
         showToast(err?.message ? `${lead} ${err.message}` : `${lead} Try again.`, 'error');
       });
-  }, [colors.navy, showToast]);
+  }, [colors.navy, showToast, deleteSavedCalendarEvent]);
+
+  // The remove button used to be an inline `setCalendarEvents(filter)` followed
+  // by `deleteCalendarEvent(id).catch(() => {})`. A refused DELETE took the row
+  // off the calendar anyway: the event looked deleted, the user stopped planning
+  // around it, and it was back on the calendar at the next launch. That is the
+  // add-path incident run backwards, and it shipped while the add path was being
+  // fixed, so the two paths now share one contract.
+  const removeCalendarEvent = useCallback((event) => {
+    if (!event) return;
+    setCalendarEvents(prev => prev.filter(e => e.id !== event.id));
+    if (typeof event.id !== 'number') { removedTempCalendarIdsRef.current.add(event.id); return; }
+    deleteSavedCalendarEvent(event);
+  }, [deleteSavedCalendarEvent]);
 
   // `f.messages || []`, not `f.messages`: every writer of a flock object today
   // seeds it with an empty array, but this is now reachable for a flock the user
@@ -14267,7 +14311,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
               {event.derived ? (
                 <button aria-label={`Open ${event.title}`} className="hit44 glass-btn glass-secondary" onClick={() => { setSelectedFlockId(event.flockId); setCurrentScreen('detail'); }} style={{ padding: '6px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0 }}>Open</button>
               ) : (
-                <button aria-label={`Remove ${event.title}`} className="hit44" onClick={() => { setCalendarEvents(calendarEvents.filter(e => e.id !== event.id)); if (typeof event.id === 'number') deleteCalendarEvent(event.id).catch(() => {}); }} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--accent-red-bg)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.red, 14)}</button>
+                <button aria-label={`Remove ${event.title}`} className="hit44" onClick={() => removeCalendarEvent(event)} style={{ width: '28px', height: '28px', borderRadius: '14px', backgroundColor: 'var(--accent-red-bg)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.red, 14)}</button>
               )}
             </div>
           )) : (flocksLoading || calendarLoading) ? (
