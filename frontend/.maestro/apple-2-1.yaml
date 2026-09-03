@@ -66,7 +66,13 @@ appId: com.flockcorp.flock
 # signup did not stick, C's login fails, the login screen stays up with C's
 # email in it, and A's login below clears the fields (parts/login.yaml).
 # ---------------------------------------------------------------------------
-- assertVisible: "Welcome back"                 # LoginScreen.js:146, fresh launch shows LoginScreen (App.js authScreen default 'login')
+# This is the app's FIRST launch on a fresh simulator now that the warm-up
+# pass is gone (2026-09-02), so it is a cold start: the WKWebView has to load
+# the bundle before the login screen paints. Run 24 asserted with no wait and
+# died here in the first seconds. Wait for it.
+- extendedWaitUntil:
+    visible: "Welcome back"                     # LoginScreen.js:146, fresh launch shows LoginScreen (App.js authScreen default 'login')
+    timeout: 90000
 - runFlow:
     file: parts/signup.yaml
     env:
