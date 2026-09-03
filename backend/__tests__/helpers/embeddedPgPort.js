@@ -70,6 +70,7 @@ const SUITE_SLOTS = {
                                  // anyway because a fixed port in the dynamic
                                  // range collides exactly the way this file's
                                  // header warns (Codex review, 2026-09-01).
+  mlOpenHoursSkip: 17,           // new in 2026-09-03; the open-hours call filter
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the
