@@ -87,7 +87,7 @@ describe('every door that can raise the OS location prompt checks the switch', (
     // question: it asks whether THIS map is the one that follows you, which a
     // venue dashboard map answers no to whatever the switch says.
     const watch = slice(
-      'watchIdRef.current = navigator.geolocation.watchPosition(',
+      'watchIdRef.current = watchPosition(',
       'const src = map.getSource',
       200,
       1200,
@@ -96,7 +96,7 @@ describe('every door that can raise the OS location prompt checks the switch', (
     // The guard sits above the call, in the same effect.
     const guard = slice(
       'if (!mapReady || !followUser',
-      'watchIdRef.current = navigator.geolocation.watchPosition(',
+      'watchIdRef.current = watchPosition(',
       20,
       600,
     );
@@ -113,7 +113,7 @@ describe('every door that can raise the OS location prompt checks the switch', (
     // marker finds nothing and the slice helper reports it as a missing
     // anchor rather than as a missing dependency.
     const deps = slice(
-      'watchIdRef.current = navigator.geolocation.watchPosition(',
+      'watchIdRef.current = watchPosition(',
       'venuesRef.current = venues;',
       200,
       1600,

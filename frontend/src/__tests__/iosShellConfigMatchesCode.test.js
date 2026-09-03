@@ -49,6 +49,11 @@ const app = read('frontend', 'src', 'App.js')
 // asserted against THIS rather than against App.js, because App.js calls it and
 // this is where the permission is actually requested.
 const contactsService = read('frontend', 'src', 'services', 'contacts.js');
+// The only file that asks for a position, for the same reason as contacts:
+// App.js stopped calling navigator.geolocation on 2026-09-03 (WKWebView was
+// raising its own '"localhost" would like to use your current location' sheet
+// on top of the real iOS one), and every call now goes through this shim.
+const geolocationService = read('frontend', 'src', 'services', 'geolocation.js');
 const billing = read('backend', 'routes', 'billing.js');
 const firebaseService = read('backend', 'services', 'firebaseService.js');
 const appDelegate = read(...IOS_APP, 'AppDelegate.swift');
@@ -239,8 +244,18 @@ describe('every NS*UsageDescription is one the app actually needs', () => {
   });
 
   test('a location string is present exactly while the client reads location', () => {
-    const readsLocation = /navigator\.geolocation\.(getCurrentPosition|watchPosition)\(/.test(app);
+    // Asserted against the shim, not App.js: App.js names no browser API here
+    // any more, it imports services/geolocation.js, which reaches the device
+    // through @capacitor/geolocation and the browser through the web API.
+    // Either branch raises the system prompt, so either branch needs the string.
+    const readsLocation =
+      /navigator\.geolocation\.(getCurrentPosition|watchPosition)\(/.test(geolocationService)
+      || /Geolocation\.(getCurrentPosition|watchPosition)\(/.test(geolocationService);
     expect(readsLocation).toBe(hasKey(infoPlist, 'NSLocationWhenInUseUsageDescription'));
+    // And the app has to actually be wired to it, or the string above would be
+    // describing a module nothing calls.
+    expect(app).toMatch(/from '\.\/services\/geolocation'/);
+    expect(app).not.toMatch(/navigator\.geolocation\./);
   });
 
   test('no purpose string promises stories while the client has no story surface', () => {
@@ -447,10 +462,37 @@ describe('the permissions that are absent are absent for a reason', () => {
     expect(contactsService).toMatch(/export async function readContactPhoneNumbers\(/);
   });
 
-  test('no always-location string, and no plugin that could request it', () => {
+  test('no always-location string, and nothing asks for always authorization', () => {
     // An always-authorization string with no always API is what produced the
     // ITMS-90683 rejection this file used to carry.
-    expect(Object.keys(pkg.dependencies)).not.toContain('@capacitor/geolocation');
+    //
+    // @capacitor/geolocation used to be banned outright here, as the only way
+    // an always request could reach CoreLocation. It arrived on 2026-09-03 to
+    // close the double-prompt defect, so the ban moved from the package to the
+    // thing it was really about: the plugin's iOS side asks for .whenInUse and
+    // nothing else, and the app never calls requestPermissions itself, so the
+    // only sheet iOS can raise is the when-in-use one this plist describes.
+    // Location is read on a tap or on the Discover tab and never in the
+    // background; if that ever changes, it is these two keys, this assertion
+    // and a new purpose string, together.
+    expect(Object.keys(pkg.dependencies)).toContain('@capacitor/geolocation');
+
+    // Read the whole installed iOS tree rather than one named file, so a
+    // version bump that moves the code cannot quietly retire this check.
+    const pluginIos = path.join(REPO, 'frontend', 'node_modules', '@capacitor', 'geolocation', 'ios');
+    const swift = [];
+    (function walk(dir) {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) walk(full);
+        else if (e.name.endsWith('.swift')) swift.push(fs.readFileSync(full, 'utf8'));
+      }
+    })(pluginIos);
+    expect(swift.length).toBeGreaterThan(0);
+    const pluginSource = swift.join('\n');
+    expect(pluginSource).toMatch(/requestLocationAuthorisation\(type: \.whenInUse\)/);
+    expect(pluginSource).not.toMatch(/requestAlwaysAuthorization|\.always\b/);
+    expect(geolocationService).not.toMatch(/requestPermissions|authorizationRequest/);
     expect(hasKey(infoPlist, 'NSLocationAlwaysAndWhenInUseUsageDescription')).toBe(false);
     expect(hasKey(infoPlist, 'NSLocationAlwaysUsageDescription')).toBe(false);
   });
@@ -650,6 +692,11 @@ const PLUGIN_CLASSES = {
   // (pulse tap, vote, plan created, check-in, the SOS press), all through
   // services/haptics.js, which no-ops on the web.
   '@capacitor/haptics': 'HapticsPlugin',
+  // Geolocation joined 2026-09-03 to close the double location prompt: the web
+  // API made WKWebView raise its own '"localhost" would like to use your
+  // current location' sheet next to the real one. Every call goes through
+  // services/geolocation.js, which uses navigator.geolocation on the web.
+  '@capacitor/geolocation': 'GeolocationPlugin',
   '@capgo/capacitor-social-login': 'SocialLoginPlugin',
   '@revenuecat/purchases-capacitor': 'PurchasesPlugin',
 };
