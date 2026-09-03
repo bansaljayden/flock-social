@@ -45,7 +45,7 @@ appId: com.flockcorp.flock
           text: "Nest"
           optional: true
       - tapOn:
-          text: "Review night.*"
+          text: "Review night[\\s\\S]*"
           index: 0
           optional: true
       - waitForAnimationToEnd
