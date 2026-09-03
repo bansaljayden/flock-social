@@ -358,6 +358,27 @@ describe('socket resilience', () => {
     }));
   });
 
+  test('dmVoteVenue tells the truth about whether the vote left the device', () => {
+    // Same contract as sendMessage above, and it did not have it. The guard was
+    // `if (socket?.connected) socket.emit(...)` with no return, so a vote cast
+    // in a tunnel emitted nothing and answered nothing, and the DM vote panel
+    // had no way to know it had just flipped a tile over a dead socket.
+    localStorage.setItem('flockToken', 'tok');
+    const instance = socketApi.connectSocket();
+
+    instance.connected = false;
+    expect(socketApi.dmVoteVenue(7, 'Cafe Nine', 'place-9')).toBe(false);
+    expect(instance.emit).not.toHaveBeenCalledWith('dm_vote_venue', expect.anything());
+
+    instance.connected = true;
+    expect(socketApi.dmVoteVenue(7, 'Cafe Nine', 'place-9')).toBe(true);
+    expect(instance.emit).toHaveBeenCalledWith('dm_vote_venue', expect.objectContaining({
+      receiverId: 7,
+      venue_name: 'Cafe Nine',
+      venue_id: 'place-9',
+    }));
+  });
+
   test('connectSocket without a token refuses rather than dialing unauthenticated', () => {
     localStorage.removeItem('flockToken');
     expect(socketApi.connectSocket()).toBeNull();
