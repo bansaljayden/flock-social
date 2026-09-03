@@ -7,11 +7,18 @@
  * ML corpus. JSON also has no import path, so it was never actually a backup.
  *
  * This walks every table in the public schema (so it cannot fall out of date
- * the way a hardcoded list does), writes INSERT statements in an order that
- * respects foreign keys, and resets every sequence at the end. Restore is:
+ * the way a hardcoded list does), writes a CREATE TABLE IF NOT EXISTS for each
+ * one, then INSERT statements in an order that respects foreign keys, and
+ * resets every sequence at the end. Restore is:
  *
  *     DATABASE_URL="$TARGET" node db/migrate.js        # structure, from the repo
  *     psql "$TARGET" -v ON_ERROR_STOP=1 -f <output>    # data
+ *
+ * The DDL block is a no-op for every table the migrations build. It is there
+ * for the tables they do NOT build: ml_training_data_weekly_w1, and the _w2 and
+ * _w3 archives that follow it, are created at runtime by
+ * scripts/ml/archiveWeeklyWindow.js, and a restore with only the migration
+ * chain to go on died on them. See createTableStatement() for the full account.
  *
  * The migration chain builds the WHOLE schema on its own. This used to say
  * `psql -f database/schema.sql` instead, which is the thirteen bootstrap tables
@@ -354,6 +361,63 @@ function lit(v, typeName) {
   return `'${String(v).replace(/'/g, "''")}'`;
 }
 
+// ---------------------------------------------------------------------------
+// THE DUMP NOW CARRIES ITS OWN TABLE DEFINITIONS, AND THAT IS NOT DECORATION.
+// ---------------------------------------------------------------------------
+// Round 18 — THIS FILE DID NOT RESTORE, AGAIN, AND FOR A NEW REASON.
+// The documented restore is `node db/migrate.js` (schema, from the migration
+// chain) and then this file (data). That assumes every table this dumper finds
+// is a table some migration creates. One is not:
+//
+//   scripts/ml/archiveWeeklyWindow.js
+//     CREATE TABLE ml_training_data_weekly_w1 AS SELECT * FROM ml_training_data
+//
+// It is made ad hoc by a script, it holds 3,454,955 rows of the training corpus
+// — the one asset in this company that cannot be rebuilt, because the vendor
+// that supplied it is gone — and no migration mentions it. So the dump faithfully
+// wrote 3.4 million rows into a file whose restore died on
+//   ERROR: relation "ml_training_data_weekly_w1" does not exist
+// after 7,947 statements, measured on the 2.74 GB dump taken 2026-09-03.
+//
+// The archive name carries the window number, so `_w2` and `_w3` arrive on their
+// own schedule and would each break the restore the same way, months apart, with
+// nobody having done anything wrong in between. A migration that creates `_w1`
+// would fix today and nothing else, which is why the fix is here instead.
+//
+// CREATE TABLE IF NOT EXISTS is a NOTICE and a no-op for every table the
+// migrations already built — which is all but one of them — so this changes
+// nothing about the ordinary restore. What it changes is the case nobody
+// remembered: a table that exists in production and in no .sql file now arrives
+// in the dump with the definition it had when the rows were read.
+//
+// WHAT THIS DDL CARRIES AND WHAT IT DOES NOT. Columns, in attnum order, with
+// their exact type, their default, and their NOT NULL. It does NOT carry primary
+// keys, unique constraints, foreign keys, checks, indexes or ownership, and it
+// is deliberately not trying to: this is a safety net for tables the migration
+// chain does not create, not a second copy of the schema. The migration chain
+// remains the source of truth for everything it does create, and the restore
+// procedure is unchanged — run migrate.js first, exactly as before.
+//
+// The type text comes from format_type(), not from reassembling
+// information_schema.columns. information_schema splits one type across five
+// columns (data_type, udt_name, character_maximum_length, numeric_precision,
+// numeric_scale) and rebuilding `character varying(50)`, `numeric(10,2)` or
+// `text[]` out of them by hand is exactly the kind of near-miss that produces a
+// table whose columns silently differ from production. format_type is the
+// function pg_dump itself renders types with.
+//
+// Ordering inside the statement is `type DEFAULT x NOT NULL`, which is what
+// pg_dump emits; Postgres accepts column constraints in any order.
+function createTableStatement(table, cols) {
+  const defs = cols.map((c) => {
+    let def = `  "${c.column_name}" ${c.type}`;
+    if (c.default_expr !== null && c.default_expr !== undefined) def += ` DEFAULT ${c.default_expr}`;
+    if (c.not_null) def += ' NOT NULL';
+    return def;
+  });
+  return `CREATE TABLE IF NOT EXISTS "${table}" (\n${defs.join(',\n')}\n);\n`;
+}
+
 async function main() {
   assertSafeOutputPath(OUT);
 
@@ -449,6 +513,31 @@ async function main() {
   const { rows: pgTypes } = await client.query('SELECT oid, typname FROM pg_type');
   const typeNameByOid = new Map(pgTypes.map((t) => [Number(t.oid), t.typname]));
 
+  // Every column of every dumped table, for the CREATE TABLE IF NOT EXISTS
+  // block written below. Read inside the same REPEATABLE READ snapshot as the
+  // rows, so the definition in the file is the definition the rows came out of.
+  // Dropped columns are excluded (attisdropped): they are still physically
+  // present in pg_attribute and SELECT * does not return them.
+  const { rows: ddlCols } = await client.query(`
+    SELECT c.relname   AS table_name,
+           a.attname   AS column_name,
+           format_type(a.atttypid, a.atttypmod) AS type,
+           a.attnotnull AS not_null,
+           pg_get_expr(d.adbin, d.adrelid) AS default_expr
+    FROM pg_attribute a
+    JOIN pg_class c ON c.oid = a.attrelid
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+    LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+    WHERE n.nspname = 'public' AND c.relkind = 'r'
+      AND a.attnum > 0 AND NOT a.attisdropped
+    ORDER BY c.relname, a.attnum
+  `);
+  const colsByTable = new Map();
+  for (const c of ddlCols) {
+    if (!colsByTable.has(c.table_name)) colsByTable.set(c.table_name, []);
+    colsByTable.get(c.table_name).push(c);
+  }
+
   // 0600: the dump holds live credentials, so it is readable only by the user
   // that produced it. (No-op on Windows; correct everywhere the dump is likely
   // to be taken from, which is a Linux shell against the Railway proxy.)
@@ -467,6 +556,23 @@ async function main() {
   await write(`--          then: psql "$TARGET" -v ON_ERROR_STOP=1 -f this-file\n`);
   await write(`-- Full procedure, including what a restore does NOT bring back: BACKUP-AND-VERIFICATION.md\n`);
   await write(`BEGIN;\nSET session_replication_role = replica;\n\n`);
+
+  // Table definitions, before any INSERT and inside the same transaction as
+  // them. See createTableStatement() above for why this block exists: one table
+  // in this database is created by a script rather than by a migration, so a
+  // restore built from the migration chain alone had nowhere to put 3.4 million
+  // rows of the ML corpus. IF NOT EXISTS makes every other line here a no-op.
+  await write('-- Table definitions. IF NOT EXISTS, so these are a no-op for every\n');
+  await write('-- table db/migrate.js already built; they exist for the tables it does\n');
+  await write('-- not build, such as the ml_training_data_weekly_* corpus archives.\n');
+  let ddlWritten = 0;
+  for (const table of ordered) {
+    const cols = colsByTable.get(table);
+    if (!cols || !cols.length) continue;
+    await write(createTableStatement(table, cols));
+    ddlWritten++;
+  }
+  await write('\n');
 
   let grand = 0;
   const counts = [];
@@ -533,7 +639,7 @@ async function main() {
   await client.end();
 
   const mb = (fs.statSync(OUT).size / 1048576).toFixed(2);
-  console.log(`\nWrote ${OUT}  (${mb} MB, ${grand} rows across ${ordered.length} tables)\n`);
+  console.log(`\nWrote ${OUT}  (${mb} MB, ${grand} rows across ${ordered.length} tables,\n  plus CREATE TABLE IF NOT EXISTS for ${ddlWritten} of them)\n`);
   counts.filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1])
     .forEach(([t, n]) => console.log(`  ${String(n).padStart(8)}  ${t}`));
   const empty = counts.filter(([, n]) => n === 0).map(([t]) => t);
@@ -583,7 +689,7 @@ async function main() {
 // timestamp as text rather than as a Date is half of whether the file restores,
 // and a test that used the default parsers would be testing a different dump
 // from the one this script takes.
-module.exports = { lit, pgArrayBody, DUMP_TYPES, TEXT_ONLY_OIDS };
+module.exports = { lit, pgArrayBody, createTableStatement, DUMP_TYPES, TEXT_ONLY_OIDS };
 
 if (require.main === module) {
   main().catch((err) => { console.error('Dump failed:', err.message); process.exit(1); });
