@@ -467,6 +467,21 @@ appId: com.flockcorp.flock
     text: "Accept invite"                       # App.js:14519 aria-label
     optional: true
 - waitForAnimationToEnd
+# Run 25 (2026-09-02) accepted the invite and then found nothing: the guard
+# below asked for the flock name immediately, and on accept the card leaves
+# the Pending Invites section and is re-rendered into the conversation list,
+# which takes a moment and can sit lower down. So B never opened the chat and
+# never posted the message A was meant to report, losing shots 12, 13 and 15.
+- extendedWaitUntil:
+    visible: "Review night ${REVIEW_RUN}"
+    timeout: 20000
+    optional: true
+- scrollUntilVisible:
+    element: "Review night ${REVIEW_RUN}"
+    direction: DOWN
+    timeout: 15000
+    centerElement: true
+    optional: true
 - runFlow:
     when:
       visible: "Review night ${REVIEW_RUN}"     # App.js:14598 flock card <h2>, card opens chatDetail (App.js:14571)
