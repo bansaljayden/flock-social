@@ -995,6 +995,30 @@ DATABASE_URL carries no sslmode and pg keeps its permissive default; and
 production really does have the migration 045 provenance columns, so the
 insert cannot throw on them.
 
+### The open-hours filter (2026-09-03), and what it does and does not buy
+
+`collectRealtime.js` no longer calls a venue that its own weekly forecast curve
+says is shut at that venue's local hour. "Open" means the venue's weekly curve
+(the `venue_local` rows, migration 023) rises above zero somewhere in H-2..H+2
+on any day of the week, and only a venue whose weekly rows cover all 24 hours
+may be judged at all. A venue with no weekly rows, a venue with a partial curve,
+and a run whose lookup fails are all called anyway. Nothing about a written row
+changes — `hour`, `hour_axis`, `label_source`, provenance and the ON CONFLICT
+key are untouched — and `--no-open-hours` stands the filter down for a run.
+
+The window is `+/-2` because it was measured, not chosen: over all 1,198 live
+readings in the corpus, a same-day-of-week rule would have dropped 29 of them,
+week-wide with no padding 18, `+/-1` seven, and `+/-2` none.
+
+What it buys, measured against production on 2026-09-03 for the 1,414-venue PA
+selection: at the CURRENT `0 2 * * *` slot (22:00 local) only about 15% of the
+calls go away, because at 10 PM almost everything is open. The saving is in the
+hours the cron does not use yet: 50% of the sweep goes away at 04:00 UTC, 78% at
+08:00 UTC, 69% at 10:00 UTC and 49% at 12:00 UTC. Adding a morning occurrence
+in that window now costs roughly a quarter of a sweep rather than a whole one,
+which is the point of it. Over a full 24 hours the average sweep is 993 calls
+instead of 1,414, so 70% of the old cost.
+
 Two residuals worth knowing rather than fixing tonight. A refusal (over the
 ceiling, or zero venues selected) exits 0, so Railway reports SUCCESS and
 only the collection heartbeat would notice. And the clock and weather are

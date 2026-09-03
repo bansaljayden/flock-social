@@ -104,6 +104,96 @@ function classifyReading(live) {
 
 const clampPct = (v) => (v == null ? null : Math.max(0, Math.min(100, v)));
 
+// ---------------------------------------------------------------------------
+// THE OPEN-HOURS FILTER (2026-09-03). WHY A CALL AT 4 AM IS A CALL WASTED.
+// ---------------------------------------------------------------------------
+// Live readings are the scarce thing in the corpus: 1,198 rows out of 3.9M
+// carry label_source='live', and RETRAIN.md blames the 91% weekly-snapshot mix
+// for a model that shrinks every prediction toward "no deviation". More live
+// readings per day is the whole point of running this collector more often.
+//
+// What stops that is not the BestTime bill, it is the CLOCK. The pacing below
+// is one call per second and it is not negotiable (two account-wide 403s bought
+// that number), so a sweep of the ~1,400 PA venues is the 47 to 60 minutes
+// RETRAIN.md measured on 2026-09-01, whatever else changes. Skipping calls is
+// the only lever that does not touch pacing.
+//
+// BE PRECISE ABOUT WHICH SKIPS THIS CAN RECOVER, because the counters are easy
+// to misread. The last run before this filter existed reported 245 rows against
+// 1,149 skips, and those 1,149 are NOT 1,149 shut venues: that run swept at
+// 22:00-23:00 Philadelphia time, where this rule would still have called 1,199
+// of the 1,414 and skipped 215. Most of those skips are simply venues BestTime
+// holds no live coverage for, at any hour, and no rule here can predict those. What this
+// filter recovers is the OTHER kind, and it is worth the most exactly when the
+// cron is cheapest to add: measured against production 2026-09-03, of the 1,414
+// PA venues it leaves uncalled 1,055 at 02:00 local, 1,038 at 05:00, 691 at
+// 08:00, and only 17 at 17:00. That is what makes an overnight run affordable.
+//
+// REAL OPENING HOURS, CHECKED FOR FIRST. ml_venues has no hours column (its 20
+// columns are id, google_place_id, besttime_venue_id, name, address, city,
+// lat/lng, venue_category, google_types, price_level, rating, review_count,
+// timezone, is_active, last_collected_at, created_at, updated_at,
+// besttime_attempted_at, besttime_status — verified against production, not
+// against the migration). Google's currentOpeningHours IS fetched, by
+// services/placeDetailsCache.js, but per request and into memory: nothing
+// persists it, so consulting it here would mean buying ~1,400 Enterprise Place
+// Details calls per sweep to save BestTime calls. That trade is absurd.
+//
+// WHAT IS ALREADY STORED IS BETTER ANYWAY. The weekly corpus is BestTime's own
+// forecast curve for each venue, on the venue_local hour axis since migration
+// 023, and BestTime writes 0 for every hour a venue is shut. Production holds
+// all 24 hours x 7 days for 1,387 of the 1,414 PA venues. So a venue is treated
+// as open at local hour H when its own weekly curve rises above zero anywhere
+// in H-2..H+2, on ANY day of the week. No new data, no new vendor, no new
+// clock: the same rows the model trains on. A venue is judged only when its
+// weekly rows cover all 24 hours — a partial curve is a hole in our collection,
+// not a closed venue, and it may not be read as one.
+//
+// WHY WEEK-WIDE AND WHY +/-2, MEASURED RATHER THAN CHOSEN. Read-only against
+// production on 2026-09-03, over all 1,198 live readings we have ever
+// collected, counting how many sit in a slot each candidate rule would have
+// called closed:
+//     same (venue, day-of-week, hour), no padding ... 29 lost
+//     same (venue, day-of-week, hour) +/-1 .......... 17 lost
+//     week-wide hour, no padding .................... 18 lost
+//     week-wide hour +/-1 ............................ 7 lost
+//     week-wide hour +/-2 ............................ 0 lost
+// A forecast of 0 does not always mean "shut" — it also means "open and never
+// busy enough for BestTime to model" — which is exactly why the rule has to be
+// the widest one and not the tightest. +/-2 week-wide is the only candidate
+// that would not have cost us a single live reading in the record, so it is the
+// one that ships. A venue with NO weekly evidence is called, and a failure to
+// load the evidence at all calls everything: every unknown resolves toward
+// spending the call.
+//
+// This decides ONLY whether a venue is called. Nothing below it changes what a
+// row contains: hour, hour_axis, label_source, provenance and the ON CONFLICT
+// key are untouched.
+// ---------------------------------------------------------------------------
+const OPEN_HOUR_PAD = 2;
+
+// The 24 venue-local hours a venue may be called at, as a bitmask. Pure, and
+// exported, so the test can table-drive it with no database and no network.
+function buildOpenHourMask(hours, pad = OPEN_HOUR_PAD) {
+  let mask = 0;
+  for (const raw of hours || []) {
+    const hour = Number(raw);
+    if (!Number.isInteger(hour) || hour < 0 || hour > 23) continue;
+    for (let d = -pad; d <= pad; d++) mask |= 1 << ((hour + d + 24) % 24);
+  }
+  return mask;
+}
+
+// `mask` undefined/null is "this venue has no weekly evidence", which is a
+// reason to call it, not a reason to skip it. Same for an hour outside 0..23,
+// which cannot happen (config.getLocalTime is h23) but must not silently mean
+// "closed" if it ever did.
+function isOpenAtHour(mask, hour) {
+  if (mask === undefined || mask === null) return true;
+  if (!Number.isInteger(hour) || hour < 0 || hour > 23) return true;
+  return (mask & (1 << hour)) !== 0;
+}
+
 if (!process.env.DATABASE_URL && process.env.PGHOST) {
   const host = process.env.PGHOST;
   const port = process.env.PGPORT || 5432;
@@ -156,6 +246,42 @@ async function ensureHolidayColumns() {
   // created here too because these scripts also run against databases that have
   // not booted the current server, and the INSERT below names the column.
   await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS hour_axis VARCHAR(16)`);
+}
+
+// One query per run, not one per venue. It reads the same weekly rows the
+// baseline lookup below already reads, scoped to the venues this run will
+// consider, and returns venue_id -> open-hour bitmask. A venue absent from the
+// map has no weekly evidence and is therefore always called.
+async function loadOpenHourMasks(cityScope) {
+  const params = [HOUR_AXIS_VENUE_LOCAL];
+  if (cityScope) params.push(cityScope);
+  const { rows } = await pool.query(
+    `SELECT t.venue_id,
+            COUNT(DISTINCT t.hour) AS hours_covered,
+            array_agg(DISTINCT t.hour) FILTER (WHERE t.busyness_pct > 0) AS busy_hours
+       FROM ml_training_data t
+       JOIN ml_venues v ON v.id = t.venue_id
+      WHERE t.collection_mode = 'weekly'
+        AND t.hour_axis = $1
+        AND v.is_active = true
+        AND v.besttime_venue_id IS NOT NULL`
+    + (cityScope ? ' AND v.city = ANY($2)' : '')
+    + ' GROUP BY t.venue_id',
+    params
+  );
+  const masks = new Map();
+  for (const row of rows) {
+    // A PARTIAL CURVE IS NOT EVIDENCE OF A CLOSED HOUR. A venue with rows for
+    // three hours of the day looks "shut" for the other twenty-one for the same
+    // reason a venue with no rows at all would, and that is a gap in OUR
+    // collection rather than a fact about the venue. Only a venue whose weekly
+    // rows cover all 24 hours may be judged; production holds exactly that for
+    // 1,387 of the 1,414 PA venues, so this costs nothing real and closes the
+    // one way this filter could invent a closure.
+    if (Number(row.hours_covered) !== 24) continue;
+    masks.set(row.venue_id, buildOpenHourMask(row.busy_hours || []));
+  }
+  return masks;
 }
 
 async function collectRealtime() {
@@ -225,6 +351,25 @@ async function collectRealtime() {
 
   console.log(`[ML:Realtime] Starting real-time collection for ${venues.length} venues...`);
 
+  // The open-hours evidence, loaded once. --no-open-hours turns the filter off
+  // for the run (a deliberate "call everything and see"), and a failed load
+  // does the same thing on its own, because an unknown must never cost a
+  // reading.
+  const openHoursFilter = !process.argv.includes('--no-open-hours');
+  let openHourMasks = new Map();
+  if (openHoursFilter) {
+    try {
+      openHourMasks = await loadOpenHourMasks(cityScope);
+      console.log(`[ML:Realtime] Open hours: ${openHourMasks.size} of ${venues.length} venues have a `
+        + `weekly curve to judge by (+/-${OPEN_HOUR_PAD}h); the rest are called unconditionally.`);
+    } catch (err) {
+      openHourMasks = new Map();
+      console.error(`[ML:Realtime] Open-hours lookup failed (${err.message}) — calling every venue.`);
+    }
+  } else {
+    console.log('[ML:Realtime] Open-hours filter DISABLED by --no-open-hours; every venue will be called.');
+  }
+
   // Group venues by city to share weather calls
   const byCity = {};
   for (const venue of venues) {
@@ -234,6 +379,13 @@ async function collectRealtime() {
 
   let totalRows = 0;
   let skipped = 0;
+  // Venues never called because their own weekly curve says they are shut at
+  // their own local hour. Counted separately from `skipped`, which keeps its
+  // old meaning exactly: a venue that WAS called and had nothing to say.
+  let closedSkips = 0;
+  // Venues actually asked about. Counted rather than derived, so an aborted run
+  // reports what it spent instead of what it planned to.
+  let called = 0;
   let liveRows = 0;
   let forecastRows = 0;
   // Rows the unique index turned away because this venue-hour-date was already
@@ -266,7 +418,23 @@ async function collectRealtime() {
       + (special ? ` [${special.name}: ${special.effect}]` : '') + (holidayEve ? ' [holiday eve]' : ''));
 
     for (const venue of cityVenues) {
+      // THE SKIP, BEFORE THE CALL. `local` is the same clock the row's `hour`
+      // is written from, so the decision and the row can never disagree about
+      // what time it is. ml_venues.timezone equals its city's timezone for all
+      // 22,151 rows in production today (checked 2026-09-03), but if one ever
+      // diverged the venue is judged on BOTH hours and called if EITHER says
+      // open — a disagreement about the clock must cost a call, not a reading.
+      const mask = openHourMasks.get(venue.id);
+      const venueHour = venue.timezone && venue.timezone !== cityConfig.tz
+        ? getLocalTime(venue.timezone).hour
+        : local.hour;
+      if (!isOpenAtHour(mask, local.hour) && !isOpenAtHour(mask, venueHour)) {
+        closedSkips++;
+        continue;
+      }
+
       let live;
+      called++;
       try {
         live = await fetchLiveBusyness(venue.besttime_venue_id);
         consecutiveErrors = 0;
@@ -461,8 +629,14 @@ async function collectRealtime() {
     }
   }
 
+  // The contract of this line is unchanged — "N rows inserted (live, forecast).
+  // K venues skipped." — with the new number named beside it rather than folded
+  // into K, so a Railway log still reads the same and now also says how much of
+  // the sweep was never bought.
   console.log(`\n[ML:Realtime] ${aborted ? 'ABORTED EARLY' : 'Done'}. ${totalRows} rows inserted `
     + `(${liveRows} live-observed, ${forecastRows} vendor-forecast). ${skipped} venues skipped`
+    + `, ${closedSkips} venues not called (closed at their local hour)`
+    + `, ${called} calls spent of ${venues.length} venues in scope`
     + `${duplicateRows > 0 ? `, ${duplicateRows} already recorded for this venue-hour-date` : ''}.`);
 
   await auditProvenance(runStartedAt, liveRows + forecastRows);
@@ -498,12 +672,18 @@ async function collectRealtime() {
   // same venue-hour-date, which migration 024's unique index correctly drops.
   // That is the collector working, not failing, so it is excluded by the
   // condition rather than only mentioned in the message.
-  if (totalRows === 0 && duplicateRows === 0 && skipped < venues.length) {
+  //
+  // closedSkips joins the accounting rather than being ignored, and it has to:
+  // a 4 AM sweep in which every venue is shut writes 0 rows and skips 0, and
+  // the old condition would have called that a failure and exited non-zero
+  // every night. The invariant is unchanged — every venue in scope must be
+  // accounted for by SOME skip before an empty run is allowed to pass.
+  if (totalRows === 0 && duplicateRows === 0 && skipped + closedSkips < venues.length) {
     throw new Error(
       `REFUSED: the run completed without aborting and wrote 0 rows, having skipped ${skipped} `
-      + `of ${venues.length} venues. That is not a plausible outcome of a healthy run. If every `
-      + 'venue was genuinely already recorded for this venue-hour-date, the duplicate counter '
-      + 'would say so; it says 0.');
+      + `of the ${called} venues it called (and left ${closedSkips} of ${venues.length} uncalled as `
+      + 'closed). That is not a plausible outcome of a healthy run. If every venue was genuinely '
+      + 'already recorded for this venue-hour-date, the duplicate counter would say so; it says 0.');
   }
 }
 
@@ -581,7 +761,10 @@ async function run() {
   }
 }
 
-module.exports = { run, classifyReading, LABEL_LIVE, LABEL_FORECAST, PROVENANCE_REFUSAL };
+module.exports = {
+  run, classifyReading, LABEL_LIVE, LABEL_FORECAST, PROVENANCE_REFUSAL,
+  buildOpenHourMask, isOpenAtHour, OPEN_HOUR_PAD,
+};
 
 if (require.main === module) {
   run().catch(err => {
