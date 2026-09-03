@@ -8,6 +8,13 @@ import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
 import { hapticTap, hapticSuccess, hapticAlarm } from './services/haptics';
+// Location goes through this shim, never the browser API directly. Calling the
+// web API inside the iOS shell made WKWebView raise a SECOND permission sheet,
+// its own, reading '"localhost" would like to use your current location' — the
+// origin Capacitor serves the bundle from, next to the real sheet that names
+// Flock. App Review has that on tape. See the shim's header for the whole
+// story, including why moving the origin was the wrong fix.
+import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from './services/geolocation';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled } from './services/socket';
 import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
@@ -2333,8 +2340,8 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   // town it had never been to. An unknown location now opens the wide view
   // below, and the map re-pans the moment permission is granted.
   const getUserLocation = () => new Promise((resolve) => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
+    if (geolocationAvailable()) {
+      getCurrentPosition(
         (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
         () => resolve(null),
         { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 },
@@ -2697,7 +2704,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         navigator.permissions.query({ name: 'geolocation' }).then((perm) => {
           perm.addEventListener('change', () => {
             if (perm.state === 'granted') {
-              navigator.geolocation.getCurrentPosition(
+              getCurrentPosition(
                 (pos) => mapEase(map, { center: [pos.coords.longitude, pos.coords.latitude], zoom: DEFAULT_ZOOM }),
                 () => {},
                 { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 },
@@ -2813,9 +2820,9 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   // question of whether THIS map is the one that follows you, and a venue
   // dashboard map answers no to it whatever the switch says.
   useEffect(() => {
-    if (!mapReady || !followUser || !locationAllowed || !navigator.geolocation) return;
-    if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
-    watchIdRef.current = navigator.geolocation.watchPosition(
+    if (!mapReady || !followUser || !locationAllowed || !geolocationAvailable()) return;
+    if (watchIdRef.current !== null) clearWatch(watchIdRef.current);
+    watchIdRef.current = watchPosition(
       (pos) => {
         const map = mapInstanceRef.current;
         if (!map) return;
@@ -2827,7 +2834,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       () => {},
       { enableHighAccuracy: true, timeout: 15000, maximumAge: 10000 },
     );
-    return () => { if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current); };
+    return () => { if (watchIdRef.current !== null) clearWatch(watchIdRef.current); };
   }, [mapReady, followUser, locationAllowed]);
 
   // ---------- venue markers ----------
@@ -4305,11 +4312,11 @@ const SOS_FOLLOW_UP_GAP_MS = 65000;
 // `timeout` option entirely, and an SOS must not hang on a vendor's mood.
 function getSosPosition(timeoutMs, maximumAge) {
   return new Promise((resolve) => {
-    if (!navigator.geolocation) { resolve({ coords: null, denied: false }); return; }
+    if (!geolocationAvailable()) { resolve({ coords: null, denied: false }); return; }
     let settled = false;
     const finish = (value) => { if (!settled) { settled = true; resolve(value); } };
     const guard = setTimeout(() => finish({ coords: null, denied: false }), timeoutMs + 500);
-    navigator.geolocation.getCurrentPosition(
+    getCurrentPosition(
       (pos) => {
         clearTimeout(guard);
         // accuracy rides along: the server has carried a whole honesty layer
@@ -4648,8 +4655,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     localStorage.setItem('flock_location_enabled', enable ? 'true' : 'false');
     queueSync({ locationEnabled: enable ? 'true' : 'false' });
     if (enable) {
-      if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
+      if (geolocationAvailable()) {
+        getCurrentPosition(
           (pos) => {
             const { latitude, longitude } = pos.coords;
             setUserLocation({ lat: latitude, lng: longitude });
@@ -7504,7 +7511,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       loadVenuesAtLocation(lat, lng);
     }
 
-    if (!navigator.geolocation) {
+    if (!geolocationAvailable()) {
       if (!savedLat) {
         // This used to load venues around a fixed point in Bethlehem,
         // Pennsylvania and WRITE THOSE COORDINATES to localStorage, so a
@@ -7517,7 +7524,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
 
     setLocationLoading(true);
-    navigator.geolocation.getCurrentPosition(
+    getCurrentPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
         setLocationLoading(false);
@@ -8797,11 +8804,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     // granted location the Share button did nothing at all, every time, with no
     // way to find out why. Asking for a fix IS what the tap means, and a tap is
     // the gesture the browser wants before it will prompt.
-    if (!navigator.geolocation) {
+    if (!geolocationAvailable()) {
       showToast("This device can't share a location", 'error');
       return;
     }
-    navigator.geolocation.getCurrentPosition(
+    getCurrentPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
         setUserLocation({ lat: latitude, lng: longitude });
@@ -10396,7 +10403,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       // anything at all. Nothing is worth that in an emergency. Wait a few
       // seconds for a fix, send either way, and chase the location afterwards.
       hapticAlarm();
-      const first = navigator.geolocation ? await getSosPosition(SOS_FIRST_FIX_MS, 60000) : { coords: null, denied: false };
+      const first = geolocationAvailable() ? await getSosPosition(SOS_FIRST_FIX_MS, 60000) : { coords: null, denied: false };
       const loc = first.coords;
       const data = await sendEmergencyAlert({
         latitude: loc?.latitude,
@@ -10415,7 +10422,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setShowSOS(false);
       // Skip the chase when there is nothing to chase: no geolocation at all,
       // or a permission the user has already refused.
-      if (!loc && !first.denied && navigator.geolocation) startSosLocationFollowUp();
+      if (!loc && !first.denied && geolocationAvailable()) startSosLocationFollowUp();
     } catch (err) {
       // A 429 carrying alreadySent is the server confirming a live alert is
       // out and this device just did not know (a second phone, cleared
@@ -10532,14 +10539,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       showToast('Add trusted contacts in Safety settings first', 'error');
       return;
     }
-    if (!navigator.geolocation) {
+    if (!geolocationAvailable()) {
       showToast('Location not supported', 'error');
       return;
     }
     setSosAlertSending(true);
     try {
       const pos = await new Promise((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 });
+        getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 });
       });
       const data = await shareLocationWithContacts({
         latitude: pos.coords.latitude,
