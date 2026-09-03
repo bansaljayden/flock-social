@@ -9966,21 +9966,35 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }, 'image/jpeg', 0.9);
   }, [cropImageSrc, cropZoom, cropOffset, showToast]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // The other button in this same sheet, confirmCrop above, has had the honest
+  // contract for weeks: the toast comes after the await and a refusal says so.
+  // This one drew the new avatar, closed the sheet, and sent the failure to the
+  // console. The picture then sat in the header, on the profile and on the
+  // user's own chat bubbles for the whole session while the server still held
+  // the old one, and it reverted at the next cold launch with nothing ever
+  // having said a word, which reads as the app losing the avatar. Two buttons
+  // in one sheet cannot answer differently, so the picture on screen goes back
+  // to the one the server actually has.
   const generateAIAvatar = useCallback(async () => {
     const avatarStyles = ['adventurer', 'avataaars', 'bottts', 'personas', 'pixel-art'];
     const style = avatarStyles[Math.floor(Math.random() * avatarStyles.length)];
     const seed = Math.random().toString(36).substring(7);
     const url = `https://api.dicebear.com/7.x/${style}/svg?seed=${seed}`;
+    const previousPic = profilePic;
     setProfilePic(url);
     setShowPicModal(false);
 
-    // Save to backend
     try {
       await saveProfileImageUrl(url);
+      showToast('Profile picture updated!', 'success');
     } catch (err) {
       console.error('Avatar save failed:', err);
+      setProfilePic(previousPic);
+      // A dead session has already announced itself through api.js's own toast.
+      if (err?.sessionExpired) return;
+      showToast(err?.message || "That avatar didn't save. Try again.", 'error');
     }
-  }, []);
+  }, [profilePic, showToast]);
 
   // Toggle Component
   // role="switch" + aria-checked is the only thing that makes an unlabelled
