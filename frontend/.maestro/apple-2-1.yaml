@@ -313,10 +313,43 @@ appId: com.flockcorp.flock
     visible: "Popular Chains Nearby"            # ChatDetail.js:1802
     timeout: 15000
     optional: true
+# Run 26 cast no vote at all and still reported COMPLETED. Maestro's textRegex
+# is case-INSENSITIVE and full-match, so ".*Vote" matched the header's own
+# "0 votes cast" -- the tapped element's text was literally " vote" in a 28x17
+# box. The venue rows are what we want: each is one <button> whose WKWebView
+# label concatenates name, category, rating, price and the "Vote" pill, e.g.
+# "Good Dog Bar Bar - 4.4 * - $$ Vote". Requiring at least twelve characters
+# before "Vote" excludes " vote" and "0 votes cast" while matching every real
+# row. The names come from Google Places near the Simulator's location and
+# change between runs, so they cannot be hardcoded.
 - tapOn:
-    text: ".*Vote"                              # ChatDetail.js:1805-1822 chain row: name, type, then the "Vote" pill
+    text: ".{12,}Vote"                          # ChatDetail.js:1807 chain row button
     index: 0
     optional: true
+- waitForAnimationToEnd
+# Proof a vote actually landed, and it is proof ON CAMERA: the header line is
+# `{totalVoters} vote(s) cast` plus ` - You voted for {venue}` once myVote is
+# set (ChatDetail.js:1726). Without a vote it reads "0 votes cast" and nothing
+# more, which is exactly what run 26 filmed.
+- extendedWaitUntil:
+    visible: ".*You voted for.*"
+    timeout: 15000
+    optional: true
+# One retry on the next row, in case index 0 landed on something inert. Both
+# taps are optional and the assertion above is optional, so a venue list that
+# never loads costs this shot and nothing after it.
+- runFlow:
+    when:
+      notVisible: ".*You voted for.*"
+    commands:
+      - tapOn:
+          text: ".{12,}Vote"
+          index: 1
+          optional: true
+      - extendedWaitUntil:
+          visible: ".*You voted for.*"
+          timeout: 10000
+          optional: true
 - waitForAnimationToEnd
 - tapOn:
     text: "Close"                               # ChatDetail.js:1730 aria-label
@@ -689,11 +722,18 @@ appId: com.flockcorp.flock
           text: "Your password"
           optional: true
       - inputText: ${REVIEW_PASSWORD_C}
+      # Run 26 opened this dialog, typed the password, and then never deleted
+      # anything. There used to be a second tap here on the bare word
+      # "DELETE"; it matched the BOLD
+      # "DELETE" inside the sentence "Type DELETE to confirm" (a 43x17 box at
+      # [75,547]) rather than the input, which moved focus off the field, so
+      # the inputText that followed went nowhere. deleteConfirmText stayed
+      # empty, the confirm button stayed disabled=true (ProfileSettings.js:908
+      # gates on deleteConfirmText.trim().toUpperCase() !== 'DELETE'), and the
+      # flow logged out instead. The input carries its own aria-label, so one
+      # tap on that is precise and the second tap must not exist.
       - tapOn:
-          text: "Type DELETE to confirm"          # ProfileSettings.js aria-label on the confirm input; it replaces the placeholder for matching
-          optional: true
-      - tapOn:
-          text: "DELETE"                        # ProfileSettings.js:891 placeholder (the empty input's value)
+          text: "Type DELETE to confirm"          # ProfileSettings.js:903 aria-label ON the input
           optional: true
       - inputText: "DELETE"
       # Return closes the keyboard (ProfileSettings.js onKeyDown blur on the
