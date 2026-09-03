@@ -1,4 +1,12 @@
 const express = require('express');
+// The budget-ceiling threshold counts SUBMITTERS WHO ARE STILL MEMBERS.
+// routes/budget.js and routes/billing.js count through this join; three
+// readers here counted bare budget_submissions rows, which still include a
+// sharer who has since left, so after a departure the flock list, the flock
+// detail and the update response kept publishing a ceiling that
+// GET /api/budget/:id withholds. A member who joined afterwards then read a
+// banded ceiling derived from a cohort they were never part of.
+const { MEMBER_SUBMISSIONS } = require('./budget');
 const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate, requireVerified, UNVERIFIED_MESSAGE } = require('../middleware/auth');
@@ -433,7 +441,7 @@ router.get('/', async (req, res) => {
               -- other. This aliased CASE overrides the f.* column in the result
               -- row (node-postgres keeps the last duplicate field).
               CASE WHEN f.budget_locked = true
-                    AND (SELECT COUNT(*) FROM budget_submissions bs
+                    AND (SELECT COUNT(*) FROM ${MEMBER_SUBMISSIONS}
                          WHERE bs.flock_id = f.id AND bs.skipped = false) >= 3
                    THEN f.budget_ceiling ELSE NULL END AS budget_ceiling,
               -- Blocks: the host's name is a name like any other. Withheld in
@@ -935,7 +943,7 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
     const flockResult = await pool.query(
       `SELECT f.*,
               CASE WHEN f.budget_locked = true
-                    AND (SELECT COUNT(*) FROM budget_submissions bs
+                    AND (SELECT COUNT(*) FROM ${MEMBER_SUBMISSIONS}
                          WHERE bs.flock_id = f.id AND bs.skipped = false) >= 3
                    THEN f.budget_ceiling ELSE NULL END AS budget_ceiling,
               -- Same host rule as the list route, and applied here so the
@@ -1338,7 +1346,7 @@ router.put('/:id',
         flockResponse.budget_ceiling = settledCeiling(flockResponse.budget_locked, flockResponse.budget_ceiling);
         if (flockResponse.budget_ceiling != null) {
           const thr = await pool.query(
-            `SELECT COUNT(*)::int AS n FROM budget_submissions WHERE flock_id = $1 AND skipped = false`,
+            `SELECT COUNT(*)::int AS n FROM ${MEMBER_SUBMISSIONS} WHERE bs.flock_id = $1 AND bs.skipped = false`,
             [flockId]
           );
           if ((thr.rows[0]?.n || 0) < 3) flockResponse.budget_ceiling = null;
