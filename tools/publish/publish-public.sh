@@ -162,6 +162,16 @@ STRIP=(
   # also carries account and billing arrangements that are nobody else's
   # business. Withheld for that reason as well as the commercial one.
   --path VENUE-BILLING.md
+  # PAYWALL.md, PAYWALL-DECISION.md and TASKS.md are working documents written
+  # to Jayden in the second person, and their history described a relative's
+  # role in the business down to whose bank details go where. On his
+  # instruction (2026-09-03) only his own name is referenced anywhere public.
+  # They stay tracked privately; erasing them from the mirror's history is the
+  # one deliberate renumbering this list warns about, done with
+  # PUBLISH_FORCE_RENUMBERED=1 on the same instruction.
+  --path PAYWALL.md
+  --path PAYWALL-DECISION.md
+  --path TASKS.md
   --path-glob 'ADVISOR-*.md'
   --path-glob 'SECURITY-AUDIT-*.md'
   --path-glob 'VIDEO-NOTES-*.md'
