@@ -497,10 +497,28 @@ router.post('/contacts', authenticate, async (req, res) => {
         return res.status(400).json({ error: `You can have up to ${MAX_TRUSTED_CONTACTS} trusted contacts` });
       }
 
+      // The conflict branch is the ordinary re-save of a contact you already
+      // have (UNIQUE(user_id, contact_phone)), and it used to change the address
+      // without touching email_set_at. That left this door open to the exact
+      // thing migration 052 was written to close: add a contact, raise a real
+      // SOS so that address gets the alarm, then re-save the same phone with a
+      // different email. The stand-down audience is `COALESCE(email_set_at,
+      // created_at) <= alert time`, so the new address passed as if it had
+      // received the alarm, and the all-clear went out to it under
+      // EMERGENCY_CATEGORY, which is the one category that bypasses the
+      // do-not-mail list on the strength of an argument that is only true of
+      // the address that actually got the alarm. PUT /contacts/:id had the
+      // fix; this statement did not. Same CASE, same IS DISTINCT FROM, so a
+      // name or relationship edit still does not reset the clock.
       const result = await client.query(
         `INSERT INTO trusted_contacts (user_id, contact_name, contact_phone, contact_email, relationship)
          VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (user_id, contact_phone) DO UPDATE SET contact_name = $2, contact_email = $4, relationship = $5
+         ON CONFLICT (user_id, contact_phone) DO UPDATE
+           SET contact_name = EXCLUDED.contact_name,
+               contact_email = EXCLUDED.contact_email,
+               relationship = EXCLUDED.relationship,
+               email_set_at = CASE WHEN trusted_contacts.contact_email IS DISTINCT FROM EXCLUDED.contact_email THEN NOW()
+                                   ELSE COALESCE(trusted_contacts.email_set_at, trusted_contacts.created_at) END
          RETURNING *`,
         [req.user.id, name, phone, email, relationship]
       );
