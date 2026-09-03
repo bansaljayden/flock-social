@@ -279,6 +279,69 @@ describe('the venue card posted when a flock is created', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 4b. The avatar the server never got
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * One sheet, two buttons, two different ideas of the truth.
+ *
+ * The Profile Photo sheet offers "Choose from Library" and "Generate AI
+ * Avatar". confirmCrop, the first one, has had the honest contract for weeks:
+ * the success toast comes after the await and a refusal gets "That photo
+ * didn't upload. Try again."
+ *
+ * generateAIAvatar, sixty lines below it in the same feature, did this:
+ *
+ *   setProfilePic(url);
+ *   setShowPicModal(false);
+ *   try { await saveProfileImageUrl(url); }
+ *   catch (err) { console.error('Avatar save failed:', err); }
+ *
+ * Optimistic write, no rollback, sheet already closed so the failure had
+ * nowhere to be drawn, and the only record of it in the console. The new
+ * picture then sat in the header, on the profile and on the user's own chat
+ * bubbles for the rest of the session while the server still held the old one,
+ * and it reverted at the next cold launch with nothing having said a word. The
+ * user reads that as the app losing their avatar.
+ */
+describe('an avatar that did not save', () => {
+  const avatar = () => region(APP, 'const generateAIAvatar = useCallback', 'const Toggle = ');
+
+  test('the picture on screen goes back to the one the server has', () => {
+    const fn = avatar();
+    const captured = fn.indexOf('const previousPic = profilePic;');
+    const optimistic = fn.indexOf('setProfilePic(url);');
+    expect(captured).toBeGreaterThan(-1);
+    expect(optimistic).toBeGreaterThan(captured);
+    expect(fn).toMatch(/setProfilePic\(previousPic\);/);
+  });
+
+  test('and the user is told, in the same shape as the button beside it', () => {
+    const fn = avatar();
+    expect(fn).toMatch(/That avatar didn't save\. Try again\./);
+    expect(fn).toMatch(/showToast\(.*'error'\)/);
+    // A dead session has already announced itself through api.js's own toast.
+    expect(fn).toMatch(/err\?\.sessionExpired/);
+  });
+
+  test('success is claimed only after the write came back', () => {
+    const fn = avatar();
+    const awaited = fn.indexOf('await saveProfileImageUrl(url);');
+    const claimed = fn.indexOf("showToast('Profile picture updated!', 'success')");
+    expect(awaited).toBeGreaterThan(-1);
+    expect(claimed).toBeGreaterThan(awaited);
+  });
+
+  test('the console is no longer the only place the failure lands', () => {
+    // console.error stays. It is the stack trace, not the user-facing answer,
+    // and the photo-upload branch keeps its own for the same reason.
+    const fn = avatar();
+    expect(fn).toMatch(/console\.error\('Avatar save failed:', err\);/);
+    expect(fn.slice(fn.indexOf('catch (err)'))).toMatch(/showToast/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 5. Failed loads are never drawn as empty
 // ═══════════════════════════════════════════════════════════════════════════
 
