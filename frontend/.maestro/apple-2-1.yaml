@@ -407,6 +407,17 @@ appId: com.flockcorp.flock
     visible: "Review night ${REVIEW_RUN}"       # App.js:14497 pending invite <h2>{f.name}
     timeout: 30000
     optional: true
+# Runs 21 and 22 both missed this with the invite sitting in B's list the
+# whole time: GET /api/flocks as B returned the flock with member_status
+# "invited" while Maestro saw nothing, because the Pending Invites section
+# renders BELOW the flock list and the DMs (App.js:14469) and a visibility
+# check does not scroll. Scroll to it.
+- scrollUntilVisible:
+    element: "Review night ${REVIEW_RUN}"
+    direction: DOWN
+    timeout: 20000
+    centerElement: true
+    optional: true
 - runFlow:
     when:
       notVisible: "Review night ${REVIEW_RUN}"
@@ -432,6 +443,12 @@ appId: com.flockcorp.flock
       - extendedWaitUntil:
           visible: "Review night ${REVIEW_RUN}"
           timeout: 30000
+          optional: true
+      - scrollUntilVisible:
+          element: "Review night ${REVIEW_RUN}"
+          direction: DOWN
+          timeout: 20000
+          centerElement: true
           optional: true
 - tapOn:
     text: "Accept invite"                       # App.js:14519 aria-label
