@@ -397,10 +397,42 @@ appId: com.flockcorp.flock
     visible: "Nest"
     timeout: 25000
 - tapOn: "Nest"
+# B's pending invite comes from the first GET /api/flocks after login and
+# renders under a "Pending invites" header on the home tab (App.js:14469,
+# tools/e2e/flock.spec.js proves it arrives). Run 21 (2026-09-02) waited only
+# 15s and never refreshed, and B's Nest had not painted the invite yet. The
+# e2e that covers this waits 30s and reloads; a relaunch is that reload and
+# re-runs loadFlocks, so wait longer and relaunch once if it is still absent.
 - extendedWaitUntil:
     visible: "Review night ${REVIEW_RUN}"       # App.js:14497 pending invite <h2>{f.name}
-    timeout: 15000
+    timeout: 30000
     optional: true
+- runFlow:
+    when:
+      notVisible: "Review night ${REVIEW_RUN}"
+    commands:
+      - launchApp:
+          permissions:
+            all: unset
+            contacts: allow
+      - waitForAnimationToEnd
+      - tapOn:
+          text: "Allow While Using App|Allow Once"
+          optional: true
+      - tapOn:
+          text: "Allow"
+          optional: true
+      - extendedWaitUntil:
+          visible: "Nest"
+          timeout: 25000
+          optional: true
+      - tapOn:
+          text: "Nest"
+          optional: true
+      - extendedWaitUntil:
+          visible: "Review night ${REVIEW_RUN}"
+          timeout: 30000
+          optional: true
 - tapOn:
     text: "Accept invite"                       # App.js:14519 aria-label
     optional: true
