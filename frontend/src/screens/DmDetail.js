@@ -209,6 +209,10 @@ export default function DmDetail({
   showDmVenueSearch,
   showDmVotePanel,
   showToast,
+  // Added after the extraction, not part of the original 93. Both empty states
+  // below have to tell a missing coordinate apart from a broken venue search,
+  // and without this prop this screen structurally could not.
+  userLocation,
   handleUnsendDm,
 }) {
   // LEAVING THIS SCREEN, WRITTEN ONCE. The composer ref and its armed flag
@@ -536,10 +540,27 @@ export default function DmDetail({
                    strength of a request that never came back, is the version
                    of this panel that changes what the user does next. */
                 <div style={{ padding: '20px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px', marginBottom: '16px' }}>
-                  <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 8px' }} />
-                  <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>{suggestedVenues.length > 0
-                    ? 'No votes yet. Vote for a place below, or share one of your own.'
-                    : 'No votes yet. Be the first to suggest a venue!'}</p>
+                  {userLocation ? (
+                    <>
+                      <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 8px' }} />
+                      <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>{suggestedVenues.length > 0
+                        ? 'No votes yet. Vote for a place below, or share one of your own.'
+                        : 'No votes yet. Be the first to suggest a venue!'}</p>
+                    </>
+                  ) : (
+                    /* The DM half of the fix ChatDetail already carries. With no
+                       coordinate, suggestedVenues is location-fed and stays
+                       empty, so this panel told a fresh account to "be the first
+                       to suggest a venue" with nothing to suggest from, and the
+                       only other door (Share a venue to chat) then claimed venue
+                       search was down. Two screens in a row, both wrong about
+                       the cause. Name the real one and open the door to it. */
+                    <>
+                      <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 8px' }} />
+                      <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: '0 0 12px', fontWeight: '500' }}>No votes yet. To see places to suggest, Flock needs your location.</p>
+                      <button className="hit44 glass-btn glass-secondary" onClick={() => { leaveDmScreen(); setPickingVenueForDm(true); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '10px 18px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Browse venues on Discover</button>
+                    </>
+                  )}
                 </div>
               )}
 
@@ -617,7 +638,14 @@ export default function DmDetail({
                    one real exit. */
                 <div style={{ padding: '16px', borderRadius: '14px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', textAlign: 'center' }}>
                   <BirdieStill size={64} style={{ margin: '0 auto 8px' }} />
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: '1.5' }}>No venues to show here. Venue search is unavailable right now, so there is nothing to pick from yet.</p>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: '1.5' }}>{userLocation
+                    ? 'No venues to show here. Venue search is unavailable right now, so there is nothing to pick from yet.'
+                    /* allVenues is only ever filled by loadVenuesAtLocation, so
+                       with no coordinate it is empty because nothing was ever
+                       asked, not because the ask failed. Blaming search told a
+                       fresh account a working feature was broken, which is the
+                       sentence ChatDetail's own comment says it fixed there. */
+                    : "No venues to show yet, because Flock doesn't have your location. Turn it on from the Discover tab and this list fills in."}</p>
                   <button className="hit44 glass-btn glass-secondary" onClick={() => setShowDmVenueSearch(false)} style={{ padding: '10px 20px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>Close</button>
                 </div>
               ) : allVenues.map(venue => (

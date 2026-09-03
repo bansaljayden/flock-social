@@ -16506,6 +16506,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         showDmVenueSearch,
         showDmVotePanel,
         showToast,
+        // Not one of the 93 the scope walk found: this screen never read a
+        // coordinate, which is exactly why both of its empty states blamed
+        // venue search for a location the app had never been given.
+        userLocation,
       };
       return <DmDetail {...dmDetailProps} />;
     }

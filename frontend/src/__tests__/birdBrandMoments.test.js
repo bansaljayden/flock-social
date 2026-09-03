@@ -401,7 +401,12 @@ describe('the 2026-09-01 sweep: every remaining empty or error state has a bird'
       // DMs
       ['DM: votes failed', 'body={dmVenueVotesError}'],
       ['DM: no votes yet', 'of this panel that changes what the user does next. */'],
-      ['DM: venue sheet has nothing to pick', 'No venues to show here. Venue search is unavailable right now, so there is nothing to pick from yet.</p>'],
+      // Both DM anchors became ternary arms on 2026-09-03, when the screen was
+      // finally given userLocation and stopped blaming venue search for a
+      // coordinate it had never been passed. Same shape as the two flock-chat
+      // rows above, which took that fix a week earlier.
+      ['DM: no votes and no location', 'No votes yet. To see places to suggest'],
+      ['DM: venue sheet has nothing to pick', "? 'No venues to show here."],
       ['DM: empty thread', 'Say hi to start the conversation.'],
       // New message sheet
       ['new message: search failed', 'body={dmSearchError}'],
