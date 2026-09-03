@@ -162,6 +162,65 @@ describe('a calendar event that did not save', () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 2b. A calendar event removed
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * The same defect as 2, pointed the other way, and it outlived the fix for 2 by
+ * three weeks because it was written inline in JSX and no region ever read it.
+ *
+ * The X on a calendar row was:
+ *
+ *   onClick={() => { setCalendarEvents(calendarEvents.filter(...));
+ *                    if (typeof event.id === 'number')
+ *                      deleteCalendarEvent(event.id).catch(() => {}); }}
+ *
+ * A refused DELETE took the row off the calendar anyway. The event looked
+ * deleted, the user stopped planning around it, and the server still had it, so
+ * it was back on the calendar at the next launch. Both halves of the calendar
+ * now go through one delete, and a refusal puts the row back and says so.
+ */
+describe('a calendar event that did not delete', () => {
+  const del = () => region(APP, 'const deleteSavedCalendarEvent = useCallback', 'const addEventToCalendar = useCallback');
+  const remove = () => region(APP, 'const removeCalendarEvent = useCallback', 'const addMessageToFlock');
+
+  test('the row goes back on the calendar when the delete is refused', () => {
+    expect(del()).toMatch(/setCalendarEvents\(prev => \(prev\.some\(e => e\.id === row\.id\) \? prev : \[\.\.\.prev, row\]\)\)/);
+  });
+
+  test('and the user is told, in words naming the calendar', () => {
+    const fn = del();
+    expect(fn).toMatch(/That didn't get removed from your calendar\./);
+    expect(fn).toMatch(/showToast\(.*'error'\)/);
+    // A dead session has already announced itself through api.js's own toast.
+    expect(fn).toMatch(/err\?\.sessionExpired/);
+  });
+
+  test('the button no longer carries its own write', () => {
+    // The whole reason this one hid: the call site was a JSX attribute, so
+    // every region in this file stepped over it. It is a named handler now.
+    expect(APP).toMatch(/onClick=\{\(\) => removeCalendarEvent\(event\)\}/);
+    expect(APP).not.toMatch(/deleteCalendarEvent\(event\.id\)\.catch\(\(\) => \{\}\)/);
+  });
+
+  test('nothing on either path swallows the failure', () => {
+    expect(del()).not.toMatch(/\.catch\(\(\) => \{\}\)/);
+    expect(remove()).not.toMatch(/\.catch\(\(\) => \{\}\)/);
+  });
+
+  test('a row removed while its create was in flight is deleted once the id exists', () => {
+    // The X is tappable during the create round trip, and in that window there
+    // is no server id to delete. Filtering the row and stopping there left the
+    // event on the server: gone from the screen, back at the next launch, which
+    // is the same lie by a different route.
+    expect(remove()).toMatch(/removedTempCalendarIdsRef\.current\.add\(event\.id\)/);
+    const cal = region(APP, 'const addEventToCalendar = useCallback', 'const removeCalendarEvent = useCallback');
+    expect(cal).toMatch(/if \(removedTempCalendarIdsRef\.current\.delete\(tempId\)\) \{/);
+    expect(cal).toMatch(/deleteSavedCalendarEvent\(saved\)/);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 3. A friend request
 // ═══════════════════════════════════════════════════════════════════════════
 
