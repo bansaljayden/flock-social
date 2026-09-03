@@ -80,7 +80,7 @@ process.env.DATABASE_URL = `postgresql://postgres:postgres@127.0.0.1:${PG_PORT}/
 // suite does not depend on either of these winning.
 process.env.PGSSLMODE = 'disable';
 
-const { lit, DUMP_TYPES } = require('../scripts/dump-db');
+const { lit, createTableStatement, DUMP_TYPES } = require('../scripts/dump-db');
 
 let pg;
 let client;
@@ -620,4 +620,106 @@ test('every column type the migration chain produces has a case in this file', a
   } finally {
     await pool.end().catch(() => {});
   }
+});
+
+// ---------------------------------------------------------------------------
+// THE DDL BLOCK. Round 18: the dump had nowhere to put 3.4 million rows.
+// ---------------------------------------------------------------------------
+// scripts/ml/archiveWeeklyWindow.js does `CREATE TABLE ml_training_data_weekly_w1
+// AS SELECT * FROM ml_training_data`, so that table exists in production and in
+// no migration file. The dump wrote its rows; the restore, whose schema comes
+// from the migration chain alone, died on `relation ... does not exist` and threw
+// the whole backup away. The name carries the window number, so _w2 and _w3 would
+// each do it again on their own schedule. dump-db.js now emits a
+// CREATE TABLE IF NOT EXISTS per table, ahead of the INSERTs.
+//
+// Two things have to hold and neither is obvious from reading the statement:
+// the definition it reconstructs has to be the definition the rows came out of,
+// and running it against a table the migrations DID build has to do nothing at
+// all — including when that table's default calls nextval() on a sequence, which
+// is every SERIAL primary key in this schema.
+
+// The catalog read from main(), narrowed to one table. Kept in the same shape so
+// the columns this test feeds createTableStatement are the columns the dump does.
+async function ddlColumns(table) {
+  const { rows } = await client.query(
+    `SELECT c.relname   AS table_name,
+            a.attname   AS column_name,
+            format_type(a.atttypid, a.atttypmod) AS type,
+            a.attnotnull AS not_null,
+            pg_get_expr(d.adbin, d.adrelid) AS default_expr
+       FROM pg_attribute a
+       JOIN pg_class c ON c.oid = a.attrelid
+       LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+      WHERE a.attrelid = $1::regclass AND a.attnum > 0 AND NOT a.attisdropped
+      ORDER BY a.attnum`,
+    [table]
+  );
+  return rows;
+}
+
+test('a table no migration creates is rebuilt from the dump, column for column', async () => {
+  // Types picked to break a reconstruction that reassembles information_schema
+  // by hand rather than asking format_type: a length, a precision and a scale,
+  // an array, and both timestamp flavours.
+  await client.query(`
+    CREATE TABLE ddl_weekly_w1 (
+      id            integer NOT NULL,
+      venue_name    character varying(50) DEFAULT 'unknown'::character varying,
+      busyness_pct  numeric(10,2),
+      score         double precision,
+      google_types  text[],
+      observed_at   timestamp without time zone,
+      collected_at  timestamp with time zone DEFAULT now() NOT NULL,
+      payload       jsonb DEFAULT '{}'::jsonb
+    )`);
+  const before = await ddlColumns('ddl_weekly_w1');
+  const stmt = createTableStatement('ddl_weekly_w1', before);
+
+  assert.match(stmt, /^CREATE TABLE IF NOT EXISTS "ddl_weekly_w1" \(/,
+    'the IF NOT EXISTS is the whole reason this is safe to emit for all 66 tables');
+
+  // A database built from the migration chain alone does not have this table.
+  await client.query('DROP TABLE ddl_weekly_w1');
+  await client.query(stmt);
+
+  assert.deepEqual(await ddlColumns('ddl_weekly_w1'), before,
+    'the rebuilt table differs from the one the rows were read out of');
+
+  // And it actually takes the rows. lit() writes the literals; this is the
+  // INSERT the dump would emit for them.
+  const cols = ['id', 'venue_name', 'busyness_pct', 'score', 'google_types', 'observed_at', 'collected_at', 'payload'];
+  const vals = [
+    lit(7, 'int4'), lit("O'Malley's", 'varchar'), lit('12.50', 'numeric'), lit(0.5, 'float8'),
+    lit(['bar', 'night_club'], '_text'), lit('2026-08-13 19:44:32.725', 'timestamp'),
+    lit('2026-08-13 15:44:32.725123-04', 'timestamptz'), lit({ a: 1 }, 'jsonb'),
+  ];
+  await client.query(`INSERT INTO ddl_weekly_w1 (${cols.join(', ')}) VALUES (${vals.join(', ')})`);
+  const { rows } = await client.query('SELECT count(*)::int AS n FROM ddl_weekly_w1');
+  assert.equal(rows[0].n, 1);
+});
+
+test('the same statement is a no-op against a table the migrations already built', async () => {
+  await client.query('CREATE TABLE ddl_existing (id serial PRIMARY KEY, note text NOT NULL)');
+  await client.query(`INSERT INTO ddl_existing (note) VALUES ('kept')`);
+
+  const stmt = createTableStatement('ddl_existing', await ddlColumns('ddl_existing'));
+  assert.ok(stmt.includes(`DEFAULT nextval('ddl_existing_id_seq'::regclass)`),
+    'the SERIAL default has to be in the statement for this test to be measuring anything');
+
+  // Twice, because a dump is replayed once but this is the shape that would
+  // fail: Postgres must skip the whole statement on the existence check rather
+  // than resolve that nextval() first.
+  await client.query(stmt);
+  await client.query(stmt);
+
+  const { rows } = await client.query('SELECT note FROM ddl_existing');
+  assert.deepEqual(rows, [{ note: 'kept' }], 'the no-op touched the data');
+
+  // The DDL deliberately carries no keys or constraints, and re-running it must
+  // not have removed the ones the migration put there either.
+  const { rows: [pk] } = await client.query(
+    `SELECT count(*)::int AS n FROM pg_constraint WHERE conrelid = 'ddl_existing'::regclass AND contype = 'p'`
+  );
+  assert.equal(pk.n, 1, 'the primary key the migration created is gone');
 });
