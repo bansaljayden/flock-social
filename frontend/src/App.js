@@ -5832,6 +5832,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           // going_count includes guests who RSVPed through the share link;
           // member_count is accounts only and stays as the fallback.
           memberCount: f.going_count ?? f.member_count ?? 1,
+          // What a bill actually divides by. The server splits across
+          // flock_members WHERE status = 'accepted' (routes/billing.js), which is
+          // member_count exactly: accounts only, guests excluded, and a blocked
+          // member still billed. memberCount above is the headcount shown on a
+          // card and includes guests, so it is the wrong number to divide by.
+          billableCount: f.member_count ?? null,
           time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'TBD',
           // Keep the raw timestamp: the display string alone can't be put on a
           // calendar, which is why "Add to calendar" used to save today.
@@ -6125,6 +6131,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         members: [],
         memberPreviews: [],
         memberCount: f.going_count ?? f.member_count ?? 1,
+        // What a bill actually divides by. The server splits across
+        // flock_members WHERE status = 'accepted' (routes/billing.js), which is
+        // member_count exactly: accounts only, guests excluded, and a blocked
+        // member still billed. memberCount above is the headcount shown on a
+        // card and includes guests, so it is the wrong number to divide by.
+        billableCount: f.member_count ?? null,
         time: formatEventTime(f.event_time || eventTime),
         eventTime: f.event_time || eventTime,
         status: f.status === 'planning' || !f.status ? 'voting' : f.status,
@@ -7769,6 +7781,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         members: [],
         memberPreviews: [],
         memberCount: f.going_count ?? f.member_count ?? 1,
+        // What a bill actually divides by. The server splits across
+        // flock_members WHERE status = 'accepted' (routes/billing.js), which is
+        // member_count exactly: accounts only, guests excluded, and a blocked
+        // member still billed. memberCount above is the headcount shown on a
+        // card and includes guests, so it is the wrong number to divide by.
+        billableCount: f.member_count ?? null,
         time: formatEventTime(f.event_time || draft.event_time || null),
         eventTime: f.event_time || draft.event_time || null,
         status: f.status === 'planning' || !f.status ? 'voting' : f.status,
@@ -8391,6 +8409,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             members,
             guests,
             memberCount: Math.max(0, (data.momentum?.accepted ?? accepted.length) - hidden),
+            // The bill divides by the server's accepted roster, blocks included,
+            // so this is the count BEFORE the blocked strip above. Hiding a
+            // blocked member from the faces must not shrink everybody's share.
+            billableCount: accepted.length,
             // momentum is left as the server sent it on purpose: it drives a
             // progress stage ("has two or more people"), not a headcount, and
             // a blocked member is still coming to the thing.
