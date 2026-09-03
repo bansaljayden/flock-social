@@ -694,6 +694,66 @@ test('the bump assertion is load-bearing on the clause, not on the fake', async 
   assert.strictEqual(userById(10).token_version, 4);
 });
 
+test('a refused Apple code exchange leaves no account behind', async () => {
+  // Round 6 refuses an Apple sign-in whose code exchange yields no refresh
+  // token, because without one account deletion can never revoke the grant
+  // (5.1.1(v)). The refusal used to run AFTER the INSERT, so it left behind the
+  // exact thing it exists to prevent: a users row bound to the Apple sub with
+  // apple_refresh_token NULL, holding a real address that was now taken against
+  // password and Google signup. The exchange is a gate, and gates run before
+  // writes.
+  reset();
+  const stub = require.cache[appleAuthPath].exports;
+  const saved = { isConfigured: stub.isConfigured, exchangeAppleCode: stub.exchangeAppleCode };
+  stub.isConfigured = () => true;
+  stub.exchangeAppleCode = async () => ({}); // Apple answered, and sent no refresh token
+  try {
+    const res = await post('/api/auth/apple', {
+      identityToken: appleIdentityToken({ sub: 'a-503', email: 'fresh@icloud.com', email_verified: true }),
+      authorizationCode: 'code-once',
+      date_of_birth: '2000-01-01',
+    });
+    assert.strictEqual(res.status, 503, JSON.stringify(res.body));
+    assert.ok(!findUserByEmail('fresh@icloud.com'),
+      'a refused sign-in must not create the account');
+    assert.ok(!db.users.some((u) => u.oauth_provider === 'apple' && u.oauth_id === 'a-503'),
+      'nor bind the Apple sub to anything');
+    assert.ok(!lastSql('INSERT INTO users'), 'nothing was written at all');
+  } finally {
+    Object.assign(stub, saved);
+  }
+});
+
+test('an accepted Apple exchange stores the token in the row it creates and spends the code once', async () => {
+  // The other half of moving the gate: the token now travels in the INSERT, so
+  // the post-creation UPDATE that used to store it must not run for a row
+  // created in this request. An Apple authorization code is single-use, so a
+  // second exchange would fail and 503 an account that already exists.
+  reset();
+  const stub = require.cache[appleAuthPath].exports;
+  const saved = { isConfigured: stub.isConfigured, exchangeAppleCode: stub.exchangeAppleCode };
+  let exchanges = 0;
+  stub.isConfigured = () => true;
+  stub.exchangeAppleCode = async () => { exchanges += 1; return { refresh_token: 'apple-refresh-once' }; };
+  try {
+    const res = await post('/api/auth/apple', {
+      identityToken: appleIdentityToken({ sub: 'a-201', email: 'fresh2@icloud.com', email_verified: true }),
+      authorizationCode: 'code-once',
+      date_of_birth: '2000-01-01',
+    });
+    assert.ok(res.status === 200 || res.status === 201, JSON.stringify(res.body));
+    const created = findUserByEmail('fresh2@icloud.com');
+    assert.ok(created, 'the account was created');
+    assert.strictEqual(created.apple_refresh_token, 'apple-refresh-once',
+      'the refresh token is written with the row, not after it');
+    assert.strictEqual(exchanges, 1, 'the single-use code is exchanged exactly once');
+    assert.ok(!lastSql('UPDATE users SET apple_refresh_token'),
+      'no second write of the token for a row created in this request');
+  } finally {
+    Object.assign(stub, saved);
+  }
+});
+
 test('the Apple claim statement carries the bump too', async () => {
   reset();
   addUser({

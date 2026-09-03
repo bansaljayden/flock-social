@@ -3379,6 +3379,10 @@ router.post('/apple', [
       }
     }
 
+    // Set only on the creation path below. The Apple authorization code is
+    // single-use, and creation now spends it BEFORE the row is written, so the
+    // post-creation exchange further down must not spend it a second time.
+    let createdNow = false;
     if (!user) {
       // New user — Apple may not give us name/email after the first sign-in.
       // Fall back to email-derived name or "Friend" for the placeholder; the
@@ -3440,6 +3444,33 @@ router.post('/apple', [
       if (await banTombstones().rejectIfBannedIdentity(res, {
         email, oauthProvider: 'apple', oauthId: appleId,
       })) return;
+      // The code exchange is a gate, and it used to run AFTER the INSERT below.
+      // Round 6 made it refuse a sign-in that yields no refresh token, because
+      // without one account deletion can never revoke the Apple grant
+      // (5.1.1(v)); but by then the users row already existed, bound to this
+      // Apple sub, holding the person's real address, with apple_refresh_token
+      // NULL: exactly the unrevokeable account the refusal exists to prevent,
+      // plus an address now taken against password and Google signup, plus a
+      // squatted address already released by the write two statements down.
+      // So the exchange runs here, ahead of every write, and the token goes
+      // into the INSERT itself. A refusal leaves nothing behind.
+      let newAppleRefreshToken = null;
+      if (authorizationCode) {
+        const { exchangeAppleCode, isConfigured: appleConfigured } = require('../services/appleAuth');
+        try {
+          const tokens = await exchangeAppleCode(authorizationCode);
+          if (tokens?.refresh_token) {
+            newAppleRefreshToken = tokens.refresh_token;
+          } else if (appleConfigured()) {
+            return res.status(503).json({ error: "Apple sign-in didn't complete. Try again in a moment." });
+          }
+        } catch (e) {
+          console.error('Apple code exchange error:', e.message);
+          if (appleConfigured()) {
+            return res.status(503).json({ error: "Apple sign-in didn't complete. Try again in a moment." });
+          }
+        }
+      }
       // Round 16: the last gate has now passed, so it is safe to take the
       // address off an unverified squat. Nothing above this line writes.
       if (existingByEmail && !(await releaseSquattedAddress(existingByEmail, req))) {
@@ -3468,16 +3499,19 @@ router.post('/apple', [
       // ever verify it — so it is recorded as verified for that placeholder and
       // never for a real address. verified_email holds what was proved.
       result = await pool.query(
-        `INSERT INTO users (email, name, oauth_provider, oauth_id, terms_accepted_at, date_of_birth, email_verified, verified_email)
-         VALUES ($1, $2, 'apple', $3, NOW(), $4, TRUE, $5)
+        `INSERT INTO users (email, name, oauth_provider, oauth_id, terms_accepted_at, date_of_birth, email_verified, verified_email, apple_refresh_token)
+         VALUES ($1, $2, 'apple', $3, NOW(), $4, TRUE, $5, $6)
          RETURNING *`,
-        [storedEmail, fallbackName, appleId, appleDob, storedEmail]
+        [storedEmail, fallbackName, appleId, appleDob, storedEmail, newAppleRefreshToken]
       );
       user = result.rows[0];
+      createdNow = true;
       linkWaitlistConversion(user.email, user.id);
     }
 
-    if (authorizationCode) {
+    // Existing accounts only: a just-created row already carries its token, and
+    // the single-use code it was bought with cannot be exchanged again.
+    if (authorizationCode && !createdNow) {
       const { exchangeAppleCode, isConfigured: appleConfigured } = require('../services/appleAuth');
       try {
         const tokens = await exchangeAppleCode(authorizationCode);
