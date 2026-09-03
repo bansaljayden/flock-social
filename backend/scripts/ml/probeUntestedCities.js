@@ -62,7 +62,17 @@ async function probeCity(city, limit) {
       );
       missed++;
     }
-    await sleep(150);
+    // One call per second, matching collectRealtime.js and collectWeekly.js.
+    // This script was left at 150ms (400 a minute) when those two were paced
+    // down on 2026-09-01, which makes it the fastest caller in the repo and
+    // the only one still above BestTime's stated 300 a minute. That pace is
+    // what the sibling comment describes earning a hard key block: 600 a
+    // minute drew one outright, and even 240 a minute, lawfully under the
+    // published ceiling, drew a 503 wall after ~475 calls and then the same
+    // 403, because a key that has offended once is not judged by the ceiling.
+    // A key block stops the nightly collection service too, so the blast
+    // radius of running this is the whole pipeline, not just this probe.
+    await sleep(1000);
   }
   return { city, attempted: venues.length, found, missed, hit_pct: venues.length ? (100 * found / venues.length).toFixed(1) : 'n/a' };
 }
