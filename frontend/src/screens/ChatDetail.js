@@ -1780,7 +1780,9 @@ export default function ChatDetail({
                     {userLocation ? (
                       <>
                         <BirdieStill size={64} style={{ margin: '0 auto 8px' }} />
-                        <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>No votes yet. Be the first to suggest a venue!</p>
+                        <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>{suggestedVenues.length > 0
+                          ? 'No votes yet. Vote for a place below, or share one of your own.'
+                          : 'No votes yet. Be the first to suggest a venue!'}</p>
                       </>
                     ) : (
                       /* The instruction used to have no way to be followed: a

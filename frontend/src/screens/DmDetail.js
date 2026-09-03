@@ -537,7 +537,9 @@ export default function DmDetail({
                    of this panel that changes what the user does next. */
                 <div style={{ padding: '20px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px', marginBottom: '16px' }}>
                   <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 8px' }} />
-                  <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>No votes yet. Be the first to suggest a venue!</p>
+                  <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>{suggestedVenues.length > 0
+                    ? 'No votes yet. Vote for a place below, or share one of your own.'
+                    : 'No votes yet. Be the first to suggest a venue!'}</p>
                 </div>
               )}
 
