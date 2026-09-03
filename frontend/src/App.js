@@ -12499,7 +12499,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex' }}>
+                  {/* The faces are a picture of the headcount, not a list of
+                      names: each one is a bare initial, so a screen reader read
+                      this card out as the flock name followed by "A" and "S".
+                      The device hierarchy confirmed it, the whole card being one
+                      button whose accessible name ran the initials together with
+                      the venue, the status and the time. Hide the letters and
+                      say the number instead, the way the unread badge does. */}
+                  <span className="sr-only">{f.memberCount || faces.length} going</span>
+                  <div aria-hidden="true" style={{ display: 'flex' }}>
                     {faces.map((face, j) => (
                       <div key={j} style={{ width: '24px', height: '24px', borderRadius: '50%', border: '2px solid var(--bg-card-solid)', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', marginLeft: j > 0 ? '-6px' : 0 }}>
                         {face.image ? <img src={face.image} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : face.initial}
