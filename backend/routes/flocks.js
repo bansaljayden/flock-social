@@ -1627,7 +1627,7 @@ router.post('/:id/invite-link', requireVerified, param('id').isInt({ min: 1, max
         `INSERT INTO flock_invite_links (token, flock_id, created_by, expires_at)
          SELECT $1, f.id, $3, GREATEST(
                   NOW() + INTERVAL '14 days',
-                  COALESCE(f.event_time, NOW()) + INTERVAL '7 days'
+                  COALESCE(f.event_time AT TIME ZONE 'UTC', NOW()) + INTERVAL '7 days'
                 )
          FROM flocks f WHERE f.id = $2
          RETURNING token`,
@@ -2964,7 +2964,7 @@ router.post('/:id/attendance',
                WHERE m2.flock_id = fm.flock_id AND m2.status = 'accepted'
              ) mc ON TRUE
              LEFT JOIN LATERAL (
-               SELECT COALESCE(f.event_time, f.created_at) <= NOW() AS started,
+               SELECT COALESCE(f.event_time, f.created_at) <= (NOW() AT TIME ZONE 'UTC') AS started,
                       FLOOR(EXTRACT(EPOCH FROM COALESCE(f.event_time, f.created_at))
                             / ${RELIABILITY_SLOT_SECONDS}) AS slot,
                       EXISTS (
@@ -2975,7 +2975,7 @@ router.post('/:id/attendance',
                           AND m3.status = 'accepted'
                           AND m3.attendance = 'no_show'
                           AND f3.status = 'completed'
-                          AND COALESCE(f3.event_time, f3.created_at) <= NOW()
+                          AND COALESCE(f3.event_time, f3.created_at) <= (NOW() AT TIME ZONE 'UTC')
                           AND FLOOR(EXTRACT(EPOCH FROM COALESCE(f3.event_time, f3.created_at))
                                     / ${RELIABILITY_SLOT_SECONDS})
                               = FLOOR(EXTRACT(EPOCH FROM COALESCE(f.event_time, f.created_at))
