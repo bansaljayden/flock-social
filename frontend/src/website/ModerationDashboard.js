@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { getToken, BASE_URL } from '../services/api';
 import Icons from '../components/ui/Icons';
+import { connectSocket, onModerationReport } from '../services/socket';
 
 // Admin-only moderation console (A6). Routed at /admin/moderation.
 // Backed by GET/PUT /api/admin/reports + GET /api/admin/moderation-actions,
@@ -416,6 +417,17 @@ export default function ModerationDashboard() {
     }, 60000);
     return () => clearInterval(t);
   }, [load, loading, refreshing]);
+
+  // And the live signal: a report filed while this page is open refreshes the
+  // queue the moment it lands, instead of on the next tick of the poll above.
+  // The poll stays, for the socket's own gaps.
+  useEffect(() => {
+    connectSocket();
+    return onModerationReport(() => {
+      if (document.hidden) return;
+      load({ background: true });
+    });
+  }, [load]);
 
   const loadMore = async () => {
     if (more.busy) return;

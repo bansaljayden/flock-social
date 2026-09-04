@@ -17315,6 +17315,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             onClose={() => setModerationTarget(null)}
             showToast={showToast}
             onBlocked={handleUserBlocked}
+            onReported={(ev) => {
+              setFlocks(prev => applyTakedownToFlocks(prev, ev));
+              setDirectMessages(prev => applyTakedownToDms(prev, ev));
+            }}
           />
 
           {/* Person card (report / block someone who has posted nothing) */}

@@ -903,6 +903,13 @@ export function onContentRemoved(callback) {
   return register('content_removed', callback);
 }
 
+// The console's live signal. Emitted per admin by services/moderationAlerts.js
+// since the alerts shipped; nothing on the client had ever registered it, so
+// an open queue learned of a new report from a sixty-second poll.
+export function onModerationReport(callback) {
+  return register('moderation_report', callback);
+}
+
 // The un-hide is a SEPARATE event on the server on purpose: a client that has
 // already dropped the row needs a different instruction from one that still has
 // it, and "removed" meaning "put it back" is the kind of name that gets handled

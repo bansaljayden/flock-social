@@ -270,6 +270,10 @@ async function alertModerators(io, rawReport = {}) {
     emailSkipped: false,
     pushAttempts: 0,
     pushFailures: 0,
+    // A push that resolved without going anywhere (Firebase off, admin online,
+    // no device). Counted apart from a rejection so the summary line cannot
+    // read "1/1 sent" when nobody was paged.
+    pushSkipped: 0,
     adminLookupFailed: false,
     usedFallbackInbox: false,
     childSafety: false,
@@ -366,6 +370,7 @@ async function alertModerators(io, rawReport = {}) {
               type: 'moderation_report',
               reportId: String(report.reportId || ''),
             })
+            .then((r) => { if (r && r.skipped) summary.pushSkipped += 1; })
             .catch((e) => {
               summary.pushFailures += 1;
               console.error(`[MODERATION] report #${reportId}: push to admin ${a.id} FAILED: ${e && e.message ? e.message : e}`);
@@ -440,7 +445,7 @@ async function alertModerators(io, rawReport = {}) {
     } else if (summary.admins === 0) {
       console.error(`[MODERATION] report #${reportId}: NO ADMIN ACCOUNTS EXIST. Nothing was emitted to a person in the app. Set ADMIN_USER_IDS on the deployment. ${mailOutcome}`);
     } else {
-      console.warn(`[MODERATION] report #${reportId} alert: ${summary.admins} admin(s), ${summary.onlineAdmins} connected, email ${summary.emailSkipped ? 'SKIPPED' : `${summary.emailSent}/${recipients.length} delivered`}, push ${summary.pushAttempts - summary.pushFailures}/${summary.pushAttempts} sent.`);
+      console.warn(`[MODERATION] report #${reportId} alert: ${summary.admins} admin(s), ${summary.onlineAdmins} connected, email ${summary.emailSkipped ? 'SKIPPED' : `${summary.emailSent}/${recipients.length} delivered`}, push ${summary.pushAttempts - summary.pushFailures - summary.pushSkipped}/${summary.pushAttempts} sent, ${summary.pushSkipped} not sent (online or no device), ${summary.pushFailures} failed.`);
     }
     return summary;
   } catch (err) {
