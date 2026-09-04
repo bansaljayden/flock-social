@@ -100,7 +100,7 @@
  * as soon as the flock exists" is POST /api/flocks: a socket event to anyone
  * online and pushInvitesToOffline for everyone else.
  */
-import React from 'react';
+import React, { useEffect } from 'react';
 import { createFlock as apiCreateFlock, sendMessage as apiSendMessage } from '../services/api';
 import { hapticSuccess } from '../services/haptics';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
@@ -260,7 +260,10 @@ export default function CreateScreen({
       const invitedIds = capturedFriends.map(f => f.id).filter(Boolean);
       // The When/Time chips were being collected and then thrown away: the POST
       // body carried no event_time at all, so every flock was created "TBD".
-      const capturedEventTime = resolveEventTime(flockDate, flockTime).toISOString();
+      const capturedFixedIso = capturedVenue?.event_datetime_utc
+        || (capturedVenue?.event_date && capturedVenue?.event_time ? `${capturedVenue.event_date}T${capturedVenue.event_time}` : null);
+      const capturedFixedAt = capturedFixedIso && !Number.isNaN(new Date(capturedFixedIso).getTime()) ? new Date(capturedFixedIso) : null;
+      const capturedEventTime = (capturedFixedAt || resolveEventTime(flockDate, flockTime)).toISOString();
 
       // Clear form immediately for snappy feel
       const capturedBudget = flockCashPool;
@@ -356,7 +359,19 @@ export default function CreateScreen({
 
     // Read-backs the labels and the footer share. All of it is state the user
     // set on this screen; nothing here is computed from anything else.
-    const eventAt = resolveEventTime(flockDate, flockTime);
+    // A flock started from an event is for the event's own instant, not for
+    // Tonight at 9: the chips used to win and the plan landed on the wrong day.
+    const fixedEventIso = selectedVenueForCreate?.event_datetime_utc
+      || (selectedVenueForCreate?.event_date && selectedVenueForCreate?.event_time ? `${selectedVenueForCreate.event_date}T${selectedVenueForCreate.event_time}` : null);
+    const fixedEventAt = fixedEventIso && !Number.isNaN(new Date(fixedEventIso).getTime()) ? new Date(fixedEventIso) : null;
+    const eventAt = fixedEventAt || resolveEventTime(flockDate, flockTime);
+    // The event's name is the obvious name for the plan; seeded once into an
+    // empty box, never over something typed.
+    const eventName = selectedVenueForCreate?.event_name || '';
+    useEffect(() => {
+      if (eventName && !flockName) setFlockName(eventName);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [eventName]);
     const whenShort = eventAt.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
     const whenLong = eventAt.toLocaleString([], { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
     const trimmedName = flockName.trim();
@@ -450,6 +465,12 @@ export default function CreateScreen({
 
           <GroupLabel aside={whenShort}>When</GroupLabel>
           <FormGroup>
+            {fixedEventAt ? (
+            <FormRow>
+              <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>When the event is</p>
+              <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: 0 }}>{whenLong}. The time comes from the event listing.</p>
+            </FormRow>
+            ) : (<>
             <FormRow>
               <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 8px' }}>Which day?</p>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px' }}>
@@ -466,6 +487,7 @@ export default function CreateScreen({
                 ))}
               </div>
             </FormRow>
+            </>)}
             {/* The answer the two rows above add up to, on its own row and on
                 the page background so it reads as a result, not a caption. */}
             <FormRow divided style={{ padding: '10px 12px', backgroundColor: 'var(--bg-primary)', borderBottomLeftRadius: '13px', borderBottomRightRadius: '13px', display: 'flex', alignItems: 'center', gap: '8px' }}>
