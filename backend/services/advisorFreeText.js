@@ -556,6 +556,31 @@ function clauses(text) {
   return String(text).split(/[.;?!]+/).map((s) => s.trim()).filter(Boolean);
 }
 
+// LIFE SAFETY GOES FIRST, and until 2026-09-04 it went last.
+//
+// `prohibitedClass` runs at the very bottom of classify(), after four earlier
+// returns: the spent daily ceiling, the model being unreachable, an unparseable
+// route, and a route the model itself refused. The classifier's closed reason
+// list has no `medical_emergency` and its prompt sends medical questions to
+// `personal_health`, so that fourth branch always won in production. Measured:
+// "someone is choking what do I do" returns "Anything to do with a person's
+// health belongs with someone medically qualified", and an owner who had used
+// today's twenty questions got "Today's questions are used up" instead.
+//
+// The product has the right sentence written down and never served it. So this
+// one class is tested on its own, before the ceiling, before the spend, before
+// the model. Everything else stays exactly where it is, for the reason written
+// at the call site: the router keeps its own reason on questions it declined.
+function emergencyClass(text) {
+  const probe = typeof text === 'string' ? text.normalize('NFKC') : String(text);
+  const segments = [...clauses(text), ...clauses(probe)];
+  const cls = PROHIBITED_CLASSES.find((c) => c.why === 'medical_emergency');
+  if (!cls) return null;
+  return segments.some((sg) => cls.subject.test(sg) && cls.predicate.test(sg))
+    ? refusalForReason(cls.why)
+    : null;
+}
+
 function prohibitedClass(text) {
   const probe = typeof text === 'string' ? text.normalize('NFKC') : String(text);
   const segments = [...clauses(text), ...clauses(probe)];
@@ -785,6 +810,11 @@ async function classify({ userId, question }) {
 
   const hard = screen(question);
   if (hard) return { mode: 'refused', intentId: null, refusal: hard };
+
+  // Before the charge and before the model. Somebody standing over a choking
+  // customer must not be told their daily allowance is spent.
+  const emergency = emergencyClass(question);
+  if (emergency) return { mode: 'refused', intentId: null, refusal: emergency };
 
   const raw = await chargedCall({
     userId,
