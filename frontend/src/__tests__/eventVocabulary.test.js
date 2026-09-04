@@ -21,3 +21,9 @@ test('a payment taken back reaches the open bill sheet', () => {
   expect(effect).toMatch(/settled: false/);
   expect(effect).toMatch(/data\.flockId === selectedFlockId/);
 });
+
+test('a foreground push on the device is shown once, by the OS banner, not again as a toast', () => {
+  const app = read('App.js');
+  const effect = app.slice(app.indexOf('const unsubscribe = onForegroundMessage((notification) => {'), app.indexOf("new CustomEvent('flock-toast'"));
+  expect(effect).toMatch(/if \(window\.Capacitor\?\.isNativePlatform\?\.\(\)\) return;/);
+});
