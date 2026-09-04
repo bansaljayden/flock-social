@@ -189,6 +189,12 @@ function initFirebase(config) {
       if (payload && payload.notification) return;
 
       var data = payload && payload.data ? payload.data : {};
+      // A badge sync is data-only by design (there is no notification to
+      // attach a count to), so it reaches this handler, and this handler used
+      // to answer every one of them with a blank "Flock" card: every mark-as-
+      // read on any device popped an empty notification on the web. Nothing
+      // to show; the count lives in data.badge for launchers that read it.
+      if (data.type === 'badge_sync') return;
       self.registration.showNotification(data.title || 'Flock', {
         body: data.body || '',
         icon: '/logo192.png',
