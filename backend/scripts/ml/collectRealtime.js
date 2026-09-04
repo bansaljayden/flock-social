@@ -637,14 +637,30 @@ async function collectRealtime() {
         ['event_type', eventData.event_type],
         ['event_hours_until', eventData.event_hours_until],
         ['events_observed', eventData.observed === true],
-        // The six enrichment columns are written EXPLICITLY, because their
+        // The SEVEN enrichment columns are written EXPLICITLY, because their
         // defaults are false, false, 0 and 0: omitting them wrote a measured
         // absence beside an events_observed of false, which is exactly the
         // fabricated negative migration 045 exists to end. A 2026-09-01
         // review found 132,432 rows already carrying it.
+        //
+        // SEVEN, not six, and the count in this comment was the tell. Until
+        // 2026-09-04 `nearest_event_attendance` was left off this list while the
+        // other six were named, and enrichWithEvents.js declares it
+        // `INTEGER DEFAULT 0`. So every row the hourly sweep wrote asserted that
+        // the nearest event had nobody at it, next to an event_size that might
+        // say two hundred, and the model carries both `nearest_event_attendance`
+        // and `log_nearest_event_attendance` as features. It was the exact bug
+        // the paragraph above describes, in the column the paragraph forgot to
+        // count. Realtime rows are the scarce live labels the hourly cadence
+        // exists to produce, so it was wrong on the rows that matter most.
+        //
+        // The value mirrors total_nearby_attendance because the realtime
+        // enrichment resolves ONE nearest event: its attendance is that event's
+        // size. null when the lookup did not happen, never a defaulted zero.
         ['has_nearby_event', eventData.observed === true ? (eventData.event_nearby === true) : null],
         ['total_nearby_events', eventData.observed === true ? (eventData.event_nearby === true ? 1 : 0) : null],
         ['total_nearby_attendance', eventData.observed === true ? (eventData.event_size || 0) : null],
+        ['nearest_event_attendance', eventData.observed === true ? (eventData.event_size || 0) : null],
         ['nearest_event_distance_km', eventData.event_distance_km],
         ['nearest_event_type', eventData.event_type],
         ['events_unavailable_reason', eventData.observed === true ? null : (eventData.reason || 'lookup_failed')],
