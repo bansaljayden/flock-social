@@ -366,12 +366,24 @@ function cityQuery(city, optional = {}) {
         ON b.google_place_id = v.google_place_id
        AND b.day_of_week = t.day_of_week
        AND b.hour = t.hour
+      -- ONE ROW PER REPORTER PER VENUE, AND ONLY RECENT ONES, in parity with
+      -- services/mlPredictor.getUserFeedback. Without the dedupe a single
+      -- verified account can be 100% of a venue's feature values (one row per
+      -- person per venue per two hours is allowed, forever), and without the
+      -- window nothing ages out, so one report steers that venue's anchor for
+      -- good. The published score has carried all of these guards for rounds;
+      -- the features had none of them on either side.
       LEFT JOIN (
         SELECT venue_place_id,
           AVG(crowd_level)::numeric(4,1) AS avg_user_crowd,
           COUNT(*)::int AS user_feedback_count,
           AVG((CASE crowd_level WHEN 1 THEN 20 WHEN 2 THEN 50 ELSE 80 END) - predicted_score)::numeric(5,2) AS avg_prediction_error
-        FROM venue_feedback vf
+        FROM (
+          SELECT DISTINCT ON (f2.venue_place_id, f2.user_id) f2.*
+            FROM venue_feedback f2
+           WHERE f2.created_at > NOW() - INTERVAL '28 days'
+           ORDER BY f2.venue_place_id, f2.user_id, f2.created_at DESC
+        ) vf
         WHERE vf.verified = true -- only presence-verified reports: unverified rows let Sybil accounts poison training features (REVIEW-ROUND5)
           -- AND NOT AGAINST AN OWNER-SET CARD, the exclusion services/mlPredictor.js
           -- applies to the same aggregate and this did not. A report left against a

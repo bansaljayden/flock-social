@@ -80,3 +80,20 @@ test('the weekly summary counts reviews the rest of the product does not', () =>
   assert.match(q.slice(0, 600), /FROM venue_reviews vr/);
   assert.match(q.slice(0, 600), /\$\{NOT_OWNER_OF_THE_PLACE\}/);
 });
+
+test('the four feedback FEATURES get the guards the published score already had', () => {
+  const predictor = src('services/mlPredictor.js');
+  const exportJs = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'ml', 'train', 'export_training_data.js'), 'utf8');
+  // buildCalibrationAdjustment protects the published number with a three
+  // reporter minimum, a 28 day window, a leverage cap and DISTINCT ON (user_id).
+  // The query feeding avg_user_crowd, log_user_feedback_count, has_user_feedback
+  // and avg_prediction_error had none of them, on either side, so one verified
+  // account could be 100% of a venue's feature values permanently.
+  assert.match(predictor, /SELECT DISTINCT ON \(vf\.user_id\)/);
+  assert.match(predictor, /AND vf\.created_at > NOW\(\) - INTERVAL '28 days'/);
+  // And training computes it the same way, or the feature means two different
+  // things in the two places it is produced.
+  assert.match(exportJs, /SELECT DISTINCT ON \(f2\.venue_place_id, f2\.user_id\) f2\.\*/);
+  assert.match(exportJs, /WHERE f2\.created_at > NOW\(\) - INTERVAL '28 days'/);
+});
