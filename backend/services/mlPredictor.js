@@ -1172,33 +1172,58 @@ async function getUserFeedback(placeId, userId) {
 
   try {
     const { rows } = await pool.query(
-      `SELECT
-        AVG(crowd_level)::numeric(4,1) AS avg_crowd,
-        COUNT(*)::int AS count,
+      // ONE ROW PER REPORTER, AND ONLY RECENT ONES.
+      //
+      // buildCalibrationAdjustment, which moves the PUBLISHED score, carries a
+      // three-reporter minimum, a 28 day window, a per-account leverage cap and
+      // a DISTINCT ON (user_id) in its own SQL. This query, which feeds FOUR
+      // MODEL FEATURES (avg_user_crowd, log_user_feedback_count,
+      // has_user_feedback, avg_prediction_error), carried none of them. So the
+      // public number was protected from one account and the model's input was
+      // not: routes/feedback.js allows one row per person per venue per two
+      // hours, so a single verified account tapping the NFC at its own bar
+      // every evening for a month is 300 rows, is 100% of that venue's feature
+      // values, and nothing ages them out. The header below already named the
+      // property ("this average has no time bound, so one bad row steers the
+      // venue's anchor for good") and then acted on the owner case only.
+      //
+      // KEEP THIS IN PARITY WITH scripts/ml/train/export_training_data.js. The
+      // training aggregate had the same shape and now has the same guards; a
+      // feature computed one way in training and another at inference is the
+      // distribution mismatch this file spends its whole feature-assembly
+      // section preventing.
+      `WITH latest AS (
+        SELECT DISTINCT ON (vf.user_id)
+               vf.user_id, vf.crowd_level, vf.predicted_score
         -- Two variants of the feedback-error feature. 'mapped' (20/50/80 minus
         -- score, one scale) is the sane definition and what the training
-        -- export now emits; 'legacy' (raw ordinal minus score) is what models
-        -- trained before round 3 — including shipped v2.5-starling — actually
-        -- saw. Feature assembly picks by model metadata so inference always
-        -- matches the checked-in model's training distribution.
+        -- export emits; 'legacy' (raw ordinal minus score) is what models
+        -- trained before round 3 saw. Feature assembly picks by model metadata.
+        --
+        -- verified only: unverified rows are stored for product UX but must not
+        -- move live predictions (round 6). And not against an owner-set card:
+        -- a comparison with a number the model did not produce is not model
+        -- error, and routes/feedback.js closes that at the source.
+          FROM venue_feedback vf
+         WHERE vf.venue_place_id = $1
+           AND vf.verified = true
+           -- Equal to crowdEngine.CALIBRATION_MAX_AGE_MS. A report from last
+           -- spring may not vote on tonight's features any more than it may
+           -- vote on tonight's number.
+           AND vf.created_at > NOW() - INTERVAL '28 days'
+           AND NOT EXISTS (
+             SELECT 1 FROM served_predictions sp
+              WHERE sp.id = vf.served_prediction_id
+                AND sp.prediction_method = 'owner_report'
+           )
+         ORDER BY vf.user_id, vf.created_at DESC
+      )
+      SELECT
+        AVG(crowd_level)::numeric(4,1) AS avg_crowd,
+        COUNT(*)::int AS count,
         AVG((CASE crowd_level WHEN 1 THEN 20 WHEN 2 THEN 50 ELSE 80 END) - predicted_score)::numeric(5,2) AS avg_error_mapped,
         AVG(crowd_level - predicted_score)::numeric(5,2) AS avg_error_legacy
-      -- verified only: unverified rows are stored for product UX but must not
-      -- move live predictions (round 6 — the round-5 filters missed this one)
-      --
-      -- AND NOT AGAINST AN OWNER-SET CARD. The root fix is in routes/feedback.js,
-      -- which no longer resolves a served prediction whose method is
-      -- 'owner_report'. This is the backstop for rows already written, and for
-      -- any future writer that forgets: a comparison against a number the model
-      -- did not produce is not model error, and this average has no time bound,
-      -- so one bad row steers the venue's anchor for good.
-      FROM venue_feedback vf
-      WHERE vf.venue_place_id = $1 AND vf.verified = true
-        AND NOT EXISTS (
-          SELECT 1 FROM served_predictions sp
-           WHERE sp.id = vf.served_prediction_id
-             AND sp.prediction_method = 'owner_report'
-        )`,
+      FROM latest`,
       [placeId]
     );
     const r = rows[0];
