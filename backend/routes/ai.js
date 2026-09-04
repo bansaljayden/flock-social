@@ -538,7 +538,7 @@ const toolDeclarations = [
       properties: {
         tab: {
           type: 'STRING',
-          description: 'The tab to switch to: "home", "explore", "chats", "calendar", "profile"',
+          description: 'The tab to switch to: "home", "explore", "chat", "calendar", "profile"',
           enum: ['home', 'explore', 'chat', 'calendar', 'profile'],
         },
         screen: {
@@ -1039,13 +1039,19 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // the query rather than on the way in, because these rows are the app's
       // own display text everywhere else and a value the model reads is not a
       // value the app should have rewritten in the database.
+      // 'planning', not 'active': no flock has ever had status 'active' (the
+      // schema allows planning, confirmed, completed, cancelled), so this
+      // filter returned only confirmed plans and the "My Flocks" chip told
+      // people with three votes open that they had no plans. It also meant
+      // add_venue_to_vote, which takes its flock id from here, could never
+      // reach a flock that was actually voting.
       const result = await pool.query(
         `SELECT f.id, f.name, f.venue_name, f.event_time, f.status,
                 COUNT(*) FILTER (WHERE fm.status = 'accepted')::int AS member_count
          FROM flocks f
          JOIN flock_members fm ON fm.flock_id = f.id
          WHERE f.id IN (SELECT flock_id FROM flock_members WHERE user_id = $1 AND status = 'accepted')
-           AND f.status IN ('active', 'confirmed')
+           AND f.status IN ('planning', 'confirmed')
          GROUP BY f.id
          ORDER BY f.event_time DESC NULLS LAST
          LIMIT 10`,
@@ -1514,6 +1520,14 @@ router.post('/chat',
             resetsAt: nextUtcMidnightISO(),
           });
         }
+        if (rateCheck.reason === 'daily') {
+          // The meter's own text ("chatting up a storm 🐦 catch up
+          // tomorrow!") broke the voice the system prompt sets (no
+          // exclamation, no emoji) and "tomorrow" is a UTC day, which is the
+          // afternoon in the US. Same body the spend ledger refusals use.
+          const ms = msUntilUtcMidnight();
+          return res.status(429).json(refusalBody(res, ms, `that's my limit for today. i'm back ${waitPhrase(ms)}`));
+        }
         return res.status(429).json({ error: rateCheck.error });
       }
 
@@ -1774,6 +1788,16 @@ router.post('/chat',
         // turn the same way the wall-clock deadline above does: answer with
         // what we already have rather than 500. The tool work is done and any
         // venue cards it produced are still worth returning.
+        // A round that started inside the budget can spend it on tool work
+        // (each crowd lookup is Places plus weather). Sending the results on
+        // then starts a further model call the client has already stopped
+        // waiting for; answer with what there is instead. The last candidate
+        // still carries the function calls just run, so cutShort below reads
+        // this as a turn we ended ourselves.
+        if (Date.now() > turnDeadline) {
+          console.warn('[AI] Turn budget spent after tool work; answering without a further model round');
+          break;
+        }
         try {
           response = await sendWithRetry(functionResponses);
         } catch (e) {

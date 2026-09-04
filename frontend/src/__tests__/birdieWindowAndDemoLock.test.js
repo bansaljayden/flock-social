@@ -496,7 +496,8 @@ describe('the input box has one source of truth', () => {
   test('the send button\'s look and its disabled state come off one value', () => {
     // `!aiInputHasText && !aiTyping` left it ENABLED over an empty box for the
     // whole time Birdie was answering, drawn at 0.4 opacity the entire time.
-    expect(appSource).toContain('const canSendAi = aiInputHasText && !aiTyping;');
+    // `&& !outOfChirps`: at zero chirps the box closes instead of re-hitting the 429.
+    expect(appSource).toContain('const canSendAi = aiInputHasText && !aiTyping && !outOfChirps;');
     expect(appSource).toContain('onClick={sendAiMessage} disabled={!canSendAi}');
     expect(appSource).not.toContain('disabled={!aiInputHasText && !aiTyping}');
   });

@@ -1804,7 +1804,10 @@ const aiMemoryCutIndex = (count, max = AI_CHAT_MAX_MESSAGES) => {
 // The per-message clamp is not tidiness. `messages.*.text` is capped on EVERY
 // element, history included, so one over-long message in a thread used to 400
 // every later send in that same thread, permanently, with no way out of it.
-const toAiWireMessages = (messages) => (Array.isArray(messages) ? messages : []).map((m) => {
+// Bubbles flagged `error` are the app talking (a refusal, a dead network).
+// They used to go back to the model as its own words, so the next turn was
+// told it had previously said "Couldn't reach Flock".
+const toAiWireMessages = (messages) => (Array.isArray(messages) ? messages : []).filter((m) => !m?.error).map((m) => {
   let text = typeof m?.text === 'string' ? m.text : '';
   if (m?.role === 'assistant' && Array.isArray(m.venues) && m.venues.length > 0) {
     text += '\n[Venues shown: ' + m.venues.map(v => `${v.name} (${v.crowd_label || 'crowd unknown'}, ${v.is_open ? 'open' : 'closed'})`).join(', ') + ']';
@@ -5847,6 +5850,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // race the first answer into the transcript out of order.
   const aiSendingRef = useRef(false);
   const [aiRemaining, setAiRemaining] = useState(null); // free-tier daily chirps left, from the last reply
+  const [aiResetsAt, setAiResetsAt] = useState(null); // ISO, from the 429 that closed the box
+  const outOfChirpsRef = useRef(false);
   const [aiChatMode, setAiChatMode] = useState('bubble'); // 'bubble' | 'panel' | 'fullscreen'
   const [aiShareVenue, setAiShareVenue] = useState(null); // venue to share to flock/DM
 
@@ -7147,7 +7152,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [paywallTrigger, setPaywallTrigger] = useState(null); // 'birdie' | 'settings' | null
   const isPro = !!entitlements?.isPremium;
   const refreshEntitlements = useCallback(() => {
-    getEntitlements().then(setEntitlements).catch(() => {});
+    getEntitlements().then((data) => {
+      setEntitlements(data);
+      // The boot fetch never seeded the meter, so the "chirps left" line was
+      // hidden until the first reply of every session.
+      if (typeof data?.birdie?.remaining === 'number') setAiRemaining(data.birdie.remaining);
+    }).catch(() => {});
   }, []);
   // A purchase only becomes premium once RevenueCat's webhook reaches our
   // backend, which can land after the app asks. One request could lose that
@@ -8171,6 +8181,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (aiSendingRef.current) return;
     const currentAiInput = aiInputValueRef.current;
     if (!currentAiInput.trim()) return;
+    if (outOfChirpsRef.current) return;
     aiSendingRef.current = true;
     const userMessage = currentAiInput.trim();
     const newMessages = [...aiMessages, { role: 'user', text: userMessage }];
@@ -8202,7 +8213,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (ctx.flock) {
         currentContext.flock = {
           name: ctx.flock.name || ctx.flock.title,
-          venue: ctx.flock.venue || null,
+          venue: ctx.flock.venue && ctx.flock.venue !== 'TBD' ? ctx.flock.venue : null,
           status: ctx.flock.status || null,
         };
       }
@@ -8251,7 +8262,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // Free-tier daily meter hit — Birdie pitches Pro in character, then the
         // paywall sheet opens with the birdie-specific headline.
         // Honest pitch: Pro is 150 messages a day, not unlimited.
-        setAiMessages(prev => [...prev, { role: 'assistant', text: "that's my 10 free chirps for today. Flock Pro bumps me to 150 a day, or catch me tomorrow." }]);
+        const resetsAt = err?.data?.resetsAt || null;
+        setAiResetsAt(resetsAt);
+        const back = resetsAt ? `after ${new Date(resetsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'tomorrow';
+        setAiMessages(prev => [...prev, { role: 'assistant', error: true, text: `that's my 10 free chirps for today. Flock Pro bumps me to 150 a day, or catch me ${back}.` }]);
         setAiRemaining(0);
         setPaywallTrigger('birdie');
       } else if (err?.code === 'CONVERSATION_TOO_LONG') {
@@ -8259,13 +8273,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // smaller, so trimming is not the answer and saying "try again" would
         // be a suggestion that cannot work. New chat is a real button in the
         // header, two inches from this sentence.
-        setAiMessages(prev => [...prev, { role: 'assistant', text: "this thread got long for me. tap New chat up top and ask me that again." }]);
+        setAiMessages(prev => [...prev, { role: 'assistant', error: true, text: "this thread got long for me. tap New chat up top and ask me that again." }]);
       } else {
         // Surface the server's friendly text when present (rate-limit, busy, etc.).
         // Never show "I'm broken" / "trouble connecting" — Birdie stays in character.
-        const serverMsg = err?.message && err.message !== 'Something went wrong' ? err.message : null;
+        // The api fallback is "Something went wrong on our end. Try again.", so
+        // an exact compare never matched and that sentence reached the bubble.
+        const serverMsg = err?.message && !/^Something went wrong/.test(err.message) ? err.message : null;
         const fallback = serverMsg || 'hmm gimme a sec, hit me again';
-        setAiMessages(prev => [...prev, { role: 'assistant', text: fallback }]);
+        setAiMessages(prev => [...prev, { role: 'assistant', error: true, text: fallback }]);
       }
     } finally {
       aiSendingRef.current = false;
@@ -8316,7 +8332,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Keep Birdie's context ref fresh — sendAiMessage's useCallback closure
   // would otherwise capture stale screen/flock/venue values.
   useEffect(() => {
-    const flock = flocks.find(f => f.id === selectedFlockId) || null;
+    // Only while they are on it. selectedFlockId survives leaving a chat, so
+    // after opening any flock once every later question was answered about
+    // it: the server wrote `viewing flock "X"` into the prompt and told the
+    // model to use it for "this flock". Birdie opens from Home, where there
+    // is no such flock.
+    const onFlock = currentScreen === 'chatDetail' || currentScreen === 'detail';
+    const flock = onFlock ? (flocks.find(f => f.id === selectedFlockId) || null) : null;
     birdieContextRef.current = {
       currentScreen,
       currentTab,
@@ -12012,7 +12034,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // in the thread and the payload sendAiMessage builds come off the same
   // number, and so the button's look and its `disabled` cannot disagree.
   const aiMemoryCut = aiMemoryCutIndex(aiMessages.length);
-  const canSendAi = aiInputHasText && !aiTyping;
+  // At zero the input stayed live: every send hit the 429 again and re-opened
+  // the paywall sheet.
+  const outOfChirps = !!entitlements?.paywallEnabled && !isPro && aiRemaining === 0;
+  outOfChirpsRef.current = outOfChirps;
+  const canSendAi = aiInputHasText && !aiTyping && !outOfChirps;
   const closeAiChat = () => setAiChatMode('bubble');
   const toggleAiFullscreen = () => setAiChatMode(prev => prev === 'fullscreen' ? 'panel' : 'fullscreen');
 
@@ -12210,9 +12236,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                   {msg.voteStage && (
                     <div style={{ marginTop: '8px', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', padding: '12px 14px' }}>
                       <p style={{ margin: 0, fontSize: 'var(--t-label)', fontWeight: '700', color: colors.navy }}>{msg.voteStage.venue.name}</p>
-                      <p style={{ margin: '3px 0 0', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Goes on the vote in {msg.voteStage.flock_name}</p>
+                      <p style={{ margin: '3px 0 0', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Your vote in {msg.voteStage.flock_name} goes to this spot. One vote each, so it replaces any vote you already cast there.</p>
                       <button className="hit44" disabled={birdieActionBusy} onClick={() => confirmBirdieVoteStage(msg.voteStage)} style={{ marginTop: '10px', width: '100%', padding: '10px', borderRadius: '10px', border: 'none', background: '#1e293b', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: birdieActionBusy ? 'wait' : 'pointer', opacity: birdieActionBusy ? 0.6 : 1 }}>
-                        {birdieActionBusy ? 'Adding\u2026' : 'Add to the vote'}
+                        {birdieActionBusy ? 'Voting\u2026' : 'Vote for it'}
                       </button>
                     </div>
                   )}
@@ -12373,7 +12399,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 {/* Free-tier meter surfaces only when it's about to matter */}
                 {entitlements?.paywallEnabled && !isPro && aiRemaining != null && aiRemaining <= 5 ? (
                   <span style={{ fontSize: 'var(--t-meta)', color: aiRemaining === 0 ? 'var(--accent-red-text)' : 'var(--text-tertiary)', fontWeight: '500' }}>
-                    {aiRemaining === 0 ? 'Out of chirps today' : `${aiRemaining} chirp${aiRemaining === 1 ? '' : 's'} left today`}
+                    {aiRemaining === 0 ? (aiResetsAt ? `Out of chirps until ${new Date(aiResetsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Out of chirps today') : `${aiRemaining} chirp${aiRemaining === 1 ? '' : 's'} left today`}
                   </span>
                 ) : (
                   <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500', opacity: 0.6 }}>Birdie AI</span>
