@@ -602,7 +602,8 @@ test('collectWeekly re-runs against the finished schema: refreshed in place, nev
   const collectWeekly = freshCollector('../scripts/ml/collectWeekly');
   const weekOf = async () => {
     const { rows } = await pool.query(
-      `SELECT day_of_week, hour, hour_axis, month, season, busyness_pct, weather_condition_code, besttime_epoch
+      `SELECT day_of_week, hour, hour_axis, month, season, busyness_pct,
+              temperature, is_raining, weather_condition_code, besttime_epoch
          FROM ml_training_data
         WHERE venue_id = $1 AND collection_mode = 'weekly'
         ORDER BY day_of_week, hour`,
@@ -624,8 +625,24 @@ test('collectWeekly re-runs against the finished schema: refreshed in place, nev
   for (const r of first) {
     assert.strictEqual(r.hour_axis, 'venue_local');
     assert.strictEqual(r.busyness_pct, r.hour * 2, 'the collector wrote the array index as the hour');
-    assert.strictEqual(r.weather_condition_code, WEATHER_CONDITION_ID,
-      'weather_condition_code is still NULL — the ten weather_* features stay dead');
+    // INVERTED 2026-09-04, and the reason is the whole point of the row.
+    //
+    // This asserted that the collector stamps weather, because at the time the
+    // complaint was that the weather features were dead. What it was actually
+    // pinning is a single current-conditions reading, taken at one instant,
+    // copied onto all 168 hours of a TYPICAL WEEK. Within a venue the column is
+    // constant, so it cannot encode the hour or the season - it encodes which
+    // batch wrote the venue, a straight line from a venue's identity to its
+    // collection time, on 88.3% of the corpus.
+    //
+    // A row that says "Tuesdays at 8pm, in general" has no moment for weather
+    // to describe. NULL is the honest value, and it leaves the realtime rows -
+    // real readings at a real time - as the only place these features carry
+    // signal. scripts/ml/repairWeeklyWeather.js clears the rows already written.
+    assert.strictEqual(r.weather_condition_code, null,
+      'a typical-week row carries a weather reading from one instant of one day');
+    assert.strictEqual(r.temperature, null);
+    assert.strictEqual(r.is_raining, null);
     assert.strictEqual(r.month, expected.month, 'month was not stamped at collection');
     assert.strictEqual(r.season, expected.season, 'season was not stamped at collection');
     assert.strictEqual(r.season, getSeason(r.month));
