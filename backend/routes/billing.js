@@ -785,6 +785,13 @@ router.get('/:flockId',
             id: bill.paid_by,
             name: invisible.has(bill.paid_by) ? null : bill.payer_name,
           },
+          // Settled-ness over EVERY share, before the visibility filter below.
+          // The client used to decide "All settled up" from the shares it could
+          // see, and a viewer who has blocked a member sees one fewer row, so
+          // it said the bill was settled while that member still owed.
+          fullySettled: sharesResult.rows.length > 0 && sharesResult.rows.every((s) => !!s.settled),
+          settledCount: sharesResult.rows.filter((s) => !!s.settled).length,
+          shareCount: sharesResult.rows.length,
           shares: sharesResult.rows
             .filter((s) => !invisible.has(s.user_id))
             .map(s => ({
