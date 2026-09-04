@@ -394,6 +394,16 @@ async function handle(text, params = []) {
   }
 
   // ---- password_resets / password_reset_requests ---------------------------
+  // Retiring a SUPERSEDED link deletes it rather than stamping used_at, so
+  // /reset-password/check can tell "a newer one replaced this" apart from "this
+  // one was spent". Both credential-change paths delete them too.
+  if (sql.startsWith('DELETE FROM password_resets WHERE user_id')) {
+    const before = db.resets.length;
+    for (let i = db.resets.length - 1; i >= 0; i -= 1) {
+      if (db.resets[i].user_id === params[0] && !db.resets[i].used_at) db.resets.splice(i, 1);
+    }
+    return { rows: [], rowCount: before - db.resets.length };
+  }
   if (sql.startsWith('INSERT INTO password_resets')) {
     db.resets.push({
       id: db.nextResetId++, user_id: params[0], selector: params[1], verifier_hash: params[2],

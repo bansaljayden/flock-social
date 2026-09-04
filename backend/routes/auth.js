@@ -83,6 +83,7 @@ const {
   // where did the address point". The account id answers the first and the
   // domain answers the second; the local part answers neither.
   maskAddress,
+  isMailableAddress: emailServiceIsMailable,
 } = require('../services/emailService');
 const { stripHtml, sanitizeArray } = require('../utils/sanitize');
 const { rejectIfProfane, moderateText } = require('../utils/moderation');
@@ -323,8 +324,13 @@ const RESEND_MAX_PER_HOUR_IP = 30;
 // A `.invalid` address is the deterministic placeholder the Apple path stores
 // when Apple omits the email (see /apple below). It can never receive mail, so
 // nothing may try to send to it.
+// Delegated to the mailer's own test, which is the one that decides. This file
+// used to carry a weaker copy (an @ sign and a .invalid suffix), so an address
+// the mailer would refuse still minted a live token row and spent a slot of the
+// hourly budget on mail that was never attempted. emailService's own export
+// block has asked for this move since it was written.
 function isMailableAddress(addr) {
-  return typeof addr === 'string' && /@/.test(addr) && !/\.invalid$/i.test(addr.trim());
+  return emailServiceIsMailable(addr);
 }
 
 function mintVerificationToken() {
@@ -726,8 +732,19 @@ function maybePurgeResetRequests() {
 // breath, so at most ONE live reset link exists per account at a time.
 async function issueReset(user, ip) {
   const { selector, verifierHash, token } = mintVerificationToken();
+  // DELETED, not stamped used. Retiring an older link and SPENDING one used to
+  // write the same column, so /reset-password/check could not tell them apart
+  // and answered 'used' for both. The copy behind 'used' says "if you did not
+  // set a new password, ask for a new link now and change the password, because
+  // someone else opened this one", which is a break-in warning. Ask for a reset,
+  // see nothing arrive, wait out the sixty second gap, ask again, then open the
+  // first mail because it is higher in the thread: the app accused an intruder
+  // who did not exist. A missing row answers 'invalid', whose copy already says
+  // the true thing, that a newer link replaced this one and only the newest one
+  // works. consumeReset still STAMPS its siblings, because there the warning is
+  // the right one: a link really was spent.
   await pool.query(
-    'UPDATE password_resets SET used_at = NOW() WHERE user_id = $1 AND used_at IS NULL',
+    'DELETE FROM password_resets WHERE user_id = $1 AND used_at IS NULL',
     [user.id]
   );
   await pool.query(
@@ -910,7 +927,7 @@ async function consumeReset(rawToken, newPassword) {
   );
 
   console.warn(`[auth] password reset completed for user ${row.user_id}`);
-  return { ok: true, userId: row.user_id };
+  return { ok: true, userId: row.user_id, email: row.current_email };
 }
 
 // ---------------------------------------------------------------------------
@@ -2480,6 +2497,15 @@ router.post('/reset-password', [
     // DMs, flock messages and location until the recheck timer noticed.
     revokeUserSessions(req.app.get('io'), result.userId);
 
+    // And lift the sign-in lockout on this address. It is keyed on
+    // canonicalEmail and cleared in exactly one place, a successful login, so
+    // the ordinary route into this flow ended in a wall: guess your password
+    // ten times, hit the limit, tap "Forgot password?", prove you can read the
+    // mailbox, choose a new password, then type the password you just chose and
+    // be told "Too many failed sign-in attempts. You can try again in about 12
+    // minutes." The lock protects a credential that no longer exists.
+    clearLoginFailures(canonicalEmail(result.email || email));
+
     // No session is issued here on purpose. Somebody who just proved they can
     // read the mailbox should sign in with the password they chose, which is
     // also the moment they find out whether it saved.
@@ -2630,6 +2656,18 @@ router.post('/logout-all', authenticate, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
     revokeUserSessions(req.app.get('io'), req.user.id);
+    // An outstanding reset link survives this, and a reset link overwrites the
+    // password and re-revokes every session. Somebody who thinks their password
+    // is known asks for a link, then decides to sign out everywhere instead:
+    // the mail sitting in their inbox stayed live for the rest of its hour and
+    // could undo exactly what they had just done. Same reasoning the reset route
+    // gives for revoking sessions, in the other direction.
+    // Not awaited into the response. The sessions are already revoked and the
+    // token version is already bumped; failing the call afterwards would tell
+    // somebody their sign-out did not work when it did. Same shape as the
+    // device-token revocation above it.
+    pool.query('DELETE FROM password_resets WHERE user_id = $1 AND used_at IS NULL', [req.user.id])
+      .catch((e) => console.error(`[auth] reset link retirement failed for user ${req.user.id}:`, e.message));
     console.warn(`[auth] all sessions revoked for user ${req.user.id} at ${new Date().toISOString()}`);
     res.json({ message: 'Signed out on all devices' });
   } catch (err) {

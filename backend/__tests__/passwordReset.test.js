@@ -178,6 +178,16 @@ pool.query = async (text, params = []) => {
     });
     return { rows: [], rowCount: 1 };
   }
+  // Retiring a SUPERSEDED link now deletes it rather than stamping used_at, so
+  // /reset-password/check can tell "a newer link replaced this" apart from "this
+  // one was spent". consumeReset still stamps its siblings.
+  if (sql.startsWith('DELETE FROM password_resets WHERE user_id')) {
+    const before = resets.length;
+    for (let i = resets.length - 1; i >= 0; i -= 1) {
+      if (resets[i].user_id === params[0] && !resets[i].used_at) resets.splice(i, 1);
+    }
+    return { rows: [], rowCount: before - resets.length };
+  }
   if (sql.startsWith('UPDATE password_resets SET used_at')) {
     // Single-use and the TTL are the DATABASE's guarantees, so both are read
     // off the statement instead of being re-implemented beside it.
