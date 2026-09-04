@@ -2249,6 +2249,9 @@ const APP_SCREENS = [
   'addFriends',
   'profile',
   'pastFlocks',
+  // Reached by setCurrentScreen since a tag tap can arrive as a universal
+  // link while the app is open (2026-09-04).
+  'nfcCheckin',
   'venueDashboard',
   'adminRevenue',
 ];

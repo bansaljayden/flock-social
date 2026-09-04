@@ -1148,6 +1148,16 @@ export default function VenueDashboard({
           )}
 
           {/* Live Sensor — only renders if a Pi is deployed for this venue */}
+          {/* Tag check-ins for a venue with no hardware sensor, which is
+              almost every venue. The count used to render only inside the
+              sensor block, so it was never shown. */}
+          {ownerSensorData && !ownerSensorData.sensor_data && (
+            <div style={{ padding: '12px 14px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', marginBottom: '12px' }}>
+              <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Last Hour Check-ins</p>
+              <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '4px 0 0' }}>{ownerSensorData.recent_checkins || 0}</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>People who tapped your tag or checked in from the app.</p>
+            </div>
+          )}
           {ownerSensorData?.sensor_data && (() => {
             const sd = ownerSensorData.sensor_data;
             // Today's IR total = sum of ir_beam_count for readings whose recorded_at is "today"

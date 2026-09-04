@@ -3498,6 +3498,95 @@ const VENUE_PLAN_PRICE = { premium: 35, pro: 99 };
 const venuePlanPriceLabel = (tier, per = 'mo') =>
   VENUE_PLAN_PRICE[tier] ? `$${VENUE_PLAN_PRICE[tier]}/${per}` : null;
 
+// The NFC check-in screen. Mounted (not called) by the screen slot, so its
+// hooks live in a component of their own.
+const NfcCheckinView = ({ placeId, sig, onViewVenue, onOpenApp }) => {
+  const [status, setStatus] = useState('loading'); // 'loading' | 'ok' | 'error'
+  const [checkedInAt, setCheckedInAt] = useState(null);
+  const [venueName, setVenueName] = useState(null);
+  const [failure, setFailure] = useState(null); // { status, message, offline }
+  const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => {
+    if (!placeId) { setStatus('error'); setFailure({ status: 400, message: 'This link has no venue on it.' }); return undefined; }
+    let cancelled = false;
+    setStatus('loading');
+    setFailure(null);
+    getNfcCheckin(placeId, sig)
+      .then((res) => {
+        if (cancelled) return;
+        setCheckedInAt(res?.checked_in_at || new Date().toISOString());
+        setVenueName(res?.venue_name || null);
+        setStatus('ok');
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        // Keep what the server said. One screen used to cover every failure
+        // with "Try tapping the tag again", which is wrong advice for an
+        // unknown tag (404) and a rate limit (429), and the only action left
+        // for the website.
+        setFailure({
+          status: err?.status || 0,
+          message: err?.message || '',
+          offline: !!(err?.isOffline || err?.isNetworkError || err?.isTimeout),
+        });
+        setStatus('error');
+      });
+    return () => { cancelled = true; };
+  }, [placeId, sig, attempt]);
+
+  const failureText = (() => {
+    if (!failure) return 'Check-in failed.';
+    if (failure.offline) return "You're offline. Tap the tag again when you have signal.";
+    if (failure.status === 404) return 'This tag is not on Flock\u2019s map. Tell the venue.';
+    if (failure.status === 429) return failure.message || 'Too many check-ins. Try again later.';
+    return failure.message || 'Check-in failed. Try tapping the tag again.';
+  })();
+  const canRetry = !failure || failure.offline || failure.status === 0 || failure.status >= 500;
+
+  const btn = { padding: '14px 32px', borderRadius: '14px', border: 'none', background: '#1e293b', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer' };
+  const ghost = { padding: '12px 28px', background: 'none', border: 'none', color: 'rgba(241,237,224,0.7)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' };
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 100,
+      backgroundColor: '#0f172a',
+      display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center',
+      padding: '32px 24px', textAlign: 'center',
+      color: '#f1ede0', fontFamily: "'Hanken Grotesk', system-ui, -apple-system, sans-serif",
+    }}>
+      <div style={{ marginBottom: '32px' }}>
+        <div style={{ fontSize: 'var(--t-display)', fontWeight: '600', letterSpacing: '-1px', color: '#f1ede0' }}>Flock</div>
+      </div>
+
+      {status === 'loading' && (
+        <div role="status" aria-label="Checking you in" style={{ width: '32px', height: '32px', border: '3px solid rgba(255,255,255,0.15)', borderTopColor: '#6d9ac3', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+      )}
+
+      {status === 'ok' && (
+        <>
+          <div style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: 'rgba(16,185,129,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px' }}>
+            <span style={{ fontSize: 'var(--t-display)', color: '#10b981', lineHeight: 1 }}>{'\u2713'}</span>
+          </div>
+          <h1 style={{ fontSize: 'var(--t-display)', fontWeight: '600', margin: '0 0 8px', color: '#f1ede0', letterSpacing: '-0.4px' }}>You're checked in{venueName ? ` at ${venueName}` : ''}</h1>
+          <p style={{ fontSize: 'var(--t-label)', color: 'rgba(241,237,224,0.6)', margin: '0 0 28px' }}>{new Date(checkedInAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</p>
+          <button className="hit44" onClick={() => onViewVenue(placeId)} style={btn}>View venue in Flock</button>
+        </>
+      )}
+
+      {status === 'error' && (
+        <>
+          <h1 style={{ fontSize: 'var(--t-display)', fontWeight: '600', margin: '0 0 8px', color: '#f1ede0' }}>Not checked in</h1>
+          <p role="alert" style={{ fontSize: 'var(--t-label)', color: 'rgba(241,237,224,0.6)', margin: '0 0 24px', maxWidth: '320px', lineHeight: 1.5 }}>{failureText}</p>
+          {canRetry && <button className="hit44" onClick={() => setAttempt(n => n + 1)} style={btn}>Try again</button>}
+          <button className="hit44" onClick={onOpenApp} style={{ ...ghost, marginTop: canRetry ? '8px' : 0 }}>Open Flock</button>
+        </>
+      )}
+    </div>
+  );
+};
+
 const isFullBleedNow = () => (typeof window !== 'undefined') && (
   (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) ||
   (window.matchMedia && window.matchMedia('(max-width: 500px)').matches)
@@ -4627,7 +4716,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [currentTab, setCurrentTab] = useState('home');
   const [currentScreen, setCurrentScreen] = useState(nfcInitialPlaceId ? 'nfcCheckin' : 'main');
   const [nfcPlaceId, setNfcPlaceId] = useState(nfcInitialPlaceId);
-  const [nfcSig] = useState(nfcInitialSig);
+  const [nfcSig, setNfcSig] = useState(nfcInitialSig);
   const [venueDetailReturnTo, setVenueDetailReturnTo] = useState(null);
   const [selectedFlockId, setSelectedFlockId] = useState(null);
   const [pickingVenueForCreate, setPickingVenueForCreate] = useState(false);
@@ -6574,7 +6663,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       getSensorHistory(pid, 12).catch(() => ({ readings: [] })),
     ]).then(([current, history]) => {
       if (cancelled) return;
-      setSensorData(current && current.sensor_data ? current : null);
+      // Keep the answer whenever there was one: the check-in count rides in
+      // the same object, and nulling it for venues without a sensor (almost
+      // all of them) hid every tag check-in and dropped the live increments.
+      setSensorData(current || null);
       // Array.isArray, not `|| []`: the chart calls .find on this every render,
       // and a readings field that came back as an object (or a string) would
       // take the whole venue sheet down with it.
@@ -6859,6 +6951,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     } else if (intent.screen === 'home') {
       setCurrentTab('home');
       setCurrentScreen('main');
+    } else if (intent.screen === 'checkin' && intent.placeId) {
+      // A tag tap delivered by the universal link, with the app open or
+      // cold-started. The screen records it the same way a web boot does.
+      setNfcPlaceId(intent.placeId);
+      setNfcSig(intent.sig || null);
+      setCurrentScreen('nfcCheckin');
     } else if (intent.screen === 'admin') {
       // The role check is the same one renderScreen and the redirect effect
       // apply. A non-admin tap is not an error, it just has nowhere to go.
@@ -13768,6 +13866,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               })()}
 
               {/* Live Occupancy card — only renders when a Pi sensor exists for this venue */}
+              {sensorData && !sensorData.sensor_data && sensorData.recent_checkins > 0 && (
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px' }}>
+                  {sensorData.recent_checkins} check-in{sensorData.recent_checkins === 1 ? '' : 's'} by tag in the last hour
+                </p>
+              )}
               {sensorData?.sensor_data && (() => {
                 const sd = sensorData.sensor_data;
                 // Number first. A `== null` check alone let a non-numeric
@@ -15927,7 +16030,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       getSensorHistory(pid, 24).catch(() => ({ readings: [] })),
     ]).then(([current, history]) => {
       if (cancelled) return;
-      setOwnerSensorData(current && current.sensor_data ? current : null);
+      setOwnerSensorData(current || null);
       setOwnerSensorHistory(history?.readings || []);
     });
     joinVenueRoom(pid);
@@ -16264,101 +16367,38 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
 
   // NFC CHECK-IN LANDING — opened by tapping a venue's NFC tag (URL-based entry)
-  const NfcCheckinScreen = () => {
-    const placeId = nfcPlaceId;
-    const [status, setStatus] = useState('loading'); // 'loading' | 'ok' | 'error'
-    const [checkedInAt, setCheckedInAt] = useState(null);
-    const isAuthed = !!authUser?.id;
-
-    useEffect(() => {
-      if (!placeId) { setStatus('error'); return; }
-      // Hit the NFC endpoint — works for both authed and anonymous users.
-      // For authed: records with user_id and triggers flock-attendance update.
-      // For anon: records with user_id NULL.
-      getNfcCheckin(placeId, nfcSig)
-        .then((res) => {
-          setCheckedInAt(res?.checked_in_at || new Date().toISOString());
-          setStatus('ok');
-        })
-        .catch(() => setStatus('error'));
-    }, [placeId]);
-
-    const goToVenue = () => {
-      // Reset URL so a refresh doesn't re-trigger the NFC flow
-      if (typeof window !== 'undefined' && window.history?.replaceState) {
-        window.history.replaceState({}, '', '/');
-      }
-      setNfcPlaceId(null);
-      setCurrentScreen('main');
-      setCurrentTab('explore');
-      // Best-effort: pan map to venue once map is available
-      if (window.__flockPanToVenue) {
-        window.__flockPanToVenue({ place_id: placeId });
-      }
-    };
-
-    return (
-      <div style={{
-        position: 'fixed', inset: 0, zIndex: 100,
-        backgroundColor: '#0f172a',
-        display: 'flex', flexDirection: 'column',
-        alignItems: 'center', justifyContent: 'center',
-        padding: '32px 24px', textAlign: 'center',
-        color: '#f1ede0', fontFamily: "'Hanken Grotesk', system-ui, -apple-system, sans-serif",
-      }}>
-        <div style={{ marginBottom: '32px' }}>
-          <div style={{ fontSize: 'var(--t-display)', fontWeight: '600', letterSpacing: '-1px', color: '#f1ede0' }}>Flock</div>
-        </div>
-
-        {status === 'loading' && (
-          <div style={{ width: '32px', height: '32px', border: '3px solid rgba(255,255,255,0.15)', borderTopColor: '#6d9ac3', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-        )}
-
-        {status === 'ok' && isAuthed && (
-          <>
-            <div style={{ width: '64px', height: '64px', borderRadius: '50%', backgroundColor: 'rgba(16,185,129,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '20px' }}>
-              <span style={{ fontSize: 'var(--t-display)', color: '#10b981', lineHeight: 1 }}>✓</span>
-            </div>
-            <h1 style={{ fontSize: 'var(--t-display)', fontWeight: '600', margin: '0 0 8px', color: '#f1ede0', letterSpacing: '-0.4px' }}>You're checked in!</h1>
-            <p style={{ fontSize: 'var(--t-label)', color: 'rgba(241,237,224,0.6)', margin: '0 0 8px' }}>{new Date(checkedInAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</p>
-            <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(241,237,224,0.4)', margin: '0 0 28px', wordBreak: 'break-all', maxWidth: '320px' }}>{placeId}</p>
-            <button className="hit44"
-              onClick={goToVenue}
-              style={{ padding: '14px 32px', borderRadius: '14px', border: 'none', background: '#1e293b', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12), 0 1px 2px rgba(30,41,59,0.10)' }}
-            >View venue in Flock</button>
-          </>
-        )}
-
-        {status === 'ok' && !isAuthed && (
-          <>
-            <h1 style={{ fontSize: 'var(--t-display)', fontWeight: '600', margin: '0 0 12px', color: '#f1ede0', letterSpacing: '-0.3px', maxWidth: '320px' }}>Checked in.</h1>
-            <p style={{ fontSize: 'var(--t-body)', color: 'rgba(241,237,224,0.7)', margin: '0 0 28px', maxWidth: '320px', lineHeight: 1.5 }}>
-              Get Flock to see live crowd data and coordinate with friends.
-            </p>
-            {/* TODO: switch back to https://flockcorp.com once marketing site is deployed */}
-            <a
-              href="https://www.flockcorp.com"
-              style={{ padding: '14px 32px', borderRadius: '14px', background: '#1e293b', color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', textDecoration: 'none', boxShadow: '0 1px 2px rgba(30,41,59,0.10)', marginBottom: '12px' }}
-            >Download Flock</a>
-            {/* TODO: switch back to https://flockcorp.com once marketing site is deployed */}
-            <a
-              href="https://www.flockcorp.com"
-              style={{ padding: '12px 28px', color: 'rgba(241,237,224,0.7)', fontSize: 'var(--t-label)', textDecoration: 'none', fontWeight: '600' }}
-            >Continue to website</a>
-          </>
-        )}
-
-        {status === 'error' && (
-          <>
-            <h1 style={{ fontSize: 'var(--t-display)', fontWeight: '600', margin: '0 0 8px', color: '#f1ede0' }}>Check-in failed</h1>
-            <p style={{ fontSize: 'var(--t-label)', color: 'rgba(241,237,224,0.6)', margin: '0 0 24px' }}>Try tapping the tag again, or open Flock to check in manually.</p>
-            {/* TODO: switch back to https://flockcorp.com once marketing site is deployed */}
-            <a href="https://www.flockcorp.com" style={{ padding: '12px 28px', color: 'rgba(241,237,224,0.7)', fontSize: 'var(--t-label)', textDecoration: 'none', fontWeight: '600' }}>Continue to website</a>
-          </>
-        )}
-      </div>
-    );
-  };
+  // The screen is a component (NfcCheckinView, module scope), not a builder
+  // with hooks: this used to declare useState and useEffect inside a function
+  // that ScreenSlot CALLED, so leaving the screen changed the hook count and
+  // React threw on every successful check-in (caught by the boundary in
+  // production, the crash overlay in development).
+  const NfcCheckinScreen = () => (
+    <NfcCheckinView
+      placeId={nfcPlaceId}
+      sig={nfcSig}
+      onViewVenue={(pid) => {
+        // Reset the URL so a refresh does not re-trigger the tap. On the web
+        // '/' is the marketing site, so the app path is what a refresh needs.
+        if (typeof window !== 'undefined' && window.history?.replaceState) {
+          window.history.replaceState({}, '', window.Capacitor?.isNativePlatform?.() ? '/' : '/app');
+        }
+        setNfcPlaceId(null);
+        setCurrentScreen('main');
+        setCurrentTab('explore');
+        // The venue sheet, with real coordinates, rather than a pan to a
+        // marker that is not loaded yet on a map that is not mounted yet.
+        if (pid) openVenueDetail(pid, null, { panMap: true });
+      }}
+      onOpenApp={() => {
+        if (typeof window !== 'undefined' && window.history?.replaceState) {
+          window.history.replaceState({}, '', window.Capacitor?.isNativePlatform?.() ? '/' : '/app');
+        }
+        setNfcPlaceId(null);
+        setCurrentScreen('main');
+        setCurrentTab('home');
+      }}
+    />
+  );
 
   // The Add Friends screen was declared here, as an arrow function inside
   // this component, and it was CALLED rather than mounted. It lives in
