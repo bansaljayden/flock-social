@@ -1274,6 +1274,11 @@ export async function saveFlockVenue(flockId, venue = {}) {
       venue_longitude: venue.lng,
       venue_rating: venue.rating,
       venue_photo_url: venue.photo_url,
+      // Optional. Confirming from the vote panel used to be two PUTs (venue,
+      // then status), and every member got two lock-screen pushes seconds
+      // apart. One PUT carrying both is one push: the server skips the
+      // "Plan updated" push when the same request confirms.
+      status: venue.status,
     })),
   });
 }

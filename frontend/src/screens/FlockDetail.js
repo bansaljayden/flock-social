@@ -119,6 +119,8 @@ export default function FlockDetail({
   handleRerunFlock,
   loadPopularVenues,
   markFlockCompleted,
+  rosterError,
+  retryRoster,
   openAttendanceSheet,
   openUserProfile,
   openVenueDetail,
@@ -641,6 +643,11 @@ export default function FlockDetail({
                     <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', margin: 0, lineHeight: 1.45 }}>Just you so far. Friends you invite land here.</p>
                   </div>
                 )}
+              </div>
+            ) : rosterError ? (
+              <div style={{ textAlign: 'center', padding: '8px 0' }}>
+                <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', margin: '0 0 6px' }}>Couldn't load who's going.</p>
+                <button className="hit44" onClick={retryRoster} style={{ minHeight: '44px', padding: '8px 14px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
               </div>
             ) : (
               <p style={{ color: 'var(--text-tertiary)', fontSize: 'var(--t-meta)', margin: 0, textAlign: 'center', padding: '8px 0' }}>Loading members...</p>
