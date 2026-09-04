@@ -72,7 +72,7 @@ const RowIcon = ({ glyph, color }) => (
   <span aria-hidden="true" style={{ display: 'inline-flex', flexShrink: 0 }}>{glyph(color, ROW_ICON)}</span>
 );
 
-const ModerationSheet = ({ target, onClose, showToast, onBlocked }) => {
+const ModerationSheet = ({ target, onClose, showToast, onBlocked, onReported }) => {
   // 'menu' | 'report' | 'block' | 'reported' — 'reported' is the step after a
   // successful report, which offers the block. See the note on submitReport.
   const [mode, setMode] = useState('menu');
@@ -130,6 +130,10 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked }) => {
       // through the same menu to do it. The confirmation now carries the block
       // as its primary action, so the whole journey is one flow. If they only
       // wanted to report, Done is right there.
+      // The thing just reported leaves this person's own screen now, the way
+      // a takedown would remove it, rather than sitting there until a
+      // moderator acts. Local only: nothing is hidden for anybody else.
+      if (contentId) onReported?.({ contentType, contentId, flockId: target.flockId ?? null });
       if (userId) {
         setMode('reported');
       } else {
