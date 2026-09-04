@@ -109,6 +109,22 @@ export function intentFromData(data) {
     return { screen: 'admin', type };
   }
 
+  if (type === 'safety_alert_cancelled') {
+    // The stand-down. Until now the one push with no branch at all: the tap
+    // resolved to null, landed on home, and the full-screen alarm the earlier
+    // push had opened stayed on screen with nothing to say it was over. Same
+    // shape the live event carries, so App.js clears the same modal by the
+    // same user id.
+    const userId = asId(data.fromUserId);
+    if (!userId) return null;
+    return {
+      screen: 'safety',
+      cancelled: true,
+      userId,
+      name: data.fromUserName ? String(data.fromUserName) : '',
+      type,
+    };
+  }
   if (type === 'safety_alert') {
     // The highest-stakes tap in the app, and until now the one that landed on
     // the home screen showing nothing. The alert modal is a top-level overlay

@@ -203,6 +203,19 @@ describe('every type the app declares has somewhere to go', () => {
       .toEqual({ screen: 'safety', userId: 7, name: 'Ava', lat: null, lng: null, at: 'x', type: 'safety_alert' });
     // No sender id is not a usable alert.
     expect(intentFromData({ type: 'safety_alert', fromUserName: 'Ava' })).toBeNull();
+  });
+
+  test('the stand-down push clears the alarm it follows', () => {
+    // Until now the one type with no branch at all: the tap resolved to null,
+    // landed on home, and the full-screen SOS from the earlier push stayed up.
+    expect(intentFromData({ type: 'safety_alert_cancelled', fromUserId: '7', fromUserName: 'Ava' }))
+      .toEqual({ screen: 'safety', cancelled: true, userId: 7, name: 'Ava', type: 'safety_alert_cancelled' });
+    expect(intentFromData({ type: 'safety_alert_cancelled', fromUserName: 'Ava' })).toBeNull();
+    // App.js consumes it by clearing the same modal by the same id
+    const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+    const branch = APP.slice(APP.indexOf("intent.screen === 'safety' && intent.cancelled"), APP.indexOf("} else if (intent.screen === 'safety') {"));
+    expect(branch).toMatch(/setSafetyAlert\(\(prev\) => \(prev && prev\.userId === String\(intent\.userId\) \? null : prev\)\);/);
+    expect(branch).toMatch(/says they are OK/);
     // Its live fields are a name and a location, so it deliberately gets NO
     // deep-link URL: a cold web tap lands on the app, never a coordinate in the
     // address bar. The backend records that decision explicitly.
