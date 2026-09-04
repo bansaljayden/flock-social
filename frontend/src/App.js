@@ -19059,8 +19059,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                     .filter(m => missed.includes(String(m.id)))
                     .map(m => m.name)
                     .filter(Boolean);
+                  // "A and B and C" is not a sentence anybody writes. Commas
+                  // until the last name, which takes the and.
+                  const namesRead = missedNames.length > 2
+                    ? `${missedNames.slice(0, -1).join(', ')} and ${missedNames[missedNames.length - 1]}`
+                    : missedNames.join(' and ');
                   showToast(missedNames.length
-                    ? `Saved. ${missedNames.join(' and ')} left the flock, so there was nothing to mark for them.`
+                    ? `Saved. ${namesRead} left the flock, so there was nothing to mark for them.`
                     : 'Attendance recorded');
                   // Write the answer into the roster this screen already holds.
                   // Without this `attendanceOwed` on the plan screen stays true
