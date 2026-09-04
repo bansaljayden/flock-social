@@ -24,8 +24,12 @@ describe('DM live location', () => {
     expect(dm).toMatch(/^\s+startDmLocationSharing,$/m);
     // App passes it and it requests a position when there is none
     expect(app).toMatch(/^\s+startDmLocationSharing,$/m);
-    const cb = block(app, 'const startDmLocationSharing = useCallback((dmId) => {', '}, [userLocation, showToast]);');
-    expect(cb).toMatch(/if \(userLocation\) \{ setDmSharingLocation\(dmId\); return; \}/);
+    const cb = block(app, 'const startDmLocationSharing = useCallback((dmId) => {', '}, [showToast]);');
+    // The early return on an existing position is gone (2026-09-04): it could
+    // be one restored from localStorage at boot, so a DM share could open by
+    // broadcasting where the phone was in a previous session. Every share now
+    // takes a fresh fix, the way the flock share already did.
+    expect(cb).not.toMatch(/if \(userLocation\) \{ setDmSharingLocation\(dmId\); return; \}/);
     expect(cb).toMatch(/getCurrentPosition\(/);
     expect(cb).toMatch(/setUserLocation\(\{ lat: pos\.coords\.latitude, lng: pos\.coords\.longitude \}\);\s*setDmSharingLocation\(dmId\);/);
     expect(cb).toMatch(/Turn it on in Settings/);

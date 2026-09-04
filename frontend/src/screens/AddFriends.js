@@ -223,7 +223,7 @@ export default function AddFriends({
                   style={{ width: '100%', padding: '12px 12px 12px 38px', borderRadius: '14px', border: `1.5px solid ${addFriendsSearch ? colors.navy : colors.borderDefault}`, fontSize: 'var(--t-body)', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontWeight: '500', transition: 'opacity 0.2s ease' }}
                 />
                 <span style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)' }}>{Icons.search(addFriendsSearch ? colors.navy : colors.textTertiary, 16)}</span>
-                {addFriendsSearch && <button aria-label="Clear search" className="hit44" onClick={() => { setAddFriendsSearch(''); setAddFriendsResults([]); }} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 14)}</button>}
+                {addFriendsSearch && <button aria-label="Clear search" className="hit44" onClick={() => handleAddFriendsSearch('')} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 14)}</button>}
               </div>
 
               {addFriendsSearching && (
@@ -323,7 +323,9 @@ export default function AddFriends({
                         </button>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <p style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, margin: 0 }}>{user.name}</p>
-                          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{user.mutual_count} mutual friend{parseInt(user.mutual_count) !== 1 ? 's' : ''}</p>
+                          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{user.shared_flocks != null
+                            ? `${user.shared_flocks} plan${parseInt(user.shared_flocks) !== 1 ? 's' : ''} together`
+                            : `${user.mutual_count} mutual friend${parseInt(user.mutual_count) !== 1 ? 's' : ''}`}</p>
                         </div>
                         {status === 'accepted' ? (
                           <span style={{ padding: '6px 14px', borderRadius: '20px', backgroundColor: 'var(--accent-green-bg)', color: 'var(--accent-green-text)', fontSize: 'var(--t-meta)', fontWeight: '500' }}>Friends</span>
@@ -533,9 +535,11 @@ export default function AddFriends({
                   <div style={{ ...styles.card, textAlign: 'center', padding: '24px 20px' }}>
                     <BirdieStill bird={WARM_BIRD} size={84} style={{ margin: '0 auto 10px' }} />
                     <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 4px', lineHeight: '1.5' }}>
-                      {partial
-                        ? `We checked ${contactsResult.checked} of your ${contactsResult.total} numbers and none of them are on Flock yet. Try the rest in an hour.`
-                        : `None of the ${contactsResult.checked} numbers we checked are on Flock yet. Invite someone below and they will show up here.`}
+                      {contactsResult.total === 0
+                        ? 'None of your contacts have a phone number Flock can check. Add someone by their number below.'
+                        : partial
+                          ? `We checked ${contactsResult.checked} of your ${contactsResult.total} numbers and none of them are on Flock yet. Try the rest in an hour.`
+                          : `None of the ${contactsResult.checked} numbers we checked are on Flock yet. Invite someone below and they will show up here.`}
                     </p>
                     {checkAgainButton}
                   </div>

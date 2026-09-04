@@ -206,10 +206,14 @@ describe('the four actions keep their original wiring', () => {
     expect(onArmedChange).toHaveBeenCalledWith(false);
   });
 
-  it('Share Location fires its handler', () => {
+  it('Share Location arms first, then fires its handler on the second tap', () => {
+    // Armed since 2026-09-04: it emails an exact coordinate to every trusted
+    // contact and sat one tap under a button that deliberately takes two.
     const onShareLocation = jest.fn();
     renderSheet({ onShareLocation });
     fireEvent.click(screen.getByRole('button', { name: /share location/i }));
+    expect(onShareLocation).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /tap again to send your location/i }));
     expect(onShareLocation).toHaveBeenCalledTimes(1);
   });
 
