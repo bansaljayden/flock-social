@@ -126,6 +126,7 @@ function dmProps(over = {}) {
     popularVenues: [],
     profilePic: null,
     retryFailedDm: fn(),
+  discardFailedDm: fn(),
     selectedDm: DM,
     selectedDmId: 7,
     sendDmMessage: fn(),
