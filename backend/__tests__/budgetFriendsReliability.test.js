@@ -373,7 +373,7 @@ async function dispatch(text, params = [], ctx = null) {
   if (has('SELECT name FROM flocks WHERE id = $1')) {
     return { rows: [{ name: flock.name }], rowCount: 1 };
   }
-  if (has('SELECT creator_id, name, budget_enabled FROM flocks') || has('SELECT creator_id, budget_enabled FROM flocks')) {
+  if (has('SELECT creator_id, name, budget_enabled, budget_locked FROM flocks') || has('SELECT creator_id, budget_enabled FROM flocks')) {
     return Number(params[0]) === FLOCK_ID ? { rows: [{ ...flock }], rowCount: 1 } : { rows: [], rowCount: 0 };
   }
   if (has('SELECT amount, skipped FROM budget_submissions')) {

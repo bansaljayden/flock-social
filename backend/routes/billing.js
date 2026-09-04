@@ -333,6 +333,12 @@ router.post('/:flockId/create',
       // the winner without being its payer (round 5).
       const existingCommitments = new Map();
       const existingSettled = new Map();
+      // What each of them settled FOR. A settled flag was carried onto a
+      // rewritten share without ever comparing the two amounts, so re-posting a
+      // corrected, higher total left the row reading "Bob $50.00, paid" over a
+      // $25 payment, and the notification loop skips settled rows so Bob was
+      // never told the bill had gone up.
+      const existingAmounts = new Map();
 
       // Calculate shares
       let shares;
@@ -495,7 +501,10 @@ router.post('/:flockId/create',
             // no new row can reach this loop in that state. This is the second
             // lock, and it is the one that covers rows already in the database.
             if (prevPayer === null) continue;
-            if (row.settled) existingSettled.set(row.user_id, row.settled_at || new Date());
+            if (row.settled) {
+              existingSettled.set(row.user_id, row.settled_at || new Date());
+              existingAmounts.set(row.user_id, Number(row.amount));
+            }
           }
         }
 
@@ -553,8 +562,18 @@ router.post('/:flockId/create',
         for (const share of shares) {
           const isPayer = share.userId === payerId;
           const wasCommitted = existingCommitments.has(share.userId);
-          const wasSettled = existingSettled.has(share.userId);
-          const settledAt = isPayer ? new Date() : (existingSettled.get(share.userId) || null);
+          // A settled debt survives a rewrite, but only for the amount it
+          // settled. If the replacement asks this person for MORE than they
+          // paid, the flag is theirs no longer: they owe the difference and the
+          // sheet has to say so, and the notification loop below can only tell
+          // somebody the bill moved if their row is unsettled. A smaller
+          // replacement keeps the flag, because they are square or ahead and
+          // un-settling a paid debt is the bug this whole branch exists to
+          // avoid.
+          const paidBefore = existingAmounts.get(share.userId);
+          const owesMore = typeof paidBefore === 'number' && Number(share.amount) > paidBefore + 0.004;
+          const wasSettled = existingSettled.has(share.userId) && !owesMore;
+          const settledAt = isPayer ? new Date() : (wasSettled ? (existingSettled.get(share.userId) || null) : null);
           share.settled = isPayer || wasSettled; // response mirrors DB truth (round 3)
           share.committed = wasCommitted;
           await client.query(
@@ -1261,13 +1280,33 @@ router.post('/:flockId/ghost-commit',
           }
           billId = existingBill.rows[0].id;
         } else {
-          // Create placeholder bill
+          // Create placeholder bill.
+          //
+          // ON CONFLICT, because bill_splits carries UNIQUE(flock_id) and this
+          // path takes no flock row lock the way POST /:flockId/create does.
+          // The "Lock in your share?" card appears for every member the moment
+          // the venue is confirmed, so two people tapping Commit inside the
+          // same second is the ordinary case, not a rare one: both read no
+          // existing bill, the second INSERT raised 23505, the whole
+          // transaction rolled back, and that member got "Failed to commit"
+          // with nothing recorded. A second tap then worked, so it read as a
+          // random glitch. DO UPDATE rather than DO NOTHING so the row is
+          // always returned; the write is a no-op on the column it touches.
           const newBill = await client.query(
             `INSERT INTO bill_splits (flock_id, total_amount, split_type, paid_by, tip_percent)
              VALUES ($1, $2, 'equal', NULL, 0)
-             RETURNING id`,
+             ON CONFLICT (flock_id) DO UPDATE SET flock_id = EXCLUDED.flock_id
+             RETURNING id, paid_by`,
             [flockId, estimatedTotal]
           );
+          // The row we lost the race to could be a real posted bill, which is
+          // the same state the branch above refuses. Undefined is not "there is
+          // a payer": it is a driver or a fake that did not return the column,
+          // and a freshly inserted row has none by construction.
+          if (newBill.rows[0].paid_by !== null && newBill.rows[0].paid_by !== undefined) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'The bill for this flock is already in, so there is nothing to pre-commit' });
+          }
           billId = newBill.rows[0].id;
         }
 
