@@ -21,7 +21,7 @@
 // class words, nothing claimed that a route does not serve, every number
 // carries its source and date.
 // ---------------------------------------------------------------------------
-const { escapeHtml } = require('../services/emailService');
+const { escapeHtml, baseWebUrl } = require('../services/emailService');
 
 // Which card goes where in the audit. RECAP looks backward (the owner's own
 // readings against what Flock published, the intake read-back), HEADS_UP looks
@@ -264,8 +264,14 @@ function renderCardHtml(card, opts) {
   const lines = cardLines(card);
   if (!lines.length) return null;
   const title = escapeHtml(headline || card.title || card.id || '');
+  // The pointer line names a dashboard, so it links it. The text render keeps
+  // the prose; this was the only line in the mail that told the reader to go
+  // somewhere and gave them nothing to click. ?venue=true is the query the
+  // app boots the venue dashboard off (frontend/src/App.js).
   const items = lines
-    .map((l) => `<li style="margin: 0 0 8px 0;">${escapeHtml(l)}</li>`)
+    .map((l) => (l === MORE_LINE
+      ? `<li style="margin: 0 0 8px 0;">More in ${escapeHtml(ADVISOR_FEATURE_NAME)}, in <a href="${escapeHtml(baseWebUrl())}/app?venue=true" style="color: #0d2847;">your venue dashboard</a>.</li>`
+      : `<li style="margin: 0 0 8px 0;">${escapeHtml(l)}</li>`))
     .join('\n');
   return [
     `<h2 style="font-size: 15px; letter-spacing: 0.04em; text-transform: uppercase; color: #1a2b4a; margin: 28px 0 10px;">${title}</h2>`,
