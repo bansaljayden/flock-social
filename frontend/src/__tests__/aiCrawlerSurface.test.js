@@ -204,7 +204,23 @@ describe('vercel.json wiring', () => {
   test('two rewrite rules route AI crawlers to the function', () => {
     expect(botRules).toHaveLength(2);
     const sources = botRules.map((r) => r.source).sort();
-    expect(sources).toEqual(['/', '/:page(about|support|privacy|terms)']);
+    // /landing, not /: Vercel gives the filesystem precedence over rewrites,
+    // so a rewrite on / lost to the built index.html and crawlers got the
+    // empty shell (verified against production 2026-09-04). A bot-only
+    // redirect below carries / to /landing first.
+    expect(sources).toEqual(['/:page(about|support|privacy|terms)', '/landing']);
+  });
+
+  test('a bot-only redirect carries / to /landing, ahead of the filesystem', () => {
+    const redirects = Array.isArray(config.redirects) ? config.redirects : [];
+    const home = redirects.filter((r) => r.source === '/');
+    expect(home).toHaveLength(1);
+    expect(home[0].destination).toBe('/landing');
+    expect(home[0].permanent).toBe(false);
+    expect(home[0].has).toHaveLength(1);
+    expect(home[0].has[0]).toMatchObject({ type: 'header', key: 'user-agent' });
+    // The same crawler list as the rewrites, by hand, since JSON has no variables.
+    expect(home[0].has[0].value).toBe(botRules[0].has[0].value);
   });
 
   test('the bot rules sit after the invite rules and before the SPA fallback', () => {
@@ -275,7 +291,7 @@ describe('vercel.json wiring', () => {
   test('every route the rewrite can name exists in the function, and vice versa', () => {
     const keys = Object.keys(api.PAGE_META).sort();
     expect(keys).toEqual(['about', 'home', 'privacy', 'support', 'terms']);
-    const grouped = /\(([^)]+)\)/.exec(botRules.find((r) => r.source !== '/').source)[1].split('|').sort();
+    const grouped = /\(([^)]+)\)/.exec(botRules.find((r) => r.source !== '/landing').source)[1].split('|').sort();
     expect(grouped).toEqual(['about', 'privacy', 'support', 'terms']);
   });
 });
