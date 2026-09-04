@@ -638,3 +638,12 @@ test('a blocked person leaves with their reactions, and the full-size photo rout
   // The one read in that file with no visibility filter.
   expect(messages).toMatch(/AND \(sender_id IS NULL OR NOT \(sender_id = ANY\(\$3::int\[\]\)\)\)/);
 });
+
+test('a direct message that cannot send has the same way out as a flock message', () => {
+  // A failed DM is not written to localStorage, so it does not survive a reload
+  // the way a failed flock message does. It is still a bubble whose only
+  // control re-runs a refusal that cannot succeed, for as long as the app is
+  // open, and the control has to mean one thing in both threads.
+  expect(appSource).toMatch(/const discardFailedDm = useCallback\(\(userId, failedMsg\) => \{/);
+  expect((appSource.match(/aria-label="Remove this message that did not send"/g) || []).length).toBe(2);
+});

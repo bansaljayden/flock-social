@@ -174,6 +174,7 @@ export default function DmDetail({
   popularVenues,
   profilePic,
   retryFailedDm,
+  discardFailedDm,
   selectedDm,
   selectedDmId,
   sendDmMessage,
@@ -885,6 +886,16 @@ export default function DmDetail({
                         screen reader user is left believing it sent. */}
                   <button className="hit44" onClick={() => retryFailedDm(selectedDmId, m)} style={{ background: 'none', border: 'none', padding: '0 4px 4px', cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--accent-red-text, #b91c1c)', display: 'block', marginLeft: 'auto' }}>
                     Didn't send. Tap to retry
+                  </button>
+                  {/* The same way out the flock chat has. Some sends can never
+                      succeed, and retry is not a way out of one. */}
+                  <button
+                    className="hit44"
+                    aria-label="Remove this message that did not send"
+                    onClick={() => discardFailedDm(selectedDmId, m)}
+                    style={{ background: 'none', border: 'none', padding: '0 4px 4px', cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-tertiary)' }}
+                  >
+                    Remove
                   </button>
                   </div>
                 )}

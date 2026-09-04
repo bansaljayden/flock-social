@@ -12084,6 +12084,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // Tap-to-retry: drop the failed bubble, send the same payload fresh. The
   // photo travels in the bubble, so a retry never asks for the file again.
+  // The DM twin of discardFailedMessage. A failed DM is not written to
+  // localStorage, so it does not survive a reload the way a failed flock
+  // message does, which makes this the smaller half of the same problem: a
+  // photo the image screen refuses still leaves a bubble whose only control
+  // re-runs the refusal, for as long as the app stays open. Same word, same
+  // place, so the control means one thing in both threads.
+  const discardFailedDm = useCallback((userId, failedMsg) => {
+    if (!userId || !failedMsg) return;
+    setDirectMessages(prev => prev.map(d => (d.userId === userId
+      ? { ...d, messages: (d.messages || []).filter(m => m.id !== failedMsg.id) }
+      : d)));
+  }, []);
+
   const retryFailedDm = useCallback((userId, failedMsg) => {
     setDirectMessages(prev => prev.map(d => d.userId === userId
       ? { ...d, messages: d.messages.filter(m => m.id !== failedMsg.id) }
@@ -17427,6 +17440,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         popularVenues,
         profilePic,
         retryFailedDm,
+        discardFailedDm,
         selectedDm,
         selectedDmId,
         sendDmMessage,
