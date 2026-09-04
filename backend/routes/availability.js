@@ -187,6 +187,9 @@ router.post('/',
         const payload = {
           userId: req.user.id,
           name: req.user.name,
+          // The client reads this key off the live event and got null every
+          // time, so a pulse that arrived live lost its face until a refetch.
+          profile_image_url: req.user.profile_image_url || null,
           status: pulse.status,
           note: pulse.note,
           setAt: pulse.set_at,
@@ -224,11 +227,21 @@ router.post('/',
                   lastPulsePushByRecipient.set(id, now);
                   return true;
                 })
-                .map((id) => pushIfOffline(io, id,
-                  `${req.user.name} is free tonight`,
-                  bodyText,
-                  { type: 'availability_pulse', fromUserId: String(req.user.id) }
-                ))
+                .map(async (id) => {
+                  const result = await pushIfOffline(io, id,
+                    `${req.user.name} is free tonight`,
+                    bodyText,
+                    { type: 'availability_pulse', fromUserId: String(req.user.id) }
+                  );
+                  // The recipient's hour was claimed before the send, so a
+                  // recipient who was online (nothing sent) still spent it and
+                  // missed the next hour's real pulse. Same rollback the
+                  // invite push uses (routes/flocks.js): a window that sent
+                  // nothing is handed back.
+                  const nothingSent = !result || result.skipped || result.sent === 0;
+                  if (nothingSent && lastPulsePushByRecipient.get(id) === now) lastPulsePushByRecipient.delete(id);
+                  return result;
+                })
             );
           }
         } catch (pushErr) {
