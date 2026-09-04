@@ -215,7 +215,19 @@ export default function VenueDashboard({
       { id: 'settings', label: 'Settings', icon: Icons.settings }
     ];
 
-    // The "How full are you right now?" card. ONE definition for the two
+    // The "How full are you compared to your capacity?" card.
+    //
+    // NAMED AGAINST CAPACITY, Jayden's call 2026-09-04. "How full are you right
+    // now?" left the scale for the owner to guess, and the two plausible
+    // guesses are far apart: percent of what the room holds, or percent of this
+    // venue's own busiest hour, which is what the 0-100 means everywhere else in
+    // the product. A restaurant that never fills past half even at its Friday
+    // peak answers 50 on one reading and 100 on the other, for the same room on
+    // the same night, and the number is published either way. The question says
+    // which one it wants now. The two scales are still not the same scale, and
+    // the card's attribution line is what keeps that honest for a reader: an
+    // owner-set number says it came from the venue, not from Flock.
+    // ONE definition for the two
     // tabs that render it: Analytics (where it lives) and Map (where
     // setting it is the proof that the pin updates). Same state, same
     // handlers, same copy on both.
@@ -232,7 +244,7 @@ export default function VenueDashboard({
             const saysLabel = venueBusyNow.attribution || 'the venue says';
             return (
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How full are you right now?</h3>
+                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How full are you compared to your capacity?</h3>
                 {venueBusyNow.suppressed ? (
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
                     Your live numbers are paused. Recent readings disagreed with what people in the room reported, so users see the forecast for now. This lifts on its own.
@@ -271,7 +283,7 @@ export default function VenueDashboard({
                   <input
                     type="range" min="0" max="100" step="1"
                     className="busy-range"
-                    aria-label="How full is your venue right now, 0 to 100 percent"
+                    aria-label="How full is your venue compared to its capacity, 0 to 100 percent"
                     value={sliderValue}
                     onChange={(e) => setVenueBusyDraft(Number(e.target.value))}
                     disabled={venueBusySaving}
@@ -755,7 +767,7 @@ export default function VenueDashboard({
               this dashboard has already had to remove twice. */}
           {venueTab === 'analytics' && venueBusyNow && !venueBusyNow.available && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How full are you right now?</h3>
+              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How full are you compared to your capacity?</h3>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{venueBusyNow.reason || 'Your live number is unavailable right now.'}</p>
               {/* The sentence above is the server's, and when the reason is a
                   missing verification it names a request. `!can.analytics` is
@@ -782,7 +794,7 @@ export default function VenueDashboard({
                   one sits where the slider would have been. */}
               {venueBusyNow && !venueBusyNow.available && (
                 <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                  <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How full are you right now?</h3>
+                  <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How full are you compared to your capacity?</h3>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{venueBusyNow.reason || 'Your live number is unavailable right now.'}</p>
                   {/* No tier condition here. This tab holds no intel card, so
                       there is nothing on it to duplicate. */}

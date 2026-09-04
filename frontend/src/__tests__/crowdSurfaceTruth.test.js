@@ -97,3 +97,15 @@ test('a venue that set its own number says so in the nearby list', () => {
   expect(app).toMatch(/\{v\.confidenceBasis === 'owner_report' && \(/);
   expect(app).toMatch(/`The \$\{v\.ownerReport\?\.noun \|\| 'venue'\} says so`/);
 });
+
+test('the owner slider names the scale it is asking about', () => {
+  const dash = fs.readFileSync(path.join(REPO, 'frontend', 'src', 'screens', 'VenueDashboard.js'), 'utf8');
+  // "How full are you right now?" left the scale to the owner to guess, and the
+  // two plausible guesses are far apart: percent of what the room holds, or
+  // percent of this venue's own busiest hour, which is what the 0-100 means
+  // everywhere else. A restaurant that never fills past half at its Friday peak
+  // answers 50 on one reading and 100 on the other, for the same room.
+  expect((dash.match(/>How full are you compared to your capacity\?<\/h3>/g) || []).length).toBe(3);
+  expect(dash).toMatch(/aria-label="How full is your venue compared to its capacity, 0 to 100 percent"/);
+  expect(dash).not.toMatch(/>How full are you right now\?<\/h3>/);
+});
