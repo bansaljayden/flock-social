@@ -231,6 +231,13 @@ const VERIFIED_PRESENCE_SQL = `
       JOIN flocks f ON f.id = fm.flock_id
       WHERE fm.user_id = $1
         AND fm.status = 'accepted'
+        -- The host's own record of who was there. A cancelled flock is
+        -- excluded a line below because it is an explicit "we did not go", and
+        -- attendance = 'no_show' is that same statement about one person: the
+        -- host slid "done" and un-ticked them. Without this the app marked a
+        -- report VERIFIED, and fed it to the live crowd calibration and the ML
+        -- export, from somebody its own roster says was not in the room.
+        AND fm.attendance IS DISTINCT FROM 'no_show'
         AND f.venue_id = $2
         AND f.status IS DISTINCT FROM 'cancelled'
         AND f.event_time BETWEEN (NOW() AT TIME ZONE 'UTC') - INTERVAL '12 hours'

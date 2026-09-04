@@ -4544,6 +4544,21 @@ export const ScreenSlot = ({ render }) => {
   return out === undefined ? null : out;
 };
 
+// ZERO IS A SCORE. `score || null` was written on three of these reads, and a
+// reliability score of exactly 0 is the one number the anti-flake feature
+// exists to publish: it is what somebody gets after being marked a no-show on
+// their only plan. Falsy-coalescing it turned that into null, which the profile
+// tile renders as a dash, which is also what a brand new account with no plans
+// renders. The one user the score describes was the one user it refused to
+// describe. Postgres also hands numerics back as strings ('0.00'), so this
+// takes a number or a numeric string and only null, undefined, '' and NaN
+// become "no score".
+const readReliability = (v) => {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
 const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Theme — shadows the outer static colors/styles with reactive versions
   const { toggleTheme, isDark, themeMode, isNightModeActive, setAutoMode } = useTheme();
@@ -6473,7 +6488,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     getUserStats().then(d => {
       setStreak(typeof d.streak === 'number' ? d.streak : null);
       setFriendCount(typeof d.friendCount === 'number' ? d.friendCount : null);
-      setReliabilityScore(d.reliabilityScore || null);
+      setReliabilityScore(readReliability(d.reliabilityScore));
     }).catch(() => {});
     // Requests that arrived while the app was closed. These used to load only
     // when Add Friends was opened, so three people could ask and the app
@@ -8378,8 +8393,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (accepted.length === 0) return false;
     setAttendanceFlockId(flockId);
     setAttendanceMembers(accepted);
+    // SEEDED FROM THE ROSTER, not from true. The loader carries `attendance`
+    // (refreshFlockRoster maps `m.attendance || 'unmarked'`) and this ignored
+    // it, so every reopening of the sheet arrived with everybody ticked. The
+    // sheet is reopenable by design: the host slides "done", and the banner on
+    // the plan screen offers "Mark it" again. So a host who correctly recorded
+    // a no-show, then tapped Mark it a second time to check it had taken, was
+    // shown that person ticked and one Confirm away from rewriting their score
+    // from 0 back to 100, with nothing on screen saying so.
+    //
+    // 'unmarked' still defaults to ticked, which is the right default for a
+    // FIRST marking: most people turn up and the host un-ticks the ones who
+    // did not. Only an explicit no_show unticks.
     const checks = {};
-    accepted.forEach(m => { checks[m.id] = true; });
+    accepted.forEach(m => { checks[m.id] = (m.attendance || 'unmarked') !== 'no_show'; });
     setAttendanceChecks(checks);
     setShowAttendanceModal(true);
     return true;
@@ -9792,7 +9819,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // boot-time number until the next relaunch.
   useEffect(() => {
     const unsub = onReliabilityUpdated((data) => {
-      if (data && data.reliabilityScore !== undefined) setReliabilityScore(data.reliabilityScore || null);
+      if (data && data.reliabilityScore !== undefined) setReliabilityScore(readReliability(data.reliabilityScore));
     });
     return unsub;
   }, []);
@@ -14128,7 +14155,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               {/* Live Occupancy card — only renders when a Pi sensor exists for this venue */}
               {sensorData && !sensorData.sensor_data && sensorData.recent_checkins > 0 && (
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px' }}>
-                  {sensorData.recent_checkins} check-in{sensorData.recent_checkins === 1 ? '' : 's'} by tag in the last hour
+                  {/* NOT "by tag". routes/sensors.js counts every row in
+                      venue_checkins for the hour with no checkin_source filter,
+                      and the app's own Check in button writes 'manual'. So one
+                      person tapping a button in a venue with no tag at all made
+                      this card claim a tag had been tapped. routes/checkin.js
+                      refuses to record a manual tap as 'nfc' for that exact
+                      reason, and this sentence undid the distinction. The
+                      number is right; the four words about how it was collected
+                      were not. */}
+                  {sensorData.recent_checkins} check-in{sensorData.recent_checkins === 1 ? '' : 's'} here in the last hour
                 </p>
               )}
               {sensorData?.sensor_data && (() => {
@@ -18983,9 +19019,35 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               <button disabled={attendanceSubmitting} onClick={async () => {
                 setAttendanceSubmitting(true);
                 try {
-                  await submitAttendance(attendanceFlockId, attendanceMembers.map(m => ({ userId: m.id, attended: !!attendanceChecks[m.id] })));
-                  showToast('Attendance recorded');
-                  getUserStats().then(d => setReliabilityScore(d.reliabilityScore || null)).catch(() => {});
+                  const saved = await submitAttendance(attendanceFlockId, attendanceMembers.map(m => ({ userId: m.id, attended: !!attendanceChecks[m.id] })));
+                  // The server names back anybody it could not score, which is
+                  // anybody who left the flock between this screen loading and
+                  // Confirm. It has done that for a while and this handler
+                  // dropped it, so the host was told a clean success about a
+                  // no-show that was never written anywhere.
+                  const missed = Array.isArray(saved?.unrecorded) ? saved.unrecorded.map(String) : [];
+                  const missedNames = attendanceMembers
+                    .filter(m => missed.includes(String(m.id)))
+                    .map(m => m.name)
+                    .filter(Boolean);
+                  showToast(missedNames.length
+                    ? `Saved. ${missedNames.join(' and ')} left the flock, so there was nothing to mark for them.`
+                    : 'Attendance recorded');
+                  // Write the answer into the roster this screen already holds.
+                  // Without this `attendanceOwed` on the plan screen stays true
+                  // (it tests for 'unmarked') and the "Who showed up?" banner
+                  // sits there after a save, inviting the second tap that the
+                  // seeding fix above now makes harmless but still confusing.
+                  // Anybody the server could not score keeps their old value.
+                  setFlocks(prev => prev.map(f => (f.id !== attendanceFlockId ? f : {
+                    ...f,
+                    members: Array.isArray(f.members) ? f.members.map(m => (
+                      (m && typeof m === 'object' && m.id in attendanceChecks && !missed.includes(String(m.id)))
+                        ? { ...m, attendance: attendanceChecks[m.id] ? 'attended' : 'no_show' }
+                        : m
+                    )) : f.members,
+                  })));
+                  getUserStats().then(d => setReliabilityScore(readReliability(d.reliabilityScore))).catch(() => {});
                   // Only a saved list closes the sheet. The close used to sit
                   // in `finally`, so a failed save threw away every checkbox
                   // the host had just ticked and left them nothing to retry.

@@ -533,7 +533,7 @@ export default function FlockDetail({
                   onClick={async () => {
                     setFeedbackSubmitting(true);
                     try {
-                      await submitVenueFeedback({
+                      const filed = await submitVenueFeedback({
                         flock_id: flock.id,
                         venue_place_id: flock.venueId,
                         venue_name: flock.venue,
@@ -544,7 +544,20 @@ export default function FlockDetail({
                       });
                       rememberFeedbackDone(flock.id);
                       setFeedbackState({ crowdLevel: null, priceWorth: null, rating: null });
-                      showToast('Thanks! This helps Flock get smarter');
+                      // The route returns `verified` for exactly this, and its
+                      // own comment says why: "the submitter is told whether
+                      // their report will count, rather than being thanked for
+                      // something that was filed and ignored." This screen
+                      // thanked everybody the same way. It matters most on the
+                      // majority path: a host who never slides "done" gets the
+                      // flock completed by the 12 hour sweep, which is the same
+                      // 12 hours the verification window allows, so a report
+                      // left the next morning is unverified by construction and
+                      // every reader drops it. Same two sentences the venue
+                      // card already uses.
+                      showToast(filed?.verified
+                        ? 'Thanks. Real reports sharpen the forecast for everyone.'
+                        : 'Thanks. Reports from a night here with your flock go into the forecast; this one is noted.');
                     } catch (err) {
                       console.error('[Feedback] Submit error:', err);
                       showToast(err?.message || "That didn't send. Try again.", 'error');
