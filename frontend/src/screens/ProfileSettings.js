@@ -257,7 +257,7 @@ export default function ProfileSettings({
                   <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'var(--accent-red-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.shield(colors.red, 18)}</div>
                   <div>
                     <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: '0 0 4px' }}>Emergency Contacts</p>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>Add trusted contacts who will receive alerts when you use the emergency button. They'll get a message with your location.</p>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.4' }}>Trusted contacts get an email when you press SOS. It includes your location if your phone has a fix at the time, and Flock keeps trying for one just after.</p>
                   </div>
                 </div>
 

@@ -9,7 +9,11 @@ const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 const safety = read('routes/safety.js');
 
 test('the flock is told before the email verdict can end the request, on the alarm and the stand-down', () => {
-  const alarmLeg = safety.indexOf("alertFlockMembers(req.app.get('io'), req.user, coords)");
+  // `, emailsSent` since 2026-09-04: the flock alarm carries how many trusted
+  // contacts were actually reached, so the flockmate's screen stops claiming
+  // they were emailed when none were. The ordering this test guards is
+  // unchanged: the leg still runs before the 502 can end the request.
+  const alarmLeg = safety.indexOf("alertFlockMembers(req.app.get('io'), req.user, coords, emailsSent)");
   const alarm502 = safety.indexOf('if (emailsSent === 0) {');
   assert.ok(alarmLeg > 0 && alarm502 > alarmLeg, 'the alarm flock leg runs before the 502');
   const sdLeg = safety.indexOf("notifyFlockStandDown(req.app.get('io'), req.user, hoursSinceAlert)");

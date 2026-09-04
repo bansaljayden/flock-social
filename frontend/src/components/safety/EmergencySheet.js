@@ -76,6 +76,9 @@ const EmergencySheet = ({
   // Which request 'Sending...' belongs to — presentation only. Cleared when
   // the send settles (the `sending` prop is owned by App.js).
   const [pendingAction, setPendingAction] = useState(null);
+  // Same arm-then-confirm the alert uses, and it disarms itself so a sheet
+  // left open does not stay one tap from sending.
+  const [shareArmed, setShareArmed] = useState(false);
   useEffect(() => {
     if (!sending) setPendingAction(null);
   }, [sending]);
@@ -263,17 +266,24 @@ const EmergencySheet = ({
             </span>
           </button>
 
+          {/* Armed, like Alert Contacts above it. This emails an exact
+              coordinate to every trusted contact, and it sat one tap away
+              directly under a button that deliberately takes two, on a sheet
+              people open in a hurry. */}
           <button
             type="button"
             className={`es-btn es-share${noContacts ? ' es-dead' : ''}`}
             disabled={sending || standingDown || noContacts}
+            aria-live="polite"
             onClick={() => {
+              if (!shareArmed) { setShareArmed(true); return; }
+              setShareArmed(false);
               setPendingAction('share');
               onShareLocation();
             }}
           >
             {Icons.mapPin('currentColor', 18)}
-            <span>{sending && pendingAction === 'share' ? 'Sending...' : 'Share Location'}</span>
+            <span>{sending && pendingAction === 'share' ? 'Sending...' : shareArmed ? 'Tap again to send your location' : 'Share Location'}</span>
           </button>
 
           {noContacts && (

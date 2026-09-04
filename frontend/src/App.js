@@ -5431,6 +5431,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       await acceptFriendRequest(userId);
       setPendingRequests(prev => prev.filter(r => r.id !== userId));
       setFriendStatuses(prev => ({ ...prev, [userId]: 'accepted' }));
+      // The header count only ever moved on boot and on the other person's
+      // socket event, so accepting here left it a friend behind.
+      getUserStats().then(d => { if (typeof d?.friendCount === 'number') setFriendCount(d.friendCount); }).catch(() => {});
       showToast('Friend request accepted!');
     } catch (err) {
       // The server's "confirm your email" refusal used to land here as a red
@@ -5518,6 +5521,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setPhoneLookupError('');
     try {
       const data = await findFriendsByPhone([value]);
+      // checked === 0 means the server could not read that as a phone number,
+      // so it never looked. Saying "nobody on Flock has that number" would be
+      // two false claims about a friend who may well be on Flock.
+      if (data && data.checked === 0) {
+        setPhoneLookupUsers(null);
+        setPhoneLookupError('We could not read that as a phone number. Try it with the area code.');
+        return;
+      }
       setPhoneLookupUsers(data.users || []);
     } catch (err) {
       setPhoneLookupUsers(null);
@@ -6439,6 +6450,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setFriendCount(typeof d.friendCount === 'number' ? d.friendCount : null);
       setReliabilityScore(d.reliabilityScore || null);
     }).catch(() => {});
+    // Requests that arrived while the app was closed. These used to load only
+    // when Add Friends was opened, so three people could ask and the app
+    // showed nothing: no badge, and a tapped "New friend request" push landed
+    // on a screen with nothing on it.
+    getPendingRequests().then(rows => setPendingRequests(Array.isArray(rows) ? rows : (rows?.requests || []))).catch(() => {});
   }, []);
 
   // Availability pulse: load my current + friends' on mount, listen for updates
@@ -9277,6 +9293,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Emit location every 10 seconds while sharing is active
   const userLocationRef = useRef(userLocation);
   userLocationRef.current = userLocation;
+  // THE SHARE HAS TO FOLLOW THE PERSON. Both emitters below re-send
+  // userLocationRef.current every ten seconds, and nothing was writing new
+  // fixes into it during a share: the only writers are explicit taps (the map,
+  // the location toggle, starting a share). So "Live location" was one frozen
+  // coordinate, re-sent forever, under a green dot and the word "just now" on
+  // the recipient's map. One watch, for either kind of share, feeding the same
+  // state the emitters already read.
+  const sharingAnywhere = !!sharingLocationForFlock || !!dmSharingLocation;
+  useEffect(() => {
+    if (!sharingAnywhere || !geolocationAvailable()) return undefined;
+    const id = watchPosition(
+      (pos) => setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      // A watch that stops answering must not stop the share: the last fix is
+      // still the best thing known, and the emitters keep sending it.
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 15000, timeout: 30000 }
+    );
+    return () => { if (id != null) clearWatch(id); };
+  }, [sharingAnywhere]);
+
   useEffect(() => {
     if (!sharingLocationForFlock || !userLocation) return;
     emitLocation(sharingLocationForFlock, userLocation.lat, userLocation.lng);
@@ -12109,7 +12145,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // the share and the position together.
   const startDmLocationSharing = useCallback((dmId) => {
     if (!dmId) return;
-    if (userLocation) { setDmSharingLocation(dmId); return; }
+    // No early return on an existing position. It could be one restored from
+    // localStorage at boot, so a DM share could open by broadcasting where the
+    // phone was in a previous session. Ask for a fix, the way the flock share
+    // already does.
     if (!geolocationAvailable()) {
       showToast("This device can't share a location", 'error');
       return;
@@ -12126,7 +12165,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
     );
-  }, [userLocation, showToast]);
+  }, [showToast]);
 
   // Keyed on whether a position EXISTS, not on the position: the object is
   // replaced on every fix and the interval already reads the ref, so a
@@ -18768,7 +18807,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           <div role="alertdialog" aria-modal="true" aria-label={`${safetyAlert.name} needs help`} style={{ width: '100%', maxWidth: '340px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.2)', border: '2px solid #b91c1c' }}>
             <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>{safetyAlert.name} needs help</h2>
             <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>
-              They pressed SOS on a plan you are both on. Their trusted contacts have already been emailed.
+              They pressed SOS on a plan you are both on.
+              {safetyAlert.contactsAlerted === 0
+                ? ' We could not reach any of their trusted contacts, so you may be the only person who knows.'
+                : ' Their trusted contacts have already been emailed.'}
               {safetyAlert.lat === null ? ' They did not share their location.' : ''}
               {/* The alarm's own time. A push tapped at 9am used to read as a
                   live 9am alarm; the hour it actually fired changes what the
