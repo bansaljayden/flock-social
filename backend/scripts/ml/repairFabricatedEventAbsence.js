@@ -4,7 +4,7 @@
 // ---------------------------------------------------------------------------
 // WHAT WENT WRONG. The event-provenance work that day taught both collectors
 // to stamp events_observed and events_unavailable_reason, which was the point,
-// and left the SIX enrichment columns beside them unnamed in the INSERT. Their
+// and left the SEVEN enrichment columns beside them unnamed in the INSERT. Their
 // defaults are `false`, `false`, `0` and `0`, so every row written that day
 // carried an honest "nothing was measured here" flag next to a confident
 // "no event nearby" fact. That pairing is precisely the fabricated negative
@@ -54,6 +54,7 @@ const SELECT_SCOPE = `
        OR has_nearby_event IS NOT NULL
        OR total_nearby_events IS NOT NULL
        OR total_nearby_attendance IS NOT NULL
+       OR nearest_event_attendance IS NOT NULL
        OR nearest_event_distance_km IS NOT NULL
        OR nearest_event_type IS NOT NULL)`;
 
@@ -75,10 +76,18 @@ async function main() {
   // assertion, it does not edit an observation.
   const res = await pool.query(`
     UPDATE ml_training_data
+       -- SEVEN, not six. nearest_event_attendance was in neither the SET list
+       -- nor the predicate, and it is the one enrichment column carrying
+       -- INTEGER DEFAULT 0. So this script NULLed six columns on 136,920
+       -- rows, left the seventh asserting a measurement on every one of them,
+       -- and then reported itself clean because the verification predicate had
+       -- the same omission. A repair that cannot see its own miss is worse than
+       -- no repair: it closes the ticket.
        SET event_nearby = NULL,
            has_nearby_event = NULL,
            total_nearby_events = NULL,
            total_nearby_attendance = NULL,
+           nearest_event_attendance = NULL,
            nearest_event_distance_km = NULL,
            nearest_event_type = NULL
      WHERE events_observed IS FALSE
@@ -86,6 +95,7 @@ async function main() {
          OR has_nearby_event IS NOT NULL
          OR total_nearby_events IS NOT NULL
          OR total_nearby_attendance IS NOT NULL
+         OR nearest_event_attendance IS NOT NULL
          OR nearest_event_distance_km IS NOT NULL
          OR nearest_event_type IS NOT NULL)`);
   console.log(`[Repair] Updated ${res.rowCount} rows.`);

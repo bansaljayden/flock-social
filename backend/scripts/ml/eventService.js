@@ -17,26 +17,57 @@ function distanceKm(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-// Map Ticketmaster event classifications to simple types
+// THE MODEL'S VOCABULARY, not a third one.
+//
+// This returned 'concert' and 'film' while collectEvents.js and
+// mlPredictor.mapTmEventType both return 'music' and 'family', and
+// prepare_features.py builds the etype_* one-hots over exactly
+// ['music','sports','arts','family','other']. That was harmless while this
+// function only fed `event_type`, which the feature list excludes. It stopped
+// being harmless on 2026-09-01 when collectRealtime.js began writing
+// `nearest_event_type` from it: a music event, the largest Ticketmaster
+// segment, produced a row where has_nearby_event is 1 and ALL FIVE etype slots
+// are 0, a combination that exists nowhere in the corpus, while serving would
+// hand the same event to the model as etype_music = 1.
 function mapEventType(classification) {
   if (!classification) return 'other';
   const seg = (classification.segment?.name || '').toLowerCase();
-  if (seg.includes('music')) return 'concert';
+  if (seg.includes('music')) return 'music';
   if (seg.includes('sport')) return 'sports';
   if (seg.includes('arts') || seg.includes('theatre')) return 'arts';
-  if (seg.includes('film')) return 'film';
+  if (seg.includes('family')) return 'family';
   return 'other';
 }
+
+// The corpus and the serving path both mean this by "nearby": 2 km, and an
+// event whose own window can contain the hour being scored. enrichWithEvents
+// uses DISTANCE_THRESHOLD_KM = 2 with isHourInRange; mlPredictor uses
+// NEARBY_KM = 2 with a [hour - EVENT_MAX_DURATION_H, hour + 1) window. This
+// file used 5 km and no time filter at all, so it answered a different
+// question and wrote the answer into the same columns.
+const NEARBY_KM = 2;
+const EVENT_MAX_DURATION_H = 3;
 
 // Fetch nearby events from Ticketmaster Discovery API
 // Docs: https://developer.ticketmaster.com/products-and-docs/apis/discovery-api/v2/
 // Env: TICKETMASTER_API_KEY
-async function fetchTicketmasterEvents(lat, lon, radiusKm = 5) {
+async function fetchTicketmasterEvents(lat, lon, radiusKm = NEARBY_KM, at = new Date()) {
   const apiKey = process.env.TICKETMASTER_API_KEY;
   // No key is a provider that cannot answer, never an empty answer.
   if (!apiKey) return null;
 
   try {
+    // A WINDOW, because without one Discovery returns UPCOMING events and the
+    // nearest of those was reported as happening now. A concert scheduled for
+    // next Saturday five kilometres away stamped has_nearby_event on a Tuesday
+    // afternoon observation, which turns the event channel into a proxy for
+    // "this venue is in a city". Same arithmetic as mlPredictor: open
+    // EVENT_MAX_DURATION_H before the observed HOUR and close at the end of it,
+    // so anything whose active window can contain this hour is fetched.
+    const HOUR_MS = 60 * 60 * 1000;
+    const tsHour = Math.floor(at.getTime() / HOUR_MS);
+    const startDt = new Date((tsHour - EVENT_MAX_DURATION_H) * HOUR_MS).toISOString().replace(/\.\d{3}Z$/, 'Z');
+    const endDt = new Date((tsHour + 1) * HOUR_MS - 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
     const params = new URLSearchParams({
       apikey: apiKey,
       latlong: `${lat},${lon}`,
@@ -44,6 +75,8 @@ async function fetchTicketmasterEvents(lat, lon, radiusKm = 5) {
       unit: 'km',
       size: 20,
       sort: 'date,asc',
+      startDateTime: startDt,
+      endDateTime: endDt,
     });
 
     // Timeout: this sits inside the paid BestTime collection loop — a hung
@@ -122,9 +155,9 @@ async function fetchSeatGeekEvents(lat, lon, radiusKm = 5) {
 // be measured against a venue). The column is TEXT with no CHECK, and
 // inventing one of the migration's three would be a lie about which failure
 // happened.
-async function getNearestEvent(venueLat, venueLon, radiusKm = 5) {
+async function getNearestEvent(venueLat, venueLon, radiusKm = NEARBY_KM, at = new Date()) {
   const [tmEvents, sgEvents] = await Promise.all([
-    fetchTicketmasterEvents(venueLat, venueLon, radiusKm),
+    fetchTicketmasterEvents(venueLat, venueLon, radiusKm, at),
     fetchSeatGeekEvents(venueLat, venueLon, radiusKm),
   ]);
 
@@ -156,18 +189,50 @@ async function getNearestEvent(venueLat, venueLon, radiusKm = 5) {
     };
   }
 
-  // Find nearest event
-  const now = new Date();
+  // Find nearest event.
+  //
+  // TWO FILTERS, because the column this feeds means "an event is happening
+  // near this venue at this hour" and the loop below used to mean "the closest
+  // thing Ticketmaster knows about". Distance is held to NEARBY_KM rather than
+  // to whatever radius the API was asked for, and start time is held to the
+  // same window the query asked for, because SeatGeek is not filtered upstream
+  // and a provider is free to answer wider than it was asked.
+  const now = at instanceof Date && Number.isFinite(at.getTime()) ? at : new Date();
+  const HOUR_MS = 60 * 60 * 1000;
+  const tsHour = Math.floor(now.getTime() / HOUR_MS);
+  const windowOpen = (tsHour - EVENT_MAX_DURATION_H) * HOUR_MS;
+  const windowClose = (tsHour + 1) * HOUR_MS;
   let nearest = null;
   let nearestDist = Infinity;
+  // Measurability is judged over EVERY event, before the two filters: an event
+  // with no coordinates is unmeasurable whether or not it is close or current,
+  // and that distinction is what `events_without_coordinates` reports.
+  let anyMeasurable = false;
 
   for (const event of allEvents) {
     if (!event.lat || !event.lon) continue;
+    anyMeasurable = true;
+    if (event.startTime) {
+      const startedAt = new Date(event.startTime).getTime();
+      if (!Number.isFinite(startedAt) || startedAt < windowOpen || startedAt >= windowClose) continue;
+    }
     const dist = distanceKm(venueLat, venueLon, event.lat, event.lon);
+    if (dist > NEARBY_KM) continue;
     if (dist < nearestDist) {
       nearestDist = dist;
       nearest = event;
     }
+  }
+
+  // The providers answered and nothing they returned is near this venue in
+  // this hour. That is a measured absence, which is the honest answer and the
+  // one the corpus carries for a quiet night.
+  if (!nearest && anyMeasurable) {
+    return {
+      event_nearby: false, event_distance_km: null, event_size: null,
+      event_type: null, event_hours_until: null,
+      observed: true, reason: null,
+    };
   }
 
   if (!nearest) {
