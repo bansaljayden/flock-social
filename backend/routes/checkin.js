@@ -569,6 +569,24 @@ async function handleNfcTap(req, res) {
 
   const userId = await tryAuth(req);
 
+  // The success screen printed the raw place id (ChIJ...) in place of a
+  // name, because nothing here sent one. Best effort: a claimed profile's
+  // business name, else the corpus name; a miss is a null, never a failed
+  // tap.
+  let venueName = null;
+  try {
+    const named = await pool.query(
+      `SELECT COALESCE(
+         (SELECT business_name FROM venue_profiles WHERE google_place_id = $1 LIMIT 1),
+         (SELECT name FROM ml_venues WHERE google_place_id = $1 LIMIT 1)
+       ) AS name`,
+      [placeId]
+    );
+    venueName = named.rows[0]?.name || null;
+  } catch (err) {
+    venueName = null;
+  }
+
   const source = nfcSigValid(placeId, req.query.sig) ? 'nfc' : 'nfc_unverified';
   const result = await recordTap({
     userId,
@@ -595,6 +613,7 @@ async function handleNfcTap(req, res) {
       ok: true,
       success: true,
       venue_place_id: placeId,
+      venue_name: venueName,
       deduped: true,
       ...redirect,
     });
@@ -603,6 +622,7 @@ async function handleNfcTap(req, res) {
   return res.json({
     success: true,
     venue_place_id: placeId,
+    venue_name: venueName,
     checked_in_at: result.checked_in_at,
     ...redirect,
   });
@@ -738,6 +758,14 @@ router.post('/:placeId', authenticate, async (req, res) => {
 });
 
 module.exports = router;
+// The tag signature, for the admin route that mints a tag URL
+// (routes/admin.js). Null when the secret is unset, so a caller cannot mint
+// a tag the verifier above would then refuse.
+module.exports.nfcTagSig = (placeId) => {
+  const secret = process.env.NFC_TAG_SECRET;
+  if (!secret) return null;
+  return crypto.createHmac('sha256', secret).update(String(placeId)).digest('hex').slice(0, 32);
+};
 
 // Exposed for __tests__/unauthSurface.test.js and __tests__/checkinFlow.test.js
 // only. Properties on the router keep server.js's

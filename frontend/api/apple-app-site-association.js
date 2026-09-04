@@ -89,6 +89,10 @@ function handler(req, res) {
         {
           appIDs: [appId],
           components: [
+            // The venue check-in tag. intentFromUrl routes it and App.js opens the
+            // check-in screen on it, so this is a claim, not an exclusion: a phone
+            // with the app opens the app, which holds the session the tap needs.
+            { '/': '/checkin/*', comment: 'NFC venue check-in; routed by intentFromUrl' },
             { '/': '/tap', exclude: true, comment: 'the NFC landing page offers the App Store on purpose' },
             { '/': '/tap*', exclude: true, comment: 'same page with a source parameter' },
             // THE INVITE PATH IS EXCLUDED UNTIL THE APP CAN ROUTE ONE, and that

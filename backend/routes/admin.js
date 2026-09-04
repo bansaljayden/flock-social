@@ -81,6 +81,9 @@ const QUEUE_OFFSET_MAX = 1000000;
 // as requireVerified in middleware/auth.js: no user is a refusal, loudly, not an
 // exception. Every route below is behind this; __tests__/adminEvidence.test.js
 // walks router.stack and refuses to let a new one be added without it.
+const { validPlaceId, isKnownVenue } = require('../utils/places');
+const { nfcTagSig } = require('./checkin');
+
 function requireAdmin(req, res, next) {
   if (!req.user || req.user.role !== 'admin') {
     return res.status(403).json({ error: 'Admin access required' });
@@ -251,6 +254,30 @@ const CONTENT_TEXT_SQL = {
 };
 
 // GET /api/admin/analytics - Research analytics dashboard data
+// GET /api/admin/venues/tag-url?placeId=... — the URL to program onto a
+// venue's NFC tag. A query parameter, not a path parameter: every path id on
+// this router is a serial settled by serialId (adminEvidence pins that), and
+// a Google place id is not one. Nothing minted one before: the only code that touched
+// NFC_TAG_SECRET verified, so a venue that wanted the feature the privacy
+// policy describes had no path to it. Admin-only on purpose: the signature
+// is static and transferable (see the header of routes/checkin.js), so a
+// venue holding its own would be holding the thing that verifies its own
+// reviews.
+router.get('/venues/tag-url', async (req, res) => {
+  try {
+    const placeId = typeof req.query.placeId === 'string' ? req.query.placeId : '';
+    if (!validPlaceId(placeId)) return res.status(400).json({ error: 'Invalid venue id' });
+    if (!(await isKnownVenue(placeId))) return res.status(404).json({ error: 'Unknown venue' });
+    const sig = nfcTagSig(placeId);
+    if (!sig) return res.status(503).json({ error: 'NFC_TAG_SECRET is not set on this server, so no tag can be minted.' });
+    const base = process.env.PUBLIC_WEB_URL || 'https://www.flockcorp.com';
+    res.json({ url: `${base.replace(/\/$/, '')}/checkin/${encodeURIComponent(placeId)}?sig=${sig}` });
+  } catch (err) {
+    console.error('Tag URL error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 router.get('/analytics', async (req, res) => {
   try {
     const totalFlocks = await pool.query('SELECT COUNT(*) AS count FROM flocks');
