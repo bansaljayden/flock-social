@@ -1073,10 +1073,14 @@ describe('the Live Sensor panel is asked for on every venue, not just half of th
     expect(hydration).toMatch(/if \(savedPlaceId\) setOwnerVenuePlaceId\(savedPlaceId\);/);
   });
 
-  test('a corrected place id repoints the panel', () => {
-    // The saved id can turn out to be a different venue; the resolved one is
-    // then the only id whose readings belong to this owner.
-    expect(appSource).toMatch(/if \(resolvedPlaceId && resolvedPlaceId !== savedPlaceId\) setOwnerVenuePlaceId\(resolvedPlaceId\);/);
+  test('the dashboard never re-points the claim, and the panel keys on the saved id', () => {
+    // The repair used to text-search the venue's name when the saved id failed
+    // a fuzzy check and WRITE the first hit's place id to the profile, which
+    // resets verification and every deal on it (2026-09-04). The saved id is
+    // the claim; the panel is keyed on it and nothing here changes it.
+    expect(appSource).toMatch(/if \(savedPlaceId\) setOwnerVenuePlaceId\(savedPlaceId\);/);
+    expect(appSource).toMatch(/applyVenue\(verifiedVenue, savedPlaceId, false\);/);
+    expect(appSource).not.toMatch(/setOwnerVenuePlaceId\(resolvedPlaceId\)/);
   });
 
   test('the sensor effect still keys on it', () => {

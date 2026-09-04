@@ -499,6 +499,9 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
   const [lead, setLead] = useState([]);
   const [groups, setGroups] = useState([]);
   const [freeText, setFreeText] = useState(false);
+  // The server's one sentence for a venue it will not answer yet (unverified
+  // or unlinked), in place of a menu of chips that all refused.
+  const [offReason, setOffReason] = useState('');
   const [showMore, setShowMore] = useState(false);
   const [showChips, setShowChips] = useState(false);
   const [draft, setDraft] = useState('');
@@ -645,6 +648,7 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
       setLead(Array.isArray(data?.lead) && data.lead.length ? data.lead : flat.slice(0, 4));
       setGroups(Array.isArray(data?.lead) ? grouped : []);
       setFreeText(!!data?.freeText && typeof askQuestion === 'function');
+      setOffReason(typeof data?.reason === 'string' ? data.reason : '');
       setState('ready');
     } catch (err) {
       if (!alive.current) return;
@@ -917,7 +921,7 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
         <div data-roost="greeter" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '14px 0 2px' }}>
           <BirdieStill size={88} eager />
           <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '10px 0 0', lineHeight: 1.5, maxWidth: '300px' }}>
-            {freeText ? LEAD_IN_FREE : LEAD_IN_CHIPS}
+            {offReason || (freeText ? LEAD_IN_FREE : LEAD_IN_CHIPS)}
           </p>
         </div>
       )}

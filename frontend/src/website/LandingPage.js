@@ -927,6 +927,9 @@ export default function LandingPage() {
               <a className="lp-btn lp-btn-navy" href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>
                 Get in touch
               </a>
+              <p className="lp-venue-signin">
+                Already have a venue account? <a href="/app?venue=true">Sign in</a>
+              </p>
             </div>
           </div>
         </div>
