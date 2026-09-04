@@ -8757,7 +8757,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
           const acceptedCount = (data.members || []).filter(m => m.status === 'accepted').length;
           const hiddenAccepted = acceptedCount - members.filter(m => m.status === 'accepted').length;
           const eventTime = data.flock?.event_time || null;
-          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, guests, memberCount: Math.max(0, (data.momentum?.accepted ?? acceptedCount) - hiddenAccepted), momentum: data.momentum || null, eventTime: eventTime || f.eventTime || null } : f));
+          // hiddenAccepted rides on the flock so a live going count (a guest
+          // answering, below) can subtract the same blocked members this does.
+          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, guests, hiddenAccepted, memberCount: Math.max(0, (data.momentum?.accepted ?? acceptedCount) - hiddenAccepted), momentum: data.momentum || null, eventTime: eventTime || f.eventTime || null } : f));
         })
         .catch(() => {});
       loadFlockVotes(selectedFlockId);
@@ -9058,7 +9060,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         // that came from the roster fetch.
         const entry = { id: data.guestId, guestId: guestRsvpId(data), name: data.name, status: data.status === 'in' ? 'accepted' : 'declined', isGuest: true };
         const guests = [...(f.guests || []).filter(g => g.id !== data.guestId), entry];
-        return { ...f, guests, memberCount: data.going };
+        // data.going counts every accepted member; the loaders subtract the
+        // ones this person has blocked (hidden from their roster), so a guest
+        // answering must not re-inflate the count by that many.
+        return { ...f, guests, memberCount: Math.max(0, Number(data.going) - (f.hiddenAccepted || 0)) };
       }));
     });
     return unsub;

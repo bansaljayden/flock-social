@@ -645,8 +645,8 @@ export default function GuestInvite() {
 
     // Never retried, whatever went wrong. Re-POSTing an RSVP through a flaky
     // connection puts the same person on the roster twice and spends one of
-    // the three guest identities this network is allowed to mint on this flock
-    // in an hour (NEW_GUESTS_PER_IP_PER_FLOCK in routes/guest.js), which on a
+    // the guest identities this network is allowed to mint on this flock in
+    // an hour (NEW_GUESTS_PER_IP_PER_FLOCK in routes/guest.js), which on a
     // shared wifi is somebody else's answer.
     const r = await ask(`${API}/api/guest/${encodeURIComponent(token)}/rsvp`, {
       method: 'POST',
