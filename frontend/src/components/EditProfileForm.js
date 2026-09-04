@@ -68,6 +68,59 @@ const EditProfileForm = ({
                 const [editError, setEditError] = React.useState('');
                 const [editSuccess, setEditSuccess] = React.useState('');
                 const [editLoading, setEditLoading] = React.useState(false);
+                // Changing your address un-verifies the account (routes/users.js
+                // clears both columns), and that route deliberately does not mail
+                // the new link itself: it answers emailVerificationRequired and
+                // the client asks for the link. That makes this form the ONLY
+                // sender, and it used to fire and forget. So a resend that was
+                // rate limited (one a minute, five an hour, and correcting a
+                // typo in your own address inside a minute is the ordinary way
+                // to hit that), refused because the mailbox had bounced before,
+                // or accepted but never sent, all rendered as "We sent a link to
+                // your new address". The person then waits for mail that will
+                // never arrive while every plan, friend request and payment
+                // handle answers 403, on a screen that offered no way to ask
+                // again. These four carry the real answer and the way back.
+                const [verifyPending, setVerifyPending] = React.useState(false);
+                const [verifyLinkSent, setVerifyLinkSent] = React.useState(false);
+                const [verifyRefused, setVerifyRefused] = React.useState(false);
+                const [resendCooldown, setResendCooldown] = React.useState(0);
+
+                React.useEffect(() => {
+                  if (resendCooldown <= 0) return undefined;
+                  const t = setTimeout(() => setResendCooldown((n) => n - 1), 1000);
+                  return () => clearTimeout(t);
+                }, [resendCooldown]);
+
+                // The same three answers SignupScreen reads, worded the same way.
+                // A 200 is not a send: the route reports `verificationSent`
+                // separately, so a request that was accepted and never left is
+                // not reported as one that arrived.
+                const applyResendResult = (data) => {
+                  const sent = data?.verificationSent !== false;
+                  setVerifyLinkSent((was) => was || sent);
+                  if (data?.mailRefused) setVerifyRefused(true);
+                  setEditSuccess(data?.mailRefused
+                    ? 'Saved. We cannot mail your new address: mail to it bounced or was reported as spam before. Email social@flockcorp.com from it and we will clear that.'
+                    : sent
+                      ? 'Saved. We sent a link to your new address; confirm it to keep making plans.'
+                      : 'Saved, but the confirmation link did not go out. Nothing is wrong with your account, and the link is still worth asking for.');
+                };
+
+                const handleResendVerification = async () => {
+                  if (resendCooldown > 0 || verifyRefused) return;
+                  // Cooldown first, so a double tap cannot get through.
+                  setResendCooldown(60);
+                  try {
+                    applyResendResult(await resendVerificationEmail());
+                  } catch (err) {
+                    // The server words a 429 with the real window and api.js
+                    // carries that sentence. Render it rather than guessing.
+                    setEditSuccess('Saved. ' + (err && err.message
+                      ? err.message
+                      : 'We could not send the confirmation link just now.'));
+                  }
+                };
 
                 const EyeSvg = ({ show }) => (
                   <svg aria-hidden="true" focusable="false" width={18} height={18} viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -133,8 +186,15 @@ const EditProfileForm = ({
                       // and the next plan, request or payment handle would
                       // 403. Mail the link now (the server asked us to) and
                       // say so, instead of "updated successfully".
-                      resendVerificationEmail().catch(() => {});
-                      setEditSuccess('Saved. We sent a link to your new address; confirm it to keep making plans.');
+                      setVerifyPending(true);
+                      setResendCooldown(60);
+                      try {
+                        applyResendResult(await resendVerificationEmail());
+                      } catch (err) {
+                        setEditSuccess('Saved. ' + (err && err.message
+                          ? err.message
+                          : 'We could not send the confirmation link just now.'));
+                      }
                     } else {
                       setEditSuccess('Profile updated successfully!');
                     }
@@ -167,7 +227,28 @@ const EditProfileForm = ({
                       <div role="alert" style={{ backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '10px', padding: '10px 14px', marginBottom: '14px', color: colors.redText, fontSize: 'var(--t-label)', fontWeight: '600' }}>{editError}</div>
                     )}
                     {editSuccess && (
-                      <div role="status" style={{ backgroundColor: 'rgba(45,90,135,0.10)', border: '1px solid rgba(45,90,135,0.35)', borderRadius: '10px', padding: '10px 14px', marginBottom: '14px', color: colors.steel, fontSize: 'var(--t-label)', fontWeight: '600' }}>{editSuccess}</div>
+                      <div role="status" style={{ backgroundColor: 'rgba(45,90,135,0.10)', border: '1px solid rgba(45,90,135,0.35)', borderRadius: '10px', padding: '10px 14px', marginBottom: '14px', color: colors.steel, fontSize: 'var(--t-label)', fontWeight: '600' }}>
+                        {editSuccess}
+                        {/* Only after an address change, and only while the
+                            mailbox is one we can still write to. A refused
+                            address cannot be helped by pressing this. */}
+                        {verifyPending && !verifyRefused && (
+                          <button
+                            type="button"
+                            className="hit44"
+                            onClick={handleResendVerification}
+                            disabled={resendCooldown > 0}
+                            style={{ display: 'block', marginTop: '8px', padding: 0, background: 'none', border: 'none', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', textDecoration: 'underline', cursor: resendCooldown > 0 ? 'not-allowed' : 'pointer', opacity: resendCooldown > 0 ? 0.5 : 1 }}
+                          >
+                            {/* "again" is a claim too. Nothing was sent when
+                                verifyLinkSent is false, and a button that says
+                                otherwise repeats the sentence above it. */}
+                            {resendCooldown > 0
+                              ? 'Try again in ' + resendCooldown + 's'
+                              : (verifyLinkSent ? 'Send the link again' : 'Send the link')}
+                          </button>
+                        )}
+                      </div>
                     )}
 
                     <div style={{ marginBottom: '12px' }}>
