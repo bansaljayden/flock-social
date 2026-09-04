@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { login, trackAuthScreen } from '../../services/api';
+import { login, trackAuthScreen, RESET_DONE_KEY } from '../../services/api';
 import useGoogleAuth, { isGoogleSignInAvailable } from './useGoogleAuth';
 import AppleSignInButton from './AppleSignInButton';
 import AuthShell, {
@@ -24,6 +24,19 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
   // landing must not be counted as a sign-in view. Fires whenever the login
   // view is the one actually on screen.
   useEffect(() => { if (view === 'login') trackAuthScreen('login'); }, [view]);
+
+  // The standalone /reset-password page finishes with a full navigation to
+  // /app, which cannot carry the onSignIn({ updated: true }) the in-app flow
+  // passes. Read once and clear, so the notice appears exactly on the load that
+  // followed the reset and never again.
+  useEffect(() => {
+    let flagged = false;
+    try {
+      flagged = sessionStorage.getItem(RESET_DONE_KEY) === '1';
+      if (flagged) sessionStorage.removeItem(RESET_DONE_KEY);
+    } catch { /* private mode */ }
+    if (flagged) setNotice('Password updated. Sign in with the new one.');
+  }, []);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
