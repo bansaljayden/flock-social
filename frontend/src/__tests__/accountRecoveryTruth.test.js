@@ -56,3 +56,11 @@ test('the Apple button names the API by its own domain', () => {
   expect(btn).toMatch(/redirectURI: 'https:\/\/api\.flockcorp\.com\/api\/auth\/apple'/);
   expect(btn).not.toMatch(/flock-app-production\.up\.railway\.app/);
 });
+
+test('the resend control belongs to the save that sent a link, not to every save after it', () => {
+  const form = fs.readFileSync(path.join(REPO, 'frontend', 'src', 'components', 'EditProfileForm.js'), 'utf8');
+  // Nothing turned the flag off once an email change had turned it on, so every
+  // later save of an unrelated field drew a Send the link control under
+  // "Profile updated successfully!", including after the address was confirmed.
+  expect(form).toMatch(/setEditSuccess\(''\);\s*(?:\/\/[^\n]*\n\s*)*setVerifyPending\(false\);/);
+});

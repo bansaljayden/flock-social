@@ -141,6 +141,12 @@ const EditProfileForm = ({
                 const handleSaveProfile = async () => {
                   setEditError('');
                   setEditSuccess('');
+                  // Cleared per save, not left standing. Nothing turned this off
+                  // once an email change had turned it on, so every later save
+                  // of an unrelated field drew a Send the link control under
+                  // "Profile updated successfully!", including after the person
+                  // had already confirmed the address.
+                  setVerifyPending(false);
 
                   if (!editName.trim()) { setEditError('Name is required'); return; }
                   if (!editEmail.trim()) { setEditError('Email is required'); return; }
