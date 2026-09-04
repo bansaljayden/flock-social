@@ -216,14 +216,14 @@ router.get('/', [
 
 // POST /api/calendar — create an event
 router.post('/', [
-  scalarOnly(body('title'), 'title').trim().notEmpty().withMessage('Title is required').isLength({ max: 120 }),
+  scalarOnly(body('title'), 'title').trim().notEmpty().withMessage('Title is required').isLength({ max: 120 }).withMessage('Keep the title under 120 characters'),
   // Round 20 established that `date` must be settled as a STRING as well as a
   // scalar: `{"date": 20260901}` is a scalar, and a number has no `.slice`.
   // Round 21 added the day itself — see calendarDate() above. Both live in the
   // one chain fragment now, and it also canonicalises, so the handler receives
   // a plain YYYY-MM-DD and needs no slicing of its own.
   calendarDate(body('date'), 'date'),
-  scalarOnly(body('venue').optional({ nullable: true }), 'venue').trim().isLength({ max: 200 }),
+  scalarOnly(body('venue').optional({ nullable: true }), 'venue').trim().isLength({ max: 200 }).withMessage('Keep the place under 200 characters'),
   scalarOnly(body('time').optional({ nullable: true }), 'time').trim().isLength({ max: 20 }),
   scalarOnly(body('color').optional({ nullable: true }), 'color').trim().isLength({ max: 30 }),
 ], async (req, res) => {
@@ -255,7 +255,7 @@ router.put('/:id', [
   // rather than served.
   scalarOnly(body('title').optional({ nullable: true }), 'title').trim().notEmpty().isLength({ max: 120 }),
   calendarDate(body('date').optional({ nullable: true }), 'date'),
-  scalarOnly(body('venue').optional({ nullable: true }), 'venue').trim().isLength({ max: 200 }),
+  scalarOnly(body('venue').optional({ nullable: true }), 'venue').trim().isLength({ max: 200 }).withMessage('Keep the place under 200 characters'),
   scalarOnly(body('time').optional({ nullable: true }), 'time').trim().isLength({ max: 20 }),
   scalarOnly(body('color').optional({ nullable: true }), 'color').trim().isLength({ max: 30 }),
 ], async (req, res) => {

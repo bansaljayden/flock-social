@@ -1490,6 +1490,10 @@ const parseHourChoice = (label) => {
   return /pm/i.test(m[2]) ? h + 12 : h;
 };
 
+// Money for a card: whole dollars stay whole, cents print as cents ($39.50,
+// not $39.5).
+const fmtMoney = (n) => (Number.isInteger(n) ? String(n) : Number(n).toFixed(2));
+
 const resolveEventTime = (dayLabel, hourLabel, now = new Date()) => {
   const d = new Date(now.getFullYear(), now.getMonth(), now.getDate(), parseHourChoice(hourLabel), 0, 0, 0);
   switch (dayLabel) {
@@ -4756,6 +4760,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const eventsSearchTimerRef = useRef(null);
   const [eventDetail, setEventDetail] = useState(null);
   const [eventDetailLoading, setEventDetailLoading] = useState(false);
+  // The /details read failed after the sheet opened on card-level data.
+  const [eventDetailError, setEventDetailError] = useState('');
   const [crowdPredictions, setCrowdPredictions] = useState({});
   // The venue sheet's crowd read failed (network, quota). Without this the
   // dial and the twelve bars pulsed forever while the chip said ESTIMATED.
@@ -4863,11 +4869,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   }, []);
 
   // Fetch weather + forecast when Plans tab is opened and location is available
-  const weatherFetchedRef = useRef(false);
+  // When the Plans weather was last read, not whether. A boolean meant the
+  // morning's reading was labelled LIVE at night.
+  const weatherFetchedRef = useRef(0);
   const [weatherForecast, setWeatherForecast] = useState([]);
   useEffect(() => {
-    if (currentTab !== 'calendar' || !userLocation || weatherFetchedRef.current) return;
-    weatherFetchedRef.current = true;
+    if (currentTab !== 'calendar' || !userLocation) return;
+    if (Date.now() - weatherFetchedRef.current < 30 * 60 * 1000) return;
+    weatherFetchedRef.current = Date.now();
     getWeather(userLocation.lat, userLocation.lng)
       .then(data => { if (data) setLiveWeather(data); })
       .catch(() => {});
@@ -5961,13 +5970,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // Load persisted calendar events on boot and every Plans visit (server is source of truth)
   const [calendarLoading, setCalendarLoading] = useState(true);
-  useEffect(() => {
+  // A failed read used to be swallowed, and the screen then showed "Nothing
+  // on this day" with the birds: the person's plans looked deleted. Named so
+  // the retry runs the same read the screen ran.
+  const [calendarError, setCalendarError] = useState('');
+  const loadCalendar = useCallback(() => {
     if (!isLoggedIn()) { setCalendarLoading(false); return; }
     setCalendarLoading(true);
+    setCalendarError('');
     getCalendarEvents()
       .then(rows => setCalendarEvents(Array.isArray(rows) ? rows : []))
-      .catch(() => {}) // offline/first-boot: keep whatever is local
+      .catch((err) => setCalendarError(err?.message || 'Your plans are not loading right now.'))
       .finally(() => setCalendarLoading(false));
+  }, []);
+  useEffect(() => {
+    loadCalendar();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentTab === 'calendar']);
 
@@ -7525,20 +7542,37 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // searching for something the app had not managed to ask about. Loading,
   // loaded and failed are now three separate answers, and the caller picks
   // between the featured list and a search by passing a query or not.
+  // Sequence per call: a keystroke fires a search every 400 ms and an
+  // earlier answer could land after a later one and overwrite it, with the
+  // spinner already cleared. Only the latest call may touch state.
+  const featuredSeqRef = useRef(0);
   const fetchFeaturedEvents = useCallback((locStr, query) => {
     if (!locStr) return;
+    const seq = ++featuredSeqRef.current;
     setFeaturedEventsLoading(true);
     setFeaturedEventsError('');
     const trimmed = (query || '').trim();
     const request = trimmed ? searchEvents(locStr, trimmed) : getFeaturedEvents(locStr, userInterests);
     request
-      .then(data => setFeaturedEvents(data.events || []))
+      .then(data => {
+        if (seq !== featuredSeqRef.current) return;
+        // The server answers a Ticketmaster failure with 200 and an empty
+        // list (cached briefly), flagged `degraded`. That is the list failing,
+        // not a quiet week, and it gets the error card with its retry.
+        if (data?.degraded) {
+          setFeaturedEvents(null);
+          setFeaturedEventsError('Ticketmaster is not answering right now.');
+          return;
+        }
+        setFeaturedEvents(data.events || []);
+      })
       .catch((err) => {
+        if (seq !== featuredSeqRef.current) return;
         console.error('[Events] Fetch failed:', err);
         setFeaturedEvents(null);
         setFeaturedEventsError(err?.message || "Events aren't loading right now.");
       })
-      .finally(() => setFeaturedEventsLoading(false));
+      .finally(() => { if (seq === featuredSeqRef.current) setFeaturedEventsLoading(false); });
   }, [userInterests]);
 
   // pullSettings() broadcasts the account's stored settings once it has them.
@@ -14487,7 +14521,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               <div style={{ flex: 1, position: 'relative' }}>
                 <input aria-label="Search events"
                   type="text"
-                  placeholder="Search concerts, games, shows..."
+                  placeholder={userLocation ? 'Search concerts, games, shows...' : 'Turn on location to search events'}
+                  disabled={!userLocation}
                   value={eventsSearchQuery}
                   onChange={(e) => {
                     setEventsSearchQuery(e.target.value);
@@ -14550,7 +14585,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '40px 20px' }}>
                 <EmptyMark name="steps" height={96} />
                 <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-secondary)', margin: '12px 0 4px' }}>Events need your location</p>
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Turn location on for Flock, or search for an event by name.</p>
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Turn location on for Flock to see what is on near you.</p>
                 {/* The sentence used to be the whole screen: a request with no
                     control. Same "Turn on" as the Discover banner. */}
                 <button className="hit44" onClick={() => { if (!locationEnabled) toggleLocation(true); else requestUserLocation(true); }} style={{ marginTop: '14px', minHeight: '44px', padding: '10px 16px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Turn on location</button>
@@ -14648,7 +14683,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                       )}
                       {event.price_range && (
                         <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>
-                          ${event.price_range.min}{event.price_range.max ? `\u2013$${event.price_range.max}` : '+'}
+                          {event.price_range.min === 0 && !event.price_range.max ? 'Free' : `$${fmtMoney(event.price_range.min)}${event.price_range.max ? `\u2013$${fmtMoney(event.price_range.max)}` : '+'}`}
                         </span>
                       )}
                     </div>
@@ -14656,7 +14691,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                     <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
                       <button className="hit44 glass-btn glass-navy" onClick={(e) => {
                         e.stopPropagation();
-                        setSelectedVenueForCreate({ name: event.venue_name || event.name, addr: event.venue_address, lat: event.location?.latitude, lng: event.location?.longitude, photo_url: event.image_url, event_name: event.name });
+                        setSelectedVenueForCreate({ name: event.venue_name || event.name, addr: event.venue_address, lat: event.location?.latitude, lng: event.location?.longitude, photo_url: event.image_url, event_name: event.name, event_date: event.date || null, event_time: event.time || null, event_datetime_utc: event.datetime_utc || null });
                         setShowEventsView(false);
                         setCurrentScreen('create');
                       }} style={{ flex: 1, padding: '9px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
@@ -14665,10 +14700,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                       <button className="hit44 glass-btn glass-secondary" onClick={(e) => {
                         e.stopPropagation();
                         setEventDetailLoading(true);
+                        setEventDetailError('');
                         setEventDetail({ ...event, photos: [], venue_details: null });
                         getEventDetails(event.id)
-                          .then(data => setEventDetail(data.event))
-                          .catch(() => {})
+                          // Merge, and keep the list's distance: the single-event
+                          // payload has none, so the miles line used to vanish.
+                          .then(data => setEventDetail(prev => ({ ...prev, ...(data?.event || {}), distance_miles: data?.event?.distance_miles ?? prev?.distance_miles ?? null })))
+                          .catch((err) => setEventDetailError(err?.message || 'The rest of this event did not load.'))
                           .finally(() => setEventDetailLoading(false));
                       }} style={{ padding: '9px 14px', borderRadius: '10px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                         {Icons.eye(colors.navy, 13)} Details
@@ -14839,7 +14877,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                     <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>{selectedDate.toLocaleDateString('en-US', { weekday: 'long' })}</p>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{selectedDate.toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}</p>
                     <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', marginTop: '4px', padding: '2px 8px', borderRadius: '10px', backgroundColor: isLive ? 'rgba(16,185,129,0.15)' : 'rgba(59,130,246,0.15)' }}>
-                      <div style={{ width: '5px', height: '5px', borderRadius: '50%', backgroundColor: isLive ? '#10b981' : '#3b82f6', animation: isLive ? 'pulse 2s ease-in-out infinite' : 'none' }} />
+                      <div style={{ width: '5px', height: '5px', borderRadius: '50%', backgroundColor: isLive ? '#10b981' : '#3b82f6' }} />
                       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: isLive ? '#10b981' : '#3b82f6' }}>{isLive ? 'LIVE' : 'FORECAST'}</span>
                     </div>
                   </div>
@@ -14911,6 +14949,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             /* Plans is built from flocks + saved calendar events, both fetched.
                "No events scheduled" waits for them. */
             <ListSkeleton label="Loading your plans" thumb={44} thumbRadius={10} />
+          ) : (calendarError || flocksError) ? (
+            <div style={{ ...styles.card, margin: '8px 0' }}>
+              <BirdNote
+                layout="row"
+                size={48}
+                bird={WARM_BIRD}
+                role="alert"
+                title={calendarError || flocksError}
+                body="Nothing has been cancelled. This is the list failing to load, not the list being empty."
+                action={<button className="hit44 glass-btn glass-navy" onClick={() => { loadFlocks(); loadCalendar(); }} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>}
+              />
+            </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '16px 20px 24px' }}>
               {/* 120, not the default 160: steps is nearly 3:1, so at this
@@ -14928,8 +14978,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           {showAddEvent && (
             <div style={{ ...styles.card, marginTop: '12px', border: `2px solid ${colors.navy}` }}>
               <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.plus(colors.navy, 14)} New Event</h4>
-              <SearchInputLocal aria-label="Event title" key="event-title" id="event-title" type="text" initialValue={newEventTitle} onCommit={setNewEventTitle} placeholder="Event title" style={{ ...styles.input, marginBottom: '8px' }} autoComplete="off" />
-              <SearchInputLocal aria-label="Venue (optional)" key="event-venue" id="event-venue" type="text" initialValue={newEventVenue} onCommit={setNewEventVenue} placeholder="Venue (optional)" style={{ ...styles.input, marginBottom: '10px' }} autoComplete="off" />
+              <SearchInputLocal aria-label="Event title" key="event-title" id="event-title" type="text" maxLength={120} initialValue={newEventTitle} onCommit={setNewEventTitle} placeholder="Event title" style={{ ...styles.input, marginBottom: '8px' }} autoComplete="off" />
+              <SearchInputLocal aria-label="Venue (optional)" key="event-venue" id="event-venue" type="text" maxLength={200} initialValue={newEventVenue} onCommit={setNewEventVenue} placeholder="Venue (optional)" style={{ ...styles.input, marginBottom: '10px' }} autoComplete="off" />
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
                 <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', flexShrink: 0 }}>Time</span>
                 <input aria-label="Time" type="time" value={newEventTime} onChange={(e) => setNewEventTime(e.target.value)} style={{ flex: 1, padding: '9px 12px', borderRadius: '10px', border: '1px solid var(--border-default)', fontSize: 'var(--t-body)', outline: 'none', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }} />
@@ -14945,7 +14995,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowAddEvent(false); setNewEventTitle(''); setNewEventVenue(''); setNewEventTime(''); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>Cancel</button>
-                <button className="hit44 glass-btn glass-navy" onClick={(e) => { if (newEventTitle.trim()) { confirmClick(e); const timeLabel = newEventTime ? new Date('1970-01-01T' + newEventTime + ':00').toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : 'TBD'; addEventToCalendar(newEventTitle, newEventVenue || 'TBD', selectedDate, timeLabel, (eventCategories.find(cat => cat.id === newEventCategory) || { color: colors.navy }).color); setNewEventTitle(''); setNewEventVenue(''); setNewEventTime(''); setShowAddEvent(false); }}} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 14)} Add</button>
+                <button className="hit44 glass-btn glass-navy" disabled={!newEventTitle.trim()} aria-disabled={!newEventTitle.trim()} onClick={(e) => { if (newEventTitle.trim()) { confirmClick(e); const timeLabel = newEventTime ? new Date('1970-01-01T' + newEventTime + ':00').toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : 'TBD'; addEventToCalendar(newEventTitle, newEventVenue || 'TBD', selectedDate, timeLabel, (eventCategories.find(cat => cat.id === newEventCategory) || { color: colors.navy }).color); setNewEventTitle(''); setNewEventVenue(''); setNewEventTime(''); setShowAddEvent(false); }}} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 14)} Add</button>
               </div>
             </div>
           )}
@@ -17963,7 +18013,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '10px 14px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)' }}>
                   {Icons.dollar(colors.navy, 18)}
                   <div>
-                    <p style={{ margin: 0, fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>${eventDetail.price_range.min}{eventDetail.price_range.max ? ` – $${eventDetail.price_range.max}` : '+'}</p>
+                    <p style={{ margin: 0, fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>${fmtMoney(eventDetail.price_range.min)}{eventDetail.price_range.max ? ` – $${fmtMoney(eventDetail.price_range.max)}` : '+'}</p>
                     <p style={{ margin: '2px 0 0', fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{eventDetail.price_range.currency}</p>
                   </div>
                 </div>
@@ -18009,9 +18059,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             )}
 
 
+            {eventDetailError && (
+              <p role="alert" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: 1.5 }}>
+                {eventDetailError}{' '}
+                <button className="hit44" onClick={() => { if (!eventDetail?.id) return; setEventDetailLoading(true); setEventDetailError(''); getEventDetails(eventDetail.id).then(data => setEventDetail(prev => ({ ...prev, ...(data?.event || {}), distance_miles: data?.event?.distance_miles ?? prev?.distance_miles ?? null }))).catch((err) => setEventDetailError(err?.message || 'The rest of this event did not load.')).finally(() => setEventDetailLoading(false)); }} style={{ background: 'none', border: 'none', padding: 0, color: colors.navy, fontWeight: '600', fontSize: 'inherit', cursor: 'pointer', textDecoration: 'underline' }}>Try again</button>
+              </p>
+            )}
             {/* Distance */}
             {eventDetail.distance_miles != null && Number.isFinite(Number(eventDetail.distance_miles)) && (
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500', marginBottom: '16px' }}>{Icons.mapPin(colors.steel, 12)} {Number(eventDetail.distance_miles).toFixed(1)} miles away</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500', marginBottom: '16px' }}>{Icons.mapPin(colors.steel, 12)} {(Number(eventDetail.distance_miles) * 1.609).toFixed(1)} km away</p>
             )}
           </div>
 
@@ -18019,7 +18075,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               so it carries the home-indicator inset. */}
           <div style={{ padding: '12px 16px calc(12px + var(--safe-bottom))', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-default)', display: 'flex', gap: '10px', flexShrink: 0 }}>
             <button className="hit44" onClick={() => {
-              setSelectedVenueForCreate({ name: eventDetail.venue_name || eventDetail.name, addr: eventDetail.venue_address, lat: eventDetail.location?.latitude, lng: eventDetail.location?.longitude, photo_url: eventDetail.image_url, event_name: eventDetail.name });
+              setSelectedVenueForCreate({ name: eventDetail.venue_name || eventDetail.name, addr: eventDetail.venue_address, lat: eventDetail.location?.latitude, lng: eventDetail.location?.longitude, photo_url: eventDetail.image_url, event_name: eventDetail.name , event_date: eventDetail.date || null, event_time: eventDetail.time || null, event_datetime_utc: eventDetail.datetime_utc || null});
               setEventDetail(null);
               setShowEventsView(false);
               setCurrentScreen('create');

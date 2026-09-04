@@ -197,14 +197,14 @@ test('failure: an HTTP 429/500 degrades to an empty 200 and never counts as a br
   for (const loc of ['39.74,-104.98', '45.00,-93.00', '35.00,-80.00']) {
     const res = await get(`/api/events/search?location=${loc}`);
     assert.strictEqual(res.status, 200, res.text);
-    assert.deepStrictEqual(res.body, { events: [], total: 0 });
+    assert.deepStrictEqual(res.body, { events: [], total: 0, degraded: true });
   }
   assert.strictEqual(eventsRouter.__test.breakerOpen(), false,
     'an HTTP error opened the unreachable-host breaker');
 
   const feat = await get('/api/events/featured?location=40.70,-74.00');
   assert.strictEqual(feat.status, 200, feat.text);
-  assert.deepStrictEqual(feat.body, { events: [], total: 0 });
+  assert.deepStrictEqual(feat.body, { events: [], total: 0, degraded: true });
 });
 
 test('failure: a malformed /featured top-up body keeps the events already fetched, not a 500', async () => {

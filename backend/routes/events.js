@@ -364,8 +364,9 @@ function mapEventCategory(classifications) {
 function formatPriceRange(priceRanges) {
   if (!priceRanges || !priceRanges[0]) return null;
   const p = priceRanges[0];
-  if (p.min && p.max) return { min: p.min, max: p.max, currency: p.currency || 'USD' };
-  if (p.min) return { min: p.min, max: null, currency: p.currency || 'USD' };
+  // Number.isFinite, not truthiness: a free event has min 0, and 0 is falsy.
+  if (Number.isFinite(p.min) && Number.isFinite(p.max)) return { min: p.min, max: p.max, currency: p.currency || 'USD' };
+  if (Number.isFinite(p.min)) return { min: p.min, max: null, currency: p.currency || 'USD' };
   return null;
 }
 
@@ -456,7 +457,7 @@ router.get('/search',
       }
 
       if (!TM_API_KEY) {
-        return res.status(500).json({ error: 'Ticketmaster API key not configured' });
+        return res.status(503).json({ error: 'Events are not set up on this server yet.' });
       }
 
       // Already proved to be a real coordinate by locationParam() above, so
@@ -497,7 +498,7 @@ router.get('/search',
       return res.status(out.status).json(out.body);
     } catch (err) {
       console.error('[Events] Search error:', err);
-      res.json({ events: [], total: 0 }); // graceful degradation — never 500 for events
+      res.json({ events: [], total: 0, degraded: true }); // graceful degradation — never 500 for events
     }
   }
 );
@@ -558,7 +559,9 @@ async function runSearch({ lat, lng, searchQuery, radiusMiles, categoryFilter, c
     // not the hour-long success TTL. A 429 lasts seconds.
     if (!responses[0].ok) {
       console.warn('[Events] Ticketmaster search returned', responses[0].status, '— returning empty');
-      const empty = { events: [], total: 0 };
+      // `degraded`: the client renders this as the events list failing, not as
+      // a quiet week. The 200 and the short negative cache stay.
+      const empty = { events: [], total: 0, degraded: true };
       setCache(cacheKey, empty, true);
       return { status: 200, body: empty };
     }
@@ -579,7 +582,7 @@ async function runSearch({ lat, lng, searchQuery, radiusMiles, categoryFilter, c
       return null;
     });
     if (!localData) {
-      const empty = { events: [], total: 0 };
+      const empty = { events: [], total: 0, degraded: true };
       setCache(cacheKey, empty, true);
       return { status: 200, body: empty };
     }
@@ -601,7 +604,7 @@ async function runSearch({ lat, lng, searchQuery, radiusMiles, categoryFilter, c
     // /search — but produced HERE so every coalesced waiter gets it. Not
     // cached: an unexpected error is not an answer.
     console.error('[Events] Search error:', err);
-    return { status: 200, body: { events: [], total: 0 } };
+    return { status: 200, body: { events: [], total: 0, degraded: true } };
   }
 }
 
@@ -619,7 +622,7 @@ router.get('/featured',
       }
 
       if (!TM_API_KEY) {
-        return res.status(500).json({ error: 'Ticketmaster API key not configured' });
+        return res.status(503).json({ error: 'Events are not set up on this server yet.' });
       }
 
       const { lat, lng } = parseLocation(req.query.location);
@@ -741,7 +744,7 @@ async function runFeatured({ lat, lng, normalizedInterests, cacheKey, userId }) 
       // FAILURE under the short negative TTL rather than the hour-long
       // success TTL. See NEGATIVE_TTL.
       console.warn('[Events] Featured: Ticketmaster', response.status, '— returning empty');
-      const empty = { events: [], total: 0 };
+      const empty = { events: [], total: 0, degraded: true };
       setCache(cacheKey, empty, true);
       return { status: 200, body: empty };
     }
@@ -753,7 +756,7 @@ async function runFeatured({ lat, lng, normalizedInterests, cacheKey, userId }) 
       return null;
     });
     if (!data) {
-      const empty = { events: [], total: 0 };
+      const empty = { events: [], total: 0, degraded: true };
       setCache(cacheKey, empty, true);
       return { status: 200, body: empty };
     }
@@ -813,7 +816,7 @@ router.get('/details',
       }
 
       if (!TM_API_KEY) {
-        return res.status(500).json({ error: 'Ticketmaster API key not configured' });
+        return res.status(503).json({ error: 'Events are not set up on this server yet.' });
       }
 
       const eventId = req.query.id;

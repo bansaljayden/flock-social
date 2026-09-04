@@ -517,7 +517,7 @@ test('events / CONNECTION LOST: a failed upstream is remembered briefly, not for
   tmImpl = () => ({ ok: false, status: 429, json: async () => ({}) });
   const first = await get('/api/events/search?location=39.74,-104.98');
   assert.strictEqual(first.status, 200, first.text);
-  assert.deepStrictEqual(first.body, { events: [], total: 0 });
+  assert.deepStrictEqual(first.body, { events: [], total: 0, degraded: true });
   assert.strictEqual(tmCalls.length, 1);
 
   const { CACHE_TTL, NEGATIVE_TTL } = eventsRouter.__test;
@@ -740,7 +740,7 @@ test('events / NOTHING: a body that will not parse is a failure, not a search wi
   tmImpl = () => ({ ok: true, status: 200, json: async () => { throw new Error('Unexpected end of JSON input'); } });
 
   const search = await get('/api/events/search?location=39.74,-104.98');
-  assert.deepStrictEqual(search.body, { events: [], total: 0 }, search.text);
+  assert.deepStrictEqual(search.body, { events: [], total: 0, degraded: true }, search.text);
   const callsAfterFirst = tmCalls.length;
   // Remembered as a FAILURE, so the retry is not a second invoice...
   await get('/api/events/search?location=39.74,-104.98');
