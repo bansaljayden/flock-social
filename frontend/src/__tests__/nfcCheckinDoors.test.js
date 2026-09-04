@@ -53,6 +53,7 @@ test('check-ins are visible to the sheet and the dashboard without a hardware se
 test('a signed-out tap is told the check-in is saved once they sign in', () => {
   expect(app).toMatch(/const \[checkinNote, setCheckinNote\] = useState\(\(\) => \(/);
   expect(app).toMatch(/'Sign in and this check-in is saved to your account\.'/);
-  expect(app).toMatch(/const noticeText = linkNote \|\| sessionNote \|\| \(!authUser \? checkinNote : ''\);/);
-  expect(app).toMatch(/setLinkNote\(''\); setSessionNote\(''\); setCheckinNote\(''\);/);
+  // The invite note shares the same bar since 2026-09-04.
+  expect(app).toMatch(/const noticeText = linkNote \|\| sessionNote \|\| \(!authUser \? \(checkinNote \|\| inviteNote\) : ''\);/);
+  expect(app).toMatch(/setLinkNote\(''\); setSessionNote\(''\); setCheckinNote\(''\); setInviteNote\(''\);/);
 });

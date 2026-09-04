@@ -19405,6 +19405,15 @@ const FlockApp = () => {
       ? 'Sign in and this check-in is saved to your account.'
       : ''
   ));
+  // Same for an invite link. The invite path is claimed now, so iOS hands it
+  // to the app,
+  // and a signed-out install used to open on a bare sign-in screen with no
+  // mention of the plan, the host, or why they were there.
+  const [inviteNote, setInviteNote] = useState(() => (
+    (typeof window !== 'undefined' && /^\/i\//.test(window.location?.pathname || ''))
+      ? 'Sign in and you will be taken straight into the plan you were invited to.'
+      : ''
+  ));
   // What the confirmation link in the signup email came back with, if this boot
   // is the one that followed it. See EMAIL_VERIFIED_COPY.
   const [linkNote, setLinkNote] = useState(() => EMAIL_VERIFIED_COPY[EMAIL_VERIFIED_OUTCOME] || '');
@@ -19596,7 +19605,7 @@ const FlockApp = () => {
   // them takes a notice prop.
   //
   // The link is the newer fact when both exist, so it wins.
-  const noticeText = linkNote || sessionNote || (!authUser ? checkinNote : '');
+  const noticeText = linkNote || sessionNote || (!authUser ? (checkinNote || inviteNote) : '');
   const notice = noticeText ? (
     <div
       role="status"
@@ -19613,7 +19622,7 @@ const FlockApp = () => {
         <button
           type="button"
           className="hit44"
-          onClick={() => { setLinkNote(''); setSessionNote(''); setCheckinNote(''); }}
+          onClick={() => { setLinkNote(''); setSessionNote(''); setCheckinNote(''); setInviteNote(''); }}
           style={{ flexShrink: 0, background: 'none', border: 'none', padding: '0 2px', color: 'rgba(241,237,224,0.6)', fontSize: '13px', fontWeight: 600, fontFamily: 'inherit', cursor: 'pointer' }}
         >
           Dismiss
