@@ -2339,11 +2339,21 @@ router.get('/this-week', requirePro, async (req, res) => {
         [placeId]
       ),
       pool.query(
+        // The fifth read of venue_reviews, and the only one that was counting
+        // the owner's own reviews. The other four apply this constant and its
+        // own comment says it exists so the rule is "one constant and not four
+        // hand-copied clauses". So an owner who reviewed their own bar five
+        // stars before claiming it saw 0 reviews on the Reviews tab and on the
+        // public card, and "1 new review, 5 stars on average" in the Pro weekly
+        // summary. The product had already ruled that is not a review.
+        //
+        // Aliased vr because the constant correlates on vr.
         `SELECT COUNT(*)::int AS this_week,
                 ROUND(AVG(rating)::numeric, 1) AS avg_rating
-           FROM venue_reviews
-          WHERE google_place_id = $1 AND COALESCE(is_hidden, false) = false
-            AND created_at >= NOW() - INTERVAL '7 days'`,
+           FROM venue_reviews vr
+          WHERE vr.google_place_id = $1 AND COALESCE(vr.is_hidden, false) = false
+            AND vr.created_at >= NOW() - INTERVAL '7 days'
+            ${NOT_OWNER_OF_THE_PLACE}`,
         [placeId]
       ),
       pool.query(

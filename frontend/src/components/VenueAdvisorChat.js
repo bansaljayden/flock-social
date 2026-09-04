@@ -1081,7 +1081,14 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
             {KEY_HINT}
           </p>
         )}
-        {!freeText && (
+        {/* "The suggested questions above still work" is only true when there
+            ARE suggested questions above. An unlinked or unverified venue is
+            answered with freeText false AND empty lead and groups, so the
+            modal pilot venue read a disabled box pointing at chips that were
+            not on the screen. The field is off there because the venue is not
+            verified, which is what offReason says a few rows up, so this note
+            has nothing to add and stands down. */}
+        {!freeText && (lead.length > 0 || groups.length > 0) && (
           <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '5px 0 0', lineHeight: 1.5 }}>
             {FREE_TEXT_OFF_NOTE}
           </p>

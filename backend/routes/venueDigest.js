@@ -127,6 +127,19 @@ router.post('/opt-out', tokenValidator, async (req, res) => {
     }
     const result = await applyOptOut(req.query.token);
     if (!result.ok) {
+      // `error` was computed by applyOptOut and read by nobody, so a database
+      // failure and a dead token gave the owner the same page: "That link has
+      // expired... no longer valid." The link was fine, `weekly` was still
+      // true, and next Monday sent again. This path also serves RFC 8058
+      // one-click, so Gmail recorded a failed unsubscribe against us. Same
+      // split routes/unsubscribe.js already makes.
+      if (result.error === 'server error') {
+        console.error('[venueDigest] opt-out write failed for a valid token');
+        return res.status(500).type('html').send(page(
+          'We could not save that',
+          'The link is fine. The request did not go through. Try again in a minute, or reply to the email and we will take you off the list by hand.'
+        ));
+      }
       return res.status(400).type('html').send(page(...BAD_TOKEN));
     }
     return res.status(200).type('html').send(page(...DONE));

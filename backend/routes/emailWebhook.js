@@ -172,10 +172,25 @@ router.post('/', async (req, res) => {
     // event this route has no opinion about.
     if (!reason) return res.status(200).json({ ok: true });
 
+    // 200 IS THE ANSWER THAT STOPS RESEND RETRYING, so it may only be given
+    // once the row is actually written. `ok === false` took no branch: a hard
+    // bounce arriving during a database blip was acknowledged as handled, never
+    // redelivered, and the dead address stayed mailable for good. That is the
+    // one failure this endpoint exists to prevent. A 500 asks for the event
+    // again, which is exactly what we want, and a duplicate suppression is a
+    // no-op. routes/unsubscribe.js already refuses to answer success on a
+    // failed write for the same reason.
+    let allWritten = true;
     for (const address of recipientsOf(data)) {
       const ok = await suppress(address, reason, detail);
-      if (ok) console.warn(`[emailWebhook] ${reason} recorded for ${maskAddress(address)}; Flock will not mail it again.`);
+      if (ok) {
+        console.warn(`[emailWebhook] ${reason} recorded for ${maskAddress(address)}; Flock will not mail it again.`);
+      } else {
+        allWritten = false;
+        console.error(`[emailWebhook] could not record ${reason} for ${maskAddress(address)}; asking for redelivery.`);
+      }
     }
+    if (!allWritten) return res.status(500).json({ error: 'Could not record the suppression' });
     return res.status(200).json({ ok: true });
   } catch (err) {
     console.error('[emailWebhook] event handling failed:', err.message);
