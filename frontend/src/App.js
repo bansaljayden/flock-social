@@ -4939,15 +4939,34 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     return true;
   }, []);
 
+  // `true` once the account's address is on the suppression list, which is a
+  // hard bounce or a spam report and is not something this app can take back
+  // off. Nothing about pressing the button again changes that answer, so the
+  // button goes away with the sentence that explains why.
+  const [verifyRefused, setVerifyRefused] = useState(false);
+
   const resendVerification = useCallback(async () => {
-    if (verifyCooldown > 0) return;
+    if (verifyCooldown > 0 || verifyRefused) return;
     setVerifyNote('');
     // Cooldown first so a double tap cannot get through; the server allows one
     // every 60 seconds and five an hour.
     setVerifyCooldown(60);
     try {
-      await resendVerificationEmail();
-      setVerifyNote('Sent. Check your inbox, and your spam folder.');
+      // A 200 IS NOT A SEND. The route reports `verificationSent` and
+      // `mailRefused` separately (routes/auth.js), and this handler read
+      // neither: a suppressed address answered 200 and this sheet said "Sent.
+      // Check your inbox" every sixty seconds forever, to somebody whose mail
+      // was never going to leave. SignupScreen has branched on both for weeks;
+      // this is the same flow's other copy, and honestSendAndSearchCopy only
+      // ever drove the auth screens, so it was never covered here.
+      const data = await resendVerificationEmail();
+      const sent = data?.verificationSent !== false;
+      if (data?.mailRefused) setVerifyRefused(true);
+      setVerifyNote(data?.mailRefused
+        ? 'We cannot mail this address: mail to it bounced or was reported as spam before. Email social@flockcorp.com from it and we will clear that.'
+        : sent
+          ? 'Sent. Check your inbox, and your spam folder.'
+          : 'That one did not go out either. Nothing is wrong with your account, and the link is still worth asking for.');
     } catch (e) {
       // The server now words this refusal with the real window (utils/retryAfter.js:
       // the resend budget's longest leg is a day, not "a few minutes"), so render
@@ -4956,7 +4975,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (e?.status === 429) setVerifyNote(e?.message || 'That is a lot of emails. Try again later.');
       else setVerifyNote(e?.message || 'Could not send it just now. Try again shortly.');
     }
-  }, [verifyCooldown]);
+  }, [verifyCooldown, verifyRefused]);
 
   // `quiet` is the automatic read on entering the tab: it still records the
   // failure in state, it just does not throw a toast at somebody who did not
@@ -17734,6 +17753,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     authUser,
     isDark,
     resendVerification,
+    verifyRefused,
     setVerifyPrompt,
     verifyCooldown,
     verifyNote,
