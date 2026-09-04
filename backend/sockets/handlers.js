@@ -1961,7 +1961,12 @@ function registerHandlers(io, socket) {
           [replyToId, user.id, receiverId]
         );
         replyRow = replyResult.rows[0] || null;
-        if (!replyRow) return; // foreign, hidden, or nonexistent reply target — drop the message
+        if (!replyRow) {
+          // Foreign, hidden, or nonexistent reply target. REST answers 400
+          // here; the socket used to drop the message with nothing said.
+          socket.emit('error', { message: 'That message is no longer there to reply to.' });
+          return;
+        }
       }
 
       // Same venue-card sanitizing as the flock send path (round 8).
@@ -2025,6 +2030,9 @@ function registerHandlers(io, socket) {
       ).catch(() => {});
     } catch (err) {
       console.error('send_dm error:', err);
+      // send_message says so; this one swallowed it, and the sender waited out
+      // the echo timer with no reason.
+      socket.emit('error', { message: 'Failed to send message' });
     }
   });
 
