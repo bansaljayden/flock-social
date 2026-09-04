@@ -371,9 +371,21 @@ function cityQuery(city, optional = {}) {
           AVG(crowd_level)::numeric(4,1) AS avg_user_crowd,
           COUNT(*)::int AS user_feedback_count,
           AVG((CASE crowd_level WHEN 1 THEN 20 WHEN 2 THEN 50 ELSE 80 END) - predicted_score)::numeric(5,2) AS avg_prediction_error
-        FROM venue_feedback
-        WHERE verified = true -- only presence-verified reports: unverified rows let Sybil accounts poison training features (REVIEW-ROUND5)
-        GROUP BY venue_place_id
+        FROM venue_feedback vf
+        WHERE vf.verified = true -- only presence-verified reports: unverified rows let Sybil accounts poison training features (REVIEW-ROUND5)
+          -- AND NOT AGAINST AN OWNER-SET CARD, the exclusion services/mlPredictor.js
+          -- applies to the same aggregate and this did not. A report left against a
+          -- card whose score came from the venue's own live slider is not model
+          -- error, and five features come out of this join, so training would fit
+          -- them on a population serving deliberately excludes. All of them are
+          -- constant today, so the cost is zero right now and it arms on the same
+          -- day the missing observed_date cutoff does.
+          AND NOT EXISTS (
+            SELECT 1 FROM served_predictions sp
+             WHERE sp.id = vf.served_prediction_id
+               AND sp.prediction_method = 'owner_report'
+          )
+        GROUP BY vf.venue_place_id
       ) fb ON fb.venue_place_id = v.google_place_id
       WHERE t.busyness_pct IS NOT NULL AND v.city = $1
         -- Unreachable while preflight() stands, and deliberately kept: if the

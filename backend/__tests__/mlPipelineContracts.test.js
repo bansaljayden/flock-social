@@ -195,8 +195,15 @@ test('an absent or dishonest incumbent comparison fails the gate', () => {
   assert.match(QUICK_EVAL, /legacy_admission = bool\(rt_pass and incumbent_pass\)/,
     'the legacy path must still AND incumbent_pass; a comparison that only prints is ' +
     'the same as no comparison');
-  assert.match(QUICK_EVAL, /gate_b_pass and incumbent is not None and incumbent\.get\('status'\) == 'compared'/,
-    'the GATE-B path may not admit without a real, compared incumbent');
+  // `incumbent_pass`, not `status`. compare_incumbent returns status='compared'
+  // together with a FALSE pass flag for the approximate_different_rows case,
+  // which is the same row COUNT over different y_actual, and it says so in a
+  // logger.error first. Testing the status admitted a comparison the comparator
+  // had explicitly failed, which contradicts that function's own header: an
+  // honest incumbent comparison is required on BOTH paths. The legacy path
+  // above already ANDs the flag.
+  assert.match(QUICK_EVAL, /gate_b_pass and incumbent is not None and incumbent_pass/,
+    'the GATE-B path may not admit on a comparison the comparator failed');
   assert.match(QUICK_EVAL, /overall_pass = bool\(floor_pass and admission_path is not None\)/,
     'the floor binds on both paths and no admission path means no ship');
   assert.match(QUICK_EVAL, /ML_ALLOW_NO_INCUMBENT/,
