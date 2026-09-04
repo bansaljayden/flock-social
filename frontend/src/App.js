@@ -10995,6 +10995,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     try {
       const payload = await exportMyData(exportPassword || undefined);
       const how = await deliverExport(payload);
+      if (how === 'cancelled') {
+        // They saw the share sheet and said no. The export slot is spent, so
+        // say what happened rather than closing the sheet on a success toast.
+        setExportError('Nothing was saved. Tap Get my data to open the share sheet again.');
+        return;
+      }
       setShowExportData(false);
       setExportPassword('');
       // Say which of the three actually happened. "Downloaded" after a
@@ -11007,7 +11013,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       );
     } catch (err) {
       const reauth = err?.data?.reauthRequired;
-      if (reauth === 'reauth') {
+      if (err?.status === 429) {
+        // A lockout or the export meter. The server's sentence names which;
+        // this used to fall into the "password is not right" branch.
+        setExportError(err?.message || 'Too many tries. Wait a few minutes and try again.');
+      } else if (reauth === 'reauth') {
         setExportNeedsReauth(true);
         setExportError('For your security, sign out and back in, then try again.');
       } else if (reauth === 'password') {

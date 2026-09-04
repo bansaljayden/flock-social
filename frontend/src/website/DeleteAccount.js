@@ -56,7 +56,7 @@ export default function DeleteAccount() {
       <section>
         <h2>In the app (fastest)</h2>
         <p>
-          Open Flock &rarr; <strong>Profile</strong> &rarr; <strong>Delete account</strong>, then
+          Open Flock &rarr; <strong>You</strong> (the last tab) &rarr; scroll to the bottom &rarr; <strong>Delete account</strong>, then
           type DELETE to confirm. If your account has a password, you'll enter it to prove it's
           you. If you sign in with Apple or Google, you may be asked to sign in again first.
           Your account and data are then deleted immediately.

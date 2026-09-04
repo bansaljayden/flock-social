@@ -483,8 +483,8 @@ export default function TermsOfService() {
       <section>
         <h2>12. Termination, bans, and deleting your account</h2>
         <p>
-          You may stop using Flock and delete your account at any time from the app (Profile
-          &rarr; Delete account) or via our <a href="/delete-account">account deletion page</a>.
+          You may stop using Flock and delete your account at any time from the app (You
+          &rarr; Delete account, at the bottom of that tab) or via our <a href="/delete-account">account deletion page</a>.
           Deleting your account also deletes every flock you created, including its chat,
           RSVPs, and votes, for everyone who was in it, and it removes your direct message
           threads from the other person's app as well. Deletion is irreversible. Our{' '}

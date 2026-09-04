@@ -2163,6 +2163,7 @@ router.post('/signup', signupValidation, async (req, res) => {
     // A Resend outage must therefore NOT fail a signup that already committed —
     // the user can ask for a new link from inside the app.
     let verificationSent = false;
+    let mailRefused = false;
     try {
       const budget = await verificationSendBudget(user.id, req.ip);
       if (budget.ipHour >= RESEND_MAX_PER_HOUR_IP) {
@@ -2170,6 +2171,7 @@ router.post('/signup', signupValidation, async (req, res) => {
       } else {
         const sendResult = await sendVerification(user, req.ip);
         verificationSent = sendResult.sent === true;
+        mailRefused = sendResult.refused === true;
       }
     } catch (mailErr) {
       console.error('[auth] verification send failed at signup:', mailErr.message);
@@ -2177,7 +2179,10 @@ router.post('/signup', signupValidation, async (req, res) => {
 
     const token = signUserToken(user);
 
-    res.status(201).json({ token, user, emailVerificationRequired: true, verificationSent });
+    // mailRefused: the address is on the do-not-mail list (a bounce or a spam
+    // report on an earlier account). Asking again cannot help, and the screen
+    // used to say the link was still worth asking for.
+    res.status(201).json({ token, user, emailVerificationRequired: true, verificationSent, mailRefused });
   } catch (err) {
     console.error('Signup error:', err);
     res.status(500).json({ error: 'Failed to create account' });
@@ -2288,7 +2293,7 @@ router.post('/resend-verification', authenticate, async (req, res) => {
     }
 
     const sendResult = await sendVerification(user, req.ip);
-    res.json({ message: 'Sent. Check your inbox.', verificationSent: sendResult.sent === true });
+    res.json({ message: 'Sent. Check your inbox.', verificationSent: sendResult.sent === true, mailRefused: sendResult.refused === true });
   } catch (err) {
     console.error('Resend verification error:', err);
     res.status(500).json({ error: 'Could not send a new link' });
@@ -2575,7 +2580,7 @@ router.get('/me', authenticate, async (req, res) => {
       // person who wrote it exactly like a bio that never saved. It is content
       // the user typed about themselves, not a secret, so it belongs in the
       // response for the same reason /api/users/profile returns it.
-      `SELECT id, email, name, phone, interests, role, profile_image_url, bio, venmo_username, cashapp_cashtag, zelle_identifier, email_verified, created_at, updated_at
+      `SELECT id, email, name, phone, interests, role, profile_image_url, bio, venmo_username, cashapp_cashtag, zelle_identifier, email_verified, created_at, updated_at, oauth_provider
        FROM users WHERE id = $1`,
       [req.user.id]
     );
@@ -2584,7 +2589,12 @@ router.get('/me', authenticate, async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    res.json({ user: result.rows[0] });
+    // How this account signs in, so the export and delete sheets can stop
+    // asking an Apple or Google account for a password it never had. The
+    // provider name is not itself sent; only the method.
+    const { oauth_provider: provider, ...user } = result.rows[0];
+    user.sign_in_method = provider || 'password';
+    res.json({ user });
   } catch (err) {
     console.error('Get current user error:', err);
     res.status(500).json({ error: 'Failed to get user' });

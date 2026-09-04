@@ -52,7 +52,7 @@ export function assertNoInlineImages(text) {
 
 /**
  * Hand the export to the person. Resolves to how it was delivered:
- * 'shared' | 'downloaded' | 'copied', or throws if every route failed.
+ * 'shared' | 'cancelled' | 'downloaded' | 'copied', or throws if every route failed.
  */
 export async function deliverExport(payload, deps = {}) {
   const {
@@ -83,7 +83,9 @@ export async function deliverExport(payload, deps = {}) {
       // A share the person CANCELS throws AbortError, and that is not a failure
       // to fall through on: they saw the sheet and said no. Anything else means
       // the route did not work and the next one should be tried.
-      if (err && err.name === 'AbortError') return 'shared';
+      // Said as cancelled, not shared: the sheet stays open and no toast
+      // claims the data is ready to save when nothing was saved.
+      if (err && err.name === 'AbortError') return 'cancelled';
     }
   }
 
