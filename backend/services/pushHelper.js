@@ -423,7 +423,12 @@ async function canNotify(userId, data = {}) {
     const row = r.rows[0];
     if (!row) return false;        // the account was deleted
     if (row.is_banned) return false; // no pulling a banned user back into an app that rejects them
-    if (row.actor_banned) return false; // a removed account does not get to keep announcing itself
+    // A removed account does not get to keep announcing itself, with one
+    // exception: an SOS or its stand-down. routes/safety.js deliberately
+    // authenticates a banned user for those (a banned person in danger is
+    // still a person in danger), and this clause was silently dropping the
+    // flock leg it had just allowed. The block check above still applies.
+    if (row.actor_banned && !RINGS_THROUGH_THE_NIGHT.has(data?.type)) return false;
     return row.can_see !== false;
   } catch (err) {
     // FAIL CLOSED. This was the one block-enforcement point in the codebase

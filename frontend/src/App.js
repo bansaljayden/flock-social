@@ -755,6 +755,11 @@ const OfflineGate = () => {
         <h1 style={{ fontFamily: 'var(--font-display, Georgia)', fontSize: 'var(--t-display)', fontWeight: '600', color: '#f1ede0', margin: '0 0 6px', letterSpacing: '-0.005em' }}>You're offline</h1>
         <p style={{ fontSize: 'var(--t-body)', color: 'rgba(241,237,224,0.55)', margin: 0 }}>Your plans are safe. Flock reconnects on its own.</p>
       </div>
+      {/* The one thing this screen must never cover. The gate sits over the
+          whole app whenever the browser says it is offline, which hid the SOS
+          button and the sheet's own Call 911 from exactly the person in a
+          dead zone who needs them. A phone call does not need the network. */}
+      <a className="hit44" href="tel:911" style={{ display: 'inline-block', padding: '12px 28px', borderRadius: '12px', backgroundColor: '#c8372d', color: '#ffffff', fontSize: 'var(--t-body)', fontWeight: '600', textDecoration: 'none' }}>Call 911</a>
       <FlockBirdGame />
       <button className="hit44"
         onClick={retry}
