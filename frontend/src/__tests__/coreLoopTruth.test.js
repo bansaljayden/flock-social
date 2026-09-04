@@ -78,3 +78,11 @@ test('the invite link is claimed and routed', () => {
   expect(aasa).not.toMatch(/'\/i\/\*', exclude: true/);
   expect(app).toMatch(/\} else if \(intent\.screen === 'invite' && intent\.token\) \{[\s\S]{0,400}rememberInvite\(intent\.token\);\s*loadFlocks\(\);/);
 });
+
+test('a chat venue card shows your vote and can take it back', () => {
+  expect(app).toMatch(/const VenueCard = React\.memo\(\(\{ venue, onViewDetails, onVote, voted = false,/);
+  expect(app).toMatch(/\{voted \? 'Voted' : 'Vote for This'\}/);
+  expect(app).toMatch(/aria-pressed=\{voted\}/);
+  expect(chat).toMatch(/voted=\{\(flock\.votes \|\| \[\]\)\.some\(v => v\.venue === m\.venue_data\.name && \(v\.voters \|\| \[\]\)\.includes\('You'\)\)\}/);
+  expect(chat).toMatch(/if \(existingVote && \(existingVote\.voters \|\| \[\]\)\.includes\('You'\)\) \{/);
+});
