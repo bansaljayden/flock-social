@@ -544,7 +544,7 @@ describe('the Share a Venue sheet when nothing loaded', () => {
 // ---------------------------------------------------------------------------
 const inviteHandlerBody = (() => {
   const OPEN = 'const handleSendFlockInvites = useCallback(async () => {';
-  const CLOSE = '}, [flockInviteSelected, selectedFlockId, showToast]);';
+  const CLOSE = '}, [flockInviteSelected, selectedFlockId, showToast, needsEmailVerification]);';
   const start = APP_SOURCE.indexOf(OPEN);
   if (start === -1) throw new Error('handleSendFlockInvites: opening line moved');
   const end = APP_SOURCE.indexOf(CLOSE, start);
@@ -556,6 +556,9 @@ function runInviteHandler(scope) {
   const names = [
     'flockInviteSelected', 'selectedFlockId', 'setFlockInviteSending',
     'inviteToFlock', 'showToast', 'setShowFlockInviteModal',
+    // The confirm-your-email branch (2026-09-04): answers false here, so
+    // every existing expectation about the generic toast still holds.
+    'needsEmailVerification',
     'setFlockInviteSelected', 'setFlockInviteSearch',
   ];
   // eslint-disable-next-line no-new-func
@@ -569,6 +572,7 @@ const inviteScope = (over = {}) => ({
   setFlockInviteSending: jest.fn(),
   inviteToFlock: jest.fn().mockResolvedValue({ invited: [3, 4] }),
   showToast: jest.fn(),
+  needsEmailVerification: jest.fn(() => false),
   setShowFlockInviteModal: jest.fn(),
   setFlockInviteSelected: jest.fn(),
   setFlockInviteSearch: jest.fn(),

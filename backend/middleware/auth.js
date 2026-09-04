@@ -204,7 +204,13 @@ const UNVERIFIED_DENY = [
   //    decision to leave POST /api/feedback OFF the list rests on the premise
   //    that an unverified account cannot manufacture flock-membership evidence
   //    — a premise that a second, ungated join route would have quietly broken.
-  { method: 'POST', pattern: /^\/api\/guest\/[^/]+\/join$/ },];
+  { method: 'POST', pattern: /^\/api\/guest\/[^/]+\/join$/ },
+  //    The venue side's two doors. Both mount requireVerified explicitly in
+  //    routes/venueProfile.js; this is the second gate every other door on
+  //    this list has, for the reason the header of this list gives.
+  { method: 'POST', pattern: /^\/api\/venue-profile$/ },
+  { method: 'POST', pattern: /^\/api\/venue-profile\/request-verification$/ },
+];
 
 const UNVERIFIED_MESSAGE =
   'Confirm your email to do this. Check your inbox for the link we sent, or ask for a new one.';
