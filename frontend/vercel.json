@@ -242,7 +242,6 @@
 
   "redirects": [
     {
-      "_comment": "AI crawlers asking for the home page. Vercel gives the filesystem precedence over rewrites (its docs: 'precedence is given to the filesystem prior to rewrites being applied'), so the rewrite that served / to crawlers as a static document never ran: the built index.html answered first and the shell went out with no words in it. Redirects run before the filesystem, and /landing is the same page for a person (index.js) and, for a crawler, the static mirror via the rewrite below. 307, never 308: a permanent answer would outlive this workaround.",
       "source": "/",
       "has": [
         {
