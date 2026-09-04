@@ -11123,9 +11123,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // to fire on the return, not during the absence), and, for the case where
   // none of those ever moves (one 502 at the gateway while the socket never
   // dropped), a slow tick. Everything is gated on an error actually being
-  // present, so a healthy list is never refetched on any of these, and the
-  // tick stops mattering the moment a load succeeds because the error it is
-  // gated on clears.
+  // present, so a healthy list is never refetched on any of these (the one
+  // exception is the reconnect edge, handled just below), and the tick stops
+  // mattering the moment a load succeeds because the error it is gated on
+  // clears.
   useEffect(() => {
     const recoverLists = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
@@ -11144,6 +11145,43 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       clearInterval(tick);
     };
   }, [reconnectTick, flocksError, dmsError, loadFlocks, loadDmConversations]);
+
+  // A reconnect is a GAP, not just a recovery. The socket was down, and every
+  // event sent in the meantime is gone for good: nothing replays a plan being
+  // cancelled, a member leaving, an invite arriving or a DM starting. The
+  // catch-up above re-reads the open conversation for exactly that reason;
+  // the lists were not covered, because the effect above only refetches a
+  // list that is in an ERROR state. socket.js releases the connection on
+  // purpose while the document is hidden, so a phone that spent an hour in a
+  // pocket reconnected on the way back and then showed a plan that no longer
+  // existed, missing one that did, until the next remount. Both loaders are
+  // silent on a populated list (the skeleton only draws while it is empty),
+  // so this costs two requests per genuine reconnect and no flash. Hidden at
+  // the moment of the tick (a reconnect the OS let happen in the background)
+  // holds the intent and flushes it on the return, the same shape as
+  // runCatchUp, rather than spending the request on a screen nobody can see
+  // or losing the gap.
+  const listsGapPendingRef = useRef(false);
+  useEffect(() => {
+    if (!reconnectTick) return;
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      listsGapPendingRef.current = true;
+      return;
+    }
+    listsGapPendingRef.current = false;
+    loadFlocks();
+    loadDmConversations();
+  }, [reconnectTick, loadFlocks, loadDmConversations]);
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible' || !listsGapPendingRef.current) return;
+      listsGapPendingRef.current = false;
+      loadFlocks();
+      loadDmConversations();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
+  }, [loadFlocks, loadDmConversations]);
 
   useEffect(() => { loadDmConversations(); }, [loadDmConversations]);
 
