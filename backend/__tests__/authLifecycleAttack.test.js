@@ -314,6 +314,16 @@ pool.query = async (text, params = []) => {
   }
 
   // ---- password_resets / password_reset_requests -------------------------
+  // Retiring a SUPERSEDED link deletes it rather than stamping used_at, so
+  // /reset-password/check can tell "a newer one replaced this" apart from "this
+  // one was spent". Both credential-change paths delete them too.
+  if (sql.startsWith('DELETE FROM password_resets WHERE user_id')) {
+    const before = resets.length;
+    for (let i = resets.length - 1; i >= 0; i -= 1) {
+      if (resets[i].user_id === params[0] && !resets[i].used_at) resets.splice(i, 1);
+    }
+    return ok({ rows: [], rowCount: before - resets.length });
+  }
   if (sql.startsWith('INSERT INTO password_resets')) {
     resets.push({
       id: resets.length + 1, user_id: params[0], selector: params[1],
@@ -982,7 +992,14 @@ test('C2 — a reset link is single-use, expiring, and bound to the address it w
     assert.notStrictEqual(first, second);
     const r = await post('/api/auth/reset-password', { token: first, password: 'Retired111' });
     assert.strictEqual(r.status, 400);
-    assert.strictEqual((await r.json()).reason, 'used');
+    // 'invalid', not 'used'. The security property is unchanged and is the line
+    // above: the retired link is refused. What changed is what the person is
+    // TOLD. Retiring and spending both wrote used_at, so the check route could
+    // not tell them apart, and the copy behind 'used' warns that somebody else
+    // opened the link. Asking twice and opening the older mail is ordinary, and
+    // it raised a break-in alarm about nobody. A superseded row is deleted now,
+    // and 'invalid' already says the true thing: only the newest link works.
+    assert.strictEqual((await r.json()).reason, 'invalid');
     assert.strictEqual((await post('/api/auth/reset-password', { token: second, password: 'Retired111' })).status, 200);
   }
 

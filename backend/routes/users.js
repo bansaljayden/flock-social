@@ -1466,7 +1466,18 @@ router.put('/profile',
       // lives indefinitely in user:{id}, where every DM, flock message and
       // location update is delivered. Without this the person you changed your
       // password to evict keeps reading your traffic in real time.
-      if (hashedPassword) revokeUserSessions(req.app.get('io'), req.user.id);
+      if (hashedPassword) {
+        revokeUserSessions(req.app.get('io'), req.user.id);
+        // And retire any outstanding reset link. Changing the password in
+        // Settings is the other way somebody answers "I think my password is
+        // known", and a live link in their inbox overwrites the new password
+        // and re-revokes every session for the rest of its hour.
+        // Not awaited into the response: the password is already changed and
+        // the sessions are already gone, so a failure here must not report the
+        // change itself as failed.
+        pool.query('DELETE FROM password_resets WHERE user_id = $1 AND used_at IS NULL', [req.user.id])
+          .catch((e) => console.error(`[users] reset link retirement failed for user ${req.user.id}:`, e.message));
+      }
 
       const { token_version: _tv, ...safeUser } = result.rows[0];
       res.json({

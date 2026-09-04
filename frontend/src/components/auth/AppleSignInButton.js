@@ -40,7 +40,12 @@ const AppleSignInButton = ({ onSuccess, onError, dob, beforeAuthorize }) => {
       const { SignInWithApple } = await import('@capacitor-community/apple-sign-in');
       const result = await SignInWithApple.authorize({
         clientId: 'com.flockcorp.flock',
-        redirectURI: 'https://flock-app-production.up.railway.app/api/auth/apple',
+        // api.flockcorp.com, not the Railway-generated host. Inert today (the
+        // native ASAuthorization path ignores redirectURI and the button is
+        // gated on iOS), but the Railway name is an implementation detail that
+        // changes if the service is ever recreated, which is the reasoning
+        // services/emailService.js already pins for every other URL we mint.
+        redirectURI: 'https://api.flockcorp.com/api/auth/apple',
         scopes: 'email name',
       });
       const r = result?.response;

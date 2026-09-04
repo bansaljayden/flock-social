@@ -162,6 +162,16 @@ pool.query = async (text, params = []) => {
   }
 
   // ---- password_resets ----------------------------------------------------
+  // Retiring a SUPERSEDED link deletes it rather than stamping used_at, so
+  // /reset-password/check can tell "a newer one replaced this" apart from "this
+  // one was spent". Both credential-change paths delete them too.
+  if (sql.startsWith('DELETE FROM password_resets WHERE user_id')) {
+    const before = resets.length;
+    for (let i = resets.length - 1; i >= 0; i -= 1) {
+      if (resets[i].user_id === params[0] && !resets[i].used_at) resets.splice(i, 1);
+    }
+    return { rows: [], rowCount: before - resets.length };
+  }
   if (sql.startsWith('DELETE FROM password_resets')) {
     tokenSweeps.push({ sql, params });
     if (sweepBehaviour === 'fail') throw new Error('sweep exploded');
