@@ -31,7 +31,11 @@ test('the guest page ranks by the same weighting members see', () => {
 
 test('the invite URL uses the hardened base, not a preview domain', () => {
   expect(flocks).toMatch(/const \{ baseWebUrl \} = require\('\.\.\/services\/emailService'\);/);
-  expect(flocks).toMatch(/const base = baseWebUrl\(\);/);
+  // inviteBase: baseWebUrl in production, and a local http origin honoured
+  // outside it so a local deployment does not mint flockcorp.com links.
+  expect(flocks).toMatch(/const base = inviteBase\(\);/);
+  expect(flocks).toMatch(/function inviteBase\(\) \{/);
+  expect(flocks).toMatch(/if \(process\.env\.NODE_ENV !== 'production' && \/\^https\?:/);
   expect(flocks).not.toMatch(/flock-app-w65m\.vercel\.app/);
 });
 
