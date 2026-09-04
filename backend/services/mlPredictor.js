@@ -1185,7 +1185,20 @@ async function getUserFeedback(placeId, userId) {
         AVG(crowd_level - predicted_score)::numeric(5,2) AS avg_error_legacy
       -- verified only: unverified rows are stored for product UX but must not
       -- move live predictions (round 6 — the round-5 filters missed this one)
-      FROM venue_feedback WHERE venue_place_id = $1 AND verified = true`,
+      --
+      -- AND NOT AGAINST AN OWNER-SET CARD. The root fix is in routes/feedback.js,
+      -- which no longer resolves a served prediction whose method is
+      -- 'owner_report'. This is the backstop for rows already written, and for
+      -- any future writer that forgets: a comparison against a number the model
+      -- did not produce is not model error, and this average has no time bound,
+      -- so one bad row steers the venue's anchor for good.
+      FROM venue_feedback vf
+      WHERE vf.venue_place_id = $1 AND vf.verified = true
+        AND NOT EXISTS (
+          SELECT 1 FROM served_predictions sp
+           WHERE sp.id = vf.served_prediction_id
+             AND sp.prediction_method = 'owner_report'
+        )`,
       [placeId]
     );
     const r = rows[0];
