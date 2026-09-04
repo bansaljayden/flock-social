@@ -228,8 +228,8 @@ async function dispatch(text, params = [], sink) {
   if (has("FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'")) {
     return { rows: [{ id: 1 }], rowCount: 1 };
   }
-  if (has('SELECT creator_id, name, budget_enabled FROM flocks')) {
-    return { rows: [{ creator_id: 1, name: 'Dinner', budget_enabled: true }], rowCount: 1 };
+  if (has('SELECT creator_id, name, budget_enabled, budget_locked FROM flocks')) {
+    return { rows: [{ creator_id: 1, name: 'Dinner', budget_enabled: true, budget_locked: false }], rowCount: 1 };
   }
   if (has('FROM flock_members fm JOIN users u ON u.id = fm.user_id')) {
     return { rows: [{ id: 2, name: 'Bob' }], rowCount: 1 };

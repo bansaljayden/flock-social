@@ -8820,10 +8820,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const members = accepted
         .filter(m => !blockedIdsRef.current.has(String(m.id)))
         .map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null }));
-      // The server's accepted count still counts the people we just hid, so the
-      // headcount has to come down with them. "3 going" over two faces is the
-      // kind of mismatch that makes someone go looking for the third.
-      const hidden = accepted.length - members.length;
+      // The headcount has to come down with the faces. "3 going" over two faces
+      // is the kind of mismatch that makes someone go looking for the third.
+      //
+      // Measured against the SERVER'S count, not against `accepted`. This route
+      // returns `members: visibleMembers`, already block-filtered server-side,
+      // so `accepted` is the post-strip list and `accepted.length - members.length`
+      // was almost always 0: the subtraction that keeps the headcount honest
+      // subtracted nothing, and the header went on saying 4 going over three
+      // faces. `member_count` is the unfiltered accepted count in the same body.
+      const hidden = Math.max(0, (data.flock?.member_count ?? accepted.length) - members.length);
       // Guests RSVP from the public share link and have no account. They
       // belong in the roster and in "going", but deliberately NOT in
       // flock.members: that array feeds the bill-split payer picker and the
@@ -8842,10 +8848,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             members,
             guests,
             memberCount: Math.max(0, (data.momentum?.accepted ?? accepted.length) - hidden),
-            // The bill divides by the server's accepted roster, blocks included,
-            // so this is the count BEFORE the blocked strip above. Hiding a
+            // The bill divides by the server's accepted roster, blocks
+            // included, so this is the count BEFORE the strip above. Hiding a
             // blocked member from the faces must not shrink everybody's share.
-            billableCount: accepted.length,
+            //
+            // `accepted.length` was NOT that count and the comment above it said
+            // it was. GET /api/flocks/:id returns `members: visibleMembers`,
+            // already block-filtered server-side, so `accepted` is the POST-strip
+            // list, `hidden` a few lines up is always 0, and this was short by
+            // every blocked member. A four-member flock where you have blocked
+            // one previewed "$40.00 each" on a $120 bill and the server came
+            // back with $30.00, on a screen whose own header said 4 going.
+            // `member_count` is the unfiltered accepted count, in the same
+            // response, and is what routes/billing.js divides by.
+            billableCount: data.flock?.member_count ?? accepted.length,
             // momentum is left as the server sent it on purpose: it drives a
             // progress stage ("has two or more people"), not a headcount, and
             // a blocked member is still coming to the thing.
@@ -9574,11 +9590,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     });
     const unsubGhost = onGhostCommitted((data) => {
       if (data.flockId === selectedFlockId) {
-        setBillSplit(prev => prev ? { ...prev, shares: prev.shares.map(s => s.userId === data.userId ? { ...s, committed: true } : s) } : prev);
+        // A first commit CREATES a bill_split_shares row, so mapping over the
+        // rows we already hold cannot introduce it: every other member's sheet
+        // kept the old row set, and with the tally now read off `shares` the
+        // counts under it were short too. The committer refetches for
+        // themselves; everybody else needs the same read when the id is new.
+        setBillSplit(prev => {
+          if (!prev) return prev;
+          const known = (prev.shares || []).some(s => String(s.userId) === String(data.userId));
+          if (!known) {
+            loadMoneyState(selectedFlockId);
+            return prev;
+          }
+          return { ...prev, shares: prev.shares.map(s => s.userId === data.userId ? { ...s, committed: true } : s) };
+        });
       }
     });
     return () => { unsubBudget(); unsubLocked(); unsubReminder(); unsubBillCreated(); unsubSettled(); unsubUnsettled(); unsubFullySettled(); unsubGhost(); };
-  }, [selectedFlockId, showToast]);
+  }, [selectedFlockId, showToast, loadMoneyState]);
 
   // Listen for real-time venue votes
   useEffect(() => {

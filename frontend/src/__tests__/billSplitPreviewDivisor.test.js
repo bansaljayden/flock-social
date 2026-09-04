@@ -23,12 +23,18 @@ test('every flock loader carries the server member_count as billableCount', () =
   expect(billable.length).toBe(3);
 });
 
-test('the roster refresh keeps the pre-strip accepted count for billing', () => {
+test('the roster refresh divides by the count the server divides by', () => {
   const app = read('App.js');
-  expect(app).toMatch(/billableCount: accepted\.length,/);
-  // and the strip that hides blocked members still exists, so the two numbers
-  // are genuinely different things rather than the same value twice
-  expect(app).toMatch(/const hidden = accepted\.length - members\.length;/);
+  // `accepted.length` was NOT the pre-strip count, which is what this test used
+  // to assert and what the comment beside it claimed. GET /api/flocks/:id
+  // returns `members: visibleMembers`, already block-filtered on the server, so
+  // `accepted` is the POST-strip list: the preview was short by every blocked
+  // member and quoted a share the server would not create.
+  expect(app).toMatch(/billableCount: data\.flock\?\.member_count \?\? accepted\.length,/);
+  expect(app).not.toMatch(/billableCount: accepted\.length,/);
+  // The same mistake made `hidden` zero, so the headcount stopped coming down
+  // with the faces. It is measured against the server's count now.
+  expect(app).toMatch(/const hidden = Math\.max\(0, \(data\.flock\?\.member_count \?\? accepted\.length\) - members\.length\);/);
 });
 
 test('the bill-split preview divides by billableCount first', () => {

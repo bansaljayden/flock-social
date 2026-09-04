@@ -162,6 +162,36 @@ export function groupReactions(reactions) {
   return [...byEmoji.values()];
 }
 
+/**
+ * How much of a bill is settled, RIGHT NOW.
+ *
+ * `GET /api/billing/:flockId` sends `fullySettled`, `settledCount` and
+ * `shareCount`, and the sheet read them with `??`, which only falls back on
+ * null or undefined. So after the first read those three were frozen: every
+ * settle path afterwards rewrites `shares` and touches none of them, local
+ * settle and unsettle included, and both socket handlers included. A three
+ * person bill therefore read "1/3 settled" while the row turned green and the
+ * "Everyone's settled up" toast arrived, and the All settled up panel never
+ * rendered until the chat was left and re-entered. The same row contradicted
+ * itself, too: the icon colour beside it used the raw `shares` test with no
+ * `??` and was right while the sentence beside it was wrong.
+ *
+ * `shares` is the array every one of those paths updates, so it is the answer.
+ * The server counts stay as the fallback for a body that carried no shares.
+ */
+const billTally = (bill) => {
+  const shares = Array.isArray(bill?.shares) ? bill.shares : null;
+  if (shares && shares.length) {
+    const settled = shares.filter((sh) => sh.settled).length;
+    return { settled, total: shares.length, all: settled === shares.length };
+  }
+  return {
+    settled: bill?.settledCount ?? 0,
+    total: bill?.shareCount ?? 0,
+    all: !!bill?.fullySettled,
+  };
+};
+
 export default function ChatDetail({
   // Module-level helpers, constants and components that live in App.js and
   // are shared with screens other than this one, so they stay declared there
@@ -472,6 +502,12 @@ export default function ChatDetail({
     // PUT /api/flocks/:id is creator-only. The venue controls below are the
     // same route the vote panel's Confirm button already gates on this.
     const isCreator = String(flock.creatorId) === String(authUser?.id);
+    // Read once here so the header bar and the sheet below cannot disagree.
+    const billBar = billTally(billSplit);
+    // A ghost commit creates a REAL bill_splits row with paid_by NULL, so it is
+    // not "no bill yet": it is a shell holding estimates from the group budget,
+    // and the server marks it hasPayer: false.
+    const billSplitIsShell = !!billSplit && billSplit.hasPayer === false;
     // The composer's arming condition, read by the Send button and by the
     // Enter key so the two cannot disagree about what is sendable. It is an
     // AND of two facts owned by two places and it needs both. App.js's
@@ -865,11 +901,16 @@ export default function ChatDetail({
         {billSplit && (
           <div role="button" tabIndex={0} aria-label="Open bill split details" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowChatPool(true); } }} onClick={() => setShowChatPool(true)} style={{ padding: '8px 14px', background: billSplit.shares?.every(s => s.settled) ? 'linear-gradient(135deg, #ecfdf5, #d1fae5)' : `linear-gradient(135deg, ${colors.navy}06, ${colors.navy}12)`, borderBottom: '1px solid var(--divider)', flexShrink: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              {Icons.dollar((billSplit.fullySettled ?? billSplit.shares?.every(s => s.settled)) ? '#22C55E' : colors.navy, 13)}
+              {Icons.dollar(billBar.all ? '#22C55E' : colors.navy, 13)}
               <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>
-                {(billSplit.fullySettled ?? billSplit.shares?.every(s => s.settled))
+                {billBar.all
                   ? 'All settled up'
-                  : `Bill: $${billSplit.totalWithTip?.toFixed(2)} · ${billSplit.settledCount ?? billSplit.shares?.filter(s => s.settled).length}/${billSplit.shareCount ?? billSplit.shares?.length} settled`}
+                  /* The amount is withheld on a shell whose flock has fallen
+                     under three present sharers (billing.js sends null), and
+                     `null?.toFixed(2)` is undefined, which a template literal
+                     prints. Every remaining member's header read
+                     "Bill: $undefined". Drop the figure rather than print it. */
+                  : `Bill: ${typeof billSplit.totalWithTip === 'number' ? `$${billSplit.totalWithTip.toFixed(2)} · ` : ''}${billBar.settled}/${billBar.total} settled`}
               </p>
             </div>
             <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>View</span>
@@ -1489,15 +1530,30 @@ export default function ChatDetail({
                 )}
 
                 {/* Budget disabled — direct to bill split */}
-                {!hasBudget && !showCreateBill && !billSplit && (
+                {!hasBudget && !showCreateBill && (!billSplit || billSplitIsShell) && (
                   <div>
                     <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', marginBottom: '16px' }}>Create a bill split after your hangout</p>
                     <button className="hit44 glass-btn glass-primary" onClick={() => setShowCreateBill(true)} style={{ ...styles.gradientButton, padding: '14px' }}>Split the Bill</button>
                   </div>
                 )}
 
-                {/* Bill Split Creation Form */}
-                {showCreateBill && !billSplit && (
+                {/* Bill Split Creation Form.
+                    `!billSplit` alone used to gate this, and a ghost commit
+                    creates a real row, so billSplit was non-null from the first
+                    commit onwards and this form could never open again. Ghost
+                    mode defaults ON for any budget flock. So: the budget settles
+                    at $40, somebody taps "Commit $40" on the ghost card, that
+                    person then pays $180 at the restaurant and opens the cash
+                    pool. It told them "Whoever pays can post the real bill" over
+                    the old estimate, and the Split the Bill button hid the
+                    estimate and showed nothing. No total field, no payer picker,
+                    no Settle Up (those gate on hasPayer), and no control
+                    anywhere in the app that posts the bill the screen was asking
+                    for. The server's own 409 says "Add the bill again with who
+                    paid", which was the one thing the client could not do.
+
+                    A payerless shell is exactly the state this form is for. */}
+                {showCreateBill && (!billSplit || billSplitIsShell) && (
                   <div>
                     <div style={{ marginBottom: '14px' }}>
                       <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '6px' }}>Who paid?</label>
@@ -1565,7 +1621,9 @@ export default function ChatDetail({
                 )}
 
                 {/* Bill Summary */}
-                {billSplit && (
+                {/* Not while the form above is open over the same shell, or
+                    the sheet shows an estimate and the real total at once. */}
+                {billSplit && !(showCreateBill && billSplitIsShell) && (
                   <div>
                     <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
@@ -1668,7 +1726,7 @@ export default function ChatDetail({
                         That was a mistake, I have not paid
                       </button>
                     )}
-                    {(billSplit.fullySettled ?? billSplit.shares?.every(s => s.settled)) && (
+                    {billBar.all && (
                       <div style={{ textAlign: 'center', padding: '12px' }}>
                         <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: '#22C55E', margin: 0 }}>All settled up</p>
                       </div>

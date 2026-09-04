@@ -864,7 +864,7 @@ router.post('/:flockId/remind',
 
       // Verify creator
       const flockResult = await pool.query(
-        'SELECT creator_id, name, budget_enabled FROM flocks WHERE id = $1',
+        'SELECT creator_id, name, budget_enabled, budget_locked FROM flocks WHERE id = $1',
         [flockId]
       );
       if (flockResult.rows.length === 0) {
@@ -877,6 +877,14 @@ router.post('/:flockId/remind',
       }
       if (!flockResult.rows[0].budget_enabled) {
         return res.status(400).json({ error: 'Budget matching is not enabled for this flock' });
+      }
+      // A locked budget refuses every submission (POST /submit answers "Budget
+      // has been locked"), so a reminder to "Submit your budget" is a push
+      // asking people to do something the server will not let them do. Only the
+      // client gate stopped it, which is a cosmetic gate with no server-side
+      // twin, and that is the one shape the design standard names outright.
+      if (flockResult.rows[0].budget_locked) {
+        return res.status(409).json({ error: 'The budget is closed, so there is nothing left to remind anyone about' });
       }
 
       // Rate limit: 1 reminder per flock per 5 minutes.
