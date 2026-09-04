@@ -19,10 +19,19 @@ test('the pre-peak push hedges, because the engine behind it is a category curve
   // supported: false and which every screen hedges through publishedLabel.
   // The push said "will be packed" flatly, on a lock screen, about a venue
   // whose card one tap away would read "Steady 55" from the model.
-  expect(alerts).toMatch(/hedgeLabel \} = require\('\.\/crowdEngine'\);/);
-  expect(alerts).toMatch(/const soon = String\(hedgeLabel\(eventScore\.label\) \|\| ''\)\.toLowerCase\(\);/);
-  expect(alerts).toMatch(/const now = String\(hedgeLabel\(currentScore\.label\) \|\| ''\)\.toLowerCase\(\);/);
+  // The hedge is carried by the SENTENCE, not by the word. hedgeLabel builds a
+  // noun phrase ("Usually packed"), which is right on a card label and wrong in
+  // these slots: it produced "It's usually steady right now", which argues with
+  // itself, and "expected to be usually busy", which is not English.
   expect(alerts).toMatch(/title: `\$\{name\} is usually packed then`/);
+  expect(alerts).toMatch(/title: `\$\{name\} usually fills up before then`/);
+  expect(alerts).toMatch(/title: `\$\{name\} usually peaks soon`/);
+  expect(alerts).toMatch(/Places like it are usually \$\{soon\} around your flock time\./);
+  expect(alerts).toMatch(/The busiest stretch usually starts around/);
+  // Scoped: the comment above the fix names hedgeLabel to explain why it is the
+  // wrong tool here.
+  expect(alerts).not.toMatch(/hedgeLabel\(/);
+  expect(alerts).not.toMatch(/hedgeLabel \} = require/);
   // Scoped to the template, because the comment above the fix quotes the old
   // words to explain what changed.
   expect(alerts).not.toMatch(/title: `\$\{name\} will be packed`/);
