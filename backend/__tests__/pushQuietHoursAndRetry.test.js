@@ -166,6 +166,8 @@ test('a 3am group chat message is held until morning rather than ringing', async
   zoneIs(zone);
   const ledger = ledgerAndLiveness();
   let queued = null;
+  // The hold first looks for a row to merge into (one per conversation).
+  on(/UPDATE push_outbox/i, () => ({ rows: [], rowCount: 0 }));
   on(/INSERT INTO push_outbox/i, (params) => { queued = params; return { rows: [], rowCount: 1 }; });
 
   const res = await pushHelper.pushIfOffline(offline, 1, 'Ava', 'you up', {
@@ -350,6 +352,8 @@ test('a transient failure queues a retry instead of losing the notification', as
   zoneIs(null);
   ledgerAndLiveness();
   let queued = null;
+  // The hold first looks for a row to merge into (one per conversation).
+  on(/UPDATE push_outbox/i, () => ({ rows: [], rowCount: 0 }));
   on(/INSERT INTO push_outbox/i, (params) => { queued = params; return { rows: [], rowCount: 1 }; });
   sendResult = { sent: 0, failed: 1 };
 

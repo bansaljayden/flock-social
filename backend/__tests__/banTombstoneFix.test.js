@@ -254,6 +254,10 @@ function handle(text, params = []) {
     return { rows: existed ? [{ id: params[0] }] : [], rowCount: existed ? 1 : 0 };
   }
 
+  // A revoke drops the device rows too (2026-09-04).
+
+  if (/DELETE FROM device_tokens WHERE user_id = \$1/.test(String(text))) return { rows: [], rowCount: 0 };
+
   unknown.push(text);
   return { rows: [], rowCount: 0 };
 }

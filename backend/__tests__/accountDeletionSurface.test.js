@@ -580,6 +580,8 @@ function stubQuery(text) {
   if (has('UPDATE content_reports') || has('UPDATE moderation_actions')) return { rows: [], rowCount: 0 };
   if (has('DELETE FROM messages')) return { rows: [], rowCount: 0 };
   if (has('banned_identities')) return { rows: [], rowCount: 0 };
+  // A revoke drops the device rows too (2026-09-04).
+  if (has('DELETE FROM device_tokens')) return { rows: [], rowCount: 0 };
   unmodelled.push(q);
   return { rows: [], rowCount: 0 };
 }

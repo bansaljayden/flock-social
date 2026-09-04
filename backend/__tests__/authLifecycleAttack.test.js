@@ -359,6 +359,9 @@ pool.query = async (text, params = []) => {
       }],
     });
   }
+  // A revoke also drops the device rows (2026-09-04): the client's own
+  // unregister cannot authenticate with a dead token.
+  if (sql === 'DELETE FROM device_tokens WHERE user_id = $1') return ok({ rows: [], rowCount: 0 });
   if (sql.startsWith('DELETE FROM password_reset_requests')) return ok({ rows: [], rowCount: 0 });
   if (sql.startsWith('DELETE FROM password_resets')) return ok({ rows: [], rowCount: 0 });
 
