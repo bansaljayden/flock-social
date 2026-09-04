@@ -79,6 +79,41 @@ const DELETE_STALE_SQL = `
 // weekly forecast rows. The `WHERE ... IS DISTINCT FROM` on the conflict target
 // suppresses no-op rewrites, so a second run of this file writes literally
 // nothing — re-running it is free and leaves the table byte-identical.
+//
+// `updated_at` IS THE DATE OF THE EVIDENCE, NOT THE DATE OF THE WRITE.
+//
+// It used to be NOW(), and the churn suppression below meant NOW() only ever
+// landed when the average actually MOVED. So the column recorded when this
+// venue's number last changed, and mlPredictor.baselineMeta publishes it as
+// how old the data under the number is — two different questions with the same
+// answer only by accident.
+//
+// The consequence ran the wrong way round. A venue whose weekly pattern is
+// stable is the healthy case, and it is the case that never trips the WHERE:
+// re-collected every week, re-averaged to the same number every week, and
+// stamped `stale: true` after ninety days of being confirmed. Meanwhile a venue
+// whose average wobbles by one point looks permanently fresh. The flag was
+// strongest exactly where it should have been quietest.
+//
+// MAX(collected_at) is the newest row that fed the average, which is the honest
+// answer: this number is supported by evidence gathered up to that moment.
+// NULL when nothing in the group carries a collection time, and NULL is
+// deliberate — baselineMeta reads it as `stale: null`, "nothing to say", which
+// is true. NOW() would have been a claim about data we cannot date.
+//
+// MONOTONIC, so the correction costs nothing up front. Migration 023 stamped
+// every one of production's ~3.45M collected rows with NOW() on 2026-08-15, and
+// switching the source of this column outright would have rewritten all of them
+// on the next cron - one multi-minute locking UPDATE inside a job that runs
+// hourly. GREATEST keeps whichever stamp is later, so a row whose evidence
+// predates the migration keeps the migration's date (today's behaviour, which
+// understates freshness and therefore errs toward warning) and only a row with
+// genuinely newer evidence is written. The table converts itself venue by venue
+// as collection reaches each one.
+//
+// Re-running stays free. If no new weekly row arrived, MAX(collected_at) has
+// not moved either, so neither clause of the WHERE fires and the row is
+// untouched - which is what mlClockAxisBackfill.test.js pins.
 const UPSERT_SQL = `
   INSERT INTO ml_venue_baselines (google_place_id, day_of_week, hour, baseline, source, updated_at)
   SELECT
@@ -87,7 +122,7 @@ const UPSERT_SQL = `
     t.hour,
     ROUND(AVG(t.busyness_pct))::smallint,
     'collected',
-    NOW()
+    MAX(t.collected_at)
   FROM ml_training_data t
   JOIN ml_venues v ON t.venue_id = v.id
   WHERE t.collection_mode = 'weekly'
@@ -97,8 +132,12 @@ const UPSERT_SQL = `
   ON CONFLICT (google_place_id, day_of_week, hour)
   DO UPDATE SET
     baseline = EXCLUDED.baseline,
-    updated_at = NOW()
+    updated_at = GREATEST(
+      COALESCE(ml_venue_baselines.updated_at, 'epoch'::timestamptz),
+      COALESCE(EXCLUDED.updated_at, 'epoch'::timestamptz)
+    )
   WHERE ml_venue_baselines.baseline IS DISTINCT FROM EXCLUDED.baseline
+     OR EXCLUDED.updated_at > COALESCE(ml_venue_baselines.updated_at, 'epoch'::timestamptz)
 `;
 
 // Rebuild every source='collected' baseline from the corrected weekly corpus.

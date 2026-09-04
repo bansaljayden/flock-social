@@ -269,23 +269,28 @@ function allowEventFetch(userId, opts) {
 // model reconstructs score = baseline + clamp(delta), so a venue with no row in
 // ml_venue_baselines cannot be scored by it at all.
 //
-// WHY THAT SET CANNOT GROW ON ITS OWN TODAY. There are exactly two ways a venue
-// acquires a baseline row. One is the BestTime collector, which is finished by
-// Jayden's decision (key dead, zero rows since 2026-05-18). The other is
+// HOW THAT SET GROWS. There are exactly two ways a venue acquires a baseline
+// row. One is the BestTime collector, and the paragraph here used to say it was
+// finished — key dead, zero rows since 2026-05-18. That was wrong, and wrong in
+// the direction that stops work: the 403s were BestTime's abuse guard tripping
+// on a 600/min pace against a 300/min limit, the account was never unpaid, and
+// since the pacing fix the Railway BESTTIME service has been collecting on a
+// cron (245 rows on 2026-09-03, provenance clean). The corpus is NOT frozen.
+// The other is
 // storeGoogleBaselines, which predictBusyness calls only when the venue it was
 // handed carries `popular_times` -- and no route in this repo puts that field on
 // a venue (routes/crowd.js says so at its batch whitelist, and the Places field
 // masks in that file do not request it, because the Places API does not sell
 // popular times). So baselineFromPopularTimes, storeGoogleBaselines and
-// GOOGLE_BASELINE_REFRESH_DAYS are unreachable from every request path, the
-// corpus is frozen at the venues collection already reached, and every venue
-// outside it takes the rule engine forever.
+// GOOGLE_BASELINE_REFRESH_DAYS are unreachable from every request path: the
+// corpus grows only where the collector goes, and a venue outside the collected
+// set takes the rule engine until collection reaches it.
 //
-// That is a product decision to make, not a bug to patch here. What was missing
-// is the number to make it on: the split is invisible in the payload (a client
-// sees one card either way), invisible in the logs (no line is written per
-// prediction), and invisible in the database (nothing is stored). These counters
-// are the cheapest thing that makes it visible.
+// Which venues to collect next is a product decision, not a bug to patch here.
+// What was missing is the number to make it on: the split is invisible in the
+// payload (a client sees one card either way), invisible in the logs (no line is
+// written per prediction), and invisible in the database (nothing is stored).
+// These counters are the cheapest thing that makes it visible.
 //
 // IN MEMORY AND PER PROCESS, deliberately, exactly like eventBudgetStatus above.
 // A counter that needed a table would need a migration, a write on the hottest
@@ -979,8 +984,18 @@ async function getBaseline(placeId, dayOfWeek, hour, userId) {
 
   // Refused misses take the same branch a query error takes, and crucially do
   // NOT write a cache entry — an account that cannot query must also be unable
-  // to evict a real venue's baseline.
-  if (!allowVenueLookup(placeId, userId)) return 0;
+  // to evict a real venue's baseline. They DO record why, in a separate map,
+  // for the reason above noteBaselineMiss.
+  if (!allowVenueLookup(placeId, userId)) {
+    // TWO DIFFERENT REFUSALS BEHIND ONE GUARD. A place id that is not shaped
+    // like one is a standing property of the venue: there is no row for it and
+    // there never will be, which is exactly the corpus gap `no_baseline`
+    // already names. A budget refusal is momentary and is the one that means
+    // "we could not ask". Calling both 'refused' would move every place-id-less
+    // venue onto the outage tag and undo the split.
+    noteBaselineMiss(cacheKey, isPlaceIdShaped(placeId) ? 'refused' : 'none');
+    return 0;
+  }
 
   try {
     // Fetch current hour + neighbors for smoothing
@@ -1002,6 +1017,7 @@ async function getBaseline(placeId, dayOfWeek, hour, userId) {
     );
 
     if (rows.length === 0) {
+      noteBaselineMiss(cacheKey, 'none');
       boundedSet(baselineCache, cacheKey, { data: 0, ts: Date.now(), meta: null });
       return 0;
     }
@@ -1012,12 +1028,51 @@ async function getBaseline(placeId, dayOfWeek, hour, userId) {
     // must produce the same number for the same rows or a venue's forecast
     // would change depending on which one warmed the cache.
     const entry = blendBaselineRows(rows, dayOfWeek, hour);
+    // A usable number clears any recorded miss: the slot is answered now, and
+    // leaving the old reason behind would let a resolved outage keep labelling
+    // a venue that has since been scored.
+    if (entry.data > 0) baselineMissCache.delete(cacheKey);
+    else noteBaselineMiss(cacheKey, 'none');
     boundedSet(baselineCache, cacheKey, { data: entry.data, ts: Date.now(), meta: entry.meta });
     return entry.data;
   } catch (err) {
     console.error('[MLPredictor] Baseline lookup failed:', err.message);
+    noteBaselineMiss(cacheKey, 'error');
     return 0;
   }
+}
+
+// WHY THE ZERO CAME BACK.
+//
+// getBaseline returns 0 for three unrelated reasons — this venue has no row,
+// this caller was refused the lookup, or the query threw — and predictBusyness
+// reported all three to the coverage counter as `rule_engine_no_baseline`.
+// That tag is a claim about the CORPUS, and it is the dominant entry on the
+// admin Revenue panel, so a database wobble or a rate-limited account read as
+// "the collector has not reached these venues yet". The one number built to
+// answer "should we go collect more baselines" answered it wrongly whenever
+// the real problem was that we could not ask.
+//
+// Its own map rather than a field on the baseline cache entry, because the
+// refused path must not write a baseline cache entry at all: an account that
+// cannot query must not be able to evict a real venue's number. Same TTL, so
+// the two expire together and a reason can never outlive the lookup it
+// explains. Bounded the same way as every other cache in this file.
+const baselineMissCache = new Map();
+
+function noteBaselineMiss(cacheKey, reason) {
+  boundedSet(baselineMissCache, cacheKey, { reason, ts: Date.now() });
+}
+
+// null when there is nothing recorded, which includes the case where the entry
+// aged out — the caller then falls back to the corpus reading, which is the
+// safe default because it is the only one of the three that is a standing
+// property of the venue rather than a momentary failure.
+function baselineMissFor(placeId, dayOfWeek, hour) {
+  if (!placeId) return null;
+  const e = baselineMissCache.get(`${placeId}_${dayOfWeek}_${hour}`);
+  if (!e || Date.now() - e.ts >= BASELINE_CACHE_TTL) return null;
+  return e.reason || null;
 }
 
 // ---------------------------------------------------------------------------
@@ -2891,7 +2946,13 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
     // (Retrain plan: teach the model an absolute head so this path dies.)
     if (metadata.label_type === 'delta' && (!baseline || baseline <= 0)) {
       const result = crowdEngine.calculateCrowdScore(venue, weather, timestamp);
-      result.predictionMethod = 'rule_engine_no_baseline';
+      // Which of the three zeros this was. `no_baseline` stays the name of the
+      // corpus gap so every existing reader of that tag keeps its meaning; the
+      // two failures get their own names instead of borrowing it.
+      const miss = baselineMissFor(placeId, ts.getDay(), ts.getHours());
+      result.predictionMethod = miss === 'refused' ? 'rule_engine_baseline_refused'
+        : miss === 'error' ? 'rule_engine_baseline_error'
+        : 'rule_engine_no_baseline';
       result.modelVersion = null;
       result.eventsObserved = eventsSeen;
       result.eventsUnavailableReason = eventsReason;
@@ -3437,6 +3498,11 @@ module.exports = {
     baselineCacheEntry: (placeId, day, hour) => baselineCache.get(`${placeId}_${day}_${hour}`),
     // Baseline freshness, for __tests__/baselineFreshness.test.js.
     baselineProvenanceFor,
+    // Which of the three zeros getBaseline just returned, for
+    // __tests__/baselineFreshness.test.js. The tag predictBusyness publishes is
+    // derived from this, and a coverage panel that reads `no_baseline` as
+    // "go collect more venues" needs the other two to be distinguishable.
+    baselineMissFor,
     baselineMeta,
     BASELINE_STALE_AFTER_MS,
     GOOGLE_BASELINE_REFRESH_DAYS,
@@ -3451,6 +3517,7 @@ module.exports = {
     // Tests only. Production code must never reset a spending counter.
     __resetVenueLookupCaches: () => {
       baselineCache.clear();
+      baselineMissCache.clear();
       feedbackCache.clear();
       selfBaselineCache.clear();
       venueLookupBudget.reset();

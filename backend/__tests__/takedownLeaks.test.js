@@ -383,7 +383,7 @@ function scriptBillCreate(blockRows, invisibleToCreator = []) {
   on(/SELECT name, creator_id FROM flocks/, () => ({ rows: [{ name: 'Dinner', creator_id: 1 }] }));
   on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] }));
   on(/SELECT id, paid_by FROM bill_splits/, () => ({ rows: [] }));
-  on(/SELECT user_id, committed, settled, settled_at FROM bill_split_shares/, () => ({ rows: [] }));
+  on(/SELECT user_id, .*FROM bill_split_shares/, () => ({ rows: [] }));
   on(/INSERT INTO bill_splits/, () => ({ rows: [{ id: 7 }] }));
   on(/DELETE FROM bill_split_shares/, () => ({ rows: [], rowCount: 0 }));
   on(/INSERT INTO bill_split_shares/, () => ({ rows: [] }));

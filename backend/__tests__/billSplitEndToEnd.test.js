@@ -329,7 +329,7 @@ test('a settled flag on a payerless shell is not carried onto the real bill', as
     [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     // The shell: a bill row exists and nobody has claimed it.
     [/SELECT id, paid_by FROM bill_splits WHERE flock_id/, () => ({ rows: [{ id: 7, paid_by: null }] })],
-    [/SELECT user_id, committed, settled, settled_at FROM bill_split_shares/, () => ({
+    [/SELECT user_id, .*FROM bill_split_shares/, () => ({
       rows: [
         { user_id: 2, committed: true, settled: true, settled_at: 'earlier' }, // Ben settled the estimate
         { user_id: 1, committed: true, settled: false, settled_at: null },
