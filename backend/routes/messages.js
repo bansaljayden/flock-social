@@ -967,6 +967,12 @@ router.get('/dm/:userId',
       );
 
       res.json({ messages: messages.reverse() });
+      // The rows above just left the unread count, so the app icon's badge is
+      // stale until the next push. The flock read route resyncs it here
+      // (PUT /flocks/:id/read); this one never did, so opening a DM with
+      // unread left the old number on the icon. Best effort, after the
+      // response, never fails a read.
+      pushBadgeSync(req.user.id).catch(() => {});
     } catch (err) {
       console.error('Get DMs error:', err);
       res.status(500).json({ error: 'Failed to get messages' });
@@ -1227,6 +1233,16 @@ router.post('/dm/messages/:id/react',
         [dmId, req.user.id, emoji]
       );
       if (result.rows.length === 0) return res.status(400).json({ error: 'Already reacted' });
+      // The socket path (sockets/handlers.js dm_react) tells both sides live;
+      // this route told nobody, so a reaction that arrived here, which is the
+      // client's fallback when its socket is down, stayed invisible to the
+      // other person until a reload. Same payload as the socket path.
+      const io = req.app.get('io');
+      if (io) {
+        const payload = { dmId, emoji, userId: req.user.id, userName: req.user.name };
+        io.to(`user:${counterpart}`).emit('dm_reaction_added', payload);
+        io.to(`user:${req.user.id}`).emit('dm_reaction_added', payload);
+      }
       res.status(201).json({ reaction: result.rows[0] });
     } catch (err) {
       console.error('DM react error:', err);
@@ -1243,8 +1259,9 @@ router.delete('/dm/messages/:id/react/:emoji', [param('id').isInt({ min: 1, max:
     const emoji = decodeURIComponent(req.params.emoji).slice(0, 10);
     // Blocks end ALL interaction with the shared conversation, removals included.
     const dm = await pool.query('SELECT sender_id, receiver_id FROM direct_messages WHERE id = $1', [dmId]);
+    let counterpart = null;
     if (dm.rows.length > 0) {
-      const counterpart = dm.rows[0].sender_id === req.user.id ? dm.rows[0].receiver_id : dm.rows[0].sender_id;
+      counterpart = dm.rows[0].sender_id === req.user.id ? dm.rows[0].receiver_id : dm.rows[0].sender_id;
       if (await isBlockedBetween(req.user.id, counterpart)) {
         return res.status(403).json({ error: 'You can no longer interact with this user.' });
       }
@@ -1254,6 +1271,13 @@ router.delete('/dm/messages/:id/react/:emoji', [param('id').isInt({ min: 1, max:
       [dmId, req.user.id, emoji]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Reaction not found' });
+    // Mirror of the add route above: the removal reaches both sides live.
+    const io = req.app.get('io');
+    if (io) {
+      const payload = { dmId, emoji, userId: req.user.id, userName: req.user.name };
+      if (counterpart != null) io.to(`user:${counterpart}`).emit('dm_reaction_removed', payload);
+      io.to(`user:${req.user.id}`).emit('dm_reaction_removed', payload);
+    }
     res.json({ message: 'Reaction removed' });
   } catch (err) {
     console.error('DM remove react error:', err);
@@ -1498,6 +1522,13 @@ router.put('/dm/:userId/pinned-venue',
       );
 
       const venue = { venue_name, venue_address, venue_id, venue_rating, venue_photo_url, pinned_by: req.user.id };
+      // The socket path announces the pin to both sides; this route is the
+      // client's fallback when its socket is down, and it told nobody.
+      const io = req.app.get('io');
+      if (io) {
+        io.to(`user:${otherUserId}`).emit('dm_venue_pinned', { userId: req.user.id, venue });
+        io.to(`user:${req.user.id}`).emit('dm_venue_pinned', { userId: req.user.id, venue });
+      }
       res.json({ venue });
     } catch (err) {
       console.error('DM pin venue error:', err);

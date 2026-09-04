@@ -1576,6 +1576,22 @@ export async function removeDmReaction(dmId, emoji) {
   return request(`/api/dm/messages/${dmId}/react/${encodeURIComponent(emoji)}`, { method: 'DELETE' });
 }
 
+// PUT /api/dm/:userId/pinned-venue has existed since the pin shipped and no
+// client ever called it: the pin went over the socket or nowhere. This is the
+// fallback App.js uses when the socket answers false.
+export async function pinDmVenue(userId, v) {
+  return request(`/api/dm/${userId}/pinned-venue`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      venue_name: v.name,
+      venue_address: v.addr || undefined,
+      venue_id: v.place_id || undefined,
+      venue_rating: Number.isFinite(v.rating) ? v.rating : undefined,
+      venue_photo_url: v.photo_url || undefined,
+    }),
+  });
+}
+
 export async function getDmVenueVotes(userId) {
   return request(`/api/dm/${userId}/venue-votes`);
 }

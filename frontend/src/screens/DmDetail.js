@@ -71,7 +71,7 @@
  * new row rather than changed here.
  */
 import React from 'react';
-import { sendFriendRequest, trackDmVenueVote, getDmMessageImage } from '../services/api';
+import { sendFriendRequest, trackDmVenueVote, getDmMessageImage, addDmReaction, removeDmReaction } from '../services/api';
 import { dmReact, dmRemoveReact, dmStopSharingLocation, dmVoteVenue, getSocket } from '../services/socket';
 import { groupReactions } from './ChatDetail';
 import Icons from '../components/ui/Icons';
@@ -800,10 +800,18 @@ export default function DmDetail({
             </span>
           </div>
         )}
+        {showDmChatSearch && dmChatSearch.trim() && selectedDm.messages.filter(m => {
+          const q = dmChatSearch.toLowerCase();
+          return m.text?.toLowerCase().includes(q) || m.sender?.toLowerCase().includes(q);
+        }).length === 0 && (
+          <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+            <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-tertiary)', fontWeight: '500' }}>No messages match "{dmChatSearch}"</p>
+          </div>
+        )}
         {/* Scrollback. Only offered when the thread is showing a full page,
             which is the only case where there can be anything behind it, and
             it retires itself the moment the server hands back a short page. */}
-        {!dmMessagesLoading && !showDmChatSearch && !dmAtTop[selectedDmId] && selectedDm.messages.length >= DM_PAGE_SIZE && (
+        {!dmMessagesLoading && !(showDmChatSearch && dmChatSearch.trim()) && !dmAtTop[selectedDmId] && selectedDm.messages.length >= DM_PAGE_SIZE && (
           <div style={{ textAlign: 'center', marginBottom: '14px' }}>
             <button
               className="hit44"
@@ -973,7 +981,7 @@ export default function DmDetail({
                           className="reaction-pop hit44"
                           aria-pressed={mine}
                           aria-label={`${g.emoji} ${g.count}${mine ? ', including you. Tap to remove your reaction' : '. Tap to react'}`}
-                          onClick={() => { const otherUser = selectedDmId; if (mine) { dmRemoveReact(m.id, g.emoji, otherUser); } else { dmReact(m.id, g.emoji, otherUser); } }}
+                          onClick={() => { const otherUser = selectedDmId; if (mine) { if (!dmRemoveReact(m.id, g.emoji, otherUser)) removeDmReaction(m.id, g.emoji).catch(() => showToast('Could not remove that reaction. Try again.', 'error')); } else if (!dmReact(m.id, g.emoji, otherUser)) { addDmReaction(m.id, g.emoji).catch(() => showToast('Could not react. Try again.', 'error')); } }}
                           style={{ fontSize: 'var(--t-meta)', backgroundColor: 'var(--bg-card-solid)', border: mine ? `1px solid ${colors.steel}` : '1px solid var(--border-default)', borderRadius: '12px', padding: '2px 6px', cursor: 'pointer', boxShadow: 'var(--card-shadow-sm)', display: 'inline-flex', alignItems: 'center', gap: '3px', minHeight: 'auto' }}
                         >{g.emoji} {g.count > 1 ? g.count : ''}</button>
                       );
@@ -984,7 +992,7 @@ export default function DmDetail({
                 {showDmReactionPicker === m.id && (
                   <div style={{ display: 'flex', gap: '4px', marginTop: '4px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '4px 8px', boxShadow: '0 2px 12px rgba(0,0,0,0.15)', position: 'absolute', [m.sender === 'You' ? 'right' : 'left']: 0, bottom: '-8px', zIndex: 5 }}>
                     {dmReactions.map(emoji => (
-                      <button aria-label={`React with ${emoji}`} className="hit44" key={emoji} onClick={(e) => { e.stopPropagation(); dmReact(m.id, emoji, selectedDmId); setShowDmReactionPicker(null); }} style={{ fontSize: 'var(--t-title)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', borderRadius: '8px', transition: 'transform 0.15s' }}
+                      <button aria-label={`React with ${emoji}`} className="hit44" key={emoji} onClick={(e) => { e.stopPropagation(); if (!dmReact(m.id, emoji, selectedDmId)) addDmReaction(m.id, emoji).catch(() => showToast('Could not react. Try again.', 'error')); setShowDmReactionPicker(null); }} style={{ fontSize: 'var(--t-title)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', borderRadius: '8px', transition: 'transform 0.15s' }}
                         onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.3)'; }}
                         onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
                       >{emoji}</button>

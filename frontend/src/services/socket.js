@@ -633,12 +633,19 @@ export function onDmUserStoppedTyping(callback) {
 }
 
 // DM reactions
+// Each answers whether the emit happened. A guarded emit over a dead socket
+// used to return nothing, so the caller drew nothing, stored nothing and
+// said nothing; the screen now falls back to REST when this answers false.
 export function dmReact(dmId, emoji, receiverId) {
-  if (socket?.connected) socket.emit('dm_react', { dmId, emoji, receiverId });
+  if (!socket?.connected) return false;
+  socket.emit('dm_react', { dmId, emoji, receiverId });
+  return true;
 }
 
 export function dmRemoveReact(dmId, emoji, receiverId) {
-  if (socket?.connected) socket.emit('dm_remove_react', { dmId, emoji, receiverId });
+  if (!socket?.connected) return false;
+  socket.emit('dm_remove_react', { dmId, emoji, receiverId });
+  return true;
 }
 
 export function onDmReactionAdded(callback) {
@@ -668,8 +675,12 @@ export function onDmNewVote(callback) {
 }
 
 // DM pinned venue
+// Same contract as dmReact: false means nothing left the device, and the
+// caller persists over REST instead of letting the pin revert on the next load.
 export function dmPinVenue(receiverId, venueData) {
-  if (socket?.connected) socket.emit('dm_pin_venue', { receiverId, venue_name: venueData.name, venue_address: venueData.addr, venue_id: venueData.place_id, venue_rating: venueData.rating, venue_photo_url: venueData.photo_url });
+  if (!socket?.connected) return false;
+  socket.emit('dm_pin_venue', { receiverId, venue_name: venueData.name, venue_address: venueData.addr, venue_id: venueData.place_id, venue_rating: venueData.rating, venue_photo_url: venueData.photo_url });
+  return true;
 }
 
 export function onDmVenuePinned(callback) {

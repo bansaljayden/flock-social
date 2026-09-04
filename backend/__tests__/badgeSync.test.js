@@ -94,10 +94,13 @@ test('every device the user has registered gets the same absolute number', async
   assert.deepEqual(sentMessages.map((m) => m.apns.payload.aps.badge), [0, 0]);
 });
 
-test('both read routes call the sync fire-and-forget, after responding', () => {
+test('all three read paths call the sync fire-and-forget, after responding', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'messages.js'), 'utf8').replace(/\r\n/g, '\n');
   const calls = src.match(/pushBadgeSync\(req\.user\.id\)\.catch\(\(\) => \{\}\);/g) || [];
-  assert.equal(calls.length, 2, `the flock read and the DM read must both sync the badge (found ${calls.length} in ${src.length} chars; regex ${String(/pushBadgeSync\(req\.user\.id\)\.catch\(\(\) => \{\}\);/g)})`);
+  // Three since 2026-09-04: the flock read, the per-message DM read, and
+  // opening a DM thread (GET /dm/:userId), which marks the thread read and
+  // used to leave the icon's number stale until the next push.
+  assert.equal(calls.length, 3, `the flock read, the DM read and the DM open must all sync the badge (found ${calls.length} in ${src.length} chars; regex ${String(/pushBadgeSync\(req\.user\.id\)\.catch\(\(\) => \{\}\);/g)})`);
   // Fire-and-forget: neither call may be awaited, so a push failure cannot
   // turn a successful read into a 500.
   assert.ok(!/await pushBadgeSync/.test(src), 'the sync must not be awaited inside a read route');
@@ -105,4 +108,10 @@ test('both read routes call the sync fire-and-forget, after responding', () => {
   const flockRead = src.indexOf("res.json({ success: true, lastReadMessageId");
   const flockSync = src.indexOf('pushBadgeSync(req.user.id)', flockRead);
   assert.ok(flockRead > 0 && flockSync > flockRead && flockSync - flockRead < 600, 'the flock read syncs right after it responds');
+  // Anchor on the DM read-mark UPDATE: the flock history route answers with
+  // the same res.json line earlier in the file.
+  const dmMark = src.indexOf('WHERE sender_id = $1 AND receiver_id = $2 AND read_status = FALSE');
+  const dmOpen = src.indexOf('res.json({ messages: messages.reverse() });', dmMark);
+  const dmOpenSync = src.indexOf('pushBadgeSync(req.user.id)', dmOpen);
+  assert.ok(dmOpen > 0 && dmOpenSync > dmOpen && dmOpenSync - dmOpen < 600, 'the DM open syncs right after it responds');
 });
