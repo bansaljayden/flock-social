@@ -163,14 +163,14 @@ describe('the question the home card should have been asking', () => {
 describe('the home screen stops asking once the vote is cast', () => {
   /** The real filter expression from App.js, run over fixtures. */
   const needsAction = (() => {
-    const marker = 'const needsAction = flocks.filter(';
+    const marker = 'const needsAction = liveFlocks.filter(';
     const at = APP.indexOf(marker);
     expect(at).toBeGreaterThan(-1);
     const line = APP.slice(at, APP.indexOf(';', at) + 1);
     expect(line.length).toBeGreaterThan(marker.length);
     expect(line.length).toBeLessThan(300);
     // eslint-disable-next-line no-new-func
-    const build = new Function('flocks', 'hasCastMyVote', 'votesLoadedRef', `${line}\nreturn needsAction;`);
+    const build = new Function('liveFlocks', 'hasCastMyVote', 'votesLoadedRef', `${line}\nreturn needsAction;`);
     return (flocks) => build(flocks, hasCastMyVote, { current: new Set(flocks.map((f) => f.id)) });
   })();
 
@@ -178,11 +178,11 @@ describe('the home screen stops asking once the vote is cast', () => {
     // Cold boot seeds votes as [], so before this gate the card said
     // "Needs your vote" about plans the person voted in yesterday until
     // they happened to open one. An unloaded [] is not evidence.
-    const marker = 'const needsAction = flocks.filter(';
+    const marker = 'const needsAction = liveFlocks.filter(';
     const at = APP.indexOf(marker);
     const line = APP.slice(at, APP.indexOf(';', at) + 1);
     // eslint-disable-next-line no-new-func
-    const build = new Function('flocks', 'hasCastMyVote', 'votesLoadedRef', `${line}
+    const build = new Function('liveFlocks', 'hasCastMyVote', 'votesLoadedRef', `${line}
 return needsAction;`);
     const unloaded = build([{ id: 9, status: 'voting', votes: [] }], hasCastMyVote, { current: new Set() });
     expect(unloaded).toEqual([]);

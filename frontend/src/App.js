@@ -5675,7 +5675,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Loading
   const [isLoading, setIsLoading] = useState(false);
   const [streak, setStreak] = useState(0);
-  const [friendCount, setFriendCount] = useState(0);
+  // null until read: a dropped stats read printed "0 friends" to someone
+  // with forty.
+  const [friendCount, setFriendCount] = useState(null);
 
   // Availability Pulse — 3-tap status: down / maybe / not (or null = unset)
   const [myPulse, setMyPulse] = useState(null);
@@ -5945,6 +5947,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // by" name, and it is what lets that name be reported or blocked.
           hostId: f.creator_id,
           memberStatus: f.member_status,
+          // Invite cards carry this instead of a status (status is private to
+          // members); the gate below reads it.
+          finished: f.finished === true,
           // Server truth for the row badge (the migration 056 cursor): the
           // socket handler increments it live and opening the chat zeroes it.
           unread: Number(f.unread_count) || 0,
@@ -5959,7 +5964,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // member still billed. memberCount above is the headcount shown on a
           // card and includes guests, so it is the wrong number to divide by.
           billableCount: f.member_count ?? null,
-          time: f.event_time ? new Date(f.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : 'TBD',
+          time: formatEventTime(f.event_time),
           // Keep the raw timestamp: the display string alone can't be put on a
           // calendar, which is why "Add to calendar" used to save today.
           eventTime: f.event_time || null,
@@ -6001,11 +6006,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           votes: [],
           messages: [],
         }));
-        setFlocks(mapped.filter(f => f.memberStatus === 'accepted'));
+        // Merge, not replace. The rows come down with members, votes and
+        // messages empty, and every return from background reloads (the
+        // native socket drops on hide and the reconnect gap calls this), so a
+        // wholesale replace wiped the votes this session had read and the
+        // "Needs your vote" card then accused people who had voted.
+        const fresh = mapped.filter(f => f.memberStatus === 'accepted');
+        setFlocks(prev => fresh.map((f) => {
+          const old = Array.isArray(prev) ? prev.find(p => p.id === f.id) : null;
+          if (!old) return f;
+          return {
+            ...f,
+            members: old.members && old.members.length ? old.members : f.members,
+            votes: old.votes && old.votes.length ? old.votes : f.votes,
+            messages: old.messages && old.messages.length ? old.messages : f.messages,
+          };
+        }));
         // An invite to a night that already happened is not an invitation,
         // and accepting one dropped the person into a finished plan. The
         // accept route has no status guard, so the card is the gate.
-        setPendingFlockInvites(mapped.filter(f => f.memberStatus === 'invited' && f.status !== 'completed' && f.status !== 'cancelled'));
+        setPendingFlockInvites(mapped.filter(f => f.memberStatus === 'invited' && !f.finished && f.status !== 'completed' && f.status !== 'cancelled'));
         // A declined membership row still comes down on every load. Keep it so
         // the person can find the plan again and re-join, rather than silently
         // dropping it and leaving no route back in.
@@ -6069,7 +6089,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const invite = pendingFlockInvites.find(f => f.id === flockId);
       if (invite) {
         setPendingFlockInvites(prev => prev.filter(f => f.id !== flockId));
-        setFlocks(prev => [...prev, { ...invite, memberStatus: 'accepted' }]);
+        setFlocks(prev => [...prev, { ...invite, memberStatus: 'accepted', status: invite.status || 'voting' }]);
       }
       showToast(`Joined ${invite?.name || 'flock'}!`);
       // Deliberately not awaited before the toast, and its failure is
@@ -6305,7 +6325,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   useEffect(() => {
     getUserStats().then(d => {
       setStreak(d.streak || 0);
-      setFriendCount(d.friendCount || 0);
+      setFriendCount(typeof d.friendCount === 'number' ? d.friendCount : null);
       setReliabilityScore(d.reliabilityScore || null);
     }).catch(() => {});
   }, []);
@@ -9143,11 +9163,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           hostId: data.invitedBy.userId,
           memberStatus: 'invited',
           members: [],
-          memberCount: 0,
-          time: 'TBD',
-          eventTime: null,
-          status: 'planning',
-          venue: 'TBD',
+          memberCount: data.goingCount || 1,
+          time: data.eventTime ? formatEventTime(data.eventTime) : 'TBD',
+          eventTime: data.eventTime || null,
+          // 'voting', the client's word for planning: 'planning' printed as
+          // "Locked In" on the optimistic row after an accept.
+          status: 'voting',
+          venue: data.venueName || 'TBD',
           messages: [],
           votes: [],
         }];
@@ -9187,6 +9209,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setOutgoingRequests(prev => prev.filter(r => r.id !== data.fromUserId));
         setFriendStatuses(prev => ({ ...prev, [data.fromUserId]: 'accepted' }));
         showToast(`${data.fromUserName} accepted your friend request!`);
+        // The header count only ever moved on boot.
+        getUserStats().then(d => { if (typeof d?.friendCount === 'number') setFriendCount(d.friendCount); }).catch(() => {});
       }
     });
 
@@ -9415,7 +9439,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           venueLng: data.venue_longitude || f.venueLng,
           venueRating: data.venue_rating || f.venueRating,
           venuePhoto: resolveVenuePhoto(data.venue_photo_url) || f.venuePhoto,
-          time: data.event_time ? new Date(data.event_time).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' }) : f.time,
+          time: data.event_time ? formatEventTime(data.event_time) : f.time,
           eventTime: data.event_time || f.eventTime || null,
           status: data.status === 'planning' ? 'voting' : (data.status || f.status),
         };
@@ -10256,7 +10280,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // flock unread is the migration 056 cursor. The flocks array holds only
     // accepted memberships (loadFlocks filters), so invites never count.
     const messagesTabUnread = directMessages.reduce((sum, d) => sum + (Number(d.unread) || 0), 0)
-      + flocks.reduce((sum, f) => sum + (Number(f.unread) || 0), 0);
+      + flocks.reduce((sum, f) => sum + (Number(f.unread) || 0), 0)
+      // An invite waits on the Messages tab, and nothing badged it: three
+      // friends could invite you and the app opened to "2 flocks".
+      + pendingFlockInvites.length;
 
     return (
       // Landmark, not a bare div: this is the app's primary navigation and it
@@ -12589,6 +12616,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // HOME SCREEN
   const HomeScreen = () => {
+    // The list request returns every accepted membership, finished plans
+    // included; the count and the section gates read the whole array while
+    // the list filtered it, so the header said "14 flocks" over two cards
+    // and the morning after your only plan the Nest was headings over
+    // nothing. One filtered, sorted array for all of them: soonest first
+    // (the server orders by last edit), a plan still voting twelve hours
+    // after its time last, and labelled as such, since nothing ages those
+    // out.
+    const liveFlocks = flocks
+      .filter(f => f.status !== 'completed' && f.status !== 'cancelled')
+      .map(f => ({ ...f, timePassed: f.status === 'voting' && !!f.eventTime && (Date.now() - new Date(f.eventTime).getTime()) > 12 * 3600 * 1000 }))
+      .sort((a, b) => {
+        if (a.timePassed !== b.timePassed) return a.timePassed ? 1 : -1;
+        const at = a.eventTime ? new Date(a.eventTime).getTime() : Infinity;
+        const bt = b.eventTime ? new Date(b.eventTime).getTime() : Infinity;
+        return at - bt;
+      });
     return (
     <div key="home-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
       {/* Compact header */}
@@ -12619,9 +12663,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
         {/* Editorial stat line — numbers as typography, not identical tiles (2026-07 recomposition) */}
         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', fontWeight: '500', letterSpacing: '-0.1px' }}>
-          <span style={{ color: 'var(--text-primary)', fontWeight: '600', fontSize: 'var(--t-label)' }}>{flocks.length}</span> {flocks.length === 1 ? 'flock' : 'flocks'}
+          <span style={{ color: 'var(--text-primary)', fontWeight: '600', fontSize: 'var(--t-label)' }}>{liveFlocks.length}</span> {liveFlocks.length === 1 ? 'flock' : 'flocks'}
+          {typeof friendCount === 'number' && (<>
           <span style={{ color: 'var(--text-tertiary)', margin: '0 7px' }}>·</span>
           <span style={{ color: 'var(--text-primary)', fontWeight: '600', fontSize: 'var(--t-label)' }}>{friendCount}</span> {friendCount === 1 ? 'friend' : 'friends'}
+          </>)}
         </p>
 
         {/* Tonight — full-width segmented pulse control (the actionable hero of the header) */}
@@ -12689,7 +12735,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // its content being wrong.
           // Only flocks whose votes were actually read may be accused: an
           // unloaded [] is not evidence the person has not voted.
-          const needsAction = flocks.filter(f => f.status === 'voting' && votesLoadedRef.current.has(f.id) && !hasCastMyVote(f));
+          const needsAction = liveFlocks.filter(f => f.status === 'voting' && !f.timePassed && votesLoadedRef.current.has(f.id) && !hasCastMyVote(f));
           if (needsAction.length === 0) return null;
           return (
             <button className="hit44"
@@ -12725,7 +12771,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         {/* With zero flocks the hero CTA and the section header are noise: the
             empty state below carries both actions at full size. Show them only
             once there is (or is about to be) a list to head. */}
-        {(flocksLoading || flocks.length > 0) && (<>
+        {pendingFlockInvites.length > 0 && (
+          <button className="hit44" onClick={() => setCurrentTab('chat')} style={{ width: '100%', minHeight: '44px', marginBottom: '10px', padding: '10px 14px', borderRadius: '12px', border: '1.5px solid #FDE68A', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', textAlign: 'left' }}>
+            <span style={{ display: 'flex', flexShrink: 0 }}>{Icons.mail('#F59E0B', 16)}</span>
+            {pendingFlockInvites.length === 1 ? '1 invite waiting' : `${pendingFlockInvites.length} invites waiting`}
+          </button>
+        )}
+        {(flocksLoading || liveFlocks.length > 0) && (<>
         {/* Primary action — one full-width hero CTA (login-language: navy on light, cream on dark) */}
         <button
           onClick={() => setCurrentScreen('create')}
@@ -12791,7 +12843,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               />
             </div>
           )}
-          {!flocksLoading && !flocksError && flocks.length === 0 && (
+          {!flocksLoading && !flocksError && liveFlocks.length === 0 && (
             <div style={{
               /* Full bleed back out of the feed's 16px gutter, and tall enough
                  to reach the tab bar. This used to be a small dashed card with
@@ -12806,8 +12858,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               textAlign: 'center',
             }}>
               <EmptyMark name="crowd" />
-              <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-display)', fontWeight: '600', color: 'var(--text-primary)', margin: '14px 0 0', letterSpacing: '-0.005em', lineHeight: 1.15 }}>No flocks yet</h3>
-              <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 20px', maxWidth: '280px' }}>Start one and drop the invite link in the group chat. Nobody needs the app to see the plan and vote.</p>
+              <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-display)', fontWeight: '600', color: 'var(--text-primary)', margin: '14px 0 0', letterSpacing: '-0.005em', lineHeight: 1.15 }}>{flocks.length > 0 ? 'Nothing coming up' : 'No flocks yet'}</h3>
+              <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 20px', maxWidth: '280px' }}>{flocks.length > 0 ? 'Your past plans are under Past flocks. Start the next one and drop the invite link in the group chat.' : 'Start one and drop the invite link in the group chat. Nobody needs the app to see the plan and vote.'}</p>
               <button className="hit44" onClick={() => setCurrentScreen('create')} style={{ width: '100%', maxWidth: '300px', height: '48px', borderRadius: '14px', border: 'none', background: isDark ? '#f1ede0' : '#1e293b', color: isDark ? '#1e293b' : '#ffffff', fontSize: 'var(--t-body)', fontWeight: '600', letterSpacing: '-0.1px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', boxShadow: isDark ? 'inset 0 1px 0 rgba(255,255,255,0.55), 0 1px 2px rgba(0,0,0,0.20)' : 'inset 0 1px 0 rgba(255,255,255,0.12), 0 1px 2px rgba(30,41,59,0.10)' }}>
                 {Icons.plus(isDark ? '#1e293b' : 'white', 16)} Start a flock
               </button>
@@ -12828,7 +12880,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               night ever. Filtered here at the render, not at the load,
               because Messages and the completed detail screen read the same
               array. */}
-          {flocks.filter(f => f.status !== 'completed' && f.status !== 'cancelled').map((f, idx) => {
+          {liveFlocks.map((f, idx) => {
             // Faces come from member_previews: a name and an avatar for up to
             // four accepted members, creator first, which GET /api/flocks sends
             // and loadFlocks stores. The card never read it, so it drew from
@@ -12873,7 +12925,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0', display: 'flex', alignItems: 'center', gap: '3px' }}>{Icons.mapPin(colors.textSecondary, 12)} {f.venue}</p>
                   </div>
                   <span style={{ fontSize: 'var(--t-meta)', padding: '3px 8px', borderRadius: '10px', fontWeight: '500', flexShrink: 0, whiteSpace: 'nowrap', backgroundColor: f.status === 'voting' ? 'rgba(45,90,135,0.12)' : 'var(--icon-bg)', color: f.status === 'voting' ? 'var(--accent-purple-text)' : 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                    {f.status === 'voting' ? Icons.vote('var(--accent-purple-text)', 12) : Icons.check('var(--text-secondary)', 12)} {f.status === 'voting' ? 'Needs Votes' : f.status === 'completed' ? 'Done' : f.status === 'cancelled' ? 'Cancelled' : 'Locked In'}
+                    {f.status === 'voting' ? Icons.vote('var(--accent-purple-text)', 12) : Icons.check('var(--text-secondary)', 12)} {f.timePassed ? 'Time passed' : f.status === 'voting' ? 'Needs Votes' : f.status === 'completed' ? 'Done' : f.status === 'cancelled' ? 'Cancelled' : 'Locked In'}
                   </span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -14919,6 +14971,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                           {f.host}
                         </button>
                       ) : f.host}
+                    </p>
+                    {/* A decision needs the when, the where and the who. */}
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {f.time && f.time !== 'TBD' ? f.time : 'Time still open'} · {f.venue && f.venue !== 'TBD' ? f.venue : 'Venue still open'} · {f.memberCount || 1} going
                     </p>
                   </div>
                   <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
