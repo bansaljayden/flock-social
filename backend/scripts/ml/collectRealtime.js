@@ -8,7 +8,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.e
 
 const { Pool } = require('pg');
 const { getWeather } = require('../../services/weatherService');
-const { fetchLiveBusyness } = require('./bestTimeService');
+const { fetchLiveBusyness, NETWORK_ERR_RE } = require('./bestTimeService');
 const { CITIES, getLocalTime, isHoliday, isSchoolBreak, sleep } = require('./config');
 const { getNearestEvent } = require('./eventService');
 const { specialNightFor, isHolidayEve } = require('./specialNights');
@@ -414,7 +414,22 @@ async function collectRealtime() {
   let consecutiveErrors = 0;
   // Throttles are counted apart from errors: see the catch block below.
   let consecutiveThrottles = 0;
+  // And so are OUR OWN timeouts, for the same reason and a worse incident.
+  // 2026-09-04 16:56 UTC: the sweep stopped after 271 of 1414 calls having
+  // written 149 rows, and exited non-zero telling the reader to go and check
+  // the BestTime subscription. Every one of the ten errors that tripped the
+  // breaker was "This operation was aborted", which is the AbortController in
+  // bestTimeService firing at twenty seconds, and nine of the ten were
+  // consecutive Starbucks venues. Not one 403. Not one 5xx. A slow answer is
+  // not evidence that the vendor is down, and the venue list groups chains
+  // together, so a run of slow ones is the normal shape of this data rather
+  // than a coincidence: it will land in the same place every sweep.
+  let consecutiveNetwork = 0;
   let aborted = false;
+  // Which of the three ceilings stopped the run, so the refusal at the bottom
+  // can name what actually happened instead of naming the worst thing it could
+  // have been.
+  let abortReason = null;
 
   // THE TIME BUDGET. A sweep that outlives the hour forfeits the next hour:
   // Railway skips a cron trigger while the previous execution is still
@@ -471,10 +486,12 @@ async function collectRealtime() {
         live = await fetchLiveBusyness(venue.besttime_venue_id);
         consecutiveErrors = 0;
         consecutiveThrottles = 0;
+        consecutiveNetwork = 0;
       } catch (err) {
         if (err.fatal) {
           console.error(`[ML:Realtime] FATAL: ${err.message} — aborting run`);
           aborted = true;
+          abortReason = 'fatal';
           break;
         }
         // A 503 is BestTime asking for space, not a venue problem, so it
@@ -491,9 +508,34 @@ async function collectRealtime() {
           if (consecutiveThrottles >= 40) {
             console.error('[ML:Realtime] 40 consecutive throttles, BestTime is not letting us in, aborting run');
             aborted = true;
+            abortReason = 'throttled';
             break;
           }
           await sleep(60000);
+          continue;
+        }
+        // OUR clock, not their answer. `NETWORK_ERR_RE` in bestTimeService is
+        // the same test that decides these are worth rethrowing rather than
+        // swallowing; this is the same classification applied one level up so
+        // the ten-error ceiling keeps meaning what its message says. The
+        // ceiling is higher because the cost of being wrong is asymmetric:
+        // stopping a sweep that could have run costs a night of corpus, and
+        // continuing through a real outage costs one wasted credit per venue
+        // until the run-time budget ends the hour anyway. A genuinely dead
+        // network fails fast (ECONNREFUSED, not a twenty second hang), so
+        // twenty-five of those is seconds, and twenty-five real hangs is about
+        // nine minutes, which the time budget already bounds.
+        const networkish = err && NETWORK_ERR_RE.test(String(err.message || ''));
+        if (networkish) {
+          consecutiveNetwork++;
+          console.error(`[ML:Realtime] Slow or unreachable ${consecutiveNetwork}/25 for ${venue.name}: ${err.message}`);
+          if (consecutiveNetwork >= 25) {
+            console.error('[ML:Realtime] 25 calls in a row timed out or could not connect, aborting run');
+            aborted = true;
+            abortReason = 'network';
+            break;
+          }
+          await sleep(2000);
           continue;
         }
         consecutiveErrors++;
@@ -501,6 +543,7 @@ async function collectRealtime() {
         if (consecutiveErrors >= 10) {
           console.error('[ML:Realtime] 10 consecutive errors, BestTime looks down, aborting run');
           aborted = true;
+          abortReason = 'upstream';
           break;
         }
         await sleep(2000);
@@ -693,13 +736,30 @@ async function collectRealtime() {
   // also wrong — 22,145 venues cannot all legitimately have nothing to say — but
   // it is a softer signal, so it refuses too and names the benign explanation so
   // the reader can rule it out rather than guess.
+  //
+  // AND IT NAMES THE RIGHT SUSPECT. This sentence used to be the 403 story on
+  // every abort, whatever stopped the run, because the 403 story is the one
+  // that cost 90 days. On 2026-09-04 it sent the reader to check a paid
+  // subscription over ten client-side timeouts in a row. A refusal that
+  // misdiagnoses is worse than a quiet one: it spends the reader's attention in
+  // the wrong place, and the account it accuses is the thing being paid for.
   if (aborted) {
+    const why = {
+      fatal: 'A 403 on every BestTime endpoint (live, forecasts-by-id, venues) is an '
+        + 'account-level rejection rather than a spent quota, which returns 402 — check the '
+        + 'BestTime subscription state before replacing the key, because a new key on a '
+        + 'lapsed account fails identically.',
+      throttled: 'Forty 503s in a row: BestTime is refusing the pace, not the account. The '
+        + 'pacing constant is what to look at, not the key.',
+      network: 'Twenty-five calls in a row timed out on OUR clock or could not connect. That '
+        + 'is a slow or unreachable upstream, not a rejected account, and the live timeout in '
+        + 'scripts/ml/bestTimeService.js is the number that decides it.',
+      upstream: 'Ten upstream errors in a row that were not throttles and not timeouts. Read '
+        + 'the status codes above; a 5xx run is BestTime, a 4xx run is us.',
+    }[abortReason] || 'The reason was not recorded, which is itself a bug worth fixing.';
     throw new Error(
       `REFUSED: the run aborted after ${totalRows} rows. Exiting non-zero so the scheduler `
-      + 'records a failure. A 403 on every BestTime endpoint (live, forecasts-by-id, venues) '
-      + 'is an account-level rejection rather than a spent quota, which returns 402 — check '
-      + 'the BestTime subscription state before replacing the key, because a new key on a '
-      + 'lapsed account fails identically.');
+      + `records a failure. ${why}`);
   }
   // duplicateRows > 0 is the one benign way to write nothing: a re-run inside the
   // same venue-hour-date, which migration 024's unique index correctly drops.
