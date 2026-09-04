@@ -377,6 +377,19 @@ async function collectRealtime() {
     byCity[venue.city].push(venue);
   }
 
+  // A RANDOM START, per city and per run. With the time budget below, the
+  // venues at the end of a fixed order would be the ones cut off every single
+  // hour, so they would never be sampled at that hour at all. Rotating the
+  // start each run spreads the cut across the corpus instead. Stateless on
+  // purpose: nothing has to remember where the last run stopped.
+  for (const k of Object.keys(byCity)) {
+    const arr = byCity[k];
+    const off = Math.floor(Math.random() * arr.length);
+    byCity[k] = arr.slice(off).concat(arr.slice(0, off));
+  }
+  const cityOrder = Object.entries(byCity);
+  if (cityOrder.length > 1 && Math.random() < 0.5) cityOrder.reverse();
+
   let totalRows = 0;
   let skipped = 0;
   // Venues never called because their own weekly curve says they are shut at
@@ -403,7 +416,20 @@ async function collectRealtime() {
   let consecutiveThrottles = 0;
   let aborted = false;
 
-  for (const [cityKey, cityVenues] of Object.entries(byCity)) {
+  // THE TIME BUDGET. A sweep that outlives the hour forfeits the next hour:
+  // Railway skips a cron trigger while the previous execution is still
+  // running, which is what happened at 02:07 on 2026-09-04 after the 01:07
+  // sweep took 58 minutes (1 s pace, ~1 s BestTime latency, and a burst of
+  // 30 s timeouts). Fifty minutes leaves the slot free by the next trigger
+  // (:07 fires ~:08:30). What is not reached is counted and reported, not
+  // silently dropped, and the random start above gives it a different tail
+  // next time.
+  const RUN_TIME_BUDGET_MS = 50 * 60 * 1000;
+  const runClockStart = Date.now();
+  let budgetHit = false;
+  let leftForNextRun = 0;
+
+  for (const [cityKey, cityVenues] of cityOrder) {
     if (aborted) break;
     const cityConfig = CITIES[cityKey];
     if (!cityConfig) continue;
@@ -418,6 +444,12 @@ async function collectRealtime() {
       + (special ? ` [${special.name}: ${special.effect}]` : '') + (holidayEve ? ' [holiday eve]' : ''));
 
     for (const venue of cityVenues) {
+      if (budgetHit || Date.now() - runClockStart > RUN_TIME_BUDGET_MS) {
+        if (!budgetHit) console.warn(`[ML:Realtime] Time budget reached after ${called} calls; the rest of this sweep is left for the next run.`);
+        budgetHit = true;
+        leftForNextRun++;
+        continue;
+      }
       // THE SKIP, BEFORE THE CALL. `local` is the same clock the row's `hour`
       // is written from, so the decision and the row can never disagree about
       // what time it is. ml_venues.timezone equals its city's timezone for all
@@ -637,7 +669,8 @@ async function collectRealtime() {
     + `(${liveRows} live-observed, ${forecastRows} vendor-forecast). ${skipped} venues skipped`
     + `, ${closedSkips} venues not called (closed at their local hour)`
     + `, ${called} calls spent of ${venues.length} venues in scope`
-    + `${duplicateRows > 0 ? `, ${duplicateRows} already recorded for this venue-hour-date` : ''}.`);
+    + `${duplicateRows > 0 ? `, ${duplicateRows} already recorded for this venue-hour-date` : ''}`
+    + `${budgetHit ? `, ${leftForNextRun} venues left for the next run (time budget)` : ''}.`);
 
   await auditProvenance(runStartedAt, liveRows + forecastRows);
 
