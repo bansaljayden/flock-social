@@ -212,9 +212,14 @@ test('an unrecognised tier does not walk through a free-minimum gate', async () 
 });
 
 test('a venue with no profile row at all is free, not undefined', async () => {
+  // Billing off: there is nothing to be below, so the reader answers 'pro'
+  // (2026-09-04; the gate already waved everyone through in that state).
+  handlers = [[/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [] })]];
+  assert.strictEqual(await getVenueTier(1), 'pro');
+  // Billing on: no row resolves to free, never undefined.
+  process.env.VENUE_BILLING_ENABLED = 'true';
   handlers = [[/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [] })]];
   assert.strictEqual(await getVenueTier(1), 'free');
-  process.env.VENUE_BILLING_ENABLED = 'true';
   handlers = [[/FROM venue_profiles vp LEFT JOIN venue_subscriptions/, () => ({ rows: [] })]];
   const res = await call('GET', '/gated');
   assert.strictEqual(res.status, 403);
