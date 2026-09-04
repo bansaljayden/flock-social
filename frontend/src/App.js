@@ -335,13 +335,19 @@ const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
 // score for everyone else. Self-contained state; remount per venue via key.
 const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venueName, predicted, ownerAsserted }) {
   const [open, setOpen] = useState(false);
-  const [sent, setSent] = useState(false);
+  const [sent, setSent] = useState(null); // 'verified' | 'unverified'
   const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
   if (!placeId) return null;
   if (sent) {
+    // The forecast only learns from a report the server could verify (a
+    // check-in by tag, or a plan with two people here). The old line promised
+    // every report sharpened it, which was false for nearly all of them.
     return (
       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', fontWeight: '500' }}>
-        Thanks. Real reports sharpen the forecast for everyone.
+        {sent === 'verified'
+          ? 'Thanks. Real reports sharpen the forecast for everyone.'
+          : 'Thanks. Reports from a night here with your flock go into the forecast; this one is noted.'}
       </p>
     );
   }
@@ -376,16 +382,19 @@ const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venue
           disabled={busy}
           onClick={async () => {
             setBusy(true);
+            setFailed(false);
             try {
-              await submitVenueFeedback({
+              const saved = await submitVenueFeedback({
                 venue_place_id: placeId,
                 venue_name: venueName,
                 crowd_level: o.level,
                 predicted_score: typeof predicted === 'number' ? Math.round(predicted) : null,
               });
-              setSent(true);
+              setSent(saved && saved.verified ? 'verified' : 'unverified');
             } catch (err) {
               console.error('[RealityCheck] submit failed:', err);
+              // Was console-only: the buttons came back with no word.
+              setFailed(true);
               setBusy(false);
             }
           }}
@@ -394,6 +403,9 @@ const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venue
           {o.label}
         </button>
       ))}
+      {failed && (
+        <span style={{ fontSize: 'var(--t-meta)', color: 'var(--accent-red-text)', fontWeight: '500' }}>That did not send. Try again.</span>
+      )}
     </div>
   );
 });
@@ -5519,6 +5531,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   useEffect(() => {
     if (!showFlockInviteModal) return undefined;
     loadFlockInviteFriends();
+    // The pulses too. They were fetched once at mount and then only moved by
+    // socket events, which a backgrounded phone drops, so the "Available
+    // tonight" list was hours stale by the time anyone opened this sheet.
+    refreshFriendsPulses();
     // Dropped rather than carried over. Held ids belong to whichever flock the
     // sheet was last opened from, and filtering this flock's friends against
     // another flock's roster hides someone who could be invited. An id short
@@ -5534,7 +5550,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       // dedupes. Worth nothing on screen.
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [showFlockInviteModal, selectedFlockId, loadFlockInviteFriends]);
+    // refreshFriendsPulses is declared further down (a stable useCallback); listing
+    // it here would read the const before its line runs, so the call above stays
+    // unlisted on purpose. It re-reads server state through setters only.
+  }, [showFlockInviteModal, selectedFlockId, loadFlockInviteFriends]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Typing filters the array already in hand. It used to refetch the entire
   // friends list on every keystroke, 300ms after the last one.
@@ -5630,9 +5649,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   const flockInvitePulses = useMemo(() => {
     const onRoster = new Set(flockInviteMemberIds);
     const picked = new Set(flockInviteSelected.map(f => String(f.id)));
+    // expires_at is stored on every pulse and was read nowhere, so at 4:05 AM
+    // the sheet still said a friend was down to hang tonight. A pulse past
+    // its end is not shown; one with no end date (older rows) still is.
+    const nowMs = Date.now();
     return friendsPulses.filter(p => p.status !== 'not'
       && !onRoster.has(String(p.id))
-      && !picked.has(String(p.id)));
+      && !picked.has(String(p.id))
+      && (!p.expires_at || new Date(p.expires_at).getTime() > nowMs));
   }, [friendsPulses, flockInviteMemberIds, flockInviteSelected]);
 
   // Everyone else, so nobody is listed twice under two headings.
@@ -6377,6 +6401,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // about every venue opened on a bad connection, which is an invitation to
   // write a review built on a fetch that failed.
   const [venueDetailReviews, setVenueDetailReviews] = useState(null);
+  // The server's total. The header used to print the page length, so a
+  // venue with three hundred reviews read "(50)".
+  const [venueDetailReviewTotal, setVenueDetailReviewTotal] = useState(null);
   const [venueDetailReviewsError, setVenueDetailReviewsError] = useState('');
   const [showReviewForm, setShowReviewForm] = useState(false);
   const [reviewRating, setReviewRating] = useState(0);
@@ -6560,12 +6587,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     if (!placeId) return;
     setVenueDetailReviewsError('');
     getPublicReviews(placeId)
-      .then(d => setVenueDetailReviews(d.reviews || []))
+      .then(d => { setVenueDetailReviews(d.reviews || []); setVenueDetailReviewTotal(Number.isFinite(d.total) ? d.total : null); })
       .catch(err => setVenueDetailReviewsError(err?.message || "Reviews aren't loading right now."));
   }, []);
 
   useEffect(() => {
-    if (!venueDetailPlaceId) { setVenueDetailReviews(null); setVenueDetailReviewsError(''); setVenueDetailPromos([]); setShowReviewForm(false); return undefined; }
+    if (!venueDetailPlaceId) { setVenueDetailReviews(null); setVenueDetailReviewTotal(null); setVenueDetailReviewsError(''); setVenueDetailPromos([]); setShowReviewForm(false); return undefined; }
     loadVenueDetailReviews(venueDetailPlaceId);
     // Promotions are LEFT silent on purpose. The section renders only when
     // there is at least one promotion, so a failed read hides a heading and
@@ -7093,6 +7120,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       getEntitlements()
         .then((data) => {
           setEntitlements(data);
+          // The meter used to be null until a reply landed, so the "chirps left"
+          // line vanished on every restart though this answer already knows it.
+          if (typeof data?.birdie?.remaining === 'number') setAiRemaining(data.birdie.remaining);
           if (!data?.isPremium) again();
         })
         .catch(() => again());
@@ -12155,7 +12185,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
                             {/* One meta line: price · rating · street */}
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px', minWidth: 0 }}>
-                              {v.price_level != null && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500', flexShrink: 0 }}>{'$'.repeat(v.price_level || 1)}</span>}
+                              {v.price_level > 0 && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500', flexShrink: 0 }}>{'$'.repeat(v.price_level)}</span>}
                               {v.rating && (
                                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500', flexShrink: 0 }}>
                                   {Icons.starFilled('#d97706', 12)}{v.rating}
@@ -18059,9 +18089,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{venueDetailModal.user_ratings_total ? `${venueDetailModal.user_ratings_total} reviews` : 'Rating'}</p>
                       </div>
                     )}
-                    {venueDetailModal.price_level != null && (
+                    {venueDetailModal.price_level > 0 && (
                       <div style={{ flex: 1, backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '10px', textAlign: 'center', border: '1px solid var(--border-subtle)' }}>
-                        <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 2px' }}>{'$'.repeat(venueDetailModal.price_level || 1)}</p>
+                        <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 2px' }}>{'$'.repeat(venueDetailModal.price_level)}</p>
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>Price</p>
                       </div>
                     )}
@@ -18160,12 +18190,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
             {/* Flock Reviews */}
             <div style={{ padding: '0 16px 12px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: 0 }}>{Icons.star(colors.amber, 14)} Flock Reviews{venueDetailReviews ? ` (${venueDetailReviews.length})` : ''}</h4>
+                <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-primary)', margin: 0 }}>{Icons.star(colors.amber, 14)} Flock Reviews{venueDetailReviews ? ` (${venueDetailReviewTotal ?? venueDetailReviews.length})` : ''}</h4>
                 {!showReviewForm && (
                   <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowReviewForm(true); setReviewRating(0); setReviewText(''); }} style={{ padding: '4px 10px', borderRadius: '6px', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
                     Write Review
                   </button>
                 )}
+              </div>
+              {/* The server refuses a review from anyone who has not been here
+                  with a flock (or checked in by tag), and it used to say so only
+                  AFTER the review was written. If no plan of yours at this place
+                  had two people, the sentence comes first. A tag check-in this
+                  client cannot see still gets through: the form stays. */}
+              {showReviewForm && !flocks.some(f => String(f.venueId) === String(venueDetailModal.place_id) && (f.memberCount || 0) >= 2) && (
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: 1.5 }}>You can review a venue after you have been there with a flock. Reviews from a plan with at least two people are the ones that count.</p>
+              )}
+              <div style={{ display: 'none' }}>
               </div>
 
               {/* Review Form */}
@@ -18198,6 +18238,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                         await submitVenueReview(venueDetailModal.place_id, reviewRating, reviewText);
                         const updated = await getPublicReviews(venueDetailModal.place_id);
                         setVenueDetailReviews(updated.reviews || []);
+                        setVenueDetailReviewTotal(Number.isFinite(updated.total) ? updated.total : null);
                         setShowReviewForm(false);
                       } catch (e) {
                         // The server refuses this for reasons the reviewer can
