@@ -196,6 +196,15 @@ export function intentFromUrl(rawUrl) {
   }
 
   const q = url.searchParams;
+  // A tag tap: /checkin/<placeId>?sig=<hmac>. Claimed in the association
+  // file, so a phone with Flock installed opens the app on it instead of a
+  // Safari tab with no session (2026-09-04).
+  const checkinMatch = url.pathname.match(/^\/checkin\/([^/?#]+)/);
+  if (checkinMatch) {
+    let placeId = checkinMatch[1];
+    try { placeId = decodeURIComponent(placeId); } catch (err) { /* keep raw */ }
+    return { screen: 'checkin', placeId, sig: q.get('sig') || null, type: 'link' };
+  }
   const inviteQ = asId(q.get('invite'));
   if (inviteQ) return { screen: 'flockInvite', flockId: inviteQ, type: 'link' };
   const flockQ = asId(q.get('flock'));
