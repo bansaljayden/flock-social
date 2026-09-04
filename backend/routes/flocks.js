@@ -2649,6 +2649,20 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
     // answer the membership DELETE inside this CTE with rowCount 1.
     const deleted = left.rows.length === 1;
 
+    // The host hears it in-app as well. The push further down stays quiet for
+    // a host who is online with an attended device, and this branch deletes
+    // the flock without the flock_deleted the creator-leave and DELETE /:id
+    // branches send, so an online host kept the dead plan on their list for
+    // the rest of the session (the list only refetches on mount) and a tap on
+    // it opened a silently empty chat. No name rides in this payload: nobody
+    // deleted the plan, it emptied, and the leaver's name would be a block
+    // leak to a host who has blocked them. The client words it by reason.
+    if (deleted && io) {
+      io.to(`user:${flock.rows[0].creator_id}`).emit('flock_deleted', {
+        flockId: parseInt(flockId), flockName, reason: 'emptied',
+      });
+    }
+
     res.json({ message: 'Left flock', flock_name: flockName, deleted });
 
     // ── WHAT THE HOST IS TOLD, AND WHAT THEY ARE NOT ─────────────────────

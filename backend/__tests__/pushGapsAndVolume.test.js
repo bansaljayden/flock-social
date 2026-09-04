@@ -323,6 +323,18 @@ test('the host is told when the last member leaves, and never told about the one
   assert.strictEqual(pushCalls[0].userId, 9);
   assert.strictEqual(pushCalls[0].data.type, 'flock_cancelled');
   assert.match(pushCalls[0].body, /Everybody left Dinner/);
+
+  // And the same news in-app, live. The push stays quiet for a host who is
+  // online, and the plans list only refetches on mount, so without this event
+  // an online host kept a dead plan on the list for the rest of the session.
+  const gone = emits.filter((e) => e.event === 'flock_deleted');
+  assert.strictEqual(gone.length, 1);
+  assert.strictEqual(gone[0].room, 'user:9');
+  assert.strictEqual(gone[0].payload.flockId, 42);
+  assert.strictEqual(gone[0].payload.flockName, 'Dinner');
+  assert.strictEqual(gone[0].payload.reason, 'emptied');
+  assert.strictEqual('deletedBy' in gone[0].payload, false,
+    'no name rides in this payload: nobody deleted the plan, it emptied');
 });
 
 test('a member leaving a plan that survives does not interrupt the host', async () => {
@@ -338,6 +350,8 @@ test('a member leaving a plan that survives does not interrupt the host', async 
   await call('POST', '/api/flocks/42/leave');
   await settle();
   assert.strictEqual(pushCalls.length, 0);
+  assert.strictEqual(emits.filter((e) => e.event === 'flock_deleted').length, 0,
+    'a plan that survives is not announced as gone');
 });
 
 // ---------------------------------------------------------------------------
