@@ -74,10 +74,21 @@ const fire = (socket, event, ...args) => socket.handlers.get(event)(...args);
 
 // --- stop_sharing_location: block-filtered like its siblings ---------------
 
-test('stop_sharing_location excludes a blocked peer and still notifies the room', async () => {
+test('stop_sharing_location reaches everyone the pin reached, minus blocks', async () => {
+  // THE STOP MUST USE THE PIN'S AUDIENCE. update_location fans out to
+  // `user:{id}` for every accepted member; this used to broadcast to
+  // `flock:{id}`, which holds only the sockets currently ON that chat screen.
+  // A member sitting on the Map tab who never opened the chat therefore
+  // received every location_update - the client stores them keyed by user id
+  // with no flock scoping and renders them as markers - and was not in the
+  // room to hear the stop. The pin stayed on their map for the rest of the
+  // session. A pin that says a person is somewhere they left is the one
+  // failure this feature must not have.
   __resetRateLimiters();
   const emitted = [];
   const restore = mockPool([
+    [/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/,
+      [{ user_id: 7 }, { user_id: 8 }, { user_id: 9 }]],
     [/FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, [{ id: 1 }]],
     [/FROM user_blocks/, [{ id: 9 }]], // user 9 is invisible to the actor
   ]);
@@ -86,11 +97,14 @@ test('stop_sharing_location excludes a blocked peer and still notifies the room'
     registerHandlers(fakeIo(emitted), socket);
     await fire(socket, 'stop_sharing_location', { flockId: 42 });
 
-    const stop = emitted.find((e) => e.event === 'member_stopped_sharing');
-    assert.ok(stop, 'the room is still told sharing stopped');
-    assert.strictEqual(stop.room, 'flock:42');
-    assert.deepStrictEqual(stop.exceptRooms, ['user:9'], 'the blocked peer is excluded');
-    assert.strictEqual(stop.payload.userId, 5);
+    const stops = emitted.filter((e) => e.event === 'member_stopped_sharing');
+    assert.deepStrictEqual(stops.map((e) => e.room).sort(), ['user:7', 'user:8'],
+      'the stop went to the room, not to the members who hold the pin');
+    assert.ok(!stops.some((e) => e.room === 'user:9'), 'the blocked peer is excluded');
+    for (const stop of stops) {
+      assert.strictEqual(stop.payload.userId, 5);
+      assert.strictEqual(stop.payload.flockId, 42);
+    }
   } finally {
     restore();
   }
@@ -100,6 +114,8 @@ test('stop_sharing_location stays silent when the block lookup fails (fail close
   __resetRateLimiters();
   const emitted = [];
   const restore = mockPool([
+    [/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/,
+      [{ user_id: 7 }]],
     [/FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, [{ id: 1 }]],
     [/FROM user_blocks/, () => { throw new Error('db blip'); }],
   ]);

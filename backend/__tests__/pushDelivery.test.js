@@ -402,8 +402,15 @@ test('a visibility lookup that fails suppresses the push instead of guessing', a
   on(/FROM user_blocks/i, () => ({ rows: [] }));
   on(/FROM users u/i, () => Promise.reject(new Error('connection terminated')));
   const res = await pushHelper.pushIfOffline(offline, 1, 'T', 'B', { type: 'flock_message', flockId: 7 });
-  assert.strictEqual(res.reason, 'not-visible', 'fails closed: an unanswerable block check sends nothing');
-  assert.strictEqual(sends.length, 0);
+  // STILL SUPPRESSED - that is the guarantee and it has not moved. What changed
+  // is that the reason now says the check FAILED rather than that it answered
+  // no. The outbox sweep deleted a row on 'not-visible', so a Postgres blip
+  // during the 08:00 release of a quiet-hours DM destroyed the notification
+  // outright while the ledger recorded a legitimate suppression.
+  assert.strictEqual(sends.length, 0, 'fails closed: an unanswerable block check sends nothing');
+  assert.strictEqual(res.reason, 'visibility-uncheckable');
+  assert.notStrictEqual(res.reason, 'not-visible',
+    'an outage and a recipient who may not see this must not share one reason');
 });
 
 // The block lookup itself throws BEFORE the visibility query — same rule.
@@ -412,8 +419,37 @@ test('a block lookup that throws suppresses the push', async () => {
   on(/FROM user_blocks/i, () => Promise.reject(new Error('connection terminated')));
   on(/FROM users u/i, () => ({ rows: [{ is_banned: false, can_see: true }] }));
   const res = await pushHelper.pushIfOffline(offline, 1, 'T', 'B', { type: 'dm_message', senderId: 2 });
+  assert.strictEqual(res.reason, 'visibility-uncheckable');
+  assert.strictEqual(sends.length, 0);
+});
+
+test('a recipient who genuinely may not see it still reads as not-visible', async () => {
+  // The other side of the split, so the two cannot quietly collapse back into
+  // one value: a healthy lookup that answers "no" is a permanent property of
+  // the recipient and the sweep is right to drop that row.
+  reset();
+  on(/FROM user_blocks/i, () => ({ rows: [] }));
+  on(/FROM users u/i, () => ({ rows: [{ is_banned: false, can_see: false }] }));
+  const res = await pushHelper.pushIfOffline(offline, 1, 'T', 'B', { type: 'flock_message', flockId: 7 });
   assert.strictEqual(res.reason, 'not-visible');
   assert.strictEqual(sends.length, 0);
+});
+
+test('a failed check does not leave its mark on the next recipient', async () => {
+  // canNotify records the failure in a module-scope set keyed by recipient and
+  // deliver() clears it. If it were ever left behind, the next push to that
+  // account would be filed as an outage and retried forever.
+  reset();
+  on(/FROM user_blocks/i, () => ({ rows: [] }));
+  on(/FROM users u/i, () => Promise.reject(new Error('connection terminated')));
+  const first = await pushHelper.pushIfOffline(offline, 1, 'T', 'B', { type: 'flock_message', flockId: 7 });
+  assert.strictEqual(first.reason, 'visibility-uncheckable');
+
+  reset();
+  on(/FROM user_blocks/i, () => ({ rows: [] }));
+  on(/FROM users u/i, () => ({ rows: [{ is_banned: false, can_see: false }] }));
+  const second = await pushHelper.pushIfOffline(offline, 1, 'T', 'B', { type: 'flock_message', flockId: 7 });
+  assert.strictEqual(second.reason, 'not-visible', 'the previous failure was still marked');
 });
 
 // ---------------------------------------------------------------------------

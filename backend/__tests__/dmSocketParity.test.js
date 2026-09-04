@@ -294,10 +294,13 @@ test('a rate-limited leave_flock still detaches from the room', async () => {
 });
 
 test('stop_sharing_location is metered, but not out of update_location budget', async () => {
-  const { socket } = connect({ id: 1, name: 'Ava' });
+  const { io, socket } = connect({ id: 1, name: 'Ava' });
   routes = [
     [/FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, [{ id: 1 }]],
-    [/FROM flock_members WHERE flock_id = \$1 AND status/, []],
+    // A peer to tell. The stop fans out to `user:{id}` now rather than
+    // broadcasting into the flock room, because the room holds only whoever is
+    // on that chat screen while the PIN went to every accepted member.
+    [/FROM flock_members WHERE flock_id = \$1 AND status/, [{ user_id: 2 }]],
     [/FROM user_blocks/, []],
   ];
 
@@ -305,11 +308,12 @@ test('stop_sharing_location is metered, but not out of update_location budget', 
   // live location does.
   for (let i = 0; i < 60; i++) await fire(socket, 'update_location', { flockId: 42, lat: 1, lng: 2 });
   socket.emitted.length = 0;
+  io.emitted.length = 0;
 
   await fire(socket, 'stop_sharing_location', { flockId: 42 });
 
   assert.ok(
-    socket.emitted.some((e) => e.event === 'member_stopped_sharing'),
+    io.emitted.some((e) => e.event === 'member_stopped_sharing'),
     'sharing a bucket with update_location meant the STOP was the event that got dropped, leaving a stale pin on every peer map'
   );
 });
@@ -486,6 +490,9 @@ test('disconnect hides the departure from blocked users too', async () => {
   const { io, socket } = connect({ id: 1, name: 'Ava' });
   routes = [
     [/FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, [{ id: 1 }]],
+    // The accepted roster, for the location-stop fan-out. 9 is blocked and 8
+    // is not, so the two halves of the assertion below are distinguishable.
+    [/FROM flock_members WHERE flock_id = \$1 AND status/, [{ user_id: 8 }, { user_id: 9 }]],
     [/FROM user_blocks/, [{ id: 9 }]],
   ];
 
@@ -495,8 +502,64 @@ test('disconnect hides the departure from blocked users too', async () => {
   const offline = io.emitted.filter((e) => e.event === 'member_offline');
   assert.strictEqual(offline.length, 1, 'still announced exactly once');
   assert.ok(offline[0].excepted && offline[0].excepted.includes('user:9'));
-  const stopped = io.emitted.find((e) => e.event === 'member_stopped_sharing');
-  assert.ok(stopped.excepted && stopped.excepted.includes('user:9'), 'and so is the location-stop signal');
+
+  // A DROPPED CONNECTION IS THE LIKELIEST WAY A SHARE ENDS. services/socket.js
+  // tears the socket down the instant the app is backgrounded on native, so no
+  // explicit stop is ever sent. This used to broadcast into the flock room,
+  // which holds only the sockets on that chat screen, while the pin itself went
+  // to every accepted member - so the people most likely to be holding a stale
+  // pin were exactly the ones the stop could not reach.
+  const stopped = io.emitted.filter((e) => e.event === 'member_stopped_sharing');
+  assert.deepStrictEqual(stopped.map((e) => e.room).sort(), ['user:8'],
+    'the stop went to the room rather than to the members holding the pin');
+  assert.strictEqual(stopped[0].payload.userId, 1);
+  assert.strictEqual(stopped[0].payload.flockId, 42);
+});
+
+test('a DM location share ends when the connection does', async () => {
+  // The flock share had a disconnect path; the DM share had none. It was
+  // symmetric only while both sides stayed connected, and the likelier end of a
+  // DM share is that the sharer's connection simply goes - services/socket.js
+  // tears the socket down the instant the app is backgrounded on native. Their
+  // emit loop stops, no stop is ever sent, and the recipient's dmMemberLocation
+  // is only cleared by dm_member_stopped_sharing or by switching threads, so
+  // the banner kept saying the other person was sharing indefinitely. Their own
+  // React state does not survive a relaunch either, so they never resume and
+  // never send the stop themselves.
+  const { io, socket } = connect({ id: 1, name: 'Ava' });
+  routes = [
+    [/FROM user_blocks/, []],
+    [/FROM friendships|FROM direct_messages|FROM dm_/, [{ ok: true }]],
+    [/[\s\S]*/, [{ ok: true }]],
+  ];
+
+  await fire(socket, 'dm_share_location', { receiverId: 2, lat: 40.7, lng: -74.0 });
+  assert.ok(socket.emitted.some((e) => e.event === 'dm_location_update'),
+    'fixture precondition: the share never went out');
+  io.emitted.length = 0;
+
+  await fire(socket, 'disconnect');
+
+  const stopped = io.emitted.filter((e) => e.event === 'dm_member_stopped_sharing');
+  assert.deepStrictEqual(stopped.map((e) => e.room), ['user:2'],
+    'the peer was left holding a live pin of somebody who is gone');
+  assert.strictEqual(stopped[0].payload.userId, 1);
+});
+
+test('a DM share that was stopped properly is not announced twice on disconnect', async () => {
+  const { io, socket } = connect({ id: 1, name: 'Ava' });
+  routes = [
+    [/FROM user_blocks/, []],
+    [/[\s\S]*/, [{ ok: true }]],
+  ];
+
+  await fire(socket, 'dm_share_location', { receiverId: 2, lat: 40.7, lng: -74.0 });
+  await fire(socket, 'dm_stop_sharing_location', { receiverId: 2 });
+  io.emitted.length = 0;
+
+  await fire(socket, 'disconnect');
+  assert.strictEqual(io.emitted.filter((e) => e.event === 'dm_member_stopped_sharing').length, 0,
+    'the disconnect re-announced a share that had already ended');
 });
 
 test('one disconnect costs one block lookup, however many flocks were open', async () => {

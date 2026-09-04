@@ -138,8 +138,13 @@ test('the safety gate still fails closed even when the preference read failed op
   on(/FROM user_settings/i, () => Promise.reject(new Error('connection terminated')));
   on(/FROM users u/i, () => Promise.reject(new Error('connection terminated')));
   const res = await pushHelper.pushAlways(1, 'T', 'B', { type: 'crowd_alert', flockId: 7 });
-  assert.strictEqual(res.reason, 'not-visible', 'block/ban enforcement keeps its own rules');
-  assert.strictEqual(sends.length, 0);
+  // Suppressed, which is the rule this test is about and it has not moved. The
+  // reason is 'visibility-uncheckable' rather than 'not-visible' because the
+  // lookup FAILED rather than answering no - a distinction the outbox sweep
+  // needs, since it deletes a row it reads as a permanent suppression and a
+  // Postgres blip used to destroy a queued notification outright.
+  assert.strictEqual(sends.length, 0, 'block/ban enforcement keeps its own rules');
+  assert.strictEqual(res.reason, 'visibility-uncheckable');
 });
 
 test('transactional types do not pay the preference read', async () => {

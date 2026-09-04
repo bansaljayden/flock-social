@@ -107,6 +107,15 @@ const OUTCOME = {
   ONLINE: 'online',
   DEBOUNCED: 'debounced',
   NOT_VISIBLE: 'not-visible',
+  // "The visibility check itself failed", as opposed to NOT_VISIBLE's "we
+  // checked and the answer was no". Both suppress the push - canNotify fails
+  // closed on purpose and that does not change - but only one of them is a
+  // permanent property of the recipient. The outbox sweep used to read them as
+  // the same thing and DELETE the row, so a Postgres blip during the 08:00
+  // release of a quiet-hours DM destroyed the notification outright: the retry
+  // rows, the TTLs and the FOR UPDATE SKIP LOCKED this whole file exists for
+  // never engaged, and the ledger recorded it as a legitimate suppression.
+  UNCHECKABLE: 'visibility-uncheckable',
   OPTED_OUT: 'opted-out',
   QUIET_HELD: 'quiet-held',
   QUIET_DROPPED: 'quiet-dropped',
@@ -445,9 +454,20 @@ async function canNotify(userId, data = {}) {
     // late or not at all, which the app recovers from the moment the user opens
     // it; the cost in the other direction cannot be taken back.
     console.error('[Push] visibility check failed, suppressing push:', err.message);
+    // Still false - the paragraph above is the reason and it stands. But leave
+    // a mark so the caller can tell a suppression from an outage. Keyed on the
+    // recipient and cleared by the reader, because the only reader is the one
+    // call site below and it runs immediately after.
+    lastVisibilityError.add(Number(userId));
     return false;
   }
 }
+
+// Set by canNotify's catch, read and cleared by the one call site in deliver().
+// A plain Set rather than a returned value because canNotify's boolean is
+// consumed in several places that all want the fail-closed answer and none of
+// which want to learn a second vocabulary.
+const lastVisibilityError = new Set();
 
 // Debounce is per CONVERSATION, not per person. Round 7: the key was the user
 // id alone, so a DM from one friend swallowed a flock invite and a message in
@@ -823,8 +843,10 @@ async function deliver(userId, title, body, data, opts = {}) {
   // here rather than at enqueue time: a recipient who left the flock, blocked
   // the sender, or was banned while the row waited gets nothing.
   if (!(await canNotify(userId, data))) {
-    return skip(userId, data, OUTCOME.NOT_VISIBLE);
+    const uncheckable = lastVisibilityError.delete(Number(userId));
+    return skip(userId, data, uncheckable ? OUTCOME.UNCHECKABLE : OUTCOME.NOT_VISIBLE);
   }
+  lastVisibilityError.delete(Number(userId));
 
   if (!RINGS_THROUGH_THE_NIGHT.has(type)) {
     const zone = await recipientZone(userId);
@@ -972,6 +994,17 @@ async function sweepPushOutbox() {
       continue;
     }
     if (sent > 0) { drop.push(row.id); continue; }
+    // A row the recipient will never be allowed to see is finished. A row we
+    // could not ASK about is not - it goes back for its own backoff, and the
+    // attempts ceiling below still stops it eventually.
+    if (result && result.skipped && result.reason === OUTCOME.UNCHECKABLE) {
+      // The claim already moved next_attempt_at by this row's own backoff, so
+      // continuing schedules the retry rather than spinning. The ceiling still
+      // applies: an outage that outlasts RETRY_MAX_ATTEMPTS ends the row here
+      // rather than leaving it to be re-attempted until its TTL.
+      if (row.attempts >= RETRY_MAX_ATTEMPTS) drop.push(row.id);
+      continue;
+    }
     if (result && result.skipped) { drop.push(row.id); continue; } // never becomes visible
     // Nothing failed and nothing sent means the account has no registered
     // device any more. Retrying that produces the same nothing forever.
