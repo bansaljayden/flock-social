@@ -141,6 +141,7 @@ function dmProps(over = {}) {
     setDmReplyingTo: fn(),
     setDmRequestSending: fn(),
     setDmSharingLocation: fn(),
+    startDmLocationSharing: fn(),
     setDmVenueVotes: fn(),
     setModerationTarget: fn(),
     setPickingVenueForCreate: fn(),

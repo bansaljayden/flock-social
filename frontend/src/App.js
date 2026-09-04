@@ -8955,14 +8955,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     return () => { unsubLocation(); unsubStopped(); };
   }, []);
 
-  // Clean up location sharing on unmount
+  // Clean up location sharing on unmount. Through the ref: with [] deps this
+  // cleanup closes over the MOUNT-TIME value, which is null, so the guard was
+  // dead and the hook could never fire. Two other layers masked it (endSession
+  // disconnects the socket, and the server announces member_stopped_sharing
+  // on disconnect), which is why nobody saw it.
   useEffect(() => {
     return () => {
-      if (sharingLocationForFlock) {
-        socketStopSharing(sharingLocationForFlock);
-      }
+      const live = sharingLocationRef.current;
+      if (live) socketStopSharing(live);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   // Listen for real-time flock invite notifications
   useEffect(() => {
@@ -9377,6 +9380,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // the body, and `image_url` / `venue_data` are the optional attachments both
   // transports already carry field for field. Adding a fourth kind means adding
   // a field here, not a second send path.
+  // transmitFlockMessage keeps its dependency list short on purpose (it is
+  // the identity the retry and send paths key on), so the avatar is read
+  // through a ref: closed over, a picture changed via confirmCrop rode on
+  // every optimistic bubble of the session as the OLD picture until a
+  // history reload replaced it.
+  const profilePicRef = useRef(profilePic);
+  profilePicRef.current = profilePic;
   const transmitFlockMessage = useCallback(async (flockId, text, opts = {}) => {
     const image = opts.image_url || null;
     const venueData = opts.venue_data || null;
@@ -9392,7 +9402,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       id: tempId,
       sender: 'You',
       senderId: authUser?.id,
-      senderImage: profilePic,
+      senderImage: profilePicRef.current,
       time: 'Now',
       sentAt: new Date().toISOString(),
       text,
@@ -11665,6 +11675,42 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     });
   }, [dmSharingLocation]);
 
+  // Arming a DM share asks for a fix on the tap, the way startSharingLocation
+  // does for a flock. The composer used to call a bare setDmSharingLocation(id)
+  // and the effect below returns early without a position, so on a device that
+  // had never visited Discover (userLocation starts null until a fix is stored)
+  // the button went green, the header said "sharing", and nothing was ever
+  // sent, for the whole session. The tap is also the gesture the browser wants
+  // before it will prompt. Both states land in one batch, so the effect sees
+  // the share and the position together.
+  const startDmLocationSharing = useCallback((dmId) => {
+    if (!dmId) return;
+    if (userLocation) { setDmSharingLocation(dmId); return; }
+    if (!geolocationAvailable()) {
+      showToast("This device can't share a location", 'error');
+      return;
+    }
+    getCurrentPosition(
+      (pos) => {
+        setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        setDmSharingLocation(dmId);
+      },
+      (err) => {
+        showToast(err?.code === 1
+          ? 'Flock needs location access to share where you are. Turn it on in Settings.'
+          : "Couldn't get your location. Try again in a second.", 'error');
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
+    );
+  }, [userLocation, showToast]);
+
+  // Keyed on whether a position EXISTS, not on the position: the object is
+  // replaced on every fix and the interval already reads the ref, so a
+  // per-fix re-run would only churn. The boolean is what was missing. With
+  // [dmSharingLocation] alone, a share armed while the position was null
+  // never re-ran when one arrived, and a share that survived Location being
+  // toggled off never resumed when it came back on.
+  const hasUserLocation = !!userLocation;
   useEffect(() => {
     if (!dmSharingLocation || !userLocation) return;
     dmShareLocation(dmSharingLocation, userLocation.lat, userLocation.lng);
@@ -11673,7 +11719,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       if (loc) dmShareLocation(dmSharingLocation, loc.lat, loc.lng);
     }, 10000);
     return () => clearInterval(interval);
-  }, [dmSharingLocation]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dmSharingLocation, hasUserLocation]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // DM typing indicators
   useEffect(() => {
@@ -16573,6 +16619,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         setDmReplyingTo,
         setDmRequestSending,
         setDmSharingLocation,
+        startDmLocationSharing,
         setDmVenueVotes,
         setModerationTarget,
         setPickingVenueForCreate,
