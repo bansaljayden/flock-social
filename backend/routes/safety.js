@@ -898,7 +898,12 @@ async function alertFlockMembers(io, user, coords) {
     // Sent to the app as numbers, so a client can put a pin on a map without
     // reparsing a sentence. Absent entirely when nothing was shared, rather
     // than present and null, so a consumer cannot mistake one for the other.
-    ...(coords ? { latitude: coords.latitude, longitude: coords.longitude } : {}),
+    // readCoords hands back { lat, lng }. This read .latitude/.longitude, so
+    // the keys were undefined, the FCM builder dropped them, and every
+    // flockmate's alarm screen said "They did not share their location" and
+    // hid the map, while the push body said the opposite. The unit test
+    // passed the wrong shape in, so it was green. 2026-09-04.
+    ...(coords ? { latitude: coords.lat, longitude: coords.lng } : {}),
     at: new Date().toISOString(),
   };
 
@@ -915,7 +920,9 @@ async function alertFlockMembers(io, user, coords) {
   const results = await Promise.allSettled(
     members.rows.map((row) => pushAlways(row.user_id, title, body, payload))
   );
-  const notified = results.filter((r) => r.status === 'fulfilled' && r.value && !r.value.skipped).length;
+  // A member with no registered device answers { sent: 0 }, which is not
+  // reached; only a delivered push counts, so the log does not over-report.
+  const notified = results.filter((r) => r.status === 'fulfilled' && r.value && (r.value.sent || 0) > 0).length;
   console.log(`[Safety] SOS from user ${user.id} reached ${notified} of ${members.rows.length} flock members in the app.`);
   return { notified };
 }
@@ -929,8 +936,13 @@ async function alertFlockMembers(io, user, coords) {
 // window is re-evaluated at cancel time, which can only shrink the set toward
 // people whose plan is still near; anyone the alarm reached outside it holds
 // a stale alert, which the email contacts always risked too.
-async function notifyFlockStandDown(io, user) {
-  const members = await pool.query(SOS_FLOCK_AUDIENCE_SQL, [user.id, SOS_FLOCK_WINDOW_HOURS]);
+async function notifyFlockStandDown(io, user, hoursSinceAlert = 0) {
+  // The window is widened by the time since the alarm, so a plan that was
+  // inside the alarm's window is still inside this one. Re-evaluated as it
+  // was, the window could only shrink, and a flockmate reached near its
+  // edge held a full-screen alarm nobody ever called off.
+  const windowHours = SOS_FLOCK_WINDOW_HOURS + Math.max(0, Math.ceil(Number(hoursSinceAlert) || 0));
+  const members = await pool.query(SOS_FLOCK_AUDIENCE_SQL, [user.id, windowHours]);
   if (members.rows.length === 0) return { notified: 0 };
 
   const name = String(user.name || 'Someone you are out with').slice(0, 80);
@@ -955,7 +967,7 @@ async function notifyFlockStandDown(io, user) {
       payload
     ))
   );
-  const notified = results.filter((r) => r.status === 'fulfilled' && r.value && !r.value.skipped).length;
+  const notified = results.filter((r) => r.status === 'fulfilled' && r.value && (r.value.sent || 0) > 0).length;
   console.log(`[Safety] Stand-down from user ${user.id} reached ${notified} of ${members.rows.length} flock members.`);
   return { notified };
 }
@@ -1004,7 +1016,7 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
                 latitude,
                 longitude,
                 COALESCE(contacts_alerted, 0) AS contacts_alerted,
-                EXTRACT(EPOCH FROM (NOW() - created_at)) * 1000 AS age_ms,
+                EXTRACT(EPOCH FROM ((NOW() AT TIME ZONE 'UTC') - created_at)) * 1000 AS age_ms,
                 (SELECT COUNT(*)::int FROM emergency_alerts e2
                   WHERE e2.user_id = $1
                     AND COALESCE(e2.contacts_alerted, 0) > 0
@@ -1290,10 +1302,14 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
       // duplicate alert a minute later, which on this route is the cheap
       // direction. It is not the thing the user asked for and its failure is
       // not theirs to hear about, so it is logged and the truth is reported.
-      await pool.query(
+      // One retry first: a lost write here also makes the alert impossible
+      // to stand down, because /alert/cancel only withdraws an alert that
+      // reached somebody, and this count is how it knows.
+      const recordCount = () => pool.query(
         'UPDATE emergency_alerts SET contacts_alerted = $1 WHERE id = $2',
         [emailsSent, alertId]
-      ).catch((e) => console.error(
+      );
+      await recordCount().catch(() => recordCount()).catch((e) => console.error(
         `[Safety] alert ${alertId} was DELIVERED to ${emailsSent} contact(s) but the count could not be recorded: ${e.message}. The cooldown for this user is not armed.`
       ));
     } else {
@@ -1312,6 +1328,16 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
         [ALERT_FLOOR_MS + 1000, alertId]
       ).catch((e) => console.error('[Safety] Failed to release alert claim:', e.message));
     }
+
+    // The flock leg, before the email verdict below can end the request.
+    // It used to run only after the success response, so when every contact
+    // email failed the people in the room were told nothing at all, and
+    // they are the ones who can physically get there. Fire-and-forget: the
+    // response is never held on it, and it cannot change the answer.
+    alertFlockMembers(req.app.get('io'), req.user, coords).catch((err) => console.error(
+      `[Safety] SOS from user ${req.user.id}: the flock leg failed (${err.message}). `
+      + 'The trusted-contact emails are unaffected.'
+    ));
 
     if (emailsSent === 0) {
       // Nobody was reached — say so loudly, and the retry path is open now.
@@ -1346,13 +1372,6 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
       alerts,
     });
 
-    // The flock leg, after the answer and never able to change it. Trusted
-    // contacts have been emailed above; this is the people in the room. See
-    // alertFlockMembers for who qualifies and why the set is that narrow.
-    alertFlockMembers(req.app.get('io'), req.user, coords).catch((err) => console.error(
-      `[Safety] SOS from user ${req.user.id}: the flock leg failed (${err.message}). `
-      + 'The trusted-contact emails above are unaffected and already sent.'
-    ));
   } catch (err) {
     // Round 23: this answered `500 Failed to send alert` and stopped there. It
     // is the only outcome in this route that tells a person nothing about what
@@ -1571,6 +1590,14 @@ router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
       if (outcome.status === 'fulfilled' && outcome.value?.sent === true) told.push(c.contact_name);
     });
 
+    // The flock leg first, for the same reason as on /alert: a stand-down
+    // whose emails all failed used to leave every flockmate holding the
+    // alarm. Best-effort and never awaited by the response.
+    const hoursSinceAlert = (Date.now() - new Date(last.rows[0].created_at).getTime()) / 3600000;
+    notifyFlockStandDown(req.app.get('io'), req.user, hoursSinceAlert).catch((fanErr) => {
+      console.error('[Safety] Flock stand-down fan-out failed:', fanErr?.message);
+    });
+
     if (told.length === 0) {
       // Same rule as /alert: never report a delivery that did not happen, and
       // say what to do instead. The meter is given back, because an attempt
@@ -1596,15 +1623,6 @@ router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
       contactsToldCount: told.length,
     });
 
-    // The flock leg, after the response for the same reason every push
-    // fan-out runs there: the stand-down is committed and the sender is not
-    // kept waiting on the rest of the flock finding out. Best-effort; the
-    // email leg above is the one the response reports on.
-    try {
-      await notifyFlockStandDown(req.app.get('io'), req.user);
-    } catch (fanErr) {
-      console.error('[Safety] Flock stand-down fan-out failed:', fanErr?.message);
-    }
     return undefined;
   } catch (err) {
     console.error('[Safety] Alert cancel error:', err);

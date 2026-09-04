@@ -226,7 +226,9 @@ const MAX_DATA_VALUE = 64;
 const MAX_DATA_BYTES = 512;
 // If the budget ever does run out, these are the keys the client needs in order
 // to resolve where a tap goes, so they are spent first.
-const DATA_PRIORITY = ['type', 'flockId', 'senderId', 'fromUserId'];
+// latitude/longitude: an SOS's map pin, which a long display name must not
+// crowd out of the budget.
+const DATA_PRIORITY = ['type', 'flockId', 'senderId', 'fromUserId', 'latitude', 'longitude'];
 
 function isControl(cp) {
   return cp < 0x20 || (cp >= 0x7f && cp <= 0x9f);
