@@ -268,6 +268,9 @@ function scriptGuestRsvp() {
   on(/SELECT COUNT\(\*\)::int AS n FROM guest_rsvps/, () => ({ rows: [{ n: 0 }], rowCount: 1 }));
   on(/pg_advisory_xact_lock/, () => ({ rows: [], rowCount: 1 }));
   on(/COALESCE\(is_hidden, false\) = true/, () => ({ rows: [], rowCount: 0 }));
+  // The same-name guard asked inside the insert transaction (nameInUse): no
+  // visible row answers under this name yet, so the insert proceeds.
+  on(/COALESCE\(is_hidden, false\) = false\s+AND lower\(regexp_replace/, () => ({ rows: [], rowCount: 0 }));
   let nextGuestId = 100;
   on(/INSERT INTO guest_rsvps/, () => {
     nextGuestId += 1;

@@ -8,7 +8,7 @@ const { guestEntryId } = require('../utils/guestRsvp');
 // UNAUTHENTICATED write surface in the app and every value it takes is
 // re-broadcast to the flock, so it is the one that could least afford the hole.
 const { scalarOnly, freeText } = require('../validators/shape');
-const { broadcastGuestRsvp, emitToFlockExcludingBlocked } = require('../sockets/handlers');
+const { broadcastGuestRsvp, emitToFlockExcludingBlocked, emitToFlockMembers } = require('../sockets/handlers');
 // The ONE authenticated route in this file (POST /:token/join). Everything else
 // here is deliberately unauthenticated; that route is deliberately not.
 const { authenticate, requireVerified } = require('../middleware/auth');
@@ -188,7 +188,13 @@ function createGuestCounter({ name, limit, windowMs, maxKeys }) {
   return { name, allow, retryAfterMs, entries, limit, windowMs, maxKeys };
 }
 
-const NEW_GUESTS_PER_IP_PER_FLOCK = 3;
+// Was 3. A share link exists for exactly the case that broke it: a group on
+// one bar's wifi, or on a carrier's shared address, opening the same link one
+// after another, and the fourth of them was told three people had already
+// answered "from this connection". Twelve fits a table. Abuse stays bounded
+// by the per-plan ledger cap below, the per-row action budget, and the same
+// hour window: a flood from one address still cannot fill a plan.
+const NEW_GUESTS_PER_IP_PER_FLOCK = 12;
 const NEW_GUEST_WINDOW_MS = 60 * 60 * 1000;
 const NEW_GUEST_MAX_KEYS = 5000;
 
@@ -313,6 +319,24 @@ async function nameIsTakenDown(run, flockId, name) {
     `SELECT 1 FROM guest_rsvps
      WHERE flock_id = $1
        AND COALESCE(is_hidden, false) = true
+       AND lower(regexp_replace(btrim(name), '\\s+', ' ', 'g')) = $2
+     LIMIT 1`,
+    [flockId, normalizeGuestName(name)]
+  );
+  return r.rows.length > 0;
+}
+
+// Is this display name already answering on this plan, visibly? Same
+// normalisation as the takedown guard. The guest identity lives in the
+// browser's storage (flock_guest_<token>), so the same person on a second
+// device, or after clearing Safari, minted a second row under the same name:
+// "Maya" twice in the roster and going one too high, for good. Asked inside
+// the insert transaction, under the same advisory lock as the cap.
+async function nameInUse(run, flockId, name) {
+  const r = await run(
+    `SELECT 1 FROM guest_rsvps
+     WHERE flock_id = $1
+       AND COALESCE(is_hidden, false) = false
        AND lower(regexp_replace(btrim(name), '\\s+', ' ', 'g')) = $2
      LIMIT 1`,
     [flockId, normalizeGuestName(name)]
@@ -753,6 +777,7 @@ router.post('/:token/rsvp',
       const client = await pool.connect();
       let ins;
       let blockedByTakedown = false;
+      let nameTaken = false;
       try {
         await client.query('BEGIN');
         await client.query("SELECT pg_advisory_xact_lock(hashtext('guest_rsvp:' || $1::text))", [String(link.flock_id)]);
@@ -788,8 +813,12 @@ router.post('/:token/rsvp',
         // Round 23: the same question the EDIT path now asks, from the same
         // definition, so the two doors cannot be locked differently.
         const revoked = await nameIsTakenDown((q, p) => client.query(q, p), link.flock_id, name);
+        const taken = !revoked && await nameInUse((q, p) => client.query(q, p), link.flock_id, name);
         if (revoked) {
           blockedByTakedown = true;
+          await client.query('ROLLBACK');
+        } else if (taken) {
+          nameTaken = true;
           await client.query('ROLLBACK');
         } else {
           ins = await client.query(
@@ -809,6 +838,12 @@ router.post('/:token/rsvp',
       // Deliberately vague, and the same shape as any other refusal: a
       // moderated-off guest learns that this name will not go through, not that
       // a moderator acted on them specifically.
+      if (nameTaken) {
+        return res.status(409).json({
+          error: 'Someone already answered as that name. Open the link on the device you used, or add a last initial.',
+          nameTaken: true,
+        });
+      }
       if (blockedByTakedown) {
         return res.status(403).json({ error: 'That name cannot be used on this flock. Try a different one.' });
       }
@@ -1201,11 +1236,14 @@ router.post('/:token/join',
           // matches nothing and must never fail the join, which is why this is
           // a best-effort UPDATE and not a validator refusal.
           if (guestUuid) {
-            await client.query(
+            const hid = await client.query(
               `UPDATE guest_rsvps SET is_hidden = TRUE
-                WHERE flock_id = $1 AND guest_token = $2 AND COALESCE(is_hidden, false) = false`,
+                WHERE flock_id = $1 AND guest_token = $2 AND COALESCE(is_hidden, false) = false
+                RETURNING id`,
               [link.flock_id, guestUuid]
             );
+            // Remembered for the fan-out after the response (see below).
+            res.locals.hiddenGuestId = hid.rows.length ? hid.rows[0].id : null;
           }
           await client.query('COMMIT');
         }
@@ -1239,6 +1277,21 @@ router.post('/:token/join',
           // the same shape POST /api/flocks/:id/join uses, so a person joining
           // through a link is announced exactly like a person accepting an
           // invite, and never to someone who blocked them.
+          // The guest row this account replaced was hidden in the join's own
+          // transaction, but the hide reached nobody: every open client kept
+          // the guest entry AND appended the member below, so the host saw
+          // the same person twice and one too many going until a refetch.
+          // The event a moderator takedown sends drops the entry and its
+          // count on every client (App.js applyTakedownToFlocks). Unfiltered,
+          // like a takedown: a row disappearing names nobody. Sent first, so
+          // the count never passes through the doubled state.
+          if (res.locals.hiddenGuestId != null) {
+            await emitToFlockMembers(io, link.flock_id, 'content_removed', {
+              contentType: 'guest_rsvp',
+              contentId: res.locals.hiddenGuestId,
+              flockId: link.flock_id,
+            });
+          }
           await emitToFlockExcludingBlocked(io, link.flock_id, req.user.id, 'flock_invite_responded', {
             flockId: link.flock_id,
             userId: req.user.id,

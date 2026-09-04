@@ -526,9 +526,7 @@ test('a flood cannot hand a spender back their own new-guest allowance', () => {
   // attacker spends first and floods second, so oldest-first eviction (and any
   // wholesale clear) deletes precisely the counter they wanted gone.
   const mine = '203.0.113.7';
-  assert.strictEqual(guest.allowNewGuest(mine, 42), true);
-  assert.strictEqual(guest.allowNewGuest(mine, 42), true);
-  assert.strictEqual(guest.allowNewGuest(mine, 42), true);
+  for (let i = 0; i < guest.NEW_GUESTS_PER_IP_PER_FLOCK; i++) assert.strictEqual(guest.allowNewGuest(mine, 42), true);
   assert.strictEqual(guest.allowNewGuest(mine, 42), false, 'spent');
 
   for (let i = 0; i < 40000; i++) {
