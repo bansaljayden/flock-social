@@ -691,10 +691,14 @@ router.delete('/:userId', async (req, res) => {
 router.get('/outgoing', async (req, res) => {
   try {
     const result = await pool.query(
+      // 'declined' rides along and is reported as pending. The decline path
+      // keeps the row precisely so the requester is not told they were turned
+      // down, and this read was dropping it instead, so the request silently
+      // vanished from Sent Requests. Vanishing is its own disclosure.
       `SELECT u.id, u.name, u.profile_image_url, f.created_at
        FROM friendships f
        JOIN users u ON u.id = f.addressee_id
-       WHERE f.requester_id = $1 AND f.status = 'pending'
+       WHERE f.requester_id = $1 AND f.status IN ('pending', 'declined')
          AND ${NOT_BANNED_SQL}
        ORDER BY f.created_at DESC`,
       [req.user.id]
@@ -750,7 +754,10 @@ router.get('/suggestions', async (req, res) => {
     console.error('Suggestions error (trying fallback):', err.message);
     try {
       const fallback = await pool.query(
-        `SELECT u.id, u.name, u.profile_image_url, COUNT(fm2.flock_id) AS mutual_count
+        // Shared FLOCKS, not mutual friends. Returned under its own name and
+        // labelled by `source` so the row cannot print "3 mutual friends" about
+        // somebody the caller has no mutual friends with.
+        `SELECT u.id, u.name, u.profile_image_url, COUNT(fm2.flock_id) AS shared_flocks
          FROM flock_members fm1
          JOIN flock_members fm2 ON fm2.flock_id = fm1.flock_id AND fm2.user_id != fm1.user_id AND fm2.status = 'accepted'
          JOIN users u ON u.id = fm2.user_id
@@ -765,7 +772,7 @@ router.get('/suggestions', async (req, res) => {
            WHERE (blocker_id = $1 AND blocked_id = u.id) OR (blocker_id = u.id AND blocked_id = $1)
          )
          GROUP BY u.id, u.name, u.profile_image_url
-         ORDER BY mutual_count DESC
+         ORDER BY shared_flocks DESC
          LIMIT 20`,
         [req.user.id]
       );
