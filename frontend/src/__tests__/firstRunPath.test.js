@@ -217,9 +217,10 @@ describe('a failed list read is not an empty account', () => {
   });
 
   it('the Nest empty state waits for an answer that was not a failure', () => {
-    const nest = codeOnly(region(APP, "<ListSkeleton label=\"Loading your flocks\" />", 'No flocks yet</h3>'));
+    const nest = codeOnly(region(APP, "<ListSkeleton label=\"Loading your flocks\" />", "'No flocks yet'}</h3>"));
     expect(nest).toMatch(/!flocksLoading && flocksError &&/);
-    expect(nest).toMatch(/!flocksLoading && !flocksError && flocks\.length === 0/);
+    // liveFlocks: the same array the list draws, finished plans excluded.
+    expect(nest).toMatch(/!flocksLoading && !flocksError && liveFlocks\.length === 0/);
     // The retry has to run the same read the screen ran.
     expect(nest).toMatch(/onClick=\{loadFlocks\}/);
   });

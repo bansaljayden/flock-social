@@ -570,6 +570,12 @@ router.get('/', async (req, res) => {
         guest_count: f.guest_count,
         going_count: f.going_count,
         member_status: f.member_status,
+        // An invite to last month's plan sat in Pending Invites until it was
+        // declined, because the client gate read a status this card does
+        // not carry (status and creator_id are private to members; see
+        // flocksAuthz). One derived boolean says the only thing the card
+        // needs to know.
+        finished: f.status === 'completed' || f.status === 'cancelled',
         invitePreview: true,
       };
     });
@@ -743,6 +749,11 @@ router.post('/',
                 flockId: flock.id,
                 flockName: flock.name,
                 invitedBy: { userId: req.user.id, name: req.user.name },
+                // The card asks for a decision; it used to render TBD for
+                // both of these and 0 going on a live invite.
+                eventTime: flock.event_time || null,
+                venueName: flock.venue_name || null,
+                goingCount: 1,
               });
             }
           }
@@ -988,6 +999,8 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
           guest_count: cnt.rows[0].guests,
           going_count: cnt.rows[0].n + cnt.rows[0].guests,
           member_status: membership.rows[0].status,
+          // Same derived boolean the list card carries (one shape, pinned).
+          finished: inv.status === 'completed' || inv.status === 'cancelled',
         },
         members: [],
         guests: [],

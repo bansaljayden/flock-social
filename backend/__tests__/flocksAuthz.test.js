@@ -640,6 +640,9 @@ test('detail: an accepted member gets the plan; nothing about the gate overshot'
 const INVITE_CARD_KEYS = [
   'id', 'name', 'venue_name', 'event_time', 'creator_name',
   'member_count', 'guest_count', 'going_count', 'member_status',
+  // A derived boolean, not the status itself: an invite to a finished plan
+  // used to sit in Pending Invites until declined (2026-09-04).
+  'finished',
 ];
 
 test('detail: the invite card is exactly the agreed preview, no more and no less', async () => {
