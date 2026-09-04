@@ -22,3 +22,9 @@ test('a streak that was never read is a dash, not a zero', () => {
   expect(app).toMatch(/setStreak\(typeof d\.streak === 'number' \? d\.streak : null\);/);
   expect(profile).toMatch(/\{ l: 'Streak', v: streak \?\? '\\u2013', hasIcon: streak != null \}/);
 });
+
+test('a flocks list that failed to load is a dash on the profile too', () => {
+  expect(profile).toMatch(/\{ l: 'Flocks', v: flocksError \? '\u2013' : flocks\.length \}/);
+  expect(profile).toMatch(/^  flocksError,$/m);
+  expect(app).toMatch(/^\s+flocksError,$/m);
+});
