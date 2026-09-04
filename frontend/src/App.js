@@ -5775,7 +5775,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // Loading
   const [isLoading, setIsLoading] = useState(false);
-  const [streak, setStreak] = useState(0);
+  // null until the stats read lands: a dropped read printed a confident 0
+  // next to a Friends count that had already learned to print a dash.
+  const [streak, setStreak] = useState(null);
   // null until read: a dropped stats read printed "0 friends" to someone
   // with forty.
   const [friendCount, setFriendCount] = useState(null);
@@ -6433,7 +6435,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Load real user stats on mount (streak, friends)
   useEffect(() => {
     getUserStats().then(d => {
-      setStreak(d.streak || 0);
+      setStreak(typeof d.streak === 'number' ? d.streak : null);
       setFriendCount(typeof d.friendCount === 'number' ? d.friendCount : null);
       setReliabilityScore(d.reliabilityScore || null);
     }).catch(() => {});
@@ -8045,16 +8047,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // your vote" about plans the person voted in yesterday, the exact lie its
   // own comment says was fixed, until they happened to open the flock.
   const votesLoadedRef = useRef(new Set());
+  // A tally nobody could read is not a tally of nothing. The vote panel is a
+  // decision surface, and it said "No votes yet. Be the first to suggest a
+  // venue" when the read had failed.
+  const [votesError, setVotesError] = useState('');
   const loadFlockVotes = useCallback((flockId) => {
     if (typeof flockId !== 'number') return;
     getFlockVotes(flockId)
       .then((data) => {
         votesLoadedRef.current.add(flockId);
+        setVotesError('');
         setFlocks(prev => prev.map(f => (
           f.id === flockId ? { ...f, votes: normalizeVotes(data?.votes, meRef.current, f.votes) } : f
         )));
       })
-      .catch(() => {});
+      .catch((err) => setVotesError(err?.message || 'The votes are not loading right now.'));
   }, []);
 
   // Birdie's hands, the confirm half. The model can only STAGE these cards
@@ -16937,6 +16944,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         olderLoading,
         openCameraViewfinder,
         openVenueDetail,
+        loadFlockVotes,
+        votesError,
         openBirdie,
         pendingImage,
         popularVenues,
