@@ -195,6 +195,7 @@ function chatProps(over = {}) {
     olderLoading: false,
     openCameraViewfinder: fn(),
     openVenueDetail: fn(),
+    openBirdie: fn(),
     pendingImage: null,
     popularVenues: [],
     profilePic: null,
