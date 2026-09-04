@@ -4537,6 +4537,30 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     }
   }, [venueLoginFlag]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Return visits. The dashboard had three doors and a second launch had the
+  // key to none of them: the venue login flag lives for one session, and the
+  // mode picker is skipped once a mode is saved. So an owner who chose Venue
+  // yesterday reopened the app in the consumer feed with no way back. The
+  // saved mode is the answer to "where do I start", so it routes, once, and
+  // only when this launch did not come through the venue login (which the
+  // effect above already handles).
+  const venueBootRoutedRef = useRef(false);
+  useEffect(() => {
+    if (venueBootRoutedRef.current) return;
+    if (userMode !== 'venue') return;
+    if (authUser?.role !== 'venue_owner' && authUser?.role !== 'admin') return;
+    if (venueLoginFlag) return;
+    venueBootRoutedRef.current = true;
+    getVenueProfile().then((p) => {
+      if (p && p.business_name) {
+        setShowVenueOnboarding(false);
+        setCurrentScreen('venueDashboard');
+      } else {
+        setShowVenueOnboarding(true);
+      }
+    }).catch(() => setShowVenueOnboarding(true));
+  }, [userMode, authUser?.role, venueLoginFlag]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Navigation
   // NFC tag URLs are flockcorp.com/checkin/<placeId>. We detect that path on
   // boot and route to a dedicated check-in screen. No React Router involved —
@@ -15415,7 +15439,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       ));
       return true;
     } catch (err) {
-      const locked = err?.code === 'UPGRADE_REQUIRED';
+      // A plan check that could not run is a retryable error, not a lock: the
+      // server says so (reason ENTITLEMENT_UNAVAILABLE, retryable true) and
+      // the locked card has no retry, so it used to read as a permanent upsell.
+      const locked = err?.code === 'UPGRADE_REQUIRED' && err?.data?.reason !== 'ENTITLEMENT_UNAVAILABLE';
       setVenueListErrors(prev => (
         (prev.incomingFlocks === !locked && prev.incomingFlocksLocked === locked)
           ? prev
