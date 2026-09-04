@@ -134,6 +134,27 @@ def reconstruct(raw_delta, baseline):
 # any other model_version and so does this (QMAP_FITTED_ON below is checked by
 # __tests__/mlTrainingContracts.test.js against the JS constant).
 # ---------------------------------------------------------------------------
+# BOTH SIDES DEFAULT ON, and mlTrainingContracts pins that they read the flag
+# identically. Do not change one without the other: a gate that scores different
+# arithmetic than the serve path performs is worse than a gate whose thresholds
+# need recalibrating.
+#
+# THE OPEN PROBLEM, recorded rather than papered over. With the map on, the model
+# measures MAE 33.13 against the popular-times comparator's 31.20 on the same
+# rows (RETRAIN.md), so no_mae_regression is False, so rt_pass is False, so the
+# legacy admission path is closed. The only remaining door is GATE-B, whose first
+# arm wants +5.0pp of within-10 against the incumbent, and the last real retrain
+# moved that +1.4pp. So the next honest retrain is refused by arithmetic rather
+# than by quality, and the thresholds were calibrated on the UNMAPPED
+# reconstruction before the map was armed on 2026-08-28. Either the thresholds
+# are recalibrated for the mapped distribution or the map comes off both sides.
+# That is a product decision, written up as JAYDEN-TODO 2c.
+#
+# A second reason it cannot simply be left on: nothing here compares
+# QMAP_FITTED_ON to the model under test, and it cannot, because export_model.py
+# stamps model_version AFTER this script runs. So a v2.7 candidate would be gated
+# through v2.6's quantile grid and then served unmapped by mlPredictor's version
+# check, and the two numbers would describe different products.
 QMAP_ENABLED = os.environ.get('CROWD_QMAP_ENABLED', 'true').lower() != 'false'
 QMAP_FITTED_ON = '2.6.0-starling'
 QMAP_X = np.array([0, 5, 8, 10, 12, 14, 16, 18, 20, 21, 23, 25, 27, 28, 29, 31,
@@ -443,6 +464,25 @@ def main():
     with open(SCRIPT_DIR / 'best_model.pkl', 'rb') as f:
         model_data = pickle.load(f)
     model = model_data['model']
+    # THE CHALLENGER GETS THE SAME CHECK THE INCUMBENT ALREADY GETS thirty lines
+    # up. `model_data['feature_cols']` was read and discarded, so the gate would
+    # happily score a pickle whose columns are a different ORDER than the matrix
+    # it is handed: XGBoost's width check catches a different COUNT and nothing
+    # catches a permutation. That is the exact failure train_model.py and
+    # export_model.py each spend a comment block preventing, left open on the
+    # one artifact whose quality is being decided.
+    challenger_cols = model_data.get('feature_cols')
+    if challenger_cols is not None and list(challenger_cols) != list(feature_cols):
+        raise SystemExit(
+            'REFUSED: best_model.pkl was trained on a different feature vector than the '
+            'matrix this gate scores.\n'
+            f'  pickle:  {len(challenger_cols)} columns\n'
+            f'  matrix:  {len(feature_cols)} columns\n'
+            '  first divergence: '
+            + next((f'index {i}: pickle {a!r} vs matrix {b!r}'
+                    for i, (a, b) in enumerate(zip(challenger_cols, feature_cols)) if a != b),
+                   'lengths differ only')
+            + '\nRe-run prepare_features.py and train_model.py against the same corpus.')
 
     # ============= TRAINING SET BASELINE COMPARISON =============
     # Model CV metrics already in metadata (computed honestly via LOCO in train_model.py)
@@ -695,7 +735,14 @@ def main():
         legacy_admission = bool(rt_pass and incumbent_pass)
         if legacy_admission:
             admission_path = 'legacy'
-        elif gate_b_pass and incumbent is not None and incumbent.get('status') == 'compared':
+        # `incumbent_pass`, not `status`. compare_incumbent returns
+        # status='compared' together with a FALSE pass flag for the
+        # approximate_different_rows case, which is the same row count over
+        # different y_actual. The legacy path respects that flag; this branch
+        # read the status only and admitted the run anyway, which contradicts
+        # the header thirty lines up: an honest incumbent comparison is required
+        # on BOTH paths.
+        elif gate_b_pass and incumbent is not None and incumbent_pass:
             admission_path = 'gate_b'
         overall_pass = bool(floor_pass and admission_path is not None)
         gate_basis = 'holdout_realtime_served'
