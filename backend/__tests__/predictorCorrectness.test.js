@@ -917,7 +917,11 @@ test('the two caller-facing caches are keyed on what the server decides', () => 
   // The event cache asked a 2 km question and keyed it at ~110 m, so two bars
   // two hundred metres apart bought the same circle of events twice, and
   // /alternatives could be eleven keys and eleven paid calls for one circle.
-  assert.match(predictor, /const cacheKey = `\$\{lat\.toFixed\(2\)\},\$\{lng\.toFixed\(2\)\},\$\{slot\}`;/);
+  // The key is built in one helper now, shared with the range prefetch, so the
+  // two cannot disagree about where an answer is stored.
+  assert.match(predictor, /function eventCacheKeyFor\(lat, lng, ms\) \{/);
+  assert.match(predictor, /return `\$\{lat\.toFixed\(2\)\},\$\{lng\.toFixed\(2\)\},\$\{slot\}`;/);
+  assert.match(predictor, /const cacheKey = eventCacheKeyFor\(lat, lng, keyTs\.getTime\(\)\);/);
 
   // The card cache key carried the caller's own localHour and localDay, which
   // the venue clock overrides before anything is scored. So all 168 (hour, day)
@@ -926,4 +930,27 @@ test('the two caller-facing caches are keyed on what the server decides', () => 
   assert.match(crowd, /const serverHour = now\.getHours\(\);/);
   assert.match(crowd, /const cacheKey = `full:\$\{placeId\}:\$\{serverHour\}:\$\{serverDay\}`;/);
   assert.doesNotMatch(crowd, /const cacheKey = `full:\$\{placeId\}:\$\{localHour\}:\$\{localDay\}`;/);
+});
+
+test('a 24 hour strip buys its events once, not once per hour', async () => {
+  // Each hour asked Ticketmaster for itself and their windows overlap by three
+  // of their four hours, so a strip re-bought most of the same events 24 times.
+  // With the card's own lookup that is 25 calls for one venue against a daily
+  // budget of 1500: sixty cold cards a day emptied it for the whole product.
+  const fs2 = require('fs');
+  const path2 = require('path');
+  const predictor = fs2.readFileSync(path2.join(__dirname, '..', 'services', 'mlPredictor.js'), 'utf8');
+
+  assert.match(predictor, /async function prefetchEventRange\(lat, lng, startMs, hours, userId, opts\) \{/);
+  // It seeds every wanted slot from ONE fetched list, through the same pure
+  // filter the per-hour path uses, so a seeded answer equals a fetched one.
+  assert.match(predictor, /buildEventResult\(events, lat, lng, h\)\)/);
+  // It skips slots that already have an answer, and does nothing for a single
+  // slot, which is the case getNearbyEvents already handles well.
+  assert.match(predictor, /if \(wanted\.length < 2\) return;/);
+  // It charges the budget once, like any other fetch.
+  assert.match(predictor, /if \(!allowEventFetch\(userId, opts\)\) return;/);
+  // And it can never be the reason a strip fails: the call is guarded, and its
+  // own body swallows a failure rather than seeding a wrong answer.
+  assert.match(predictor, /\} catch \{ \/\* seed nothing; every hour below asks for itself, as before \*\/ \}/);
 });

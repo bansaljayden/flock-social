@@ -1289,6 +1289,9 @@ function distanceKm(lat1, lon1, lat2, lon2) {
 // "nearby" at prediction time exactly when training would have counted it.
 const EVENT_DURATION_HOURS = { music: 3, sports: 3, arts: 2, family: 3, other: 3 };
 const EVENT_MAX_DURATION_H = 3; // max of the table — bounds the query window
+// Module scope since 2026-09-04: buildEventResult below is lifted out of the
+// fetch and needs it, and a constant used by two functions belongs to neither.
+const HOUR_MS = 60 * 60 * 1000;
 
 function mapTmEventType(classifications) {
   if (!classifications || !classifications.length) return 'other';
@@ -1416,6 +1419,80 @@ function eventsUnavailable(reason) {
 // allowEventFetch. Cache HITS are answered before the gate and cost nothing,
 // which is the rule utils/placesBudget.js states: charging for a call you did
 // not make masks the real burn rate.
+// The cache key for one venue at one hour. Lifted out so the range prefetch
+// below and getNearbyEvents cannot disagree about where an answer is stored.
+function eventCacheKeyFor(lat, lng, ms) {
+  const d = new Date(ms);
+  const slot = Number.isNaN(d.getTime())
+    ? new Date().toISOString().slice(0, 13)
+    : d.toISOString().slice(0, 13);
+  return `${lat.toFixed(2)},${lng.toFixed(2)},${slot}`;
+}
+
+// ONE CALL FOR A WHOLE STRIP.
+//
+// predictHourlyForecast scores up to 24 hours and each hour used to ask
+// Ticketmaster for itself. The windows overlap by three of their four hours, so
+// the strip re-bought most of the same events 24 times over, and with the card's
+// own lookup that is 25 calls for one venue. EVENT_DAILY_BUDGET is 1500, so
+// sixty cold cards a day emptied the budget for the entire product and event
+// enrichment then silently vanished for everybody.
+//
+// The union of those windows is one contiguous range, and buildEventResult is
+// pure in the hour, so a single fetch answers every slot. `size` is raised for
+// the range because a 27 hour window in a dense city can hold more than the 20
+// a single-hour window ever needed; Discovery allows up to 200 on one page.
+//
+// FAILURE IS A NO-OP ON PURPOSE. Nothing is cached and nothing is thrown: the
+// per-hour path then behaves exactly as it does today. This can only turn 25
+// calls into 1, never into 0 answers.
+async function prefetchEventRange(lat, lng, startMs, hours, userId, opts) {
+  const apiKey = process.env.TICKETMASTER_API_KEY;
+  if (!apiKey || !lat || !lng) return;
+  const from = new Date(startMs);
+  if (Number.isNaN(from.getTime()) || !(hours > 1)) return;
+
+  // Every slot already answered is one this prefetch does not need to buy.
+  const startHour = Math.floor(from.getTime() / HOUR_MS);
+  const wanted = [];
+  for (let i = 0; i < hours; i += 1) {
+    const h = startHour + i;
+    if (!eventCache.get(eventCacheKeyFor(lat, lng, h * HOUR_MS))) wanted.push(h);
+  }
+  if (wanted.length < 2) return; // one slot is what getNearbyEvents already does well
+
+  if (!allowEventFetch(userId, opts)) return;
+
+  try {
+    const openMs = (wanted[0] - EVENT_MAX_DURATION_H) * HOUR_MS;
+    const closeMs = (wanted[wanted.length - 1] + 1) * HOUR_MS - 1000;
+    const params = new URLSearchParams({
+      apikey: apiKey,
+      latlong: `${lat},${lng}`,
+      radius: '2',
+      unit: 'km',
+      startDateTime: new Date(openMs).toISOString().replace(/\.\d{3}Z$/, 'Z'),
+      endDateTime: new Date(closeMs).toISOString().replace(/\.\d{3}Z$/, 'Z'),
+      size: '200',
+      sort: 'date,asc',
+    });
+    const response = await fetch(
+      `https://app.ticketmaster.com/discovery/v2/events.json?${params}`,
+      { signal: upstreamSignal('ticketmaster') }
+    );
+    if (!response.ok) return;
+    const data = await response.json();
+    const events = data._embedded?.events || [];
+    for (const h of wanted) {
+      cacheEvents(eventCacheKeyFor(lat, lng, h * HOUR_MS),
+        buildEventResult(events, lat, lng, h));
+    }
+  } catch {
+    // Same posture as the per-hour catch: an unseen street is not an empty one,
+    // and here we simply decline to seed. The hourly path will ask for itself.
+  }
+}
+
 async function getNearbyEvents(lat, lng, timestamp, userId, opts) {
   const apiKey = process.env.TICKETMASTER_API_KEY;
   if (!apiKey) return eventsUnavailable('no_api_key');
@@ -1426,19 +1503,9 @@ async function getNearbyEvents(lat, lng, timestamp, userId, opts) {
   // from the full timestamp (startDateTime/endDateTime), so the key has to
   // carry the date too. UTC "YYYY-MM-DDTHH" matches the request window exactly.
   const keyTs = timestamp ? new Date(timestamp) : new Date();
-  const slot = Number.isNaN(keyTs.getTime())
-    ? new Date().toISOString().slice(0, 13)
-    : keyTs.toISOString().slice(0, 13);
-  // TWO decimals, not three, because the question has a 2 km radius and three
-  // decimals is about 110 m. Two bars two hundred metres apart were two keys
-  // and two identical upstream queries for the same circle of events, and
-  // /alternatives scores the target plus up to ten neighbours inside a 2 km
-  // circle, so one card could be eleven keys and eleven calls. routes/crowd.js
-  // already buckets the batch route's coordinates to two decimals and says why;
-  // this is the same fix on the two paths that pass Google's full precision
-  // straight through. Bucketing is coarser than the radius on purpose: a key
-  // finer than the query it stands for cannot ever hit.
-  const cacheKey = `${lat.toFixed(2)},${lng.toFixed(2)},${slot}`;
+  // Built by eventCacheKeyFor so this and prefetchEventRange cannot
+  // disagree about where an answer is stored.
+  const cacheKey = eventCacheKeyFor(lat, lng, keyTs.getTime());
   const cached = eventCache.get(cacheKey);
   if (cached) {
     // A remembered FAILURE expires in a minute, a remembered ANSWER in an hour.
@@ -1487,6 +1554,85 @@ async function getNearbyEvents(lat, lng, timestamp, userId, opts) {
   }
 }
 
+// The per-slot filter, lifted out of the fetch on 2026-09-04 so ONE fetched
+// list can answer many hours.
+//
+// Everything below depends only on the events, the venue's coordinates and
+// the HOUR being asked about. That is what makes a range prefetch possible:
+// a 24 hour strip used to make up to 24 upstream calls whose windows overlap
+// by three hours each, re-buying most of the same events every time, and
+// EVENT_DAILY_BUDGET divided by 25 is sixty cold venue cards a day for the
+// whole product before event enrichment silently vanishes for everyone.
+//
+// Pure: no cache write, no budget charge, no network. The two callers below
+// own those.
+function buildEventResult(events, lat, lng, tsHour) {
+  // ONE POPULATION, COUNTED ONCE. scripts/ml/enrichWithEvents.js builds the
+  // training values by filtering to DISTANCE_THRESHOLD_KM = 2 and then
+  // deriving total_nearby_events AND total_nearby_attendance from the same
+  // surviving list. Round 17: this counted `events.length` — everything
+  // Ticketmaster returned, including entries with no coordinates at all and
+  // whatever the vendor's own radius interpretation let through — while
+  // summing attendance over a strictly smaller set. So the two features
+  // described different populations, and total_nearby_events was inflated
+  // relative to every row the model was trained on.
+  const NEARBY_KM = 2; // enrichWithEvents.DISTANCE_THRESHOLD_KM
+  let nearestDist = Infinity;
+  let nearestEvent = null;
+  let totalAttendance = 0;
+  let totalNearby = 0;
+
+  for (const e of events) {
+    const eLat = parseFloat(e._embedded?.venues?.[0]?.location?.latitude) || 0;
+    const eLng = parseFloat(e._embedded?.venues?.[0]?.location?.longitude) || 0;
+    // An event we cannot place is an event we cannot say is nearby.
+    if (!eLat || !eLng) continue;
+
+    const dist = distanceKm(lat, lng, eLat, eLng);
+    if (dist > NEARBY_KM) continue;
+
+    // ONGOING, THE WAY TRAINING COUNTED IT: hour(t) inside [startHour,
+    // startHour + duration], both ends inclusive, at hour granularity
+    // (enrichWithEvents.isHourInRange over collectEvents.estimateEndHour's
+    // per-type durations). Hour floors of real instants: offsets cancel for
+    // whole-hour timezones, and a half-hour zone is off by at most the same
+    // hour of slack training's integer-hour comparison already had. An event
+    // whose start Ticketmaster does not timestamp stays counted — it matched
+    // the query window, so it started within the last EVENT_MAX_DURATION_H
+    // hours, and "probably mid-show" beats inventing a start time.
+    const type = mapTmEventType(e.classifications);
+    const startMs = Date.parse(e.dates?.start?.dateTime || '');
+    if (Number.isFinite(startMs)) {
+      const hoursSinceStart = tsHour - Math.floor(startMs / HOUR_MS);
+      const durH = EVENT_DURATION_HOURS[type] ?? EVENT_MAX_DURATION_H;
+      if (hoursSinceStart < 0 || hoursSinceStart > durH) continue;
+    }
+
+    const attendance = estimateTmAttendance(e);
+    totalNearby++;
+    totalAttendance += attendance;
+
+    if (dist < nearestDist) {
+      nearestDist = dist;
+      nearestEvent = { name: e.name, type, attendance };
+    }
+  }
+
+  // Everything Ticketmaster listed was too far away, over, or unplaceable.
+  // The listing ran, so this is observed: an empty street, honestly.
+  return nearestEvent ? {
+    hasEvent: true,
+    nearestAttendance: nearestEvent.attendance,
+    totalEvents: totalNearby,
+    totalAttendance,
+    nearestType: nearestEvent.type,
+    nearestDistance: Math.round(nearestDist * 100) / 100,
+    nearestName: nearestEvent.name,
+    observed: true,
+    unavailableReason: null,
+  } : eventsObserved();
+}
+
 // The uncoalesced half of getNearbyEvents. Never call this directly: it neither
 // reads the cache nor dedupes concurrent callers, so a direct call is an
 // unshared paid Ticketmaster request.
@@ -1511,7 +1657,6 @@ async function fetchNearbyEvents(cacheKey, lat, lng, timestamp, userId, opts) {
     // hour comparison) and closes at the end of that hour, so every candidate
     // whose active window can contain this hour is fetched; the per-event
     // duration filter in the loop below does the exact per-type arithmetic.
-    const HOUR_MS = 60 * 60 * 1000;
     const tsHour = Math.floor(ts.getTime() / HOUR_MS);
     const startDt = new Date((tsHour - EVENT_MAX_DURATION_H) * HOUR_MS).toISOString().replace(/\.\d{3}Z$/, 'Z');
     const endDt = new Date((tsHour + 1) * HOUR_MS - 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -1553,70 +1698,7 @@ async function fetchNearbyEvents(cacheKey, lat, lng, timestamp, userId, opts) {
       return empty;
     }
 
-    // ONE POPULATION, COUNTED ONCE. scripts/ml/enrichWithEvents.js builds the
-    // training values by filtering to DISTANCE_THRESHOLD_KM = 2 and then
-    // deriving total_nearby_events AND total_nearby_attendance from the same
-    // surviving list. Round 17: this counted `events.length` — everything
-    // Ticketmaster returned, including entries with no coordinates at all and
-    // whatever the vendor's own radius interpretation let through — while
-    // summing attendance over a strictly smaller set. So the two features
-    // described different populations, and total_nearby_events was inflated
-    // relative to every row the model was trained on.
-    const NEARBY_KM = 2; // enrichWithEvents.DISTANCE_THRESHOLD_KM
-    let nearestDist = Infinity;
-    let nearestEvent = null;
-    let totalAttendance = 0;
-    let totalNearby = 0;
-
-    for (const e of events) {
-      const eLat = parseFloat(e._embedded?.venues?.[0]?.location?.latitude) || 0;
-      const eLng = parseFloat(e._embedded?.venues?.[0]?.location?.longitude) || 0;
-      // An event we cannot place is an event we cannot say is nearby.
-      if (!eLat || !eLng) continue;
-
-      const dist = distanceKm(lat, lng, eLat, eLng);
-      if (dist > NEARBY_KM) continue;
-
-      // ONGOING, THE WAY TRAINING COUNTED IT: hour(t) inside [startHour,
-      // startHour + duration], both ends inclusive, at hour granularity
-      // (enrichWithEvents.isHourInRange over collectEvents.estimateEndHour's
-      // per-type durations). Hour floors of real instants: offsets cancel for
-      // whole-hour timezones, and a half-hour zone is off by at most the same
-      // hour of slack training's integer-hour comparison already had. An event
-      // whose start Ticketmaster does not timestamp stays counted — it matched
-      // the query window, so it started within the last EVENT_MAX_DURATION_H
-      // hours, and "probably mid-show" beats inventing a start time.
-      const type = mapTmEventType(e.classifications);
-      const startMs = Date.parse(e.dates?.start?.dateTime || '');
-      if (Number.isFinite(startMs)) {
-        const hoursSinceStart = tsHour - Math.floor(startMs / HOUR_MS);
-        const durH = EVENT_DURATION_HOURS[type] ?? EVENT_MAX_DURATION_H;
-        if (hoursSinceStart < 0 || hoursSinceStart > durH) continue;
-      }
-
-      const attendance = estimateTmAttendance(e);
-      totalNearby++;
-      totalAttendance += attendance;
-
-      if (dist < nearestDist) {
-        nearestDist = dist;
-        nearestEvent = { name: e.name, type, attendance };
-      }
-    }
-
-    // Everything Ticketmaster listed was too far away, over, or unplaceable.
-    // The listing ran, so this is observed: an empty street, honestly.
-    const result = nearestEvent ? {
-      hasEvent: true,
-      nearestAttendance: nearestEvent.attendance,
-      totalEvents: totalNearby,
-      totalAttendance,
-      nearestType: nearestEvent.type,
-      nearestDistance: Math.round(nearestDist * 100) / 100,
-      nearestName: nearestEvent.name,
-      observed: true,
-      unavailableReason: null,
-    } : eventsObserved();
+    const result = buildEventResult(events, lat, lng, tsHour);
 
     cacheEvents(cacheKey, result);
     return result;
@@ -3158,6 +3240,31 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
     })
     : null;
   const nowMs = Date.now();
+
+  // ONE EVENT CALL FOR THE WHOLE STRIP, seeded before the loop. Each hour below
+  // asks getNearbyEvents for itself, and their upstream windows overlap by three
+  // of their four hours, so a 24 hour strip re-bought most of the same events 24
+  // times. With the card's own lookup that is 25 calls for one venue against a
+  // daily budget of 1500, which is sixty cold cards a day for the entire product.
+  //
+  // The event instant is the venue's true one, the same conversion the loop uses
+  // for weather, so the seeded slots are the slots the loop will ask for. A
+  // failure seeds nothing and the loop behaves exactly as it does today.
+  //
+  // WRAPPED, because this is an optimisation and an optimisation may never be
+  // the reason a strip fails. __tests__/eventUnknownVsZero.js proves the point
+  // by making options.userId a throwing getter: read outside a guard, that
+  // exception escaped the per-hour try/catch below and took the whole forecast
+  // with it, which is a worse outcome than the 25 calls this exists to avoid.
+  try {
+    await prefetchEventRange(
+      wxLat, wxLng,
+      trueEventInstant(base, utcOff).getTime(),
+      hours,
+      options && options.userId,
+      options
+    );
+  } catch { /* seed nothing; every hour below asks for itself, as before */ }
 
   for (let i = 0; i < hours; i++) {
     const ts = new Date(base.getTime() + i * 60 * 60 * 1000);
