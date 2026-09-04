@@ -158,6 +158,11 @@ pool.query = async (text, params = []) => {
   }
 
   // flocks
+  // The invite helper's best-effort card facts (time, venue, going count),
+  // added 2026-09-04 so a live invite says when and where.
+  if (has('SELECT f.event_time, f.venue_name')) {
+    return { rows: [{ event_time: null, venue_name: null, going: 1 }], rowCount: 1 };
+  }
   if (has('SELECT id, name FROM flocks WHERE id = $1')) {
     return Number(params[0]) === FLOCK_ID
       ? { rows: [{ id: FLOCK_ID, name: 'Rooftop Friday' }], rowCount: 1 }

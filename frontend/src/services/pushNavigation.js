@@ -199,6 +199,10 @@ export function intentFromUrl(rawUrl) {
   // A tag tap: /checkin/<placeId>?sig=<hmac>. Claimed in the association
   // file, so a phone with Flock installed opens the app on it instead of a
   // Safari tab with no session (2026-09-04).
+  // /i/<token>, the invite link that is the growth path. Remembered and
+  // redeemed by the app's existing handoff (App.js on the intent).
+  const inviteMatch = url.pathname.match(/^\/i\/([^/?#]+)/);
+  if (inviteMatch) return { screen: 'invite', token: inviteMatch[1], type: 'link' };
   const checkinMatch = url.pathname.match(/^\/checkin\/([^/?#]+)/);
   if (checkinMatch) {
     let placeId = checkinMatch[1];
