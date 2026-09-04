@@ -586,12 +586,24 @@ for (const rel of ['routes/flocks.js', 'routes/venueProfile.js', 'services/crowd
 // is how somebody waits forever for a reply that was muted. Wiring
 // notification_prefs here would also be wiring a column whose three real
 // features still do not exist, which is the thing the note above refuses to do.
+//
+// The third and fourth sends arrived on 2026-09-04, from the trace that found
+// the moderation loop never closed for two of its three parties. The BAN
+// notice is addressed to the banned account, the answer to a report about
+// them, in the same class as the warning: a ban a user can mute is not a
+// ban. The reporter FOLLOW-UP is addressed to whoever filed the report, the
+// answer to a request they themselves made, in the same class as the
+// verification decision. Neither is a booking, a review or a weekly report,
+// and neither recipient is being reached as a venue owner. Same conditional
+// shape: exactly these four subjects, or the file is an offender again.
 function exemptSend(file, code) {
   if (file !== 'admin.js') return false;
   const sends = code.match(/sendEmail\s*\(/g) || [];
-  if (sends.length !== 2) return false;
+  if (sends.length !== 4) return false;
   return /subject: WARN_SUBJECT/.test(code)
-    && /subject: VERIFY_DECIDED_SUBJECT\(/.test(code);
+    && /subject: VERIFY_DECIDED_SUBJECT\(/.test(code)
+    && /subject: BAN_SUBJECT/.test(code)
+    && /subject: REPORT_FOLLOWUP_SUBJECT/.test(code);
 }
 
 test('any file that notifies a venue owner must read notification_prefs', () => {
