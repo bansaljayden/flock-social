@@ -1603,6 +1603,35 @@ function registerHandlers(io, socket) {
     }
   });
 
+  // THE STOP MUST REACH EVERYONE THE PIN REACHED.
+  //
+  // update_location fans out to `user:{id}` for every accepted member, and it
+  // does that deliberately (round 16: a room broadcast leaks to whoever is in
+  // the room). Both stops were `flock:{id}` room broadcasts, and the flock room
+  // holds only the sockets currently ON that chat screen.
+  //
+  // So a member sitting on the Map tab who never opened the chat received every
+  // location_update - the client writes them into flockMemberLocations with no
+  // flock scoping and renders them as markers - and then was not in the room to
+  // hear the stop. The pin stayed on their map, green dot and all, for the rest
+  // of the session. Same for anyone who opened the chat and navigated away.
+  //
+  // A pin that says a person is somewhere they left is the one failure this
+  // feature must not have, so the stop now uses the pin's own audience. Blocks
+  // are honoured the same way update_location honours them, and the sharer is
+  // excluded in the query rather than by relying on socket.to().
+  async function announceStoppedSharing(flockId) {
+    const members = await pool.query(
+      "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+      [flockId, user.id]
+    );
+    const invisible = new Set(await getInvisibleUserIds(user.id));
+    for (const m of members.rows) {
+      if (invisible.has(m.user_id)) continue;
+      io.to(`user:${m.user_id}`).emit('member_stopped_sharing', { userId: user.id, flockId });
+    }
+  }
+
   socket.on('stop_sharing_location', async (data) => {
     // Round 16: update_location right above is metered at 30/10s; its
     // counterpart had no limit while doing the same verifyMembership query, so
@@ -1620,15 +1649,15 @@ function registerHandlers(io, socket) {
     // its counterpart let any authenticated user fire `member_stopped_sharing`
     // into any flock room they could guess the id of.
     if (!(await verifyMembership(flockId, user.id))) return;
-    // Round 17: this was an identity-bearing whole-room broadcast, while its two
-    // siblings both exclude blocked users — update_location fans out per member
-    // skipping blocks, and the disconnect handler's own member_stopped_sharing
-    // is block-filtered. A blocked peer therefore never received the location
-    // pin but was still told, by user id, the instant sharing stopped. Same
-    // block-excluded broadcast as leave_flock's member_offline; fails closed.
-    await announceToRoomExcludingBlocked(socket, `flock:${flockId}`, 'member_stopped_sharing', {
-      userId: user.id,
-    });
+    // Round 17 made this block-aware; it was still addressed to the room
+    // rather than to the people who actually got the pin. See
+    // announceStoppedSharing above. Fails closed: a lookup that throws sends
+    // nothing rather than sending to everyone.
+    try {
+      await announceStoppedSharing(flockId);
+    } catch (err) {
+      console.error('stop_sharing_location announce error:', err.message);
+    }
   });
 
   // --- Friend request events ---
@@ -2309,6 +2338,22 @@ function registerHandlers(io, socket) {
   //   - anything that was not exactly the id's canonical spelling produced a
   //     `user:{junk}` room name that matched nobody, so the event was silently
   //     lost rather than refused.
+  // WHO IS CURRENTLY BEING SHOWN THIS SOCKET'S LOCATION IN A DM.
+  //
+  // The flock share has a disconnect path; the DM share had none. It is
+  // symmetric only while both sides stay connected, and the far more likely end
+  // of a DM share is that the sharer's connection simply goes - services/
+  // socket.js tears the socket down the instant the app is backgrounded on
+  // native. Their emit loop stops, no stop is ever sent, and the recipient's
+  // dmMemberLocation is only cleared by dm_member_stopped_sharing or by
+  // switching threads. The banner kept saying the other person was sharing,
+  // indefinitely. Their React state does not survive a relaunch either, so they
+  // never resume and never send the stop themselves.
+  //
+  // Per socket, so a second device sharing to the same peer is tracked on its
+  // own connection, exactly like the flock rooms above.
+  const dmSharingWith = new Set();
+
   socket.on('dm_share_location', async (data) => {
     if (!allowEvent(socket, 'dm_location', 30, 10_000)) return;
     const receiverId = asId(data?.receiverId);
@@ -2316,6 +2361,7 @@ function registerHandlers(io, socket) {
     if (receiverId === null || !isLatLng(lat, lng)) return;
     if (await isBlockedBetweenCached(user.id, receiverId)) return;
     if (!(await hasDmRelationshipCached(user.id, receiverId))) return;
+    dmSharingWith.add(receiverId);
     socket.to(`user:${receiverId}`).emit('dm_location_update', {
       userId: user.id, name: user.name, lat, lng, timestamp: Date.now(),
     });
@@ -2327,6 +2373,7 @@ function registerHandlers(io, socket) {
     if (receiverId === null) return;
     if (await isBlockedBetweenCached(user.id, receiverId)) return;
     if (!(await hasDmRelationshipCached(user.id, receiverId))) return;
+    dmSharingWith.delete(receiverId);
     socket.to(`user:${receiverId}`).emit('dm_member_stopped_sharing', { userId: user.id });
   });
 
@@ -2494,6 +2541,19 @@ function registerHandlers(io, socket) {
       }
       if (users.size === 0) roomUsers.delete(key);
     }
+    // THE DM HALF GOES FIRST, above the early return: a socket can be sharing
+    // in a DM while holding no flock room at all, and `departures.length === 0`
+    // ends this handler on the next line.
+    //
+    // Not block-filtered, deliberately. This peer is already looking at a live
+    // pin of where this user is; clearing it can only reduce what they know,
+    // and withholding it would leave the location on their screen. That is the
+    // opposite trade from the flock presence events, which ADD identity.
+    for (const receiverId of dmSharingWith) {
+      io.to(`user:${receiverId}`).emit('dm_member_stopped_sharing', { userId: user.id });
+    }
+    dmSharingWith.clear();
+
     if (departures.length === 0) return;
 
     // Round 16: these two were the last identity-bearing broadcasts that did
@@ -2509,16 +2569,33 @@ function registerHandlers(io, socket) {
     } catch (_) {
       return; // fail closed: no presence event beats a leaked one
     }
+    const stoppedSharingFor = [];
     for (const { key, flockId } of departures) {
       broadcastExcluding(io.to(`flock:${key}`), invisible, 'member_offline', {
         userId: user.id,
         name: user.name,
         flockId,
       });
-      // Also notify that location sharing stopped
-      broadcastExcluding(io.to(`flock:${key}`), invisible, 'member_stopped_sharing', {
-        userId: user.id,
-      });
+      // Also notify that location sharing stopped — to the pin's audience,
+      // not the room's. A dropped connection is the MOST likely way a share
+      // ends without a stop (socket.js tears the socket down the instant the
+      // app is backgrounded on native), so this is the path a stale pin
+      // actually arrives through.
+      stoppedSharingFor.push(flockId);
+    }
+    for (const flockId of stoppedSharingFor) {
+      try {
+        const members = await pool.query(
+          "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+          [flockId, user.id]
+        );
+        for (const m of members.rows) {
+          if (invisible.includes(m.user_id)) continue;
+          io.to(`user:${m.user_id}`).emit('member_stopped_sharing', { userId: user.id, flockId });
+        }
+      } catch (err) {
+        console.error('disconnect stop-sharing announce error:', err.message);
+      }
     }
   });
 }
