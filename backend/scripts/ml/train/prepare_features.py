@@ -2069,12 +2069,35 @@ def main():
     )
     known_prov = sorted(train_df['label_provenance'].dropna().unique().tolist())
     logger.info(f'label_provenance levels present: {known_prov}')
-    if known_prov == ['unknown']:
+    # ON THE REALTIME ROWS, because those are the only rows the weighting ladder
+    # can act on and the only rows the check is about.
+    #
+    # This tested the WHOLE frame against exactly ['unknown'], and weekly rows
+    # are stamped 'weekly' by derive_label_provenance, so the list is at minimum
+    # ['unknown', 'weekly'] on any real corpus and the raise beneath it could
+    # never execute. The last run proves it: prep3.log records
+    # "369076 realtime of which 0 vendor-forecast @ weight 0.3" beside
+    # "label_provenance levels present: ['unknown', 'weekly']". Zero of 369,076
+    # weight-1.0 rows were downweighted, and an unknown share of them are
+    # BestTime's own forecast rather than a live reading, because the collector
+    # fell back to the forecast when live traffic was unavailable and migration
+    # 025 records that the two are indistinguishable after the fact. The one
+    # check written to make that impossible to overlook was looking at the wrong
+    # population.
+    rt_prov = sorted(
+        train_df.loc[train_df['is_realtime'] == 1, 'label_provenance']
+        .dropna().unique().tolist()
+    ) if 'is_realtime' in train_df.columns else known_prov
+    logger.info(f'label_provenance levels on realtime rows: {rt_prov}')
+    if ((rt_prov == ['unknown'] or not rt_prov)
+            and os.environ.get('ML_ALLOW_UNKNOWN_PROVENANCE', '').lower() != 'true'):
         raise CorpusContractError(
-            'Every training row has label_provenance="unknown" — the column is '
-            'present but carries no signal, so vendor-forecast labels would all '
-            'be weighted 1.0 again. Re-export after collectRealtime.js has '
-            'written label_source, or fix the export join.'
+            'Every REALTIME training row has label_provenance="unknown" — the column '
+            'is present but carries no signal on the only rows the weighting ladder '
+            'can act on, so vendor-forecast labels would all be weighted 1.0 again. '
+            'Re-export after collectRealtime.js has written label_source, or fix the '
+            'export join. Set ML_ALLOW_UNKNOWN_PROVENANCE=true to train on the '
+            'pre-2026-05 corpus anyway, knowing what it contains.'
         )
     if n_rt < MIN_REALTIME_ROWS:
         raise ValueError(f'Only {n_rt} realtime rows — expected {MIN_REALTIME_ROWS}+. '
