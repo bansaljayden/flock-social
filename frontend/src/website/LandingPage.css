@@ -1054,6 +1054,10 @@ html:has(.lp) body { overflow-x: clip; }
 }
 
 .lp-list { display: grid; gap: 12px; margin-top: 20px; }
+/* The venues card's sign-in line, under the mailto button. Inherits the
+   card's ink so it reads as a footnote, not a second button. */
+.lp-venue-signin { margin: 14px 0 0; font-size: 0.9em; opacity: 0.85; }
+.lp-venue-signin a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .lp-list li { list-style: none; font-size: 15.5px; color: var(--ink-2); line-height: 1.5; }
 .lp-sec-navy .lp-list li { color: var(--cream-2); }
 /* Ruled rows, no glyphs. A column of checkmarks is the single most
