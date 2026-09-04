@@ -73,7 +73,9 @@ pool.query = (text, params = []) => {
       rows: [{ day_of_week: DOW, hour: HOUR, baseline: '55' }], rowCount: 1,
     });
   }
-  if (/FROM venue_feedback WHERE venue_place_id = \$1/.test(sql)) {
+  // The avg-error read gained an alias and a NOT EXISTS on 2026-09-04 (an
+  // owner-set card is not model error), so this must not pin the old text.
+  if (/FROM venue_feedback(?: vf)?\s+WHERE (?:vf\.)?venue_place_id = \$1/.test(sql)) {
     feedbackQueries.push(params);
     return Promise.resolve({
       rows: [{ avg_crowd: '2.0', count: params[0] === REAL ? 4 : 0, avg_error_mapped: '1.0', avg_error_legacy: '1.0' }],

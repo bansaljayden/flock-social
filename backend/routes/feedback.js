@@ -396,11 +396,29 @@ router.post('/',
         // newest-then-check: a batch row minted a second ago must not shadow
         // the trustworthy card serve underneath it, or an attacker disables
         // server provenance for any venue at will by scrolling a vote list.
+        // AND NOT THE OWNER'S OWN NUMBER. A card whose score came from the
+        // venue's live slider is recorded here like any other serve, with
+        // prediction_method 'owner_report' (routes/crowd.js), and this lookup
+        // filtered on `source` alone. So a report left against an owner-set
+        // card was stored as the MODEL's error, and mlPredictor averages
+        // exactly that column into avg_prediction_error with no time bound: an
+        // owner who set the slider to 0 on a packed Saturday moved their own
+        // venue's live feature toward +80 permanently, which the 90 minute
+        // expiry and the retract button do not touch because the row is in
+        // venue_feedback by then. migration 031 states the boundary in as many
+        // words: feeding it self-reports would let an owner steer the model's
+        // anchor as well as tonight's number. The discriminator column was
+        // added for this and nothing read it.
+        //
+        // Falling through to the client value is the existing behaviour for a
+        // missing serve and is right here too: comparing against nothing is
+        // better than comparing against a number the model did not produce.
         const served = await pool.query(
           `SELECT id, score FROM served_predictions
             WHERE user_id = $1 AND venue_place_id = $2
               AND served_at > NOW() - INTERVAL '12 hours'
               AND source = 'detail'
+              AND (prediction_method IS NULL OR prediction_method <> 'owner_report')
               AND local_day = $3 AND local_hour = $4
             ORDER BY served_at DESC
             LIMIT 1`,
