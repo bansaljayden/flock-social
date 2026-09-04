@@ -32,3 +32,8 @@ test('the category filter drives pins, heat and an empty sentence from one predi
 test('a quota refusal that names its window does not offer a retry that cannot work', () => {
   expect(app).toMatch(/\{!\/again in \\d\+\/i\.test\(venueLoadError \|\| ''\) && <button className="hit44" onClick=\{\(\) => \{ setLocationError\(''\); setVenueLoadError\(''\);/);
 });
+
+test('a category-shaped hourly curve says so under the bars', () => {
+  expect(app).toMatch(/\{cd && !cd\.hourly && !crowdFetchFailed && \(/);
+  expect(app).toMatch(/at these hours, not a read of this spot\./);
+});
