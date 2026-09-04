@@ -2003,7 +2003,10 @@ function attemptPaymentHandoff(method, options = {}) {
 }
 
 // Memoized VenueCard — unified design for both DMs and Flocks
-const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: I, getCategoryColor: gcc }) => {
+// `voted`: this card is the person's current vote. The button reads Voted
+// and a tap takes the vote back; without it the card never showed a vote
+// and could not undo one, while the vote panel did both.
+const VenueCard = React.memo(({ venue, onViewDetails, onVote, voted = false, colors: c, Icons: I, getCategoryColor: gcc }) => {
   const rating = venue.stars || venue.rating || null;
   const price = venue.price || (venue.price_level ? '$'.repeat(venue.price_level) : null);
   const address = venue.addr || venue.formatted_address || '';
@@ -2080,8 +2083,8 @@ const VenueCard = React.memo(({ venue, onViewDetails, onVote, colors: c, Icons: 
               {I.eye(c.navy, 14)} View Details
             </button>
           )}
-          <button className="hit44 glass-btn glass-navy" onClick={(e) => { e.stopPropagation(); const btn = e.currentTarget; if (!btn.classList.contains('btn-confirmed')) { btn.classList.add('btn-confirmed'); setTimeout(() => btn.classList.remove('btn-confirmed'), 1100); } onVote(); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: `linear-gradient(135deg, ${c.navy}, ${c.navyMid})`, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', boxShadow: '0 2px 8px rgba(13,40,71,0.10)', transition: 'opacity 0.2s ease', position: 'relative', overflow: 'hidden' }}>
-              {I.vote('white', 14)} Vote for This
+          <button className="hit44 glass-btn glass-navy" aria-pressed={voted} onClick={(e) => { e.stopPropagation(); const btn = e.currentTarget; if (!btn.classList.contains('btn-confirmed')) { btn.classList.add('btn-confirmed'); setTimeout(() => btn.classList.remove('btn-confirmed'), 1100); } onVote(); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: voted ? 'var(--bg-card-solid)' : `linear-gradient(135deg, ${c.navy}, ${c.navyMid})`, color: voted ? c.navy : 'white', border: voted ? `2px solid ${c.navy}` : 'none', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', boxShadow: '0 2px 8px rgba(13,40,71,0.10)', transition: 'opacity 0.2s ease', position: 'relative', overflow: 'hidden' }}>
+              {voted ? I.check(c.navy, 14) : I.vote('white', 14)} {voted ? 'Voted' : 'Vote for This'}
             </button>
         </div>
       </div>
