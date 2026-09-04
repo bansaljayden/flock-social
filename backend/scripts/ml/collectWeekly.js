@@ -320,6 +320,8 @@ async function collectWeekly() {
       // Insert 168 rows (7 days × 24 hours) — batched into a single multi-row INSERT
       let venueRows = 0;
       let venueNew = 0;
+      // Set by the batch insert's catch; read by the last_collected_at guard.
+      let insertFailed = false;
       const params = [];
       const valueRows = [];
       // The slot -> (day, hour) transform is a rotation of the 168-cell week, so
@@ -354,11 +356,20 @@ async function collectWeekly() {
             // date a one-off event could attach to, so the honest stamp is
             // false with no_observation_date, never an ambiguous NULL.
             false, 'no_observation_date',
-            // And the event columns themselves NULL, explicitly. Their
-            // defaults are false, false, 0 and 0, so leaving them out wrote a
-            // measured absence beside that false, the fabricated negative
-            // migration 045 exists to end (2026-09-01 review).
-            null, null, null, null,
+            // And the event columns themselves NULL, explicitly, because
+            // leaving one out lets its SQL DEFAULT write a measured absence
+            // beside that honest `false` - the fabricated negative migration
+            // 045 exists to end (2026-09-01 review).
+            //
+            // THERE ARE SEVEN OF THEM, NOT FOUR. This list and the two below
+            // named event_nearby, has_nearby_event, total_nearby_events and
+            // total_nearby_attendance, and stopped. nearest_event_attendance
+            // is `INTEGER DEFAULT 0` (enrichWithEvents.js), so 201,796 of the
+            // 202,440 weekly rows already stamped 'no_observation_date' carry
+            // a measured attendance of zero next to three NULLs and a false.
+            // Both nearest_* columns are shipped model features. Same defect
+            // collectRealtime had, left behind here.
+            null, null, null, null, null, null, null,
           ];
           const base = params.length;
           params.push(...rowParams);
@@ -403,7 +414,8 @@ async function collectWeekly() {
                temperature, humidity, wind_speed, weather_condition, weather_condition_code,
                is_raining, busyness_pct, besttime_epoch,
                events_observed, events_unavailable_reason,
-               event_nearby, has_nearby_event, total_nearby_events, total_nearby_attendance)
+               event_nearby, has_nearby_event, total_nearby_events, total_nearby_attendance,
+               nearest_event_attendance, nearest_event_distance_km, nearest_event_type)
              VALUES ${valueRows.join(', ')}
              ON CONFLICT (venue_id, day_of_week, hour)
                WHERE collection_mode = 'weekly' AND hour_axis = 'venue_local'
@@ -437,6 +449,13 @@ async function collectWeekly() {
                has_nearby_event       = EXCLUDED.has_nearby_event,
                total_nearby_events    = EXCLUDED.total_nearby_events,
                total_nearby_attendance = EXCLUDED.total_nearby_attendance,
+               -- ...and the three that were missing from the list above as
+               -- well, which is the other half of the same defect: a refreshed
+               -- weekly row kept whatever enrichment had been written to it
+               -- while events_observed beside it was reset to the honest false.
+               nearest_event_attendance = EXCLUDED.nearest_event_attendance,
+               nearest_event_distance_km = EXCLUDED.nearest_event_distance_km,
+               nearest_event_type     = EXCLUDED.nearest_event_type,
                collected_at           = NOW()
              RETURNING (xmax = 0) AS inserted`,
             params
@@ -450,6 +469,7 @@ async function collectWeekly() {
           venueNew = res.rows.filter((r) => r.inserted).length;
         } catch (err) {
           console.error(`  Batch insert error:`, err.message);
+          insertFailed = true;
         }
       }
 
@@ -457,13 +477,39 @@ async function collectWeekly() {
       newRows += venueNew;
       console.log(`  ${venueRows} rows written (${venueNew} new, ${venueRows - venueNew} refreshed)`);
 
-      // Update last_collected_at
-      await safeQuery(
-        'UPDATE ml_venues SET last_collected_at = NOW() WHERE id = $1',
-        [venue.id]
-      );
+      // A TRUNCATED SWEEP MUST NOT LOOK LIKE A FINISHED ONE.
+      //
+      // The batch insert's catch above logs and continues, so a venue whose
+      // 168-row statement died - a check violation, a numeric overflow, a pool
+      // failure that outlives safeQuery's retries - fell straight through to
+      // this stamp with venueRows at 0. last_collected_at then said the venue
+      // had been collected, --skip-collected and --skip-attempted excluded it
+      // from every later scoped pass, and consecutiveErrors was reset so ten
+      // such venues in a row could not trip the abort. The venue simply had no
+      // rows, permanently, and nothing anywhere said so.
+      //
+      // last_collected_at is a claim about DATA. It is only made when data
+      // landed. (besttime_attempted_at and besttime_status='found' are stamped
+      // earlier and stay there: we did attempt, and BestTime did find it. Those
+      // two are true regardless of what the insert then did.)
+      if (insertFailed || venueRows === 0) {
+        consecutiveErrors++;
+        console.error(`  [NO ROWS WRITTEN ${consecutiveErrors}] ${venue.name}: `
+          + 'last_collected_at left unset so a later pass can retry this venue');
+        if (consecutiveErrors >= 10) {
+          console.error('\n[ML:Weekly] Ten venues in a row wrote nothing. Stopping.');
+          break;
+        }
+        // Deliberately NOT `continue`: the pacing sleep is below, and skipping
+        // it would lift the rate limit exactly when the run is going wrong.
+      } else {
+        await safeQuery(
+          'UPDATE ml_venues SET last_collected_at = NOW() WHERE id = $1',
+          [venue.id]
+        );
+        consecutiveErrors = 0;
+      }
 
-      consecutiveErrors = 0;
       // One call per second, a fifth of BestTime's stated 300 a minute. The
       // history that earned this humility, same day: 100ms pacing (600 a
       // minute) drew a hard key block; 250ms (240 a minute, lawfully under

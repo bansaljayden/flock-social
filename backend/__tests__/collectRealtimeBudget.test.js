@@ -86,8 +86,30 @@ test('every enrichment column is written, including the one the comment miscount
   ]) {
     assert.ok(collect.includes("['" + col + "',"), col + ' is written explicitly');
   }
-  // And it is null when the lookup did not happen, never a defaulted zero.
-  assert.match(collect, /\['nearest_event_attendance', eventData\.observed === true \? \(eventData\.event_size \|\| 0\) : null\]/);
+  // THREE STATES, and the pin used to allow only two. `event_size || 0` met
+  // the letter of "never a defaulted zero when the lookup did not happen" and
+  // broke it the other way: Ticketmaster publishes capacity for almost nothing,
+  // eventService maps a missing capacity to null, and `null || 0` is 0 - so
+  // every live detection wrote "there is an event within 2 km and nobody is at
+  // it". All 1,052 such rows in the corpus say that. enrichWithEvents defaults
+  // the same quantity to 500, so the two writers disagreed by construction.
+  //
+  //   observed, nothing nearby        -> 0     (a real measurement)
+  //   observed, event of unknown size -> null  (we looked; they do not publish it)
+  //   not observed                    -> null  (we could not look)
+  for (const col of ['total_nearby_attendance', 'nearest_event_attendance']) {
+    const m = collect.match(new RegExp("\\['" + col + "',[\\s\\S]{0,260}?\\],"));
+    assert.ok(m, col + ' is not written at all');
+    const expr = m[0];
+    assert.ok(!/event_size \|\| 0/.test(expr),
+      col + ': `event_size || 0` turns an unpublished capacity into a measured zero');
+    assert.match(expr, /event_size \?\? null/,
+      col + ': an unknown capacity must be null, not a number');
+    assert.match(expr, /event_nearby === true/,
+      col + ': a measured zero is only honest when the lookup found nothing nearby');
+    assert.match(expr, /observed === true/,
+      col + ': a lookup that did not happen must be null');
+  }
   assert.match(collect, /The SEVEN enrichment columns are written EXPLICITLY/);
 });
 
@@ -97,6 +119,63 @@ test('every enrichment column is written, including the one the comment miscount
 const eventSvc = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'eventService.js'), 'utf8');
 const weekly = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'collectWeekly.js'), 'utf8');
 const repair = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'repairFabricatedEventAbsence.js'), 'utf8');
+
+const enrich = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'enrichWithEvents.js'), 'utf8');
+
+test('the WEEKLY insert names all seven enrichment columns too', () => {
+  // The same defect as the realtime one above, left behind in the other
+  // collector. nearest_event_attendance is INTEGER DEFAULT 0, so a fresh weekly
+  // row got a measured attendance of zero beside three NULLs and an honest
+  // events_observed = false - the exact pairing migration 045 and
+  // repairFabricatedEventAbsence exist to erase, recreated on every insert.
+  const insert = weekly.slice(weekly.indexOf('INSERT INTO ml_training_data'));
+  const cols = insert.slice(0, insert.indexOf('VALUES'));
+  for (const col of [
+    'event_nearby', 'has_nearby_event', 'total_nearby_events', 'total_nearby_attendance',
+    'nearest_event_attendance', 'nearest_event_distance_km', 'nearest_event_type',
+  ]) {
+    assert.ok(cols.includes(col), `${col} is missing from the weekly INSERT column list`);
+    // And in DO UPDATE, or a refreshed row keeps stale enrichment beside a
+    // reset events_observed - the invariant the statement states about itself.
+    assert.match(insert, new RegExp(col + '\\s*=\\s*EXCLUDED\\.' + col),
+      `${col} is missing from the weekly DO UPDATE, so a re-collection keeps the stale value`);
+  }
+});
+
+test('enrichWithEvents does not rewrite what collectRealtime measured live', () => {
+  // It reconstructs event context from ml_events, a historical table that ends
+  // in 2026-05. collectRealtime resolves the nearest event live and writes those
+  // columns itself. Unscoped, this script found no ml_events entry for any
+  // post-cutoff date and NULLed every live measurement to
+  // events_observed = false / 'no_events_on_date', while leaving
+  // collectRealtime's own event_nearby and event_size beside it, so the row
+  // contradicted itself. Every live detection in the corpus would have gone
+  // that way the first time it ran.
+  assert.match(enrich, /collection_mode IS DISTINCT FROM 'realtime'/,
+    'the rebuild is not scoped away from realtime rows');
+  const select = enrich.slice(enrich.indexOf('SELECT t.id, t.day_of_week'));
+  assert.match(select.slice(0, select.indexOf('ORDER BY')), /WHERE \$\{REBUILDABLE\}/,
+    'the chunk query walks every row, realtime included');
+});
+
+test('a weekly venue whose insert failed is not stamped as collected', () => {
+  // The batch insert's catch logs and continues, so a venue whose 168-row
+  // statement died fell through to the last_collected_at stamp with zero rows
+  // written. --skip-collected and --skip-attempted then excluded it from every
+  // later pass, permanently, and consecutiveErrors was reset so ten such
+  // venues in a row could not trip the abort.
+  const stamp = weekly.indexOf("UPDATE ml_venues SET last_collected_at = NOW()");
+  assert.ok(stamp > -1, 'the collected stamp is gone');
+  const before = weekly.slice(Math.max(0, stamp - 1200), stamp);
+  assert.match(before, /if \(insertFailed \|\| venueRows === 0\)/,
+    'last_collected_at is written without checking that any row landed');
+  assert.match(before, /consecutiveErrors\+\+/,
+    'a venue that wrote nothing does not count toward the abort');
+  // And the failure path must still be paced: skipping the sleep would lift
+  // the rate limit exactly when the run is going wrong.
+  assert.ok(!/if \(insertFailed \|\| venueRows === 0\)[\s\S]{0,900}?\n\s*continue;/.test(weekly),
+    'the no-rows path continues past the pacing sleep');
+});
 
 test('the collector means by "nearby" what the corpus and the model mean', () => {
   // 5 km and no time filter at all: the nearest UPCOMING event was reported as

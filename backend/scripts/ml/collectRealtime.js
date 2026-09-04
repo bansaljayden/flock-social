@@ -678,8 +678,24 @@ async function collectRealtime() {
         // size. null when the lookup did not happen, never a defaulted zero.
         ['has_nearby_event', eventData.observed === true ? (eventData.event_nearby === true) : null],
         ['total_nearby_events', eventData.observed === true ? (eventData.event_nearby === true ? 1 : 0) : null],
-        ['total_nearby_attendance', eventData.observed === true ? (eventData.event_size || 0) : null],
-        ['nearest_event_attendance', eventData.observed === true ? (eventData.event_size || 0) : null],
+        // THREE STATES, NOT TWO. The comment above says "null when the lookup
+        // did not happen, never a defaulted zero", and `|| 0` broke it in the
+        // other direction: Ticketmaster publishes capacity for almost nothing,
+        // eventService maps a missing capacity to null, and `null || 0` is 0.
+        // So every live detection wrote "there is an event within 2km and
+        // nobody is at it" - all 1,052 such rows in the corpus. Meanwhile
+        // enrichWithEvents defaults the same quantity to 500, so the two
+        // writers disagreed by construction.
+        //
+        //   observed, no event nearby  -> 0      (a real measurement)
+        //   observed, event of unknown size -> null (we looked, they do not say)
+        //   not observed               -> null   (we could not look)
+        ['total_nearby_attendance', eventData.observed === true
+          ? (eventData.event_nearby === true ? (eventData.event_size ?? null) : 0)
+          : null],
+        ['nearest_event_attendance', eventData.observed === true
+          ? (eventData.event_nearby === true ? (eventData.event_size ?? null) : 0)
+          : null],
         ['nearest_event_distance_km', eventData.event_distance_km],
         ['nearest_event_type', eventData.event_type],
         ['events_unavailable_reason', eventData.observed === true ? null : (eventData.reason || 'lookup_failed')],
