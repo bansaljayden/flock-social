@@ -58,7 +58,7 @@
  * character. Nothing was renamed, reformatted or improved on the way across.
  */
 import React from 'react';
-import { deleteAccount, trackNotificationPermission, updatePaymentMethods } from '../services/api';
+import { deleteAccount, trackNotificationPermission, updatePaymentMethods, logoutAll } from '../services/api';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
@@ -118,6 +118,7 @@ export default function ProfileSettings({
   newInterest,
   notifStatus,
   onLogout,
+  onUserUpdated,
   paymentSaving,
   pendingRequests,
   phoneDiscoverable,
@@ -584,6 +585,10 @@ export default function ProfileSettings({
                     setPaymentSaving(true);
                     try {
                       await updatePaymentMethods({ venmo_username: venmoUsername, cashapp_cashtag: cashappCashtag, zelle_identifier: zelleIdentifier });
+                      // The row this screen reads back from is authUser, which
+                      // nothing refreshed, so a saved handle read as blank on
+                      // the next visit.
+                      onUserUpdated?.({ venmo_username: venmoUsername, cashapp_cashtag: cashappCashtag, zelle_identifier: zelleIdentifier });
                       showToast('Payment methods saved');
                     } catch (err) { if (!needsEmailVerification(err, 'save a payment handle')) showToast(err.message, 'error'); }
                     setPaymentSaving(false);
@@ -798,6 +803,14 @@ export default function ProfileSettings({
             )}
             {/* .glass-danger paints this solid red with white text (both !important),
                 so the icon must be white too — colors.red on red was invisible. */}
+            {/* Every device at once. The server route has existed since the
+                token-version claim shipped; nothing in the app reached it. */}
+            <button className="hit44 glass-btn glass-secondary" onClick={async () => {
+              try { await logoutAll(); } catch (_) { /* the local sign-out below still happens */ }
+              if (onLogout) onLogout(sessionEndCopy ? sessionEndCopy('signed_out_everywhere') : undefined);
+            }} style={{ width: '100%', minHeight: '44px', marginTop: '16px', padding: '12px', textAlign: 'left', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: '600' }}>
+              Sign out everywhere
+            </button>
             <button className="hit44 glass-btn glass-danger" onClick={() => { if (onLogout) onLogout(); }} style={{ width: '100%', minHeight: '44px', marginTop: '16px', padding: '12px', textAlign: 'left', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '12px', border: 'none', cursor: 'pointer' }}>
               {Icons.logout('#ffffff', 18)}
               <span style={{ fontWeight: '600', fontSize: 'var(--t-body)' }}>Log Out</span>

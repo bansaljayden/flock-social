@@ -1159,10 +1159,22 @@ export function isLoggedIn() {
 // reachable at all. An untouched field is spelled `undefined` and falls out of
 // JSON.stringify, so it never rewrites the stored value.
 export async function updateProfile({ name, email, phone, bio, current_password, new_password }) {
-  return request('/api/users/profile', {
+  const data = await request('/api/users/profile', {
     method: 'PUT',
     body: JSON.stringify({ name, email, phone, bio, current_password, new_password }),
   });
+  // A password change bumps token_version and the server mints a replacement
+  // token in the same answer. It was dropped here, so the very next request
+  // 401'd and the app said "Your session expired" for a change that had just
+  // succeeded. Stored before anything else can run.
+  if (data && typeof data.token === 'string' && data.token) setToken(data.token);
+  return data;
+}
+
+// POST /api/auth/logout-all bumps token_version: every device is signed out,
+// this one included. Built and tested long before anything called it.
+export async function logoutAll() {
+  return request('/api/auth/logout-all', { method: 'POST' });
 }
 
 // The whole profile row, which is where `phone_discoverable` lives.

@@ -4408,7 +4408,7 @@ export const ScreenSlot = ({ render }) => {
   return out === undefined ? null : out;
 };
 
-const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
+const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Theme — shadows the outer static colors/styles with reactive versions
   const { toggleTheme, isDark, themeMode, isNightModeActive, setAutoMode } = useTheme();
   // eslint-disable-next-line no-unused-vars
@@ -10358,6 +10358,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // live inline on <ModerationSheet onBlocked>, which meant a block started
   // anywhere else did none of it and the person stayed on screen — name, face
   // and messages — until the screen changed. One function, both callers.
+  // A saved payment handle (and any other profile edit made on the settings
+  // screen) patches authUser, which lives in the outer App; the patch rides
+  // up through onUserPatch. Bound here so the settings props stay shorthand.
+  const onUserUpdated = useCallback((patch) => { if (onUserPatch) onUserPatch(patch); }, [onUserPatch]);
+
   const handleUserBlocked = useCallback((blockedId) => {
     const id = String(blockedId);
     blockedIdsRef.current.add(id);
@@ -16963,6 +16968,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         // this component, and reading them any earlier is a temporal dead zone
         // throw.
         const profileSettingsProps = {
+          onUserUpdated,
           DialogBehavior,
           ListSkeleton,
           PROFILE_SUBSCREEN_TITLES,
@@ -18873,6 +18879,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 const SESSION_END_COPY = {
   session_expired: 'Your session expired. Sign in again to pick up where you left off.',
   session_revoked: 'Your sign-in details changed, so Flock signed you out everywhere. Sign in again.',
+  signed_out_everywhere: 'Signed out on every device, this one included. Sign in again to pick up where you left off.',
   account_deleted: 'This account was deleted. Sign in with another one, or make a new account.',
   account_suspended: 'This account is suspended. Email social@flockcorp.com if that looks wrong.',
 };
@@ -19301,7 +19308,7 @@ const FlockApp = () => {
       {/* Only ever a linkNote here: sessionNote does not survive having a
           session. See the notice block above. */}
       {notice}
-      <FlockAppInner authUser={authUser} venueLoginFlag={venueLoginFlag} onLogout={(note) => endSession(note || '', { specific: !!note })} />
+      <FlockAppInner authUser={authUser} venueLoginFlag={venueLoginFlag} onLogout={(note) => endSession(note || '', { specific: !!note })} onUserPatch={(patch) => setAuthUser(prev => (prev ? { ...prev, ...patch } : prev))} />
     </>
   );
 };

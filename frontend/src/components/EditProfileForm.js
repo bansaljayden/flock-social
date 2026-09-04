@@ -37,7 +37,7 @@
  */
 import React from 'react';
 import Icons from './ui/Icons';
-import { updateProfile } from '../services/api';
+import { updateProfile, resendVerificationEmail } from '../services/api';
 
 const EditProfileForm = ({
   authUser,
@@ -113,6 +113,10 @@ const EditProfileForm = ({
                     // absent phone as "leave the column alone". Sending '' on
                     // every save would do the same thing, but only by accident.
                     if (editPhone.trim()) payload.phone = editPhone.trim();
+                    // An emptied field on an account that HAD a number is a
+                    // removal, spelled null: the server clears the number, its
+                    // digest and the discovery switch together.
+                    else if (profilePhone) payload.phone = null;
                     if (newPw) payload.new_password = newPw;
 
                     const data = await updateProfile(payload);
@@ -124,7 +128,16 @@ const EditProfileForm = ({
                     // The row of record, not what was typed, so the switch
                     // under Safety and privacy reads what actually got stored.
                     if ('phone' in data.user) setProfilePhone(data.user.phone || '');
-                    setEditSuccess('Profile updated successfully!');
+                    if (data.emailVerificationRequired) {
+                      // The address moved, so the account is unverified again
+                      // and the next plan, request or payment handle would
+                      // 403. Mail the link now (the server asked us to) and
+                      // say so, instead of "updated successfully".
+                      resendVerificationEmail().catch(() => {});
+                      setEditSuccess('Saved. We sent a link to your new address; confirm it to keep making plans.');
+                    } else {
+                      setEditSuccess('Profile updated successfully!');
+                    }
                     setCurrentPw('');
                     setNewPw('');
                     setConfirmPw('');
