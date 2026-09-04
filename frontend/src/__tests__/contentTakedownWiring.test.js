@@ -650,7 +650,9 @@ describe('venue dashboard list reads', () => {
   });
 
   test('an incoming-flocks refusal is told apart from an incoming-flocks failure', () => {
-    expect(appSource).toContain("const locked = err?.code === 'UPGRADE_REQUIRED';");
+    // A plan check that could not run (reason ENTITLEMENT_UNAVAILABLE) is a
+    // retryable error, not a lock (2026-09-04).
+    expect(appSource).toContain("const locked = err?.code === 'UPGRADE_REQUIRED' && err?.data?.reason !== 'ENTITLEMENT_UNAVAILABLE';");
     expect(appSource).toContain('incomingFlocksLocked');
     // The refusal must NOT offer a retry that can only refuse again.
     const banner = appSource.slice(

@@ -189,8 +189,12 @@ export default function VenueDashboard({
       rating: r.rating,
       text: r.text || '',
       date: r.created_at ? new Date(r.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '',
-      replied: !!r.venue_reply,
+      // A reply the server has retired (the review was edited after it, so it
+      // is off the public card) is not a reply any more: the button comes
+      // back, and the old words are shown as retired rather than as live.
+      replied: !!r.venue_reply && !r.reply_needs_review,
       reply: r.venue_reply || null,
+      replyRetired: !!r.reply_needs_review,
     }));
     const reviewStats = venueReviewsData.stats;
 
@@ -1361,6 +1365,20 @@ export default function VenueDashboard({
           )}
           {venueTab === 'promotions' && can.postDeals && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {/* Deals from an unverified venue publish to nobody: the consumer
+                  surface requires vp.verified. Said once, above the list, in
+                  the same shape as the reviews tab's banner, instead of a
+                  deal that reads "0 views" forever with no reason given. */}
+              {!venueIsVerified && (
+                <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
+                    {venueVerificationPending || verificationRequestNote
+                      ? 'Deals show on your venue card once your venue is verified. Your request is in. Until then a deal you post stays here and nobody sees it.'
+                      : 'Deals show on your venue card once your venue is verified. Until then a deal you post stays here and nobody sees it.'}
+                  </p>
+                  {renderVerificationAsk()}
+                </div>
+              )}
               {/* Create New Promotion Button */}
               <button className="hit44 glass-btn glass-navy" onClick={() => openPromoModal()} style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                 {Icons.plus('white', 18)} Create Promotion
@@ -1715,8 +1733,11 @@ export default function VenueDashboard({
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: '1.4' }}>{review.text}</p>
                       {review.reply && (
                         <div style={{ marginTop: '8px', padding: '8px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '8px', border: '1px solid var(--border-default)' }}>
-                          <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, margin: '0 0 2px' }}>Owner Reply</p>
+                          <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, margin: '0 0 2px' }}>{review.replyRetired ? 'Your earlier reply' : 'Owner Reply'}</p>
                           <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{review.reply}</p>
+                          {review.replyRetired && (
+                            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0', lineHeight: 1.4 }}>The review was edited after this, so it is off your card. Reply again to publish a new one.</p>
+                          )}
                         </div>
                       )}
                       {!review.replied && venueIsVerified && replyingToReview !== review.id && (

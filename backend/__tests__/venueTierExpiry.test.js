@@ -234,6 +234,9 @@ test('an end date nobody can parse revokes rather than opens', () => {
 // ---------------------------------------------------------------------------
 
 test('getVenueTier reads the grant and the cache in ONE query, by user id', async () => {
+  // Grant resolution only applies while billing is on; off, every reader
+  // answers 'pro' (2026-09-04).
+  process.env.VENUE_BILLING_ENABLED = 'true';
   handlers = [grantIs({ tier: 'premium', grant_tier: 'premium', grant_status: 'active', expires_at: null })];
   assert.strictEqual(await getVenueTier(4242), 'premium');
   const q = ran(/FROM venue_profiles vp LEFT JOIN venue_subscriptions/);
@@ -242,6 +245,9 @@ test('getVenueTier reads the grant and the cache in ONE query, by user id', asyn
 });
 
 test('the dashboard is told the same thing the gate enforces', async () => {
+  // Grant resolution only applies while billing is on; off, every reader
+  // answers 'pro' (2026-09-04).
+  process.env.VENUE_BILLING_ENABLED = 'true';
   // A venue whose comp ended must not read "Insights" on its own settings
   // screen while every Roost route answers 403. One resolver, one answer.
   const past = new Date(Date.now() - HOUR);
