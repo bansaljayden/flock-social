@@ -131,6 +131,13 @@ async function typeInto(locator, value) {
   await locator.page().waitForTimeout(250);
 }
 
+// The Messages tab renames itself when something is waiting on it: its
+// accessible name becomes "Messages, 2 unread and 1 invite" and an exact match
+// on "Messages" then finds nothing, which is a 135 second timeout rather than a
+// failed assertion. Match the label as a prefix, for every tab, so the same
+// thing on any other tab is a passing test and not a hang.
+const tabName = (label) => new RegExp(`^${label}(,|$)`);
+
 /**
  * Go to one of the five tabs.
  *
@@ -147,7 +154,7 @@ async function goTab(page, label) {
     if (!(await back.count())) break;
     await back.click();
   }
-  await nav.getByRole('button', { name: label, exact: true }).click();
+  await nav.getByRole('button', { name: tabName(label) }).click();
 }
 
 /** Create a flock from the home screen with nothing but a name. */
