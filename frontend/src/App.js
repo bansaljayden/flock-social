@@ -15,7 +15,7 @@ import { hapticTap, hapticSuccess, hapticAlarm } from './services/haptics';
 // Flock. App Review has that on tape. See the shim's header for the whole
 // story, including why moving the origin was the wrong fix.
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from './services/geolocation';
-import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled } from './services/socket';
+import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled } from './services/socket';
 import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
@@ -6719,6 +6719,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       // The role check is the same one renderScreen and the redirect effect
       // apply. A non-admin tap is not an error, it just has nowhere to go.
       setPushAdminIntent(true);
+    } else if (intent.screen === 'safety' && intent.cancelled) {
+      // The stand-down, tapped. Clears the alarm the earlier push opened, by
+      // the same user id the live event clears it by, and says who is OK.
+      // Without this the tap resolved to nothing and the full-screen SOS from
+      // the first push stayed up with no way to know it had been called off.
+      setSafetyAlert((prev) => (prev && prev.userId === String(intent.userId) ? null : prev));
+      showToast(`${String(intent.name || 'They').slice(0, 80)} says they are OK`);
     } else if (intent.screen === 'safety') {
       // A tapped SOS. The alert modal is a top-level overlay that does not
       // depend on the current screen or on any loaded list, and the intent
@@ -6737,7 +6744,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         at: intent.at || new Date().toISOString(),
       });
     }
-  }), []);
+  }), [showToast]);
 
   // ── Where a tapped invite actually lands ────────────────────────────────
   //
@@ -9086,6 +9093,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         setBillSplit(prev => prev ? { ...prev, shares: prev.shares.map(s => s.userId === data.userId ? { ...s, settled: true } : s) } : prev);
       }
     });
+    // The mirror of the above. The server has emitted share_unsettled since
+    // the unsettle route shipped (routes/billing.js), and its own comment
+    // promised an open bill sheet would follow it; nothing listened, so a
+    // payment taken back left every other member looking at a green tick
+    // until they reopened the sheet.
+    const unsubUnsettled = onShareUnsettled((data) => {
+      if (data.flockId === selectedFlockId) {
+        setBillSplit(prev => prev ? { ...prev, shares: prev.shares.map(s => s.userId === data.userId ? { ...s, settled: false } : s) } : prev);
+      }
+    });
     const unsubFullySettled = onBillFullySettled((data) => {
       if (data.flockId === selectedFlockId) showToast("Everyone's settled up");
     });
@@ -9094,7 +9111,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         setBillSplit(prev => prev ? { ...prev, shares: prev.shares.map(s => s.userId === data.userId ? { ...s, committed: true } : s) } : prev);
       }
     });
-    return () => { unsubBudget(); unsubLocked(); unsubReminder(); unsubBillCreated(); unsubSettled(); unsubFullySettled(); unsubGhost(); };
+    return () => { unsubBudget(); unsubLocked(); unsubReminder(); unsubBillCreated(); unsubSettled(); unsubUnsettled(); unsubFullySettled(); unsubGhost(); };
   }, [selectedFlockId, showToast]);
 
   // Listen for real-time venue votes

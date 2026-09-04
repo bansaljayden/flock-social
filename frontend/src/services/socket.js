@@ -932,6 +932,12 @@ export function onShareSettled(callback) {
   return register('share_settled', callback);
 }
 
+// The report taken back. Emitted by the unsettle route since it shipped;
+// this registration is what was missing on the client.
+export function onShareUnsettled(callback) {
+  return register('share_unsettled', callback);
+}
+
 export function onBillFullySettled(callback) {
   return register('bill_fully_settled', callback);
 }
