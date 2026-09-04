@@ -53,6 +53,7 @@ const EditProfileForm = ({
   setProfileBio,
   setProfileName,
   setProfilePhone,
+  onUserUpdated,
   setShowPicModal,
   styles,
 }) => {
@@ -179,6 +180,20 @@ const EditProfileForm = ({
                     if (newPw) payload.new_password = newPw;
 
                     const data = await updateProfile(payload);
+                    // Push the row of record up to the app shell. `authUser` is
+                    // a prop that is read at sign-in and never refetched, so an
+                    // address changed here stayed stale everywhere above: the
+                    // verify sheet says "We sent a link to {authUser.email}",
+                    // which named the mailbox the person had just moved AWAY
+                    // from, and told them to go and look in it.
+                    if (onUserUpdated && data.user) {
+                      onUserUpdated({
+                        name: data.user.name,
+                        email: data.user.email,
+                        ...(typeof data.user.bio === 'string' ? { bio: data.user.bio } : {}),
+                        ...('phone' in data.user ? { phone: data.user.phone || null } : {}),
+                      });
+                    }
                     setProfileName(data.user.name);
                     // Keep the server's word for the bio when it gives one; a
                     // backend that has not learned the field yet answers
