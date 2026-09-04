@@ -14298,6 +14298,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                           <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: crowdColorFor(v.score ?? v.crowd, colors) || 'var(--border-mid)' }} />
                           <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>{v.label || crowdLabelFor(v.score ?? v.crowd) || 'No reading yet'}</span>
                         </div>
+                        {/* WHOSE NUMBER IT IS. The nearby list applies the owner
+                            override to every row and RANKS by it, and this cell
+                            printed a name, a dot and a label, so a venue whose
+                            owner had set their own slider to 10 appeared here as
+                            "Quiet", indistinguishable from a Flock reading and
+                            recommended over the venue the person was looking at.
+                            services/ownerReports.js says the source is labelled
+                            on every surface; this was the surface where it was
+                            not, and it is the one where the conflict of interest
+                            is sharpest. Same noun the card uses. */}
+                        {v.confidenceBasis === 'owner_report' && (
+                          <span style={{ display: 'block', fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', marginTop: '2px' }}>
+                            {`The ${v.ownerReport?.noun || 'venue'} says so`}
+                          </span>
+                        )}
                       </button>
                     ))}
                   </div>
