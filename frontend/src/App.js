@@ -7582,6 +7582,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // and the screen says nothing about billing in that case rather than guessing.
   const [venueTierSource, setVenueTierSource] = useState(null);
   const [venueTierReason, setVenueTierReason] = useState(null);
+  // Whether venue billing is on at all (VENUE_BILLING_ENABLED). Off in
+  // production: every venue resolves to 'pro' and nothing is a plan anyone
+  // holds. Assumed on until the profile says otherwise.
+  const [venueBillingOn, setVenueBillingOn] = useState(true);
   const [venueTab, setVenueTab] = useState('analytics'); // Lifted to App level to persist across re-renders
   const [adminTab, setAdminTab] = useState('revenue'); // Lifted to App level to persist across re-renders
 
@@ -12216,6 +12220,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   outOfChirpsRef.current = outOfChirps;
   const canSendAi = aiInputHasText && !aiTyping && !outOfChirps;
   const closeAiChat = () => setAiChatMode('bubble');
+  // The door from You to the venue dashboard. The welcome screen promised a
+  // switch "in your profile" and there was none; the only way back was the
+  // dashboard's own arrow, which an owner in the consumer app cannot reach.
+  const openVenueDashboard = useCallback(() => {
+    setUserMode('venue');
+    try { localStorage.setItem('flockUserMode', 'venue'); } catch (e) { /* storage blocked */ }
+    setShowModeSelection(false);
+    setCurrentScreen('venueDashboard');
+  }, []);
   // Birdie in the flock chat. Jayden's note from the TestFlight pass: the
   // chat needs Birdie present. The panel mounts at the root, so it opens over
   // the chat; the context effect already hands the model this flock while
@@ -12744,7 +12757,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               <button className="hit44 glass-btn glass-secondary" onClick={() => selectMode('venue')} style={modeBtn}>
                 <div style={{ flex: 1 }}>
                   <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', margin: '0 0 2px', textShadow: '0 1px 3px rgba(0,0,0,0.4)' }}>Venue Dashboard</h3>
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', margin: 0, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>Manage your venue, see traffic</p>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', margin: 0, textShadow: '0 1px 2px rgba(0,0,0,0.3)' }}>Your listing, your live number, your forecast</p>
                 </div>
                 <span style={{ fontSize: 'var(--t-title)', color: 'rgba(255,255,255,0.5)' }}>›</span>
               </button>
@@ -12763,7 +12776,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           </div>
         </div>
 
-        <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(148,163,184,0.3)', textAlign: 'center', margin: '0 0 16px', position: 'relative', zIndex: 1 }}>You can switch modes anytime in your profile</p>
+        <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(148,163,184,0.3)', textAlign: 'center', margin: '0 0 16px', position: 'relative', zIndex: 1 }}>Change this later under You, then Venue dashboard</p>
       </div>
     );
   };
@@ -15808,9 +15821,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     try {
       const d = await getIncomingFlocks();
       setRealIncomingFlocks(d?.flocks || []);
+      // The route answers 200 { flocks: [], unverified: true } for a venue it
+      // will not serve yet; that used to render as a confident 0 and "No
+      // incoming flocks yet".
+      const unverified = !!d?.unverified;
       setVenueListErrors(prev => (
-        (prev.incomingFlocks || prev.incomingFlocksLocked)
-          ? { ...prev, incomingFlocks: false, incomingFlocksLocked: false }
+        (prev.incomingFlocks || prev.incomingFlocksLocked || prev.incomingFlocksUnverified !== unverified)
+          ? { ...prev, incomingFlocks: false, incomingFlocksLocked: false, incomingFlocksUnverified: unverified }
           : prev
       ));
       return true;
@@ -15955,6 +15972,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           setVenueTierEndsAt(p.tier_expires_at || null);
           setVenueTierSource(p.tier_source || null);
           setVenueTierReason(p.tier_reason || null);
+          setVenueBillingOn(p.billing_enabled !== false);
           // Load saved logo. photo_url is stored as the RELATIVE proxy path
           // (/api/venues/photo?...), which is not an origin this SPA serves —
           // rendered raw it 404s against Vercel. resolveVenuePhoto prefixes
@@ -15966,7 +15984,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // in the Settings tab.)
           // Validate hours have real open/close times (not just "Open 24 hours" from bad parse)
           const savedHours = p.operating_hours && Array.isArray(p.operating_hours) ? p.operating_hours : [];
-          const hoursValid = savedHours.length > 0 && savedHours.some(h => h.open && h.close && h.open !== 'Open 24 hours' && h.open !== 'Closed');
+          // 'Open 24 hours' is a valid answer for a venue that is: treating it as
+          // invalid re-fetched Google on every load for those venues.
+          const hoursValid = savedHours.length > 0 && savedHours.some(h => h.open && (h.open === 'Open 24 hours' || (h.close && h.open !== 'Closed')));
           if (hoursValid) {
             setOperatingHours(savedHours);
           }
@@ -16025,31 +16045,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
             // 1) Try saved place ID — only trust result if venue name matches
             // (savedPlaceId is resolved and published above, unconditionally.)
-            let verifiedVenue = await fetchAndVerify(savedPlaceId);
-            let resolvedPlaceId = savedPlaceId;
+            const verifiedVenue = await fetchAndVerify(savedPlaceId);
 
-            // 2) If saved place_id points to wrong venue OR no data, search by name for correct one
-            if (!verifiedVenue) {
-              try {
-                const query = p.location ? `${p.business_name} ${p.location}` : p.business_name;
-                const searchData = await searchVenues(query);
-                const match = (searchData.venues || []).find(v =>
-                  v.name.toLowerCase() === expectedName
-                ) || (searchData.venues || [])[0];
-                if (match?.place_id && match.place_id !== savedPlaceId) {
-                  verifiedVenue = await fetchAndVerify(match.place_id);
-                  if (verifiedVenue) resolvedPlaceId = match.place_id;
-                }
-              } catch (e) { /* search optional */ }
-            }
-
+            // No search fallback, and no re-pointing of the claim. This branch
+            // used to text-search the name when the saved id failed the fuzzy
+            // check and WRITE the first hit's place id to the profile, which
+            // resets verification and every deal on it. A venue whose name in
+            // Settings drifted from Google's (or whose id Google no longer
+            // answers) got un-verified by opening its own dashboard. The
+            // saved id is the claim; only it is read.
             if (verifiedVenue) {
-              // Save the correct place_id if it differs from saved
-              applyVenue(verifiedVenue, resolvedPlaceId, resolvedPlaceId !== savedPlaceId);
-              // And point the sensor panel at it. When the saved id turned out
-              // to be the wrong venue, the corrected one is the only id whose
-              // sensor readings belong to this owner.
-              if (resolvedPlaceId && resolvedPlaceId !== savedPlaceId) setOwnerVenuePlaceId(resolvedPlaceId);
+              applyVenue(verifiedVenue, savedPlaceId, false);
             }
           }
         }
@@ -16522,6 +16528,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // shorthand throughout, so a name here and the matching parameter over
       // there cannot drift apart.
       const venueOnboardingProps = {
+        onUserPatch,
+        setShowModeSelection,
         VENUE_MAX_ANCHORS,
         parseGoogleHours,
         renderVenueChips,
@@ -17153,6 +17161,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         venueStrip,
         venueTab,
         venueThisWeek,
+        venueBillingOn,
         venueTier,
         venueTierEndsAt,
         venueTierReason,
@@ -17225,6 +17234,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // this component, and reading them any earlier is a temporal dead zone
         // throw.
         const profileSettingsProps = {
+          openVenueDashboard,
           onUserUpdated,
           DialogBehavior,
           ListSkeleton,
@@ -19238,6 +19248,9 @@ const FlockApp = () => {
   const [authScreen, setAuthScreen] = useState(() => {
     if (typeof window === 'undefined') return 'login';
     if (window.location.pathname === '/signup') return 'signup';
+    // The website's venue card links here; with no session that is the venue
+    // sign-in, not the consumer one with a small link at the bottom.
+    if (new URLSearchParams(window.location.search || '').get('venue') === 'true') return 'venue-login';
     let hasToken = false;
     try { hasToken = Boolean(window.localStorage.getItem('flockToken')); } catch (e) { /* storage blocked */ }
     return (window.Capacitor?.isNativePlatform?.() && !hasToken) ? 'signup' : 'login';

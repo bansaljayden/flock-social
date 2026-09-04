@@ -169,6 +169,7 @@ export default function VenueDashboard({
   venueStrip,
   venueTab,
   venueThisWeek,
+  venueBillingOn,
   venueTier,
   venueTierEndsAt,
   venueTierReason,
@@ -631,9 +632,11 @@ export default function VenueDashboard({
               {Icons.arrowLeft('white', 16)}
             </button>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {venueBillingOn && (
               <span style={{ ...tierBadge[venueData.tier], padding: '4px 10px', borderRadius: '12px', fontSize: 'var(--t-meta)', fontWeight: '500', backgroundColor: tierBadge[venueData.tier].bg, color: tierBadge[venueData.tier].color }}>
                 {tierBadge[venueData.tier].label}
               </span>
+              )}
               <button aria-label="Log out" className="hit44" onClick={onLogout} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {Icons.logout('white', 14)}
               </button>
@@ -909,7 +912,7 @@ export default function VenueDashboard({
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Right Now</p>
               <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: intelReady && venueIntel.now.score > 84 ? colors.red : colors.steel, margin: '4px 0 0' }}>{intelReady ? `${venueIntel.now.score}` : '–'}</p>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{intelReady ? venueIntel.now.label : ''}</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>{intelReady ? (venueIntel.now.method === 'ml' ? venueIntel.now.label : `${venueIntel.now.label} · typical for your category`) : ''}</p>
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Tonight's Peak</p>
@@ -922,7 +925,7 @@ export default function VenueDashboard({
                   this grid already print '–' when the model has nothing to say;
                   this one printed a confident 0 for a request that 403'd or
                   timed out, and 0 here is the number a venue would act on. */}
-              <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0' }}>{(venueListErrors.incomingFlocks || venueListErrors.incomingFlocksLocked) ? '–' : realIncomingFlocks.length}</p>
+              <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0' }}>{(venueListErrors.incomingFlocks || venueListErrors.incomingFlocksLocked || venueListErrors.incomingFlocksUnverified) ? '–' : realIncomingFlocks.length}</p>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>flocks with you in their vote</p>
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
@@ -1297,7 +1300,7 @@ export default function VenueDashboard({
                 });
                 setPromotions(prev => [created, ...prev]);
                 setDealDescription('');
-                showToast('Deal posted. It is on your venue card now.', 'success');
+                showToast(venueIsVerified ? 'Deal posted. It is on your venue card now.' : 'Saved. It goes on your card once your venue is verified.', 'success');
                 setVenueTab('promotions');
               } catch (e) {
                 console.error('Post deal failed:', e);
@@ -1350,7 +1353,7 @@ export default function VenueDashboard({
                 ))}
               </div>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '8px 0 0' }}>
-                {venueIntel.model ? `Flock crowd model v${venueIntel.model}` : 'Flock rule engine (model learns your venue as data arrives)'}
+                {venueIntel.model ? `Flock crowd model v${venueIntel.model}` : 'Flock rule engine: typical for a venue like yours, not measured here yet.'}
               </p>
             </div>
           )}
@@ -1551,7 +1554,12 @@ export default function VenueDashboard({
                   // Flock users, and he is their bird. The "Your Events" card
                   // below shares this screen and stays bird-free on purpose —
                   // one mark per screen, and this is the card about people.
-                  (venueListErrors.incomingFlocks || venueListErrors.incomingFlocksLocked) ? null : (
+                  (venueListErrors.incomingFlocks || venueListErrors.incomingFlocksLocked) ? null : venueListErrors.incomingFlocksUnverified ? (
+                    <div style={{ padding: '14px 4px 8px' }}>
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>This feed turns on once your venue is verified.</p>
+                      {renderVerificationAsk()}
+                    </div>
+                  ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '14px 0 4px' }}>
                       <BirdieStill size={84} />
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', margin: 0, padding: '10px 0 12px' }}>No incoming flocks yet</p>
@@ -2027,6 +2035,14 @@ export default function VenueDashboard({
                   screen can say what actually happened instead. */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.creditCard(colors.navy, 14)} Subscription</h3>
+                {/* Billing off: every feature is on and nothing is a plan the
+                    owner holds, so "Pro Plan / Set by us / No end date" with a
+                    cancel button was a statement about a subscription nobody
+                    had signed. One sentence. */}
+                {!venueBillingOn && (
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>Every feature is on while venue plans are being set up. Nothing is charged, and we will email you before anything is.</p>
+                )}
+                {venueBillingOn && (<>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px', padding: '8px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px' }}>
                   <div style={{ minWidth: 0 }}>
                     <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>{tierBadge[venueData.tier].label} Plan</p>
@@ -2119,6 +2135,7 @@ export default function VenueDashboard({
                     </p>
                   </div>
                 )}
+                </>)}
               </div>
 
               {/* Danger Zone */}
@@ -2160,7 +2177,7 @@ export default function VenueDashboard({
                   <ul style={{ margin: 0, paddingLeft: '16px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
                     {features.free.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
                   </ul>
-                  {venueTier === 'free' && <span style={{ display: 'block', textAlign: 'center', fontSize: 'var(--t-meta)', color: colors.steel, fontWeight: '500', marginTop: '8px' }}>Current Plan</span>}
+                  {venueBillingOn && venueTier === 'free' && <span style={{ display: 'block', textAlign: 'center', fontSize: 'var(--t-meta)', color: colors.steel, fontWeight: '500', marginTop: '8px' }}>Current Plan</span>}
                 </div>
 
                 {/* Premium Tier */}
@@ -2172,7 +2189,7 @@ export default function VenueDashboard({
                   <ul style={{ margin: 0, paddingLeft: '16px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
                     {features.premium.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
                   </ul>
-                  {venueTier === 'premium' ? <span style={{ display: 'block', textAlign: 'center', fontSize: 'var(--t-meta)', color: 'var(--accent-amber-text)', fontWeight: '500', marginTop: '8px' }}>Current Plan</span> : venueTier === 'free' && <button className="hit44" onClick={() => requestTierUpgrade('Premium')} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: 'var(--accent-amber-text)', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', marginTop: '8px' }}>Email us about Premium</button>}
+                  {venueBillingOn && venueTier === 'premium' ? <span style={{ display: 'block', textAlign: 'center', fontSize: 'var(--t-meta)', color: 'var(--accent-amber-text)', fontWeight: '500', marginTop: '8px' }}>Current Plan</span> : venueTier === 'free' && <button className="hit44" onClick={() => requestTierUpgrade('Premium')} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', backgroundColor: 'var(--accent-amber-text)', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', marginTop: '8px' }}>Email us about Premium</button>}
                 </div>
 
                 {/* Pro Tier */}
@@ -2184,7 +2201,7 @@ export default function VenueDashboard({
                   <ul style={{ margin: 0, paddingLeft: '16px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
                     {features.pro.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
                   </ul>
-                  {venueTier === 'pro' ? <span style={{ display: 'block', textAlign: 'center', fontSize: 'var(--t-meta)', color: 'var(--accent-purple-text)', fontWeight: '500', marginTop: '8px' }}>Current Plan</span> : <button className="hit44" onClick={() => requestTierUpgrade('Pro')} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', marginTop: '8px' }}>Email us about Pro</button>}
+                  {venueBillingOn && venueTier === 'pro' ? <span style={{ display: 'block', textAlign: 'center', fontSize: 'var(--t-meta)', color: 'var(--accent-purple-text)', fontWeight: '500', marginTop: '8px' }}>Current Plan</span> : <button className="hit44" onClick={() => requestTierUpgrade('Pro')} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', marginTop: '8px' }}>Email us about Pro</button>}
                 </div>
 
                 {/* THE OTHER AXIS, said once rather than in three lists.

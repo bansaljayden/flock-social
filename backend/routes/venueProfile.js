@@ -40,7 +40,7 @@ const { rejectIfProfane } = require('../utils/moderation');
 // and it has to be the SAME answer the gate enforces. Reading the column would
 // not be: venue_profiles.tier is a cache of the grant, and a lapsed grant leaves
 // it saying 'premium' (migration 040, services/venueEntitlements.js).
-const { getVenueEntitlement } = require('../services/venueEntitlements');
+const { getVenueEntitlement, venueBillingEnabled } = require('../services/venueEntitlements');
 // The verification request has to reach a person, not just a column. Held as a
 // module object rather than destructured, the way services/moderationAlerts.js
 // holds it: tests replace the exported function, and a destructured copy would
@@ -293,7 +293,7 @@ const placeIdRule = scalarOnly(body('googlePlaceId').optional({ nullable: true }
 // claim, waiting for an admin to verify it into a 500. Answer 409 at claim
 // time, and translate the index's own 23505 the same way for the case where a
 // verification lands between this check and the write.
-const CLAIMED_MSG = 'That business is already claimed by a verified owner. Contact support if it is yours.';
+const CLAIMED_MSG = 'That business is already claimed by a verified owner. If it is yours, email social@flockcorp.com and we will sort it out.';
 
 async function claimedByAnother(placeId, userId) {
   if (!placeId) return false;
@@ -590,7 +590,16 @@ router.post('/', requireVerified, [
       );
     }
 
-    res.status(201).json(profileView(saved));
+    // The role this account holds now. The client's user object is the login
+    // payload with role 'user', and nothing refreshed it, so a new owner
+    // finished twelve steps of onboarding and was bounced to the consumer
+    // feed by the dashboard's role guard. Derived, not re-read: the UPDATE
+    // above never downgrades, so an admin stays admin.
+    const role = saved?.google_place_id
+      ? (req.user.role === 'admin' ? 'admin' : 'venue_owner')
+      : (req.user.role || 'user');
+
+    res.status(201).json({ ...profileView(saved), role });
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: CLAIMED_MSG });
     console.error('Create venue profile error:', err);
@@ -599,6 +608,21 @@ router.post('/', requireVerified, [
 });
 
 // GET /api/venue-profile — get current user's venue profile
+// GET /api/venue-profile/claim?placeId=... — whether a verified owner already
+// holds this place. Onboarding asks at step one, so an owner learns it while
+// picking the place rather than after eleven more screens.
+router.get('/claim', async (req, res) => {
+  try {
+    const placeId = typeof req.query.placeId === 'string' ? req.query.placeId : '';
+    if (!isPlaceIdShaped(placeId)) return res.status(400).json({ error: 'Invalid venue id' });
+    const taken = await claimedByAnother(placeId, req.user.id);
+    res.json({ claimedByAnother: taken, message: taken ? CLAIMED_MSG : null });
+  } catch (err) {
+    console.error('Venue claim check error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query(
@@ -640,6 +664,11 @@ router.get('/', async (req, res) => {
     }
     res.json({
       ...profileView(saved),
+      // With billing off every venue resolves to 'pro' so nothing is gated,
+      // and the dashboard read that as a plan the owner held ("Pro Plan, set
+      // by us, no end date", with a cancel button). This is what lets it say
+      // the true thing instead.
+      billing_enabled: venueBillingEnabled(),
       ...(entitlement ? {
         tier: entitlement.tier,
         tier_expires_at: entitlement.expiresAt,

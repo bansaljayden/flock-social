@@ -42,7 +42,7 @@
  * This screen reads no hooks of its own: it is a pure function of its props.
  */
 import React from 'react';
-import { createVenueProfile, getVenueDetails, searchVenues } from '../services/api';
+import { checkVenueClaim, createVenueProfile, getVenueDetails, searchVenues } from '../services/api';
 import { BirdieStill, WARM_BIRD } from '../components/ui/BirdieBird';
 
 export default function VenueOnboarding({
@@ -56,7 +56,9 @@ export default function VenueOnboarding({
   setCurrentTab,
   setOperatingHours,
   setShowVenueOnboarding,
+  setShowModeSelection,
   setUserMode,
+  onUserPatch,
   setVenueInfo,
   setVenueOnboardingData,
   setVenueOnboardingError,
@@ -175,6 +177,13 @@ export default function VenueOnboarding({
                     }));
                     setVenueSearchQuery(v.name);
                     setVenueSearchResults([]);
+                    // Already claimed by a verified owner? Said here, under the
+                    // pick, rather than after eleven more screens.
+                    if (v.place_id) {
+                      checkVenueClaim(v.place_id)
+                        .then((r) => { if (r?.claimedByAnother) setVenueSearchError(r.message || 'That business is already claimed by a verified owner. If it is yours, email social@flockcorp.com.'); })
+                        .catch(() => {});
+                    }
                     // Fetch phone + hours from Google Places
                     if (v.place_id) {
                       getVenueDetails(v.place_id).then(data => {
@@ -254,7 +263,7 @@ export default function VenueOnboarding({
               them back. The dashboard is the same six tabs whichever of these
               you tick. So the line now says the true thing, which is that we
               are asking what you want out of this and keeping the answer. */}
-          <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 20px' }}>Pick all that apply. It tells us what to build for you, and you can change it later in Settings.</p>
+          <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 20px' }}>Pick all that apply. You can change this later in Settings.</p>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {venueGoals.map(goal => {
               const selected = venueOnboardingData.goals.includes(goal);
@@ -454,8 +463,9 @@ export default function VenueOnboarding({
         // marched on to the dashboard, wrote the "onboarding complete" flag,
         // and the owner never learned their profile had not saved. The server
         // validates and bounds these fields, so a rejection is a real outcome.
+        let created = null;
         try {
-          await createVenueProfile(venueOnboardingData);
+          created = await createVenueProfile(venueOnboardingData);
         } catch (err) {
           console.error('Failed to save venue profile:', err);
           // An unverified email is not a detail to check: say what to do.
@@ -466,6 +476,14 @@ export default function VenueOnboarding({
         }
         setVenueOnboardingError('');
         localStorage.setItem('flockVenueOnboardingComplete', 'true');
+        // The server just made this account an owner and says so in its
+        // answer. Without this the dashboard's role guard bounced a brand-new
+        // owner to the consumer feed, and the auto-mode effect had written
+        // 'user' to disk, so relaunching did the same.
+        if (created?.role && typeof onUserPatch === 'function') onUserPatch({ role: created.role });
+        setUserMode('venue');
+        try { localStorage.setItem('flockUserMode', 'venue'); } catch (e) { /* storage blocked */ }
+        if (typeof setShowModeSelection === 'function') setShowModeSelection(false);
         setShowVenueOnboarding(false);
         setCurrentScreen('venueDashboard');
       }

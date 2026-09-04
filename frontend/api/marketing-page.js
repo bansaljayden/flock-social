@@ -181,6 +181,7 @@ const PAGE_BLOCKS = {
     ["li", "Put a deal on your venue’s card, where groups open it"],
     ["li", "Reply to reviews from people who went"],
     ["li", "Your own hour-by-hour forecast, from the model the app runs"],
+    ["p", "Already have a venue account? Sign in"],
     ["h2", "Give the next plan a fighting chance."],
     ["p", "Open Flock in your browser, or leave your email and you’ll hear the moment the iPhone app is out."],
   ],

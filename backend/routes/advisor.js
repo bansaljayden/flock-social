@@ -670,6 +670,17 @@ router.get('/questions', authenticate, requirePro, async (req, res) => {
       const ctx = await advisorFacts.getVenueContext(req.user.id);
       if (ctx && ctx.profile && ctx.profile.google_place_id && ctx.profile.verified) {
         offered = await availableIntents(ctx);
+      } else if (ctx && ctx.profile) {
+        // Unlinked or unverified: every chip would answer the same refusal
+        // (the route's own comment called that a menu of dead buttons). Say
+        // the one thing once, with the unlock path, and offer nothing.
+        return res.json({
+          name: advisorPhrasing.ADVISOR_NAME,
+          freeText: false,
+          lead: [],
+          groups: [],
+          reason: unverifiedReason(ctx.profile),
+        });
       }
     }
 
