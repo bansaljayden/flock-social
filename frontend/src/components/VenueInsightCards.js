@@ -689,7 +689,7 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
                   ))}
                 </div>
                 <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>
-                  {intel?.model ? `Today hour by hour, our estimate. Flock crowd model v${intel.model}.` : 'Today hour by hour. Flock rule engine while the model learns your venue.'}
+                  {intel?.model ? `Today hour by hour, our estimate. Flock crowd model v${intel.model}.` : 'Today hour by hour. Flock rule engine: typical for a venue like yours, not measured here yet.'}
                   {hourlyWindowed ? ' Shown across your listed hours.' : ''}
                 </p>
               </div>

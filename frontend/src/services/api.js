@@ -1056,6 +1056,12 @@ export async function getEntitlements() {
 // they stay out of a vote, and the owner is already identified by account id,
 // so an event naming their bar is a record of which real business this person
 // runs sitting in a vendor.
+// Whether a verified owner already holds this Google place. Asked at
+// onboarding step one.
+export async function checkVenueClaim(placeId) {
+  return request(`/api/venue-profile/claim?placeId=${encodeURIComponent(placeId)}`);
+}
+
 export async function createVenueProfile(data) {
   const created = await request('/api/venue-profile', { method: 'POST', body: JSON.stringify(data) });
   // Whether the claim named a real Google place is the whole difference
