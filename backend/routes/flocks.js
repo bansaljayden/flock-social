@@ -830,7 +830,7 @@ router.get('/activity', async (req, res) => {
         FROM flocks f
         JOIN users u ON u.id = f.creator_id
         JOIN flock_members fm ON fm.flock_id = f.id AND fm.user_id = $1 AND fm.status = 'accepted'
-        WHERE f.created_at > NOW() - INTERVAL '7 days'
+        WHERE f.created_at > (NOW() AT TIME ZONE 'UTC') - INTERVAL '7 days'
           AND NOT EXISTS (
             SELECT 1 FROM user_blocks b
             WHERE (b.blocker_id = $1 AND b.blocked_id = f.creator_id)
