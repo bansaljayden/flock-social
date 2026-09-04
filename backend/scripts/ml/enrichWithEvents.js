@@ -182,7 +182,23 @@ async function main() {
   await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS events_unavailable_reason TEXT`);
 
   // Process training data in chunks
-  const { rows: countResult } = await pool.query('SELECT COUNT(*) as count FROM ml_training_data');
+  // REALTIME ROWS ARE NOT THIS SCRIPT'S TO WRITE.
+  //
+  // Everything below reconstructs event context from ml_events, which is a
+  // historical table of what was collected per city per date - and it ends in
+  // 2026-05. collectRealtime, by contrast, resolves the nearest event live at
+  // the moment it records a reading and writes those columns itself.
+  //
+  // Left unscoped, this script walked every row, found no ml_events entry for
+  // any date after the cutoff, and rewrote each live measurement to
+  // has_nearby_event = NULL / events_observed = false / 'no_events_on_date' -
+  // while leaving collectRealtime's own event_nearby, event_size, event_type
+  // and event_hours_until untouched beside it, so the row contradicted itself.
+  // Every one of the corpus's live event detections would have gone that way
+  // the first time this ran.
+  const REBUILDABLE = "t.collection_mode IS DISTINCT FROM 'realtime'";
+  const { rows: countResult } = await pool.query(
+    `SELECT COUNT(*) as count FROM ml_training_data t WHERE ${REBUILDABLE}`);
   const totalRows = parseInt(countResult[0].count, 10);
   console.log(`[Enrich] Processing ${totalRows} training rows...`);
 
@@ -202,6 +218,7 @@ async function main() {
               v.city, v.latitude, v.longitude
        FROM ml_training_data t
        JOIN ml_venues v ON t.venue_id = v.id
+       WHERE ${REBUILDABLE}
        ORDER BY t.id
        LIMIT $1 OFFSET $2`,
       [CHUNK_SIZE, offset]
