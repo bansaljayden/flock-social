@@ -573,9 +573,21 @@ export function unregisterPushToken() {
   const token = knownPushToken();
   rememberPushToken(null);
 
+  // THE ACCOUNT-WIDE PATH IS FOR A DEVICE THAT HAD A TOKEN AND LOST TRACK OF
+  // IT, not for one that never had one. The overwhelmingly common null case is
+  // a device that never registered at all: every browser, and every install
+  // where the person never granted permission. Signing out there used to call
+  // unregisterAllTokens, which dropped the token on their PHONE, silently, and
+  // the phone's own watcher does not repair it (its auth token is already
+  // settled and rearmIfUnresolved returns early while a token is held). So push
+  // stopped everywhere until a force quit. Permission is the tell: a device
+  // that was never granted cannot own a token.
+  const everRegistered = !!token || getNotificationStatus() === 'granted';
   const request = token
     ? unregisterDeviceToken(token).catch(() => {})
-    : unregisterAllTokens().catch(() => {});
+    : everRegistered
+      ? unregisterAllTokens().catch(() => {})
+      : Promise.resolve();
 
   // Drop the token on the device too, so the next account on this device gets
   // a fresh one rather than inheriting the previous user's subscription.

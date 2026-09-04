@@ -1063,7 +1063,7 @@ export default function GuestInvite() {
           <div className="gi-join-body">
             {/* A FULL PLAN GETS A DIFFERENT BAND, not a disabled button.
                 POST /:token/join refuses a new account past the member ceiling
-                with a 429, and until the server started saying so up front,
+                with a 409, and until the server started saying so up front,
                 this page's answer to a full flock was to send a stranger
                 through a whole signup that could not end in this flock and
                 then say nothing at all. A control whose only job is to reject

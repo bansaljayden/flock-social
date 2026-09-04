@@ -25,18 +25,17 @@
 // this function is now reached by a real URL on every native login. Do not
 // narrow it on the assumption that nothing calls it.
 //
-// Universal links are still not delivered, for a different reason than before.
-// App.entitlements DOES declare associated domains for flockcorp.com and
-// www.flockcorp.com as of 9fab8a9, but frontend/api/apple-app-site-association.js
-// excludes every path, so iOS finds nothing claimed and keeps sending
-// flockcorp.com links to Safari. The PATH forms below (/f/12, /dm/45) therefore
-// remain unreachable on device, and the query form the backend emits
-// (/?flock=12) is what exercises this function everywhere else.
+// UNIVERSAL LINKS ARE DELIVERED NOW, and this block used to say the opposite
+// for long enough to be worth correcting rather than deleting. App.entitlements
+// declares associated domains for flockcorp.com and www.flockcorp.com, and as
+// of 2026-09-04 the association file CLAIMS two paths rather than excluding
+// every one: the venue check-in tag and the invite link. Both are parsed here
+// (see the checkin and invite branches below) and both have a handler in
+// App.js, which is the condition the exclusions were waiting on.
 //
-// It does not parse /i/<token>, the invite link that is the actual growth path,
-// and there is no screen in App.js that redeems an invite token either. Those
-// two are what the association file is waiting for; claiming /i/* first would
-// open the app on whatever screen it was already showing.
+// The remaining PATH forms below (/f/12, /dm/45) are still not claimed, so on
+// device they arrive only through the query form the backend emits
+// (/?flock=12). That is what exercises this function everywhere else.
 // ---------------------------------------------------------------------------
 
 // api.js is the ONLY module that may capture (the analytics sweep enforces it),

@@ -7249,11 +7249,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // every native user starts as 'default' whatever the OS actually thinks. Ask
   // the plugin once. It reports, it does not request, so this draws no prompt.
   useEffect(() => {
+    // Re-read on resume, not only at mount. Someone who follows our own
+    // instruction, turns Flock's notifications back on in the Settings app and
+    // comes back was still told "Blocked in Settings. Flock cannot ask again"
+    // while push was working. readNotificationPermission reports and never
+    // requests, so this draws no prompt.
     let live = true;
-    readNotificationPermission()
-      .then((status) => { if (live) setNotifStatus(status); })
-      .catch(() => {});
-    return () => { live = false; };
+    const read = () => {
+      readNotificationPermission()
+        .then((status) => { if (live) setNotifStatus(status); })
+        .catch(() => {});
+    };
+    read();
+    const onVisible = () => { if (document.visibilityState === 'visible') read(); };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', read);
+    return () => {
+      live = false;
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', read);
+    };
   }, []);
   // "Not now" on the notifications row in a flock chat. Remembered on the
   // device, because an ask that comes back on the next screen is not an ask.
@@ -19467,6 +19482,15 @@ const FlockApp = () => {
     sessionEndedByRevokeRef.current = false;
     setSessionNote('');
     setAuthUser(user);
+    // Pull the ACCOUNT's settings on every session start. This used to happen
+    // only in the cold-boot effect, which returns early when nobody is signed
+    // in at mount and never re-runs, so signing in during a session left every
+    // synced switch showing this device's defaults: crowd alerts reading on
+    // when the account had turned them off, and the first interest tapped
+    // replacing the account's whole list. pullSettings is idempotent and
+    // guards on isLoggedIn, and it is what makes the flock-settings-loaded
+    // listener below reach an already-mounted screen.
+    pullSettings().catch(() => {});
   }, []);
 
   // The tab title. public/index.html ships the marketing title, "Flock | Plans
