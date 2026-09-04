@@ -577,7 +577,7 @@ export default function LandingPage() {
               <li>The best time to show up</li>
               <li>Every spot near you, scored the same way</li>
               <li>A quieter pick nearby when your first choice is slammed</li>
-              <li>Check-ins from people who are actually there fold in live</li>
+              <li>Crowd reports from people at the venue fold in live</li>
             </ul>
           </div>
 
