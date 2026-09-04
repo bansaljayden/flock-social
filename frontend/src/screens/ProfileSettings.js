@@ -216,6 +216,11 @@ export default function ProfileSettings({
               const editProfileFormProps = {
                 authUser,
                 colors,
+                // The shell's copy of the account is a prop that never
+                // refreshes, and this form is the one screen that can move the
+                // ADDRESS on it. Without this, everything downstream kept
+                // naming the old one.
+                onUserUpdated,
                 confirmClick,
                 profileBio,
                 profileName,

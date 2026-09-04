@@ -64,3 +64,18 @@ test('the resend control belongs to the save that sent a link, not to every save
   // "Profile updated successfully!", including after the address was confirmed.
   expect(form).toMatch(/setEditSuccess\(''\);\s*(?:\/\/[^\n]*\n\s*)*setVerifyPending\(false\);/);
 });
+
+test('changing your address changes the address every screen names', () => {
+  const form = fs.readFileSync(path.join(REPO, 'frontend', 'src', 'components', 'EditProfileForm.js'), 'utf8');
+  const settings = fs.readFileSync(path.join(REPO, 'frontend', 'src', 'screens', 'ProfileSettings.js'), 'utf8');
+  const app = fs.readFileSync(path.join(REPO, 'frontend', 'src', 'App.js'), 'utf8');
+  // `authUser` is read at sign-in and never refetched, and this form is the one
+  // screen that can move the address on it. The verify sheet renders
+  // "We sent a link to {authUser?.email}", so a stale copy sent people to look
+  // in the mailbox they had just moved away from.
+  expect(settings).toMatch(/const editProfileFormProps = \{\s*authUser,\s*colors,\s*(?:\/\/[^\n]*\n\s*)*onUserUpdated,/);
+  expect(form).toMatch(/if \(onUserUpdated && data\.user\) \{/);
+  expect(form).toMatch(/email: data\.user\.email,/);
+  // And a suppression refusal belongs to a mailbox, so a new one clears it.
+  expect(app).toMatch(/useEffect\(\(\) => \{ setVerifyRefused\(false\); \}, \[authUser\?\.email\]\);/);
+});

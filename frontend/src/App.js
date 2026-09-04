@@ -4959,6 +4959,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // off. Nothing about pressing the button again changes that answer, so the
   // button goes away with the sentence that explains why.
   const [verifyRefused, setVerifyRefused] = useState(false);
+  // Bound to the ADDRESS, not to the account. Suppression is a property of a
+  // mailbox, so moving to a new one is exactly the thing that makes the
+  // refusal stop being true, and leaving the flag set told somebody we could
+  // not mail an address we had never tried.
+  useEffect(() => { setVerifyRefused(false); }, [authUser?.email]);
 
   const resendVerification = useCallback(async () => {
     if (verifyCooldown > 0 || verifyRefused) return;
