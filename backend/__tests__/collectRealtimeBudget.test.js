@@ -20,9 +20,12 @@ test('each run starts at a random venue per city, and the city order varies', ()
   assert.match(collect, /for \(const \[cityKey, cityVenues\] of cityOrder\) \{/);
 });
 
-test('the live call gives up at ten seconds; the forecast call keeps thirty', () => {
-  const live = svc.slice(svc.indexOf('/api/v1/forecasts/live?'), svc.indexOf('/api/v1/forecasts/live?') + 600);
-  assert.match(live, /\b10000\b/);
+test('the live call gives up at twenty seconds; the forecast call keeps thirty', () => {
+  const live = svc.slice(svc.indexOf('/api/v1/forecasts/live?'), svc.indexOf('/api/v1/forecasts/live?') + 1000);
+  // 20 s, not 10: live answers measured at 16-18 s on 2026-09-04 were all
+  // aborted at 10 s and the sweep's second half wrote nothing.
+  assert.match(live, /\b20000\b/);
+  assert.doesNotMatch(live, /\b10000\b/);
   const fc = svc.slice(svc.indexOf('/api/v1/forecasts?'), svc.indexOf('/api/v1/forecasts?') + 200);
   assert.match(fc, /\b30000\b/);
 });

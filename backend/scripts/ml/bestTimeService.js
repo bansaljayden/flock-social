@@ -165,13 +165,16 @@ async function fetchLiveBusyness(venueId) {
     const response = await fetchWithTimeout(
       `https://besttime.app/api/v1/forecasts/live?${params}`,
       { method: 'POST' },
-      // 10 s, down from 30. A live answer normally lands in a second or two;
-      // on 2026-09-04 the hourly sweep hit a burst of these timing out and
-      // every one cost the full 30 s plus the transient sleep, which is a
-      // large part of why one sweep ran past the next hour's trigger and
-      // Railway skipped it. The forecast call above keeps 30 s: it is rare
-      // and it fetches a whole week.
-      10000
+      // 20 s. A live answer normally lands in a second or two, but BestTime
+      // has slow hours: measured from outside at 03:50 UTC on 2026-09-04,
+      // live answers took 16-18 s. At 10 s (the first cut, down from 30)
+      // every one of those was aborted here and the sweep's second half
+      // wrote nothing, while at 30 s a burst of them once ran a sweep past
+      // the next hour's trigger. The run-time budget in collectRealtime.js
+      // is what protects the hour now; this only decides how long one venue
+      // may take. The forecast call above keeps 30 s: it is rare and it
+      // fetches a whole week.
+      20000
     );
 
     if (!response.ok) {
