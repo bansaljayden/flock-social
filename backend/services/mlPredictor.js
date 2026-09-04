@@ -1404,7 +1404,16 @@ async function getNearbyEvents(lat, lng, timestamp, userId, opts) {
   const slot = Number.isNaN(keyTs.getTime())
     ? new Date().toISOString().slice(0, 13)
     : keyTs.toISOString().slice(0, 13);
-  const cacheKey = `${lat.toFixed(3)},${lng.toFixed(3)},${slot}`;
+  // TWO decimals, not three, because the question has a 2 km radius and three
+  // decimals is about 110 m. Two bars two hundred metres apart were two keys
+  // and two identical upstream queries for the same circle of events, and
+  // /alternatives scores the target plus up to ten neighbours inside a 2 km
+  // circle, so one card could be eleven keys and eleven calls. routes/crowd.js
+  // already buckets the batch route's coordinates to two decimals and says why;
+  // this is the same fix on the two paths that pass Google's full precision
+  // straight through. Bucketing is coarser than the radius on purpose: a key
+  // finer than the query it stands for cannot ever hit.
+  const cacheKey = `${lat.toFixed(2)},${lng.toFixed(2)},${slot}`;
   const cached = eventCache.get(cacheKey);
   if (cached) {
     // A remembered FAILURE expires in a minute, a remembered ANSWER in an hour.
