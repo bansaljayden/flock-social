@@ -2331,8 +2331,12 @@ const TOO_MANY_EXPORTS_MESSAGE =
 // to change. exportImage() is the marker, and it is applied to message and
 // story images only.
 const EXPORT_IMAGE_OMITTED_NOTE =
-  'Images inside messages and stories are not included in this file. They are visible in ' +
-  'the app. Your profile photo is included.';
+  'Images inside messages and stories, and your profile photo, are not included in this file. ' +
+  'They are visible in the app.';
+// Named in the privacy policy as the four things not in this file.
+const EXPORT_OMISSIONS_NOTE =
+  'Not in this file: the crowd predictions served to you, the accounts you have blocked, ' +
+  "your device's push tokens, and any venue profile. Email social@flockcorp.com for those.";
 
 // Fetches cap+1 and slices, so "exactly cap rows exist" and "the cap cut rows
 // off" are distinguishable and the payload can say so honestly.
@@ -2594,6 +2598,7 @@ router.get('/export', async (req, res) => {
           'This export contains the data you provided to Flock and activity recorded about your account.',
           'Messages other people sent (including their half of your DMs), other members\' budget amounts, group budget results, other members\' bill-split shares, and venue owners\' replies to your reviews are their data and are not included.',
           EXPORT_IMAGE_OMITTED_NOTE,
+          EXPORT_OMISSIONS_NOTE,
         ],
       },
       profile: {
@@ -2603,7 +2608,13 @@ router.get('/export', async (req, res) => {
         phone: account.phone,
         interests: account.interests || [],
         role: account.role,
-        profile_image_url: account.profile_image_url,
+        // An uploaded avatar is a data: URL, and the client refuses to deliver a
+        // file carrying image data (see services/dataExport.js). Copying it
+        // untouched made every export fail for anyone with a photo, and each
+        // try spent one of the five hourly slots. Same rule as message images.
+        ...(typeof account.profile_image_url === 'string' && account.profile_image_url.startsWith('data:')
+          ? { profile_image_url: null, profile_photo_omitted: true }
+          : { profile_image_url: account.profile_image_url || null }),
         // bio is data the user typed about themselves — squarely inside the
         // "data you provided to Flock" promise this export keeps.
         bio: account.bio ?? null,
@@ -2759,12 +2770,14 @@ async function deleteAccount(req, res) {
     // Round 5: when revocation is CONFIGURED and fails, abort — deleting the
     // row destroys the only stored refresh token, so a swallowed failure would
     // make revocation permanently impossible. Unconfigured env stays a no-op.
+    let appleRevoked = false;
     if (u.rows[0].oauth_provider === 'apple' && u.rows[0].apple_refresh_token && appleAuthConfigured()) {
       let revoked = false;
       try { revoked = await revokeAppleToken(u.rows[0].apple_refresh_token); } catch (_) { revoked = false; }
       if (!revoked) {
         return res.status(503).json({ error: "We couldn't disconnect your Apple sign-in just now. Try again in a minute." });
       }
+      appleRevoked = true;
     }
 
     // Moderation evidence survives the account (round 5): cascade deletes let
@@ -2934,8 +2947,13 @@ async function deleteAccount(req, res) {
     } catch (txErr) {
       await client.query('ROLLBACK').catch(() => {});
       console.error('Delete account: de-attribution failed, account NOT deleted:', txErr.message);
+      // "Nothing was changed" is untrue for an Apple account: the revocation
+      // above already ran, and it is the reason the sign-in has to happen
+      // again before a retry can revoke a fresh token.
       return res.status(503).json({
-        error: "We couldn't finish deleting your account just now. Nothing was changed. Please try again in a minute.",
+        error: appleRevoked
+          ? 'Your Apple sign-in was disconnected, but the account could not be deleted just now. Sign in with Apple again, then try once more.'
+          : "We couldn't finish deleting your account just now. Nothing was changed. Please try again in a minute.",
       });
     } finally {
       client.release();
