@@ -223,7 +223,7 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked, onReported }) 
                 reporter_id and the admin queue shows it. What is true, and what
                 the user is actually worried about, is that the other person is
                 never told. Say that instead. */}
-            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 14px' }}>We never tell them who reported. Our team reviews every report.</p>
+            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: '0 0 14px' }}>We never tell them who reported. Every report is reviewed.</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px' }}>
               {REASONS.map(r => (
                 <button key={r.value} aria-pressed={reason === r.value} onClick={() => setReason(r.value)} style={{ width: '100%', padding: '12px 14px', textAlign: 'left', borderRadius: '12px', border: reason === r.value ? '2px solid var(--text-primary)' : '1px solid var(--border-default)', backgroundColor: reason === r.value ? 'var(--bg-hover)' : 'transparent', color: 'var(--text-primary)', fontSize: '14px', fontWeight: '600', cursor: 'pointer', fontFamily: FONT }}>{r.label}</button>

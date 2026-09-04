@@ -103,9 +103,8 @@ export default function AboutPage() {
           ones you kept.
         </p>
         <p>
-          Flock is not trying to be a feed, and it is not trying to replace
-          your group chat. There is nothing to scroll and nobody to follow. The
-          chat keeps the jokes. Flock keeps the plan.
+          There is nothing to scroll and nobody to follow. Your group chat
+          keeps the jokes. Flock keeps the plan.
         </p>
       </section>
 

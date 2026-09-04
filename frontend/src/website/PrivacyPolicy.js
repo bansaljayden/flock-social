@@ -812,9 +812,8 @@ export default function PrivacyPolicy() {
               </ul>
               <p>
                 If you would rather have a copy of your data before you delete it, you can get one
-                yourself in the app, under Profile and then Get a copy of my data. It downloads as a
-                file. If you would rather we sent it, ask us at {mail}.
-              </p>
+                yourself in the app, under Profile and then Get a copy of my data. You can save it or copy it out, depending on your device. If you would rather we sent it, ask us at {mail}.
+               Push notification bookkeeping survives too: a delivery ledger that records that a notification was sent, with no message text, kept for thirty days and de-attributed the same way a report is. While you have an account, a notification held for quiet hours keeps its text on our server until it is delivered or a day past its expiry, and a device's push token is dropped after 270 days of silence.</p>
             </section>
 
             <section id="your-choices">

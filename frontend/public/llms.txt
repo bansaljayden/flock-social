@@ -9,10 +9,10 @@ Flock runs in a web browser at https://www.flockcorp.com. An iPhone app is in
 App Store review and cannot be downloaded yet. Users never pay. Venues are the
 side Flock is built to charge, and no venue is being charged today.
 
-www.flockcorp.com is a client-rendered React application. Four of the pages
+www.flockcorp.com is a client-rendered React application. Five of the pages
 listed below serve a full static HTML rendering of their content to AI and
 answer-engine user agents, generated from the same copy human visitors see:
-/about, /support, /privacy and /terms. The home page, /guidelines and
+the home page, /about, /support, /privacy and /terms. /guidelines and
 /delete-account are not among them and need JavaScript to read. This file is
 the summary and the index.
 
