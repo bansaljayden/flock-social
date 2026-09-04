@@ -324,8 +324,11 @@ router.post('/request',
       }
 
       // Mutual block — can't friend someone you (or they) blocked.
+      // Answered like a miss, on purpose. The accept route already answers a
+      // blocked pair with the miss-shaped 404; this door answered a distinct
+      // 403, so one request confirmed a block to the person who was blocked.
       if (await isBlockedBetween(req.user.id, user_id)) {
-        return res.status(403).json({ error: 'You can no longer connect with this user.' });
+        return miss();
       }
 
       const io = req.app.get('io');
@@ -351,6 +354,9 @@ router.post('/request',
             if (io) {
               io.to(`user:${user_id}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
             }
+            // A mutual request that accepted itself told the other side over the
+            // socket only; an explicit accept also pushes. Same words, same type.
+            await pushIfOffline(io, user_id, 'You are now friends', `${req.user.name} accepted your friend request.`, { type: 'friend_accepted', fromUserId: String(req.user.id) });
             return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted' });
           }
           return res.json({ message: 'Friend request already sent', status: 'pending' });
@@ -417,6 +423,9 @@ router.post('/request',
           if (io) {
             io.to(`user:${user_id}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
           }
+          // A mutual request that accepted itself told the other side over the
+          // socket only; an explicit accept also pushes. Same words, same type.
+          await pushIfOffline(io, user_id, 'You are now friends', `${req.user.name} accepted your friend request.`, { type: 'friend_accepted', fromUserId: String(req.user.id) });
           return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted' });
         }
         return res.json(await currentState(req.user.id, user_id));
@@ -816,8 +825,9 @@ router.post('/add-by-code',
       }
 
       // Mutual block — can't friend someone you (or they) blocked.
+      // Same as /request above: a block reads as a miss.
       if (await isBlockedBetween(req.user.id, targetUserId)) {
-        return res.status(403).json({ error: 'You can no longer connect with this user.' });
+        return miss();
       }
 
       const io = req.app.get('io');
@@ -840,6 +850,7 @@ router.post('/add-by-code',
           }
           await collapseToOneFriendship(req.user.id, targetUserId);
           if (io) io.to(`user:${targetUserId}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
+          await pushIfOffline(io, targetUserId, 'You are now friends', `${req.user.name} accepted your friend request.`, { type: 'friend_accepted', fromUserId: String(req.user.id) });
           return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted', user: userCheck.rows[0] });
         }
         if (row.status === 'pending') {
@@ -879,12 +890,20 @@ router.post('/add-by-code',
         if (await acceptPending(seen.id)) {
           await collapseToOneFriendship(req.user.id, targetUserId);
           if (io) io.to(`user:${targetUserId}`).emit('friend_request_responded', { fromUserId: req.user.id, fromUserName: req.user.name, action: 'accepted' });
+          await pushIfOffline(io, targetUserId, 'You are now friends', `${req.user.name} accepted your friend request.`, { type: 'friend_accepted', fromUserId: String(req.user.id) });
           return res.json({ message: `You and ${userCheck.rows[0].name} are now friends!`, status: 'accepted', user: userCheck.rows[0] });
         }
         return res.json({ ...await currentState(req.user.id, targetUserId), user: userCheck.rows[0] });
       }
 
       if (io) io.to(`user:${targetUserId}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
+      // The push /request sends. This door emitted the socket event only, so
+      // a code scanned while its owner was offline reached them never.
+      await pushIfOffline(io, targetUserId,
+        'New friend request',
+        `${req.user.name} wants to be friends`,
+        { type: 'friend_request', fromUserId: String(req.user.id) }
+      );
       res.json({ message: `Friend request sent to ${userCheck.rows[0].name}`, status: 'pending', user: userCheck.rows[0] });
     } catch (err) {
       console.error('Add by code error:', err);

@@ -181,6 +181,10 @@ const UNVERIFIED_DENY = [
   //    `accept`: a squatter's outgoing request is half of an accepted edge, and
   //    the victim accepting it is the attack working.
   { method: 'POST', pattern: /^\/api\/friends\/(request|accept|add-by-code)$/ },
+  //    Contact discovery resolves an address book to names and faces. An
+  //    account that has not proved its email has no business doing that, and
+  //    the route was not on this list.
+  { method: 'POST', pattern: /^\/api\/friends\/find-by-phone$/ },
   // 3. Flock membership — routes/flocks.js. Creating a flock makes you its
   //    first member, so it belongs on the list next to join and invite.
   { method: 'POST', pattern: /^\/api\/flocks$/ },

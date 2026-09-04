@@ -10313,6 +10313,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     setAddFriendsResults(prev => prev.filter(u => String(u.id) !== id));
     setFriendSuggestions(prev => prev.filter(u => String(u.id) !== id));
     setConnectResults(prev => prev.filter(u => String(u.id) !== id));
+    // The contacts and phone-lookup rows render the same avatar and Add button.
+    setContactsUsers(prev => (Array.isArray(prev) ? prev.filter(u => String(u.id) !== id) : prev));
+    setPhoneLookupUsers(prev => (Array.isArray(prev) ? prev.filter(u => String(u.id) !== id) : prev));
+    // And the status pill, so the id cannot reappear wearing "Friends".
+    setFriendStatuses(prev => { if (!prev || !(id in prev)) return prev; const next = { ...prev }; delete next[id]; return next; });
     // Then ask the server, so the counts under the roster are its numbers
     // rather than our subtraction.
     if (selectedFlockId) refreshFlockRoster(selectedFlockId);
@@ -11701,8 +11706,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       // fully populated and fully typeable, and every send was refused with a
       // two second toast until the screen was left and re-entered.
       setDmBlocked(prev => (prev[String(userId)] ? prev : { ...prev, [String(userId)]: true }));
+      // And everything else the blocker's own side already drops: their
+      // pending request (which Accept would answer with "no pending request"),
+      // their DM row, their pulse, their seat in an open roster. This handler
+      // used to run only for the person who did the blocking, so the person
+      // who was blocked kept every one of those on screen until a reload.
+      handleUserBlocked(userId);
     });
-  }, [dmSharingLocation]);
+  }, [dmSharingLocation, handleUserBlocked]);
 
   // Arming a DM share asks for a fix on the tap, the way startSharingLocation
   // does for a flock. The composer used to call a bare setDmSharingLocation(id)
