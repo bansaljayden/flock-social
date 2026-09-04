@@ -131,12 +131,31 @@ const isChildSafety = (r) => (
   typeof r.child_safety === 'boolean' ? r.child_safety : r.reason === 'sexual'
 );
 
+// A bare fetch had no deadline, so a stalled connection left the first load on
+// "Loading..." with the Refresh button disabled behind it, and any failure
+// surfaced to the moderator as the browser's own words ("Failed to fetch", or
+// "Load failed" in the iOS WebView the admin push tap lands in). A moderator
+// who has just pressed Ban must never be left unsure whether it landed.
+const ADMIN_FETCH_TIMEOUT_MS = 20000;
 async function adminFetch(path, options = {}) {
   const token = getToken();
-  const res = await fetch(`${BASE_URL}${path}`, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(options.headers || {}) },
-  });
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), ADMIN_FETCH_TIMEOUT_MS) : null;
+  let res;
+  try {
+    res = await fetch(`${BASE_URL}${path}`, {
+      ...options,
+      ...(controller ? { signal: controller.signal } : {}),
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...(options.headers || {}) },
+    });
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      throw new Error('That took too long. It may or may not have gone through. Press Refresh and check the card before trying again.');
+    }
+    throw new Error('The console could not reach the server. Check your connection and press Refresh.');
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
   return data;
@@ -725,7 +744,7 @@ export default function ModerationDashboard() {
           Report queue. Act promptly. Hide content and/or ban the user. Every action is logged.
           <button
             onClick={() => load({ background: true })}
-            disabled={loading || refreshing}
+            disabled={refreshing}
             style={{ ...S.refresh, opacity: (loading || refreshing) ? 0.6 : 1, cursor: (loading || refreshing) ? 'progress' : 'pointer' }}
           >
             {Icons.repeat('currentColor', 14)} {refreshing ? 'Refreshing…' : 'Refresh'}
@@ -814,7 +833,10 @@ export default function ModerationDashboard() {
                   // sends a real email, so it is offered only where there is
                   // somebody to send one to and a ban would not already have
                   // overtaken it.
-                  const canWarn = canBan && !r.reported_user_banned;
+                  // ... and only when there is somewhere to send it. The server
+                  // refuses a warning to an account with no mailable address, which
+                  // every Apple Sign In user who hid their address has.
+                  const canWarn = canBan && !r.reported_user_banned && r.reported_user_mailable !== false;
                   const childSafety = isChildSafety(r);
                   const showActions = canHide || canRestore || canBan || unhandled;
                   return (

@@ -530,7 +530,9 @@ describe('two lists, two verdicts', () => {
 
     await renderConsole();
 
-    expect(screen.getAllByText('Failed to fetch')).toHaveLength(1);
+    // The browser's own words no longer reach the moderator: a TypeError from
+    // fetch is mapped to a sentence (2026-09-04). Still exactly one banner.
+    expect(screen.getAllByText('The console could not reach the server. Check your connection and press Refresh.')).toHaveLength(1);
     expect(warn.mock.calls.some((c) => /same key|duplicate key/i.test(String(c[0])))).toBe(false);
     warn.mockRestore();
   });

@@ -17,7 +17,14 @@ test('a ban is told, after the commit, best-effort', () => {
 
 test('the reporter hears back once on resolution, with no outcome and no name', () => {
   const src = read('routes/admin.js');
-  assert.match(src, /if \(newStatus === 'resolved'\) \{\s*pool\.query\(\s*'SELECT u\.name, u\.email FROM content_reports r JOIN users u ON u\.id = r\.reporter_id WHERE r\.id = \$1'/);
+  // Every reporter of the same content since 2026-09-04, not only the one
+  // whose report the moderator opened: hiding sweeps the siblings closed, and
+  // nine of the ten people who reported a brigaded message used to hear
+  // nothing at all.
+  assert.match(src, /if \(newStatus === 'resolved'\) \{/);
+  assert.match(src, /SELECT u\.name, u\.email FROM content_reports r JOIN users u ON u\.id = r\.reporter_id WHERE r\.id = ANY\(\$1::int\[\]\)/);
+  assert.match(src, /UNION\s*\n\s*SELECT u\.name, u\.email FROM users u WHERE u\.id = ANY\(\$2::int\[\]\)/);
+  assert.match(src, /RETURNING reporter_id/);
   const text = src.slice(src.indexOf('function reportFollowupText'), src.indexOf('function reportFollowupHtml'));
   assert.match(text, /handled/);
   assert.doesNotMatch(text, /banned|removed|warned|\$\{outcome/);
