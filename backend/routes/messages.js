@@ -1295,10 +1295,10 @@ router.get('/dm/:userId/venue-votes', [param('userId').isInt({ min: 1, max: INT4
     }
     const { user1, user2 } = dmPairKey(req.user.id, parseInt(req.params.userId));
     const result = await pool.query(
-      `SELECT venue_name, venue_id, COUNT(*) AS vote_count, ARRAY_AGG(u.name) AS voters
+      `SELECT venue_name, MIN(venue_id) FILTER (WHERE venue_id IS NOT NULL) AS venue_id, COUNT(*)::int AS vote_count, ARRAY_AGG(u.name) AS voters
        FROM dm_venue_votes vv JOIN users u ON u.id = vv.user_id
        WHERE vv.user1_id = $1 AND vv.user2_id = $2
-       GROUP BY venue_name, venue_id ORDER BY vote_count DESC`,
+       GROUP BY venue_name ORDER BY vote_count DESC`,
       [user1, user2]
     );
     res.json({ votes: result.rows });
@@ -1401,10 +1401,10 @@ router.post('/dm/:userId/venue-votes',
       }
       // Return updated tallies
       const result = await pool.query(
-        `SELECT venue_name, venue_id, COUNT(*) AS vote_count, ARRAY_AGG(u.name) AS voters
+        `SELECT venue_name, MIN(venue_id) FILTER (WHERE venue_id IS NOT NULL) AS venue_id, COUNT(*)::int AS vote_count, ARRAY_AGG(u.name) AS voters
          FROM dm_venue_votes vv JOIN users u ON u.id = vv.user_id
          WHERE vv.user1_id = $1 AND vv.user2_id = $2
-         GROUP BY venue_name, venue_id ORDER BY vote_count DESC`,
+         GROUP BY venue_name ORDER BY vote_count DESC`,
         [user1, user2]
       );
       res.json({ votes: result.rows });
