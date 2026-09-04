@@ -284,6 +284,7 @@ export default function ChatDetail({
   profilePic,
   renderFlockInviteRow,
   retryFailedMessage,
+  discardFailedMessage,
   selectedFlockId,
   sendChatMessage,
   setBillPaidBy,
@@ -638,7 +639,7 @@ export default function ChatDetail({
             </div>
             {chatSearch.trim() && (
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '6px 0 0 4px', fontWeight: '500' }}>
-                {visibleMessages.length} messages found
+                {visibleMessages.length} {visibleMessages.length === 1 ? 'message' : 'messages'} found
               </p>
             )}
           </div>
@@ -937,7 +938,24 @@ export default function ChatDetail({
           }).length === 0 && (
             <div style={{ textAlign: 'center', padding: '40px 20px' }}>
               <BirdieStill bird={WARM_BIRD} size={72} style={{ margin: '0 auto 8px' }} />
-              <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-tertiary)', fontWeight: '500' }}>No messages match "{chatSearch}"</p>
+              {/* "No messages match" is a claim about the whole flock and
+                  this only read the rows that are loaded. Say which. */}
+              <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-tertiary)', fontWeight: '500' }}>
+                {/* Everything is on screen when the reader has hit the top OR
+                    when the whole thread is shorter than one page, which is the
+                    common case and the one flockAtTop alone gets wrong: it is
+                    only ever set by the paging reader, so a three message flock
+                    never sets it and would have been told its own contents were
+                    merely "not loaded so far". */}
+                {(flockAtTop[flock.id] || flock.messages.length < DM_PAGE_SIZE)
+                  ? `No messages match "${chatSearch}"`
+                  : `Nothing loaded so far matches "${chatSearch}"`}
+              </p>
+              {!flockAtTop[flock.id] && flock.messages.length >= DM_PAGE_SIZE && (
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>
+                  Load earlier messages above to search further back.
+                </p>
+              )}
             </div>
           )}
 
@@ -946,8 +964,14 @@ export default function ChatDetail({
               stays gated so it can never claim an empty chat during a fetch. */}
           {messagesLoading && flock.messages.length === 0 && <ChatSkeleton label={`Loading messages in ${flock.name}`} />}
 
-          {/* Scrollback, same contract as the DM thread. */}
-          {!messagesLoading && !(showChatSearch && chatSearch.trim()) && !flockAtTop[flock.id] && flock.messages.length >= DM_PAGE_SIZE && (
+          {/* Scrollback, same contract as the DM thread.
+              NOT hidden during a search. There is no server-side message
+              search, so the filter runs over the rows this client happens to
+              hold, which on entry is the newest fifty. Hiding this while a
+              search was open meant a term three hundred messages back could
+              never be reached from inside search, and the empty state below
+              announced it did not exist. */}
+          {!messagesLoading && !flockAtTop[flock.id] && flock.messages.length >= DM_PAGE_SIZE && (
             <div style={{ textAlign: 'center', marginBottom: '14px' }}>
               <button
                 className="hit44"
@@ -1034,6 +1058,18 @@ export default function ChatDetail({
                         screen reader user is left believing it sent. */}
                   <button className="hit44" onClick={() => retryFailedMessage(flock.id, m)} style={{ background: 'none', border: 'none', padding: '0 4px 4px', cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--accent-red-text, #b91c1c)', display: 'flex', alignItems: 'center', gap: '4px' }}>
                     Didn't send. Tap to retry
+                  </button>
+                  {/* Some sends can never succeed. A photo the image screen
+                      refuses, or text the language filter rejects, comes back
+                      here on every open of this chat with a retry that runs the
+                      same refusal again. Without this the bubble is permanent. */}
+                  <button
+                    className="hit44"
+                    aria-label="Remove this message that did not send"
+                    onClick={() => discardFailedMessage(flock.id, m)}
+                    style={{ background: 'none', border: 'none', padding: '0 4px 4px', cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-tertiary)' }}
+                  >
+                    Remove
                   </button>
                   </div>
                 )}

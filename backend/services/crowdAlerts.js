@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 
 const pool = require('../config/database');
-const { calculateCrowdScore, generateHourlyForecast, venueLocalNow, weekdayOffset } = require('./crowdEngine');
+const { calculateCrowdScore, generateHourlyForecast, venueLocalNow, weekdayOffset, hedgeLabel } = require('./crowdEngine');
 const { getWeather } = require('./weatherService');
 const {
   pushAlways,
@@ -174,18 +174,39 @@ function pickPeak(forecast) {
 //     busier" trigger without changing the word, and the sentence contradicted
 //     itself. The alert is still worth sending; it just has to say what it
 //     actually knows.
+//
+// AND THE THIRD, added 2026-09-04. This file imports crowdEngine and nothing
+// else. mlPredictor is never required here, so every crowd push is the
+// hand-written category curve, which crowdEngine itself classifies as
+// `basis: 'category_pattern', supported: false` and which every other surface
+// in the product therefore hedges through publishedLabel: "Usually packed",
+// never "packed". The push said `${name} will be packed` flatly, on a lock
+// screen, about a venue whose card one tap away would read "Steady 55" from the
+// model. The gate in front of this sweep requires an ml_venues row, so it fires
+// only on corpus venues, which are exactly the ones that DO have a baseline and
+// would have taken the model path.
+//
+// Asking the model here is the better fix and a bigger one: it means a second
+// service and a per-venue inference inside a sweep that runs against every
+// upcoming flock. What is not defensible in the meantime is stating a category
+// prior as fact, so this hedges the same way the rest of the product does. The
+// alert still fires, it still says what it knows, and it stops claiming to know
+// more than the engine behind it does.
 // ---------------------------------------------------------------------------
 function buildAlertMessage({ venueName, currentScore, eventScore, peak }) {
   const name = venueName || 'Your venue';
-  const soon = String(eventScore.label || '').toLowerCase();
-  const now = String(currentScore.label || '').toLowerCase();
+  // hedgeLabel, not the raw band. These come from calculateCrowdScore, which is
+  // the category curve, and publishedLabel(score, { supported: false }) is what
+  // every screen renders for exactly this basis.
+  const soon = String(hedgeLabel(eventScore.label) || '').toLowerCase();
+  const now = String(hedgeLabel(currentScore.label) || '').toLowerCase();
   const gettingBusier = eventScore.score > currentScore.score + 15;
   const peakSoon = Boolean(peak) && peak.score >= PEAK_SCORE;
 
   if (eventScore.score >= 85) {
     return {
-      title: `${name} will be packed`,
-      body: `Expected to be ${soon} around your flock time. Worth heading out early.`,
+      title: `${name} is usually packed then`,
+      body: `Places like it are ${soon} around your flock time. Worth heading out early.`,
     };
   }
   if (gettingBusier) {
