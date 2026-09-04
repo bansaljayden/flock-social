@@ -65,6 +65,15 @@ export function queueSync(partial) {
       // dropped: re-sending those would fail identically forever.
       if (err && err.isNetworkError) {
         pending = { ...payload, ...pending };
+      } else if (typeof window !== 'undefined') {
+        // A save that cannot be retried used to be a console warning and
+        // nothing else, so a switch could move on screen, never reach the
+        // account, and keep disagreeing with the person's other device. Both
+        // halves belong in the sentence: the local change stuck, the
+        // account-wide one did not.
+        window.dispatchEvent(new CustomEvent('flock-toast', {
+          detail: { message: 'That setting did not save to your account. It still applies on this device.', type: 'error' },
+        }));
       }
     });
   }, 600);
