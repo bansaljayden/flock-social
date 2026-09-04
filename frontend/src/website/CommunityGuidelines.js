@@ -120,7 +120,7 @@ export default function CommunityGuidelines() {
           Blocking is mutual: a blocked account can't message you, add you, or see your
           content, and you won't see theirs. Blocking also ends the friendship if you had
           one, and unblocking does not restore it. You can see and undo your blocks in{' '}
-          <strong>Profile</strong> &rarr; <strong>Blocked accounts</strong>. You can also email{' '}
+          <strong>You</strong> &rarr; <strong>Blocked accounts</strong>. You can also email{' '}
           <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>.
         </p>
       </section>

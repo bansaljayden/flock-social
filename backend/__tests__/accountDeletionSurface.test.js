@@ -294,14 +294,20 @@ test('the export says which images it leaves out, and the profile photo is not o
     USERS_ROUTE, /'Inline image data is not included in the export/,
     'the blanket claim is false while profile_image_url is exported as stored'
   );
-  assert.match(USERS_ROUTE, /Images inside messages and stories are not included in this file/);
-  assert.match(USERS_ROUTE, /Your profile photo is included/);
-
-  // And the marker really is applied to those two and not to the avatar.
-  assert.match(USERS_ROUTE, /profile_image_url: account\.profile_image_url,/);
+  // 2026-09-04: the avatar is now left out too. It is a data: URL, and the
+  // client refuses to deliver a file carrying image data (dataExport.js), so
+  // copying it out untouched made every export fail for anyone with a photo
+  // and spent one of the five hourly slots per try. The note says so, and
+  // the profile block applies the same data: rule as message images.
+  assert.match(USERS_ROUTE, /Images inside messages and stories, and your profile photo, are not included in this file/);
+  assert.doesNotMatch(USERS_ROUTE, /Your profile photo is included/);
+  assert.doesNotMatch(USERS_ROUTE, /profile_image_url: account\.profile_image_url,/);
+  assert.match(USERS_ROUTE, /\? \{ profile_image_url: null, profile_photo_omitted: true \}/);
   const exportImage = USERS_ROUTE.match(/function exportImage\(url\)[\s\S]*?\n\}/);
   assert.ok(exportImage, 'exportImage must exist');
   assert.match(exportImage[0], /url\.startsWith\('data:'\)/);
+  // The four omissions the privacy policy names are listed in the file itself.
+  assert.match(USERS_ROUTE, /EXPORT_OMISSIONS_NOTE,\s*\],/);
 });
 
 // ---------------------------------------------------------------------------
