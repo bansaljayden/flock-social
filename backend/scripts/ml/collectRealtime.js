@@ -472,9 +472,28 @@ async function collectRealtime() {
       // diverged the venue is judged on BOTH hours and called if EITHER says
       // open — a disagreement about the clock must cost a call, not a reading.
       const mask = openHourMasks.get(venue.id);
-      const venueHour = venue.timezone && venue.timezone !== cityConfig.tz
-        ? getLocalTime(venue.timezone).hour
-        : local.hour;
+      // THE ROW'S OWN CLOCK, read now, not the one read when this city's block
+      // started. `local` is taken once per city and a sweep runs up to fifty
+      // minutes (58 observed in production on 2026-09-04), so the tail of a run
+      // that crosses an hour boundary was filed under the previous hour: a 22:40
+      // sweep still going at 23:30 recorded genuine 23:00 observations as
+      // hour = 22. This is a DELTA model whose anchor is keyed on
+      // (venue, day_of_week, hour), so those rows were differenced against the
+      // wrong baseline cell and refreshed the wrong ml_venue_baselines slot. The
+      // dedupe key is built from the same clock, so a sweep crossing midnight
+      // could collide with the previous night and be dropped by DO NOTHING.
+      //
+      // The tell was already in the file: the open-hours test below computed a
+      // FRESH per-venue hour and the row then recorded the stale city one.
+      const obs = getLocalTime(venue.timezone || cityConfig.tz);
+      const venueHour = obs.hour;
+      // Same reasoning for the DATE-derived columns. A sweep crossing midnight
+      // would otherwise stamp the previous day's holiday, holiday-eve and
+      // special-night answers onto rows observed after it. The city-level pair
+      // above stays as it is: it is the header log line, which describes the
+      // run rather than any row.
+      const obsSpecial = specialNightFor(cityKey, obs.dateStr);
+      const obsHolidayEve = isHolidayEve(cityKey, obs.dateStr);
       if (!isOpenAtHour(mask, local.hour) && !isOpenAtHour(mask, venueHour)) {
         closedSkips++;
         continue;
@@ -611,12 +630,12 @@ async function collectRealtime() {
       const columns = [
         ['venue_id', venue.id],
         ['hour_axis', HOUR_AXIS_VENUE_LOCAL],
-        ['day_of_week', local.dayOfWeek],
-        ['hour', local.hour],
-        ['month', local.month],
-        ['season', local.season],
-        ['is_holiday', isHoliday(local.dateStr)],
-        ['is_school_break', isSchoolBreak(local.dateStr)],
+        ['day_of_week', obs.dayOfWeek],
+        ['hour', obs.hour],
+        ['month', obs.month],
+        ['season', obs.season],
+        ['is_holiday', isHoliday(obs.dateStr)],
+        ['is_school_break', isSchoolBreak(obs.dateStr)],
         ['venue_category', venue.venue_category],
         ['price_level', venue.price_level],
         ['rating', venue.rating],
@@ -666,11 +685,11 @@ async function collectRealtime() {
         ['events_unavailable_reason', eventData.observed === true ? null : (eventData.reason || 'lookup_failed')],
         ['baseline_busyness', baseline],
         ['busyness_pct', clampPct(busyness)],
-        ['observed_date', local.dateStr],
-        ['is_holiday_eve', holidayEve],
-        ['special_night', special?.name ?? null],
-        ['special_night_effect', special?.effect ?? null],
-        ['special_night_conf', special?.conf ?? null],
+        ['observed_date', obs.dateStr],
+        ['is_holiday_eve', obsHolidayEve],
+        ['special_night', obsSpecial?.name ?? null],
+        ['special_night_effect', obsSpecial?.effect ?? null],
+        ['special_night_conf', obsSpecial?.conf ?? null],
         ['label_source', labelSource],
         ['vendor_forecast_pct', clampPct(reading.vendorForecast)],
       ];
