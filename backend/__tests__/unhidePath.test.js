@@ -325,7 +325,11 @@ test('JUDGEMENT: an un-hide resolves the report as dismissed, not resolved', asy
 });
 
 test('hide, ban, unban and dismiss keep the status they had', async () => {
-  const expected = { hide: 'resolved', ban: 'resolved', unban: 'resolved', dismiss: 'dismissed' };
+  // unban moved to 'dismissed' on 2026-09-04, for the reason unhide already
+  // had: recording a reversal as resolved told the original reporter by email
+  // that what they reported had been handled, at the moment it was undone, and
+  // counted it in the Resolved badge beside decisions that were upheld.
+  const expected = { hide: 'resolved', ban: 'resolved', unban: 'dismissed', dismiss: 'dismissed' };
   for (const [action, status] of Object.entries(expected)) {
     handlers = [
       ...moderationHandlers('flock_message', 'messages', { flock_id: 8, notify_a: null, notify_b: null }),

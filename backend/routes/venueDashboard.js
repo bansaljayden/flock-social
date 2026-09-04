@@ -1312,7 +1312,7 @@ router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
                 SELECT 1 FROM venue_profiles vp
                 WHERE vp.google_place_id = vr.google_place_id AND vp.verified = true
               ) THEN vr.venue_replied_at ELSE NULL END AS venue_replied_at,
-              vr.created_at, u.name, u.profile_image_url
+              vr.created_at, vr.user_id, u.name, u.profile_image_url
        FROM venue_reviews vr
        JOIN users u ON u.id = vr.user_id
        WHERE vr.google_place_id = $1
