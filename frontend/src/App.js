@@ -11087,12 +11087,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
 
   // Load DM conversations from backend (filter out deleted ones). Named so the
   // Messages error card retries the read the screen already ran.
+  // Read through a ref, not closed over. The loader's dependency list is
+  // empty on purpose (its identity is what the recovery and reconnect effects
+  // key on, and a new identity per delete would re-run them), so a closure
+  // over the state array froze the hidden list at its mount-time value:
+  // delete a conversation, refetch the list, and the deleted conversation
+  // came back. Refetches used to be rare (error recovery); the reconnect
+  // catch-up runs one on every return from the background.
+  const deletedDmUserIdsRef = useRef(deletedDmUserIds);
+  deletedDmUserIdsRef.current = deletedDmUserIds;
   const loadDmConversations = useCallback(() => {
     setDmsLoading(true);
     setDmsError('');
     return getDMConversations()
       .then(data => {
-        const hidden = deletedDmUserIds;
+        const hidden = deletedDmUserIdsRef.current;
         setDirectMessages((data.conversations || []).filter(c => !hidden.includes(c.userId)).map(c => ({
           userId: c.userId,
           name: c.name,
