@@ -1029,6 +1029,7 @@ export default function ChatDetail({
                   >
                   <VenueCard
                     venue={m.venue_data}
+                    voted={(flock.votes || []).some(v => v.venue === m.venue_data.name && (v.voters || []).includes('You'))}
                     colors={colors}
                     Icons={Icons}
                     getCategoryColor={getCategoryColor}
@@ -1048,6 +1049,14 @@ export default function ChatDetail({
                     onVote={() => {
                       const current = flock.votes || [];
                       const existingVote = current.find(v => v.venue === m.venue_data.name);
+                      // Already yours: the tap takes the vote back, the way the
+                      // vote panel's row does.
+                      if (existingVote && (existingVote.voters || []).includes('You')) {
+                        updateFlockVotes(selectedFlockId, current
+                          .map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') }))
+                          .filter(v => v.voters.length > 0 || (v.guestCount || 0) > 0));
+                        return;
+                      }
                       if (existingVote) {
                         const newVotes = current.map(v => ({
                           ...v,
