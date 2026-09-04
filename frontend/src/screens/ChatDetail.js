@@ -183,7 +183,29 @@ const billTally = (bill) => {
   const shares = Array.isArray(bill?.shares) ? bill.shares : null;
   if (shares && shares.length) {
     const settled = shares.filter((sh) => sh.settled).length;
-    return { settled, total: shares.length, all: settled === shares.length };
+    // THE ARRAY IS BLOCK-FILTERED; THE COUNTS ARE NOT. billing.js computes
+    // fullySettled/settledCount/shareCount over every row (:844-846) and then
+    // sends `shares` with anyone you have blocked removed (:848). Counting the
+    // array alone therefore forgot those people entirely: block one member of a
+    // three-way split, settle the other two, and the header and the green panel
+    // both declared the bill square while a third of it was still owed. The
+    // person is hidden from the list; their share is not hidden from the total.
+    //
+    // The live array still decides the settled figure, because it is what the
+    // socket updates and an optimistic local settle has to move immediately.
+    // The DENOMINATOR comes from the server, and the square claim may only be
+    // made when nothing is hidden or the server itself agrees.
+    //
+    // (Deliberately phrased without the two button/banner strings: the source
+    // contract in __tests__/billUnsettle.test.js slices the panel between
+    // them, and repeating either up here moves its anchor.)
+    const total = Math.max(shares.length, Number(bill?.shareCount) || 0);
+    const hidden = total - shares.length;
+    return {
+      settled,
+      total,
+      all: settled === shares.length && (hidden === 0 || !!bill?.fullySettled),
+    };
   }
   return {
     settled: bill?.settledCount ?? 0,

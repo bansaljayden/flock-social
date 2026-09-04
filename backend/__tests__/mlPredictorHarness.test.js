@@ -164,7 +164,12 @@ function assertContract(r, what) {
       `${what}: an 'ml' answer must name the model that produced it`);
     assert.ok(r.dataSourcesUsed.includes('ml_model'), `${what}: 'ml' without ml_model source`);
   } else {
-    assert.match(r.predictionMethod, /^rule_engine(_no_baseline|_no_weather_norm|_fallback)?$/,
+    // _baseline_refused and _baseline_error split out of _no_baseline: the same
+    // zero from getBaseline, but a lookup this caller was refused and a lookup
+    // that threw are not the corpus gap _no_baseline names, and the coverage
+    // panel reads that tag as a reason to go collect.
+    assert.match(r.predictionMethod,
+      /^rule_engine(_no_baseline|_baseline_refused|_baseline_error|_no_weather_norm|_fallback)?$/,
       `${what}: unknown predictionMethod ${r.predictionMethod}`);
     assert.equal(r.modelVersion, null,
       `${what}: a fallback answer must not carry a model version`);

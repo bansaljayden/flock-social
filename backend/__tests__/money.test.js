@@ -272,7 +272,11 @@ function scriptBillCreate({ existingBill, existingShares, members, creatorId = 1
     [/SELECT name, creator_id FROM flocks/, () => ({ rows: [{ name: 'Dinner', creator_id: creatorId }] })],
     [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/SELECT id, paid_by FROM bill_splits/, () => ({ rows: existingBill ? [existingBill] : [] })],
-    [/SELECT user_id, committed, settled, settled_at FROM bill_split_shares/, () => ({ rows: existingShares || [] })],
+    // `amount` joined this SELECT so that owesMore can fire at all; before it
+    // did, Number(row.amount) was NaN and every settled row survived every
+    // increase. The pattern is loose on the column list on purpose - it exists
+    // to answer the share lookup, not to pin its SELECT list.
+    [/SELECT user_id, .*FROM bill_split_shares/, () => ({ rows: existingShares || [] })],
     [/INSERT INTO bill_splits/, () => ({ rows: [{ id: 7 }] })],
     [/DELETE FROM bill_split_shares/, () => ({ rows: [], rowCount: 0 })],
     [/INSERT INTO bill_split_shares/, () => ({ rows: [] })],
@@ -360,6 +364,113 @@ test('a settled share survives a rewrite that drops it from the split', async ()
 
   // No unconditional "DELETE ... WHERE bill_id = $1" remains.
   assert.ok(!dels.some((d) => /WHERE bill_id = \$1$/.test(d.sql)), 'blanket share delete is back');
+});
+
+test('a bill revised upward un-settles whoever now owes more than they paid', async () => {
+  // THE GUARD WAS DEAD. `owesMore` is computed from existingAmounts, and the
+  // SELECT that fills existingAmounts did not include `amount`. Number(undefined)
+  // is NaN, `typeof NaN === 'number'` passes, and every comparison against NaN
+  // is false - so owesMore was false for every share on every edit and a settled
+  // row survived any increase. The push loop only notifies UNSETTLED shares, so
+  // the person who had paid $30 was not told the bill had trebled either.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptBillCreate({
+    existingBill: { id: 7, paid_by: 1 },
+    existingShares: [
+      { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '30.00' },
+      { user_id: 2, committed: false, settled: true, settled_at: new Date(), amount: '30.00' },
+      { user_id: 3, committed: false, settled: false, settled_at: null, amount: '30.00' },
+    ],
+    members: THREE,
+  });
+
+  // $90 becomes $300: each share goes from $30 to $100.
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 300, paidBy: 1 });
+
+  assert.strictEqual(res.status, 201, res.text);
+  const ben = res.body.bill.shares.find((sh) => sh.userId === 2);
+  assert.strictEqual(ben.settled, false,
+    'Ben paid $30 against a $100 share and is still marked settled');
+  const benRow = inserts('bill_split_shares').find((q) => q.params[1] === 2);
+  assert.strictEqual(benRow.params[4], false, 'the response and the row disagree');
+
+  // AND THE COLUMN THE RULE READS IS ACTUALLY SELECTED. The fake above answers
+  // the share lookup out of a fixture object, so it hands back `amount` whether
+  // or not the SQL asked for it - Postgres does not. That is exactly how the
+  // original defect survived: the guard read row.amount, the SELECT never listed
+  // it, and no assertion about behaviour could tell the difference. Pin the
+  // statement, because the statement is the thing that was wrong.
+  const shareSelect = log.find((q) => /SELECT user_id.*FROM bill_split_shares/.test(q.sql));
+  assert.ok(shareSelect, 'the existing shares were never read');
+  assert.match(shareSelect.sql, /SELECT user_id, amount,/,
+    'amount is missing from the share SELECT, so Number(row.amount) is NaN and ' +
+    'owesMore can never be true - a settled share survives any increase');
+
+  // The payer keeps their flag: it records having fronted the money, not a debt.
+  assert.strictEqual(res.body.bill.shares.find((sh) => sh.userId === 1).settled, true);
+});
+
+test('a bill revised downward leaves a settled share alone', async () => {
+  // The other half of the same rule, and the reason owesMore is a comparison
+  // rather than a blanket reset: somebody who paid $50 against a share that is
+  // now $20 is square or ahead, and un-settling them would invent a debt.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptBillCreate({
+    existingBill: { id: 7, paid_by: 1 },
+    existingShares: [
+      { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '50.00' },
+      { user_id: 2, committed: false, settled: true, settled_at: new Date(), amount: '50.00' },
+      { user_id: 3, committed: false, settled: false, settled_at: null, amount: '50.00' },
+    ],
+    members: THREE,
+  });
+
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 60, paidBy: 1 });
+
+  assert.strictEqual(res.status, 201, res.text);
+  assert.strictEqual(res.body.bill.shares.find((sh) => sh.userId === 2).settled, true,
+    'a smaller share un-settled somebody who had already overpaid it');
+});
+
+test('the flock creator cannot move an existing bill onto themselves', async () => {
+  // The creator is allowed to correct a bill they did not pay, because someone
+  // has to be able to fix a typed total. `paid_by` is a different thing: it is
+  // what GET /payment-links turns into a Venmo, Cash App and Zelle handle.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptBillCreate({
+    existingBill: { id: 7, paid_by: 2 },
+    existingShares: [
+      { user_id: 1, committed: false, settled: false, settled_at: null, amount: '30.00' },
+      { user_id: 2, committed: false, settled: true, settled_at: new Date(), amount: '30.00' },
+      { user_id: 3, committed: false, settled: false, settled_at: null, amount: '30.00' },
+    ],
+    members: THREE,
+    creatorId: 1,
+  });
+
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 90, paidBy: 1 });
+
+  assert.strictEqual(res.status, 403, res.text);
+  assert.strictEqual(inserts('bill_splits').length, 0, 'the payer was rewritten anyway');
+});
+
+test('the flock creator may still correct the total on a bill they did not pay', async () => {
+  // The guard above must not cost the creator the edit itself.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptBillCreate({
+    existingBill: { id: 7, paid_by: 2 },
+    existingShares: [
+      { user_id: 1, committed: false, settled: false, settled_at: null, amount: '30.00' },
+      { user_id: 2, committed: false, settled: true, settled_at: new Date(), amount: '30.00' },
+      { user_id: 3, committed: false, settled: false, settled_at: null, amount: '30.00' },
+    ],
+    members: THREE,
+    creatorId: 1,
+  });
+
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 120, paidBy: 2 });
+
+  assert.strictEqual(res.status, 201, res.text);
 });
 
 test('a plain member cannot open the first bill in someone else name', async () => {

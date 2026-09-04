@@ -470,9 +470,42 @@ router.post('/:flockId/create',
           } else if (userId !== prevPayer && userId !== flockCreatorId) {
             await client.query('ROLLBACK');
             return res.status(403).json({ error: 'Only the person who paid or the flock creator can change this bill' });
+          } else if (payerId !== prevPayer && userId !== prevPayer) {
+            // WHO MAY EDIT IS NOT WHO MAY BECOME THE PAYER.
+            //
+            // The clause above lets the flock creator correct a bill they did
+            // not pay, which is the point of it: somebody has to be able to fix
+            // a typed total when the payer has gone home. But nothing then
+            // constrained `paidBy`, and `paid_by` is what GET /payment-links
+            // resolves to a Venmo, Cash App and Zelle handle.
+            //
+            // So the creator could POST the same bill back with themselves as
+            // payer. The loop below drops the outgoing payer's auto-settled row
+            // (correctly - see the note on it), so Alice, who actually handed
+            // the restaurant $200, is re-inserted owing $50; every other member
+            // is pushed "you owe Carol $50"; and the payment links now serve
+            // Carol's handles. One request, no exploit, and the money goes to
+            // the wrong person.
+            //
+            // The claim can still be TRANSFERRED, because a payer giving up
+            // their own receivable is theirs to give - that is the case
+            // money.test.js pins. What cannot happen is somebody else moving it
+            // onto themselves.
+            await client.query('ROLLBACK');
+            return res.status(403).json({ error: 'Only the person who paid can hand this bill to someone else' });
           }
           const shareResult = await client.query(
-            'SELECT user_id, committed, settled, settled_at FROM bill_split_shares WHERE bill_id = $1',
+            // `amount` IS LOAD-BEARING, not decoration. It feeds existingAmounts,
+            // which feeds `owesMore` below, which is the only thing that clears a
+            // settled flag when a bill is revised upward. It was missing from
+            // this list, so `Number(row.amount)` was Number(undefined) = NaN;
+            // `typeof NaN === 'number'` passes, and every comparison against NaN
+            // is false, so owesMore was false for every share on every edit. A
+            // settled row survived any increase, and the push loop at the bottom
+            // only notifies UNSETTLED shares — so a $100 bill re-posted at $400
+            // left everyone who had already paid $25 marked paid, told nothing,
+            // and the payer $75 short with no record of it.
+            'SELECT user_id, amount, committed, settled, settled_at FROM bill_split_shares WHERE bill_id = $1',
             [existingBill.rows[0].id]
           );
           for (const row of shareResult.rows) {

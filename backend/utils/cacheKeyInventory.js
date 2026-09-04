@@ -664,6 +664,25 @@ const INVENTORY = [
     why: 'Found by this round\'s sweep, never reported: 20 venues a request x 3 place-keyed caches was up to 60 forced round trips per request, unmetered, at 3000 req/15min. Now gated by allowVenueLookup — a free shape refusal (a non-shaped id cannot match a row) plus a charged per-account budget, both in front of the query so a refused caller neither queries nor writes.',
   },
   {
+    file: 'services/mlPredictor.js', name: 'baselineMissCache', kind: 'cache',
+    key: '`${placeId}_${dayOfWeek}_${hour}` — the same key as baselineCache',
+    callerControls: 'the whole placeId, same 256-char batch field as baselineCache; '
+      + 'the entry is only ever written on a path that already refused or failed',
+    protects: 'nothing — it stores no upstream answer, only WHICH of the three '
+      + 'reasons getBaseline returned 0, so predictBusyness can tag the refusal '
+      + 'as a corpus gap, a budget refusal or a query error instead of reporting '
+      + 'all three to the coverage counter as `rule_engine_no_baseline`',
+    denominator: 'not a spend surface; it rides alongside the lookups baselineCache meters',
+    bound: 'boundedSet at PREDICTOR_CACHE_MAX = 2000, and read behind the same '
+      + 'BASELINE_CACHE_TTL so a reason can never outlive the lookup it explains',
+    verdict: 'SAFE',
+    why: 'A short string per slot, on the same key and the same ceiling as the '
+      + 'cache it shadows, so it cannot grow faster than baselineCache does. It '
+      + 'is deliberately NOT a field on the baselineCache entry: the refused path '
+      + 'must not write a baselineCache entry at all, or an account that cannot '
+      + 'query could evict a real venue\'s number.',
+  },
+  {
     file: 'services/mlPredictor.js', name: 'feedbackCache', kind: 'cache',
     key: 'placeId',
     callerControls: 'all of it, same 256-char batch field',

@@ -15,11 +15,14 @@
 //      on the corrected clock axis, and the anchor the delta label was computed
 //      against), not a google row from an arbitrarily long time ago.
 //
-//   2. NO READ PATH LOOKED AT THE AGE. Realtime collection stopped 2026-05-18.
-//      Checked read-only against production 2026-08-18: all 3,454,955 baseline
-//      rows are source='collected' across 20,569 venues, and there is not one
-//      source='google' row. A card built in December and a card built in April
-//      were indistinguishable to every client.
+//   2. NO READ PATH LOOKED AT THE AGE. Checked read-only against production
+//      2026-08-18: all 3,454,955 baseline rows are source='collected' across
+//      20,569 venues, and there is not one source='google' row. A card built in
+//      December and a card built in April were indistinguishable to every
+//      client. (This note used to open "realtime collection stopped
+//      2026-05-18". It restarted: the 403s were BestTime's abuse guard on a
+//      600/min pace against a 300/min limit, and since the pacing fix the
+//      Railway BESTTIME service has collected on a cron.)
 //
 // WHAT `updated_at` MEANS, and why the payload says so rather than implying
 // otherwise: it is when the ROW was written, not when the venue was observed.
@@ -69,6 +72,7 @@ const {
   getBaseline, baselineProvenanceFor, baselineMeta,
   BASELINE_STALE_AFTER_MS, GOOGLE_BASELINE_REFRESH_DAYS,
   __resetVenueLookupCaches,
+  baselineMissFor, allowVenueLookup, VENUE_LOOKUP_USER_HOURLY,
 } = mlPredictor._internals;
 
 const PLACE = 'ChIJ_baseline_freshness_001';
@@ -239,6 +243,78 @@ global.fetch = (url, opts) => {
 test.after(() => { global.fetch = realFetch; });
 
 const BASELINE_WRITTEN = Date.now() - 150 * DAY;
+// ── 3. WHICH zero, when getBaseline returns zero ───────────────────────────
+//
+// getBaseline answers 0 for three unrelated reasons and predictBusyness used to
+// report all three to the coverage counter as `rule_engine_no_baseline`. That
+// tag is a claim about the CORPUS and it is the dominant entry on the admin
+// Revenue panel, so a database wobble or a rate-limited account read there as
+// "the collector has not reached these venues yet" — the one number built to
+// decide whether to go collect more, answering wrongly precisely when the real
+// problem was that we could not ask.
+
+test('no row for the slot is the corpus gap, and says so', async () => {
+  BASELINE_ROWS = [];
+  assert.strictEqual(await getBaseline(PLACE, DOW, HOUR), 0);
+  assert.strictEqual(baselineMissFor(PLACE, DOW, HOUR), 'none');
+});
+
+test('a baseline lookup that throws is not reported as a missing venue', async () => {
+  const real = pool.query;
+  pool.query = (sql, params) => (/FROM ml_venue_baselines/.test(String(sql))
+    ? Promise.reject(new Error('connection terminated'))
+    : real(sql, params));
+  try {
+    assert.strictEqual(await getBaseline(PLACE, DOW, HOUR), 0);
+    assert.strictEqual(baselineMissFor(PLACE, DOW, HOUR), 'error',
+      'a failed query is indistinguishable from a venue nobody has collected');
+  } finally {
+    pool.query = real;
+  }
+});
+
+test('a caller over the lookup budget is "we could not ask", not "no such row"', async () => {
+  const userId = 909;
+  for (let i = 0; i < VENUE_LOOKUP_USER_HOURLY; i++) allowVenueLookup(PLACE, userId);
+  assert.strictEqual(allowVenueLookup(PLACE, userId), false, 'the budget never ran out');
+
+  BASELINE_ROWS = [{ day_of_week: DOW, hour: HOUR, baseline: 70, source: 'collected', updated_at: new Date() }];
+  assert.strictEqual(await getBaseline(PLACE, DOW, HOUR, userId), 0);
+  assert.strictEqual(baselineMissFor(PLACE, DOW, HOUR), 'refused');
+});
+
+test('a venue with no usable place id stays the corpus gap, not an outage', async () => {
+  // allowVenueLookup refuses for two unrelated reasons behind one boolean. An
+  // id that is not shaped like a place id is a standing property of the venue —
+  // there is no row and there never will be — which is what `no_baseline`
+  // already means. Only the budget refusal is momentary.
+  // Too short for PLACE_ID_RE ({6,128}); note that a hyphenated word IS shaped,
+  // so this has to be a length failure rather than a punctuation one.
+  const junk = 'ab';
+  assert.strictEqual(allowVenueLookup(junk, null), false, 'fixture precondition');
+  assert.strictEqual(await getBaseline(junk, DOW, HOUR), 0);
+  assert.strictEqual(baselineMissFor(junk, DOW, HOUR), 'none');
+});
+
+test('a slot that answers clears a reason an earlier failure left behind', async () => {
+  const real = pool.query;
+  pool.query = (sql, params) => (/FROM ml_venue_baselines/.test(String(sql))
+    ? Promise.reject(new Error('down'))
+    : real(sql, params));
+  try {
+    await getBaseline(PLACE, DOW, HOUR);
+    assert.strictEqual(baselineMissFor(PLACE, DOW, HOUR), 'error');
+  } finally {
+    pool.query = real;
+  }
+  // The outage ends; the cached zero must not keep the venue labelled.
+  __resetVenueLookupCaches();
+  BASELINE_ROWS = [{ day_of_week: DOW, hour: HOUR, baseline: 64, source: 'collected', updated_at: new Date() }];
+  assert.ok(await getBaseline(PLACE, DOW, HOUR) > 0);
+  assert.strictEqual(baselineMissFor(PLACE, DOW, HOUR), null,
+    'a resolved outage kept labelling a venue that has since been scored');
+});
+
 mlPredictor.predictBusyness = async () => ({
   score: 55,
   label: crowdEngine.getLabel(55),
