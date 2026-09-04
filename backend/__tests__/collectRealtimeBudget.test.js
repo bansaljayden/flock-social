@@ -69,3 +69,24 @@ test('the refusal names what actually stopped the run', () => {
   assert.match(collect, /\}\[abortReason\] \|\| 'The reason was not recorded/);
   assert.match(collect, /timed out on OUR clock or could not connect/);
 });
+
+test('every enrichment column is written, including the one the comment miscounted', () => {
+  // enrichWithEvents.js declares nearest_event_attendance INTEGER DEFAULT 0, and
+  // the collector's own comment explains why the enrichment columns must be
+  // written explicitly: a default writes a measured absence where nothing was
+  // measured. It named six and there are seven. So every realtime row asserted
+  // the nearest event had nobody at it, beside an event_size that might say two
+  // hundred, and the model carries nearest_event_attendance and
+  // log_nearest_event_attendance as features. Realtime rows are the scarce live
+  // labels the hourly cadence exists to produce.
+  for (const col of [
+    'has_nearby_event', 'total_nearby_events', 'total_nearby_attendance',
+    'nearest_event_attendance', 'nearest_event_distance_km', 'nearest_event_type',
+    'events_unavailable_reason',
+  ]) {
+    assert.ok(collect.includes("['" + col + "',"), col + ' is written explicitly');
+  }
+  // And it is null when the lookup did not happen, never a defaulted zero.
+  assert.match(collect, /\['nearest_event_attendance', eventData\.observed === true \? \(eventData\.event_size \|\| 0\) : null\]/);
+  assert.match(collect, /The SEVEN enrichment columns are written EXPLICITLY/);
+});
