@@ -105,7 +105,7 @@ const NewDmModal = ({
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <h3 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0 }}>{user.name}</h3>
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.email}</p>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.shared_flocks > 0 ? `${user.shared_flocks} ${parseInt(user.shared_flocks, 10) === 1 ? 'flock' : 'flocks'} together` : ''}</p>
                 </div>
                 <span style={{ fontSize: 'var(--t-body)', color: 'var(--text-tertiary)' }}>›</span>
               </button>
