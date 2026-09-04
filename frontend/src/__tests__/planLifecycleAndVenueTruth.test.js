@@ -104,21 +104,29 @@ describe('confirming a plan', () => {
     expect(APP).not.toMatch(/select_venue/);
   });
 
-  test('saveFlockVenue still sends no status, so the two calls stay two calls', () => {
+  test('saveFlockVenue can carry the confirmation, so confirming is one call and one push', () => {
+    // Two PUTs (venue, then status) sent every member two lock-screen pushes
+    // seconds apart; the server skips the "Plan updated" push when the same
+    // request confirms (2026-09-04).
     const fn = region(API, 'export async function saveFlockVenue', '\n}');
     expect(fn).toMatch(/venue_name/);
-    expect(fn).not.toMatch(/status/);
+    expect(fn).toMatch(/status: venue\.status,/);
     // PUT /api/flocks/:id is one route for both, and the status enum is
     // validated on the client so a typo costs no round trip.
     expect(API).toMatch(/FLOCK_STATUSES = \['planning', 'confirmed', 'completed', 'cancelled'\]/);
   });
 
-  test('the Confirm button saves the venue and only then locks the plan', () => {
+  test('the Confirm button saves the venue and the confirmation in one write, with the row\'s own place id', () => {
     const handler = region(APP, 'const handleConfirmVenue = ', 'const assignedVenue');
     expect(handler).toMatch(/updateFlockVenue\(selectedFlockId/);
-    // Chained on the venue write's result: locking a plan onto a venue the
-    // server just refused would announce a night at a venue nobody has.
-    expect(handler).toMatch(/saved \? confirmFlockPlan\(selectedFlockId\) : false/);
+    // One PUT: a venue the server refuses is a plan that is not confirmed
+    // either, since the same request carries both.
+    expect(handler).toMatch(/status: 'confirmed',/);
+    expect(handler).not.toMatch(/confirmFlockPlan\(/);
+    // The row's place id first, then the chat's venue card, then the pins: a
+    // name lookup in the nearby pins lost the id for anything voted from a
+    // shared card, and the plan lost Details, Directions and Check In.
+    expect(handler).toMatch(/place_id: rowPlaceId \|\| card\?\.place_id \|\| pin\?\.place_id \|\| null,/);
   });
 
   test('a venue write that fails reports false rather than resolving quietly', () => {

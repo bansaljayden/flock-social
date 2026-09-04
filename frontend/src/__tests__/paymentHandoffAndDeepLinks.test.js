@@ -726,19 +726,15 @@ describe('intentFromUrl', () => {
     expect(intentFromUrl('flock:' + '//dm/45')).toEqual({ screen: 'dm', userId: 45, type: 'link' });
   });
 
-  test('an invite link resolves to NOTHING, and that gap is now LIVE', () => {
+  test('an invite link resolves to an invite intent the app redeems', () => {
     // https://www.flockcorp.com/i/<token> is the link the product spreads
-    // through, and it is the one form intentFromUrl does not parse. There is
-    // also no screen in App.js that redeems an invite token.
-    //
-    // This comment used to say turning on associated domains without both
-    // would be worse than leaving them off. Associated domains went on in
-    // 9fab8a9 and the association file claims `/i/*`, so that is no longer a
-    // warning about the future: on a phone with the app installed, an invite
-    // link is handed to the app today and the app has nowhere to put it. The
-    // assertion below is what is TRUE, not what is wanted. It has to be
-    // REPLACED by an invite-redemption route, not deleted around.
-    expect(intentFromUrl('https://www.flockcorp.com/i/abc123')).toBeNull();
+    // through. For a long time it was the one form intentFromUrl did not
+    // parse, and the association file excluded it so a phone with the app
+    // kept opening it in Safari. As of 2026-09-04 the file claims /i/*, the
+    // parser answers an invite intent, and App.js remembers the token and
+    // reloads, which the existing handoff redeems and opens the plan.
+    expect(intentFromUrl('https://www.flockcorp.com/i/abc123')).toEqual({ screen: 'invite', token: 'abc123', type: 'link' });
+    expect(intentFromUrl('flock://i/abc123')).toEqual({ screen: 'invite', token: 'abc123', type: 'link' });
   });
 
   test('junk is null rather than a throw on the notification path', () => {

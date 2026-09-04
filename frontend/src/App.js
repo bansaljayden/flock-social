@@ -21,7 +21,7 @@ import { resendVerificationEmail } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
 // carrying when they made an account, then open the flock they were invited to.
 // The reasoning, and everything the token has to survive, is in the service.
-import { redeemPendingInvite, openJoinedFlock } from './services/inviteHandoff';
+import { redeemPendingInvite, openJoinedFlock, rememberInvite } from './services/inviteHandoff';
 import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
 import { joinVenueRoom, leaveVenueRoom, joinVenueContentRoom, leaveVenueContentRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked, onSocketError, onAvailabilityUpdated, onBlockedBy, onContentRemoved, onContentRestored } from './services/socket';
 import { pullSettings, queueSync } from './services/userSettings';
@@ -6951,6 +6951,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     } else if (intent.screen === 'home') {
       setCurrentTab('home');
       setCurrentScreen('main');
+    } else if (intent.screen === 'invite' && intent.token) {
+      // /i/<token>, delivered by the universal link. The redeem path already
+      // exists (loadFlocks redeems a remembered token first and opens the
+      // plan), so this only has to remember it and reload.
+      rememberInvite(intent.token);
+      loadFlocks();
     } else if (intent.screen === 'checkin' && intent.placeId) {
       // A tag tap delivered by the universal link, with the app open or
       // cold-started. The screen records it the same way a web boot does.
@@ -6986,7 +6992,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         at: intent.at || new Date().toISOString(),
       });
     }
-  }), [showToast]);
+  }), [showToast, loadFlocks]);
 
   // ── Where a tapped invite actually lands ────────────────────────────────
   //
@@ -8173,12 +8179,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       venueLat: before.venueLat, venueLng: before.venueLng, venuePhoto: before.venuePhoto,
       venueRating: before.venueRating, venuePriceLevel: before.venuePriceLevel,
     };
+    // Confirming in the same write. The vote panel's Confirm used to save the
+    // venue and then call confirmFlockPlan for a second PUT.
+    const confirming = venue.status === 'confirmed';
+    const previousStatus = before ? before.status : null;
     // Update local state immediately
+    if (confirming && previousStatus !== 'confirmed' && previousStatus !== 'locked') {
+      setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, status: 'confirmed' } : f));
+    }
     setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, venue: vName, venueAddress: vAddr, venueId: vId, venueLat: vLat, venueLng: vLng, venuePhoto: vPhoto, venueRating: vRating, venuePriceLevel: vPriceLevel } : f));
     // A flock that exists only in local state (no numeric id) has nothing to
     // save against; the optimistic write is the whole story.
     if (typeof flockId !== 'number') return Promise.resolve(true);
-    return saveFlockVenue(flockId, { name: vName, addr: vAddr, place_id: vId, lat: vLat, lng: vLng, rating: vRating, photo_url: vPhoto })
+    return saveFlockVenue(flockId, { name: vName, addr: vAddr, place_id: vId, lat: vLat, lng: vLng, rating: vRating, photo_url: vPhoto, status: confirming ? 'confirmed' : undefined })
       .then((data) => {
         // Reconcile against what was actually stored. The server rewrites some
         // of this: safeVenuePhotoUrl normalises our absolute proxy url back
@@ -8197,12 +8210,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           venueLng: saved.venue_longitude ?? f.venueLng,
           venuePhoto: resolveVenuePhoto(saved.venue_photo_url) ?? f.venuePhoto,
           venueRating: saved.venue_rating ?? f.venueRating,
+          status: saved.status === 'planning' ? 'voting' : (saved.status || f.status),
         } : f));
+        if (confirming) showToast('Locked in. Everyone in the flock has been told.');
+        return true;
       })
       .catch((err) => {
-        if (previous) setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, ...previous } : f));
+        if (previous) setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, ...previous, status: previousStatus || f.status } : f));
         // A dead session already announced itself through api.js's own toast.
-        if (!err?.sessionExpired) showToast(err?.message || "Couldn't save that venue", 'error');
+        if (!err?.sessionExpired) showToast(err?.message || (confirming ? "Couldn't lock this in" : "Couldn't save that venue"), 'error');
+        return false;
       });
   }, [showToast]);
 
@@ -8245,6 +8262,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // plan the server's own sweep completed while nobody was looking. Without
   // the second door, an auto-completed night could never have attendance
   // marked, and attendance is the only thing that writes a reliability score.
+  // The plan screen's roster read failed. Rendered as a sentence with a retry
+  // instead of "Loading members..." forever.
+  const [rosterError, setRosterError] = useState(false);
+  const [rosterAttempt, setRosterAttempt] = useState(0);
+  const retryRoster = useCallback(() => { setRosterError(false); setRosterAttempt(n => n + 1); }, []);
   const openAttendanceSheet = useCallback((flockId) => {
     const flock = flocksRef.current.find(f => f.id === flockId);
     if (!flock || String(flock.creatorId) !== String(meRef.current?.id)) return false;
@@ -8269,12 +8291,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, status: 'completed' } : f));
     if (typeof flockId !== 'number') return Promise.resolve();
     return setFlockStatus(flockId, 'completed')
-      .then(() => {
+      .then(async () => {
         showToast('Flock marked as done!');
         // Reads the roster fresh inside openAttendanceSheet: `flocks` in a
         // closure was a stale snapshot and was also why this callback was
         // rebuilt on every flock state change.
-        openAttendanceSheet(flockId);
+        if (openAttendanceSheet(flockId)) return;
+        // No roster in memory (the read failed, or the screen never loaded
+        // one): fetch it and try once more, so the night's attendance is not
+        // silently skipped.
+        try {
+          const data = await getFlock(flockId);
+          const members = (data.members || []).map(m => ({ id: m.id, name: m.name, image: m.profile_image_url || null, status: m.status, attendance: m.attendance || 'unmarked' }));
+          flocksRef.current = flocksRef.current.map(f => f.id === flockId ? { ...f, members } : f);
+          setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, members } : f));
+          if (openAttendanceSheet(flockId)) return;
+        } catch (err) { /* said below */ }
+        showToast('Marked done. Open the plan again to mark who showed up.');
       })
       .catch((err) => {
         if (previousStatus) setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, status: previousStatus } : f));
@@ -8932,7 +8965,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       key = `flock:${flockId}`;
       // keepOlder: this runs mid-conversation, so it must not slice scrollback
       // off the top of what the user is already reading.
-      read = () => { loadFlockMessages(flockId, { keepOlder: true }); loadMoneyState(flockId); };
+      // Votes, joins and leaves are socket-only with no replay, so a pocketed
+      // phone came back to the tally and roster from before.
+      read = () => { loadFlockMessages(flockId, { keepOlder: true }); loadMoneyState(flockId); loadFlockVotes(flockId); refreshFlockRoster(flockId); };
     } else if (screen === 'dmDetail' && dmId) {
       key = `dm:${dmId}`;
       read = () => loadDmMessages(dmId, { keepOlder: true });
@@ -8958,7 +8993,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       catchUpTimerRef.current = null;
       runCatchUpRef.current?.();
     }, waitMs);
-  }, [loadFlockMessages, loadDmMessages, loadMoneyState]);
+  }, [loadFlockMessages, loadDmMessages, loadMoneyState, loadFlockVotes, refreshFlockRoster]);
   runCatchUpRef.current = runCatchUp;
 
   useEffect(() => {
@@ -8981,6 +9016,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Fetch flock members + momentum when opening flock detail overview
   useEffect(() => {
     if (currentScreen === 'detail' && selectedFlockId) {
+      setRosterError(false);
       getFlock(selectedFlockId)
         .then((data) => {
           // Same block filter as refreshFlockRoster, and for the same reason:
@@ -9024,10 +9060,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // answering, below) can subtract the same blocked members this does.
           setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, guests, hiddenAccepted, memberCount: Math.max(0, (data.momentum?.accepted ?? acceptedCount) - hiddenAccepted), momentum: data.momentum || null, eventTime: eventTime || f.eventTime || null } : f));
         })
-        .catch(() => {});
+        .catch(() => setRosterError(true));
       loadFlockVotes(selectedFlockId);
     }
-  }, [currentScreen, selectedFlockId, loadFlockVotes]);
+  }, [currentScreen, selectedFlockId, loadFlockVotes, rosterAttempt]);
 
   // Listen for real-time messages via WebSocket
   useEffect(() => {
@@ -9525,6 +9561,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Listen for flock updated (name, venue, time, status)
   useEffect(() => {
     const unsub = onFlockUpdated((data) => {
+      // Say what changed to anyone who did not make the change. The actor's
+      // own optimistic flip already matches the payload, so they get no
+      // second sentence. Read before the setter: a toast is not a reducer's
+      // job.
+      const before = flocksRef.current.find(f => f.id === data.flockId);
+      if (before) {
+        const name = data.name || before.name || 'Your plan';
+        if (data.status === 'confirmed' && before.status !== 'confirmed') {
+          showToast(`${name} is locked in${data.venue_name ? ` at ${data.venue_name}` : ''}.`);
+        } else if (data.event_time && before.eventTime && new Date(data.event_time).getTime() !== new Date(before.eventTime).getTime()) {
+          showToast(`${name} moved to ${formatEventTime(data.event_time)}.`);
+        } else if (data.event_time && !before.eventTime) {
+          showToast(`${name} is set for ${formatEventTime(data.event_time)}.`);
+        }
+      }
       setFlocks(prev => prev.map(f => {
         if (f.id !== data.flockId) return f;
         return {
@@ -9544,7 +9595,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       }));
     });
     return unsub;
-  }, []);
+  }, [showToast]);
 
   // Unsent messages leave every open screen the moment the server confirms
   // the tombstone. Removal, not a stub: the thread reads as if the message
@@ -16671,6 +16722,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         handleCheckIn,
         handleRerunFlock,
         loadPopularVenues,
+        rosterError,
+        retryRoster,
         markFlockCompleted,
         openAttendanceSheet,
         openUserProfile,
@@ -18556,7 +18609,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                   setCurrentTab('chat');
                   setCurrentScreen('dmDetail');
                 } else if (pickingVenueForFlockId) {
+                  // Only the creator may set the venue (the route is creator-only,
+                  // and a member used to get a 403 toast and a revert). A member
+                  // puts it on the table instead: a venue card in the chat, with
+                  // their vote on it.
+                  const picked = flocksRef.current.find(f => f.id === pickingVenueForFlockId);
+                  const pickerIsCreator = !picked || String(picked.creatorId) === String(meRef.current?.id);
+                  const pickedVenue = { name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, stars: venueDetailModal.rating, photo_url: photoUrl, location: venueDetailModal.geometry?.location ? { latitude: venueDetailModal.geometry.location.lat, longitude: venueDetailModal.geometry.location.lng } : undefined, type: venueDetailModal.category || null };
+                  if (pickerIsCreator) {
                   updateFlockVenue(pickingVenueForFlockId, { name: venueDetailModal.name, addr: venueDetailModal.formatted_address, place_id: venueDetailModal.place_id, rating: venueDetailModal.rating, photo_url: photoUrl, lat: venueDetailModal.location?.latitude, lng: venueDetailModal.location?.longitude });
+                  } else {
+                    shareVenueToChat(pickingVenueForFlockId, pickedVenue);
+                    const current = picked.votes || [];
+                    updateFlockVotes(pickingVenueForFlockId, [
+                      ...current.map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') })),
+                      { venue: pickedVenue.name, type: pickedVenue.type, place_id: pickedVenue.place_id || null, voters: ['You'] },
+                    ]);
+                    showToast(`${pickedVenue.name} is on the table, with your vote.`);
+                  }
                   setVenueDetailModal(null);
                   setPickingVenueForCreate(false);
                   setSelectedFlockId(pickingVenueForFlockId);
@@ -18571,7 +18641,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                   setCurrentScreen('create');
                 }
               }} className="hit44 glass-btn glass-primary" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', boxShadow: '0 4px 12px rgba(13,40,71,0.10)', position: 'relative', overflow: 'hidden' }}>
-                {venueDetailReturnTo ? Icons.arrowLeft('white', 16) : Icons.plus('white', 16)} {pickingVenueForDm ? 'Pin to DM' : venueDetailReturnTo ? 'Back to Chat' : 'Add to Flock'}
+                {venueDetailReturnTo ? Icons.arrowLeft('white', 16) : Icons.plus('white', 16)} {pickingVenueForDm ? 'Pin to DM' : venueDetailReturnTo ? 'Back to Chat' : (pickingVenueForFlockId && String(flocksRef.current.find(f => f.id === pickingVenueForFlockId)?.creatorId) !== String(meRef.current?.id)) ? 'Suggest to flock' : 'Add to Flock'}
               </button>
             </div>
           </div>

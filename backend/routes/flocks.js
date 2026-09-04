@@ -2074,11 +2074,34 @@ async function inviteUsersToFlock({ io, inviter, flockId, flockName, userIds }) 
 
   // Notify invited users via socket
   if (invited.length > 0 && io) {
+    // The card asks for a decision, and this emit used to carry only the
+    // name, so an invite sent from the chat's sheet read "Time still open ·
+    // Venue still open · 1 going" for a plan that had all three. Best effort:
+    // a miss leaves the fields null and the card says "still open".
+    let eventTime = null;
+    let venueName = null;
+    let goingCount = null;
+    try {
+      const facts = await pool.query(
+        `SELECT f.event_time, f.venue_name,
+                (SELECT COUNT(*)::int FROM flock_members WHERE flock_id = f.id AND status = 'accepted') AS going
+           FROM flocks f WHERE f.id = $1`,
+        [flockId]
+      );
+      eventTime = facts.rows[0]?.event_time || null;
+      venueName = facts.rows[0]?.venue_name || null;
+      goingCount = typeof facts.rows[0]?.going === 'number' ? facts.rows[0].going : null;
+    } catch (err) {
+      // The invite is already written; the card does without.
+    }
     for (const inv of invited) {
       io.to(`user:${inv.user_id}`).emit('flock_invite_received', {
         flockId,
         flockName,
         invitedBy: { userId: inviter.id, name: inviter.name },
+        eventTime,
+        venueName,
+        goingCount,
       });
     }
     // `invitedBy` names the inviter, so the room broadcast leaked that

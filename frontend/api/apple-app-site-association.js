@@ -112,7 +112,10 @@ function handler(req, res) {
             // rather than an exclusion: `intentFromUrl` returning an intent that
             // carries the token, and App.js acting on it. When both exist, drop
             // the exclude and the association file is finished.
-            { '/': '/i/*', exclude: true, comment: 'until intentFromUrl routes an invite token' },
+            // Claimed as of 2026-09-04: intentFromUrl returns { screen: 'invite', token }
+            // and App.js remembers the token and reloads, which redeems it and opens
+            // the plan. A friend who already has the app lands in the app.
+            { '/': '/i/*', comment: 'invite link; routed by intentFromUrl and redeemed by inviteHandoff' },
           ],
         },
       ],
