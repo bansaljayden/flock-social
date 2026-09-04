@@ -939,7 +939,7 @@ async function sendPasswordResetOAuthEmail({ to, name, provider }) {
       '',
       `Hi ${name || 'there'}, someone asked to reset a Flock password for this address. This account signs in with ${provider === 'apple' ? 'Apple' : 'Google'}, so it has never had a password. Open Flock and tap Continue with ${provider === 'apple' ? 'Apple' : 'Google'}.`,
       '',
-      baseWebUrl(),
+      `${baseWebUrl()}/app`,
       '',
       'Nothing about the account has changed. If this was not you, you can ignore it.',
       '',
@@ -955,7 +955,7 @@ async function sendPasswordResetOAuthEmail({ to, name, provider }) {
           Hi ${safeName}, someone asked to reset a Flock password for this address. This account signs in with ${safeProvider}, so it has never had a password. Open Flock and tap Continue with ${safeProvider}.
         </p>
         <p style="margin: 0 0 24px;">
-          <a href="${baseWebUrl()}" style="display: inline-block; background: #0d2847; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 10px; font-size: 16px; font-weight: 600;">Open Flock</a>
+          <a href="${baseWebUrl()}/app" style="display: inline-block; background: #0d2847; color: #ffffff; text-decoration: none; padding: 14px 28px; border-radius: 10px; font-size: 16px; font-weight: 600;">Open Flock</a>
         </p>
         <p style="font-size: 14px; color: #4a5568; line-height: 1.6; margin-bottom: 24px;">
           Nothing about the account has changed. If this was not you, you can ignore it.
