@@ -14062,7 +14062,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                   {activeVenue.place_id && (
                     <button className="hit44 glass-btn glass-secondary" onClick={() => { openVenueDetail(activeVenue.place_id, { name: activeVenue.name, formatted_address: activeVenue.addr, place_id: activeVenue.place_id, rating: activeVenue.stars, photo_url: activeVenue.photo_url }); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)' }}>{Icons.eye('var(--text-secondary)', 14)} Details</button>
                   )}
-                  <button className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); addEventToCalendar(`Visit ${activeVenue.name}`, activeVenue.name, new Date(), '8 PM', getCategoryColor(activeVenue.category)); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)' }}>{Icons.calendar('var(--text-secondary)', 14)} Add to Calendar</button>
+                  {/* No "Add to Calendar" here. It saved "Visit <venue>" for today at
+                      8 PM whatever the plan, which is a calendar entry nobody made.
+                      The plan path is the button above: start a flock here, and
+                      the flock's real time lands on the calendar by itself. */}
                 </div>
               </m.div>
               )}
