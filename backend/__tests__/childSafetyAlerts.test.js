@@ -340,3 +340,30 @@ test("runbook: the report vocabulary's child-safety mapping cannot silently drif
       `VALID_REASONS gained ${JSON.stringify(r)}; add it to CHILD_SAFETY_REASONS in services/moderationAlerts.js`);
   }
 });
+
+test('a moderator push that fails is counted, named, and in the summary line', async () => {
+  // The push leg is the only real-time channel to a human (no client
+  // registers the socket event). It used to be fire-and-forget with a
+  // swallowed rejection: pushAttempts was counted, never printed, and the
+  // summary line could say "2 admins, 0 connected" over two pushes that had
+  // both died, which is the exact blindness this file exists to prevent.
+  const pushHelper = require('../services/pushHelper');
+  const realPush = pushHelper.pushIfOffline;
+  const realOnline = pushHelper.isUserOnline;
+  pushHelper.pushIfOffline = async () => { throw new Error('APNs refused the token'); };
+  pushHelper.isUserOnline = () => false;
+  const h = harness({ admins: [{ id: 1, email: 'one@example.com' }, { id: 2, email: 'two@example.com' }] });
+  try {
+    const s = await alerts.alertModerators(null, GENERIC_REPORT);
+    assert.strictEqual(s.admins, 2, 'two admins were resolved (or this test proves nothing)');
+    assert.strictEqual(s.pushAttempts, 2);
+    assert.strictEqual(s.pushFailures, 2, 'both rejections were counted before the summary was written');
+    assert.match(h.all(), /push to admin 1 FAILED: APNs refused the token/);
+    assert.match(h.all(), /push to admin 2 FAILED: APNs refused the token/);
+    assert.match(h.all(), /push 0\/2 sent/, 'the summary line says how many pages actually went out');
+  } finally {
+    pushHelper.pushIfOffline = realPush;
+    pushHelper.isUserOnline = realOnline;
+    h.restore();
+  }
+});

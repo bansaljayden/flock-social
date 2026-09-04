@@ -269,6 +269,7 @@ async function alertModerators(io, rawReport = {}) {
     emailSent: 0,
     emailSkipped: false,
     pushAttempts: 0,
+    pushFailures: 0,
     adminLookupFailed: false,
     usedFallbackInbox: false,
     childSafety: false,
@@ -337,6 +338,15 @@ async function alertModerators(io, rawReport = {}) {
     // can reach a moderator who is looking at the app RIGHT NOW behind the one
     // that lands in an inbox, which is backwards for the whole point of this
     // service. Nothing here awaits.
+    // Every push is awaited before the summary is written, so the line that
+    // says who was paged is written after the pages were attempted, not
+    // before. This leg used to be fire-and-forget with .catch(() => {}):
+    // pushAttempts was counted, never printed, and a rejection vanished, so
+    // the one file whose stated job is making "nobody was paged" visibly
+    // different from "everybody was paged" could not report the one channel
+    // that reaches a human in real time (no client registers the socket
+    // event). The email leg names every failure; this leg now does too.
+    const pushes = [];
     for (const a of admins) {
       if (io) {
         // Kept, and kept honest: no client registers `moderation_report` yet
@@ -350,16 +360,22 @@ async function alertModerators(io, rawReport = {}) {
       }
       if (pushHelper && pushHelper.pushIfOffline) {
         summary.pushAttempts += 1;
-        pushHelper
-          .pushIfOffline(io, a.id, childSafety ? 'Child safety report' : 'New content report', label, {
-            type: 'moderation_report',
-            reportId: String(report.reportId || ''),
-          })
-          .catch(() => {});
+        pushes.push(
+          pushHelper
+            .pushIfOffline(io, a.id, childSafety ? 'Child safety report' : 'New content report', label, {
+              type: 'moderation_report',
+              reportId: String(report.reportId || ''),
+            })
+            .catch((e) => {
+              summary.pushFailures += 1;
+              console.error(`[MODERATION] report #${reportId}: push to admin ${a.id} FAILED: ${e && e.message ? e.message : e}`);
+            })
+        );
       }
     }
 
     // ---- LEG 2: email -----------------------------------------------------
+    await Promise.allSettled(pushes);
     const configured = configuredRecipients();
     const adminAddresses = admins.map((a) => a.email).filter(isMailable);
     const wanted = [...configured, ...adminAddresses];
@@ -424,7 +440,7 @@ async function alertModerators(io, rawReport = {}) {
     } else if (summary.admins === 0) {
       console.error(`[MODERATION] report #${reportId}: NO ADMIN ACCOUNTS EXIST. Nothing was emitted to a person in the app. Set ADMIN_USER_IDS on the deployment. ${mailOutcome}`);
     } else {
-      console.warn(`[MODERATION] report #${reportId} alert: ${summary.admins} admin(s), ${summary.onlineAdmins} connected, email ${summary.emailSkipped ? 'SKIPPED' : `${summary.emailSent}/${recipients.length} delivered`}.`);
+      console.warn(`[MODERATION] report #${reportId} alert: ${summary.admins} admin(s), ${summary.onlineAdmins} connected, email ${summary.emailSkipped ? 'SKIPPED' : `${summary.emailSent}/${recipients.length} delivered`}, push ${summary.pushAttempts - summary.pushFailures}/${summary.pushAttempts} sent.`);
     }
     return summary;
   } catch (err) {

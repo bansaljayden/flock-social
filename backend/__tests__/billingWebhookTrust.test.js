@@ -564,9 +564,31 @@ test('TRANSFER moves the entitlement between the ids it names and no others', as
   const grant = log.filter((q) => /UPDATE users SET is_premium = true/i.test(q.sql));
   assert.equal(revoke.length, 1);
   assert.equal(grant.length, 1);
+  // Both sides present, so both halves ride in ONE statement: the revoke set
+  // is $1 and the grant set is $2, and the same log entry answers both filters.
+  assert.strictEqual(revoke[0], grant[0], 'a two-sided transfer is a single statement');
   assert.deepEqual(revoke[0].params[0], [11, 12]);
-  assert.deepEqual(grant[0].params[0], [13]);
+  assert.deepEqual(revoke[0].params[1], [13]);
   assert.match(revoke[0].sql, /ANY\(\$1::int\[\]\)/, 'the set must be a bound int[] parameter');
+  assert.match(revoke[0].sql, /ANY\(\$2::int\[\]\)/);
+});
+
+test('a two-sided TRANSFER cannot commit the revoke without the grant', async () => {
+  // The interleaving window (an id on both sides) was closed earlier by
+  // excluding overlapping ids from the revoke set. The FAILURE window was not:
+  // two autocommits meant a revoke that landed followed by a grant that threw
+  // left the receiving ids non-premium until RevenueCat retried, and every
+  // entitlement check is a fresh read. One statement, or nothing.
+  process.env.REVENUECAT_WEBHOOK_SECRET = SECRET;
+  const res = await signed({
+    event: { type: 'TRANSFER', transferred_from: ['21'], transferred_to: ['22'] },
+  });
+  assert.equal(res.status, 200, res.text);
+  const touching = log.filter((q) => /is_premium/i.test(q.sql));
+  assert.equal(touching.length, 1, 'exactly one statement touches is_premium');
+  assert.match(touching[0].sql, /WITH revoked AS/);
+  assert.match(touching[0].sql, /is_premium = false/);
+  assert.match(touching[0].sql, /is_premium = true/);
 });
 
 test('a TRANSFER naming more ids than one person could own is refused whole', async () => {
