@@ -177,6 +177,11 @@ test.beforeEach(() => {
   FETCH_THROWS = null;
   CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
   delete process.env.PAYWALL_ENABLED;
+  // The neighbour search is cached across requests, keyed on type and centre,
+  // and every venue faked here shares one address and one type. Without this
+  // a case that scripts an upstream failure quietly reads the list a passing
+  // case left behind and asserts nothing at all.
+  crowdRouter.__test.clearCache();
 });
 
 async function call(method, path_, body) {
@@ -706,6 +711,47 @@ test('a timed-out neighbour search is a 502, and never an empty alternatives lis
   // An empty `alternatives` array is a claim about a real place ("we looked,
   // nothing near you is quieter"). A timeout is not that claim.
   assert.ok(!('alternatives' in res.body));
+});
+
+// --- the neighbour search is bought once, not once per asker -----------------
+//
+// /alternatives deliberately refuses to cache its PAYLOAD whenever any row
+// carries an owner's live reading: that reading is perishable and retractable
+// and must not be served from a ten minute cache. But the payload also carries
+// a Google Text Search, which costs a billed unit every time and is not
+// perishable at all — it answers "which places of this type are within two
+// kilometres". So one owner moving their slider made every request naming that
+// venue or any of its neighbours re-buy the search, for the ninety minutes the
+// reading lives. The two are cached separately now, and these pin both halves.
+
+test('two people asking the same neighbourhood buy one Google search', async () => {
+  scriptFeedback([]);
+  NEARBY = [{ ...place('ALT_NEIGHBOUR') }];
+
+  const first = await call('GET', '/api/crowd/ALT_COSTED/alternatives?localHour=20&localDay=5');
+  assert.strictEqual(first.status, 200, first.text);
+  const searches = () => fetched.filter((u) => u.includes(':searchText')).length;
+  assert.strictEqual(searches(), 1, 'the first request never searched; this would prove nothing');
+
+  const second = await call('GET', '/api/crowd/ALT_COSTED/alternatives?localHour=20&localDay=5');
+  assert.strictEqual(second.status, 200, second.text);
+  assert.strictEqual(searches(), 1,
+    'the same neighbourhood was bought from Google twice; an owner with a live reading makes this happen all day');
+});
+
+test('a refused neighbour search is never cached as a list of venues', async () => {
+  // The distinction that matters: a zero-result search is an answer and may be
+  // remembered, a 429 is not and must not be. Caching the refusal would publish
+  // "we could not ask" for ten minutes after Google came back.
+  scriptFeedback([]);
+  SEARCH_RESPONSE = { ok: false, status: 429, json: async () => ({ error: { status: 'RESOURCE_EXHAUSTED' } }) };
+  const down = await call('GET', '/api/crowd/ALT_REFUSED/alternatives?localHour=20&localDay=5');
+  assert.strictEqual(down.status, 502, down.text);
+
+  SEARCH_RESPONSE = null;
+  NEARBY = [];
+  const retry = await call('GET', '/api/crowd/ALT_REFUSED/alternatives?localHour=20&localDay=5');
+  assert.strictEqual(retry.status, 200, 'the refusal was cached and outlived the outage');
 });
 
 // ===========================================================================
