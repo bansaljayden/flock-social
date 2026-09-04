@@ -1008,10 +1008,10 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
                 (SELECT COUNT(*)::int FROM emergency_alerts e2
                   WHERE e2.user_id = $1
                     AND COALESCE(e2.contacts_alerted, 0) > 0
-                    AND e2.created_at > NOW() - ($2::int || ' milliseconds')::interval) AS delivered_in_window,
+                    AND e2.created_at > (NOW() AT TIME ZONE 'UTC') - ($2::int || ' milliseconds')::interval) AS delivered_in_window,
                 (SELECT COUNT(*)::int FROM emergency_alerts e3
                   WHERE e3.user_id = $1
-                    AND e3.created_at > NOW() - ($2::int || ' milliseconds')::interval) AS attempts_in_window
+                    AND e3.created_at > (NOW() AT TIME ZONE 'UTC') - ($2::int || ' milliseconds')::interval) AS attempts_in_window
          FROM emergency_alerts
          WHERE user_id = $1
          ORDER BY created_at DESC LIMIT 1`,
@@ -1471,7 +1471,7 @@ router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
          FROM emergency_alerts
         WHERE user_id = $1
           AND COALESCE(contacts_alerted, 0) > 0
-          AND created_at > NOW() - ($2::int || ' milliseconds')::interval
+          AND created_at > (NOW() AT TIME ZONE 'UTC') - ($2::int || ' milliseconds')::interval
         ORDER BY created_at DESC LIMIT 1`,
       [req.user.id, CANCEL_WINDOW_MS]
     );
