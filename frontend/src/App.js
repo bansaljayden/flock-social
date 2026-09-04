@@ -9214,7 +9214,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         setCurrentScreen('main');
         setSelectedFlockId(null);
       }
-      showToast(`${data.flockName || 'A flock'} was deleted by ${data.deletedBy}`);
+      // 'emptied' is the last member walking out: nobody deleted the plan, so
+      // there is nobody to name, and the payload deliberately carries no name.
+      showToast(data.reason === 'emptied'
+        ? `Everybody left ${data.flockName || 'your plan'}, so it is closed.`
+        : `${data.flockName || 'A flock'} was deleted by ${data.deletedBy}`);
     });
     return unsub;
   }, [selectedFlockId, showToast]);
