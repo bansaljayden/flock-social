@@ -58,7 +58,7 @@ describe('the cards say what is true', () => {
   });
 
   test('the vote card names the flock it stages onto', () => {
-    expect(APP).toContain('Goes on the vote in {msg.voteStage.flock_name}');
+    expect(APP).toContain('Your vote in {msg.voteStage.flock_name} goes to this spot.');
   });
 
   test('both buttons disable while one confirm is in flight', () => {
