@@ -740,7 +740,8 @@ router.post('/:token/rsvp',
         // other one: a guest holding ANY live token for this flock could simply
         // RENAME their existing row to the removed name. Same column, same
         // broadcast to every member, and the row is not hidden so no read
-        // filters it. The per-IP allowance is three identities an hour, so the
+        // filters it. The per-IP allowance is NEW_GUESTS_PER_IP_PER_FLOCK an
+        // hour (12, not the 3 this line claimed), so the
         // same person who was moderated usually still holds one.
         //
         // Checked on every edit rather than only when the name changes: the

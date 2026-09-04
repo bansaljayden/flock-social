@@ -726,7 +726,7 @@ export default function ProfileSettings({
                   <span style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, display: 'block' }}>Smart Night Mode</span>
                   <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>Auto dark at 8 PM, light at 6 AM</span>
                 </div>
-                <Toggle label="Match device appearance" on={themeMode === 'auto'} onChange={() => setAutoMode(themeMode !== 'auto')} />
+                <Toggle label="Smart Night Mode" on={themeMode === 'auto'} onChange={() => setAutoMode(themeMode !== 'auto')} />
               </div>
               {/* Night mode active badge */}
               {themeMode === 'auto' && isNightModeActive && (
@@ -750,7 +750,7 @@ export default function ProfileSettings({
                 <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>Push Notifications</span>
                 {notifStatus === 'granted' ? (
                   <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#22c55e' }}>On</span>
-                ) : notifStatus === 'denied' ? (
+                ) : notifStatus === 'denied' || notifStatus === 'unsupported' ? (
                   // THERE IS NO BROWSER IN THE iOS APP, and this said there
                   // was. It is the only state a user can reach where the app
                   // cannot fix itself: iOS gives an app one notification prompt
@@ -772,6 +772,9 @@ export default function ProfileSettings({
                     }).catch(() => showToast("Notifications aren't on. Check your device settings.", 'error'))} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Enable</button>
                 )}
               </div>
+              {notifStatus === 'unsupported' && (
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0 44px', lineHeight: 1.45 }}>This browser cannot show notifications. Install Flock from the App Store to get them.</p>
+              )}
               {notifStatus === 'denied' && (
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0 44px', lineHeight: 1.35 }}>
                   {window.Capacitor?.isNativePlatform?.() === true
