@@ -13854,6 +13854,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                       <span key={i} style={{ flex: 1, textAlign: 'center', fontSize: 'var(--t-meta)', color: b.isNow ? 'var(--text-primary)' : 'var(--text-tertiary)', fontWeight: b.isNow ? '500' : '400', minWidth: 0, overflow: 'hidden' }}>{b.isNow ? 'Now' : b.h.hour}</span>
                     ))}
                   </div>
+                  {/* The server sent a crowd read with no hour-by-hour curve, so
+                      the bars above are the client's category shape (genHourly).
+                      They used to draw under the same ESTIMATED chip as a real
+                      model curve, indistinguishable from one. */}
+                  {cd && !cd.hourly && !crowdFetchFailed && (
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>
+                      Typical for {activeVenue.category ? `a ${String(activeVenue.category).toLowerCase()}` : 'a place like this'} at these hours, not a read of this spot.
+                    </p>
+                  )}
                 </m.div>
 
                 {/* Busiest Hours & Wait */}
