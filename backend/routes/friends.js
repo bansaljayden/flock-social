@@ -99,8 +99,8 @@ async function reRequestDeclined(rowId, requesterId, addresseeId) {
     return r.rows.length > 0;
   } catch (err) {
     // 23505: the direction flip collided with an OPPOSITE-ordered row for the
-    // same pair (a legacy crossed pair where both rows ended up declined —
-    // today's decline DELETEs, so only old data can hold this shape). The
+    // same pair (a crossed pair where both rows ended up declined; the decline
+    // keeps its row as 'declined' since 2026-09-04, so this shape is live). The
     // caller answers with currentState() on `false`, which is the honest
     // report; before this catch the constraint violation fell into the outer
     // catch and answered 500 for a tap on a perfectly ordinary button.
@@ -626,8 +626,17 @@ router.post('/decline',
 
       const { user_id } = req.body;
 
+      // The row STAYS, as 'declined'. It used to be deleted, which left no
+      // record at all: the next request from the same person inserted fresh
+      // and pushed again, bounded only by the daily probe budget, so a
+      // declined stranger could ring a phone dozens of times a day. Over a
+      // declined row the request door revives quietly (reRequestDeclined:
+      // socket event to the addressee's open app, no push), the addressee's
+      // pending list filters on 'pending' so nothing reappears there, and the
+      // requester still reads 'pending', which is the non-leak the decline
+      // has always kept.
       const result = await pool.query(
-        `DELETE FROM friendships
+        `UPDATE friendships SET status = 'declined'
          WHERE requester_id = $1 AND addressee_id = $2 AND status = 'pending'
          RETURNING id`,
         [user_id, req.user.id]
@@ -655,9 +664,14 @@ router.delete('/:userId', async (req, res) => {
       return res.status(400).json({ error: 'Invalid user ID' });
     }
 
+    // A declined row belongs to the person who declined it. Its requester
+    // cannot remove it and then request again as if for the first time (which
+    // would insert fresh and push), so the exclusion below keeps the decline's
+    // record in the one hand that can clear it.
     const result = await pool.query(
       `DELETE FROM friendships
-       WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)
+       WHERE ((requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1))
+         AND NOT (status = 'declined' AND requester_id = $1)
        RETURNING id`,
       [req.user.id, userId]
     );
@@ -698,19 +712,24 @@ router.get('/outgoing', async (req, res) => {
 router.get('/suggestions', async (req, res) => {
   try {
     const result = await pool.query(
-      `SELECT u.id, u.name, u.profile_image_url, COUNT(*) AS mutual_count
-       FROM friendships f1
-       JOIN friendships f2 ON (
-         (CASE WHEN f1.requester_id = $1 THEN f1.addressee_id ELSE f1.requester_id END) =
-         (CASE WHEN f2.requester_id = $1 THEN f2.requester_id ELSE f2.addressee_id END)
+      `WITH mine AS (
+         SELECT CASE WHEN requester_id = $1 THEN addressee_id ELSE requester_id END AS friend_id
+           FROM friendships
+          WHERE status = 'accepted' AND (requester_id = $1 OR addressee_id = $1)
+       ), theirs AS (
+         -- Either end of the friend's own rows. The old join only matched a
+         -- friend who was the ADDRESSEE of f2, so every friend-of-a-friend
+         -- where the friend had sent the request never surfaced.
+         SELECT CASE WHEN f2.requester_id = m.friend_id THEN f2.addressee_id ELSE f2.requester_id END AS candidate
+           FROM mine m
+           JOIN friendships f2
+             ON f2.status = 'accepted'
+            AND (f2.requester_id = m.friend_id OR f2.addressee_id = m.friend_id)
        )
-       JOIN users u ON u.id = CASE WHEN f2.requester_id = (CASE WHEN f1.requester_id = $1 THEN f1.addressee_id ELSE f1.requester_id END) THEN f2.addressee_id ELSE f2.requester_id END
-       WHERE f1.status = 'accepted'
-       AND f2.status = 'accepted'
-       AND (f1.requester_id = $1 OR f1.addressee_id = $1)
-       AND u.id != $1
-       AND ${NOT_BANNED_SQL}
-       AND NOT EXISTS (
+       SELECT u.id, u.name, u.profile_image_url, COUNT(*) AS mutual_count
+       FROM theirs t
+       JOIN users u ON u.id = t.candidate
+       WHERE NOT EXISTS (
          SELECT 1 FROM friendships
          WHERE ((requester_id = $1 AND addressee_id = u.id) OR (requester_id = u.id AND addressee_id = $1))
        )
@@ -718,6 +737,8 @@ router.get('/suggestions', async (req, res) => {
          SELECT 1 FROM user_blocks
          WHERE (blocker_id = $1 AND blocked_id = u.id) OR (blocker_id = u.id AND blocked_id = $1)
        )
+       AND u.id != $1
+       AND ${NOT_BANNED_SQL}
        GROUP BY u.id, u.name, u.profile_image_url
        ORDER BY mutual_count DESC
        LIMIT 20`,
