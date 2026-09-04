@@ -541,12 +541,27 @@ async function getForecast(lat, lon, opts = {}) {
       }
 
       // Group by date, pick midday (12:00) or closest entry per day
+      // Days and hours in the CITY's zone. dt_txt is UTC, so the strip keyed
+      // its days on UTC and picked 12:00 UTC, which is 7 or 8 AM in
+      // Pennsylvania: "today" rolled over at 8 PM and the day's reading was
+      // the morning one. OpenWeather sends the city's offset (seconds) as
+      // city.timezone; dt plus that offset, read as UTC fields, is local.
+      const tzOffsetSec = Number.isFinite(data.city?.timezone) ? data.city.timezone : 0;
       const dailyMap = {};
       for (const entry2 of data.list) {
-        if (typeof entry2?.dt_txt !== 'string') continue;
-        const [datePart, timePart] = entry2.dt_txt.split(' ');
-        if (!datePart || !timePart) continue;
-        const hour = parseInt(timePart.split(':')[0], 10);
+        let datePart;
+        let hour;
+        if (Number.isFinite(entry2?.dt)) {
+          const local = new Date((entry2.dt + tzOffsetSec) * 1000);
+          datePart = local.toISOString().slice(0, 10);
+          hour = local.getUTCHours();
+        } else {
+          if (typeof entry2?.dt_txt !== 'string') continue;
+          const [dp, timePart] = entry2.dt_txt.split(' ');
+          if (!dp || !timePart) continue;
+          datePart = dp;
+          hour = parseInt(timePart.split(':')[0], 10);
+        }
         if (!Number.isInteger(hour)) continue;
         if (!dailyMap[datePart] || Math.abs(hour - 12) < Math.abs(dailyMap[datePart].hour - 12)) {
           dailyMap[datePart] = {

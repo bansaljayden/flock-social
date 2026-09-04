@@ -491,7 +491,8 @@ describe('venue reviews', () => {
   });
 
   test('the count is only printed once the reviews are known', () => {
-    expect(APP).toMatch(/Flock Reviews\{venueDetailReviews \? ` \(\$\{venueDetailReviews\.length\}\)` : ''\}/);
+    // The server total, when known, else the page length (2026-09-04).
+    expect(APP).toMatch(/Flock Reviews\{venueDetailReviews \? ` \(\$\{venueDetailReviewTotal \?\? venueDetailReviews\.length\}\)` : ''\}/);
   });
 
   test('the retry runs the same read the screen does', () => {
