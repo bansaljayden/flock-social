@@ -120,6 +120,12 @@ async function newPerson(browser, tag, firstName = 'Ada') {
   return { context, page, email, name, firstName, surname, errors, offences };
 }
 
+// The Messages tab renames itself when something is waiting on it: its
+// accessible name becomes "Messages, 2 unread and 1 invite" and an exact match
+// on "Messages" then finds nothing, which is a 135 second timeout rather than a
+// failed assertion. Match the label as a prefix, for every tab, so the same
+// thing on any other tab is a passing test and not a hang.
+const tabName = (label) => new RegExp(`^${label}(,|$)`);
 /** Go to one of the five tabs, stepping back out of a chat first if need be. */
 async function goTab(page, label) {
   const nav = page.getByRole('navigation', { name: 'Main' });
@@ -129,7 +135,7 @@ async function goTab(page, label) {
     if (!(await back.count())) break;
     await back.click();
   }
-  await nav.getByRole('button', { name: label, exact: true }).click();
+  await nav.getByRole('button', { name: tabName(label) }).click();
 }
 
 /** SearchInputLocal commits on a 120ms timer, so a fill then click loses it. */

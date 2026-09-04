@@ -10533,11 +10533,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // One number over both chat lists: DM unread is server truth already and
     // flock unread is the migration 056 cursor. The flocks array holds only
     // accepted memberships (loadFlocks filters), so invites never count.
-    const messagesTabUnread = directMessages.reduce((sum, d) => sum + (Number(d.unread) || 0), 0)
-      + flocks.reduce((sum, f) => sum + (Number(f.unread) || 0), 0)
-      // An invite waits on the Messages tab, and nothing badged it: three
-      // friends could invite you and the app opened to "2 flocks".
-      + pendingFlockInvites.length;
+    const messagesTabUnreadMessages = directMessages.reduce((sum, d) => sum + (Number(d.unread) || 0), 0)
+      + flocks.reduce((sum, f) => sum + (Number(f.unread) || 0), 0);
+    // An invite waits on the Messages tab, and nothing badged it: three
+    // friends could invite you and the app opened to "2 flocks".
+    const messagesTabInvites = pendingFlockInvites.length;
+    const messagesTabUnread = messagesTabUnreadMessages + messagesTabInvites;
+    // The badge is one number because the tab is one destination. The SPOKEN
+    // label may not be, and it was: an invite was rounded up into "1 unread",
+    // so a screen reader user opened a tab holding one invitation and no
+    // messages at all, having been told there was a message waiting. It names
+    // the two things separately now, and the badge still adds them up.
+    const messagesTabParts = [];
+    if (messagesTabUnreadMessages > 0) {
+      messagesTabParts.push(`${messagesTabUnreadMessages > 99 ? 'more than 99' : messagesTabUnreadMessages} unread`);
+    }
+    if (messagesTabInvites > 0) {
+      messagesTabParts.push(`${messagesTabInvites > 99 ? 'more than 99' : messagesTabInvites} ${messagesTabInvites === 1 ? 'invite' : 'invites'}`);
+    }
+    const messagesTabLabel = messagesTabParts.length ? `Messages, ${messagesTabParts.join(' and ')}` : undefined;
 
     return (
       // Landmark, not a bare div: this is the app's primary navigation and it
@@ -10559,7 +10573,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         ].map(t => (
           <button className="hit44" key={t.id} onClick={() => handleTabClick(t.id)}
             aria-current={currentTab === t.id ? 'page' : undefined}
-            aria-label={t.id === 'chat' && messagesTabUnread > 0 ? `Messages, ${messagesTabUnread > 99 ? 'more than 99' : messagesTabUnread} unread` : undefined}
+            aria-label={t.id === 'chat' ? messagesTabLabel : undefined}
             style={{
               ...styles.navItem,
               backgroundColor: currentTab === t.id ? 'var(--icon-bg)' : 'transparent',
@@ -10712,14 +10726,33 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // up through onUserPatch. Bound here so the settings props stay shorthand.
   const onUserUpdated = useCallback((patch) => { if (onUserPatch) onUserPatch(patch); }, [onUserPatch]);
 
-  const handleUserBlocked = useCallback((blockedId) => {
+  // `keepDmOpen` is for the person who was blocked rather than the one who did
+  // the blocking. Both get the same `blocked_by` event, and both need the same
+  // cleanup, but not the same navigation: somebody who taps Block expects to
+  // leave the conversation, and somebody whose conversation dies underneath
+  // them expects to be told why. Dropping the row and pushing them to the home
+  // screen did neither. It skipped the standing "You can no longer message"
+  // panel that exists for exactly this moment, because that panel reads off a
+  // row this had already deleted, and left them on the Nest with no sentence
+  // anywhere on the screen about what had just happened to the thread they
+  // were looking at.
+  const handleUserBlocked = useCallback((blockedId, { keepDmOpen = false } = {}) => {
     const id = String(blockedId);
     blockedIdsRef.current.add(id);
-    // Drop the blocked user's DM thread and leave their conversation.
-    setDirectMessages(prev => prev.filter(d => String(d.userId) !== id));
-    if (String(selectedDmId) === id) {
-      setSelectedDmId(null);
-      setCurrentScreen('main');
+    if (keepDmOpen && String(selectedDmId) === id) {
+      // Empty the thread but leave the row. This is exactly what the HTTP read
+      // does when the server refuses the pair (see loadDmMessages), so the
+      // screen looks the same whether the block arrived live or on reopen.
+      setDirectMessages(prev => prev.map(d => (String(d.userId) === id
+        ? { ...d, messages: [], unread: 0 }
+        : d)));
+    } else {
+      // Drop the blocked user's DM thread and leave their conversation.
+      setDirectMessages(prev => prev.filter(d => String(d.userId) !== id));
+      if (String(selectedDmId) === id) {
+        setSelectedDmId(null);
+        setCurrentScreen('main');
+      }
     }
     // The DM was the only thing this used to clean up, so someone blocked from
     // a flock chat stayed right there on screen, messages and all, until you
@@ -12162,7 +12195,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // their DM row, their pulse, their seat in an open roster. This handler
       // used to run only for the person who did the blocking, so the person
       // who was blocked kept every one of those on screen until a reload.
-      handleUserBlocked(userId);
+      handleUserBlocked(userId, { keepDmOpen: true });
     });
   }, [dmSharingLocation, handleUserBlocked]);
 

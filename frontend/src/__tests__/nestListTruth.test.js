@@ -30,7 +30,13 @@ test('the Nest counts, gates and lists one live, sorted array', () => {
 });
 
 test('a waiting invite is said on the badge and on the Nest, with when, where and who', () => {
-  expect(app).toMatch(/\+ pendingFlockInvites\.length;/);
+  // The badge adds invites into one number, because the tab is one place to
+  // go. The spoken label does not: it names them separately, so nobody is told
+  // there is an unread message when what is waiting is an invitation.
+  expect(app).toMatch(/const messagesTabInvites = pendingFlockInvites\.length;/);
+  expect(app).toMatch(/const messagesTabUnread = messagesTabUnreadMessages \+ messagesTabInvites;/);
+  expect(app).toMatch(/messagesTabInvites === 1 \? 'invite' : 'invites'/);
+  expect(app).toMatch(/`Messages, \$\{messagesTabParts\.join\(' and '\)\}`/);
   expect(app).toMatch(/\? '1 invite waiting' : `\$\{pendingFlockInvites\.length\} invites waiting`/);
   expect(app).toMatch(/\{f\.time && f\.time !== 'TBD' \? f\.time : 'Time still open'\} · \{f\.venue && f\.venue !== 'TBD' \? f\.venue : 'Venue still open'\} · \{f\.memberCount \|\| 1\} going/);
   expect(app).toMatch(/time: data\.eventTime \? formatEventTime\(data\.eventTime\) : 'TBD',/);

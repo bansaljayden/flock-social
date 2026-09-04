@@ -295,13 +295,20 @@ test('the flock chat header nav is out of the keyboard and the tree while collap
 // 2. DISCOVER: THE COLLAPSED HEADER AND THE PARKED EVENTS PANEL
 // ===========================================================================
 
+// The Messages tab renames itself when something is waiting on it: its
+// accessible name becomes "Messages, 2 unread and 1 invite" and an exact match
+// on "Messages" then finds nothing, which is a 135 second timeout rather than a
+// failed assertion. Match the label as a prefix, for every tab, so the same
+// thing on any other tab is a passing test and not a hang.
+const tabName = (label) => new RegExp(`^${label}(,|$)`);
+
 test('Discover hides its collapsed nav and its closed events panel from the keyboard', async ({ browser }) => {
   test.setTimeout(150_000);
   const me = await newPerson(browser, 'Robin');
   const page = me.page;
 
   await page.getByRole('navigation', { name: 'Main' })
-    .getByRole('button', { name: 'Discover', exact: true }).click();
+    .getByRole('button', { name: tabName('Discover') }).click();
   // The map and its "we could not place you" path both settle inside this.
   await page.waitForTimeout(2500);
 
@@ -333,7 +340,7 @@ test('Discover hides its collapsed nav and its closed events panel from the keyb
   // and a child that names `visibility: visible` for itself overrides that,
   // which put these three into the tab order of every other screen.
   await page.getByRole('navigation', { name: 'Main' })
-    .getByRole('button', { name: /^Messages(, .* unread)?$/ }).click();
+    .getByRole('button', { name: tabName('Messages') }).click();
   await page.waitForTimeout(1500);
   const elsewhere = await focusableNames(page);
   for (const label of DISCOVER_NAV) {
@@ -434,12 +441,12 @@ test('no screen in the core loop has a tab stop the eye cannot find', async ({ b
   await check('Nest');
 
   for (const tab of ['Discover', 'Plans', 'Messages', 'You']) {
-    await nav().getByRole('button', { name: tab, exact: true }).click();
+    await nav().getByRole('button', { name: tabName(tab) }).click();
     await page.waitForTimeout(tab === 'Discover' ? 2500 : 1500);
     await check(tab);
   }
 
-  await nav().getByRole('button', { name: 'Nest', exact: true }).click();
+  await nav().getByRole('button', { name: tabName('Nest') }).click();
   await page.waitForTimeout(800);
   await page.getByRole('button', { name: /start a flock/i }).first().click();
   await expect(page.getByRole('heading', { name: /start a flock/i })).toBeVisible();
