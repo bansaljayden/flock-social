@@ -449,8 +449,17 @@ async function collectRealtime() {
     const cityConfig = CITIES[cityKey];
     if (!cityConfig) continue;
 
-    // One weather call per city
-    const weather = await getWeather(cityConfig.lat, cityConfig.lon);
+    // One weather call per city, REFRESHED WHEN THE HOUR TURNS.
+    //
+    // getWeather returns current conditions, and these six columns are model
+    // features on the scarce live rows this collector exists to produce. A
+    // single reading held across a fifty-eight minute sweep stops describing
+    // the moment the busyness was measured and starts describing when the city
+    // block began - which for the last venues in a long block is a different
+    // hour, sometimes a different sky. One extra call per hour crossed, per
+    // city, against a corpus of live labels: the cheapest thing here.
+    let weather = await getWeather(cityConfig.lat, cityConfig.lon);
+    let weatherHour = new Date().getUTCHours();
     const local = getLocalTime(cityConfig.tz);
     const special = specialNightFor(cityKey, local.dateStr);
     const holidayEve = isHolidayEve(cityKey, local.dateStr);
@@ -486,6 +495,15 @@ async function collectRealtime() {
       // The tell was already in the file: the open-hours test below computed a
       // FRESH per-venue hour and the row then recorded the stale city one.
       const obs = getLocalTime(venue.timezone || cityConfig.tz);
+
+      // Only on an hour boundary, and only replaced if the refetch answered -
+      // a transient failure must not blank the reading we already have.
+      const nowHour = new Date().getUTCHours();
+      if (nowHour !== weatherHour) {
+        const fresher = await getWeather(cityConfig.lat, cityConfig.lon);
+        if (fresher) { weather = fresher; }
+        weatherHour = nowHour;
+      }
       const venueHour = obs.hour;
       // Same reasoning for the DATE-derived columns. A sweep crossing midnight
       // would otherwise stamp the previous day's holiday, holiday-eve and
@@ -591,7 +609,8 @@ async function collectRealtime() {
       }
 
       // Look up the weekly baseline for this venue at the current venue-local
-      // day/hour. local.hour is a wall clock hour, so only weekly rows that
+      // day/hour, on the venue's own clock (obs), not the city clock the block
+      // header was printed from. obs.hour is a wall clock hour, so only weekly rows that
       // DECLARE the venue-local axis may answer it: before migration 023 the
       // weekly rows held BestTime array indices, and this lookup silently
       // stamped every realtime row with the busyness of a slot six hours away.
@@ -607,7 +626,13 @@ async function collectRealtime() {
            WHERE venue_id = $1 AND collection_mode = 'weekly'
              AND hour_axis = $4
              AND day_of_week = $2 AND hour = $3 AND busyness_pct IS NOT NULL`,
-          [venue.id, local.dayOfWeek, local.hour, HOUR_AXIS_VENUE_LOCAL]
+          // `obs`, NOT `local`. The block above converted every date-derived
+          // column on this row to the venue's own clock; this lookup was left
+          // on the city clock captured once at the top of the city, and
+          // RUN_TIME_BUDGET_MS is fifty minutes against runs that have
+          // measured fifty-eight. A sweep crossing an hour boundary therefore
+          // wrote hour = 23 with the 22:00 baseline attached to it.
+          [venue.id, obs.dayOfWeek, obs.hour, HOUR_AXIS_VENUE_LOCAL]
         );
         baseline = baselineRows[0]?.avg ?? null;
       } catch (_) {}

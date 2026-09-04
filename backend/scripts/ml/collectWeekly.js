@@ -7,7 +7,6 @@
 require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
 
 const { Pool } = require('pg');
-const { getWeather } = require('../../services/weatherService');
 const { fetchWeeklyForecast } = require('./bestTimeService');
 const { bestTimeDayToJsDay, getLocalTime, getSeason, sleep } = require('./config');
 
@@ -310,11 +309,35 @@ async function collectWeekly() {
         );
       }
 
-      // Fetch weather for this venue's location (representative snapshot)
-      const weather = await getWeather(venue.latitude, venue.longitude);
+      // A TYPICAL WEEK HAS NO WEATHER.
+      //
+      // This used to call getWeather(venue.latitude, venue.longitude) - current
+      // conditions, at one instant - and stamp temperature, humidity,
+      // wind_speed, weather_condition, weather_condition_code and is_raining
+      // from it onto all 168 rows. Those six are shipped model features, and
+      // 3,456,635 weekly rows (88.3% of ml_training_data) carry them, so most
+      // of what the model has ever seen under "temperature" is the temperature
+      // at the moment a collection batch happened to run. Within a venue the
+      // column is constant, which means it does not encode the hour at all - it
+      // encodes WHICH BATCH wrote the venue, and that is a straight line from a
+      // venue's identity to its collection time.
+      //
+      // Concretely, from the production dump: venue 42042's entire week carries
+      // 79.5F / 83% / light rain / is_raining TRUE from a single 05:53 fetch on
+      // 2026-05-09, including a Sunday-midnight row asserting rain at 79.5F
+      // with busyness 0.
+      //
+      // A row that says "Tuesdays at 8pm, in general" has no moment for weather
+      // to describe, so the honest value is NULL and the realtime rows - which
+      // are actual observations at an actual time - become the only place the
+      // weather features carry signal. That is also one fewer API call per
+      // venue per sweep. scripts/ml/repairWeeklyWeather.js clears the rows
+      // already written.
+      const weather = null;
 
       // When this snapshot was taken, on the venue's own clock. One value for
-      // the whole week — the 168 rows are one fetch.
+      // the whole week — the 168 rows are one fetch. Month and season DO
+      // survive: a typical week collected in August genuinely describes August.
       const calendar = venueCalendar(venue);
 
       // Insert 168 rows (7 days × 24 hours) — batched into a single multi-row INSERT
