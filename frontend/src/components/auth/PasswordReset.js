@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import request from '../../services/api';
+import request, { clearLocalSession, RESET_DONE_KEY } from '../../services/api';
 import AuthShell, { AUTH, AuthError, AuthNotice, PasswordEye } from './AuthShell';
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -407,7 +407,23 @@ export const PasswordResetPage = () => {
   // "Sign in" after a successful reset dropped the person on landing copy
   // with no sign-in form. '/app' is the canonical web entry and boots the app
   // whether or not a session exists.
-  const goHome = () => { window.location.assign('/app'); };
+  // The argument matters. ResetPasswordScreen calls onSignIn({ updated: true })
+  // and LoginScreen renders "Password updated. Sign in with the new one." from
+  // it; dropping it threw that away. Worse on the case this page exists for,
+  // resetting on a laptop you are still signed in on: the old JWT is now a
+  // version behind, so /app booted, GET /api/auth/me answered 401, and the
+  // person was shown "Your session expired" seconds after being told their
+  // password was set. Clearing the dead token first means the app opens on the
+  // sign-in screen, which is where they were going anyway.
+  const goHome = (arg) => {
+    if (arg && arg.updated) {
+      try { clearLocalSession(); } catch { /* private mode */ }
+      try { sessionStorage.setItem(RESET_DONE_KEY, '1'); } catch { /* private mode */ }
+      window.location.assign('/app');
+      return;
+    }
+    window.location.assign('/app');
+  };
 
   if (view === 'forgot') {
     return <ForgotPasswordScreen onBack={goHome} />;

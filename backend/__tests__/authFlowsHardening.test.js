@@ -191,6 +191,16 @@ pool.query = async (text, params = []) => {
     });
     return { rows: [], rowCount: 1 };
   }
+  // Superseded links are DELETED now (so 'a newer one replaced it' can be told
+  // apart from 'this one was spent'), and both credential-change paths delete
+  // them too.
+  if (sql.startsWith('DELETE FROM password_resets WHERE user_id')) {
+    const before = resets.length;
+    for (let i = resets.length - 1; i >= 0; i -= 1) {
+      if (resets[i].user_id === params[0] && !resets[i].used_at) resets.splice(i, 1);
+    }
+    return { rows: [], rowCount: before - resets.length };
+  }
   if (sql.startsWith('UPDATE password_resets SET used_at')) {
     const unused = (r) => !clause(sql, /AND used_at IS NULL/) || !r.used_at;
     const live = (r) => !clause(sql, /AND expires_at > NOW\(\)/) || Date.parse(r.expires_at) > now;

@@ -231,6 +231,11 @@ function endNativeGoogleSession() {
  * Safari private mode and "block all cookies" make storage access throw rather
  * than return null, and a throw here would abort a sign-out. Hence the guards.
  */
+// Set by the standalone /reset-password page on its way to /app, read and
+// cleared by LoginScreen. The in-app flow hands the same fact to LoginScreen as
+// a function argument, which a full page navigation cannot carry.
+export const RESET_DONE_KEY = 'flock_password_reset_done';
+
 export function clearLocalSession() {
   try { sweepStore(window.localStorage); } catch (_) { /* storage blocked */ }
   try { sweepStore(window.sessionStorage); } catch (_) { /* storage blocked */ }
