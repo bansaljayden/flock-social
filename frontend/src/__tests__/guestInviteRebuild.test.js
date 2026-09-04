@@ -392,7 +392,7 @@ describe('GuestInvite: the rebuilt screen', () => {
     await screen.findByRole('heading', { level: 1, name: /this invite has closed/i });
     expect(container.textContent).toMatch(/stop working after/i);
     // And it says what to do next, naming who can do it.
-    expect(container.textContent).toMatch(/ask whoever sent it for a new link/i);
+    expect(container.textContent).toMatch(/ask whoever sent it to share the plan with you again/i);
     // Never a retry button on a link that will not start working again.
     expect(screen.queryByRole('button', { name: /try again/i })).toBeNull();
   });

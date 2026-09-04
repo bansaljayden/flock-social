@@ -224,7 +224,10 @@ test('legacy 12-char tokens still resolve, and both formats pass validation', as
   // Backward compatibility is the constraint the whole change was made under:
   // links already pasted into group chats must keep working.
   on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
-  on(/SUM\(c\)::int AS votes/, () => ({ rows: [{ venue_name: 'The Bar', votes: 3 }] }));
+  // The weighted tally returns member and guest columns and combines them
+  // with the same cap members see (2026-09-04).
+  on(/AS member_votes/, () => ({ rows: [{ venue_name: 'The Bar', member_votes: 3, guest_votes: 0 }] }));
+  on(/COUNT\(\*\)::int AS n FROM venue_votes/, () => ({ rows: [{ n: 3 }] }));
   on(/AS members/, () => ({ rows: [{ members: 2, guests: 1 }] }));
 
   const legacy = await call('GET', `/api/guest/${LEGACY_TOKEN}`);
@@ -322,7 +325,10 @@ test('the preview answers with a fixed allowlist and nothing else', async () => 
   // publish. Read off the accepted-member figure the `going` query already
   // fetched, so it costs no extra round trip and cannot disagree with `going`.
   on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
-  on(/SUM\(c\)::int AS votes/, () => ({ rows: [{ venue_name: 'The Bar', votes: 3 }] }));
+  // The weighted tally returns member and guest columns and combines them
+  // with the same cap members see (2026-09-04).
+  on(/AS member_votes/, () => ({ rows: [{ venue_name: 'The Bar', member_votes: 3, guest_votes: 0 }] }));
+  on(/COUNT\(\*\)::int AS n FROM venue_votes/, () => ({ rows: [{ n: 3 }] }));
   on(/AS members/, () => ({ rows: [{ members: 2, guests: 1 }] }));
   on(/FROM flock_members fm JOIN users u/, () => ({ rows: [
     { name: 'Ava Brooks', status: 'accepted' },
@@ -375,7 +381,9 @@ test('a plan at the join ceiling says so on the preview, before anybody signs up
   // Pinned against the exported constant, not against 50, so raising the cap
   // stays one edit.
   on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
-  on(/SUM\(c\)::int AS votes/, () => ({ rows: [] }));
+  on(/AS member_votes/, () => ({ rows: [] }));
+  // The weighted tally's second leg: the cap is the number of member votes cast.
+  on(/COUNT\(\*\)::int AS n FROM venue_votes/, () => ({ rows: [{ n: 0 }] }));
   on(/AS members/, () => ({ rows: [{ members: guest.LINK_JOIN_MEMBER_CAP, guests: 0 }] }));
   on(/FROM flock_members fm JOIN users u/, () => ({ rows: [] }));
   on(/SELECT name, status FROM guest_rsvps/, () => ({ rows: [] }));
@@ -389,7 +397,9 @@ test('one member under the ceiling is not reported as full', async () => {
   // Off by one here is the difference between an honest page and a page that
   // turns people away from a plan they could have joined.
   on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
-  on(/SUM\(c\)::int AS votes/, () => ({ rows: [] }));
+  on(/AS member_votes/, () => ({ rows: [] }));
+  // The weighted tally's second leg: the cap is the number of member votes cast.
+  on(/COUNT\(\*\)::int AS n FROM venue_votes/, () => ({ rows: [{ n: 0 }] }));
   on(/AS members/, () => ({ rows: [{ members: guest.LINK_JOIN_MEMBER_CAP - 1, guests: 0 }] }));
   on(/FROM flock_members fm JOIN users u/, () => ({ rows: [] }));
   on(/SELECT name, status FROM guest_rsvps/, () => ({ rows: [] }));
@@ -403,7 +413,9 @@ test('guests do not fill the member ceiling, because they do not take member sea
   // Counting guests toward the join ceiling would close the join band on a
   // plan that has room, which is the mirror image of the bug above.
   on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
-  on(/SUM\(c\)::int AS votes/, () => ({ rows: [] }));
+  on(/AS member_votes/, () => ({ rows: [] }));
+  // The weighted tally's second leg: the cap is the number of member votes cast.
+  on(/COUNT\(\*\)::int AS n FROM venue_votes/, () => ({ rows: [{ n: 0 }] }));
   on(/AS members/, () => ({ rows: [{ members: 3, guests: guest.LINK_JOIN_MEMBER_CAP }] }));
   on(/FROM flock_members fm JOIN users u/, () => ({ rows: [] }));
   on(/SELECT name, status FROM guest_rsvps/, () => ({ rows: [] }));
@@ -418,7 +430,9 @@ test('the roster is capped, and the cap is what the route advertises', async () 
   // raising the cap is a deliberate edit in two places, not a drift in one.
   const many = Array.from({ length: 200 }, (_, i) => ({ name: `Person${i}`, status: 'accepted' }));
   on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
-  on(/SUM\(c\)::int AS votes/, () => ({ rows: [] }));
+  on(/AS member_votes/, () => ({ rows: [] }));
+  // The weighted tally's second leg: the cap is the number of member votes cast.
+  on(/COUNT\(\*\)::int AS n FROM venue_votes/, () => ({ rows: [{ n: 0 }] }));
   on(/AS members/, () => ({ rows: [{ members: 200, guests: 0 }] }));
   on(/FROM flock_members fm JOIN users u/, () => ({ rows: many }));
   on(/SELECT name, status FROM guest_rsvps/, () => ({ rows: [] }));
@@ -557,7 +571,10 @@ test('a finished plan leaks nothing through the link that a live one did not', a
   // out the plan is off through `status`. What it must never do is grow: the
   // post-event payload carries exactly the same fields as the live one.
   on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
-  on(/SUM\(c\)::int AS votes/, () => ({ rows: [{ venue_name: 'The Bar', votes: 3 }] }));
+  // The weighted tally returns member and guest columns and combines them
+  // with the same cap members see (2026-09-04).
+  on(/AS member_votes/, () => ({ rows: [{ venue_name: 'The Bar', member_votes: 3, guest_votes: 0 }] }));
+  on(/COUNT\(\*\)::int AS n FROM venue_votes/, () => ({ rows: [{ n: 3 }] }));
   on(/AS members/, () => ({ rows: [{ members: 2, guests: 1 }] }));
 
   const live = await call('GET', `/api/guest/${LEGACY_TOKEN}`);
@@ -582,7 +599,9 @@ test('a finished plan leaks nothing through the link that a live one did not', a
 
 test('the preview counts, tallies and ROSTER all exclude hidden guests', async () => {
   on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
-  on(/SUM\(c\)::int AS votes/, () => ({ rows: [] }));
+  on(/AS member_votes/, () => ({ rows: [] }));
+  // The weighted tally's second leg: the cap is the number of member votes cast.
+  on(/COUNT\(\*\)::int AS n FROM venue_votes/, () => ({ rows: [{ n: 0 }] }));
   on(/AS members/, () => ({ rows: [{ members: 2, guests: 0 }] }));
 
   await call('GET', `/api/guest/${LEGACY_TOKEN}`);
@@ -592,9 +611,9 @@ test('the preview counts, tallies and ROSTER all exclude hidden guests', async (
   assert.match(going.sql, /status = 'in' AND COALESCE\(is_hidden, false\) = false/,
     'a taken-down guest must not inflate the public going count');
 
-  const tally = ran(/SUM\(c\)::int AS votes/)[0];
+  const tally = ran(/AS member_votes/)[0];
   assert.ok(tally, 'the venue tally ran');
-  assert.match(tally.sql, /JOIN guest_rsvps gr ON gr\.id = gv\.guest_rsvp_id WHERE gv\.flock_id = \$1 AND COALESCE\(gr\.is_hidden, false\) = false/,
+  assert.match(tally.sql, /JOIN guest_rsvps gr ON gr\.id = gv\.guest_rsvp_id\s+WHERE gv\.flock_id = \$1 AND COALESCE\(gr\.is_hidden, false\) = false/,
     'a hidden guest\'s votes must not move the public tally');
 
   // The roster is the newest reader of guest_rsvps and therefore the newest way
@@ -614,7 +633,9 @@ test('a hidden guest is absent from the roster even when the row is returned', a
   // in production, and the assertion is that only what the WHERE clause admits
   // is what the handler was given.
   on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
-  on(/SUM\(c\)::int AS votes/, () => ({ rows: [] }));
+  on(/AS member_votes/, () => ({ rows: [] }));
+  // The weighted tally's second leg: the cap is the number of member votes cast.
+  on(/COUNT\(\*\)::int AS n FROM venue_votes/, () => ({ rows: [{ n: 0 }] }));
   on(/AS members/, () => ({ rows: [{ members: 0, guests: 0 }] }));
   on(/FROM flock_members fm JOIN users u/, () => ({ rows: [] }));
   on(/SELECT name, status FROM guest_rsvps/, (params, sql) => {
