@@ -403,7 +403,11 @@ export const ResetPasswordScreen = ({ onSignIn, onRequestNew }) => {
 
 export const PasswordResetPage = () => {
   const [view, setView] = useState('reset');
-  const goHome = () => { window.location.assign('/'); };
+  // '/app', not '/'. On the web '/' is the marketing site (src/index.js), so
+  // "Sign in" after a successful reset dropped the person on landing copy
+  // with no sign-in form. '/app' is the canonical web entry and boots the app
+  // whether or not a session exists.
+  const goHome = () => { window.location.assign('/app'); };
 
   if (view === 'forgot') {
     return <ForgotPasswordScreen onBack={goHome} />;
