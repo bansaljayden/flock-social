@@ -425,6 +425,18 @@ async function collectWeekly() {
                besttime_epoch         = EXCLUDED.besttime_epoch,
                events_observed        = EXCLUDED.events_observed,
                events_unavailable_reason = EXCLUDED.events_unavailable_reason,
+               -- The four event columns the INSERT above names. They were
+               -- missing here, so the invariant three lines up ("every
+               -- non-key column of the INSERT must appear below") was stated
+               -- and broken: a re-collection flipped events_observed to the
+               -- new honest value while the SQL defaults false/false/0/0
+               -- survived beside it, recreating the exact pairing migration
+               -- 045 exists to end and silently undoing
+               -- repairFabricatedEventAbsence on any weekly row it touched.
+               event_nearby           = EXCLUDED.event_nearby,
+               has_nearby_event       = EXCLUDED.has_nearby_event,
+               total_nearby_events    = EXCLUDED.total_nearby_events,
+               total_nearby_attendance = EXCLUDED.total_nearby_attendance,
                collected_at           = NOW()
              RETURNING (xmax = 0) AS inserted`,
             params

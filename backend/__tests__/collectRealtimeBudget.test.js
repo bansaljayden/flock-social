@@ -90,3 +90,69 @@ test('every enrichment column is written, including the one the comment miscount
   assert.match(collect, /\['nearest_event_attendance', eventData\.observed === true \? \(eventData\.event_size \|\| 0\) : null\]/);
   assert.match(collect, /The SEVEN enrichment columns are written EXPLICITLY/);
 });
+
+// ---------------------------------------------------------------------------
+// The event channel asked a different question than the corpus answers.
+// ---------------------------------------------------------------------------
+const eventSvc = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'eventService.js'), 'utf8');
+const weekly = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'collectWeekly.js'), 'utf8');
+const repair = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'repairFabricatedEventAbsence.js'), 'utf8');
+
+test('the collector means by "nearby" what the corpus and the model mean', () => {
+  // 5 km and no time filter at all: the nearest UPCOMING event was reported as
+  // happening now, so a concert next Saturday stamped has_nearby_event on a
+  // Tuesday afternoon observation and the channel became a proxy for "this
+  // venue is in a city". enrichWithEvents uses 2 km with an hour-range test and
+  // mlPredictor uses 2 km with a [hour - 3, hour + 1) window.
+  assert.match(eventSvc, /const NEARBY_KM = 2;/);
+  assert.match(eventSvc, /const EVENT_MAX_DURATION_H = 3;/);
+  assert.match(eventSvc, /startDateTime: startDt,\s*endDateTime: endDt,/);
+  assert.match(eventSvc, /if \(dist > NEARBY_KM\) continue;/);
+  assert.match(eventSvc, /startedAt < windowOpen \|\| startedAt >= windowClose\) continue;/);
+  // A provider that answered with nothing near right now is a measured absence.
+  assert.match(eventSvc, /if \(!nearest && anyMeasurable\) \{/);
+});
+
+test('one event-type vocabulary, the one the model was trained on', () => {
+  // This returned 'concert' and 'film' while the feature one-hots are
+  // music/sports/arts/family/other, so a music event produced has_nearby_event
+  // = 1 with all five etype slots at 0, a combination absent from the corpus.
+  assert.match(eventSvc, /if \(seg\.includes\('music'\)\) return 'music';/);
+  assert.match(eventSvc, /if \(seg\.includes\('family'\)\) return 'family';/);
+  assert.doesNotMatch(eventSvc, /return 'concert';/);
+  assert.doesNotMatch(eventSvc, /return 'film';/);
+});
+
+test('a row is stamped with the hour it was observed, not the hour the sweep began', () => {
+  // `local` is read once per city and a sweep runs up to fifty minutes, so the
+  // tail of a run crossing an hour boundary was filed under the previous hour.
+  // This is a delta model anchored on (venue, day_of_week, hour), so those rows
+  // were differenced against the wrong baseline cell, and the dedupe key is
+  // built from the same clock.
+  assert.match(collect, /const obs = getLocalTime\(venue\.timezone \|\| cityConfig\.tz\);/);
+  for (const col of ['day_of_week', 'hour', 'month', 'season', 'observed_date']) {
+    assert.ok(collect.includes("['" + col + "', obs."), col + ' reads the row clock');
+  }
+  // And the date-derived answers follow it, so a midnight crossing cannot stamp
+  // the previous day's holiday onto rows observed after it.
+  assert.match(collect, /const obsSpecial = specialNightFor\(cityKey, obs\.dateStr\);/);
+  assert.match(collect, /const obsHolidayEve = isHolidayEve\(cityKey, obs\.dateStr\);/);
+  assert.ok(collect.includes("['is_holiday', isHoliday(obs.dateStr)]"));
+});
+
+test('the weekly upsert refreshes every column it inserts', () => {
+  // The invariant is stated three lines above the block and was broken: a
+  // re-collection flipped events_observed to the honest value while the SQL
+  // defaults survived beside it, undoing the repair script on that row.
+  for (const col of ['event_nearby', 'has_nearby_event', 'total_nearby_events', 'total_nearby_attendance']) {
+    assert.match(weekly, new RegExp(col + String.raw`\s*= EXCLUDED\.` + col), col + ' is refreshed');
+  }
+});
+
+test('the repair script can see its own miss', () => {
+  // It NULLed six columns and verified six, so it left the seventh asserting a
+  // measurement on 136,920 rows and then printed "Remaining: 0 (expected 0)".
+  assert.match(repair, /nearest_event_attendance = NULL,/);
+  assert.strictEqual((repair.match(/OR nearest_event_attendance IS NOT NULL/g) || []).length, 2);
+  assert.match(repair, /left the SEVEN enrichment columns/);
+});
