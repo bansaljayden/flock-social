@@ -2831,7 +2831,7 @@ async function deleteAccount(req, res) {
         `SELECT f.id, f.name,
                 (f.status NOT IN ('completed', 'cancelled')
                  AND COALESCE(f.event_time, f.created_at + INTERVAL '14 days')
-                     > NOW() - make_interval(hours => $2::int)) AS upcoming,
+                     > (NOW() AT TIME ZONE 'UTC') - make_interval(hours => $2::int)) AS upcoming,
                 COALESCE(
                   ARRAY_AGG(fm.user_id) FILTER (
                     WHERE fm.user_id IS NOT NULL AND fm.user_id <> $1 AND fm.status = 'accepted'

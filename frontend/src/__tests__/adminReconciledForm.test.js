@@ -55,6 +55,11 @@ describe('the paid-invoice form on the Reconciled card', () => {
 
   test('the amount cannot be saved empty and the date cannot be in the future', () => {
     expect(screen).toContain("disabled={busy || usd === ''}");
-    expect(screen).toContain('max={new Date().toISOString().slice(0, 10)}');
+    // The device's own date, not the UTC date: after 8 PM Eastern the UTC day
+    // has already rolled, and the picker used to offer, and default to, tomorrow.
+    expect(screen).toContain('max={localToday()}');
+    expect(screen).toContain('value={asOf}');
+    expect(screen).toMatch(/const localToday = \(\) => \{\s*const d = new Date\(\);\s*return `\$\{d\.getFullYear\(\)\}-/);
+    expect(screen).not.toContain('toISOString().slice(0, 10)');
   });
 });

@@ -198,7 +198,7 @@ async function markFlockAttendance(userId, placeId) {
              -- not pre-credit attendance for next week's flock — reliability
              -- scores were inflatable above 100%)
              AND event_time IS NOT NULL
-             AND NOW() BETWEEN event_time - INTERVAL '3 hours' AND event_time + INTERVAL '12 hours'
+             AND (NOW() AT TIME ZONE 'UTC') BETWEEN event_time - INTERVAL '3 hours' AND event_time + INTERVAL '12 hours'
          )`,
       [userId, placeId]
     );

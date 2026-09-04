@@ -233,8 +233,8 @@ const VERIFIED_PRESENCE_SQL = `
         AND fm.status = 'accepted'
         AND f.venue_id = $2
         AND f.status IS DISTINCT FROM 'cancelled'
-        AND f.event_time BETWEEN NOW() - INTERVAL '12 hours'
-                             AND NOW() + INTERVAL '12 hours'
+        AND f.event_time BETWEEN (NOW() AT TIME ZONE 'UTC') - INTERVAL '12 hours'
+                             AND (NOW() AT TIME ZONE 'UTC') + INTERVAL '12 hours'
         AND (
           SELECT COUNT(*) FROM flock_members m
           WHERE m.flock_id = f.id AND m.status = 'accepted'

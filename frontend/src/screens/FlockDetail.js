@@ -58,6 +58,38 @@ import { submitVenueFeedback } from '../services/api';
 import { BirdieStill, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
 
+// The time editor's day chips are relative words (Tonight, Tomorrow, This
+// Weekend, Next Week). A plan that sits on none of those days, a Saturday
+// two weeks out say, used to open the editor on 'Tonight', so changing its
+// HOUR silently moved it to today for every member. When no chip lands on
+// the plan's own day, the day itself becomes the chip, as a YYYY-MM-DD key,
+// and resolves to that date at the chosen hour.
+const DATE_KEY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+const isDateKey = (day) => DATE_KEY_RE.test(String(day || ''));
+const dateKeyOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const sameLocalDay = (a, b) => a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+const hourOfChoice = (label) => {
+  const m = /^\s*(\d{1,2})\s*(AM|PM)\s*$/i.exec(String(label || ''));
+  if (!m) return 21;
+  const h = parseInt(m[1], 10) % 12;
+  return /pm/i.test(m[2]) ? h + 12 : h;
+};
+const resolveEditTime = (resolveEventTime, day, hour) => {
+  const m = DATE_KEY_RE.exec(String(day || ''));
+  if (!m) return resolveEventTime(day, hour);
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), hourOfChoice(hour), 0, 0, 0);
+};
+const dayChipLabel = (day) => {
+  const m = DATE_KEY_RE.exec(String(day || ''));
+  if (!m) return day;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+};
+// The chip that lands on the plan's own day at this hour, else the day itself.
+const dayChipFor = (resolveEventTime, dayChoices, when, hourLabel) => {
+  const hit = dayChoices.find((d) => sameLocalDay(resolveEventTime(d, hourLabel), when));
+  return hit || dateKeyOf(when);
+};
+
 export default function FlockDetail({
   // Module-level helpers, constants and components that live in App.js and
   // are shared with screens other than this one, so they stay declared there
@@ -692,11 +724,14 @@ export default function FlockDetail({
                   if (when && !isNaN(when.getTime())) {
                     const h = when.getHours();
                     const label = `${((h + 11) % 12) + 1} ${h < 12 ? 'AM' : 'PM'}`;
-                    setTimeEditHour(FLOCK_HOUR_CHOICES.includes(label) ? label : '9 PM');
+                    const hourLabel = FLOCK_HOUR_CHOICES.includes(label) ? label : '9 PM';
+                    setTimeEditHour(hourLabel);
+                    // The plan's own day, not 'Tonight': see dayChipFor above.
+                    setTimeEditDay(dayChipFor(resolveEventTime, FLOCK_DAY_CHOICES, when, hourLabel));
                   } else {
                     setTimeEditHour('9 PM');
+                    setTimeEditDay('Tonight');
                   }
-                  setTimeEditDay('Tonight');
                   setShowTimeEditor(true);
                 }} style={{ padding: '7px 12px', borderRadius: '10px', border: '1px solid var(--border-mid)', backgroundColor: 'transparent', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>
                   {flock.eventTime ? 'Change' : 'Set time'}
@@ -751,8 +786,8 @@ export default function FlockDetail({
 
               <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '6px' }}>Day</label>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', marginBottom: '14px' }}>
-                {FLOCK_DAY_CHOICES.map(d => (
-                  <button className="hit44" key={d} onClick={() => setTimeEditDay(d)} style={{ padding: '10px', borderRadius: '10px', border: timeEditDay === d ? `2px solid ${colors.steel}` : '1.5px solid var(--border-default)', backgroundColor: timeEditDay === d ? 'rgba(45,90,135,0.12)' : 'var(--bg-card-solid)', color: 'var(--text-primary)', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>{d}</button>
+                {[...FLOCK_DAY_CHOICES, ...(isDateKey(timeEditDay) ? [timeEditDay] : [])].map(d => (
+                  <button className="hit44" key={d} onClick={() => setTimeEditDay(d)} style={{ padding: '10px', borderRadius: '10px', border: timeEditDay === d ? `2px solid ${colors.steel}` : '1.5px solid var(--border-default)', backgroundColor: timeEditDay === d ? 'rgba(45,90,135,0.12)' : 'var(--bg-card-solid)', color: 'var(--text-primary)', fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer' }}>{dayChipLabel(d)}</button>
                 ))}
               </div>
 
@@ -763,7 +798,7 @@ export default function FlockDetail({
                 ))}
               </div>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 16px', fontWeight: '500' }}>
-                {resolveEventTime(timeEditDay, timeEditHour).toLocaleString([], { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                {resolveEditTime(resolveEventTime, timeEditDay, timeEditHour).toLocaleString([], { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
               </p>
 
               <div style={{ display: 'flex', gap: '8px' }}>
@@ -771,7 +806,7 @@ export default function FlockDetail({
                 <button className="hit44 glass-btn glass-navy" disabled={savingEventTime} onClick={async () => {
                   setSavingEventTime(true);
                   try {
-                    await saveFlockEventTime(flock.id, resolveEventTime(timeEditDay, timeEditHour).toISOString());
+                    await saveFlockEventTime(flock.id, resolveEditTime(resolveEventTime, timeEditDay, timeEditHour).toISOString());
                     setShowTimeEditor(false);
                     showToast('Time updated');
                   } catch (err) {
