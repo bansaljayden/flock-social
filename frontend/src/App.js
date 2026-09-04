@@ -365,11 +365,22 @@ const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venue
     );
   }
   const opts = [
-    // Same words the score ladder uses (crowdLabelFor). 'Packed' was a sixth
-    // vocabulary item that appears nowhere else in the product.
+    // The words the score ladder actually uses (crowdLabelFor: Quiet, Not Busy,
+    // Steady, Busy, Packed), narrowed to the three buckets this control has.
+    //
+    // The comment here used to claim these WERE the ladder's words and that
+    // 'Packed' appeared nowhere else in the product. Both stopped being true on
+    // 2026-08-28, when the ladder was re-cut and gained Packed. So somebody
+    // looking at a card reading "Packed 91" tapped "There now? Rate the crowd"
+    // and was offered Quiet / Moderate / Very Busy: no option matched the word
+    // on their screen and two of the three were words nothing else in the app
+    // says (backend/routes/badge.js calls them legacy aliases).
+    //
+    // Only the WORDS change. `level` is what travels to the server and what the
+    // training export reads, so the stored data is untouched.
     { level: 1, label: 'Quiet' },
-    { level: 2, label: 'Moderate' },
-    { level: 3, label: 'Very Busy' },
+    { level: 2, label: 'Steady' },
+    { level: 3, label: 'Packed' },
   ];
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap', margin: '0 0 8px', animation: 'fadeSlideIn 0.25s ease-out' }}>
@@ -1158,9 +1169,20 @@ const sameSend = (local, server) => {
   // rendered twice, and thirty seconds later the first copy said "Didn't send.
   // Tap to retry", which sent a third. Text and type already discriminate, and
   // the lookup is scoped to one conversation.
+  // ANY of the three. Migration 053 gave history rows a thumbnail and the
+  // history read now BLANKS image_url whenever a thumb exists
+  // (routes/messages.js: `CASE WHEN m.thumb_url IS NOT NULL THEN NULL ELSE
+  // m.image_url END`), which is right for the payload and quietly reopened the
+  // bug this function was written to close. Nearly every photo gets a thumb, so
+  // nearly every photo stopped matching its own server row: a send that timed
+  // out but actually landed came back on the next open as a SECOND bubble
+  // reading "Didn't send. Tap to retry", the failed copy was rewritten to
+  // localStorage every time, and tapping retry posted a third. The socket echo
+  // was never affected because it carries image_url from INSERT ... RETURNING.
+  const serverHasImage = !!(server.image_url || server.thumb_url || server.thumb || null);
   return trim(local.text) === trim(server.message_text)
     && (local.message_type || 'text') === (server.message_type || 'text')
-    && !!localImage === !!(server.image_url || null);
+    && !!localImage === serverHasImage;
 };
 
 // Message and DM primary keys are SERIAL, i.e. int4. Optimistic bubbles are
@@ -1276,6 +1298,7 @@ const mergeHistory = (local, history, { keepOlder = false } = {}) => {
     message_text: h.text,
     message_type: h.message_type,
     image_url: h.image_url || h.image || null,
+    thumb: h.thumb || h.thumb_url || null,
   })));
 
   let oldestId = null;
@@ -6703,6 +6726,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
     let cancelled = false;
     setCrowdLoading(true);
+    // Cleared per venue, the way openVenueDetail clears it. A failure that
+    // outlived the venue it belonged to would caption the next one.
+    setCrowdFetchFailed(false);
     if (!restoredStale) {
       setCrowdData(null);
       setCrowdAlternatives([]);
@@ -6720,7 +6746,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         }
         if (data) getCrowdAlternatives(pid).then(res => { if (!cancelled) setCrowdAlternatives(res.alternatives || []); }).catch(() => {});
       })
-      .catch(() => {})
+      .catch(() => {
+        // Recorded, not swallowed. openVenueDetail sets this and the map-marker
+        // path did not, so a crowd read that 429'd on the Places budget or 502'd
+        // left `cd` null with no failure flag: the dial and all twelve bars
+        // pulsed as skeletons forever under a chip reading ESTIMATED, with no
+        // sentence and no retry. The same failure reached through a search row
+        // correctly said "No crowd read for this spot right now."
+        if (!cancelled) setCrowdFetchFailed(true);
+      })
       .finally(() => { if (!cancelled) setCrowdLoading(false); });
     return () => { cancelled = true; };
   }, [activeVenue]);
@@ -8752,8 +8786,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (readPutRef.current !== key) {
       readPutRef.current = key;
       // Best effort, same contract as markDmRead: a failed mark is a stale
-      // badge on the next load, not a lost message.
-      markFlockRead(selectedFlockId, newest).catch(() => {});
+      // badge on the next load, not a lost message. But the key is released on
+      // failure, exactly as loadFlockMessages releases its throttle below. The
+      // stamp used to stand whatever happened, so one failed PUT (and the time
+      // this fails is when the connection is flaky, which is when you are most
+      // likely to be opening a chat) left last_read_message_id where it was
+      // FOR THE SESSION: the row badge came back on the next flocks read, the
+      // app icon kept counting the same messages, and reopening the same chat
+      // did not retry because the key had not changed.
+      markFlockRead(selectedFlockId, newest).catch(() => {
+        if (readPutRef.current === key) readPutRef.current = '';
+      });
     }
   }, [currentScreen, selectedFlockId, selectedFlock?.messages, docVisible]);
 
@@ -8896,8 +8939,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // comes back as a ghost failure.
         const failed = readFailedFlockMessages(flockId).filter(fm => !msgs.some(h => sameSend(fm, {
           message_text: h.text, message_type: h.message_type, image_url: h.image || h.image_url || null,
+          thumb: h.thumb || h.thumb_url || null,
         })));
         writeFailedFlockMessages(flockId, failed);
+        // A read that does NOT keep older rows truncates the list back to this
+        // page, so whatever was paged in before is gone and the pages exist
+        // again. Nothing cleared the exhausted flag, so one walk to the top of a
+        // long chat hid "Load earlier messages" for the rest of the session:
+        // leave the chat, come back to the newest fifty, and the control that
+        // reaches the other two hundred and fifty is not on the screen.
+        if (!keepOlder) {
+          setFlockAtTop(t => {
+            if (!t[flockId]) return t;
+            const next = { ...t };
+            delete next[flockId];
+            return next;
+          });
+        }
         setFlocks(prev => prev.map(f => {
           if (f.id !== flockId) return f;
           const have = new Set((f.messages || []).map(m => m.id));
@@ -9788,11 +9846,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // the same rows.
   useEffect(() => {
     const unsub = onFlockMessageUnsent((data) => {
-      setFlocks(prev => prev.map(f => (
-        f.id === data.flockId
-          ? { ...f, messages: (f.messages || []).filter(m => m.id !== data.messageId) }
-          : f
-      )));
+      setFlocks(prev => prev.map(f => {
+        if (f.id !== data.flockId) return f;
+        const messages = (f.messages || []).filter(m => m.id !== data.messageId);
+        // The badge is a server-backed COUNT since migration 056, not something
+        // derived from this array, so dropping the bubble left the row saying
+        // one unread about a message that no longer exists. The server's own
+        // unread_count already excludes it; this is the same subtraction on the
+        // copy we are holding, and only when the row was actually removed.
+        const removed = messages.length !== (f.messages || []).length;
+        return {
+          ...f,
+          messages,
+          ...(removed && (f.unread || 0) > 0 ? { unread: f.unread - 1 } : {}),
+        };
+      }));
     });
     return unsub;
   }, []);
@@ -10031,6 +10099,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // venue_data was missing from this list, retrying a card would have re-sent
   // `Check out X!` as a plain sentence with no card under it, which is why the
   // HTTP path used to DELETE a refused card instead of offering a retry.
+  // The other half of a failed bubble. Retry was the ONLY control on one, and
+  // some sends can never succeed: an image Vision refuses, an animated file,
+  // text the profanity filter rejects. Those bubbles were written to
+  // localStorage, restored on every open of that chat, forever, offering a
+  // retry that re-ran the same refusal. That is a state with no way out, and
+  // for an image it also parks a data URL of a few hundred kilobytes in a five
+  // megabyte store that fails silently when it fills.
+  const discardFailedMessage = useCallback((flockId, failedMsg) => {
+    if (!flockId || !failedMsg) return;
+    removeFailedFlockMessage(flockId, failedMsg.id);
+    setFlocks(prev => prev.map(f => (f.id === flockId
+      ? { ...f, messages: (f.messages || []).filter(m => m.id !== failedMsg.id) }
+      : f)));
+  }, []);
+
   const retryFailedMessage = useCallback((flockId, failedMsg) => {
     // The old failed bubble is dropped from state and from the reload store; the
     // resend below mints a fresh one that persists again only if it fails again.
@@ -10154,7 +10237,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // the server echo lands. Reacting to one would address a row the server has
     // never issued, so the local toggle stands and nothing is sent, exactly as
     // the send path treats a pending echo.
-    if (typeof messageId !== 'number' || typeof flockId !== 'number') return;
+    // isServerId, not typeof number. An optimistic bubble's id is Date.now(),
+    // which IS a number, so this guard passed and the request went out against
+    // an id above int4. The route's param validator carries no message, so
+    // express-validator's default came back and the toast read "Your reaction
+    // didn't save. Invalid value" to somebody who had tapped a heart on a
+    // message still saying Sending. The Unsend control two hundred lines away
+    // already tests the ceiling.
+    if (!isServerId(messageId) || typeof flockId !== 'number') return;
 
     (hadIt ? removeReaction(messageId, emoji) : addReaction(messageId, emoji))
       .catch((err) => {
@@ -10839,9 +10929,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // navigated away and back. The server hides their messages from the next
     // fetch; this is the copy already rendered, and their seat in the roster.
     setFlocks(prev => prev.map(f => {
-      const messages = Array.isArray(f.messages) ? f.messages.filter(m => String(m.senderId) !== id) : null;
+      // Their reactions on OTHER people's messages go too. The server pays a
+      // filter to keep those off this screen (routes/messages.js drops a
+      // blocked user's reaction rows for exactly this reason) and the client
+      // cleanup only took their own messages, so the pill on a third member's
+      // message kept counting them until the next history read.
+      const messages = Array.isArray(f.messages)
+        ? f.messages
+          .filter(m => String(m.senderId) !== id)
+          .map(m => {
+            if (!Array.isArray(m.reactions)) return m;
+            const kept = m.reactions.filter(r => String(r && r.user_id) !== id);
+            return kept.length === m.reactions.length ? m : { ...m, reactions: kept };
+          })
+        : null;
       const members = Array.isArray(f.members) ? f.members.filter(m => String(m.id) !== id) : null;
-      const msgChanged = messages && messages.length !== f.messages.length;
+      // Length is no longer the whole test: stripping a blocked person's
+      // REACTION off somebody else's message leaves the count identical and
+      // replaces the row, so a length comparison would throw that work away.
+      const msgChanged = messages && (messages.length !== f.messages.length
+        || messages.some((m, i) => m !== f.messages[i]));
       const memChanged = members && members.length !== f.members.length;
       if (!msgChanged && !memChanged) return f;
       return { ...f, ...(msgChanged ? { messages } : {}), ...(memChanged ? { members } : {}) };
@@ -13770,8 +13877,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 // used to read `weather != null`, so a ten minute old cached
                 // response still claimed LIVE. lastUpdated is on the response
                 // and was read nowhere in this file.
+                //
+                // AND recent is not enough either. `lastUpdated` is stamped when
+                // the route BUILDS the payload, so on any uncached request it is
+                // seconds old and this was true for every venue in the product,
+                // including one with no baseline whose number came from the
+                // category curve. The card then drew a pulsing green LIVE over
+                // an attribution line eight rows below reading "An estimate from
+                // typical patterns for this kind of place". The route ships
+                // predictionMethod for exactly this question, so ask it: only a
+                // number the model actually produced may call itself live.
                 const isLiveNow = (() => {
                   if (!cd?.lastUpdated) return false;
+                  const method = String(cd.predictionMethod || '');
+                  if (!method || method.startsWith('rule_engine')) return false;
                   const t = Date.parse(cd.lastUpdated);
                   return Number.isFinite(t) && (Date.now() - t) < CROWD_FRESH_MS;
                 })();
@@ -14138,11 +14257,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 </m.div>
 
                 {/* Quieter Options */}
-                {!venueOwnerView && (crowdAlternatives.length > 0 || (!cd && allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category).length > 0)) && (
+                {/* `v.crowd < score` used to do the filtering, and
+                    venuesToMapPins sets crowd to NULL for a venue with no
+                    reading, on purpose. A relational comparison coerces null to
+                    0, so every unscored venue passed "quieter than this" and
+                    `a.crowd - b.crowd` sorted them to the front as the quietest
+                    places nearby, each captioned "No reading yet". The outer
+                    condition also only checked the CATEGORY filter, so the
+                    heading could render over an empty row. Both now ask the same
+                    question, and both require two real numbers. */}
+                {!venueOwnerView && (crowdAlternatives.length > 0 || (!cd && typeof score === 'number' && allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category && typeof v.crowd === 'number' && v.crowd < score && v.opening_hours?.openNow !== false).length > 0)) && (
                 <m.div initial={{ opacity: 0, y: 14 }} animate={cd ? { opacity: 1, y: 0 } : { opacity: 0, y: 14 }} transition={{ delay: 1.0, duration: 0.4, ease: 'easeOut' }}>
                   <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', marginBottom: '4px', textTransform: 'uppercase' }}>Less Crowded Nearby</p>
                   <div style={{ display: 'flex', gap: '6px' }}>
-                    {(crowdAlternatives.length > 0 ? crowdAlternatives.slice(0, 2) : allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category && v.crowd < score && v.opening_hours?.openNow !== false).sort((a, b) => a.crowd - b.crowd).slice(0, 2)).map((v, i) => (
+                    {(crowdAlternatives.length > 0 ? crowdAlternatives.slice(0, 2) : allVenues.filter(v => v.id !== activeVenue.id && v.category === activeVenue.category && typeof v.crowd === 'number' && typeof score === 'number' && v.crowd < score && v.opening_hours?.openNow !== false).sort((a, b) => a.crowd - b.crowd).slice(0, 2)).map((v, i) => (
                       <button key={v.placeId || v.id || i} className="hit44 glass-btn glass-secondary" onClick={() => {
                         const pid = v.placeId || v.place_id;
                         if (pid) {
@@ -17173,6 +17301,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         profilePic,
         renderFlockInviteRow,
         retryFailedMessage,
+        discardFailedMessage,
         selectedFlockId,
         sendChatMessage,
         setBillPaidBy,
@@ -18149,7 +18278,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                                     the label that keeps it honest (noun is
                                     category-derived server-side), and the
                                     detail card one tap away says the rest. */}
-                                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdColor }}>{prediction?.confidenceBasis === 'owner_report' ? `${prediction?.ownerReport?.noun || 'venue'} says ${crowdScore}%` : `${crowdScore}%`}</span>
+                                <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdColor }}>{prediction?.confidenceBasis === 'owner_report' ? `${prediction?.ownerReport?.noun || 'venue'} says ${crowdScore}` : `${crowdScore}`}</span>
                               </div>
                               )}
                             </>
@@ -18180,7 +18309,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                             {!venue.photo_url && crowdScore != null && (
                               <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: crowdInk, backgroundColor: `${crowdColor}12`, padding: '2px 8px', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '3px' }}>
                                 <div style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: crowdColor }} />
-                                {prediction?.confidenceBasis === 'owner_report' ? `${((prediction?.ownerReport?.noun || 'venue').charAt(0).toUpperCase())}${(prediction?.ownerReport?.noun || 'venue').slice(1)} says ${crowdScore}%` : `${crowdLabel} ${crowdScore}%`}
+                                {prediction?.confidenceBasis === 'owner_report' ? `${((prediction?.ownerReport?.noun || 'venue').charAt(0).toUpperCase())}${(prediction?.ownerReport?.noun || 'venue').slice(1)} says ${crowdScore}` : `${crowdLabel} ${crowdScore}`}
                               </span>
                             )}
                             {/* Photo cards carry the bare percentage in their

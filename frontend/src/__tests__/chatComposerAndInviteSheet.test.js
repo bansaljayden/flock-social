@@ -203,6 +203,7 @@ function chatProps(over = {}) {
     profilePic: null,
     renderFlockInviteRow: () => null,
     retryFailedMessage: fn(),
+    discardFailedMessage: fn(),
     selectedFlockId: 1,
     sendChatMessage: fn(),
     setBillPaidBy: fn(),
