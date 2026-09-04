@@ -49,3 +49,10 @@ test('check-ins are visible to the sheet and the dashboard without a hardware se
   expect(app).toMatch(/\{sensorData && !sensorData\.sensor_data && sensorData\.recent_checkins > 0 && \(/);
   expect(dash).toMatch(/\{ownerSensorData && !ownerSensorData\.sensor_data && \(/);
 });
+
+test('a signed-out tap is told the check-in is saved once they sign in', () => {
+  expect(app).toMatch(/const \[checkinNote, setCheckinNote\] = useState\(\(\) => \(/);
+  expect(app).toMatch(/'Sign in and this check-in is saved to your account\.'/);
+  expect(app).toMatch(/const noticeText = linkNote \|\| sessionNote \|\| \(!authUser \? checkinNote : ''\);/);
+  expect(app).toMatch(/setLinkNote\(''\); setSessionNote\(''\); setCheckinNote\(''\);/);
+});
