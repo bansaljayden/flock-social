@@ -135,7 +135,15 @@ async function getVenueEntitlement(userId) {
   const rows = r.rows;
   if (!Array.isArray(rows)) throw new Error('venue tier lookup returned no rows array');
   const row = rows[0];
-  const tier = resolveGrantedTier(row, Date.now());
+  // While venue billing is switched off there is nothing to be below: the
+  // gate (requireVenueTier) already waves every request through in that
+  // state, routes/advisor.js and services/venueDigest.js already read 'pro'
+  // for it, and this reader alone kept answering the column's default,
+  // 'free'. The dashboard builds its capability set from THIS answer, so a
+  // verified owner opened Roost to three locked tabs and no advisor while
+  // the server would have served all of it. Grant metadata below is still
+  // reported as recorded, so a comped venue can be told what it holds.
+  const tier = venueBillingEnabled() ? resolveGrantedTier(row, Date.now()) : 'pro';
   return {
     tier,
     // Null unless a grant row exists, so a caller can tell "granted, with no end
