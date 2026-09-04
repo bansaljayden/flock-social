@@ -182,7 +182,11 @@ const whenLabel = (d) => {
   // small ambiguity that makes someone answer for the wrong night.
   if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
   const day = d.toLocaleDateString(undefined, opts);
-  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  // With the zone name. The link preview (frontend/api/invite-preview.js)
+  // renders the plan in the venue's zone WITH a zone name, and this page
+  // renders it in the reader's zone; a guest in another zone saw "9:00 PM
+  // EDT" in iMessage and "6:00 PM" after tapping, with nothing to say why.
+  const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', timeZoneName: 'short' });
   return `${day} ${DOT} ${time}`;
 };
 
