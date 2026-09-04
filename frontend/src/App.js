@@ -5266,9 +5266,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setFriendStatuses(prev => ({ ...prev, [userId]: 'accepted' }));
       showToast('Friend request accepted!');
     } catch (err) {
+      // The server's "confirm your email" refusal used to land here as a red
+      // toast with no resend, beside a request that stayed on screen.
+      if (needsEmailVerification(err, 'add friends')) return;
       showToast(err.message || 'Failed to accept', 'error');
     }
-  }, [showToast]);
+  }, [showToast, needsEmailVerification]);
 
   const handleDeclineFriendRequest = useCallback(async (userId) => {
     try {
@@ -5416,9 +5419,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
                 setShowQrScanner(false);
                 // Add friend by code
                 setFriendCodeInput(parsed.code);
-                const data = await addFriendByCode(parsed.code);
-                showToast(data.message || 'Friend request sent!');
-                if (data.user) setFriendStatuses(prev => ({ ...prev, [data.user.id]: data.status || 'pending' }));
+                // Own guard: a server refusal is not a bad QR code.
+                try {
+                  const data = await addFriendByCode(parsed.code);
+                  showToast(data.message || 'Friend request sent!');
+                  if (data.user) setFriendStatuses(prev => ({ ...prev, [data.user.id]: data.status || 'pending' }));
+                } catch (err) {
+                  if (needsEmailVerification(err, 'add friends')) return;
+                  showToast(err.message || 'Could not add that friend. Try again.', 'error');
+                }
               } else {
                 setQrScanError('Not a Flock QR code');
               }
@@ -5442,7 +5451,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         );
       }
     }, 300);
-  }, [showToast]);
+  }, [showToast, needsEmailVerification]);
 
   const stopQrScanner = useCallback(async () => {
     if (qrScannerRef.current) {
@@ -5557,11 +5566,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setFlockInviteSelected([]);
       setFlockInviteSearch('');
     } catch (err) {
+      if (needsEmailVerification(err, 'invite people')) return;
       showToast(err.message || 'Failed to send invites', 'error');
     } finally {
       setFlockInviteSending(false);
     }
-  }, [flockInviteSelected, selectedFlockId, showToast]);
+  }, [flockInviteSelected, selectedFlockId, showToast, needsEmailVerification]);
 
   // Accepting a flock invite is declared further down this component, beside
   // loadFlocks, because it has to call it. See the note there.
@@ -15238,6 +15248,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
     try {
       await requestVerificationNow();
     } catch (err) {
+      if (needsEmailVerification(err, 'request verification')) return;
       setVerificationRequestError(err?.message || 'The request did not go through. Try again.');
     } finally {
       setVerificationRequestBusy(false);

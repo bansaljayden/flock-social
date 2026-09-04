@@ -458,7 +458,10 @@ export default function VenueOnboarding({
           await createVenueProfile(venueOnboardingData);
         } catch (err) {
           console.error('Failed to save venue profile:', err);
-          setVenueOnboardingError(err?.message || "That didn't save. Check your details and try again.");
+          // An unverified email is not a detail to check: say what to do.
+          setVenueOnboardingError(err?.data?.emailVerificationRequired
+            ? 'Confirm your email first. Open the link we sent to your inbox, then finish this step. Every answer here is kept.'
+            : (err?.message || "That didn't save. Check your details and try again."));
           return; // stay on the last step with every answer still filled in
         }
         setVenueOnboardingError('');
