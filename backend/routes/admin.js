@@ -972,6 +972,69 @@ const TAKEDOWN_TARGETS = {
 // here would be claiming a surface that does not exist.
 const WARN_SUBJECT = 'About your recent activity on Flock';
 
+// A ban used to land with no message at all: the account learned of it by
+// every request answering 403 and one boot screen. Sent after the commit and
+// best-effort, unlike the warning: a warning changes nothing else, so it is
+// delivered or refused; a ban has already changed everything and must stand
+// whether or not the mail goes.
+const BAN_SUBJECT = 'Your Flock account has been banned';
+
+function banEmailText(name) {
+  return [
+    `Hi ${name || 'there'},`,
+    '',
+    'A moderator reviewed a report about your account. What they found broke our '
+    + 'Community Guidelines in a way that ends your access, so your account is banned. '
+    + 'A ban is permanent.',
+    '',
+    'You can still delete your account from the app, and SOS still works.',
+    '',
+    'The guidelines are at https://www.flockcorp.com/guidelines. '
+    + 'If you think this was a mistake, reply to this email and a person will read it.',
+    '',
+    'The Flock Team',
+  ].join('\n');
+}
+
+function banEmailHtml(name) {
+  const safe = emailService.escapeHtml(String(name || 'there'));
+  return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:15px;line-height:1.5;color:#16233a">
+    <p>Hi ${safe},</p>
+    <p>A moderator reviewed a report about your account. What they found broke our Community Guidelines in a way that ends your access, so your account is banned. A ban is permanent.</p>
+    <p>You can still delete your account from the app, and SOS still works.</p>
+    <p>The guidelines are at <a href="https://www.flockcorp.com/guidelines">flockcorp.com/guidelines</a>. If you think this was a mistake, reply to this email and a person will read it.</p>
+    <p>The Flock Team</p>
+  </div>`;
+}
+
+// The reporter hears back once. Before this, "Report received" was the last
+// thing they ever saw about it. No outcome and no name, so nobody can work
+// out from the mail who reported them or what happened to them.
+const REPORT_FOLLOWUP_SUBJECT = 'About something you reported on Flock';
+
+function reportFollowupText(name) {
+  return [
+    `Hi ${name || 'there'},`,
+    '',
+    'A moderator reviewed what you reported and it has been handled. We do not say '
+    + 'what was done or to whom, so nobody can tell who reported them.',
+    '',
+    'Thank you for saying something.',
+    '',
+    'The Flock Team',
+  ].join('\n');
+}
+
+function reportFollowupHtml(name) {
+  const safe = emailService.escapeHtml(String(name || 'there'));
+  return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:15px;line-height:1.5;color:#16233a">
+    <p>Hi ${safe},</p>
+    <p>A moderator reviewed what you reported and it has been handled. We do not say what was done or to whom, so nobody can tell who reported them.</p>
+    <p>Thank you for saying something.</p>
+    <p>The Flock Team</p>
+  </div>`;
+}
+
 function warnEmailText(name) {
   return [
     `Hi ${name || 'there'},`,
@@ -1361,6 +1424,30 @@ router.put('/reports/:id', async (req, res) => {
     if (banTargetId) {
       const io = req.app.get('io');
       if (io) io.in(`user:${banTargetId}`).disconnectSockets(true);
+    }
+
+    // Told. Both after the commit, both best-effort, neither able to change
+    // the answer above. See BAN_SUBJECT and REPORT_FOLLOWUP_SUBJECT.
+    if (banTargetId) {
+      pool.query('SELECT name, email FROM users WHERE id = $1', [banTargetId])
+        .then(async (r) => {
+          const t = r.rows[0];
+          if (!t || !emailService.isMailableAddress(t.email)) return;
+          await emailService.sendEmail({ to: t.email, subject: BAN_SUBJECT, text: banEmailText(t.name), html: banEmailHtml(t.name) });
+        })
+        .catch((e) => console.error(`[MODERATION] ban notice for user ${banTargetId} not sent: ${e.message}`));
+    }
+    if (newStatus === 'resolved') {
+      pool.query(
+        'SELECT u.name, u.email FROM content_reports r JOIN users u ON u.id = r.reporter_id WHERE r.id = $1',
+        [reportId]
+      )
+        .then(async (r) => {
+          const t = r.rows[0];
+          if (!t || !emailService.isMailableAddress(t.email)) return;
+          await emailService.sendEmail({ to: t.email, subject: REPORT_FOLLOWUP_SUBJECT, text: reportFollowupText(t.name), html: reportFollowupHtml(t.name) });
+        })
+        .catch((e) => console.error(`[MODERATION] reporter follow-up for report ${reportId} not sent: ${e.message}`));
     }
 
     // Round 18: a takedown must bite as immediately as a ban does. Hiding a
