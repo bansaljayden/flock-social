@@ -660,6 +660,46 @@ function stopOutboxSweep() {
 
 async function enqueue(userId, title, body, data, reason, nextAttemptAt, expiresAt) {
   try {
+    if (reason === 'quiet') {
+      // ONE held row per conversation. Every debounce window through the
+      // night used to add its own row, and the table has no dedupe, so a busy
+      // overnight group chat released twenty to forty separate sends at
+      // 08:00, each with a sound. apns-collapse-id merges the visible line,
+      // not the alerts, which is the failure this file's header claims to
+      // prevent. The key is the one buildFcmMessage collapses on: the type
+      // and the conversation (flockId, else senderId). The newest words win
+      // and the hold's expiry is extended, so the morning gets one line that
+      // is current, not the first of forty.
+      const d = data && typeof data === 'object' ? data : {};
+      const scopeKey = d.flockId != null ? 'flockId' : (d.senderId != null ? 'senderId' : null);
+      // Its own guard: a merge that cannot run must fall through to the
+      // insert below, never cost the hold.
+      let merged = null;
+      try {
+        merged = await pool.query(
+          `UPDATE push_outbox
+              SET title = $3, body = $4, data = $5::jsonb,
+                  expires_at = GREATEST(expires_at, $6)
+            WHERE user_id = $1 AND reason = 'quiet'
+              AND COALESCE(data->>'type', '') = COALESCE($2, '')
+              AND ($7::text IS NULL OR data->>$7::text = $8::text)
+            RETURNING id`,
+          [
+            userId,
+            d.type != null ? String(d.type) : '',
+            String(title == null ? '' : title).slice(0, 500),
+            String(body == null ? '' : body).slice(0, 1000),
+            JSON.stringify(d),
+            expiresAt,
+            scopeKey,
+            scopeKey ? String(d[scopeKey]) : null,
+          ]
+        );
+      } catch (mergeErr) {
+        console.error('[Push] outbox merge failed, inserting instead:', mergeErr.message);
+      }
+      if (merged && merged.rowCount > 0) return true;
+    }
     await pool.query(
       `INSERT INTO push_outbox (user_id, reason, title, body, data, next_attempt_at, expires_at)
        VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)`,
@@ -804,10 +844,13 @@ async function deliver(userId, title, body, data, opts = {}) {
         // existed is not.
         if (held) return skip(userId, data, OUTCOME.QUIET_HELD, { quiet: true });
       } else {
-        // Released early, or the window moved under it (a DST shift). The
-        // sweep reschedules rather than the row being re-enqueued as a
-        // duplicate.
-        return { skipped: true, reason: OUTCOME.QUIET_HELD, requeue: true };
+        // Released early, the window moved under it (a DST shift), or a
+        // RETRY row crossed into the night. The sweep reschedules rather than
+        // re-enqueueing a duplicate, and it is told WHEN: without the release
+        // time, a retry row was bumped by its own backoff, kept meeting the
+        // window, and expired inside it, so a transient failure just before
+        // 02:00 was dropped rather than held.
+        return { skipped: true, reason: OUTCOME.QUIET_HELD, requeue: true, releaseAt: quietWindowEnd(zone) || null };
       }
     }
   }
@@ -912,7 +955,22 @@ async function sweepPushOutbox() {
 
     const sent = Number(result && result.sent) || 0;
     const stillQuiet = Boolean(result && result.requeue);
-    if (stillQuiet) continue; // next_attempt_at already moved by the claim
+    if (stillQuiet) {
+      // The claim moved next_attempt_at by the row's own backoff. For a row
+      // that has to wait for morning, that is the wrong clock: move it to the
+      // window's end and keep it alive until then, whatever its reason.
+      const at = result.releaseAt instanceof Date && !Number.isNaN(result.releaseAt.getTime()) ? result.releaseAt : null;
+      if (at) {
+        await pool.query(
+          `UPDATE push_outbox
+              SET next_attempt_at = $2,
+                  expires_at = GREATEST(expires_at, $2 + INTERVAL '1 hour')
+            WHERE id = $1`,
+          [row.id, at]
+        ).catch((err) => console.error('[Push] outbox reschedule failed:', err.message));
+      }
+      continue;
+    }
     if (sent > 0) { drop.push(row.id); continue; }
     if (result && result.skipped) { drop.push(row.id); continue; } // never becomes visible
     // Nothing failed and nothing sent means the account has no registered

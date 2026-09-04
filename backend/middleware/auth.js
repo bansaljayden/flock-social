@@ -73,7 +73,16 @@ function signUserToken(user) {
 // in the same file, /logout-all, and the password change in routes/users.js
 // (which this comment used to record as the outstanding gap — it is closed).
 function revokeUserSessions(io, userId) {
-  if (!io || userId === undefined || userId === null) return false;
+  if (userId === undefined || userId === null) return false;
+  // The device rows go with the sessions. A revoke (password change, reset,
+  // sign out everywhere, a squatted address released) makes every token
+  // dead, and the client's own unregister cannot authenticate with a dead
+  // token, so the rows stayed and pushes kept landing on devices that were
+  // no longer signed in. Each device that signs in again re-registers.
+  // Fire-and-forget: a revoke must not wait on, or fail on, this delete.
+  pool.query('DELETE FROM device_tokens WHERE user_id = $1', [userId])
+    .catch((err) => console.error(`[auth] device token revocation failed for user ${userId}:`, err.message));
+  if (!io) return false;
   try {
     io.in(`user:${userId}`).disconnectSockets(true);
     return true;
