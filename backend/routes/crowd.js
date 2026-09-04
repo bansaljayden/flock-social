@@ -1645,6 +1645,29 @@ router.get('/:placeId/alternatives',
 
       // Search nearby venues of similar type
       const primaryType = target.types[0] || 'restaurant';
+
+      // THE SEARCH IS CACHED SEPARATELY FROM THE PAYLOAD, and the two expire for
+      // different reasons.
+      //
+      // The payload below is deliberately NOT remembered when any row carries an
+      // owner's live reading, because that reading is perishable and retractable
+      // and must never be served from a ten minute cache. Correct. But the
+      // payload also contains the result of a Google Text Search, which always
+      // costs a billed unit, and which is not perishable at all: it answers
+      // "which places of this type are within two kilometres", and that does not
+      // change because a landlord moved a slider. So one owner asserting a
+      // reading made every /alternatives request naming that venue OR any of its
+      // listed neighbours re-buy a Text Search, for the ninety minutes the
+      // reading lives.
+      //
+      // Keyed on the question the search actually asks: the type, and the centre
+      // bucketed to two decimals, which is coarser than the 2 km radius for the
+      // same reason the event cache is. It shares the ten minute TTL every entry
+      // in this map has, which is the right order for it: a neighbourhood's list
+      // of restaurants is stable, and a stale entry costs a newly opened place
+      // going unlisted for ten minutes rather than a wrong number on a card.
+      const searchCacheKey = `altsearch:${primaryType}:${lat.toFixed(2)},${lon.toFixed(2)}`;
+      const cachedSearch = getCached(searchCacheKey);
       // Wrapped for the same reason as the target fetch above: the round-12
       // deadline makes a rejection here a normal upstream outcome, and it used
       // to leave as a 500 while the identical failure one status check later
@@ -1652,27 +1675,38 @@ router.get('/:placeId/alternatives',
       // asking failed.
       let searchResponse;
       let searchData;
-      try {
-        searchResponse = await fetch('https://places.googleapis.com/v1/places:searchText', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Goog-Api-Key': API_KEY,
-            'X-Goog-FieldMask': 'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.types,places.location,places.currentOpeningHours,places.utcOffsetMinutes',
-          },
-          body: JSON.stringify({
-            textQuery: primaryType,
-            locationBias: {
-              circle: { center: { latitude: lat, longitude: lon }, radius: 2000.0 },
+      if (cachedSearch) {
+        // Shaped like the upstream answer so every line below is unchanged.
+        searchData = cachedSearch;
+        searchResponse = { ok: true, status: 200 };
+      } else {
+        try {
+          searchResponse = await fetch('https://places.googleapis.com/v1/places:searchText', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Goog-Api-Key': API_KEY,
+              'X-Goog-FieldMask': 'places.id,places.displayName,places.rating,places.userRatingCount,places.priceLevel,places.types,places.location,places.currentOpeningHours,places.utcOffsetMinutes',
             },
-            maxResultCount: 10,
-          }),
-          signal: upstreamSignal('places'), // round 12
-        });
-        searchData = await searchResponse.json();
-      } catch (netErr) {
-        console.error('[Crowd] Alternatives search unreachable:', netErr.message);
-        return res.status(502).json({ error: 'Could not load nearby venues right now', unavailable: true });
+            body: JSON.stringify({
+              textQuery: primaryType,
+              locationBias: {
+                circle: { center: { latitude: lat, longitude: lon }, radius: 2000.0 },
+              },
+              maxResultCount: 10,
+            }),
+            signal: upstreamSignal('places'), // round 12
+          });
+          searchData = await searchResponse.json();
+          // ONLY A REAL ANSWER IS REMEMBERED. A quota refusal or an outage is
+          // handled below and must never be cached as though it were a list of
+          // venues, or one 429 would publish "nothing quieter nearby" for ten
+          // minutes to everyone who asked.
+          if (searchResponse.ok && !searchData.error) setCache(searchCacheKey, searchData);
+        } catch (netErr) {
+          console.error('[Crowd] Alternatives search unreachable:', netErr.message);
+          return res.status(502).json({ error: 'Could not load nearby venues right now', unavailable: true });
+        }
       }
       // Round 19: `(searchData.places || [])` turned every upstream failure into
       // an empty neighbour list, and an empty list is this endpoint's way of
@@ -1896,4 +1930,14 @@ module.exports.__testables = { fetchVenueFromGoogle, feedbackWindow };
 // 038), and both are internal to the write helper — a test that could only
 // reach them through a whole HTTP round trip could not pin the edges (hour 0
 // is falsy; '4' is not a clock) where they actually break.
-module.exports.__test = { SERVE_SOURCES, clockField, detailServeStamp };
+module.exports.__test = {
+  SERVE_SOURCES,
+  clockField,
+  detailServeStamp,
+  // Exposed for the honesty tests in calibrationQueries.test.js and
+  // presenceParity.test.js. The neighbour
+  // search is cached across requests, so a case that wants to watch an upstream
+  // failure has to start from a cold key; without this it silently reads the
+  // answer a passing case left behind and asserts nothing at all.
+  clearCache: () => crowdCache.clear(),
+};
