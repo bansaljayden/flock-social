@@ -4423,6 +4423,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
   // Foreground push notification listener
   useEffect(() => {
     const unsubscribe = onForegroundMessage((notification) => {
+      // On the device the OS has already drawn this one. The messaging plugin
+      // presents foreground pushes with its default badge+sound+alert options
+      // (no presentationOptions in capacitor.config.ts) AND fires this event,
+      // so a toast here rendered the same message twice, banner then toast.
+      // The banner is the tappable one, so it stays and the toast goes. The
+      // web has no banner, so the toast is its only channel.
+      if (window.Capacitor?.isNativePlatform?.()) return;
       // Show as toast — the user is in the app but maybe on a different screen
       if (notification.title || notification.body) {
         window.dispatchEvent(new CustomEvent('flock-toast', { detail: { message: notification.body || notification.title, type: 'info' } }));
