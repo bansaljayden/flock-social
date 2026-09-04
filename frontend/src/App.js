@@ -17347,6 +17347,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           exportPassword,
           exportingData,
           flocks,
+          flocksError,
           friendCount,
           handleDeleteContact,
           handleEditContact,

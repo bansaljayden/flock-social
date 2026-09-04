@@ -99,6 +99,7 @@ export default function ProfileSettings({
   exportPassword,
   exportingData,
   flocks,
+  flocksError,
   friendCount,
   handleDeleteContact,
   handleEditContact,
@@ -622,7 +623,7 @@ export default function ProfileSettings({
 
         <div style={{ flex: 1, padding: '12px', overflowY: 'auto', marginTop: '-8px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginBottom: '12px' }}>
-            {[{ l: 'Flocks', v: flocks.length }, { l: 'Friends', v: friendCount ?? '\u2013' }, { l: 'Streak', v: streak ?? '\u2013', hasIcon: streak != null }, { l: 'Reliable', v: reliabilityScore != null ? `${Math.round(reliabilityScore)}%` : '–' }].map(s => (
+            {[{ l: 'Flocks', v: flocksError ? '–' : flocks.length }, { l: 'Friends', v: friendCount ?? '\u2013' }, { l: 'Streak', v: streak ?? '\u2013', hasIcon: streak != null }, { l: 'Reliable', v: reliabilityScore != null ? `${Math.round(reliabilityScore)}%` : '–' }].map(s => (
               <div key={s.l} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '8px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }}>
                 <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{s.v}{s.hasIcon && Icons.flame('#F59E0B', 16)}</p>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{s.l}</p>
