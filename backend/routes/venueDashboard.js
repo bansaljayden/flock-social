@@ -682,7 +682,7 @@ router.get('/incoming-flocks', requirePremium, async (req, res) => {
        FROM flocks f
        JOIN venue_votes vv ON vv.flock_id = f.id
        WHERE vv.venue_id = $1
-         AND (f.status IS NULL OR f.status IN ('active', 'confirmed'))
+         AND (f.status IS NULL OR f.status IN ('planning', 'confirmed'))
          AND f.event_time IS NOT NULL
          AND f.event_time > (NOW() AT TIME ZONE 'UTC') - INTERVAL '12 hours'
          AND f.event_time < (NOW() AT TIME ZONE 'UTC') + INTERVAL '7 days'
@@ -759,7 +759,7 @@ async function countUnattributedVotes(venue) {
        WHERE vv.venue_id IS NULL
          AND vp.business_name IS NOT NULL
          AND LOWER(BTRIM(vv.venue_name)) = LOWER(BTRIM(vp.business_name))
-         AND (f.status IS NULL OR f.status IN ('active', 'confirmed'))
+         AND (f.status IS NULL OR f.status IN ('planning', 'confirmed'))
          AND f.event_time IS NOT NULL
          AND f.event_time > (NOW() AT TIME ZONE 'UTC') - INTERVAL '12 hours'
          AND f.event_time < (NOW() AT TIME ZONE 'UTC') + INTERVAL '7 days'`,

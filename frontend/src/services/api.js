@@ -271,7 +271,10 @@ export function clearLocalSession() {
  */
 const DEFAULT_TIMEOUT_MS = 15000;
 const UPLOAD_TIMEOUT_MS = 90000; // uploads on weak signal are slow, not stuck
-const AI_TIMEOUT_MS = 60000; // Birdie can legitimately think for a while
+// 75 s: the server's turn budget is 45 s and one more model call can
+// follow it, so at 60 s the client blamed the person's signal for a turn
+// the server was still finishing (and had already charged).
+const AI_TIMEOUT_MS = 75000; // Birdie can legitimately think for a while
 // AND A REARMED DEADLINE HAS NO "FOREVER" IN IT, WHICH RULE 1 ABOVE DOES.
 //
 // The windows above are idle windows: each one is rearmed by every chunk that
