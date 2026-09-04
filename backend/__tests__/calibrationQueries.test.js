@@ -161,6 +161,11 @@ test.beforeEach(() => {
   NEARBY_FAILS = false;
   SCORES = {};
   OFFSETS = {};
+  // The neighbour search is cached across requests, keyed on type and centre,
+  // and every venue faked here shares one address and one type. Without this
+  // a case that scripts an upstream failure quietly reads the list a passing
+  // case left behind and asserts nothing at all.
+  crowdRouter.__test.clearCache();
 });
 
 async function call(method, path, body) {
