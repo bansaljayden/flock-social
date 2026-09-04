@@ -407,10 +407,16 @@ test('leave_flock detaches on any id but announces only for a real membership', 
   } finally { restore(); }
 });
 
-test('stop_sharing_location requires membership and targets the canonical room', async () => {
+test('stop_sharing_location requires membership and reaches the pin\'s holders', async () => {
+  // The audience moved from the flock ROOM to the same per-member fan-out
+  // update_location uses, because those are the people holding a pin: the room
+  // holds only whoever is on that chat screen right now, so a member on the Map
+  // tab got the pin and never the stop. The membership gate and the id
+  // coercion, which is what this test was originally about, are unchanged.
   __resetRateLimiters();
   let memberRows = [];
   const restore = mockPool([
+    [/user_id != \$2/, [{ user_id: 901 }]],
     [MEMBERSHIP, () => memberRows],
     [INVISIBLE, []],
   ]);
@@ -420,12 +426,14 @@ test('stop_sharing_location requires membership and targets the canonical room',
     registerHandlers(io, s);
 
     await fire(s, 'stop_sharing_location', { flockId: 4303 });
-    assert.ok(!s.emitted.some((e) => e.event === 'member_stopped_sharing'), 'non-member: silent');
+    assert.ok(!io.emitted.some((e) => e.event === 'member_stopped_sharing'), 'non-member: silent');
 
     memberRows = [{ id: 1 }];
     await fire(s, 'stop_sharing_location', { flockId: '4303' });
-    const stop = s.emitted.find((e) => e.event === 'member_stopped_sharing');
-    assert.strictEqual(stop.target, 'flock:4303', 'string ids resolve to the canonical room');
+    const stop = io.emitted.find((e) => e.event === 'member_stopped_sharing');
+    assert.ok(stop, 'a member who stops sharing tells nobody');
+    assert.strictEqual(stop.room, 'user:901');
+    assert.strictEqual(stop.payload.flockId, 4303, 'string ids are coerced before they reach a payload');
   } finally { restore(); }
 });
 
