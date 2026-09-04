@@ -246,7 +246,9 @@ export default function ChatDetail({
   olderLoading,
   openCameraViewfinder,
   openVenueDetail,
+  loadFlockVotes,
   openBirdie,
+  votesError,
   pendingImage,
   popularVenues,
   profilePic,
@@ -1830,6 +1832,13 @@ export default function ChatDetail({
                         </div>
                       );
                     })}
+                  </div>
+                ) : votesError ? (
+                  <div role="alert" style={{ padding: '20px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px', marginBottom: '16px' }}>
+                    <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 8px' }} />
+                    <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 4px', fontWeight: '500' }}>{votesError}</p>
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 12px' }}>Nobody's vote has been lost. This is the tally failing to load.</p>
+                    <button className="hit44 glass-btn glass-navy" onClick={() => loadFlockVotes(selectedFlockId)} style={{ padding: '10px 16px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
                   </div>
                 ) : (
                   <div style={{ padding: '20px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px', marginBottom: '16px' }}>
