@@ -101,13 +101,15 @@ describe('the three routes out, in order', () => {
     expect(how).toBe('downloaded');
   });
 
-  it('treats a cancelled share as done, not as a route that failed', async () => {
+  it('treats a cancelled share as cancelled, not as a route that failed', async () => {
     // The person saw the sheet and said no. Falling through would download a
     // file they just declined to save.
     const abort = Object.assign(new Error('cancelled'), { name: 'AbortError' });
     const { calls, deps } = harness({ canShare: true, shareImpl: () => { throw abort; } });
     const how = await deliverExport(PAYLOAD, deps);
-    expect(how).toBe('shared');
+    // 'cancelled', not 'shared': the caller keeps the sheet open and says
+    // nothing was saved, instead of a toast that the data is ready (2026-09-04).
+    expect(how).toBe('cancelled');
     expect(calls.clicked).toBe(0);
     expect(calls.copied).toBe(0);
   });

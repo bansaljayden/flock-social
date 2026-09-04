@@ -389,11 +389,13 @@ describe('privacy claims that depend on how the code behaves', () => {
     // Blocked accounts and Delete account both hang off the Profile screen.
     // There is no Settings screen between them, so no page may say there is.
     expect(app).toMatch(/\{ l: 'Blocked accounts', s: 'blocked'/);
-    expect(guidelines).toMatch(/<strong>Profile<\/strong> &rarr; <strong>Blocked accounts<\/strong>/);
+    // The tab is called You (App.js tab label); every page names it that way.
+    expect(guidelines).toMatch(/<strong>You<\/strong> &rarr; <strong>Blocked accounts<\/strong>/);
     expect(guidelines).not.toMatch(/Settings<\/strong> &rarr; <strong>Blocked/);
     expect(app).toMatch(/Delete account \(Apple Guideline 5\.1\.1\(v\)\)/);
-    expect(privacy).toMatch(/Profile &rarr; Delete account/);
-    expect(deletePage).toMatch(/<strong>Profile<\/strong> &rarr; <strong>Delete account<\/strong>/);
+    expect(privacy).toMatch(/You &rarr; scroll to the bottom &rarr; Delete account/);
+    expect(privacy).not.toMatch(/Profile &rarr; Delete account/);
+    expect(deletePage).toMatch(/<strong>You<\/strong> \(the last tab\) &rarr; scroll to the bottom &rarr; <strong>Delete account<\/strong>/);
 
     // Every reporting surface the guidelines promise has a report entry point.
     for (const type of ['flock_message', 'dm', 'profile', 'venue_review', 'guest_rsvp']) {

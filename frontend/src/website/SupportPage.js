@@ -41,7 +41,7 @@ const FAQ = [
   {
     q: 'Why am I not getting Flock notifications?',
     a: 'Open Settings → Notifications → Flock and confirm Allow Notifications is on. On iOS, '
-      + "also check that Focus modes aren't silencing them. Inside the app, go to Profile and "
+      + "also check that Focus modes aren't silencing them. Inside the app, go to You (the last tab) and "
       + 'check that Push Notifications shows as enabled.',
   },
   {
@@ -51,7 +51,7 @@ const FAQ = [
   },
   {
     q: 'How do I delete my account?',
-    a: "Open Flock and go to Profile → Delete account, then type DELETE to confirm. You'll "
+    a: "Open Flock and go to You → Delete account, then type DELETE to confirm. You'll "
       + 'also enter your password (or sign in again if you use Apple or Google) so nobody else '
       + 'can delete your account from a borrowed phone. This immediately and permanently '
       + 'removes your account, messages, flocks you created, friend connections, and personal '
@@ -66,7 +66,7 @@ const FAQ = [
   },
   {
     q: 'What happens when I tap SOS?',
-    a: 'Your trusted contacts (Profile → Safety → Trusted Contacts) get an email with your '
+    a: 'Your trusted contacts (You → Safety → Trusted Contacts) get an email with your '
       + 'current location and a timestamp. Add at least one contact before you need it.',
   },
   {
@@ -150,7 +150,7 @@ export default function SupportPage() {
         <h3>Why am I not getting Flock notifications?</h3>
         <p>
           Open Settings → Notifications → Flock and confirm Allow Notifications is on. On iOS,
-          also check that Focus modes aren't silencing them. Inside the app, go to Profile and
+          also check that Focus modes aren't silencing them. Inside the app, go to You (the last tab) and
           check that Push Notifications shows as enabled.
         </p>
 
@@ -162,7 +162,7 @@ export default function SupportPage() {
 
         <h3>How do I delete my account?</h3>
         <p>
-          Open Flock and go to Profile → Delete account, then type DELETE to confirm. You'll
+          Open Flock and go to You → Delete account, then type DELETE to confirm. You'll
           also enter your password (or sign in again if you use Apple or Google) so nobody else
           can delete your account from a borrowed phone. This immediately and permanently
           removes your account, messages, flocks you created, friend connections, and personal
@@ -179,7 +179,7 @@ export default function SupportPage() {
 
         <h3>What happens when I tap SOS?</h3>
         <p>
-          Your trusted contacts (Profile → Safety → Trusted Contacts) get an email with your
+          Your trusted contacts (You → Safety → Trusted Contacts) get an email with your
           current location and a timestamp. Add at least one contact before you need it.
         </p>
 

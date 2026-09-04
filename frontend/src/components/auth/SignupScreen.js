@@ -40,6 +40,9 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   const [linkSent, setLinkSent] = useState(true);
   const [resendCooldown, setResendCooldown] = useState(0);
   const [resendNote, setResendNote] = useState('');
+  // The address is on the do-not-mail list (a bounce or a spam report on an
+  // earlier account). Asking again cannot help.
+  const [mailRefused, setMailRefused] = useState(false);
   // On iOS the confirmation link opens in Safari, not in the app, so nothing
   // here ever hears about it. Without this button the screen stayed on
   // "Confirm your email" after they had, with only "Send the link again".
@@ -81,9 +84,12 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
       const data = await resendVerificationEmail();
       const sent = data?.verificationSent !== false;
       setLinkSent((was) => was || sent);
-      setResendNote(sent
-        ? 'Sent. Check your inbox, and your spam folder.'
-        : 'That one did not go out either. Nothing is wrong with your account, and the link is still worth asking for.');
+      if (data?.mailRefused) setMailRefused(true);
+      setResendNote(data?.mailRefused
+        ? 'We cannot mail this address: mail to it bounced or was reported as spam before. Email social@flockcorp.com from it and we will clear that.'
+        : sent
+          ? 'Sent. Check your inbox, and your spam folder.'
+          : 'That one did not go out either. Nothing is wrong with your account, and the link is still worth asking for.');
     } catch (err) {
       // The server words this refusal with the real window (backend
       // utils/retryAfter.js: the resend budget's longest leg is a day, not "a
@@ -206,6 +212,10 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
         // that does not report the field means. Only an explicit false is a
         // failed send.
         setLinkSent(data.verificationSent !== false);
+        if (data.mailRefused) {
+          setMailRefused(true);
+          setResendNote('We cannot mail this address: mail to it bounced or was reported as spam before. Email social@flockcorp.com from it and we will clear that.');
+        }
         setAwaitingVerification(true);
         return;
       }
@@ -245,9 +255,9 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
         <button
           type="button"
           onClick={handleResend}
-          disabled={resendCooldown > 0}
+          disabled={resendCooldown > 0 || mailRefused}
           className="auth-primary"
-          style={{ opacity: resendCooldown > 0 ? 0.5 : 1, cursor: resendCooldown > 0 ? 'not-allowed' : 'pointer' }}
+          style={{ opacity: (resendCooldown > 0 || mailRefused) ? 0.5 : 1, cursor: (resendCooldown > 0 || mailRefused) ? 'not-allowed' : 'pointer' }}
         >
           {/* "again" is a claim too. Nothing was sent the first time when
               linkSent is false, and a button that says otherwise repeats the

@@ -58,7 +58,7 @@
  * character. Nothing was renamed, reformatted or improved on the way across.
  */
 import React from 'react';
-import { deleteAccount, trackNotificationPermission, updatePaymentMethods, logoutAll } from '../services/api';
+import { deleteAccount, trackNotificationPermission, updatePaymentMethods, logoutAll, getCurrentUser, clearLocalSession } from '../services/api';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
@@ -842,8 +842,17 @@ export default function ProfileSettings({
             <DialogBehavior onClose={() => setShowExportData(false)} label="Get a copy of my data" />
               <div onClick={(e) => e.stopPropagation()} style={{ width: '100%', maxWidth: '360px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', padding: '22px', boxShadow: '0 8px 24px rgba(0,0,0,0.15)', fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif" }}>
                 <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>Get a copy of my data</h3>
-                <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>A JSON file with your profile, flocks, messages, votes, budgets, reviews, check-ins, friends and trusted contacts. Photos are referenced by link rather than included. Our Privacy Policy lists the few things left out and why.</p>
-                {!exportNeedsReauth && (
+                <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>A JSON file with your profile, flocks, messages, votes, budgets, reviews, check-ins, friends and trusted contacts. Photos in messages and your profile photo are not included; they stay visible in the app. Our Privacy Policy lists the few things left out and why.</p>
+                {/* An Apple or Google account has no password here, and the box
+                    invited them to type the one they use with Apple or Google
+                    into Flock, which the server then ignored. Only an account
+                    that signs in with a password gets the box; the others get
+                    the rule, said before the tap. Unknown (an older payload)
+                    keeps the box. */}
+                {!exportNeedsReauth && authUser?.sign_in_method && authUser.sign_in_method !== 'password' && (
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: 1.5 }}>You sign in with {authUser.sign_in_method === 'apple' ? 'Apple' : 'Google'}. If it has been more than five minutes since you signed in, Flock will ask you to sign in again first.</p>
+                )}
+                {!exportNeedsReauth && !(authUser?.sign_in_method && authUser.sign_in_method !== 'password') && (
                   <input
                     type="password"
                     autoComplete="current-password"
@@ -882,7 +891,10 @@ export default function ProfileSettings({
                     for an OAuth one, so a stolen token alone can no longer
                     destroy an account. Deletion always stays possible; it just
                     needs proof it is really you. */}
-                {!deleteNeedsReauth && (
+                {!deleteNeedsReauth && authUser?.sign_in_method && authUser.sign_in_method !== 'password' && (
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 14px', lineHeight: 1.5 }}>You sign in with {authUser.sign_in_method === 'apple' ? 'Apple' : 'Google'}. If it has been more than five minutes since you signed in, Flock will ask you to sign in again first.</p>
+                )}
+                {!deleteNeedsReauth && !(authUser?.sign_in_method && authUser.sign_in_method !== 'password') && (
                   <>
                     <label htmlFor="delete-password" style={{ display: 'block', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', margin: '0 0 6px' }}>Your password</label>
                     <input
@@ -935,6 +947,18 @@ export default function ProfileSettings({
                         if (onLogout) onLogout(sessionEndCopy('account_deleted'));
                       } catch (err) {
                         const reauth = err?.data?.reauthRequired;
+                        if (err?.isNetworkError || err?.isTimeout) {
+                          // The server commits, cuts the sockets, then answers, so a
+                          // reply lost after the commit looked like a failed request
+                          // and the next request said the session had expired.
+                          let gone = false;
+                          try { await getCurrentUser(); } catch (probe) { gone = probe?.status === 401; }
+                          if (gone) {
+                            clearLocalSession();
+                            if (onLogout) onLogout(sessionEndCopy('account_deleted'));
+                            return;
+                          }
+                        }
                         if (err?.status === 429) {
                           setDeleteError('Too many tries. Wait fifteen minutes and try again.');
                         } else if (reauth === 'reauth') {
