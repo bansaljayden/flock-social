@@ -38,6 +38,23 @@ const { emitToFlockExcludingBlocked, emitToFlockMembers } = require('../sockets/
 const { settledCeiling } = require('./budget');
 
 const { baseWebUrl } = require('../services/emailService');
+
+// The base an invite link is minted on.
+//
+// In production this is baseWebUrl(), which refuses anything that is not a
+// public https URL and falls back to the canonical host. That is the fix this
+// replaced: a raw env read whose fallback was a preview domain the iOS
+// entitlement does not claim and the link preview does not use.
+//
+// Outside production the whole app can legitimately live on http://127.0.0.1,
+// and it does (tools/e2e/stack.js). Handing that deployment a flockcorp.com
+// link would point every tester at somebody else's data, so a local http
+// origin is honoured there and nowhere else.
+function inviteBase() {
+  const raw = (process.env.PUBLIC_WEB_URL || '').trim().replace(/\/+$/, '');
+  if (process.env.NODE_ENV !== 'production' && /^https?:\/\/[^\s/]+/.test(raw)) return raw;
+  return baseWebUrl();
+}
 const { pushIfOffline, pushIfOfflineDebounced, isPushConfigured } = require('../services/pushHelper');
 
 const router = express.Router();
@@ -1657,7 +1674,7 @@ router.post('/:id/invite-link', requireVerified, param('id').isInt({ min: 1, max
     // iOS entitlement does not claim and the link preview does not use, so a
     // tap from a preview landed on a different origin than the one shared and
     // the guest's identity (per-origin localStorage) did not come with it.
-    const base = baseWebUrl();
+    const base = inviteBase();
     res.json({ token, url: `${base}/i/${token}` });
   } catch (err) {
     console.error('Invite link error:', err);
