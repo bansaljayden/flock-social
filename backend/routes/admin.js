@@ -430,6 +430,11 @@ router.get('/reports', async (req, res) => {
     const result = await pool.query(
       `SELECT r.*, ru.name AS reporter_name,
               tu.name AS reported_user_name, tu.is_banned AS reported_user_banned,
+              -- Whether a warning could reach them at all. The warn route refuses
+              -- an account with no mailable address, which every Apple Sign In
+              -- user who hid their address has, so the console was offering a
+              -- button that could only produce a refusal.
+              (tu.email IS NOT NULL AND tu.email !~* '\.(invalid|test|example|localhost)$') AS reported_user_mailable,
               LEFT(c.body, 280) AS content_excerpt,
               (COALESCE(LENGTH(c.body), 0) > 280) AS content_excerpt_clipped,
               (c.image_url IS NOT NULL) AS content_has_image,
@@ -491,10 +496,15 @@ router.get('/reports', async (req, res) => {
                    AND dup.content_type = r.content_type
                    AND dup.content_id = r.content_id
                    AND dup.status IN ('open', 'under_review')) AS content_open_reports,
+              -- EARLIER, which is what the card calls it. Without the time
+              -- predicate this counted reports filed AFTER this one, so an old
+              -- card in a growing queue asserted a history that was partly
+              -- future, and escalation decisions are about prior conduct.
               (SELECT COUNT(*)::int FROM content_reports pr
                  WHERE r.reported_user_id IS NOT NULL
                    AND pr.reported_user_id = r.reported_user_id
-                   AND pr.id <> r.id) AS user_total_reports,
+                   AND pr.id <> r.id
+                   AND pr.created_at < r.created_at) AS user_total_reports,
               prior.action AS user_last_action,
               prior.created_at AS user_last_action_at,
               -- Who closed it, by name. content_reports.handled_by has always
@@ -1147,7 +1157,12 @@ router.put('/reports/:id', async (req, res) => {
     // is as often a time-served decision as a reversal), and it is out of the
     // scope this change was asked to settle. The asymmetry is deliberate, not
     // an oversight.
-    const newStatus = (action === 'dismiss' || action === 'unhide') ? 'dismissed' : 'resolved';
+    // 'unban' joins them, and the paragraph above is superseded: an unban
+    // recorded as 'resolved' told the original reporter, by email, that what
+    // they reported had been handled, at the moment the outcome was reversed,
+    // and counted the reversal in the Resolved badge beside decisions that
+    // were upheld. Same argument the un-hide already won.
+    const newStatus = (action === 'dismiss' || action === 'unhide' || action === 'unban') ? 'dismissed' : 'resolved';
 
     // THE WARNING GOES OUT BEFORE ANYTHING IS WRITTEN. Every refusal below
     // happens with nothing recorded and nothing sent, and each one names the
@@ -1202,6 +1217,7 @@ router.put('/reports/:id', async (req, res) => {
     // How many OTHER open reports about the same content this takedown closed.
     // Reported back so the console can say it out loud rather than leaving a
     // moderator to notice nine cards missing on the next refresh.
+    let sweptReporterIds = [];
     let alsoResolved = 0;
     // A boolean rather than a second read of the audit action name. The drift
     // guard in __tests__/unhidePath.test.js scrapes this file for assignments to
@@ -1371,17 +1387,23 @@ router.put('/reports/:id', async (req, res) => {
           // no race window; the refusal path pays one read to say WHICH refusal
           // it was, because "that user no longer exists" would be a lie about a
           // moderator who is sitting right there.
+          // AND is_banned IS NOT TRUE: without it a ban on an already-banned
+          // account "succeeded" on a race or a stale card, which resolved the
+          // report again, wrote a second audit row and mailed the person a
+          // second ban notice. Warn already refuses this exact state.
           const changed = await client.query(
             banned
               ? `UPDATE users SET is_banned = true, banned_at = NOW()
-                 WHERE id = $1 AND COALESCE(role, 'user') <> 'admin'`
+                 WHERE id = $1 AND COALESCE(role, 'user') <> 'admin' AND is_banned IS NOT TRUE`
               : 'UPDATE users SET is_banned = false, banned_at = NULL WHERE id = $1',
             [report.reported_user_id]
           );
           if (changed.rowCount === 0 && banned) {
-            const who = await client.query('SELECT id, role FROM users WHERE id = $1', [report.reported_user_id]);
+            const who = await client.query('SELECT id, role, is_banned FROM users WHERE id = $1', [report.reported_user_id]);
             refusal = who.rows.length === 0
               ? { status: 404, error: 'That user no longer exists. Dismiss the report instead.' }
+              : who.rows[0].is_banned
+              ? { status: 409, error: 'That account is already banned. Dismiss the report instead.' }
               : {
                 status: 403,
                 error: report.reported_user_id === req.user.id
@@ -1421,10 +1443,15 @@ router.put('/reports/:id', async (req, res) => {
           const swept = await client.query(
             `UPDATE content_reports SET status = 'resolved', handled_by = $1, resolved_at = NOW()
              WHERE content_type = $2 AND content_id = $3 AND id <> $4
-               AND status IN ('open', 'under_review')`,
+               AND status IN ('open', 'under_review')
+             RETURNING reporter_id`,
             [req.user.id, report.content_type, report.content_id, reportId]
           );
           alsoResolved = swept.rowCount || 0;
+          // Ten people report one message and one of them used to hear back.
+          // The follow-up names no outcome and no person, so it is safe to
+          // send to all of them, which is the case brigading makes.
+          sweptReporterIds = [...new Set((swept.rows || []).map(r => r.reporter_id).filter(Boolean))].slice(0, 200);
         }
         await client.query(
           `INSERT INTO moderation_actions (report_id, moderator_id, target_user_id, action, content_type, content_id, reason)
@@ -1459,20 +1486,39 @@ router.put('/reports/:id', async (req, res) => {
       pool.query('SELECT name, email FROM users WHERE id = $1', [banTargetId])
         .then(async (r) => {
           const t = r.rows[0];
-          if (!t || !emailService.isMailableAddress(t.email)) return;
-          await emailService.sendEmail({ to: t.email, subject: BAN_SUBJECT, text: banEmailText(t.name), html: banEmailHtml(t.name) });
+          // An unmailable address used to be a silent return. An Apple Sign In
+          // account that hid its address holds one, which is common, so a ban
+          // could send nothing, record nothing, and the console still said the
+          // notice went. Say it in the log either way.
+          if (!t) return console.warn(`[MODERATION] ban notice for user ${banTargetId} not sent: the account is gone`);
+          if (!emailService.isMailableAddress(t.email)) {
+            return console.warn(`[MODERATION] ban notice for user ${banTargetId} not sent: no mailable address on the account`);
+          }
+          const sent = await emailService.sendEmail({ to: t.email, subject: BAN_SUBJECT, text: banEmailText(t.name), html: banEmailHtml(t.name) });
+          if (sent && sent.sent === false) {
+            console.warn(`[MODERATION] ban notice for user ${banTargetId} was refused: ${sent.reason || 'unknown'}`);
+          }
         })
         .catch((e) => console.error(`[MODERATION] ban notice for user ${banTargetId} not sent: ${e.message}`));
     }
     if (newStatus === 'resolved') {
+      // Every reporter of this content, not only the one whose report the
+      // moderator happened to open.
+      const followUpIds = [reportId, ...sweptReporterIds.map(() => null)].filter(Boolean);
       pool.query(
-        'SELECT u.name, u.email FROM content_reports r JOIN users u ON u.id = r.reporter_id WHERE r.id = $1',
-        [reportId]
+        `SELECT u.name, u.email FROM content_reports r JOIN users u ON u.id = r.reporter_id WHERE r.id = ANY($1::int[])
+         UNION
+         SELECT u.name, u.email FROM users u WHERE u.id = ANY($2::int[])`,
+        [followUpIds, sweptReporterIds]
       )
         .then(async (r) => {
-          const t = r.rows[0];
-          if (!t || !emailService.isMailableAddress(t.email)) return;
-          await emailService.sendEmail({ to: t.email, subject: REPORT_FOLLOWUP_SUBJECT, text: reportFollowupText(t.name), html: reportFollowupHtml(t.name) });
+          for (const t of r.rows) {
+            if (!t || !emailService.isMailableAddress(t.email)) continue;
+            const sent = await emailService.sendEmail({ to: t.email, subject: REPORT_FOLLOWUP_SUBJECT, text: reportFollowupText(t.name), html: reportFollowupHtml(t.name) });
+            if (sent && sent.sent === false) {
+              console.warn(`[MODERATION] reporter follow-up for report ${reportId} was refused: ${sent.reason || 'unknown'}`);
+            }
+          }
         })
         .catch((e) => console.error(`[MODERATION] reporter follow-up for report ${reportId} not sent: ${e.message}`));
     }

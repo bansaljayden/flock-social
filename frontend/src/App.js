@@ -17786,6 +17786,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             onReported={(ev) => {
               setFlocks(prev => applyTakedownToFlocks(prev, ev));
               setDirectMessages(prev => applyTakedownToDms(prev, ev));
+              // The two the reducers above do not cover. Without these a
+              // reported review or deal sat on the reporter's own screen
+              // while a reported message vanished, which is the promise this
+              // handler makes for every type.
+              if (ev.contentType === 'venue_review') setVenueDetailReviews(prev => dropContentById(prev, ev.contentId));
+              if (ev.contentType === 'venue_promotion') setVenueDetailPromos(prev => dropContentById(prev, ev.contentId));
             }}
           />
 
