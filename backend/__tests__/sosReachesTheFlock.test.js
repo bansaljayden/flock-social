@@ -69,8 +69,12 @@ test('every accepted member of a confirmed plan happening now is told', async (t
   if (!alertFlockMembers) return t.skip('no seam');
   reset();
   memberRows = [{ user_id: 2 }, { user_id: 3 }];
-  const out = await alertFlockMembers(io, USER, { latitude: 40.6, longitude: -75.4 });
+  // The shape readCoords returns, { lat, lng }: the test used to pass
+  // { latitude, longitude } and so never noticed the payload carried neither.
+  const out = await alertFlockMembers(io, USER, { lat: 40.6, lng: -75.4 });
   assert.strictEqual(out.notified, 2);
+  assert.strictEqual(emitted[0].payload.latitude, 40.6, 'the map pin must reach the flock');
+  assert.strictEqual(emitted[0].payload.longitude, -75.4);
   assert.deepStrictEqual(pushes.map((p) => p.userId).sort(), [2, 3]);
   assert.deepStrictEqual(emitted.map((e) => e.room).sort(), ['user:2', 'user:3']);
   assert.strictEqual(emitted[0].event, 'safety_alert');
@@ -111,7 +115,7 @@ test('location travels only when it was shared, and is absent rather than null',
   if (!alertFlockMembers) return t.skip('no seam');
   reset();
   memberRows = [{ user_id: 2 }];
-  await alertFlockMembers(io, USER, { latitude: 40.6, longitude: -75.4 });
+  await alertFlockMembers(io, USER, { lat: 40.6, lng: -75.4 });
   assert.strictEqual(pushes[0].data.latitude, 40.6);
   assert.match(pushes[0].body, /shared their location/i);
 
