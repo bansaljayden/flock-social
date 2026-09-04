@@ -32,6 +32,8 @@ const path = require('node:path');
 const express = require('express');
 
 process.env.JWT_SECRET = 'waitlist-launch-test-secret';
+// The route refuses a real send until the launch mail can point at the store.
+process.env.APP_STORE_URL = 'https://apps.apple.com/app/id0000000000';
 
 const pool = require('../config/database');
 const { signUserToken } = require('../middleware/auth');
@@ -114,6 +116,23 @@ function reset() {
 
 test.before(() => new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)));
 test.after(() => new Promise((resolve) => server.close(resolve)));
+
+test('a real send is refused while APP_STORE_URL is unset, and nothing goes out', async () => {
+  // Without the variable the button resolves to `${web}/signup`, a web signup
+  // form, in a mail titled for an iOS launch. The dry run still reports.
+  const saved = process.env.APP_STORE_URL;
+  delete process.env.APP_STORE_URL;
+  try {
+    statsRow = { total: 4, converted: 0, announced: 0, pending: 4 };
+    const dry = await call('POST', '/api/admin/waitlist/announce', { dry_run: true }, signUserToken(ADMIN));
+    assert.strictEqual(dry.status, 200);
+    const res = await call('POST', '/api/admin/waitlist/announce', {}, signUserToken(ADMIN));
+    assert.strictEqual(res.status, 409);
+    assert.match(res.body.error, /APP_STORE_URL/);
+  } finally {
+    process.env.APP_STORE_URL = saved;
+  }
+});
 
 test('a non-admin cannot announce', async () => {
   reset();

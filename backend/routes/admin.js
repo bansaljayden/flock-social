@@ -124,6 +124,17 @@ router.post('/waitlist/announce', async (req, res) => {
       return res.json({ dry_run: true, ...summary });
     }
 
+    // A launch mail whose button opens a web signup form is the wrong mail
+    // for an iOS app, and the only thing that points the button at the store
+    // is APP_STORE_URL (services/emailService.js sendWaitlistLaunchEmail).
+    // Refuse a real send without it. The dry run above still answers, so the
+    // switch can be rehearsed before the variable exists.
+    if (!process.env.APP_STORE_URL) {
+      return res.status(409).json({
+        error: 'APP_STORE_URL is not set, so the launch email would point at the web signup form instead of the App Store. Set it on the service and try again.',
+      });
+    }
+
     const batch = await pool.query(
       `SELECT id, email FROM waitlist
         WHERE announced_at IS NULL AND converted_user_id IS NULL
