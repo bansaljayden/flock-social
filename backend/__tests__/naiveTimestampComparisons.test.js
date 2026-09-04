@@ -45,6 +45,18 @@ test('the six windows found on 2026-09-04 read as naive UTC', () => {
   assert.match(read('routes/flocks.js'), /COALESCE\(f\.event_time AT TIME ZONE 'UTC', NOW\(\)\) \+ INTERVAL '7 days'/);
 });
 
+test('the created_at windows on naive tables read as naive UTC too, and the timestamptz ones are left alone', () => {
+  // flocks.created_at and emergency_alerts.created_at are TIMESTAMP (naive);
+  // venue_checkins.created_at and venue_feedback.created_at are TIMESTAMPTZ,
+  // where a bare NOW() is the right comparison and must stay.
+  assert.match(read('routes/flocks.js'), /WHERE f\.created_at > \(NOW\(\) AT TIME ZONE 'UTC'\) - INTERVAL '7 days'/);
+  const safety = read('routes/safety.js');
+  assert.strictEqual((safety.match(/created_at > \(NOW\(\) AT TIME ZONE 'UTC'\) - \(\$2::int \|\| ' milliseconds'\)::interval/g) || []).length, 3);
+  assert.strictEqual((safety.match(/created_at > NOW\(\) - \(\$2::int \|\| ' milliseconds'\)::interval/g) || []).length, 0);
+  assert.match(read('routes/checkin.js'), /created_at > NOW\(\) - \(INTERVAL '1 millisecond' \* \$4::double precision\)/);
+  assert.match(read('routes/feedback.js'), /created_at > NOW\(\) - INTERVAL '3 hours'/);
+});
+
 test('a reconciliation is dated by the business day, not the UTC day', () => {
   const src = read('routes/admin.js');
   assert.match(src, /function businessToday\(\)/);
