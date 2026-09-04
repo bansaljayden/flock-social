@@ -89,7 +89,7 @@
  * Send button armed over whitespace, and the "online" literal wired to nothing.
  */
 import React from 'react';
-import { leaveFlock as apiLeaveFlock, BASE_URL, createBillSplit, createFlockInviteLink, getFlockMessageImage, getPaymentLinks, ghostCommit, lockBudget, sendBudgetReminder, settleShare, submitBudget, trackNotificationPermission, unsettleShare } from '../services/api';
+import { leaveFlock as apiLeaveFlock, BASE_URL, createBillSplit, createFlockInviteLink, getFlockMessageImage, getPaymentLinks, ghostCommit, lockBudget, sendBudgetReminder, settleShare, submitBudget, trackNotificationPermission, unsettleShare, getBillSplit } from '../services/api';
 import { getSocket, leaveFlock } from '../services/socket';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
@@ -799,9 +799,14 @@ export default function ChatDetail({
                    flock it was waiting on itself. Three amounts is the floor,
                    and a flock that cannot reach it is not waiting. */
                 <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', margin: 0 }}>
-                  {(budgetStatus.totalMembers || 0) > 0 && (budgetStatus.totalMembers || 0) < 3
-                    ? 'No group number in a flock this size'
-                    : `Waiting on amounts · ${budgetStatus.submissionCount || 0} of ${budgetStatus.totalMembers || '?'} answered`}
+                  {budgetStatus.budgetLocked
+                    /* Closed with no number to show (fewer than three sharers
+                       still here). "Waiting on amounts" here told a member the
+                       group was waiting when answers were closed. */
+                    ? 'Budget closed · no group number to show'
+                    : (budgetStatus.totalMembers || 0) > 0 && (budgetStatus.totalMembers || 0) < 3
+                      ? 'No group number in a flock this size'
+                      : `Waiting on amounts · ${budgetStatus.submissionCount || 0} of ${budgetStatus.totalMembers || '?'} answered`}
                 </p>
               )}
             </div>
@@ -823,6 +828,9 @@ export default function ChatDetail({
               <button className="hit44 glass-btn glass-navy" onClick={async () => {
                 try {
                   await ghostCommit(selectedFlockId);
+                  // The commit changed the bill the card below reads; without
+                  // this the card stayed as it was until the screen was left.
+                  try { const d = await getBillSplit(selectedFlockId); setBillSplit(d.bill); } catch (_) { /* the socket event covers it */ }
                   showToast('Committed');
                 } catch (err) { showToast(err.message, 'error'); }
               }} style={{ padding: '6px 14px', borderRadius: '14px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0 }}>
@@ -836,11 +844,11 @@ export default function ChatDetail({
         {billSplit && (
           <div role="button" tabIndex={0} aria-label="Open bill split details" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowChatPool(true); } }} onClick={() => setShowChatPool(true)} style={{ padding: '8px 14px', background: billSplit.shares?.every(s => s.settled) ? 'linear-gradient(135deg, #ecfdf5, #d1fae5)' : `linear-gradient(135deg, ${colors.navy}06, ${colors.navy}12)`, borderBottom: '1px solid var(--divider)', flexShrink: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              {Icons.dollar(billSplit.shares?.every(s => s.settled) ? '#22C55E' : colors.navy, 13)}
+              {Icons.dollar((billSplit.fullySettled ?? billSplit.shares?.every(s => s.settled)) ? '#22C55E' : colors.navy, 13)}
               <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>
-                {billSplit.shares?.every(s => s.settled)
+                {(billSplit.fullySettled ?? billSplit.shares?.every(s => s.settled))
                   ? 'All settled up'
-                  : `Bill: $${billSplit.totalWithTip?.toFixed(2)} · ${billSplit.shares?.filter(s => s.settled).length}/${billSplit.shares?.length} settled`}
+                  : `Bill: $${billSplit.totalWithTip?.toFixed(2)} · ${billSplit.settledCount ?? billSplit.shares?.filter(s => s.settled).length}/${billSplit.shareCount ?? billSplit.shares?.length} settled`}
               </p>
             </div>
             <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>View</span>
@@ -1351,7 +1359,7 @@ export default function ChatDetail({
                       try {
                         const data = await submitBudget(selectedFlockId, { amount: 0, skipped: true });
                         setBudgetStatus(prev => ({ ...prev, ...data, userSubmitted: true, userSkipped: true }));
-                        showToast('Budget submitted');
+                        showToast('Skipped. You will not count toward the group number.');
                         setShowChatPool(false);
                       } catch (err) { showToast(err.message, 'error'); }
                       setBudgetSubmitting(false);
@@ -1441,7 +1449,7 @@ export default function ChatDetail({
                         {budgetStatus?.isReady && (
                           <button className="hit44 glass-btn glass-primary" onClick={async () => { try { const d = await lockBudget(selectedFlockId); setBudgetStatus(prev => ({ ...prev, budgetLocked: true, ceiling: d?.ceiling ?? prev?.ceiling })); showToast('Budget locked'); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Lock Budget</button>
                         )}
-                        <button className="hit44 glass-btn glass-secondary" onClick={async () => { try { const d = await sendBudgetReminder(selectedFlockId); showToast(`Reminded ${d.reminded} member${d.reminded !== 1 ? 's' : ''}`); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid var(--border-color)`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Send Reminder</button>
+                        <button className="hit44 glass-btn glass-secondary" onClick={async () => { try { const d = await sendBudgetReminder(selectedFlockId); showToast(d.reminded > 0 ? `Reminded ${d.reminded} member${d.reminded !== 1 ? 's' : ''}` : 'Nobody left to remind'); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid var(--border-color)`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Send Reminder</button>
                       </div>
                     )}
                     {isConfirmedOrComplete && (
@@ -1534,7 +1542,11 @@ export default function ChatDetail({
                         <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>Total: ${billSplit.totalWithTip?.toFixed(2)}</span>
                         {billSplit.tipPercent > 0 && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>includes {billSplit.tipPercent}% tip</span>}
                       </div>
-                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px' }}>Paid by {billSplit.paidBy?.name || 'Unknown'}</p>
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px' }}>
+                        {billSplit.hasPayer === false
+                          ? 'Nobody has paid yet. These are estimates from the group budget. Whoever pays can post the real bill.'
+                          : `Paid by ${billSplit.paidBy?.name || 'a member'}`}
+                      </p>
                       <div style={{ borderTop: '1px solid var(--divider)', paddingTop: '8px' }}>
                         {(billSplit.shares || []).map(s => (
                           <div key={s.userId} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0' }}>
@@ -1555,7 +1567,7 @@ export default function ChatDetail({
                       </div>
                     </div>
                     {/* Settle Up button for current user if they owe */}
-                    {billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
+                    {billSplit.hasPayer !== false && billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
                       <button className="hit44 glass-btn glass-primary" onClick={async () => {
                         try {
                           const result = await getPaymentLinks(selectedFlockId);
@@ -1580,13 +1592,13 @@ export default function ChatDetail({
                         } catch (err) {
                           // A failed payment-link lookup is NOT a payment —
                           // never mark the debt settled on an error path
-                          showToast('Could not load payment links. Use "Mark as Paid" after paying.', 'error');
+                          showToast(err?.message || 'Could not load payment links. Use "Mark as Paid" after paying.', 'error');
                         }
                       }} style={{ ...styles.gradientButton, padding: '14px', marginBottom: '8px' }}>
                         Settle Up · ${billSplit.shares.find(s => String(s.userId) === String(authUser?.id))?.amount?.toFixed(2)}
                       </button>
                     )}
-                    {billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
+                    {billSplit.hasPayer !== false && billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
                       <button className="hit44 glass-btn glass-secondary" onClick={async () => {
                         try {
                           await settleShare(selectedFlockId);
@@ -1626,7 +1638,7 @@ export default function ChatDetail({
                         That was a mistake, I have not paid
                       </button>
                     )}
-                    {billSplit.shares?.every(s => s.settled) && (
+                    {(billSplit.fullySettled ?? billSplit.shares?.every(s => s.settled)) && (
                       <div style={{ textAlign: 'center', padding: '12px' }}>
                         <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: '#22C55E', margin: 0 }}>All settled up</p>
                       </div>
