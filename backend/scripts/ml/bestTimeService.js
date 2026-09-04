@@ -165,7 +165,13 @@ async function fetchLiveBusyness(venueId) {
     const response = await fetchWithTimeout(
       `https://besttime.app/api/v1/forecasts/live?${params}`,
       { method: 'POST' },
-      30000
+      // 10 s, down from 30. A live answer normally lands in a second or two;
+      // on 2026-09-04 the hourly sweep hit a burst of these timing out and
+      // every one cost the full 30 s plus the transient sleep, which is a
+      // large part of why one sweep ran past the next hour's trigger and
+      // Railway skipped it. The forecast call above keeps 30 s: it is rare
+      // and it fetches a whole week.
+      10000
     );
 
     if (!response.ok) {
