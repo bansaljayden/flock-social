@@ -390,6 +390,35 @@ async function guestTallies(flockId) {
   return r.rows;
 }
 
+// The same weighting members see (routes/venues.js): guest votes for a venue
+// count for at most the number of member votes cast on the whole flock. Without
+// it the guest page ranked by raw sums, so on a link-driven plan the venue
+// leading the guest page was not the venue leading the group's.
+async function guestTalliesWeighted(flockId) {
+  const [rows, membersCast] = await Promise.all([
+    pool.query(
+      `SELECT venue_name,
+              SUM(CASE WHEN src = 'member' THEN c ELSE 0 END)::int AS member_votes,
+              SUM(CASE WHEN src = 'guest' THEN c ELSE 0 END)::int AS guest_votes
+         FROM (
+           SELECT venue_name, COUNT(*) AS c, 'member' AS src FROM venue_votes WHERE flock_id = $1 GROUP BY venue_name
+           UNION ALL
+           SELECT gv.venue_name, COUNT(*) AS c, 'guest' AS src FROM guest_votes gv
+             JOIN guest_rsvps gr ON gr.id = gv.guest_rsvp_id
+            WHERE gv.flock_id = $1 AND COALESCE(gr.is_hidden, false) = false
+            GROUP BY gv.venue_name
+         ) t GROUP BY venue_name`,
+      [flockId]
+    ),
+    pool.query('SELECT COUNT(*)::int AS n FROM venue_votes WHERE flock_id = $1', [flockId]),
+  ]);
+  const cap = Math.max(membersCast.rows[0]?.n || 0, 1);
+  return rows.rows
+    .map((v) => ({ venue_name: v.venue_name, votes: v.member_votes + Math.min(v.guest_votes, cap) }))
+    .sort((a, b) => b.votes - a.votes)
+    .slice(0, 12);
+}
+
 // ---------------------------------------------------------------------------
 // THE ROSTER — who is going, who is not, and who has not answered.
 //
@@ -584,7 +613,7 @@ router.get('/:token',
       if (!link) return res.status(404).json({ error: 'This invite link is no longer active' });
 
       const [tallies, going, people] = await Promise.all([
-        guestTallies(link.flock_id),
+        guestTalliesWeighted(link.flock_id),
         pool.query(
           `SELECT
              (SELECT COUNT(*) FROM flock_members WHERE flock_id = $1 AND status = 'accepted')::int AS members,
@@ -730,6 +759,17 @@ router.post('/:token/rsvp',
           }
           if (await nameIsTakenDown((q, p) => pool.query(q, p), link.flock_id, name)) {
             return res.status(403).json({ error: 'That name cannot be used on this flock. Try a different one.' });
+          }
+          // The duplicate-name guard had the same two doors the takedown guard
+          // did, and only the create one was locked: a guest could rename into
+          // a name already on the roster, deliberately, and both would show.
+          // Same question, same definition, same sentence the create path uses.
+          if (existing.rows[0].name !== name
+              && await nameInUse((q, p) => pool.query(q, p), link.flock_id, name)) {
+            return res.status(409).json({
+              error: 'Someone already answered as that name. Open the link on the device you used, or add a last initial.',
+              nameTaken: true,
+            });
           }
         }
 
@@ -971,7 +1011,7 @@ router.post('/:token/vote',
         }
       }
 
-      const venues = await guestTallies(link.flock_id);
+      const venues = await guestTalliesWeighted(link.flock_id);
 
       // The GUEST gets counts only (guestTallies) — no voter identities ever
       // cross onto the public link surface. The MEMBERS get the same `new_vote`
@@ -1244,6 +1284,21 @@ router.post('/:token/join',
             );
             // Remembered for the fan-out after the response (see below).
             res.locals.hiddenGuestId = hid.rows.length ? hid.rows[0].id : null;
+            // THE VOTE COMES WITH THEM. Hiding the guest row drops its vote
+            // from every tally (both read paths filter on is_hidden), so a
+            // guest who voted for a bar and then made an account watched that
+            // bar lose a vote at the moment they joined, with nothing said.
+            // ON CONFLICT DO NOTHING: they may already hold a member vote.
+            if (res.locals.hiddenGuestId) {
+              const promoted = await client.query(
+                `INSERT INTO venue_votes (flock_id, user_id, venue_name)
+                 SELECT $1, $2, gv.venue_name FROM guest_votes gv WHERE gv.guest_rsvp_id = $3
+                 ON CONFLICT DO NOTHING
+                 RETURNING venue_name`,
+                [link.flock_id, req.user.id, res.locals.hiddenGuestId]
+              );
+              res.locals.promotedVenue = promoted.rows.length ? promoted.rows[0].venue_name : null;
+            }
           }
           await client.query('COMMIT');
         }
@@ -1291,6 +1346,12 @@ router.post('/:token/join',
               contentId: res.locals.hiddenGuestId,
               flockId: link.flock_id,
             });
+          }
+          // The vote moved from the guest ledger to the member one inside the
+          // transaction above, so open clients have to re-tally or they keep
+          // showing a guest vote the server has already retired.
+          if (res.locals.promotedVenue) {
+            await broadcastGuestVote(io, link.flock_id, res.locals.promotedVenue);
           }
           await emitToFlockExcludingBlocked(io, link.flock_id, req.user.id, 'flock_invite_responded', {
             flockId: link.flock_id,

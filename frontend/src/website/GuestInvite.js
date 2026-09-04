@@ -854,8 +854,8 @@ export default function GuestInvite() {
         // resolveLink answers an expired row exactly as it answers a revoked
         // one. Saying only "switched off" left the most likely reader of this
         // screen thinking the host had shut them out on purpose.
-        lead: 'Invite links stop working after a couple of weeks, and a host can switch one off. The plan may also be over.',
-        help: 'Ask whoever sent it for a new link. They can make one from the plan in the app. An old link never starts working again.',
+        lead: 'Invite links stop working after a couple of weeks. The plan may also be over.',
+        help: 'Ask whoever sent it to share the plan with you again. An old link never starts working again.',
         retry: false,
       },
       badlink: {
@@ -1077,8 +1077,10 @@ export default function GuestInvite() {
               <>
                 <p className="gi-join-lead">
                   It already holds as many people as a flock can, so making an
-                  account will not put you in this one. You can still answer
-                  below, and {host || 'they'} will see it.
+                  account will not put you in this one.
+                  {guestsFull
+                    ? ' It has taken as many guest answers as it can, too. Ask them to add you from the app.'
+                    : ` You can still answer below, and ${host || 'they'} will see it.`}
                 </p>
                 <p className="gi-join-alt">
                   Already on this plan?{' '}

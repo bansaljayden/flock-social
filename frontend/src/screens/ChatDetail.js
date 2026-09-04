@@ -2086,7 +2086,7 @@ export default function ChatDetail({
               {copiedInviteUrl && (
                 <div role="status" style={{ marginBottom: '14px', padding: '10px 12px', borderRadius: '12px', backgroundColor: 'var(--accent-green-bg)', border: '1px solid var(--border-subtle)' }}>
                   <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--accent-green-text)', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    {Icons.check('var(--accent-green-text)', 13)} Copied. Anyone with this link can RSVP and vote.
+                    {Icons.check('var(--accent-green-text)', 13)} Copied. Anyone with this link can see the plan, answer, vote, and join this flock. It stops working in two weeks.
                   </p>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, wordBreak: 'break-all', fontFamily: 'monospace' }}>{copiedInviteUrl}</p>
                 </div>

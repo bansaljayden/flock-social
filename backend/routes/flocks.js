@@ -37,6 +37,7 @@ const { emitToFlockExcludingBlocked, emitToFlockMembers } = require('../sockets/
 // so these three readers get both gates from one call.
 const { settledCeiling } = require('./budget');
 
+const { baseWebUrl } = require('../services/emailService');
 const { pushIfOffline, pushIfOfflineDebounced, isPushConfigured } = require('../services/pushHelper');
 
 const router = express.Router();
@@ -1651,7 +1652,12 @@ router.post('/:id/invite-link', requireVerified, param('id').isInt({ min: 1, max
       }
     }
 
-    const base = process.env.PUBLIC_WEB_URL || 'https://flock-app-w65m.vercel.app';
+    // baseWebUrl, not a raw env read with a preview-domain fallback. This is
+    // the one URL the product spreads through, and the fallback was a host the
+    // iOS entitlement does not claim and the link preview does not use, so a
+    // tap from a preview landed on a different origin than the one shared and
+    // the guest's identity (per-origin localStorage) did not come with it.
+    const base = baseWebUrl();
     res.json({ token, url: `${base}/i/${token}` });
   } catch (err) {
     console.error('Invite link error:', err);
