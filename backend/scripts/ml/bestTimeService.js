@@ -51,6 +51,10 @@ function classifyHttpFailure(status, context) {
   return null;
 }
 
+// Exported since 2026-09-04. collectRealtime needs the SAME test one level up:
+// its ten-error breaker says "BestTime looks down" and a timeout on our own
+// clock is not that, so the two places that decide what a network error is have
+// to be one place. A second copy is how they drift.
 const NETWORK_ERR_RE = /aborted|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|fetch failed/i;
 
 async function fetchWithTimeout(url, options, ms) {
@@ -209,4 +213,4 @@ async function fetchLiveBusyness(venueId) {
   }
 }
 
-module.exports = { fetchWeeklyForecast, fetchLiveBusyness };
+module.exports = { fetchWeeklyForecast, fetchLiveBusyness, NETWORK_ERR_RE };
