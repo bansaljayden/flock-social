@@ -28,7 +28,7 @@ test('a completed reset lifts the sign-in lockout it exists to get past', () => 
   // clearLoginFailures was called from exactly one place, a successful login,
   // so ten wrong guesses then a successful reset ended on "Too many failed
   // sign-in attempts" for the password the person had just chosen.
-  expect(auth).toMatch(/clearLoginFailures\(canonicalEmail\(result\.email \|\| email\)\);/);
+  expect(auth).toMatch(/clearLoginFailures\(canonicalEmail\(result\.email\)\);/);
   expect(auth).toMatch(/return \{ ok: true, userId: row\.user_id, email: row\.current_email \};/);
 });
 

@@ -2504,7 +2504,11 @@ router.post('/reset-password', [
     // mailbox, choose a new password, then type the password you just chose and
     // be told "Too many failed sign-in attempts. You can try again in about 12
     // minutes." The lock protects a credential that no longer exists.
-    clearLoginFailures(canonicalEmail(result.email || email));
+    // consumeReset only reports ok with the address it matched the row on, so
+    // there is nothing to fall back to. An earlier draft wrote `result.email ||
+    // email` and this handler has no `email` binding: harmless while the left
+    // side is always set, and a ReferenceError 500 the day that stops being true.
+    clearLoginFailures(canonicalEmail(result.email));
 
     // No session is issued here on purpose. Somebody who just proved they can
     // read the mailbox should sign in with the password they chose, which is
