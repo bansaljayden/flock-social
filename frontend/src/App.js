@@ -1152,9 +1152,15 @@ const sameSend = (local, server) => {
   if (!local || !server) return false;
   const localImage = local.image_url || local.image || null;
   const trim = (v) => (typeof v === 'string' ? v.trim() : '');
+  // PRESENCE, not equality. The server strips EXIF and tEXt and re-encodes
+  // when it removes anything, so an already-compressed photo comes back as
+  // different bytes than were sent. The echo then matched nothing: the photo
+  // rendered twice, and thirty seconds later the first copy said "Didn't send.
+  // Tap to retry", which sent a third. Text and type already discriminate, and
+  // the lookup is scoped to one conversation.
   return trim(local.text) === trim(server.message_text)
     && (local.message_type || 'text') === (server.message_type || 'text')
-    && localImage === (server.image_url || null);
+    && !!localImage === !!(server.image_url || null);
 };
 
 // Message and DM primary keys are SERIAL, i.e. int4. Optimistic bubbles are
@@ -11581,16 +11587,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     return getDMConversations()
       .then(data => {
         const hidden = deletedDmUserIdsRef.current;
-        setDirectMessages((data.conversations || []).filter(c => !hidden.includes(c.userId)).map(c => ({
-          userId: c.userId,
-          name: c.name,
-          image: c.image,
-          messages: [],
-          lastMessage: c.lastMessage,
-          lastMessageTime: c.lastMessageTime,
-          lastMessageIsYou: c.lastMessageIsYou,
-          unread: c.unread,
-        })));
+        // Merge, not replace, exactly as loadFlocks does. This runs on every
+        // reconnect and every return from background, and a wholesale replace
+        // threw away the open thread's scrollback and any failed bubble, which
+        // for a DM photo is the only copy of it. It also left the thread empty
+        // for up to twelve seconds behind the throttled re-read, which renders
+        // as "Say hi to start the conversation" on a thread with history.
+        const fresh = (data.conversations || []).filter(c => !hidden.includes(c.userId));
+        setDirectMessages(prev => fresh.map(c => {
+          const old = Array.isArray(prev) ? prev.find(p => p.userId === c.userId) : null;
+          return {
+            userId: c.userId,
+            name: c.name,
+            image: c.image,
+            messages: old && old.messages && old.messages.length ? old.messages : [],
+            lastMessage: c.lastMessage,
+            lastMessageTime: c.lastMessageTime,
+            lastMessageIsYou: c.lastMessageIsYou,
+            unread: c.unread,
+          };
+        }));
       })
       // The list already on screen is left alone, exactly as loadFlocks leaves
       // its own. The empty state is what has to be suppressed, not the data.
@@ -12201,6 +12217,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // DM typing indicators
   useEffect(() => {
+    // Reset on every thread change. Both listeners below are keyed on the open
+    // conversation, so a "stopped typing" from the thread you just left was
+    // discarded and the indicator stuck: the next thread's header read
+    // "Alex is typing..." over Sam's conversation, and stayed that way.
+    setDmIsTyping(false);
+    setDmTypingUser('');
     const unsubTyping = onDmUserTyping((data) => {
       if (data.userId === selectedDmId) {
         setDmTypingUser(data.name);
@@ -15229,8 +15251,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                       </div>
                     </div>
                     {dm.unread > 0 && (
-                      <div style={{ width: '20px', height: '20px', borderRadius: '10px', background: 'linear-gradient(135deg, #EF4444, #DC2626)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                        {dm.unread}
+                      <div style={{ minWidth: '20px', height: '20px', padding: '0 6px', borderRadius: '10px', background: 'linear-gradient(135deg, #EF4444, #DC2626)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                        {dm.unread > 99 ? '99+' : dm.unread}<span className="sr-only"> unread messages</span>
                       </div>
                     )}
                   </button>
@@ -15504,6 +15526,29 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // start reaches this panel for a second or two while GET /api/flocks is still
   // in flight, and "it was deleted" is a lie about a plan that is on its way.
   // While the list is loading it says so instead.
+  const MissingDmPanel = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', alignItems: 'center', justifyContent: 'center', gap: '14px', padding: '32px 24px', backgroundColor: 'var(--bg-primary)', textAlign: 'center' }}>
+      <BirdieStill size={104} />
+      {dmsLoading ? (
+        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.005em' }}>Opening your messages</h2>
+      ) : (
+        <>
+          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.005em' }}>This conversation is not here</h2>
+          <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, maxWidth: '26em', lineHeight: 1.5 }}>
+            They may have deleted their account, or you removed this chat. Your other conversations are all still here.
+          </p>
+          <button
+            className="hit44"
+            onClick={() => { setCurrentScreen('main'); setSelectedDmId(null); }}
+            style={{ marginTop: '4px', padding: '12px 24px', borderRadius: '12px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
+          >
+            Back to Messages
+          </button>
+        </>
+      )}
+    </div>
+  );
+
   const MissingFlockPanel = () => (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', alignItems: 'center', justifyContent: 'center', gap: '14px', padding: '32px 24px', backgroundColor: 'var(--bg-primary)', textAlign: 'center' }}>
       <BirdieStill size={104} />
@@ -17172,6 +17217,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // venue search for a location the app had never been given.
         userLocation,
       };
+      // A conversation that is not in the list yet, or not there any more, used
+      // to render as literally nothing: DmDetail returns false when selectedDm
+      // is undefined, and it draws no nav of its own, so a DM push tapped on a
+      // cold start, or a partner who deleted their account, left a blank screen
+      // with no way out. The flock twin has had MissingFlockPanel for this.
+      if (!selectedDm) return <MissingDmPanel />;
       return <DmDetail {...dmDetailProps} />;
     }
     if (currentScreen === 'venueDashboard') {
