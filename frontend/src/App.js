@@ -12165,6 +12165,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   outOfChirpsRef.current = outOfChirps;
   const canSendAi = aiInputHasText && !aiTyping && !outOfChirps;
   const closeAiChat = () => setAiChatMode('bubble');
+  // Birdie in the flock chat. Jayden's note from the TestFlight pass: the
+  // chat needs Birdie present. The panel mounts at the root, so it opens over
+  // the chat; the context effect already hands the model this flock while
+  // the person is on chatDetail, so "this flock" is the one they are in.
+  const openBirdie = useCallback(() => setAiChatMode('panel'), []);
   const toggleAiFullscreen = () => setAiChatMode(prev => prev === 'fullscreen' ? 'panel' : 'fullscreen');
 
   const aiAssistantModal = (isAiPanel || isAiFullscreen) && (
@@ -16796,6 +16801,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         olderLoading,
         openCameraViewfinder,
         openVenueDetail,
+        openBirdie,
         pendingImage,
         popularVenues,
         profilePic,
