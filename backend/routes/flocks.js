@@ -2611,9 +2611,29 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
       }).catch((e) => console.error('flock_member_left fan-out failed:', e.message));
     }
 
-    // Remove member
-    await pool.query(
-      'DELETE FROM flock_members WHERE flock_id = $1 AND user_id = $2',
+    // Remove the member and, if nobody accepted remains, the flock, in ONE
+    // statement, the way the creator branch above is one cascading DELETE.
+    // This used to be three autocommits: drop the membership, count who is
+    // left, drop the flock if nobody. A failure of the third answered "500
+    // Failed to leave flock" for a leave that had already happened, and the
+    // retry found the caller was no longer a member, so the flocks row
+    // survived with zero accepted members and nothing to reap it (the sweep
+    // only touches status), still resolvable by any live invite link. The
+    // outer DELETE reads the table as it was BEFORE this statement (a
+    // data-modifying CTE's effect is not visible to its siblings), so the
+    // leaver's own row is excluded by id rather than by absence, and
+    // EXISTS(gone) keeps a non-member's request from deleting an empty flock
+    // it was never in.
+    const left = await pool.query(
+      `WITH gone AS (
+         DELETE FROM flock_members WHERE flock_id = $1 AND user_id = $2 RETURNING 1
+       )
+       DELETE FROM flocks f
+        WHERE f.id = $1
+          AND EXISTS (SELECT 1 FROM gone)
+          AND NOT EXISTS (SELECT 1 FROM flock_members m
+                           WHERE m.flock_id = $1 AND m.status = 'accepted' AND m.user_id <> $2)
+       RETURNING f.id`,
       [flockId, req.user.id]
     );
 
@@ -2622,16 +2642,12 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
     // receiving messages, locations, and votes until they disconnected.
     if (io) io.in(`user:${req.user.id}`).socketsLeave(`flock:${flockId}`);
 
-    // If no accepted members remain, delete the flock
-    const remaining = await pool.query(
-      "SELECT COUNT(*) AS cnt FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
-      [flockId]
-    );
-
-    const deleted = parseInt(remaining.rows[0].cnt) === 0;
-    if (deleted) {
-      await pool.query('DELETE FROM flocks WHERE id = $1', [flockId]);
-    }
+    // The RETURNING row, not rowCount, is the signal: a data-modifying CTE's
+    // rowCount reports the outer DELETE, which is right in Postgres, but a
+    // statement that returns the deleted id is also readable by every SQL
+    // fake in the test suite that answers by substring, and several of those
+    // answer the membership DELETE inside this CTE with rowCount 1.
+    const deleted = left.rows.length === 1;
 
     res.json({ message: 'Left flock', flock_name: flockName, deleted });
 

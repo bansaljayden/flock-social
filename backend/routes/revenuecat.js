@@ -416,13 +416,35 @@ router.post('/webhook', async (req, res) => {
       const receiving = new Set(to);
       const revoking = from.filter((id) => !receiving.has(id));
 
-      if (revoking.length) {
+      // Revoke and grant in ONE statement when both sides exist. They used to
+      // be two autocommits, and the comment above only closed the
+      // interleaving window (an id on both sides was never revoked). The
+      // failure window stayed open: a revoke that committed followed by a
+      // grant that threw left every transferred_from id non-premium and no
+      // transferred_to id premium until RevenueCat's retry converged, and
+      // services/entitlements.js reads the column fresh on every check, so a
+      // paying subscriber saw the upgrade sheet in between. The two sets are
+      // disjoint by construction (revoking = from minus to), which is what
+      // lets one statement touch both without updating any row twice. A
+      // one-sided transfer still issues only the statement it needs, so a
+      // from-only or to-only event reads exactly as it did.
+      if (revoking.length && to.length) {
+        await pool.query(
+          `WITH revoked AS (
+             UPDATE users SET is_premium = false
+              WHERE id = ANY($1::int[]) AND is_premium IS DISTINCT FROM false
+              RETURNING id
+           )
+           UPDATE users SET is_premium = true
+            WHERE id = ANY($2::int[]) AND is_premium IS DISTINCT FROM true`,
+          [revoking, to]
+        );
+      } else if (revoking.length) {
         await pool.query(
           'UPDATE users SET is_premium = false WHERE id = ANY($1::int[]) AND is_premium IS DISTINCT FROM false',
           [revoking]
         );
-      }
-      if (to.length) {
+      } else if (to.length) {
         await pool.query(
           'UPDATE users SET is_premium = true WHERE id = ANY($1::int[]) AND is_premium IS DISTINCT FROM true',
           [to]

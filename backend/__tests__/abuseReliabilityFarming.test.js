@@ -225,6 +225,23 @@ async function dispatch(sql, params) {
   if (/^SELECT COUNT\(\*\) AS cnt FROM flock_members WHERE flock_id = \$1 AND status = 'accepted'/.test(flat)) {
     return { rows: [{ cnt: String(acceptedCount(Number(p[0]))) }], rowCount: 1 };
   }
+  // The non-creator leave is one statement now: drop the membership and, if
+  // nobody accepted remains, the flock, together or not at all. Mirror the
+  // route's own semantics: the leaver's row is excluded by id, and a request
+  // from a non-member deletes nothing.
+  if (/^WITH gone AS \(\s*DELETE FROM flock_members WHERE flock_id = \$1 AND user_id = \$2 RETURNING 1\s*\)\s*DELETE FROM flocks f/.test(flat)) {
+    const fid = Number(p[0]);
+    const uid = Number(p[1]);
+    const had = world.members.some((m) => m.flock_id === fid && m.user_id === uid);
+    world.members = world.members.filter((m) => !(m.flock_id === fid && m.user_id === uid));
+    const others = world.members.filter((m) => m.flock_id === fid && m.status === 'accepted').length;
+    if (had && others === 0) {
+      world.flocks.delete(fid);
+      world.members = world.members.filter((m) => m.flock_id !== fid);
+      return { rows: [{ id: fid }], rowCount: 1 };
+    }
+    return { rows: [], rowCount: 0 };
+  }
   if (/^DELETE FROM flocks WHERE id = \$1$/.test(flat)) {
     world.flocks.delete(Number(p[0]));
     world.members = world.members.filter((m) => m.flock_id !== Number(p[0]));

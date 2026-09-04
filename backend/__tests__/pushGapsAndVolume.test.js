@@ -306,9 +306,10 @@ test('the host is told when the last member leaves, and never told about the one
   on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ status: 'accepted' }] }));
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [] }));
   on(/FROM user_blocks/, () => ({ rows: [] }));
-  on(/DELETE FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [], rowCount: 1 }));
-  on(/SELECT COUNT\(\*\) AS cnt FROM flock_members WHERE flock_id = \$1 AND status = 'accepted'/, () => ({ rows: [{ cnt: '0' }] }));
-  on(/DELETE FROM flocks WHERE id = \$1/, () => ({ rows: [], rowCount: 1 }));
+  // The leave is one statement now: membership out and, with nobody accepted
+  // left, the flock too. The RETURNING row is how the route learns the plan
+  // is gone, which is what tells the host.
+  on(/WITH gone AS/, () => ({ rows: [{ id: 42 }], rowCount: 1 }));
 
   const res = await call('POST', '/api/flocks/42/leave');
   assert.strictEqual(res.status, 200);
@@ -330,8 +331,9 @@ test('a member leaving a plan that survives does not interrupt the host', async 
   on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ status: 'accepted' }] }));
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [{ user_id: 3 }] }));
   on(/FROM user_blocks/, () => ({ rows: [] }));
-  on(/DELETE FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [], rowCount: 1 }));
-  on(/SELECT COUNT\(\*\) AS cnt FROM flock_members WHERE flock_id = \$1 AND status = 'accepted'/, () => ({ rows: [{ cnt: '1' }] }));
+  // Somebody accepted remains, so the statement removes the membership and
+  // returns no flock row: the plan survives and the host hears nothing.
+  on(/WITH gone AS/, () => ({ rows: [], rowCount: 0 }));
 
   await call('POST', '/api/flocks/42/leave');
   await settle();
