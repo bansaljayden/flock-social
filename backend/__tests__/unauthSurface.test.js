@@ -126,10 +126,12 @@ test('a share link cannot be flooded with fresh guest identities', () => {
   // general limiter — so one script could outvote a five-person flock 10:1 and
   // permanently brick the invite link for real guests.
   guest.newGuestLog.clear();
-  for (let i = 0; i < 3; i++) {
+  // The budget is the exported constant (12 since 2026-09-04: a table on one
+  // wifi), not a literal, so this pins the SHAPE of the guard.
+  for (let i = 0; i < guest.NEW_GUESTS_PER_IP_PER_FLOCK; i++) {
     assert.strictEqual(guest.allowNewGuest('1.1.1.1', 42), true, `guest ${i + 1} should be allowed`);
   }
-  assert.strictEqual(guest.allowNewGuest('1.1.1.1', 42), false, 'the 4th from one IP is refused');
+  assert.strictEqual(guest.allowNewGuest('1.1.1.1', 42), false, 'the one past the budget from one IP is refused');
 
   // Budgets are per flock and per IP, so the throttle never leaks across plans
   // and never punishes a genuinely different guest.
