@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 
 const pool = require('../config/database');
-const { calculateCrowdScore, generateHourlyForecast, venueLocalNow, weekdayOffset, hedgeLabel } = require('./crowdEngine');
+const { calculateCrowdScore, generateHourlyForecast, venueLocalNow, weekdayOffset } = require('./crowdEngine');
 const { getWeather } = require('./weatherService');
 const {
   pushAlways,
@@ -195,37 +195,39 @@ function pickPeak(forecast) {
 // ---------------------------------------------------------------------------
 function buildAlertMessage({ venueName, currentScore, eventScore, peak }) {
   const name = venueName || 'Your venue';
-  // hedgeLabel, not the raw band. These come from calculateCrowdScore, which is
-  // the category curve, and publishedLabel(score, { supported: false }) is what
-  // every screen renders for exactly this basis.
-  const soon = String(hedgeLabel(eventScore.label) || '').toLowerCase();
-  const now = String(hedgeLabel(currentScore.label) || '').toLowerCase();
+  // The RAW band, lower-cased, with the hedge carried by the sentence around
+  // it. hedgeLabel is the right tool for a card label, where the whole string
+  // is the claim; dropped into these slots it produced "It's usually steady
+  // right now", which argues with itself, and "expected to be usually busy",
+  // which is not English. Same honesty, written as somebody would say it.
+  const soon = String(eventScore.label || '').toLowerCase();
+  const now = String(currentScore.label || '').toLowerCase();
   const gettingBusier = eventScore.score > currentScore.score + 15;
   const peakSoon = Boolean(peak) && peak.score >= PEAK_SCORE;
 
   if (eventScore.score >= 85) {
     return {
       title: `${name} is usually packed then`,
-      body: `Places like it are ${soon} around your flock time. Worth heading out early.`,
+      body: `Places like it are usually ${soon} around your flock time. Worth heading out early.`,
     };
   }
   if (gettingBusier) {
     return {
-      title: `${name} is filling up`,
+      title: `${name} usually fills up before then`,
       body: soon === now
-        ? `It's ${now} right now and still filling up before your flock time. Going early beats the rush.`
-        : `It's ${now} right now and expected to be ${soon} by your flock time. Going early beats the rush.`,
+        ? `Typically ${now} now and busier by your flock time. Going early beats the rush.`
+        : `Typically ${now} now and ${soon} by your flock time. Going early beats the rush.`,
     };
   }
   if (peakSoon) {
     return {
-      title: `${name} is about to peak`,
-      body: `The busiest stretch starts around ${peak.hour}. Head out now for a better spot.`,
+      title: `${name} usually peaks soon`,
+      body: `The busiest stretch usually starts around ${peak.hour}. Head out now for a better spot.`,
     };
   }
   return {
     title: `Heads up about ${name}`,
-    body: `Expected to be ${soon} at your flock time.`,
+    body: `Places like it are usually ${soon} at your flock time.`,
   };
 }
 
