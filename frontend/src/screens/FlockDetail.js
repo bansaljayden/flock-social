@@ -496,7 +496,10 @@ export default function FlockDetail({
 
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', fontWeight: '500' }}>Was it busy?</p>
               <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
-                {[{ level: 1, label: 'Quiet', color: colors.steel, ink: colors.steel }, { level: 2, label: 'Moderate', color: colors.amber, ink: colors.amberText }, { level: 3, label: 'Very Busy', color: colors.red, ink: colors.redText }].map(opt => (
+                {/* Ladder words, not the legacy aliases. See the note on the
+                    same three options in App.js: only the words changed, the
+                    level is what travels. */}
+                {[{ level: 1, label: 'Quiet', color: colors.steel, ink: colors.steel }, { level: 2, label: 'Steady', color: colors.amber, ink: colors.amberText }, { level: 3, label: 'Packed', color: colors.red, ink: colors.redText }].map(opt => (
                   <button key={opt.level} className="hit44 glass-btn glass-secondary" onClick={() => setFeedbackState(prev => ({ ...prev, crowdLevel: opt.level }))} style={{ flex: 1, padding: '12px 6px', borderRadius: '10px', border: feedbackState.crowdLevel === opt.level ? `2px solid ${opt.color}` : '1.5px solid var(--border-default)', backgroundColor: feedbackState.crowdLevel === opt.level ? `${opt.color}15` : 'var(--bg-card-solid)', cursor: 'pointer', textAlign: 'center', transition: 'opacity 0.15s ease' }}>
                     <div style={{ width: '8px', height: '8px', borderRadius: '4px', backgroundColor: opt.color, margin: '0 auto 6px' }} />
                     <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: feedbackState.crowdLevel === opt.level ? opt.ink : colors.navy }}>{opt.label}</span>

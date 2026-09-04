@@ -120,7 +120,14 @@ describe('the reaction actually leaves the device', () => {
   it('does not address a message the server has never issued', () => {
     // An optimistic bubble keeps its Date.now() placeholder id until the echo
     // lands. Reacting to one would POST against a row number nobody has.
-    expect(handler).toContain("typeof messageId !== 'number'");
+    //
+    // The guard USED to read `typeof messageId !== 'number'`, which a
+    // Date.now() id passes, so the request went out against an id above int4
+    // and the route's param validator answered with express-validator's own
+    // default: a red toast reading "Your reaction didn't save. Invalid value"
+    // to somebody who tapped a heart on a bubble still saying Sending.
+    expect(handler).toContain('!isServerId(messageId)');
+    expect(handler).not.toContain("typeof messageId !== 'number'");
   });
 });
 

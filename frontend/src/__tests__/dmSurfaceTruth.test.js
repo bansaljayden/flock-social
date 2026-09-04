@@ -23,8 +23,19 @@ test('a reconnect keeps the thread this session already read', () => {
 });
 
 test('a photo the server re-encoded is one bubble, not two', () => {
-  expect(app).toMatch(/&& !!localImage === !!\(server\.image_url \|\| null\);/);
+  // PRESENCE, and presence now includes the THUMBNAIL. Migration 053 made the
+  // history read blank image_url whenever a thumb exists, which is right for
+  // the payload and reopened this exact bug on the history path: nearly every
+  // photo stopped matching its own server row, so a send that timed out but
+  // actually landed came back as a second bubble reading "Didn't send", the
+  // failed copy was rewritten to localStorage on every open, and retry posted a
+  // third. The socket echo was never affected; it carries image_url from
+  // INSERT ... RETURNING.
+  expect(app).toMatch(/const serverHasImage = !!\(server\.image_url \|\| server\.thumb_url \|\| server\.thumb \|\| null\);/);
+  expect(app).toMatch(/&& !!localImage === serverHasImage;/);
   expect(app).not.toMatch(/&& localImage === \(server\.image_url \|\| null\);/);
+  // And both history call sites hand the thumb through.
+  expect((app.match(/thumb: h\.thumb \|\| h\.thumb_url \|\| null,/g) || []).length).toBe(2);
 });
 
 test('the typing indicator is reset when the open thread changes', () => {

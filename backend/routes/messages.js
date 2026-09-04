@@ -476,10 +476,21 @@ router.get('/flocks/:id/messages/:messageId/image',
       if (!(await verifyFlockMember(flockId, req.user.id))) {
         return res.status(403).json({ error: 'Not a member of this flock' });
       }
+      // The same visibility filter every other read in this file applies, and
+      // the only one that was missing it. The history query drops a blocked
+      // member's rows and the reaction grouping drops their reactions; this
+      // route took a message id and a membership check and nothing else, so the
+      // full resolution photo of somebody you had blocked, or who had blocked
+      // you, was still served to a fellow member who asked for it by id. The UI
+      // closes it (handleUserBlocked strips their messages, so no row is
+      // tappable) and that is exactly why it has to be closed here as well:
+      // a screen-level fix is not an access rule.
+      const invisible = await getInvisibleUserIds(req.user.id);
       const row = await pool.query(
         `SELECT image_url FROM messages
-          WHERE id = $1 AND flock_id = $2 AND COALESCE(is_hidden, false) = false AND sender_deleted_at IS NULL`,
-        [req.params.messageId, flockId]
+          WHERE id = $1 AND flock_id = $2 AND COALESCE(is_hidden, false) = false AND sender_deleted_at IS NULL
+            AND (sender_id IS NULL OR NOT (sender_id = ANY($3::int[])))`,
+        [req.params.messageId, flockId, invisible]
       );
       if (row.rows.length === 0 || !row.rows[0].image_url) {
         return res.status(404).json({ error: 'Photo not found' });

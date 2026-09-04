@@ -137,7 +137,13 @@ describe('flock chat unread', () => {
     expect(appSource).toMatch(/flock_chat_seen/);
     expect(appSource).toMatch(/unread: Number\(f\.unread_count\) \|\| 0/);
     expect(appSource).toMatch(/const hasUnread = \(f\.unread \|\| 0\) > 0;/);
-    expect(appSource).toMatch(/markFlockRead\(selectedFlockId, newest\)\.catch\(\(\) => \{\}\)/);
+    // The failed PUT releases its key. It used to be stamped before the
+    // request and never reset, so one failure (and the moment this fails is a
+    // flaky connection, which is the moment you are most likely to be opening a
+    // chat) left the server cursor where it was for the session: the badge came
+    // back on the next flocks read, the app icon kept counting the same
+    // messages, and reopening the same chat did not retry.
+    expect(appSource).toMatch(/markFlockRead\(selectedFlockId, newest\)\.catch\(\(\) => \{\s*if \(readPutRef\.current === key\) readPutRef\.current = '';\s*\}\)/);
     expect(appSource).toMatch(/unread: chatOpen \? \(f\.unread \|\| 0\) : \(f\.unread \|\| 0\) \+ 1/);
   });
 
@@ -581,4 +587,54 @@ describe('whitespace does not arm the Send button on either chat screen', () => 
     expect(send.length).toBeGreaterThan(200);
     expect(send).toContain('disabled={!chatInputHasText}');
   });
+});
+
+// ---------------------------------------------------------------------------
+// From the flock chat trace of 2026-09-04. Four more, and the one above.
+// ---------------------------------------------------------------------------
+test('reaching the top of the scrollback is not permanent', () => {
+  // Nothing cleared the exhausted flag, and a read that does not keep older
+  // rows truncates the list back to one page, so the pages exist again. One
+  // walk to the top of a long chat hid "Load earlier messages" for the rest of
+  // the session: leave, come back to the newest fifty, and the control that
+  // reaches the other two hundred and fifty is not on the screen.
+  expect(appSource).toMatch(/if \(!keepOlder\) \{\s*setFlockAtTop\(t => \{/);
+  expect(appSource).toMatch(/delete next\[flockId\];/);
+});
+
+test('a send the server will always refuse has a way off the screen', () => {
+  // Retry was the only control, and a photo the image screen refuses or text
+  // the language filter rejects comes back on every open with a retry that
+  // runs the same refusal. It also parks a data URL in a 5 MB store.
+  expect(appSource).toMatch(/const discardFailedMessage = useCallback\(\(flockId, failedMsg\) => \{/);
+  expect(appSource).toMatch(/removeFailedFlockMessage\(flockId, failedMsg\.id\);/);
+  expect(appSource).toMatch(/aria-label="Remove this message that did not send"/);
+});
+
+test('an unsent message stops being counted as unread', () => {
+  // The badge is a server-backed count since 056, not derived from the array,
+  // so dropping the bubble left the row asserting an unread that is gone.
+  expect(appSource).toMatch(/\.\.\.\(removed && \(f\.unread \|\| 0\) > 0 \? \{ unread: f\.unread - 1 \} : \{\}\),/);
+});
+
+test('search says what it actually searched, and can widen it', () => {
+  // There is no server-side message search, so the filter runs over the rows
+  // this client holds. Hiding the scrollback control during a search made a
+  // term three hundred messages back unreachable, and the empty state then
+  // announced it did not exist.
+  expect(appSource).toMatch(/Nothing loaded so far matches/);
+  // "Everything is here" is the top of the scrollback OR a thread shorter than
+  // one page. flockAtTop alone is only set by the paging reader, so a short
+  // flock never sets it and would be told its own contents were not loaded.
+  expect(appSource).toMatch(/\(flockAtTop\[flock\.id\] \|\| flock\.messages\.length < DM_PAGE_SIZE\)/);
+  expect(appSource).toMatch(/Load earlier messages above to search further back\./);
+  expect(appSource).not.toMatch(/\{!messagesLoading && !\(showChatSearch && chatSearch\.trim\(\)\) && !flockAtTop\[flock\.id\]/);
+  expect(appSource).toMatch(/\{visibleMessages\.length === 1 \? 'message' : 'messages'\} found/);
+});
+
+test('a blocked person leaves with their reactions, and the full-size photo route agrees', () => {
+  const messages = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'routes', 'messages.js'), 'utf8');
+  expect(appSource).toMatch(/const kept = m\.reactions\.filter\(r => String\(r && r\.user_id\) !== id\);/);
+  // The one read in that file with no visibility filter.
+  expect(messages).toMatch(/AND \(sender_id IS NULL OR NOT \(sender_id = ANY\(\$3::int\[\]\)\)\)/);
 });
