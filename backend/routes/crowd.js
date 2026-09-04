@@ -642,8 +642,28 @@ router.get('/:placeId',
       if (!Number.isInteger(localHour) || localHour < 0 || localHour > 23) localHour = now.getHours();
       if (!Number.isInteger(localDay) || localDay < 0 || localDay > 6) localDay = now.getDay();
 
-      // Check cache (include local time in key so different hours aren't stale)
-      const cacheKey = `full:${placeId}:${localHour}:${localDay}`;
+      // THE KEY HOLDS NOTHING THE CALLER CHOOSES.
+      //
+      // `localHour` and `localDay` are still the caller's query parameters at
+      // this point; the venue's own clock overrides both about eighty lines
+      // below, before anything is scored. So for any venue Google gives an
+      // offset for, all 168 (hour, day) keys held the IDENTICAL card, and one
+      // account walking ?localHour=0..23&localDay=0..6 against a single place id
+      // could mint 168 copies of one answer and flush the 200-entry map that
+      // every other user's cards live in, each miss running a fresh 24-hour
+      // forecast. The Places budget does not stop it, because a warm details
+      // cache means no upstream call is charged.
+      //
+      // The venue clock is not available yet here, so the key carries the SERVER's
+      // hour instead: it is the same for every caller, it rolls with the TTL, and
+      // where the venue is in another timezone the entry is simply keyed on a
+      // number that does not describe it, which costs a duplicate rather than a
+      // wrong answer. mlPredictor's own R4-I2 header states the rule this
+      // restores: a cache key is a security control and is only as good as the
+      // part of it the caller cannot choose.
+      const serverHour = now.getHours();
+      const serverDay = now.getDay();
+      const cacheKey = `full:${placeId}:${serverHour}:${serverDay}`;
       const cached = getCached(cacheKey);
       if (cached) {
         // The owner override is applied to the CACHED object, never baked into

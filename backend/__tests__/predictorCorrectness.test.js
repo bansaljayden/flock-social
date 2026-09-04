@@ -588,15 +588,19 @@ test('the event cache is bounded by the same helper as every other cache', async
     const MAX = _internals.EVENT_CACHE_MAX;
     // Fill past the ceiling so the eviction branch actually runs — that is the
     // branch that carried the eviction twice.
+    // 0.01 per step, not 0.001. The event cache key buckets coordinates to two
+    // decimals (about 1.1 km, coarser than the 2 km question it stands for), so
+    // a finer walk collapses into one key and the cache never reaches its
+    // ceiling. The step has to out-run the bucket for this to test eviction.
     for (let i = 0; i < MAX + 40; i++) {
-      await _internals.getNearbyEvents(10 + i * 0.001, 20 + i * 0.001, ts);
+      await _internals.getNearbyEvents(10 + i * 0.01, 20 + i * 0.01, ts);
     }
     assert.equal(_internals.eventCacheSize(), MAX,
       'the cache must sit AT its ceiling, not one slot below it forever');
     // And STAY there. An insert that evicts twice makes the size oscillate
     // MAX / MAX-1, so a single sample can pass by luck; several cannot.
     for (let i = 0; i < 4; i++) {
-      await _internals.getNearbyEvents(70 + i * 0.001, 80 + i * 0.001, ts);
+      await _internals.getNearbyEvents(70 + i * 0.01, 80 + i * 0.01, ts);
       assert.equal(_internals.eventCacheSize(), MAX,
         `one insert must evict exactly one entry (after extra insert ${i})`);
     }
@@ -606,7 +610,7 @@ test('the event cache is bounded by the same helper as every other cache', async
     let calls = 0;
     global.fetch = async () => { calls++; return { ok: true, status: 200, json: async () => ({ _embedded: { events: [] } }) }; };
     for (let i = MAX + 10; i < MAX + 40; i++) {
-      await _internals.getNearbyEvents(10 + i * 0.001, 20 + i * 0.001, ts);
+      await _internals.getNearbyEvents(10 + i * 0.01, 20 + i * 0.01, ts);
     }
     assert.equal(calls, 0, 'a remembered "no events here" must not be re-purchased');
   } finally {
@@ -902,4 +906,24 @@ test('no route supplies popular_times, so the corpus write stays unreachable', (
     'a route now supplies popular_times: services/mlPredictor.js storeGoogleBaselines '
     + 'will start INSERTing into ml_venue_baselines under a place id that routes/crowd.js '
     + 'POST /batch does not shape-check. Add the check and update the tripwire comment.');
+});
+
+test('the two caller-facing caches are keyed on what the server decides', () => {
+  const fs2 = require('fs');
+  const path2 = require('path');
+  const predictor = fs2.readFileSync(path2.join(__dirname, '..', 'services', 'mlPredictor.js'), 'utf8');
+  const crowd = fs2.readFileSync(path2.join(__dirname, '..', 'routes', 'crowd.js'), 'utf8');
+
+  // The event cache asked a 2 km question and keyed it at ~110 m, so two bars
+  // two hundred metres apart bought the same circle of events twice, and
+  // /alternatives could be eleven keys and eleven paid calls for one circle.
+  assert.match(predictor, /const cacheKey = `\$\{lat\.toFixed\(2\)\},\$\{lng\.toFixed\(2\)\},\$\{slot\}`;/);
+
+  // The card cache key carried the caller's own localHour and localDay, which
+  // the venue clock overrides before anything is scored. So all 168 (hour, day)
+  // keys held the identical card and one account could mint 168 copies and
+  // flush the shared 200-entry map for everybody else.
+  assert.match(crowd, /const serverHour = now\.getHours\(\);/);
+  assert.match(crowd, /const cacheKey = `full:\$\{placeId\}:\$\{serverHour\}:\$\{serverDay\}`;/);
+  assert.doesNotMatch(crowd, /const cacheKey = `full:\$\{placeId\}:\$\{localHour\}:\$\{localDay\}`;/);
 });
