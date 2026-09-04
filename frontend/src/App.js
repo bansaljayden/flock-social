@@ -8627,6 +8627,29 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       .finally(() => setOlderLoading(false));
   }, [showToast]);
 
+  // The money state of an open chat: the budget, and the bill when there
+  // could be one. Named so the reconnect catch-up can re-read it: it used to
+  // re-read the messages alone, and a budget that locked or a bill that
+  // landed while the phone was in a pocket stayed off the screen.
+  const loadMoneyState = useCallback((flockId) => {
+    getBudgetStatus(flockId)
+      .then(data => { if (data.budgetEnabled) setBudgetStatus(data); else setBudgetStatus(null); })
+      .catch(() => setBudgetStatus(null));
+    // A bill only exists after someone splits one, and the UI only offers
+    // that on a confirmed or completed flock. Asking for one on every open
+    // meant a 404 (and a red line in the console) every single time a plan
+    // was opened. Ask only when there could be an answer; the bill_created
+    // socket event covers one being made while you are sitting here.
+    const flockNow = flocksRef.current.find(f => f.id === flockId);
+    if (flockNow && (flockNow.status === 'confirmed' || flockNow.status === 'completed' || flockNow.status === 'locked')) {
+      getBillSplit(flockId)
+        .then(data => setBillSplit(data.bill))
+        .catch(() => setBillSplit(null));
+    } else {
+      setBillSplit(null);
+    }
+  }, []);
+
   useEffect(() => {
     if (currentScreen === 'chatDetail' && selectedFlockId) {
       // Leave previous room — unless a live location share is still running in
@@ -8657,22 +8680,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
         loadFlockMessages(selectedFlockId, { showSpinner: true });
       }
       // Load budget status and bill split
-      getBudgetStatus(selectedFlockId)
-        .then(data => { if (data.budgetEnabled) setBudgetStatus(data); else setBudgetStatus(null); })
-        .catch(() => setBudgetStatus(null));
-      // A bill only exists after someone splits one, and the UI only offers
-      // that on a confirmed or completed flock. Asking for one on every open
-      // meant a 404 (and a red line in the console) every single time a plan
-      // was opened. Ask only when there could be an answer; the bill_created
-      // socket event covers one being made while you are sitting here.
-      const flockNow = flocksRef.current.find(f => f.id === selectedFlockId);
-      if (flockNow && (flockNow.status === 'confirmed' || flockNow.status === 'completed' || flockNow.status === 'locked')) {
-        getBillSplit(selectedFlockId)
-          .then(data => setBillSplit(data.bill))
-          .catch(() => setBillSplit(null));
-      } else {
-        setBillSplit(null);
-      }
+      loadMoneyState(selectedFlockId);
 
     } else if (currentScreen !== 'chatDetail' && prevFlockIdRef.current) {
       // Don't leave socket room if actively sharing location (need to keep receiving updates)
@@ -8683,7 +8691,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       setBudgetStatus(null);
       setBillSplit(null);
     }
-  }, [currentScreen, selectedFlockId, loadFlockVotes, refreshFlockRoster, loadFlockMessages]);
+  }, [currentScreen, selectedFlockId, loadFlockVotes, refreshFlockRoster, loadFlockMessages, loadMoneyState]);
 
   // --- Reconnect catch-up ---------------------------------------------------
   //
@@ -8738,7 +8746,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       key = `flock:${flockId}`;
       // keepOlder: this runs mid-conversation, so it must not slice scrollback
       // off the top of what the user is already reading.
-      read = () => loadFlockMessages(flockId, { keepOlder: true });
+      read = () => { loadFlockMessages(flockId, { keepOlder: true }); loadMoneyState(flockId); };
     } else if (screen === 'dmDetail' && dmId) {
       key = `dm:${dmId}`;
       read = () => loadDmMessages(dmId, { keepOlder: true });
@@ -8764,7 +8772,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag }) => {
       catchUpTimerRef.current = null;
       runCatchUpRef.current?.();
     }, waitMs);
-  }, [loadFlockMessages, loadDmMessages]);
+  }, [loadFlockMessages, loadDmMessages, loadMoneyState]);
   runCatchUpRef.current = runCatchUp;
 
   useEffect(() => {
