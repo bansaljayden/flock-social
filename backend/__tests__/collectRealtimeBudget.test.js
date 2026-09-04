@@ -33,3 +33,39 @@ test('the live call gives up at twenty seconds; the forecast call keeps thirty',
 test('the pace itself is untouched: one call per second', () => {
   assert.match(collect, /await sleep\(1000\);/);
 });
+
+// ---------------------------------------------------------------------------
+// 2026-09-04 16:56 UTC. The sweep stopped after 271 of 1414 calls having
+// written 149 rows, exited non-zero, and told the reader to go and check the
+// BestTime subscription. Every one of the ten errors that tripped the breaker
+// was "This operation was aborted", which is our own AbortController at twenty
+// seconds, and nine of the ten were consecutive Starbucks venues. Not one 403.
+// Not one 5xx in that run. The venue list groups chains together, so a run of
+// slow answers is the normal shape of this data, not a coincidence.
+// ---------------------------------------------------------------------------
+test('a timeout on our own clock is not evidence that BestTime is down', () => {
+  // One definition of "network error", shared, so the two places that decide
+  // cannot drift.
+  assert.match(svc, /module\.exports = \{ fetchWeeklyForecast, fetchLiveBusyness, NETWORK_ERR_RE \};/);
+  assert.match(collect, /const \{ fetchLiveBusyness, NETWORK_ERR_RE \} = require\('\.\/bestTimeService'\);/);
+  // Its own counter and its own ceiling, the way a 503 throttle already has.
+  assert.match(collect, /let consecutiveNetwork = 0;/);
+  assert.match(collect, /const networkish = err && NETWORK_ERR_RE\.test\(String\(err\.message \|\| ''\)\);/);
+  assert.match(collect, /if \(consecutiveNetwork >= 25\) \{/);
+  assert.match(collect, /25 calls in a row timed out or could not connect, aborting run/);
+  // All three counters reset on a success.
+  assert.match(collect, /consecutiveErrors = 0;\s*consecutiveThrottles = 0;\s*consecutiveNetwork = 0;/);
+});
+
+test('the refusal names what actually stopped the run', () => {
+  // The 403 story was printed on every abort, whatever caused it, because the
+  // 403 story is the one that cost 90 days. A refusal that misdiagnoses spends
+  // the reader's attention in the wrong place, and here it accused the paid
+  // subscription over ten client-side timeouts.
+  assert.match(collect, /let abortReason = null;/);
+  for (const reason of ['fatal', 'throttled', 'network', 'upstream']) {
+    assert.match(collect, new RegExp(`abortReason = '${reason}';`), `${reason} names itself`);
+  }
+  assert.match(collect, /\}\[abortReason\] \|\| 'The reason was not recorded/);
+  assert.match(collect, /timed out on OUR clock or could not connect/);
+});
