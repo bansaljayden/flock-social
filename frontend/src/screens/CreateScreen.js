@@ -321,7 +321,14 @@ export default function CreateScreen({
             });
         }
         const invitedNames = capturedFriends.map(fr => fr.name);
-        const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', creatorId: f.creator_id, members: invitedNames, memberCount: 1 + invitedIds.length, time: formatEventTime(f.event_time || capturedEventTime), eventTime: f.event_time || capturedEventTime, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, venueLat: venueLat, venueLng: venueLng, cashPool: null, budgetEnabled: f.budget_enabled || capturedBudget, budgetContext: f.budget_context || capturedBudgetCtx, budgetLocked: false, budgetCeiling: null, ghostModeEnabled: f.ghost_mode_enabled || capturedGhostMode, votes: [], messages: initialMessages };
+        // The server drops invitees it could not seat (a blocked pair, the
+        // hourly budget) and echoes the ids it kept; the chat header used to
+        // count everyone asked for.
+        const acceptedInvites = Array.isArray(f.invited_user_ids) ? f.invited_user_ids.length : invitedIds.length;
+        if (invitedIds.length > 0 && acceptedInvites < invitedIds.length) {
+          showToast(`Invited ${acceptedInvites} of ${invitedIds.length}. The rest can join from the invite link.`);
+        }
+        const newFlock = { id: f.id, name: f.name, host: authUser?.name || 'You', creatorId: f.creator_id, members: invitedNames, memberCount: 1 + (Array.isArray(f.invited_user_ids) ? f.invited_user_ids.length : invitedIds.length), time: formatEventTime(f.event_time || capturedEventTime), eventTime: f.event_time || capturedEventTime, status: 'voting', venue: f.venue_name || 'TBD', venueAddress: venueAddr, venueId: venueId, venuePhoto: venuePhoto, venueRating: venueRating, venuePriceLevel: venuePriceLevel, venueLat: venueLat, venueLng: venueLng, cashPool: null, budgetEnabled: f.budget_enabled || capturedBudget, budgetContext: f.budget_context || capturedBudgetCtx, budgetLocked: false, budgetCeiling: null, ghostModeEnabled: f.ghost_mode_enabled || capturedGhostMode, votes: [], messages: initialMessages };
 
         // Batch all state updates together — navigate immediately
         hapticSuccess();
@@ -467,7 +474,8 @@ export default function CreateScreen({
             </FormRow>
           </FormGroup>
 
-          <GroupLabel aside={flockFriends.length > 0 ? `${flockFriends.length} invited` : 'Just you'}>Who</GroupLabel>
+          {/* 25 is the server's ceiling for one create; more join from the chat. */}
+          <GroupLabel aside={flockFriends.length >= 25 ? '25 invited, the most at once. Add more from the chat.' : flockFriends.length > 0 ? `${flockFriends.length} invited` : 'Just you'}>Who</GroupLabel>
           <FormGroup>
             <FormRow>
               {/* THE ROSTER. Picked people as chips. While it is just you, the
@@ -503,7 +511,7 @@ export default function CreateScreen({
                   <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-tertiary)', margin: '0 0 6px' }}>Suggested</p>
                   <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
                     {suggestedToShow.slice(0, 5).map(user => (
-                      <button key={user.id} className="hit44 glass-btn glass-secondary" onClick={() => setFlockFriends(prev => [...prev, user])} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 10px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', flexShrink: 0, transition: 'opacity 0.15s ease' }}>
+                      <button key={user.id} className="hit44 glass-btn glass-secondary" disabled={flockFriends.length >= 25} onClick={() => setFlockFriends(prev => (prev.length >= 25 ? prev : [...prev, user]))} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '6px 10px', borderRadius: '20px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', flexShrink: 0, transition: 'opacity 0.15s ease' }}>
                         <div style={{ width: '24px', height: '24px', borderRadius: '12px', backgroundColor: colors.navyMidBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', overflow: 'hidden', flexShrink: 0 }}>
                           {user.profile_image_url ? <img src={user.profile_image_url} alt="" style={{ width: '24px', height: '24px', borderRadius: '12px', objectFit: 'cover' }} /> : user.name[0]?.toUpperCase()}
                         </div>

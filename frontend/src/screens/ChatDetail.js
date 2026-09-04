@@ -606,6 +606,21 @@ export default function ChatDetail({
           </div>
         )}
 
+        {/* The plan, in one line, and the way to it. The chat never showed
+            the time or the status: a member in here when the host locked the
+            plan or moved it saw nothing change, and the only way to the plan
+            screen was Home, then the card. */}
+        <button
+          className="hit44"
+          aria-label="Open the plan"
+          onClick={() => { leaveChatScreen(); setCurrentScreen('detail'); }}
+          style={{ width: '100%', minHeight: '40px', padding: '8px 14px', border: 'none', borderBottom: `1px solid ${colors.creamDark}`, background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', cursor: 'pointer', flexShrink: 0, textAlign: 'left' }}
+        >
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {flock.time && flock.time !== 'TBD' ? flock.time : 'Time still open'} · {flock.status === 'confirmed' ? 'Locked in' : flock.status === 'completed' ? 'Done' : flock.status === 'cancelled' ? 'Called off' : 'Still voting'}
+          </span>
+          <span style={{ flexShrink: 0, color: colors.navy, fontWeight: '600' }}>Plan</span>
+        </button>
         {/* Pinned Venue Banner — shows which venue this flock is at */}
         {flock.venue && flock.venue !== 'TBD' ? (
           <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.steel}12)`, borderBottom: `1px solid ${colors.creamDark}`, flexShrink: 0 }}>
@@ -1699,18 +1714,30 @@ export default function ChatDetail({
           // could never move on. The venue write has to land first: locking a
           // plan onto a venue the server just refused would tell everyone it
           // is happening somewhere it is not.
-          const handleConfirmVenue = (venueName) => {
-            const venueObj = allVenues.find(v => v.name === venueName);
+          // Confirm takes the vote row, not a name. The lookup used to be by name
+          // in the nearby map pins, so a venue voted from a shared card or the
+          // popular list saved with no place id and the plan lost Details,
+          // Directions, Check In, the map and the feedback card. The row's own
+          // place id, then the chat's venue card, then the pins. One PUT
+          // carries the venue and the confirmation, so members get one push.
+          const handleConfirmVenue = (row) => {
+            const venueName = typeof row === 'string' ? row : row.venue;
+            const rowPlaceId = typeof row === 'string' ? null : (row.place_id || null);
+            const card = (flock.messages || []).find(m => m.message_type === 'venue_card' && m.venue_data && (
+              (rowPlaceId && m.venue_data.place_id === rowPlaceId) || m.venue_data.name === venueName
+            ))?.venue_data || null;
+            const pin = allVenues.find(v => (rowPlaceId && v.place_id === rowPlaceId) || v.name === venueName) || null;
             setShowVotePanel(false);
             return updateFlockVenue(selectedFlockId, {
               name: venueName,
-              addr: venueObj?.addr || venueObj?.formatted_address || '',
-              place_id: venueObj?.place_id || null,
-              lat: venueObj?.location?.latitude || null,
-              lng: venueObj?.location?.longitude || null,
-              photo_url: venueObj?.photo_url || null,
-              rating: venueObj?.stars || venueObj?.rating || null,
-            }).then((saved) => (saved ? confirmFlockPlan(selectedFlockId) : false));
+              addr: card?.addr || pin?.addr || pin?.formatted_address || '',
+              place_id: rowPlaceId || card?.place_id || pin?.place_id || null,
+              lat: card?.lat || pin?.location?.latitude || null,
+              lng: card?.lng || pin?.location?.longitude || null,
+              photo_url: card?.photo_url || pin?.photo_url || null,
+              rating: card?.rating || card?.stars || pin?.stars || pin?.rating || null,
+              status: 'confirmed',
+            });
           };
 
           // Ensure assigned venue is in votes list
@@ -1752,12 +1779,16 @@ export default function ChatDetail({
                       const isMyVote = v.voters.includes('You');
                       const count = voteTotal(v);
                       const votePercent = totalVoters > 0 ? Math.round((count / totalVoters) * 100) : 0;
-                      const isLeading = !isAssigned && idx === 0 && count > 0;
+                      // Two venues at the same count are not "Leading" and a flame;
+                      // the host reads that as the group's pick.
+                      const topCount = sortedVotes.length ? voteTotal(sortedVotes[0]) : 0;
+                      const isTiedTop = !isAssigned && count > 0 && count === topCount && sortedVotes.filter(x => voteTotal(x) === topCount).length > 1;
+                      const isLeading = !isAssigned && idx === 0 && count > 0 && !isTiedTop;
                       const iconBg = isAssigned
                         ? colors.navyBg
                         : isLeading ? colors.steel : `linear-gradient(135deg, ${colors.navy}15, ${colors.navy}25)`;
                       return (
-                        <button key={v.venue} className="hit44 glass-btn glass-secondary" onClick={(e) => { confirmClick(e); isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type, v.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: isAssigned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : `1.5px solid var(--border-default)`, backgroundColor: isAssigned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'opacity 0.2s' }}>
+                        <div role="button" tabIndex={0} aria-pressed={isMyVote} key={v.venue} className="hit44 glass-btn glass-secondary" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.currentTarget.click(); } }} onClick={(e) => { confirmClick(e); isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type, v.place_id); }} style={{ width: '100%', textAlign: 'left', padding: '12px 14px', borderRadius: '14px', border: isAssigned ? `2px solid ${colors.navy}` : isMyVote ? `2px solid ${colors.navy}` : `1.5px solid var(--border-default)`, backgroundColor: isAssigned ? `${colors.navy}05` : isMyVote ? `${colors.navy}06` : 'var(--bg-card-solid)', cursor: 'pointer', position: 'relative', overflow: 'hidden', transition: 'opacity 0.2s' }}>
                           {/* Progress bar background */}
                           <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${votePercent}%`, backgroundColor: isMyVote ? `${colors.navy}10` : 'var(--bg-tertiary)', transition: 'width 0.4s ease', borderRadius: '14px' }} />
                           <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -1768,7 +1799,7 @@ export default function ChatDetail({
                               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 <h4 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.venue}</h4>
                                 {isAssigned && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', backgroundColor: colors.navyBg, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Assigned</span>}
-                                {isLeading && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, backgroundColor: `${colors.steel}15`, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Leading</span>}
+                                {(isLeading || isTiedTop) && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, backgroundColor: `${colors.steel}15`, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>{isLeading ? 'Leading' : 'Tied'}</span>}
                               </div>
                               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{(() => {
                                 const guests = v.guestCount || 0;
@@ -1783,11 +1814,11 @@ export default function ChatDetail({
                               {count > 0 && <span style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: isMyVote ? colors.navy : colors.textTertiary }}>{count}</span>}
                               {isMyVote && <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.check('white', 12)}</div>}
                               {isCreator && !planLocked && (
-                                <button className="hit44 glass-btn glass-primary" onClick={(e) => { e.stopPropagation(); confirmClick(e); handleConfirmVenue(v.venue); }} style={{ padding: '4px 8px', borderRadius: '8px', border: 'none', background: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>{isAssigned ? 'Lock it in' : 'Confirm'}</button>
+                                <button className="hit44 glass-btn glass-primary" onClick={(e) => { e.stopPropagation(); confirmClick(e); handleConfirmVenue(v); }} style={{ padding: '4px 8px', borderRadius: '8px', border: 'none', background: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>{isAssigned ? 'Lock it in' : 'Confirm'}</button>
                               )}
                             </div>
                           </div>
-                        </button>
+                        </div>
                       );
                     })}
                   </div>

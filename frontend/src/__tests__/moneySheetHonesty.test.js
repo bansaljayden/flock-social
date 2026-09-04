@@ -32,5 +32,7 @@ test('a ghost commit re-reads the bill, the 409 speaks, and the two toasts say w
 test('the reconnect catch-up re-reads the money state of the open chat', () => {
   const app = read('App.js');
   expect(app).toMatch(/const loadMoneyState = useCallback\(\(flockId\) => \{/);
-  expect(app).toMatch(/read = \(\) => \{ loadFlockMessages\(flockId, \{ keepOlder: true \}\); loadMoneyState\(flockId\); \};/);
+  // Votes and the roster ride along since 2026-09-04: both are socket-only
+  // with no replay, so a pocketed phone came back to a stale tally.
+  expect(app).toMatch(/read = \(\) => \{ loadFlockMessages\(flockId, \{ keepOlder: true \}\); loadMoneyState\(flockId\); loadFlockVotes\(flockId\); refreshFlockRoster\(flockId\); \};/);
 });
