@@ -459,7 +459,7 @@ test('the console offers Warn, says it sends an email, and never offers it on a 
   assert.match(CONSOLE_SRC, /Warn user/);
   assert.match(CONSOLE_SRC, /Email a warning to/,
     'the confirm has to say what actually happens, because what happens is an email');
-  assert.match(CONSOLE_SRC, /const canWarn = canBan && !r\.reported_user_banned;/);
+  assert.match(CONSOLE_SRC, /const canWarn = canBan && !r\.reported_user_banned && r\.reported_user_mailable !== false;/);
   assert.match(CONSOLE_SRC, /user_warned: 'User warned'/,
     'an action the audit log cannot name renders as a shrugged "user warned"');
 });

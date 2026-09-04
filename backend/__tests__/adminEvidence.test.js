@@ -750,7 +750,7 @@ const banHandlers = (targetRole, targetExists = true) => [
     // of passing against a guard that is no longer there.
     rowCount: targetExists && !(/<> 'admin'/.test(sql) && targetRole === 'admin') ? 1 : 0,
   })],
-  [/SELECT id, role FROM users WHERE id/, () => ({ rows: targetExists ? [{ id: 3, role: targetRole }] : [], rowCount: targetExists ? 1 : 0 })],
+  [/SELECT id, role, is_banned FROM users WHERE id/, () => ({ rows: targetExists ? [{ id: 3, role: targetRole, is_banned: false }] : [], rowCount: targetExists ? 1 : 0 })],
   ...resolveAndAudit,
 ];
 
@@ -791,7 +791,7 @@ test('the refusal is carried by the UPDATE\'s own WHERE, not by a check that can
   log = [];
   const ok = await call('PUT', '/api/admin/reports/7', { action: 'ban' });
   assert.strictEqual(ok.status, 200, ok.text);
-  assert.strictEqual(ran(/SELECT id, role FROM users WHERE id/).length, 0, 'the success path must not pay for a second round trip');
+  assert.strictEqual(ran(/SELECT id, role, is_banned FROM users WHERE id/).length, 0, 'the success path must not pay for a second round trip');
 });
 
 test('banning an ordinary account still works, still audits, still disconnects', async () => {
@@ -823,7 +823,7 @@ test('UN-banning is never blocked — it is the recovery direction', async () =>
   const res = await call('PUT', '/api/admin/reports/7', { action: 'unban' });
   assert.strictEqual(res.status, 200, res.text);
   assert.strictEqual(res.body.action, 'user_unbanned');
-  assert.strictEqual(ran(/SELECT id, role FROM users WHERE id/).length, 0);
+  assert.strictEqual(ran(/SELECT id, role, is_banned FROM users WHERE id/).length, 0);
 });
 
 test('hiding a moderator\'s own content IS allowed, deliberately', async () => {
