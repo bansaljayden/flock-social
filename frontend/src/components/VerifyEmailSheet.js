@@ -39,6 +39,7 @@ const VerifyEmailSheet = ({
   verifyCooldown,
   verifyNote,
   verifyPrompt,
+  verifyRefused,
 }) => verifyPrompt && (
     <div
       onClick={() => setVerifyPrompt(null)}
@@ -56,10 +57,15 @@ const VerifyEmailSheet = ({
         <button
           className="hit44"
           onClick={resendVerification}
-          disabled={verifyCooldown > 0}
+          disabled={verifyCooldown > 0 || verifyRefused}
           style={{ width: '100%', height: '48px', borderRadius: '14px', border: 'none', background: isDark ? '#f1ede0' : '#1e293b', color: isDark ? '#1e293b' : '#ffffff', fontSize: 'var(--t-body)', fontWeight: '600', cursor: verifyCooldown > 0 ? 'not-allowed' : 'pointer', opacity: verifyCooldown > 0 ? 0.5 : 1 }}
         >
-          {verifyCooldown > 0 ? `Send it again in ${verifyCooldown}s` : 'Send the link again'}
+          {/* A suppressed address cannot be helped by pressing this, and the
+              note above it now says so. Offering the control anyway is the
+              loop this pair of changes exists to end. */}
+          {verifyRefused
+            ? 'We cannot mail that address'
+            : verifyCooldown > 0 ? `Send it again in ${verifyCooldown}s` : 'Send the link again'}
         </button>
         <button
           className="hit44"

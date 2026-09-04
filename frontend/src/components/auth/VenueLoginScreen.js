@@ -89,6 +89,11 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
   const [linkSent, setLinkSent] = useState(true);
   const [resendCooldown, setResendCooldown] = useState(0);
   const [resendNote, setResendNote] = useState('');
+  // The consumer signup screen has branched on this since it was added. This
+  // one never referenced it, so an owner whose address had bounced before was
+  // told "the link is still worth asking for" on the front door of the paid
+  // product, forever, about mail that could not leave.
+  const [mailRefused, setMailRefused] = useState(false);
 
   React.useEffect(() => {
     if (resendCooldown <= 0) return undefined;
@@ -106,9 +111,12 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
       const data = await resendVerificationEmail();
       const sent = data?.verificationSent !== false;
       setLinkSent((was) => was || sent);
-      setResendNote(sent
-        ? 'Sent. Check your inbox, and your spam folder.'
-        : 'That one did not go out either. Nothing is wrong with your account, and the link is still worth asking for.');
+      if (data?.mailRefused) setMailRefused(true);
+      setResendNote(data?.mailRefused
+        ? 'We cannot mail this address: mail to it bounced or was reported as spam before. Email social@flockcorp.com from it and we will clear that.'
+        : sent
+          ? 'Sent. Check your inbox, and your spam folder.'
+          : 'That one did not go out either. Nothing is wrong with your account, and the link is still worth asking for.');
     } catch (err) {
       // The server words this refusal with the real window (backend
       // utils/retryAfter.js: the resend budget's longest leg is a day, not "a
@@ -200,6 +208,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
           // Absent means an older backend that does not report the field, and
           // that is treated as sent. Only an explicit false is a failed send.
           setLinkSent(data.verificationSent !== false);
+          if (data.mailRefused) setMailRefused(true);
           setAwaitingVerification(true);
           return;
         }
@@ -271,18 +280,24 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
             ? 'Your account exists. Clicking the link is what lets you claim your venue and reply to reviews. If it has not landed in a minute, check your spam folder.'
             : 'Your account exists and your password works. Our mail did not leave, so there is nothing in your inbox to look for yet. Ask for the link below, and check your spam folder once it arrives.'}
         </p>
+        {mailRefused && !resendNote && (
+          <p role="status" className="auth-hint" style={{ margin: '0 0 12px' }}>{'We cannot mail this address: mail to it bounced or was reported as spam before. Email social@flockcorp.com from it and we will clear that.'}</p>
+        )}
         {resendNote && <p role="status" className="auth-hint" style={{ margin: '0 0 12px' }}>{resendNote}</p>}
         <button
           type="button"
           onClick={handleResend}
-          disabled={resendCooldown > 0}
+          disabled={resendCooldown > 0 || mailRefused}
           className="auth-primary"
+          style={{ opacity: (resendCooldown > 0 || mailRefused) ? 0.5 : 1, cursor: (resendCooldown > 0 || mailRefused) ? 'not-allowed' : 'pointer' }}
         >
           {/* "again" is a claim too. Nothing was sent the first time when
               linkSent is false. */}
-          {resendCooldown > 0
-            ? `Try again in ${resendCooldown}s`
-            : (linkSent ? 'Send the link again' : 'Send the link')}
+          {mailRefused
+            ? 'We cannot mail that address'
+            : resendCooldown > 0
+              ? `Try again in ${resendCooldown}s`
+              : (linkSent ? 'Send the link again' : 'Send the link')}
         </button>
         <p className="auth-foot">
           Already confirmed?

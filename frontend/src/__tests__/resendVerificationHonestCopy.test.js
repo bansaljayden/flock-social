@@ -132,3 +132,58 @@ test('neither auth screen carries the hardcoded "few minutes" 429 copy any more'
   expect(/status === 429\) setResendNote\(err\?\.message/.test(signup)).toBe(true);
   expect(/status === 429\) setResendNote\(err\?\.message/.test(venue)).toBe(true);
 });
+
+/**
+ * A SUPPRESSED ADDRESS, which is the other half of the same lie.
+ *
+ * `POST /api/auth/resend-verification` answers 200 with `mailRefused: true`
+ * when the address is on `email_suppressions`, and nothing in this codebase
+ * takes a row back off that table. SignupScreen has branched on the flag since
+ * it was added. The venue portal never referenced it and the in-app sheet in
+ * App.js read neither flag, so both answered a refusal that will never change
+ * with "Sent. Check your inbox, and your spam folder." every sixty seconds,
+ * for good, on mail that was never going to leave.
+ */
+const REFUSED = /We cannot mail this address/;
+
+test('the venue portal names a refused mailbox instead of offering the loop again', async () => {
+  api.signup.mockResolvedValueOnce({ emailVerificationRequired: true, verificationSent: false });
+  const utils = render(
+    React.createElement(VenueLoginScreen, {
+      onLoginSuccess: jest.fn(),
+      onSwitchToSignup: jest.fn(),
+      onSwitchToVenueLogin: jest.fn(),
+    })
+  );
+
+  fireEvent.click(utils.getByText('Create an account'));
+  fireEvent.change(utils.getByLabelText('Your name'), { target: { value: 'Sam' } });
+  fireEvent.change(utils.getByLabelText('Email'), { target: { value: 'bounced@example.com' } });
+  fireEvent.change(utils.getByLabelText('Password'), { target: { value: 'Password1' } });
+  fireEvent.change(utils.getByLabelText('Date of birth'), { target: { value: yearsAgo(30) } });
+  fireEvent.submit(utils.container.querySelector('form'));
+
+  api.resendVerificationEmail.mockResolvedValueOnce({ verificationSent: false, mailRefused: true });
+  const button = await waitFor(() => utils.getByText('Send the link'));
+  fireEvent.click(button);
+
+  await waitFor(() => expect(utils.getByText(REFUSED)).toBeTruthy());
+  // And the control that cannot help is not offered as though it could.
+  await waitFor(() => expect(utils.getByText('We cannot mail that address')).toBeTruthy());
+  expect(utils.getByText('We cannot mail that address').disabled).toBe(true);
+});
+
+test('the in-app verify sheet reads both flags, and retires the button on a refusal', () => {
+  const app = read('frontend', 'src', 'App.js');
+  const sheet = read('frontend', 'src', 'components', 'VerifyEmailSheet.js');
+  // A 200 is not a send.
+  expect(app).toMatch(/const data = await resendVerificationEmail\(\);\s*const sent = data\?\.verificationSent !== false;/);
+  expect(app).toMatch(/if \(data\?\.mailRefused\) setVerifyRefused\(true\);/);
+  expect(app).toMatch(/setVerifyNote\(data\?\.mailRefused/);
+  expect(app).toMatch(/That one did not go out either\./);
+  // The guard is on the handler as well as the button, so a keyboard activation
+  // of a stale node cannot spend a cooldown on a send that cannot happen.
+  expect(app).toMatch(/if \(verifyCooldown > 0 \|\| verifyRefused\) return;/);
+  expect(sheet).toMatch(/disabled=\{verifyCooldown > 0 \|\| verifyRefused\}/);
+  expect(sheet).toMatch(/\{verifyRefused\s*\?\s*'We cannot mail that address'/);
+});
