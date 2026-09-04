@@ -2043,7 +2043,7 @@ router.post('/costs/reconciled', async (req, res) => {
     if (typeof asOf !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(asOf) || Number.isNaN(Date.parse(asOf + 'T00:00:00Z'))) {
       return res.status(400).json({ error: 'asOf must be a date, YYYY-MM-DD' });
     }
-    if (asOf > new Date().toISOString().slice(0, 10)) {
+    if (asOf > businessToday()) {
       return res.status(400).json({ error: 'asOf cannot be in the future' });
     }
     const cleanNote = typeof note === 'string' && note.trim() ? note.trim().slice(0, 500) : null;
@@ -2066,8 +2066,16 @@ router.post('/costs/reconciled', async (req, res) => {
   }
 });
 
+// "Today" for a reconciliation date is the business's day, not the UTC day.
+// The server runs in UTC, so at 8 PM in Pennsylvania toISOString().slice(0, 10)
+// already said tomorrow, and an invoice could be dated a day that had not
+// happened yet. en-CA formats as YYYY-MM-DD, which is what the picker sends.
+function businessToday() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+
 router.get('/costs', async (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = businessToday();
   const reconciledBlock = await costModel.readReconciled(pool);
 
   // -- In-memory meters, turned into plain counts -----------------------------

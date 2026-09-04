@@ -71,9 +71,16 @@ import { saveAdminReconciled } from '../services/api';
 // and short. Saving posts through the admin route and then the parent refetches
 // the whole costs payload, so what the card shows afterwards is what the server
 // merged, never what this form thinks it sent.
+// The device's own date, not the UTC date: after 8 PM Eastern the UTC day has
+// already rolled, and the picker offered, and defaulted to, tomorrow.
+const localToday = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+
 function ReconciledLineForm({ line, onSaved, colors }) {
   const [usd, setUsd] = React.useState(Number.isFinite(line.usdPerMonth) ? String(line.usdPerMonth) : '');
-  const [asOf, setAsOf] = React.useState(new Date().toISOString().slice(0, 10));
+  const [asOf, setAsOf] = React.useState(localToday());
   const [busy, setBusy] = React.useState(false);
   const [err, setErr] = React.useState('');
   const save = async () => {
@@ -98,7 +105,7 @@ function ReconciledLineForm({ line, onSaved, colors }) {
           $
           <input aria-label={`Paid amount for ${line.label}`} type="number" min="0" step="0.01" inputMode="decimal" value={usd} onChange={(e) => setUsd(e.target.value)} style={{ ...input, width: '110px' }} />
         </label>
-        <input aria-label={`Invoice date for ${line.label}`} type="date" value={asOf} max={new Date().toISOString().slice(0, 10)} onChange={(e) => setAsOf(e.target.value)} style={input} />
+        <input aria-label={`Invoice date for ${line.label}`} type="date" value={asOf} max={localToday()} onChange={(e) => setAsOf(e.target.value)} style={input} />
         <button className="hit44" type="button" disabled={busy || usd === ''} onClick={save} style={{ padding: '8px 14px', borderRadius: '8px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: busy ? 'default' : 'pointer' }}>{busy ? 'Saving' : 'Save'}</button>
       </div>
       {err && <span style={{ ...small, color: 'var(--accent-red-text, #EF4444)' }}>{err}</span>}

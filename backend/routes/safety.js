@@ -871,8 +871,8 @@ const SOS_FLOCK_AUDIENCE_SQL = `SELECT DISTINCT fm.user_id
         AND fm.user_id <> $1
         AND f.status = 'confirmed'
         AND f.event_time IS NOT NULL
-        AND f.event_time BETWEEN NOW() - ($2::int * INTERVAL '1 hour')
-                            AND NOW() + ($2::int * INTERVAL '1 hour')
+        AND f.event_time BETWEEN (NOW() AT TIME ZONE 'UTC') - ($2::int * INTERVAL '1 hour')
+                            AND (NOW() AT TIME ZONE 'UTC') + ($2::int * INTERVAL '1 hour')
         AND COALESCE((SELECT is_banned FROM users u WHERE u.id = fm.user_id), FALSE) = FALSE
         AND NOT EXISTS (
           SELECT 1 FROM user_blocks b
