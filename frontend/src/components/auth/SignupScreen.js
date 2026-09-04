@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { signup, resendVerificationEmail, trackAuthScreen } from '../../services/api';
+import { signup, resendVerificationEmail, trackAuthScreen, getCurrentUser } from '../../services/api';
 import useGoogleAuth, { isGoogleSignInAvailable } from './useGoogleAuth';
 import AppleSignInButton from './AppleSignInButton';
 import AuthShell, { AUTH, AuthError, AuthRule, GoogleG, PasswordEye } from './AuthShell';
@@ -40,6 +40,28 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   const [linkSent, setLinkSent] = useState(true);
   const [resendCooldown, setResendCooldown] = useState(0);
   const [resendNote, setResendNote] = useState('');
+  // On iOS the confirmation link opens in Safari, not in the app, so nothing
+  // here ever hears about it. Without this button the screen stayed on
+  // "Confirm your email" after they had, with only "Send the link again".
+  const [confirmChecking, setConfirmChecking] = useState(false);
+  const handleConfirmed = async () => {
+    if (confirmChecking) return;
+    setConfirmChecking(true);
+    setResendNote('');
+    try {
+      const me = await getCurrentUser();
+      const user = me?.user || me;
+      if (user?.email_verified) {
+        onSignupSuccess(user);
+        return;
+      }
+      setResendNote('Not confirmed yet. Open the link in the email, then come back and tap this again.');
+    } catch (err) {
+      setResendNote(err?.message || 'Could not check just now. Try again in a moment.');
+    } finally {
+      setConfirmChecking(false);
+    }
+  };
 
   React.useEffect(() => {
     if (resendCooldown <= 0) return undefined;
@@ -234,8 +256,17 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
             ? `Try again in ${resendCooldown}s`
             : (linkSent ? 'Send the link again' : 'Send the link')}
         </button>
+        <button
+          type="button"
+          onClick={handleConfirmed}
+          disabled={confirmChecking}
+          className="auth-provider"
+          style={{ marginTop: '10px', opacity: confirmChecking ? 0.6 : 1 }}
+        >
+          {confirmChecking ? 'Checking' : 'I opened the link, continue'}
+        </button>
         <p className="auth-foot">
-          Already confirmed?
+          Signed up before?
           <button type="button" className="auth-textbtn" onClick={onSwitchToLogin}>Sign in</button>
         </p>
       </AuthShell>

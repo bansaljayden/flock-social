@@ -2241,6 +2241,42 @@ function metersCirclePolygon(lat, lng, radiusMeters, points = 64) {
 const PIN_OVERLAP_PX = 46; // pin body is 44px; closer than this and they stack
 const PIN_RING_PX = 40;    // spacing between displaced neighbours
 
+const venueMatchesCategory = (v, filterCategory) => {
+  const t = (v.types || []).join(' ').toLowerCase();
+  const nm = (v.name || '').toLowerCase();
+  let show = true;
+  if (filterCategory && filterCategory !== 'All') {
+    if (filterCategory === 'Food') {
+      show = t.includes('restaurant') || t.includes('cafe') || t.includes('food') || t.includes('bakery') || t.includes('meal') || t.includes('pizza') || t.includes('diner') || t.includes('bar') || t.includes('juice') || t.includes('smoothie') || t.includes('brunch') || t.includes('breakfast') || v.category === 'Food';
+    } else if (filterCategory === 'Nightlife') {
+      show = t.includes('bar') || t.includes('night_club') || t.includes('club') || t.includes('liquor') || t.includes('lounge') || v.category === 'Nightlife';
+    } else if (filterCategory === 'Live Music') {
+      show = t.includes('music') || t.includes('concert') || t.includes('performing_arts') || nm.includes('music') || nm.includes('jazz') || v.category === 'Live Music';
+    } else if (filterCategory === 'Sports') {
+      show = t.includes('stadium') || t.includes('gym') || t.includes('sports') || t.includes('bowling') || t.includes('fitness') || nm.includes('sport') || v.category === 'Sports';
+    }
+  }
+  return show;
+};
+
+const applyCategoryFilter = (map, markers, filterCategory, setFilterHidesAll) => {
+  let visible = 0;
+  const heatFeatures = [];
+  markers.forEach(({ el, venue: v }) => {
+    const show = venueMatchesCategory(v, filterCategory);
+    el.style.display = show ? '' : 'none';
+    if (!show) return;
+    visible += 1;
+    const loc = v.location;
+    if (loc?.latitude && loc?.longitude && typeof v.crowd === 'number') {
+      heatFeatures.push({ type: 'Feature', geometry: { type: 'Point', coordinates: [loc.longitude, loc.latitude] }, properties: { weight: v.crowd / 100 } });
+    }
+  });
+  const heatSrc = map && map.getSource ? map.getSource('venue-heat') : null;
+  if (heatSrc) heatSrc.setData({ type: 'FeatureCollection', features: heatFeatures });
+  setFilterHidesAll(markers.length > 0 && visible === 0);
+};
+
 function declutterMarkers(map, markerEntries) {
   if (!map) return;
   const entries = markerEntries.filter(({ venue }) => venue.location?.latitude && venue.location?.longitude);
@@ -2334,6 +2370,10 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   const venuesRef = useRef([]);     // latest venues for non-React consumers (toggleMapType, etc.)
   const fittedKeyRef = useRef(null); // result set the viewport was last framed to
   const [mapReady, setMapReady] = useState(false);
+  // The category filter hid every pin on the map. Rendered as a sentence,
+  // because an empty map reads as broken.
+  const [filterHidesAll, setFilterHidesAll] = useState(false);
+  const filterCategoryRef = useRef(filterCategory);
   // Same guard as the map constructor below: a stored 'hybrid' is only honoured
   // while there is a satellite style to honour it with.
   const [mapType, setMapType] = useState(() => (
@@ -2871,9 +2911,10 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     venues.forEach(v => {
       const loc = v.location;
       if (!loc?.latitude || !loc?.longitude) return;
+      const shown = venueMatchesCategory(v, filterCategoryRef.current);
 
       // Heatmap point — weighted by crowd score (0-100 → 0-1)
-      if (typeof v.crowd === 'number') {
+      if (shown && typeof v.crowd === 'number') {
         heatFeatures.push({
           type: 'Feature',
           geometry: { type: 'Point', coordinates: [loc.longitude, loc.latitude] },
@@ -2900,9 +2941,11 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         mapEase(map, { center: [loc.longitude, loc.latitude], zoom: Math.max(map.getZoom(), 15), duration: 600 });
       });
       const anchor = (photoCacheRef.current[v.place_id] || v.photo_url) ? 'center' : 'bottom';
+      if (!shown) el.style.display = 'none';
       const marker = new ml.Marker({ element: el, anchor }).setLngLat([loc.longitude, loc.latitude]).addTo(map);
       markersRef.current.push({ marker, el, venue: v });
     });
+    setFilterHidesAll(venues.length > 0 && markersRef.current.every(({ el }) => el.style.display === 'none'));
 
     // Push heat data to the source
     const heatSrc = map.getSource('venue-heat');
@@ -2993,23 +3036,8 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
 
   // ---------- category filter (toggle visibility) ----------
   useEffect(() => {
-    markersRef.current.forEach(({ el, venue: v }) => {
-      const t = (v.types || []).join(' ').toLowerCase();
-      const nm = (v.name || '').toLowerCase();
-      let show = true;
-      if (filterCategory && filterCategory !== 'All') {
-        if (filterCategory === 'Food') {
-          show = t.includes('restaurant') || t.includes('cafe') || t.includes('food') || t.includes('bakery') || t.includes('meal') || t.includes('pizza') || t.includes('diner') || t.includes('bar') || t.includes('juice') || t.includes('smoothie') || t.includes('brunch') || t.includes('breakfast') || v.category === 'Food';
-        } else if (filterCategory === 'Nightlife') {
-          show = t.includes('bar') || t.includes('night_club') || t.includes('club') || t.includes('liquor') || t.includes('lounge') || v.category === 'Nightlife';
-        } else if (filterCategory === 'Live Music') {
-          show = t.includes('music') || t.includes('concert') || t.includes('performing_arts') || nm.includes('music') || nm.includes('jazz') || v.category === 'Live Music';
-        } else if (filterCategory === 'Sports') {
-          show = t.includes('stadium') || t.includes('gym') || t.includes('sports') || t.includes('bowling') || t.includes('fitness') || nm.includes('sport') || v.category === 'Sports';
-        }
-      }
-      el.style.display = show ? '' : 'none';
-    });
+    filterCategoryRef.current = filterCategory;
+    applyCategoryFilter(mapInstanceRef.current, markersRef.current, filterCategory, setFilterHidesAll);
   }, [filterCategory]);
 
   // ---------- external imperative API ----------
@@ -3173,6 +3201,9 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   // ---------- render ----------
   return (
     <div ref={mapRootRef} style={{ position: 'absolute', inset: 0 }}>
+      {mapReady && filterHidesAll && filterCategory && filterCategory !== 'All' && (
+        <p role="status" style={{ position: 'absolute', top: '10px', left: '50%', transform: 'translateX(-50%)', zIndex: 20, margin: 0, padding: '8px 12px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', whiteSpace: 'nowrap' }}>No {filterCategory.toLowerCase()} spots on this map. Pick another filter or move the map.</p>
+      )}
       {!mapReady && (
         <div style={{ position: 'absolute', inset: 0, zIndex: 10, backgroundColor: '#1a2a3a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
           <div style={{ width: '32px', height: '32px', border: '3px solid rgba(255,255,255,0.15)', borderTopColor: '#6d9ac3', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
@@ -4631,6 +4662,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [eventDetail, setEventDetail] = useState(null);
   const [eventDetailLoading, setEventDetailLoading] = useState(false);
   const [crowdPredictions, setCrowdPredictions] = useState({});
+  // The venue sheet's crowd read failed (network, quota). Without this the
+  // dial and the twelve bars pulsed forever while the chip said ESTIMATED.
+  const [crowdFetchFailed, setCrowdFetchFailed] = useState(false);
   // Latest predictions for callers that must READ them without re-firing when
   // a batch lands (requestCrowdScores dedupes against this).
   const crowdPredictionsRef = useRef(crowdPredictions);
@@ -5007,9 +5041,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setActiveVenue(null);
         // Fire batch crowd prediction (non-blocking, dedupes, feeds the heatmap)
         requestCrowdScores(venues);
+      } else {
+        // A search that found nothing must not leave the last city's pins on
+        // the map under "All N results". Someone searching Chicago from
+        // Bethlehem saw Bethlehem.
+        setAllVenues([]);
+        setActiveVenue(null);
       }
     } catch (err) {
       console.error('Venue search error:', err);
+      // Same for a search that failed: the banner says why, the map is not
+      // still showing somewhere else.
+      setAllVenues([]);
+      setActiveVenue(null);
       // The dropdown used to render "No venues found. Try a different search."
       // for this, blaming the user's spelling for a dead API key or a 502. The
       // backend answers every one of these with a real sentence
@@ -5031,6 +5075,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setVenueDetailLoading(true);
     setVenueDetailPhotoIdx(0);
     setCrowdData(null);
+    setCrowdFetchFailed(false);
     setCrowdLoading(true);
     setCrowdAlternatives([]);
     setVenueDetailModal(fallbackData ? { ...fallbackData, loading: true } : { name: 'Loading...', loading: true });
@@ -5042,6 +5087,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
       const venue = detailResult.status === 'fulfilled' ? detailResult.value.venue : fallbackData;
       const crowd = crowdResult.status === 'fulfilled' ? crowdResult.value : null;
+      setCrowdFetchFailed(crowdResult.status !== 'fulfilled');
 
       // THE PHOTO THE SEED OBJECT WAS CARRYING MUST SURVIVE THIS SWAP. Every
       // caller of openVenueDetail hands in a venue that already has a working
@@ -13366,6 +13412,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                         <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>---</span>
                       </div>
                     </div>
+                  ) : (!cd && crowdFetchFailed) ? (
+                    <div style={{ width: '60px', height: '60px', borderRadius: '30px', flexShrink: 0, backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>---</span>
+                    </div>
                   ) : !cd ? (
                     <div className="skeleton" style={{ width: '60px', height: '60px', borderRadius: '30px', flexShrink: 0 }} />
                   ) : (
@@ -13514,7 +13564,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                   </div>
                   <div style={{ display: 'flex', alignItems: 'flex-end', gap: '2px', height: '56px' }}>
                     {/* Skeleton bars while the prediction loads — never fake colored data */}
-                    {(!cd && !isClosed) ? [34, 46, 40, 52, 44, 38, 50, 42, 36, 48, 40, 32].map((hgt, i) => (
+                    {(!cd && crowdFetchFailed) ? (
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0, alignSelf: 'center', width: '100%', textAlign: 'center' }}>No crowd read for this spot right now.</p>
+                    ) : (!cd && !isClosed) ? [34, 46, 40, 52, 44, 38, 50, 42, 36, 48, 40, 32].map((hgt, i) => (
                       <div key={i} style={{ flex: 1, display: 'flex', alignItems: 'flex-end', height: '100%' }}>
                         <div className="skeleton" style={{ width: '100%', height: `${hgt}px`, borderRadius: '3px 3px 1px 1px' }} />
                       </div>
@@ -13884,6 +13936,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           and nothing explaining why, which reads as a broken map rather than as
           a setting the person chose. The button turns it back on here rather
           than sending them to Settings to find the row again. */}
+      {/* Before the first answer the map behind the permission sheet was the
+          whole country with no pins and no sentence. */}
+      {locationLoading && (
+        <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ flexShrink: 0, display: 'flex' }}>{Icons.mapPin('var(--text-tertiary)', 16)}</span>
+          <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 0, lineHeight: 1.5 }}>Finding where you are. Venues near you show up once that lands.</p>
+        </div>
+      )}
       {!locationLoading && !locationEnabled && (
         <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span style={{ flexShrink: 0, display: 'flex' }}>{Icons.mapPin('var(--text-tertiary)', 16)}</span>
@@ -13892,11 +13952,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         </div>
       )}
 
+      {/* Zero venues nearby used to be an empty map with nothing on it, which
+          reads as broken. Say what it is and what to do. */}
+      {!locationLoading && locationEnabled && !locationError && !venueLoadError && mapVenuesLoaded && allVenues.length === 0 && (
+        <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <BirdieStill size={48} style={{ flexShrink: 0 }} />
+          <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 0, lineHeight: 1.5 }}>No venues on Flock's map right here yet. Search a place by name, or move the map.</p>
+        </div>
+      )}
+
       {!locationLoading && locationEnabled && (locationError || venueLoadError) && (
         <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <BirdieStill size={48} style={{ flexShrink: 0 }} />
           <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 0, lineHeight: 1.5 }}>{locationError || venueLoadError}</p>
-          <button className="hit44" onClick={() => { setLocationError(''); setVenueLoadError(''); setMapVenuesLoaded(false); requestUserLocation(true); }} style={{ flexShrink: 0, padding: '7px 12px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
+          {!/again in \d+/i.test(venueLoadError || '') && <button className="hit44" onClick={() => { setLocationError(''); setVenueLoadError(''); setMapVenuesLoaded(false); requestUserLocation(true); }} style={{ flexShrink: 0, padding: '7px 12px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>}
         </div>
       )}
 
@@ -14217,6 +14286,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 <EmptyMark name="steps" height={96} />
                 <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: 'var(--text-secondary)', margin: '12px 0 4px' }}>Events need your location</p>
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Turn location on for Flock, or search for an event by name.</p>
+                {/* The sentence used to be the whole screen: a request with no
+                    control. Same "Turn on" as the Discover banner. */}
+                <button className="hit44" onClick={() => { if (!locationEnabled) toggleLocation(true); else requestUserLocation(true); }} style={{ marginTop: '14px', minHeight: '44px', padding: '10px 16px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Turn on location</button>
               </div>
             )}
             {!featuredEventsLoading && !featuredEventsError && featuredEvents && featuredEvents.length === 0 && (
@@ -14583,6 +14655,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               <EmptyMark name="steps" height={120} />
               <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '12px 0 0', letterSpacing: '-0.005em' }}>Nothing on this day</h3>
               <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 0', maxWidth: '280px' }}>Flocks you join land here automatically.</p>
+              <button className="hit44" onClick={() => { setCurrentTab('home'); setCurrentScreen('create'); }} style={{ marginTop: '10px', minHeight: '44px', padding: '10px 14px', background: 'none', border: 'none', color: 'var(--accent-purple-text)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Start a flock</button>
             </div>
           )}
 
@@ -17520,7 +17593,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                       {/* Same split as the dropdown: a search that failed must
                           not be reported as a search that found nothing. */}
                       <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '12px 0 0', letterSpacing: '-0.005em' }}>{venueLoadError ? 'Search is not answering' : 'No venues found'}</h3>
-                      <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 0', maxWidth: '280px' }}>{venueLoadError || 'Try a different search or location.'}</p>
+                      <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 0', maxWidth: '280px' }}>{venueLoadError || (allVenues.length > 0 && budgetFilteredVenues.length === 0 ? `All ${allVenues.length} spots here are above your group's budget, so none show. The search worked.` : 'Try a different search or location.')}</p>
                     </div>
                   ) : !venueSearching && sorted.map((venue) => {
                     const dist = calcDist(venue.location);
@@ -18957,9 +19030,17 @@ const FlockApp = () => {
   const [authUser, setAuthUser] = useState(null);
   // /signup deep-links straight to account creation (the marketing site's
   // "Create account" CTA); every other path opens on login as before.
-  const [authScreen, setAuthScreen] = useState(
-    () => (typeof window !== 'undefined' && window.location.pathname === '/signup' ? 'signup' : 'login')
-  );
+  // A fresh native install has no session and no history with us, so it
+  // opens on account creation. "Welcome back" was greeting strangers: the
+  // /signup path that picks signup on the web is unreachable in the shell.
+  // A stored token, valid or expired, means they have signed in here before.
+  const [authScreen, setAuthScreen] = useState(() => {
+    if (typeof window === 'undefined') return 'login';
+    if (window.location.pathname === '/signup') return 'signup';
+    let hasToken = false;
+    try { hasToken = Boolean(window.localStorage.getItem('flockToken')); } catch (e) { /* storage blocked */ }
+    return (window.Capacitor?.isNativePlatform?.() && !hasToken) ? 'signup' : 'login';
+  });
   const [authChecking, setAuthChecking] = useState(true);
   // A cold start that has a stored session but cannot reach the server. The
   // device believes it is online (navigator.onLine is true on venue wifi whose
