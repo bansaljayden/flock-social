@@ -85,3 +85,15 @@ test('the reality check offers the words the ladder actually uses', () => {
   expect(app).toMatch(/\{ level: 1, label: 'Quiet' \}/);
   expect(detail).toMatch(/\{ level: 1, label: 'Quiet',/);
 });
+
+test('a venue that set its own number says so in the nearby list', () => {
+  // The nearby list applies the owner override to every row and RANKS by it,
+  // and the cell printed a name, a dot and a label. So a venue whose owner had
+  // set their own slider to 10 appeared as "Quiet", indistinguishable from a
+  // Flock reading, recommended over the venue the person was looking at. It is
+  // the surface where the conflict of interest is sharpest and the one place
+  // the attribution was missing; services/ownerReports.js says the source is
+  // labelled on every surface.
+  expect(app).toMatch(/\{v\.confidenceBasis === 'owner_report' && \(/);
+  expect(app).toMatch(/`The \$\{v\.ownerReport\?\.noun \|\| 'venue'\} says so`/);
+});
