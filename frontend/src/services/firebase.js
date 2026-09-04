@@ -512,9 +512,16 @@ async function syncPushForSession() {
 // would otherwise stay unregistered for the whole page load. Coming back to
 // the tab or regaining connectivity re-arms it — but only when permission is
 // already settled in our favour, so nobody is prompted twice.
-function rearmIfUnresolved() {
+async function rearmIfUnresolved() {
   if (currentPushToken) return;
-  const status = getNotificationStatus();
+  let status = getNotificationStatus();
+  if (status === 'denied' && isNativeApp()) {
+    // The sticky marker says denied, but the person may have turned
+    // notifications on in Settings since. Ask the OS; a grant clears the
+    // marker (readNotificationPermission does that) and the re-arm proceeds.
+    // Without this, a fix in Settings was not noticed until a cold start.
+    try { status = await readNotificationPermission(); } catch (_) { /* keep the marker's answer */ }
+  }
   if (status === 'denied' || status === 'unsupported') return;
   // The web-only "granted" condition that used to be here was guarding against
   // a re-arm turning into a second prompt. The path it re-arms cannot prompt
