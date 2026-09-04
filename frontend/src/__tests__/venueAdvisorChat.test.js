@@ -975,3 +975,15 @@ describe('Roost chat: SLOP pins on the source itself', () => {
     expect(SRC).not.toMatch(/seamless|effortless|unlock deeper|supercharge|elevate your/i);
   });
 });
+
+test('the free-text-off note does not point at chips that are not there', () => {
+  const src = require('fs').readFileSync(
+    require('path').join(__dirname, '..', 'components', 'VenueAdvisorChat.js'), 'utf8');
+  // "The suggested questions above still work" is only true when there are
+  // some. An unlinked or unverified venue is answered with freeText false AND
+  // an empty lead and groups, so the modal pilot venue read a disabled box
+  // pointing at chips that were not on the screen. offReason a few rows up
+  // already says why the field is off.
+  expect(src).toMatch(/\{!freeText && \(lead\.length > 0 \|\| groups\.length > 0\) && \(/);
+  expect(src).not.toMatch(/\{!freeText && \(\s*\n\s*<p style=\{\{ fontSize: 'var\(--t-micro\)'/);
+});
