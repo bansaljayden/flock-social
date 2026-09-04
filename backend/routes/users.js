@@ -724,12 +724,12 @@ async function isIdentityBanned(identity) {
 // Deliberately vague, and identical whatever matched: a precise message would
 // tell an attacker which of a victim's identifiers is on the list, turning this
 // into an oracle ("is this phone number banned?").
-// hello@flockcorp.com is the address the app actually sends from
+// social@flockcorp.com is the address the app actually sends from
 // (services/emailService.js). Inventing a support@ that nobody reads would be
 // worse than saying nothing, and this is the only route a false positive (a
 // recycled phone number) has back to a human.
 const BANNED_IDENTITY_MESSAGE =
-  'This account cannot be created. If you believe this is a mistake, contact hello@flockcorp.com.';
+  'This account cannot be created. If you believe this is a mistake, contact social@flockcorp.com.';
 
 // Mirrors rejectIfProfane(res, name) in utils/moderation.js: returns true when
 // it has already sent the response, so the caller writes one line.
@@ -1150,7 +1150,11 @@ router.put('/profile',
         );
         if (!validPassword) {
           proofFailures.record(user.id);
-          return res.status(401).json({ error: 'Current password is incorrect' });
+          // reauthRequired: the client treats any other 401 on a signed-in
+          // request as a dead session, cleared it, and said "Your session
+          // expired". A mistyped current password threw the person to the
+          // sign-in screen. The export route already speaks this way.
+          return res.status(401).json({ error: 'Current password is incorrect', reauthRequired: 'password' });
         }
         proofFailures.clear(user.id);
       } else if (new_password) {
@@ -1274,6 +1278,7 @@ router.put('/profile',
       // Comparison is on the last 10 digits, matching find-by-phone, so
       // reformatting the same number is not treated as a change and costs the
       // user nothing.
+      const clearPhone = req.body.phone === null && Boolean(user.phone);
       const changingPhone = Boolean(phone) && canonicalPhone(phone) !== canonicalPhone(user.phone);
       if (changingPhone) {
         // HIGH 2 (re-audit): "unverified accounts cannot accumulate" is the
@@ -1441,6 +1446,20 @@ router.put('/profile',
           changingPhone ? Boolean(user.phone_discoverable) && Boolean(nextPhoneHash) : null,
         ]
       );
+
+      // An explicit null clears the number, its digest and the discovery
+      // switch together. COALESCE above reads a blank as "leave alone", so a
+      // number could be added and never removed, and turning discovery off
+      // erased only the digest. Its own statement, so the profile UPDATE's
+      // text, which two fixtures interpret clause by clause, is unchanged.
+      if (clearPhone) {
+        await pool.query(
+          'UPDATE users SET phone = NULL, phone_hash = NULL, phone_discoverable = FALSE, updated_at = NOW() WHERE id = $1',
+          [req.user.id]
+        );
+        result.rows[0].phone = null;
+        result.rows[0].phone_discoverable = false;
+      }
 
       // A password change bumps token_version, which stops the thief's REST
       // calls, but a WebSocket authenticates once at the handshake and then
