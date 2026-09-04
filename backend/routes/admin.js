@@ -342,7 +342,12 @@ router.get('/analytics', async (req, res) => {
       `SELECT
         COUNT(*) FILTER (WHERE reliability_score >= 80) AS reliable,
         COUNT(*) FILTER (WHERE reliability_score >= 50 AND reliability_score < 80) AS moderate,
-        COUNT(*) FILTER (WHERE reliability_score > 0 AND reliability_score < 50) AS flaky,
+        -- >= 0, not > 0. A user marked no_show on their only plan scores
+        -- exactly 0.00, and all four buckets excluded them: not >= 80, not
+        -- >= 50, not > 0, not NULL. The four cells summed to less than the
+        -- user count, and the cell published as the flakiest bucket was the
+        -- one bucket that could not contain the flakiest users.
+        COUNT(*) FILTER (WHERE reliability_score >= 0 AND reliability_score < 50) AS flaky,
         COUNT(*) FILTER (WHERE reliability_score IS NULL) AS unscored
        FROM users`
     );
