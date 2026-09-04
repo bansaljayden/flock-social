@@ -359,7 +359,7 @@ test('every empty panel a brand new account meets explains itself', async ({ pag
   await expect(page.getByRole('button', { name: /add friends/i })).toBeEnabled();
 
   // Messages. An empty list has to say why it is empty and where chats come from.
-  await page.getByRole('button', { name: /^Messages(, .* unread)?$/ }).click();
+  await page.getByRole('button', { name: /^Messages(,|$)/ }).click();
   await expect(page.getByText(/no conversations yet/i)).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText(/every flock gets its own chat/i)).toBeVisible();
   await expect(page.getByRole('button', { name: /start a flock/i })).toBeEnabled();

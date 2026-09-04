@@ -139,7 +139,7 @@ async function createFlock(page, inviteeNames, { budget = false } = {}) {
 /** Accept the invite from where the product actually puts it, the Messages tab. */
 async function acceptInvite(page) {
   await page.reload();
-  await page.getByRole('button', { name: /^Messages(, .* unread)?$/ }).click();
+  await page.getByRole('button', { name: /^Messages(,|$)/ }).click();
   await page.getByRole('button', { name: /accept invite/i }).click({ timeout: 40_000 });
   await expect(page.getByRole('button', { name: new RegExp(FLOCK_NAME) }).first()).toBeVisible({ timeout: 25_000 });
 }
@@ -147,7 +147,7 @@ async function acceptInvite(page) {
 /** Open the flock chat from wherever we are. */
 async function openFlock(page) {
   if (await page.getByRole('button', { name: 'Features' }).count()) return;
-  await page.getByRole('button', { name: /^Messages(, .* unread)?$/ }).click();
+  await page.getByRole('button', { name: /^Messages(,|$)/ }).click();
   await page.getByRole('button', { name: new RegExp(FLOCK_NAME) }).first().click();
   await expect(page.getByRole('button', { name: 'Features' })).toBeVisible({ timeout: 25_000 });
 }
@@ -167,7 +167,7 @@ async function openFlock(page) {
  */
 async function reenterFlock(page) {
   await page.getByRole('button', { name: 'Back', exact: true }).click();
-  await page.getByRole('button', { name: /^Messages(, .* unread)?$/ }).click();
+  await page.getByRole('button', { name: /^Messages(,|$)/ }).click();
   await page.getByRole('button', { name: new RegExp(FLOCK_NAME) }).first().click();
   await expect(page.getByRole('button', { name: 'Features' })).toBeVisible({ timeout: 25_000 });
 }
