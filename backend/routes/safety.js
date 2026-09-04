@@ -880,7 +880,7 @@ const SOS_FLOCK_AUDIENCE_SQL = `SELECT DISTINCT fm.user_id
              OR (b.blocker_id = fm.user_id AND b.blocked_id = $1)
         )`;
 
-async function alertFlockMembers(io, user, coords) {
+async function alertFlockMembers(io, user, coords, contactsAlerted) {
   const members = await pool.query(SOS_FLOCK_AUDIENCE_SQL, [user.id, SOS_FLOCK_WINDOW_HOURS]);
 
   if (members.rows.length === 0) return { notified: 0 };
@@ -904,6 +904,12 @@ async function alertFlockMembers(io, user, coords) {
     // hid the map, while the push body said the opposite. The unit test
     // passed the wrong shape in, so it was green. 2026-09-04.
     ...(coords ? { latitude: coords.lat, longitude: coords.lng } : {}),
+    // How many trusted contacts the emails actually reached. The flockmate's
+    // alarm screen stated "their trusted contacts have already been emailed"
+    // unconditionally, so when every email failed the only people who knew
+    // were told the adults were handled. A number, not a boolean, because the
+    // screen says something different for none than for some.
+    ...(typeof contactsAlerted === 'number' ? { contactsAlerted } : {}),
     at: new Date().toISOString(),
   };
 
@@ -1334,7 +1340,7 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
     // email failed the people in the room were told nothing at all, and
     // they are the ones who can physically get there. Fire-and-forget: the
     // response is never held on it, and it cannot change the answer.
-    alertFlockMembers(req.app.get('io'), req.user, coords).catch((err) => console.error(
+    alertFlockMembers(req.app.get('io'), req.user, coords, emailsSent).catch((err) => console.error(
       `[Safety] SOS from user ${req.user.id}: the flock leg failed (${err.message}). `
       + 'The trusted-contact emails are unaffected.'
     ));
