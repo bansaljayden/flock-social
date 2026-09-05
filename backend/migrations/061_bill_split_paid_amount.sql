@@ -1,0 +1,58 @@
+-- 061: what each share has already had paid against it, so that editing a
+-- bill carries the PAYMENT forward and not only the flag that one happened.
+--
+-- ---------------------------------------------------------------------------
+-- WHAT WENT WRONG
+--
+-- bill_split_shares recorded a settlement as one boolean. POST
+-- /api/billing/:flockId/create preserves a settled row across an edit, which
+-- is right, but "preserved" meant the flag alone: the amount on the row was
+-- overwritten with the new share and nothing kept what had actually been
+-- handed over. Two friends, then. Ben paid his $30 share and tapped Mark as
+-- Paid. The payer found the receipt and raised the bill so that Ben's share is
+-- now $100. The route saw that $100 is more than $30, cleared Ben's flag so he
+-- would owe the difference, and stored $100 against a row that no longer said
+-- anything about the $30. GET /payment-links then asked Ben for the full $100,
+-- the push said "You owe $100.00", and a Ben who trusted the app paid $130
+-- against a $100 share. The other direction lost evidence instead of money: a
+-- bill revised DOWN kept the flag on a $20 row over a $50 payment, so the $30
+-- Ben was owed back existed nowhere.
+--
+-- ---------------------------------------------------------------------------
+-- THE COLUMN
+--
+-- paid_amount is the money credited to this share from EARLIER versions of the
+-- bill, carried across each rewrite. It is not a second copy of `settled` and
+-- it is not the running total of everything this person ever paid. The two
+-- columns divide the work like this:
+--
+--   settled      this person has paid whatever was outstanding on the CURRENT
+--                version of the bill (or the payer's own auto-settled row).
+--   paid_amount  what was already paid before the current version was posted.
+--
+-- So what the person still owes is `amount - paid_amount` while unsettled and
+-- nothing once settled, and what they have paid in total is `paid_amount`
+-- while unsettled and the greater of `amount` and `paid_amount` once settled.
+-- Only routes/billing.js reads or writes it; that file is where the arithmetic
+-- and the reasoning behind it live.
+--
+-- ---------------------------------------------------------------------------
+-- WHY THERE IS NO BACKFILL, AND WHY THAT IS SAFE
+--
+-- Every row that exists today is described correctly by DEFAULT 0. A settled
+-- legacy row means "paid the current share in full", which is exactly what
+-- settled with no carried credit means under the split above, and an unsettled
+-- legacy row has had nothing credited to it because there was nowhere to record
+-- a credit. Nothing needs to move. That also keeps this file honest with
+-- __tests__/migrationBootSafety.test.js, which replays every migration over a
+-- populated database and expects no row to change on the second pass.
+--
+-- DECIMAL(8,2) to match `amount` on the same table, NOT NULL DEFAULT 0 so that
+-- a row written by anything other than the bill route (the ghost-commit
+-- INSERT does not name it) reads as "nothing credited" rather than NULL, and
+-- IF NOT EXISTS for the replay.
+
+-- @requires column bill_split_shares.paid_amount
+
+ALTER TABLE bill_split_shares
+  ADD COLUMN IF NOT EXISTS paid_amount DECIMAL(8,2) NOT NULL DEFAULT 0;

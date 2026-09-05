@@ -1002,13 +1002,20 @@ test('a settled debt survives a payer change, and keeps the time it was settled'
   //       receipt says the debt was paid at the moment the bill was edited.
   const paidAt = new Date('2026-08-01T18:30:00Z');
   CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  // The rows carry their amounts because the route now decides a settled
+  // row's fate from what it paid (bill_split_shares.amount and paid_amount,
+  // migration 061), not from the flag alone: a settled row whose amount
+  // cannot be read is a row the route will not vouch for, and it is skipped
+  // rather than carried. A real DECIMAL column never hands back undefined, so
+  // this is only the fixture catching up with the SELECT list money.test.js
+  // pins. $90 three ways is $30 each, and Cy paid his.
   scriptBill({
     creatorId: 1,
     existingBill: [{ id: 5, paid_by: 1 }],
     existingShares: [
-      { user_id: 1, committed: false, settled: true, settled_at: new Date() }, // Ava, payer
-      { user_id: 3, committed: false, settled: true, settled_at: paidAt },     // Cy, really paid
-      { user_id: 2, committed: false, settled: false, settled_at: null },
+      { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '30.00' }, // Ava, payer
+      { user_id: 3, committed: false, settled: true, settled_at: paidAt, amount: '30.00' },     // Cy, really paid
+      { user_id: 2, committed: false, settled: false, settled_at: null, amount: '30.00' },
     ],
   });
 
