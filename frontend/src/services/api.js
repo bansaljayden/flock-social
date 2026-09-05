@@ -1321,10 +1321,11 @@ export async function setFlockEventTime(flockId, eventTime) {
 // exactly; anything else is rejected here rather than spending a round trip.
 const FLOCK_STATUSES = ['planning', 'confirmed', 'completed', 'cancelled'];
 
-// "Plans die in the group chat" is the claim on the landing page, and this is
-// the event that tests it. A flock that never leaves 'planning' died the same
-// death Flock says it prevents. `status` is safe to send because it is one of
-// the four values checked on the line above and can never be anything else.
+// "Get the flock out the door" is the promise on the landing page, and this is
+// the event that tests it. A flock that never leaves 'planning' never got out
+// the door, which is the exact failure the product claims to prevent. `status`
+// is safe to send because it is one of the four values checked on the line
+// above and can never be anything else.
 export async function setFlockStatus(flockId, status) {
   if (!FLOCK_STATUSES.includes(status)) {
     throw new Error(`Unknown flock status: ${status}`);
@@ -1482,6 +1483,37 @@ export async function markFlockRead(flockId, lastMessageId) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// OPENED — the receipt, which is NOT the read cursor above
+// ---------------------------------------------------------------------------
+//
+// Two calls that look alike and mean different things, so it is worth being as
+// blunt here as backend/routes/messages.js is at the routes themselves.
+//
+//   markFlockRead / markDmRead are the UNREAD BADGE. They say "stop counting
+//   these against me". A client is free to send them from a background
+//   catch-up, and this one does: a badge that runs ahead of the truth costs
+//   nobody anything.
+//
+//   markFlockOpened / markDmOpened are a CLAIM MADE TO SOMEBODY ELSE. They
+//   tell the sender that a person looked. Migration 065 exists because the
+//   badge cursor was the tempting shortcut here and would have made every
+//   receipt in the product a lie, so nothing may call these two except a
+//   screen saying, of itself, that the thread is on screen and visible.
+//
+// These are the FALLBACK. The socket pair (sendFlockOpen / sendDmOpen in
+// services/socket.js) is the normal path, and App.js reaches for these only
+// when the emit answers false, which is the same shape pinDmVenue and the DM
+// reaction helpers already use. Both routes are idempotent: the flock one takes
+// GREATEST of the watermark, and the DM one's predicate is `opened_at IS NULL`,
+// so a repeat opens nothing and says so with an empty list.
+export async function markFlockOpened(flockId, lastMessageId) {
+  return request(`/api/flocks/${flockId}/opened`, {
+    method: 'PUT',
+    body: JSON.stringify({ lastMessageId }),
+  });
+}
+
 // A message carries text, an image, or both. `image_url` was missing here, so
 // the REST transport — the fallback the socket client uses while its connection
 // is down — could not send a photo at all: it posted a message_type of 'image'
@@ -1611,6 +1643,21 @@ export async function sendDM(userId, text, opts = {}) {
 // the user had watched land. App.js calls this per arriving message now.
 export async function markDmRead(messageId) {
   return request(`/api/dm/${messageId}/read`, { method: 'PUT' });
+}
+
+// The DM half of the opened receipt. See the block above markFlockOpened for
+// why this is not the call directly above it.
+//
+// Keyed on the OTHER PERSON, not on a message: a DM thread has one
+// counterparty, so there is no ambiguity about whose messages were on screen,
+// and `lastMessageId` is optional because a thread opened from a push has no
+// id to send. Absent means "everything from this person". It is sent whenever
+// the screen knows one, because a bound claim is a smaller claim.
+export async function markDmOpened(userId, lastMessageId) {
+  return request(`/api/dm/${userId}/opened`, {
+    method: 'PUT',
+    body: JSON.stringify(lastMessageId == null ? {} : { lastMessageId }),
+  });
 }
 
 export async function addDmReaction(dmId, emoji) {

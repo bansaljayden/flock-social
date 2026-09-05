@@ -692,6 +692,122 @@ export function onDmUserStoppedTyping(callback) {
   return register('dm_user_stopped_typing', callback);
 }
 
+// --- Read receipts (migration 065) -----------------------------------------
+//
+// FOUR EMITS OUT, THREE EVENTS IN, AND ONE HARD LINE THROUGH THE MIDDLE.
+//
+//   sendDmAck / sendFlockAck     this client took these off the wire.
+//                                DELIVERED.
+//   sendDmOpen / sendFlockOpen   this client has the thread on screen and a
+//                                person could see it. OPENED.
+//
+// The names are the wire event names with a `send` in front, so grepping
+// either half of a receipt finds the other: `dm_open` here, `dm_open` in
+// backend/sockets/handlers.js, `PUT /api/dm/:userId/opened` in
+// backend/routes/messages.js.
+//
+// WHY THE SECOND PAIR IS NOT THE FIRST PAIR WITH A DIFFERENT NAME. The whole
+// server side of this feature exists because `flock_members.last_read_message_id`
+// (migration 056) was NOT good enough to answer "did they read it": App.js
+// advances that cursor on a history fetch, and a history fetch is a phone
+// waking up, not a person looking. Migration 065's header says so at length and
+// so does the route. So nothing in this file may emit an `_open` from a
+// background read, from a push, or from a hidden tab. The callers in App.js
+// gate on the same `docVisible` state the badge cursor uses, and the gate is
+// theirs rather than this file's because only they know which screen is up.
+//
+// ONE RATE BUCKET FOR ALL FOUR, 30 per 10s, shared. That is per socket and
+// generous for what these callers do (one ack per history read, one open per
+// distinct newest message), but it is a shared allowance, so nothing in here
+// should ever be wired to a scroll handler or a keystroke.
+//
+// Each returns whether the emit actually happened, the same contract
+// sendMessage and dmReact carry, so a caller with a REST fallback
+// (PUT /flocks/:id/opened, PUT /dm/:userId/opened) knows when to use it. A
+// receipt lost to a dead socket is not worth a retry queue: the next history
+// read marks delivery again and the next open of the thread claims the open
+// again.
+
+/**
+ * "I have these messages from this person." DELIVERED, never opened.
+ *
+ * `upToId` is optional and absent means "everything from this person", which
+ * is what a catch-up ack means and exactly what GET /api/dm/:userId already
+ * claims on the server when it answers a thread read.
+ */
+export function sendDmAck(withUserId, upToId) {
+  if (!socket?.connected) return false;
+  socket.emit('dm_ack', {
+    withUserId,
+    // Written this way rather than `upToId: upToId || undefined` because 0 is
+    // not a message id and a falsy check would silently widen a bounded ack to
+    // the whole thread. Only an explicit absence means everything.
+    ...(upToId == null ? {} : { upToId }),
+  });
+  return true;
+}
+
+/** "A person has this DM thread on screen." OPENED. */
+export function sendDmOpen(withUserId, upToId) {
+  if (!socket?.connected) return false;
+  socket.emit('dm_open', {
+    withUserId,
+    ...(upToId == null ? {} : { upToId }),
+  });
+  return true;
+}
+
+/**
+ * The flock twin of sendDmAck.
+ *
+ * A flock watermark has no "everything" form: it is a message id compared
+ * against every row on the page, so an absent one is nothing to record rather
+ * than a sweep of the thread. The server refuses a missing id for that reason
+ * and this refuses to send one.
+ */
+export function sendFlockAck(flockId, upToId) {
+  if (!socket?.connected) return false;
+  if (upToId == null) return false;
+  socket.emit('flock_ack', { flockId, upToId });
+  return true;
+}
+
+/** "A person has this flock's chat on screen." OPENED. */
+export function sendFlockOpen(flockId, upToId) {
+  if (!socket?.connected) return false;
+  if (upToId == null) return false;
+  socket.emit('flock_open', { flockId, upToId });
+  return true;
+}
+
+/**
+ * `dm_delivered` / `dm_opened`: `{ withUserId, messageIds }`, and they reach
+ * the SENDER's room alone. The ids are the rows that actually moved, so an
+ * empty list is never sent and a repeat receipt is never sent either.
+ */
+export function onDmDelivered(callback) {
+  return register('dm_delivered', callback);
+}
+
+export function onDmOpened(callback) {
+  return register('dm_opened', callback);
+}
+
+/**
+ * `flock_read`: `{ flockId, userId, name?, lastDeliveredMessageId,
+ * lastOpenedMessageId }`, one member's pair of watermarks.
+ *
+ * `name` IS OPTIONAL AND OFTEN ABSENT. The send-time delivery sweep in
+ * backend/sockets/handlers.js updates every online member in one statement and
+ * has their ids and nothing else, so it emits without a name. A client that
+ * merges these on `userId` against the roster GET /api/flocks/:id/messages
+ * handed it never needs one; a client that trusted the event to carry a name
+ * would drop half its readers out of "Opened by 3".
+ */
+export function onFlockRead(callback) {
+  return register('flock_read', callback);
+}
+
 // DM reactions
 // Each answers whether the emit happened. A guarded emit over a dead socket
 // used to return nothing, so the caller drew nothing, stored nothing and

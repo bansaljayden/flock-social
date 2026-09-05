@@ -229,6 +229,90 @@ const highlightMatches = (text, query) => (
  * longer than one sample in every case that has been measured. */
 const SOCKET_SAMPLE_MS = 2000;
 
+/**
+ * A person's first name, by the one rule the whole feature uses.
+ *
+ * Identical to `firstName` in backend/utils/messageStatus.js, deliberately and
+ * with the same defensiveness, because `users.name` is free text: a null, a
+ * number out of a bad join, or a string of spaces all become null here rather
+ * than an empty entry in a list StatusLine would then render as ", and".
+ *
+ * It exists because the two halves of the group ladder arrive named
+ * differently. `openedBy` on a history row is a list the SERVER has already
+ * trimmed. `readers[].name` is a FULL name, and so is the optional `name` on a
+ * `flock_read` event, because both come straight off the users row. Anything
+ * this file draws from the roster therefore has to be cut to match what the
+ * server drew, or the same flock would say "Opened by Ava" before a reload and
+ * "Opened by Ava Chen" after one.
+ */
+const firstNameOf = (name) => {
+  if (typeof name !== 'string') return null;
+  const trimmed = name.trim();
+  if (!trimmed) return null;
+  return trimmed.split(/\s+/)[0];
+};
+
+/**
+ * THE GROUP LADDER: one own message plus the flock's roster, in, one receipt
+ * out. Mirrors `flockStatusFor` in backend/utils/messageStatus.js.
+ *
+ * WHY THIS IS COMPUTED HERE AND NOT JUST READ OFF THE ROW. A history read does
+ * hand every own row a `status` and, when there are openers, an `openedBy` —
+ * and if that were the only source, a receipt would freeze at whatever it was
+ * when the page was fetched. Nothing on the wire updates a row: the live event
+ * is `flock_read`, which carries ONE MEMBER and their two watermarks and no
+ * message ids at all, because the group side stores a watermark per member
+ * rather than a row per reader (migration 065 explains the N+1 that buys). So
+ * a message sent thirty seconds ago has no server-supplied receipt and never
+ * will; the only way it can ever say Delivered is a comparison against the
+ * roster.
+ *
+ * Given that the roster has to be the source for new rows, it is the source
+ * for ALL of them. The alternative — server status for old rows, roster for
+ * new ones — is two answers to one question on one screen, and the day they
+ * disagree the reader is looking at both at once. The roster IS the data the
+ * server ran its own comparison over, so the two agree by construction.
+ *
+ * WHAT THE ROW IS STILL FOR. Everything the roster cannot answer falls back to
+ * it, and that is not a formality:
+ *
+ *   - Nobody has caught up to this message yet. The roster says nothing, the
+ *     row says 'sent', and "Sent" is what the reader gets.
+ *   - The roster read FAILED. routes/messages.js catches that and answers with
+ *     `readers: []` and no status on any row, because a decoration must never
+ *     turn a history read into a 500. Both halves are then silent and
+ *     StatusLine draws nothing, which is the whole point of it drawing nothing
+ *     for an unknown status. Synthesising 'sent' from an empty roster would
+ *     invent a receipt out of a server error.
+ *   - A row stored before this migration existed. 065 backfills nothing, on
+ *     purpose, so those rows carry no receipt and never acquire one.
+ *
+ * ANY reader makes it opened, not every reader, which is what the word means
+ * in a group and what "Opened by 3" says. Requiring all of them would leave a
+ * message on Delivered because one member never opens the app.
+ */
+export const flockReceipt = (message, readers) => {
+  const fallback = { status: message?.status || null, openedBy: message?.openedBy || null };
+  const id = Number(message?.id);
+  const list = Array.isArray(readers) ? readers : [];
+  if (!Number.isFinite(id) || list.length === 0) return fallback;
+
+  const openers = list.filter((r) => (Number(r?.lastOpenedMessageId) || 0) >= id);
+  if (openers.length > 0) {
+    /* The count and the names are the SAME array by the time StatusLine sees
+       them, so they cannot disagree. A reader whose name cannot be read is
+       dropped from both rather than from one, which is the rule the server
+       states where it does the same filtering. An empty list left over from
+       that renders as plain "Opened", which is honest: somebody opened it and
+       we cannot say who. */
+    return { status: 'opened', openedBy: openers.map((r) => firstNameOf(r.name)).filter(Boolean) };
+  }
+  if (list.some((r) => (Number(r?.lastDeliveredMessageId) || 0) >= id)) {
+    return { status: 'delivered', openedBy: null };
+  }
+  return fallback;
+};
+
 /* The id of the one synthetic row this screen puts into the stream.
  *
  * A bill is not a message and `messages` has no row for it, so the card that
@@ -1192,13 +1276,39 @@ export default function ChatDetail({
       return null;
     };
 
-    // THE RECEIPT, AND ONLY WHAT THE ROW CAN BACK. There is no delivered and
-    // no opened on the flock side: no column, no event, nothing to read. So
-    // the two states a row really carries are the two that appear, a send in
-    // flight and a send that failed, and StatusLine refuses to invent the
-    // rest. "Sending" sits under the last own message only, which is where the
-    // stream puts a receipt. The failed line, with its Retry and its Remove,
-    // sits under the message that did not send, wherever in the run that is.
+    // THE RECEIPT, AND ONLY WHAT THE SERVER CAN BACK.
+    //
+    // This comment used to say there was no delivered and no opened on the
+    // flock side, "no column, no event, nothing to read", and that was true
+    // until migration 065 and commit 2bcdc55. There are now two watermarks per
+    // member, a `readers` roster on the history read, per-row `status` and
+    // `openedBy`, and a `flock_read` event. All five words StatusLine knows are
+    // reachable from this screen, and until this change none of them past
+    // 'sending' was ever asked for, so the whole ladder was invisible.
+    //
+    // WHICH ROW GETS WHICH. The two client-owned states are per row and stay
+    // per row: 'failed' belongs to the message that did not send, wherever in
+    // the run that is, and 'sending' belongs to EVERY row still on the wire,
+    // because two can be in flight at once and asking only about the last one
+    // hid the first one's receipt entirely (and, during a search, attached it
+    // to the last own row that MATCHED rather than the one still sending).
+    //
+    // The three SERVER states are not per row. They belong to the conversation
+    // and appear exactly once, under your last own message, which is what
+    // StatusLine's own header describes and what the capture shows: the word
+    // goes away when the other person's next message arrives, because there is
+    // a newer thing on the screen than your receipt.
+    const lastThreadRow = (flock.messages || [])[(flock.messages || []).length - 1];
+    /* Read off `flock.messages` and NOT off the rows being drawn. The stream
+       can be a search result, and it can carry the synthetic bill row this
+       screen splices in; neither changes which message is actually last in the
+       conversation. A receipt that moved because somebody typed in the search
+       box would be a receipt about the search box. */
+    const receiptRowId = lastThreadRow && lastThreadRow.sender === 'You'
+      && !lastThreadRow.pending && !lastThreadRow.failed
+      ? lastThreadRow.id
+      : null;
+
     const renderStatus = (m) => {
       if (!m || m.sender !== 'You') return null;
       if (m.failed) {
@@ -1223,7 +1333,15 @@ export default function ChatDetail({
          row's status under that row for exactly this. Same fix the DM side
          already carries. */
       if (m.pending) return <StatusLine status="sending" />;
-      return null;
+      if (m.id !== receiptRowId) return null;
+      /* `flock.readers` is the roster GET /api/flocks/:id/messages hands back,
+         kept current by the `flock_read` events App.js merges into it. An
+         unknown or missing status returns null here rather than reaching
+         StatusLine as a word, so a flock whose roster read failed draws
+         nothing at all instead of claiming "Sent". */
+      const { status, openedBy } = flockReceipt(m, flock.readers);
+      if (!status) return null;
+      return <StatusLine status={status} openedBy={openedBy} />;
     };
 
     // Scrollback, the same three-part condition the old control carried, said
