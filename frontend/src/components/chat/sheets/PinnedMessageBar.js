@@ -10,8 +10,10 @@
  * unpin control removes the one on screen.
  *
  * WHAT IT REPLACES
- * Nothing that shipped. Pinning a message is new (migration 066 adds the
- * pinned_messages table). It is listed here because the header drawer is where
+ * Nothing that shipped. Pinning a message is new. The table arrived in
+ * migration 068, not 066: this line said 066 for a while and 066 became the
+ * flock reply, so the number pointed at the wrong file and nothing tracked
+ * that the table had never been written at all. It is listed here because the header drawer is where
  * a feature like this would otherwise have gone, and the whole point of the
  * rebuild is that it does not.
  *
