@@ -1186,6 +1186,11 @@ router.post('/dm/:userId',
           // Same room and event name as sockets/handlers.js send_dm; the client
           // dedupes on message id.
           io.to(`user:${receiverId}`).emit('new_dm', message);
+          // And the sender's other devices, for the reason send_dm gives: an
+          // account is several devices, and the one that posted this over
+          // REST is the one whose socket is down, so the others are the ones
+          // that need telling. The client dedupes on id.
+          io.to(`user:${req.user.id}`).emit('new_dm', message);
           const preview = (message_text || '').substring(0, 100);
           await pushIfOfflineDebounced(io, receiverId,
             req.user.name,
@@ -1519,7 +1524,9 @@ router.put('/dm/:userId/pinned-venue',
       if (rejectIfProfane(res, venue_name)) return;
       if (venue_address && rejectIfProfane(res, venue_address)) return;
       const venue_id = typeof req.body.venue_id === 'string' ? req.body.venue_id.slice(0, 256) : null;
-      const venue_rating = Number.isFinite(req.body.venue_rating) ? req.body.venue_rating : null;
+      // NUMERIC(2,1) and a five-star scale; see the socket twin.
+      const venue_rating = Number.isFinite(req.body.venue_rating) && req.body.venue_rating >= 0 && req.body.venue_rating <= 5
+        ? req.body.venue_rating : null;
       const venue_photo_url = safeVenuePhotoUrl(req.body.venue_photo_url);
 
       await pool.query(

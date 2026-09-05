@@ -881,6 +881,10 @@ router.post('/:token/rsvp',
       // a moderator acted on them specifically.
       if (nameTaken) {
         return res.status(409).json({
+          // The code lets the page tell this apart from a closed plan (the
+          // other 409 on this route) and look for an identity it already
+          // holds for the name under an older link (website/GuestInvite.js).
+          code: 'NAME_TAKEN',
           error: 'Someone already answered as that name. Open the link on the device you used, or add a last initial.',
           nameTaken: true,
         });
@@ -1215,7 +1219,59 @@ router.post('/:token/join',
         }
       }
       if (existing.rows.length && existing.rows[0].status === 'accepted') {
-        return res.json({ flockId: link.flock_id, flockName: link.name, joined: false });
+        // ALREADY IN, BUT THE GUEST ROW STILL GOES (guest and DM audit,
+        // 2026-09-05). A member without the app opens the link on a laptop,
+        // answers by name, then taps "Sign in and join". The join answered
+        // joined: false here, before the transaction that retires the guest
+        // row, so the roster listed them twice and "going" was one too high
+        // for good. Same best-effort hide and vote promotion the new-member
+        // path runs, on the pool because there is no membership to commit
+        // beside it; a stale or garbage token matches nothing and changes
+        // nothing. Announced after the response exactly as that path does.
+        let hiddenGuestId = null;
+        let promotedVenue = null;
+        if (guestUuid) {
+          try {
+            const hid = await pool.query(
+              `UPDATE guest_rsvps SET is_hidden = TRUE
+                WHERE flock_id = $1 AND guest_token = $2 AND COALESCE(is_hidden, false) = false
+                RETURNING id`,
+              [link.flock_id, guestUuid]
+            );
+            hiddenGuestId = hid.rows.length ? hid.rows[0].id : null;
+            if (hiddenGuestId) {
+              const promoted = await pool.query(
+                `INSERT INTO venue_votes (flock_id, user_id, venue_name)
+                 SELECT $1, $2, gv.venue_name FROM guest_votes gv WHERE gv.guest_rsvp_id = $3
+                 ON CONFLICT DO NOTHING
+                 RETURNING venue_name`,
+                [link.flock_id, req.user.id, hiddenGuestId]
+              );
+              promotedVenue = promoted.rows.length ? promoted.rows[0].venue_name : null;
+            }
+          } catch (hideErr) {
+            console.error('Guest row retire for an existing member failed:', hideErr.message);
+          }
+        }
+        res.json({ flockId: link.flock_id, flockName: link.name, joined: false });
+        if (hiddenGuestId != null) {
+          try {
+            const io = req.app.get('io');
+            if (io) {
+              await emitToFlockMembers(io, link.flock_id, 'content_removed', {
+                contentType: 'guest_rsvp',
+                contentId: hiddenGuestId,
+                flockId: link.flock_id,
+              });
+              if (promotedVenue) {
+                await emitToFlockMembers(io, link.flock_id, 'new_vote', { flockId: link.flock_id, venueName: promotedVenue });
+              }
+            }
+          } catch (emitErr) {
+            console.error('Guest row retire fan-out failed:', emitErr.message);
+          }
+        }
+        return;
       }
       const wasInvited = existing.rows.length > 0;
 

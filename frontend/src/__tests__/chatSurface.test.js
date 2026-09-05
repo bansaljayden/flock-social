@@ -647,3 +647,21 @@ test('a direct message that cannot send has the same way out as a flock message'
   expect(appSource).toMatch(/const discardFailedDm = useCallback\(\(userId, failedMsg\) => \{/);
   expect((appSource.match(/aria-label="Remove this message that did not send"/g) || []).length).toBe(2);
 });
+
+
+test('the DM scrollback flag is reset the way the flock one is', () => {
+  // Same bug, other thread: nothing cleared dmAtTop and a non-keepOlder read
+  // truncates to one page, so re-entering a long DM hid "Load earlier
+  // messages" for the rest of the session (guest and DM audit, 2026-09-05).
+  expect(appSource).toMatch(/if \(!keepOlder\) \{\s*setDmAtTop\(t => \{/);
+  expect(appSource).toMatch(/delete next\[userId\];/);
+});
+
+test('a DM thread opened before its list row exists keeps its history', () => {
+  // A push tap on a cold start sets the screen before GET /api/dm answers; a
+  // map over the rows held was a no-op, so the thread rendered its empty
+  // state over real unread messages. The loader now makes the row.
+  expect(appSource).toMatch(/if \(!prev\.some\(d => d\.userId === userId\)\) \{/);
+  expect(appSource).toMatch(/name: fromThem\?\.sender_name \|\| 'Unknown',/);
+  expect(appSource).toMatch(/messages: old && old\.messages && old\.messages\.length \? old\.messages : \[\],/);
+});

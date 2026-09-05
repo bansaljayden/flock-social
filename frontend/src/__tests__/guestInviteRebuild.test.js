@@ -1100,3 +1100,25 @@ describe('inviteHandoff: App.js wiring', () => {
     expect(block.indexOf('setFlocks(')).toBeLessThan(open);
   });
 });
+
+
+describe('a regenerated link does not strand a guest who already answered', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'website', 'GuestInvite.js'), 'utf8');
+
+  it('finds the identity this device holds for the name under an older link and resends it once', () => {
+    // Identity is stored per link token; the server accepts a guest token by
+    // flock. On the name-taken refusal (code NAME_TAKEN) the page looks for
+    // the same name under any flock_guest_* key and retries with that token.
+    expect(src).toMatch(/const carriedIdentityFor = \(name, exceptKey\) => \{/);
+    expect(src).toMatch(/key\.startsWith\('flock_guest_'\)/);
+    expect(src).toMatch(/body\.code === 'NAME_TAKEN' && !carried/);
+    expect(src).toMatch(/return submitRsvp\(status, remembered\);/);
+    expect(src).toMatch(/guestToken: carried \|\| \(guest && guest\.guestToken\)/);
+  });
+
+  it('compares names the way the server does', () => {
+    expect(src).toMatch(/const sameGuestName = \(a, b\) => String\(a \|\| ''\)\.trim\(\)\.toLowerCase\(\)\.replace\(\/\\s\+\/g, ' '\)/);
+  });
+});

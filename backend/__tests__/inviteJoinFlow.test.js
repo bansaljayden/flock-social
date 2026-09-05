@@ -660,3 +660,42 @@ test('the budget is keyed per user AND per flock, so one abuser cannot lock othe
   assert.match(guestSrc, /joinCounter\.allow\(`\$\{req\.user\.id\}\|\$\{link\.flock_id\}`\)/,
     'the key is the pair, not the user alone');
 });
+
+
+test('a member who answered the link by name before signing in has that guest row retired too', async () => {
+  // The already-in answer used to return before the transaction that hides
+  // the guest row, so the roster listed them twice and "going" was one too
+  // high for good (guest and DM audit, 2026-09-05). The hide and the vote
+  // promotion run on the pool for this branch, and the removal is announced
+  // after the response the way the new-member path announces it.
+  scriptViewer();
+  on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
+  on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/,
+    () => ({ rows: [{ status: 'accepted' }] }));
+  on(/UPDATE guest_rsvps SET is_hidden = TRUE/, () => ({ rows: [{ id: 77 }], rowCount: 1 }));
+  on(/INSERT INTO venue_votes/, () => ({ rows: [{ venue_name: 'The Bar' }], rowCount: 1 }));
+  scriptAnnounce();
+
+  const uuid = '11111111-2222-4333-8444-555555555555';
+  const res = await join(VIEWER, { body: { guestToken: uuid } });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.deepStrictEqual(res.body, { flockId: 42, flockName: 'Dinner', joined: false });
+  const hid = ran(/UPDATE guest_rsvps SET is_hidden = TRUE/);
+  assert.strictEqual(hid.length, 1, 'the guest row must be retired for an existing member too');
+  assert.deepStrictEqual(hid[0].params, [42, uuid]);
+  const promoted = ran(/INSERT INTO venue_votes/);
+  assert.strictEqual(promoted.length, 1, 'and the guest vote comes with them');
+  assert.deepStrictEqual(promoted[0].params, [42, VIEWER.id, 77]);
+  assert.strictEqual(ran(/INSERT INTO flock_members/).length, 0, 'no second membership');
+});
+
+test('a member re-tapping the link with no guest identity is still the one indexed read', async () => {
+  scriptViewer();
+  on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
+  on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/,
+    () => ({ rows: [{ status: 'accepted' }] }));
+  scriptAnnounce();
+  const res = await join(VIEWER);
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(ran(/UPDATE guest_rsvps/).length, 0, 'nothing to retire, nothing touched');
+});

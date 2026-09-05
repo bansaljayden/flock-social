@@ -200,11 +200,19 @@ test('a DM sent over REST reaches the recipient live', async () => {
   await settle();
 
   const delivered = emits.filter((e) => e.event === 'new_dm');
-  assert.strictEqual(delivered.length, 1);
-  assert.strictEqual(delivered[0].room, 'user:2');
-  assert.strictEqual(delivered[0].payload.id, 900);
-  assert.strictEqual(delivered[0].payload.sender_name, 'Ava');
-  assert.deepStrictEqual(delivered[0].payload.reactions, []);
+  // Two rooms: the recipient's, and the sender's own account, whose OTHER
+  // devices are the ones that need telling when one of them posted over REST
+  // because its socket was down (guest and DM audit, 2026-09-05).
+  assert.strictEqual(delivered.length, 2);
+  const toRecipient = delivered.find((e) => e.room === 'user:2');
+  assert.ok(toRecipient, 'the recipient no longer hears the message');
+  const toSender = delivered.find((e) => e.room !== 'user:2');
+  assert.ok(toSender && /^user:\d+$/.test(toSender.room) && toSender.room !== 'user:2',
+    "the sender's account must hear its own message");
+  assert.strictEqual(toRecipient.payload.id, 900);
+  assert.strictEqual(toRecipient.payload.sender_name, 'Ava');
+  assert.deepStrictEqual(toRecipient.payload.reactions, []);
+  assert.strictEqual(toSender.payload.id, 900, 'the same row, so the client can dedupe on id');
 });
 
 test('a reply delivered over REST carries the row it quotes', async () => {
