@@ -62,6 +62,12 @@ const apiSource = fs.readFileSync(apiPath, 'utf8');
    still own: the loaders, the cursors, the gating conditions, the empty
    states and both composers. */
 const dmScreenSource = fs.readFileSync(path.join(__dirname, '..', 'screens', 'DmDetail.js'), 'utf8');
+const flockScreenSource = fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatDetail.js'), 'utf8');
+/* Both screens dress their rows and decide their receipts the same way now, so
+   the two rules below are asserted against each of them by name rather than
+   against the three files glued together. A concatenated source cannot tell
+   you that BOTH have the fix; it only tells you that one of them does. */
+const CHAT_SCREENS = [['flock', flockScreenSource], ['DM', dmScreenSource]];
 const chatModule = (f) => fs.readFileSync(path.join(__dirname, '..', 'components', 'chat', f), 'utf8');
 const messageListSource = chatModule('MessageList.js');
 const chatInputBarSource = chatModule('ChatInputBar.js');
@@ -291,12 +297,34 @@ describe('claims a chat screen must not make', () => {
     expect(appSource.match(/<StatusLine status="sending" \/>/g)).toHaveLength(2);
     expect(statusLineSource).toMatch(/sending: 'Sending',/);
     expect(messageRowSource).toMatch(/opacity: pending \? 0\.6 : 1,/);
-    // On the DM side it is asked of EVERY row in flight, not just the newest.
-    // Two sends can be on the wire at once, and under a search "the newest own
-    // row" is the newest own row that MATCHED the query, which is a different
-    // message from the one that has not landed.
-    expect(dmScreenSource).toMatch(/if \(m\.pending\) return <StatusLine status="sending" \/>;/);
-    expect(dmScreenSource).not.toMatch(/lastOwnDmId/);
+    // It is asked of EVERY row in flight, not just the newest, ON BOTH
+    // SCREENS. Two sends can be on the wire at once and each is one that has
+    // not landed, so pinning the receipt to the newest own row hid the first
+    // one's entirely. Worse, under a search "the newest own row" is the newest
+    // own row that MATCHED the query, which is a different message from the
+    // one still sending, so the receipt appeared under a message that had
+    // already been delivered. The DM was fixed first; the flock screen carried
+    // it for longer.
+    CHAT_SCREENS.forEach(([name, src]) => {
+      expect({ name, ok: /if \(m\.pending\) return <StatusLine status="sending" \/>;/.test(src) })
+        .toEqual({ name, ok: true });
+      // No screen picks "the last own row" to hang it on any more.
+      expect({ name, lastOwn: /lastOwn(Dm)?Id/.test(src) }).toEqual({ name, lastOwn: false });
+    });
+  });
+
+  test('a shared venue keeps no caption line, search running or not', () => {
+    // Both screens blank a venue card's text, because the caption ("Check out
+    // Kome!") is what the CARD says and printing it above the card says it
+    // twice. The search path then rebuilt `text` from the row's own copy, so a
+    // query the caption matched put it straight back under the card the
+    // blanking had just cleared. A card is a card whether or not a search is
+    // running, which is why the card test comes FIRST in the condition.
+    CHAT_SCREENS.forEach(([name, src]) => {
+      expect({ name, blanks: /isCard \? \{ \.\.\.(m|quoted), text: '' \} : (m|quoted)/.test(src) })
+        .toEqual({ name, blanks: true });
+      expect({ name, guarded: /if \(isCard \|\|/.test(src) }).toEqual({ name, guarded: true });
+    });
   });
 });
 

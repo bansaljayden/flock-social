@@ -749,8 +749,15 @@ export default function ChatDetail({
     const needsDressing = searchActive
       || visibleMessages.some((m) => m.message_type === 'venue_card' && m.venue_data && m.text);
     const listRows = needsDressing ? visibleMessages.map((m) => {
-      const carded = m.message_type === 'venue_card' && m.venue_data ? { ...m, text: '' } : m;
-      if (!searchActive || typeof m.text !== 'string' || !m.text.toLowerCase().includes(chatSearch.toLowerCase())) return carded;
+      const isCard = m.message_type === 'venue_card' && m.venue_data;
+      const carded = isCard ? { ...m, text: '' } : m;
+      /* AND ON THE SEARCH PATH TOO. The highlight below rebuilds `text` from
+         the row's own copy, so a query the caption matched ("check out") put
+         that caption straight back under the card the line above had just
+         cleared, which is the duplicate the blanking exists to stop. A card is
+         a card whether or not a search is running. Fixed on the DM side
+         already; this is the flock half of the same line. */
+      if (isCard || !searchActive || typeof m.text !== 'string' || !m.text.toLowerCase().includes(chatSearch.toLowerCase())) return carded;
       return { ...carded, text: highlightMatches(m.text, chatSearch) };
     }) : visibleMessages;
 
@@ -826,12 +833,6 @@ export default function ChatDetail({
     // rest. "Sending" sits under the last own message only, which is where the
     // stream puts a receipt. The failed line, with its Retry and its Remove,
     // sits under the message that did not send, wherever in the run that is.
-    const lastOwnId = (() => {
-      for (let i = listRows.length - 1; i >= 0; i--) {
-        if (listRows[i] && listRows[i].sender === 'You') return listRows[i].id;
-      }
-      return null;
-    })();
     const renderStatus = (m) => {
       if (!m || m.sender !== 'You') return null;
       if (m.failed) {
@@ -847,7 +848,15 @@ export default function ChatDetail({
           />
         );
       }
-      if (m.pending && m.id === lastOwnId) return <StatusLine status="sending" />;
+      /* EVERY row still on the wire says so, not just the last one. Two
+         messages can be in flight at once and each is one that has not landed,
+         so the old "last own row" test hid the first one's receipt entirely.
+         It also attached the receipt to the WRONG message during a search,
+         because the row it found was the last own row that MATCHED the query
+         rather than the one still sending. MessageGroup draws a non-last
+         row's status under that row for exactly this. Same fix the DM side
+         already carries. */
+      if (m.pending) return <StatusLine status="sending" />;
       return null;
     };
 
