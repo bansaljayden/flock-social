@@ -1,0 +1,214 @@
+/*
+ * STREAM CARDS: the stylesheet.
+ *
+ * WHAT THIS IS. The keyframes, the focus rings, the reduced-motion guards and
+ * the eight new colour tokens for the cards and system rows that live inside
+ * the chat message stream. Everything the cards can say with an inline style
+ * object is said there, the way the rest of this repo does it. This file holds
+ * only what an inline style cannot express.
+ *
+ * WHAT IT REPLACES. Nothing of its own. It is the stylesheet half of the six
+ * card components in this folder, which between them replace the stack of
+ * banners that sits today between the chat header and the first message: the
+ * 40pt plan bar, the 72pt venue banner, the pinned bill bar, the ghost commit
+ * card, the momentum meter and the live location strip. Measured on a group
+ * chat that is about 112pt of chrome before a single message arrives.
+ * Snapchat spends zero there, so these move into the stream as events, which
+ * is where CHAT-REBUILD-PLAN.md puts them.
+ *
+ * THE TEN NEW TOKENS, and why each one is new rather than an existing token
+ * reused. index.css already carries --bg-card-solid, --border-color and the
+ * --accent-green-* and --accent-red-* pairs, and seven of the ten below could
+ * have been written as aliases of those. They are not, because a card in the stream is a
+ * different surface from a card on a screen: it sits on the chat ground with
+ * messages above and below it, and the day somebody retunes the chat ground
+ * these have to move with it while the settings cards must not. One
+ * indirection now is cheaper than unpicking a shared token later.
+ *
+ *   --chat-card-bg              the ground of every card in the stream
+ *   --chat-card-border          its hairline
+ *   --chat-card-settled-bg      the green ground a fully settled bill turns
+ *   --chat-card-settled-border  that card's hairline
+ *   --chat-card-alert-bg        the red ground the SOS card takes
+ *   --chat-card-alert-border    that card's hairline. It is the heavier of
+ *                               the two red steps on purpose: the SOS card is
+ *                               the one card in the stream somebody has to
+ *                               find while scrolling past it fast, and the
+ *                               ground alone does not survive a dark theme.
+ *   --chat-accent               the navy accent a changed value is printed in
+ *   --chat-vote-track           the unfilled part of a poll row's count bar
+ *   --chat-vote-fill            the filled part
+ *   --chat-on-fill              text and glyphs drawn ON a filled accent or
+ *                               green chip. It is white in light mode and the
+ *                               navy ground in dark, because the accent and
+ *                               the green both invert between themes: white
+ *                               on the dark #2d5a87 measures 6.5:1, and white
+ *                               on the light #6d9ac3 measures 2.4:1, which is
+ *                               a button label nobody can read. One token
+ *                               rather than two, because the accent chip and
+ *                               the settled tick need the same answer.
+ *
+ * COLOUR. Flock's cream and navy, never Snapchat's own colours (rebuild plan,
+ * decision 6). --chat-accent is the steel navy the app already calls its brand
+ * accent: #2d5a87 measures 6.5:1 on white and 5.8:1 on the cream ground, and
+ * #6d9ac3 measures 5.5:1 on the dark card, so the accent clears WCAG 1.4.3 as
+ * text in both themes rather than only as a fill.
+ */
+
+:root {
+  --chat-card-bg: #ffffff;
+  --chat-card-border: #e8e0d0;
+  --chat-card-settled-bg: #ecfdf5;
+  --chat-card-settled-border: #a7f3d0;
+  --chat-card-alert-bg: #fef2f2;
+  --chat-card-alert-border: #fecaca;
+  --chat-accent: #2d5a87;
+  --chat-vote-track: #e8e0d5;
+  --chat-vote-fill: rgba(45, 90, 135, 0.16);
+  --chat-on-fill: #ffffff;
+}
+
+[data-theme="dark"] {
+  --chat-card-bg: #1e293b;
+  --chat-card-border: #1e3a5c;
+  --chat-card-settled-bg: rgba(16, 185, 129, 0.12);
+  --chat-card-settled-border: rgba(16, 185, 129, 0.35);
+  --chat-card-alert-bg: rgba(239, 68, 68, 0.12);
+  --chat-card-alert-border: rgba(239, 68, 68, 0.4);
+  --chat-accent: #6d9ac3;
+  --chat-vote-track: #1e3a5c;
+  --chat-vote-fill: rgba(109, 154, 195, 0.22);
+  --chat-on-fill: #0f172a;
+}
+
+/* ==========================================================================
+   THE CARD SHELL
+
+   A tappable card is the whole tap target, so it carries a real focus ring.
+   The repo's global :focus-visible rule paints an outline on focusable
+   elements; a div with role="button" is only focusable because of tabIndex,
+   so it is spelled out here rather than left to inheritance.
+
+   :active is a 1% press, not a bounce. Nothing in this module bounces
+   (rebuild plan, "Feel"): the only motion the chat surface is allowed is the
+   keyboard curve and the long-press menu, and neither of those lives here.
+   ========================================================================== */
+/* The identity class every card in the stream carries. It sets almost
+   nothing, because the shell's measurements are inline where a reader of the
+   component can see them. It exists so a test, the integration pass or a
+   later reaction layer can name a card without knowing which one it is, and
+   the one property it does set is the containing block those reactions will
+   need. */
+.chat-card {
+  position: relative;
+}
+
+.chat-card-tappable {
+  cursor: pointer;
+  transition: transform 120ms ease-out, background-color 200ms ease-out;
+}
+.chat-card-tappable:active {
+  transform: scale(0.99);
+}
+.chat-card-tappable:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* A row inside a card that is itself tappable (a poll option, a system row
+   with a jump target). Same ring, tighter offset, because the row sits inside
+   a card that already has a hairline. */
+.chat-card-row:focus-visible,
+.chat-system-row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+  border-radius: 8px;
+}
+
+/* ==========================================================================
+   THE POLL COUNT BAR
+
+   The bar grows to its share of the vote. A width transition is the one thing
+   here that reads as motion, and it is a value changing rather than an
+   entrance animation, so it stays. The reduced-motion block below still
+   collapses it, because a person who has asked for no motion gets the new
+   width immediately instead of watching it travel.
+   ========================================================================== */
+.chat-poll-bar {
+  transition: width 300ms cubic-bezier(0.38, 0.7, 0.125, 1);
+}
+
+/* ==========================================================================
+   THE NUDGE ROW, AND ITS SWIPE
+
+   Dragging the row is direct manipulation: the finger is on it and the row
+   tracks the finger, so it is not decoration and it is not suppressed under
+   reduced motion. What IS suppressed is the settle, the return to zero when a
+   drag is released short of the threshold, because that one plays by itself
+   after the finger has gone.
+
+   The dismiss is a fade rather than a fly-out, so a row leaving the stream
+   does not shove the messages under it sideways. A fade leaves the box where
+   it was, though, so the leaving row also gives up its pointer events: an
+   invisible strip that still swallows taps in the middle of the message
+   stream is worse than the banner this row replaced. The component takes it
+   out of the accessibility tree on the same state.
+   ========================================================================== */
+.chat-nudge-settling {
+  transition: transform 180ms cubic-bezier(0.38, 0.7, 0.125, 1);
+}
+
+.chat-nudge-leaving {
+  animation: chat-nudge-out 180ms ease-out forwards;
+  pointer-events: none;
+}
+
+@keyframes chat-nudge-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+/* ==========================================================================
+   REDUCED MOTION
+
+   index.css already carries a global reduce block that flattens every
+   animation and transition in the app. This one is not redundant: it is
+   scoped to this module and it is what a reader of this folder can see. If
+   the global rule is ever narrowed, the cards keep their guarantee.
+   ========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  .chat-card-tappable,
+  .chat-poll-bar,
+  .chat-nudge-settling {
+    transition: none;
+  }
+  .chat-card-tappable:active {
+    transform: none;
+  }
+  .chat-nudge-leaving {
+    animation: none;
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+
+/* ==========================================================================
+   ONE LINE, ALWAYS
+
+   A system row is one line. A long venue name truncates rather than wrapping
+   into a second centred line that reads as a paragraph in the middle of the
+   stream. Inline styles cannot express the ellipsis and the min-width reset
+   together on a flex child, which is what .chat-truncate is.
+   ========================================================================== */
+.chat-system-row {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-truncate {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
