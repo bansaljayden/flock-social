@@ -1670,6 +1670,24 @@ router.get('/:placeId/alternatives',
       // Score the target venue
       const targetResult = await mlPredictor.predictBusyness(target, weather, clientTime, { userId: req.user.id });
 
+      // Nothing is "less crowded" than a venue that is already quiet or not
+      // busy (39 is the Not Busy band's ceiling), and the sheet hides the
+      // section on an empty list, yet the paid Text Search and up to ten
+      // predictions ran on every tap regardless (Explore audit, 2026-09-05).
+      // The owner's live reading counts, since it is the figure the sheet
+      // shows for the venue itself.
+      {
+        const ownerOnTarget = await ownerReports.getLiveOwnerReports([placeId]).catch(() => ({}));
+        const shown = ownerReports.applyOwnerReport(
+          { score: targetResult.score },
+          ownerOnTarget && ownerOnTarget[placeId],
+          { reporters: 0, feedbackRows: [] }
+        ).score;
+        if (Number.isFinite(shown) && shown <= 39) {
+          return res.json({ alternatives: [] });
+        }
+      }
+
       // Search nearby venues of similar type
       const primaryType = target.types[0] || 'restaurant';
 
