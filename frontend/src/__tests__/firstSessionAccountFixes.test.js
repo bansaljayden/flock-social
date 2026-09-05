@@ -196,6 +196,46 @@ describe('the name Apple sends once', () => {
     await waitFor(() => expect(onSuccess).toHaveBeenCalledWith({ id: 7 }));
   });
 
+  it('is not remembered when the plugin hands over no Apple user id', async () => {
+    // The plugin's contract allows a null `user`. A name with no id cannot be
+    // keyed to anyone, so it is not kept, and a later sheet with no id
+    // matches nothing (adversarial audit round 2, 2026-09-05).
+    asNativeIos();
+    const onError = jest.fn();
+    const utils = render(React.createElement(AppleSignInButton, { onSuccess: jest.fn(), onError }));
+    mockAppleAuthorize.mockResolvedValueOnce({
+      response: { identityToken: 'apple-token-n1', givenName: 'Sam', familyName: 'Lee', authorizationCode: 'code-n1' },
+    });
+    api.appleLogin.mockRejectedValueOnce(needsDob());
+    tapApple(utils);
+    await waitFor(() => expect(onError).toHaveBeenCalled());
+
+    mockAppleAuthorize.mockResolvedValueOnce({ response: { identityToken: 'apple-token-n2', authorizationCode: 'code-n2' } });
+    api.appleLogin.mockResolvedValueOnce({ user: { id: 11 } });
+    tapApple(utils);
+    await waitFor(() => expect(api.appleLogin).toHaveBeenCalledTimes(2));
+    expect(api.appleLogin.mock.calls[1][1]).toBeUndefined();
+  });
+
+  it('is forgotten the moment the server accepts it', async () => {
+    asNativeIos();
+    const utils = render(React.createElement(AppleSignInButton, { onSuccess: jest.fn(), onError: jest.fn() }));
+    mockAppleAuthorize.mockResolvedValueOnce({
+      response: { identityToken: 'apple-token-f1', user: 'apple-user-F', givenName: 'Sam', familyName: 'Lee' },
+    });
+    api.appleLogin.mockResolvedValueOnce({ user: { id: 12 } });
+    tapApple(utils);
+    await waitFor(() => expect(api.appleLogin).toHaveBeenCalledTimes(1));
+
+    // Same Apple user, a second sheet with no name: nothing is resent, because
+    // the account already carries it and nothing else on the device may.
+    mockAppleAuthorize.mockResolvedValueOnce({ response: { identityToken: 'apple-token-f2', user: 'apple-user-F' } });
+    api.appleLogin.mockResolvedValueOnce({ user: { id: 12 } });
+    tapApple(utils);
+    await waitFor(() => expect(api.appleLogin).toHaveBeenCalledTimes(2));
+    expect(api.appleLogin.mock.calls[1][1]).toBeUndefined();
+  });
+
   it('is never sent for a different Apple user on the same device', async () => {
     asNativeIos();
     const utils = render(React.createElement(AppleSignInButton, { onSuccess: jest.fn(), onError: jest.fn() }));
@@ -272,6 +312,23 @@ describe('the Terms are on screen before a sign-in screen creates an account', (
       'https://www.flockcorp.com/privacy',
       'https://www.flockcorp.com/guidelines',
     ]);
+  });
+
+  it('the venue sign-in half reveals the date field when Apple answers needsDob', async () => {
+    // The Apple callback read only the message, so a brand-new Apple account
+    // on the sign-in half was told to try again with no field to fill
+    // (adversarial audit round 2, 2026-09-05). Same transition as Google.
+    asNativeIos();
+    const utils = render(React.createElement(VenueLoginScreen, {
+      onLoginSuccess: jest.fn(), onSwitchToUserLogin: jest.fn(),
+    }));
+    expect(utils.queryByLabelText(/date of birth/i)).toBeNull();
+    mockAppleAuthorize.mockResolvedValueOnce({ response: { identityToken: 'apple-token-v1', user: 'apple-user-V' } });
+    api.appleLogin.mockRejectedValueOnce(needsDob());
+    fireEvent.click(utils.getByRole('button', { name: /continue with apple/i }));
+    await waitFor(() => expect(utils.getByLabelText(/date of birth/i)).toBeTruthy());
+    expect(utils.getByRole('alert').textContent).toBe('Add your date of birth below, then tap Continue with Apple again.');
+    expect(consentOn(utils.container)).not.toBeNull();
   });
 
   it('the venue sign-in half shows it too', async () => {

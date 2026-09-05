@@ -129,6 +129,21 @@ test('PUT /profile refuses a move to a disposable address with the same sentence
   assert.strictEqual(res.body.error, 'Temporary email addresses cannot be used. Use an address you keep.');
 });
 
+test('an unchanged address on a grandfathered account is not a move, so it is not refused', async () => {
+  // The form sends the current address on every save. An account that signed
+  // up before its domain joined the list, and sends that same address back
+  // with a new bio, is not moving anywhere; refusing it locked such accounts
+  // out of every edit (adversarial audit round 2, 2026-09-05).
+  reset();
+  USER.email = DISPOSABLE;
+  const res = await req('PUT', '/api/users/profile', {
+    body: { email: DISPOSABLE, bio: 'still here', current_password: 'CorrectHorse1' },
+  });
+  assert.notStrictEqual(res.body?.error, 'Temporary email addresses cannot be used. Use an address you keep.',
+    JSON.stringify(res.body));
+  assert.notStrictEqual(res.status, 400, JSON.stringify(res.body));
+});
+
 test('an address that is not disposable is not caught by the new rule', async () => {
   reset();
   const res = await req('PUT', '/api/users/profile', {

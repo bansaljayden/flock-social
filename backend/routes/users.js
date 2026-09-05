@@ -1042,12 +1042,10 @@ router.put('/profile',
       .isLength({ max: MAX_EMAIL }).withMessage('Email address is too long')
       .isEmail().withMessage('Valid email required')
       .normalizeEmail()
-      .isLength({ max: MAX_EMAIL }).withMessage('Email address is too long')
-      // The same block all three account-creation paths in routes/auth.js
-      // apply. Without it a throwaway address that signup refused was one
-      // profile save away: create the account on an address you keep, then
-      // move it to the disposable one here.
-      .custom((v) => !isDisposableEmail(v)).withMessage('Temporary email addresses cannot be used. Use an address you keep.'),
+      .isLength({ max: MAX_EMAIL }).withMessage('Email address is too long'),
+      // The disposable-domain rule is applied in the handler, once the stored
+      // address is known: it is a rule about MOVING to such an address, not
+      // about naming one. See changingEmail.
     // Round 16: this was `body('phone').optional()` with NO validation at all,
     // while signup runs isMobilePhone(). Two separate problems came out of that:
     // anything at all could be written into the column (a name, a URL, an
@@ -1181,6 +1179,18 @@ router.put('/profile',
       // Check email uniqueness if changing email
       const changingEmail = Boolean(email) && normalizedAddress(email) !== normalizedAddress(user.email);
       if (changingEmail) {
+        // The same block all three account-creation paths in routes/auth.js
+        // apply. Without it a throwaway address that signup refused was one
+        // profile save away: create the account on an address you keep, then
+        // move it to the disposable one here. Applied only to a CHANGE
+        // (adversarial audit round 2, 2026-09-05): the form sends the current
+        // address on every save, so a rule at the validator refused every
+        // name, bio and phone edit on an account whose domain joined the list
+        // after it signed up, and there was no address such a person could
+        // type to get their own account back.
+        if (isDisposableEmail(email)) {
+          return res.status(400).json({ error: 'Temporary email addresses cannot be used. Use an address you keep.' });
+        }
         // PERMANENT EMAIL SQUAT (round 13). Nothing here ever verified that the
         // caller owns the address they are moving to, and an OAuth row needs no
         // password to reach this handler at all. So: sign in with your own
@@ -1508,6 +1518,13 @@ router.put('/profile',
       });
     } catch (err) {
       console.error('Update profile error:', err);
+      // The canonical-email unique index (migration 062): the address is a
+      // dot or plus variant of one another account holds, and that account
+      // arrived between the uniqueness read above and this write. Same
+      // sentence the read gives when it is not raced.
+      if (err.code === '23505') {
+        return res.status(400).json({ error: 'Email is already in use' });
+      }
       res.status(500).json({ error: 'Failed to update profile' });
     }
   }
