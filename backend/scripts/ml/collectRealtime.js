@@ -954,16 +954,29 @@ async function run() {
     // readings and weekly forecast rows — on two different hour axes — into the
     // same baseline slot, and whichever script ran last decided what a venue's
     // baseline meant. One definition now, in buildBaselines.js.
-    try {
-      console.log('[ML:Realtime] Refreshing venue baselines...');
-      const result = await refreshCollectedBaselines(pool);
-      if (!result.ok) {
-        console.error(`[ML:Realtime] Baseline refresh ${REFUSAL_MESSAGE}`);
-      } else {
-        console.log(`[ML:Realtime] Baselines refreshed (${result.upserted} changed, ${result.deleted} stale removed)`);
+    // THE BASELINE REFRESH IS CORPUS-WIDE, AND ONLY ONE COLLECTOR SHOULD DO IT.
+    // It rebuilds every venue's baselines from all 3.3M weekly rows inside one
+    // transaction under withCorpusWriteLock, so a second collector running on
+    // its own cron stalls on that lock for the whole rebuild while its own run
+    // clock keeps ticking. A holdout-city collector therefore passes
+    // --no-baseline-refresh and leaves the rebuild to the hourly PA run, which
+    // already covers every city because the statement is not city-scoped.
+    const skipBaselines = process.argv.includes('--no-baseline-refresh');
+    if (skipBaselines) {
+      console.log('[ML:Realtime] Skipping the baseline refresh (--no-baseline-refresh); another collector owns it.');
+    }
+    if (!skipBaselines) {
+      try {
+        console.log('[ML:Realtime] Refreshing venue baselines...');
+        const result = await refreshCollectedBaselines(pool);
+        if (!result.ok) {
+          console.error(`[ML:Realtime] Baseline refresh ${REFUSAL_MESSAGE}`);
+        } else {
+          console.log(`[ML:Realtime] Baselines refreshed (${result.upserted} changed, ${result.deleted} stale removed)`);
+        }
+      } catch (err) {
+        console.error('[ML:Realtime] Baseline refresh failed:', err.message);
       }
-    } catch (err) {
-      console.error('[ML:Realtime] Baseline refresh failed:', err.message);
     }
   } finally {
     await pool.end().catch(() => {});
