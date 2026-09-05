@@ -474,8 +474,13 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
 
         {/* Guideline 1.2 / EULA consent. The backend stamps terms_accepted_at on
             every signup path, so the agreement has to be on screen before any
-            of the three buttons below is pressed. */}
-        {isSignup && (
+            of the three buttons below is pressed. The sign-in half creates an
+            account too: its Google and Apple buttons make one for anyone who
+            has none, once the server has asked for a date of birth, so the
+            line shows there from the moment needsDob is set. A first tap is
+            always answered needsDob before a row is written, and an existing
+            account signs in without seeing it. */}
+        {(isSignup || needsDob) && (
           <p className="auth-legal">
             Creating an account means you agree to the{' '}
             <a href={TERMS_URL} target="_blank" rel="noopener noreferrer">Terms</a>,{' '}
@@ -536,9 +541,20 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
             document.getElementById('venue-dob-check')?.focus();
             return false;
           }
-          // The impossible date, stopped for the reason on dobLooksReal. An
-          // empty field still goes through: an Apple account that already
-          // exists signs in without one.
+          // On the signup half an empty field is stopped before the sheet
+          // opens, the same as the Google button above: the server will not
+          // create an account without a date, and Apple hands over the
+          // person's name only on the first sheet that completes, so a tap
+          // the server was always going to refuse spent that one delivery
+          // and the retry named the account after the email's local part.
+          // On the sign-in half an empty field still goes through: an Apple
+          // account that already exists signs in without one, and a new one
+          // gets the server's needsDob answer and this field.
+          if (isSignup && !dob) {
+            setError('Add your date of birth above first, then continue with Apple.');
+            return false;
+          }
+          // The impossible date, stopped for the reason on dobLooksReal.
           if (dob && !dobLooksReal(dob)) {
             setError('That date of birth does not look right. Check it and try again.');
             return false;
