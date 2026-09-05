@@ -18,9 +18,16 @@ function block(src, startMarker, endMarker) {
 
 describe('DM live location', () => {
   test('arming a share from the composer asks for a fix on the tap', () => {
-    // the composer no longer sets state blind
-    expect(dm).not.toMatch(/else \{ setDmSharingLocation\(selectedDmId\); \}/);
-    expect(dm).toMatch(/else \{ startDmLocationSharing\(selectedDmId\); \}/);
+    // The composer no longer sets state blind, and it never did the toggling
+    // either: starting a share is a tile in the "+" sheet now, and the control
+    // for one already running is the Stop beside the bar's own chip. One
+    // control that means "start" or "stop" depending on state was two doors
+    // wearing one label.
+    expect(dm).not.toMatch(/setDmSharingLocation\(selectedDmId\)/);
+    expect(dm).toMatch(/startDmLocationSharing\(selectedDmId\);/);
+    // The tile is withheld entirely while a share is running, rather than
+    // being drawn and quietly meaning something else.
+    expect(dm).toMatch(/onShareLocation=\{dmSharingLocation \? undefined :/);
     expect(dm).toMatch(/^\s+startDmLocationSharing,$/m);
     // App passes it and it requests a position when there is none
     expect(app).toMatch(/^\s+startDmLocationSharing,$/m);

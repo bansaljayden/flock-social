@@ -405,7 +405,11 @@ describe('the DM stream through the chat module', () => {
     const { container } = render(React.createElement(DmDetail, dmProps({
       selectedDm: THREAD([{ id: 1, sender: 'Sam Diaz', senderId: 7, text: 'here yet?', sentAt: '2026-09-05T18:00:00Z' }]),
     })));
-    const field = container.querySelector('[data-dm-input]');
+    // The bar's field, not the old `data-dm-input` node. What is under test
+    // is unchanged and is the whole reason this exists: the stream used to
+    // blur the focused input on every scroll event, so the keyboard shut
+    // whenever a message arrived.
+    const field = container.querySelector('.chat-composer-field');
     expect(field).toBeTruthy();
     field.focus();
     expect(document.activeElement).toBe(field);
