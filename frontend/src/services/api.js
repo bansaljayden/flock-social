@@ -1571,6 +1571,11 @@ export async function sendMessage(flockId, text, opts = {}) {
       venue_data: opts.venue_data || undefined,
       image_url: opts.image_url || undefined,
       thumb_url: opts.thumb_url || undefined,
+      // The socket twin sends null for an absent reply; this one sends the
+      // field not at all, which is what every other optional field on this
+      // body does and what the validator's optional({ values: 'null' }) chain
+      // expects either way.
+      reply_to_id: opts.reply_to_id || undefined,
     }),
   });
   track('flock_message_sent', { kind: messageKind(opts), transport: 'http' });

@@ -1285,6 +1285,19 @@ const mapFlockRow = (m, myId) => ({
   // nothing and this does the same.
   status: m.status || null,
   openedBy: m.openedBy || null,
+  // The quote, flattened to the same three names mapDmRow uses so MessageRow
+  // draws a flock reply and a DM reply through one code path. message_type
+  // rides along because the server sends it: a reply to a photo or a venue
+  // card has no text to quote, and without the type the bubble would show an
+  // empty quote block rather than saying what was quoted.
+  reply_to: m.reply_to
+    ? {
+      id: m.reply_to.id,
+      text: m.reply_to.message_text,
+      sender: m.reply_to.sender_name,
+      message_type: m.reply_to.message_type || 'text',
+    }
+    : null,
   ...(m.image_url ? { image: m.image_url } : {}),
 });
 
@@ -4119,12 +4132,26 @@ const applyTakedownToFlocks = (flocks, ev) => {
     if (flockId != null && !sameContentId(f.id, flockId)) return f;
     if (contentType === 'flock_message') {
       const msgs = f.messages || [];
+      // TWO REMOVALS, NOT ONE, since migration 066. Dropping the bubble is the
+      // obvious half; the second is the QUOTE. A reply carries a verbatim copy
+      // of the body it answers, drawn in full above the bubble, so a takedown
+      // that removed only the original would leave its exact words on screen
+      // inside every reply to it, which is the one thing a takedown is for.
+      // routes/messages.js already refuses to hydrate a hidden parent, so
+      // nulling it here is what the next refetch would do anyway. This is the
+      // flock twin of the same two-part removal in applyTakedownToDms.
+      const quoting = msgs.some((m) => m.reply_to && sameContentId(m.reply_to.id, contentId));
       const kept = msgs.filter((m) => !sameContentId(m.id, contentId));
-      if (kept.length === msgs.length) return f;
+      if (kept.length === msgs.length && !quoting) return f;
       touched = true;
+      // Null rather than a tombstone: the bubble simply loses its quote block,
+      // which is exactly what a reply loaded after the takedown looks like.
+      const cleaned = quoting
+        ? kept.map((m) => (m.reply_to && sameContentId(m.reply_to.id, contentId) ? { ...m, reply_to: null } : m))
+        : kept;
       // Nothing else has to move: the flock list row reads its preview and its
       // unread dot off this array, so both correct themselves.
-      return { ...f, messages: kept };
+      return { ...f, messages: cleaned };
     }
     const guests = f.guests || [];
     // guestId is the plain guest_rsvps row id; `id` is the namespaced
@@ -6142,17 +6169,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const headerRef = useRef(null);
   const handleScroll = useCallback(() => {}, []);
 
-  // The flock swipe-to-reply gesture and its per-frame swipeState were removed
-  // 2026-08-27, on the maintainer's call, for two audits' worth of reasons at once.
-  // The chat audit: the whole flock reply affordance was wired to nothing
-  // (messages has no reply_to_id column, no transport carried a quote, no
-  // bubble rendered one), so the recipient got a plain message while the
-  // sender's "Replying to" bar stayed up lying. The performance audit: the
-  // gesture wrote top-level state on every touchmove, re-rendering the whole
-  // app per frame of the drag. The DM side keeps its REAL reply feature and
-  // is the implementation to copy if flock reply is ever plumbed for real:
-  // migration for messages.reply_to_id, both transports, and the quote
-  // render, together.
+  // FLOCK REPLY, PLUMBED FOR REAL on 2026-09-05.
+  //
+  // This was the note explaining why the flock reply affordance had been torn
+  // out on 2026-08-27: it was wired to nothing. `messages` had no reply_to_id,
+  // no transport carried a quote and no bubble rendered one, so the sender's
+  // "Replying to" bar stayed up over a send path that dropped it while the
+  // recipient got a plain message. The note named the three things a real fix
+  // needs, together: the migration, both transports, and the quote render.
+  // Migration 066 and both send paths are in; this is the third.
+  //
+  // THE PER-FRAME swipeState IS NOT COMING BACK WITH IT. That was the
+  // performance half of the same removal, and it was a separate bug: the drag
+  // wrote top-level app state on every touchmove, re-rendering the whole tree
+  // once per frame of the gesture. components/chat/MessageRow owns the
+  // gesture now and reports ONCE, on release, through onSwipeReply. Nothing
+  // above it re-renders while a finger is moving.
+  const [flockReplyingTo, setFlockReplyingTo] = useState(null);
 
   // AI Assistant
   // Starts EMPTY — the empty state (Birdie himself + prompt chips) is the
@@ -10453,6 +10486,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const image = opts.image_url || null;
     const venueData = opts.venue_data || null;
     const msgType = opts.message_type || (venueData ? 'venue_card' : image ? 'image' : 'text');
+    // The quote travels as two things: an id for the server and a display
+    // shape for the optimistic bubble, which has to draw the quote before any
+    // echo comes back. `replyQuote` is already in row shape (id/text/sender),
+    // because it comes off a row this screen is showing.
+    const replyToId = opts.reply_to_id || null;
+    const replyQuote = replyToId ? (opts.reply_to || null) : null;
     // Derived here, once, so the socket and the HTTP fallback carry the same
     // pair and a retry regenerates it from the same bytes. ~50ms of canvas
     // work per photo, before the optimistic bubble, which renders the FULL
@@ -10470,6 +10509,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       text,
       reactions: [],
       message_type: msgType,
+      reply_to: replyQuote,
       ...(image ? { image } : {}),
       ...(venueData ? { venue_data: venueData } : {}),
       pending: true,
@@ -10494,7 +10534,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // below cannot double-post. That window used to lose the message entirely.
     const sock = getSocket();
     const sentOverSocket = !!sock?.connected
-      && socketSendMessage(flockId, text, { message_type: msgType, image_url: image, thumb_url: thumb, venue_data: venueData });
+      && socketSendMessage(flockId, text, { message_type: msgType, image_url: image, thumb_url: thumb, venue_data: venueData, reply_to_id: replyToId });
     if (sentOverSocket) {
       // The socket is the normal transport, so this is where the count of
       // flock messages actually lives. api.js's copy fires only in the `else`
@@ -10513,7 +10553,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           if (f.id !== flockId) return f;
           return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, pending: false, failed: true } : m)) };
         }));
-        persistFailedFlockMessage(flockId, { id: tempId, sender: 'You', senderId: authUser?.id, time: 'Now', text, reactions: [], message_type: msgType, ...(image ? { image } : {}), ...(venueData ? { venue_data: venueData } : {}), failed: true });
+        persistFailedFlockMessage(flockId, { id: tempId, sender: 'You', senderId: authUser?.id, time: 'Now', text, reactions: [], message_type: msgType, reply_to: replyQuote, ...(image ? { image } : {}), ...(venueData ? { venue_data: venueData } : {}), failed: true });
         // 8s suits a sentence; a 700KB photo on venue wifi can still be
         // honestly uploading at 8s, and marking it failed mid-flight is how a
         // retry tap makes duplicates. The late-echo reclaim self-heals either
@@ -10553,7 +10593,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           if (f.id !== flockId) return f;
           return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, pending: false, failed: true } : m)) };
         }));
-        persistFailedFlockMessage(flockId, { id: tempId, sender: 'You', senderId: authUser?.id, time: 'Now', text, reactions: [], message_type: msgType, ...(image ? { image } : {}), ...(venueData ? { venue_data: venueData } : {}), failed: true });
+        persistFailedFlockMessage(flockId, { id: tempId, sender: 'You', senderId: authUser?.id, time: 'Now', text, reactions: [], message_type: msgType, reply_to: replyQuote, ...(image ? { image } : {}), ...(venueData ? { venue_data: venueData } : {}), failed: true });
       }
     }
   }, [addMessageToFlock, authUser, showToast]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -10593,6 +10633,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       message_type: failedMsg.message_type,
       image_url: failedMsg.image || null,
       venue_data: failedMsg.venue_data || null,
+      // A retry is the SAME message, so it quotes the same thing. Dropping
+      // this would resend a reply as a loose message, which is the failure
+      // mode where the answer stops making sense in a busy thread.
+      reply_to_id: failedMsg.reply_to?.id || null,
+      reply_to: failedMsg.reply_to || null,
     });
   }, [transmitFlockMessage]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -10617,9 +10662,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // anyone in the flock. It only recovered if they paused mid-word for two
       // full seconds. (The DM composer has no latch, so it never had this.)
       typingActiveRef.current = false;
-      transmitFlockMessage(selectedFlockId, text);
+      // Read and cleared in the same act as the send, the way the DM composer
+      // does it. Cleared UNCONDITIONALLY rather than on success:
+      // transmitFlockMessage owns the outcome from here, and its failure path
+      // keeps the quote on the failed bubble so a retry resends it. Leaving
+      // the bar up would make the next thing typed look like a second reply to
+      // the same line.
+      const quoting = flockReplyingTo;
+      setFlockReplyingTo(null);
+      transmitFlockMessage(selectedFlockId, text, quoting
+        ? {
+          reply_to_id: quoting.id,
+          reply_to: {
+            id: quoting.id,
+            text: quoting.text,
+            sender: quoting.sender,
+            message_type: quoting.message_type || 'text',
+          },
+        }
+        : {});
     }
-  }, [selectedFlockId, transmitFlockMessage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedFlockId, transmitFlockMessage, flockReplyingTo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // useCallback, and the dep is the palette: this is a prop of the
   // React.memo'd MapLibreMapView, and as a plain arrow it was re-created on
@@ -16987,12 +17050,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           setFlocks(prev => applyTakedownToFlocks(prev, ev));
           // The reply composer quotes the message it is answering, body and
           // all, so left alone it keeps the removed words on screen under
-          // "Replying to …". (A flock reply is composer-only — send_message
-          // carries no reply_to_id — so this is purely about what is displayed;
-          // the DM branch below has the stored-reference problem too.) Scoped
-          // to the matching type because messages.id and direct_messages.id are
-          // separate sequences that collide constantly.
+          // "Replying to ...". This branch was an EMPTY BLOCK, left behind when
+          // the dead flock reply affordance was removed, and its comment said a
+          // flock reply was composer-only because send_message carried no
+          // reply_to_id. Migration 066 made that false: a flock reply is now
+          // stored and fanned out like the DM twin, so this has the same
+          // stored-reference problem the DM branch below does, and the same
+          // fix. Scoped to the matching type because messages.id and
+          // direct_messages.id are separate sequences that collide constantly.
           if (ev.contentType === 'flock_message') {
+            setFlockReplyingTo((cur) => (cur && sameContentId(cur.id, ev.contentId) ? null : cur));
           }
           break;
         case 'dm':
@@ -17891,6 +17958,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // them, are declared further down this component, and reading them any
       // earlier is a temporal dead zone throw.
       const chatDetailProps = {
+        flockReplyingTo,
+        setFlockReplyingTo,
         userLocation,
         ChatSkeleton,
         DM_PAGE_SIZE,

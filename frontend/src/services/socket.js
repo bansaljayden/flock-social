@@ -593,6 +593,11 @@ export function sendMessage(flockId, messageText, opts = {}) {
     venue_data: opts.venue_data || null,
     image_url: opts.image_url || null,
     thumb_url: opts.thumb_url || null,
+    // Migration 066. The server scopes this to the flock and refuses a target
+    // that is hidden, unsent or from anywhere else, so an id that has gone
+    // stale between the long press and the send comes back as an error rather
+    // than as a quote of the wrong message.
+    reply_to_id: opts.reply_to_id || null,
   });
   return true;
 }
