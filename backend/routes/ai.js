@@ -57,6 +57,7 @@ const {
   allowGeminiCall,
   geminiSpendStatus,
   settleGeminiCall,
+  refundTurn,
 } = require('../services/birdieUsage');
 
 const router = express.Router();
@@ -306,6 +307,14 @@ function birdieBudgetLeg(userId, tokens) {
   if (st.userDayRemaining < tokens) return 'user-day';
   if (st.userHourRemaining < tokens) return 'user-hour';
   return 'global-day';
+}
+
+// The chirp charged at the top of the handler comes back when nothing was
+// delivered for it; see services/birdieUsage.js refundTurn.
+function refundChirp(res) {
+  if (!res.locals.chirpCharged) return;
+  res.locals.chirpCharged = false;
+  refundTurn(res.locals.chirpUser);
 }
 
 function birdieRefusal(res, leg) {
@@ -1485,7 +1494,9 @@ router.post('/chat',
 
       const genAI = getGenAI();
       if (!genAI) {
-        return res.status(500).json({ error: 'hold up, gimme a sec' });
+        // A permanent outage, not a moment: no key means no Birdie until
+        // somebody sets one (chat audit, 2026-09-05).
+        return res.status(500).json({ error: "birdie's offline right now. try again in a bit" });
       }
 
       const { messages, location, currentContext } = req.body;
@@ -1544,6 +1555,7 @@ router.post('/chat',
 
       // Per-user rate limit (daily by tier + 15/min for everyone)
       const rateCheck = checkUserRateLimit(userId, dailyLimit);
+      if (rateCheck.allowed) { res.locals.chirpCharged = true; res.locals.chirpUser = userId; }
       if (!rateCheck.allowed) {
         if (freeTier && rateCheck.reason === 'daily') {
           return res.status(429).json({
@@ -1710,7 +1722,7 @@ router.post('/chat',
       try {
         response = await sendWithRetry(userText);
       } catch (e) {
-        if (e?.geminiBudget) return birdieRefusal(res, e.leg);
+        if (e?.geminiBudget) { refundChirp(res); return birdieRefusal(res, e.leg); }
         throw e;
       }
       let iterations = 0;
@@ -1852,6 +1864,17 @@ router.post('/chat',
       // Extract final text
       const candidate = response.candidates?.[0];
       const textParts = candidate?.content?.parts?.filter(p => p.text) || [];
+      // A prompt Gemini refuses on safety grounds comes back with no
+      // candidates or finishReason SAFETY. It used to fall through to "say
+      // that one more time?", which asks for the repeat that gets refused
+      // again, charging a chirp each time (chat audit, 2026-09-05). Say so
+      // once, in voice, and hand the chirp back.
+      const blockReason = response.promptFeedback?.blockReason
+        || (candidate?.finishReason === 'SAFETY' ? 'SAFETY' : null);
+      if (blockReason && textParts.length === 0) {
+        refundChirp(res);
+        return res.json({ text: "not something i'll help with. ask me something else", venues: [], remaining: rateCheck.remaining + 1 });
+      }
       // WHOSE FAULT THE EMPTY REPLY IS DECIDES WHICH SENTENCE THE USER READS.
       //
       // "say that one more time?" asks the user to rephrase, which is the right
@@ -1878,6 +1901,9 @@ router.post('/chat',
         ? budgetCutText
         : (cutShort ? BIRDIE_BUSY_MESSAGE : 'say that one more time?');
       const responseText = textParts.map(p => p.text).join('') || fallbackText;
+      // An empty answer that is not a budget or tool cut delivered nothing;
+      // the chirp comes back so "say that one more time?" is free to obey.
+      if (textParts.length === 0 && !budgetStopped && !cutShort) refundChirp(res);
 
       // Collect venue data from tool results to send as cards
       const venueCards = [];
@@ -1925,6 +1951,7 @@ router.post('/chat',
         });
       }
       console.error('[AI] Chat error:', err);
+      refundChirp(res);
       if (err.status === 429 || err.message?.includes('quota')) {
         return res.status(429).json({ error: 'one sec, lots of people chatting rn. try that again' });
       }

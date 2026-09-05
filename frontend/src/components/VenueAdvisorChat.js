@@ -760,7 +760,17 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
       setThread((t) => t.map((turn) => (turn.key === key ? { ...turn, status: 'done', answer } : turn)));
     } catch (err) {
       if (!alive.current || !stillMine()) return;
-      setThread((t) => t.map((turn) => (turn.key === key ? { ...turn, status: 'error' } : turn)));
+      // The server's own sentence for a refusal (too short, too many this
+      // hour, plan, not connected yet) used to be thrown away for "That did
+      // not go through. Try again", with a Try again that could not work
+      // (chat audit, 2026-09-05). A 4xx with a real sentence renders as a
+      // quiet answer; the error row stays for 5xx and the network.
+      const said = [400, 403, 429].includes(Number(err?.status)) && typeof err?.message === 'string' && err.message.trim().length > 12
+        ? err.message.trim()
+        : null;
+      setThread((t) => t.map((turn) => (turn.key === key
+        ? (said ? { ...turn, status: 'done', answer: { mode: 'refusal', text: said } } : { ...turn, status: 'error' })
+        : turn)));
     } finally {
       // Only the account that issued this request gets its busy flag back. The
       // new owner's own in flight question keeps the card busy, so a late

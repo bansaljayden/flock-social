@@ -174,6 +174,20 @@ function checkUserRateLimit(userId, dailyLimit = PREMIUM_DAILY_LIMIT) {
 // Reads through accountKey for the same reason checkUserRateLimit writes
 // through it: '5' and 5 must be one account, or the number the client is shown
 // in its entitlements can disagree with the number the meter is enforcing.
+// Hands one daily chirp back. The meter charges before the model is called,
+// so a failed call (provider 5xx or 429, a spend-ledger refusal, a safety
+// block, an empty answer) used to cost a free-tier message that delivered
+// nothing, and the error copy invited the retry that spent the next one
+// (chat audit, 2026-09-05). The per-minute stamp stays: a burst is a burst
+// whether or not the model answered.
+function refundTurn(userId) {
+  const id = accountKey(userId);
+  if (id === null) return;
+  const limit = userRateLimits.get(id);
+  if (!limit || limit.day !== todayKey()) return;
+  if (limit.dailyCount > 0) limit.dailyCount -= 1;
+}
+
 function getUsedToday(userId) {
   const id = accountKey(userId);
   if (id === null) return 0;
@@ -477,6 +491,7 @@ function __resetGeminiSpend() {
 
 module.exports = {
   checkUserRateLimit,
+  refundTurn,
   getUsedToday,
   nextUtcMidnightISO,
   PREMIUM_DAILY_LIMIT,
