@@ -111,6 +111,32 @@
   --chat-meta: var(--text-secondary);
   --chat-notice: var(--text-tertiary);
   --chat-name-fallback: var(--text-secondary);
+
+  /* WHO IS SPEAKING, IN COLOUR, AND READABLE ON BOTH GROUNDS.
+     The six were measured off the reference capture and they are correct
+     there, on a near-black ground. This app's light theme is #f1ede0, and
+     against that the measured values land between 1.50:1 and 2.32:1. The run
+     colour is not decoration: MessageGroup draws the sender's NAME in it, at
+     11.5px uppercase, so those are text contrasts and six of the seven fail
+     even the 3:1 floor for large text.
+
+     Shipping them raw made the app worse than before it had a palette at all.
+     The DM friend's label went from --text-secondary at 5.3:1 to 2.07:1, so
+     the one change meant to tell people apart made the label harder to read
+     than the grey it replaced.
+
+     So the light theme takes the same hues darkened until each clears 4.5:1,
+     which is the small-text floor and what an 11.5px label needs. The hue is
+     what carries the identity and the hue is preserved; only the lightness
+     moves. The dark block below restates the measured values, where they were
+     always right, with the one exception noted there. */
+  --chat-run-1: #277B23;
+  --chat-run-2: #315DED;
+  --chat-run-3: #985E00;
+  --chat-run-4: #147A60;
+  --chat-run-5: #C03E03;
+  --chat-run-6: #076CC4;
+  --chat-run-friend: #177297;
   --chat-quote-ink: var(--text-secondary);
   --chat-reaction-bg: var(--bg-card-solid);
   --chat-reaction-border: var(--border-default);
@@ -131,6 +157,22 @@
   --chat-pill-bg: #f1ede0;
   --chat-pill-ink: #0f172a;
   --chat-pill-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+
+  /* The measured values, unchanged, because the capture they came from is a
+     dark ground and they clear 4.5:1 on this one: 8.15, 10.14, 6.70, 6.58,
+     6.65 and 7.36 against #0f172a.
+
+     ONE EXCEPTION. The measured blue #3661ED is 3.48:1 here, which passes for
+     large text and fails for an 11.5px label, so the dark theme takes it a
+     step lighter. It is the same hue and the same position in the palette, so
+     nobody who has learned that blue is Sam has to relearn anything. */
+  --chat-run-1: #45C83E;
+  --chat-run-2: #5479F0;
+  --chat-run-3: #FFB53C;
+  --chat-run-4: #1DB38D;
+  --chat-run-5: #FC7537;
+  --chat-run-6: #41A3F8;
+  --chat-run-friend: #3CB2E2;
 }
 
 /* ── The typing dots ──────────────────────────────────────────────────────

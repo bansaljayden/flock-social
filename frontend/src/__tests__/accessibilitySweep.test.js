@@ -765,13 +765,20 @@ describe('every overlay that covers the app manages focus', () => {
     expect(overlays.filter((o) => o.isOfflineGate).length).toBe(1);
   });
 
-  it('the seven added in this pass are named, so a revert is loud', () => {
+  it('the six added in this pass are named, so a revert is loud', () => {
     [
       'onClose={closeVenueDetail}',                        // the venue detail card
       'onClose={() => setEventDetail(null)}',              // the event detail screen
       "label={editingContact ? 'Edit contact' : 'Add trusted contact'}",
       'label="Crop photo"',
-      'label="Send this photo"',
+      /* "Send this photo" was here until 2026-09-05. It labelled the DM's
+         full-screen photo confirm, a black overlay with Cancel and Send, and
+         that overlay is gone: a photo waiting to go sits in ChatInputBar's own
+         pending-image row above the field, the way the flock chat has always
+         done it, which is also the only way a DM photo can carry a caption.
+         A row inside the composer is not an overlay and has nothing to trap
+         focus for, so it is correctly absent from this list rather than
+         renamed into it. Six now, and the title of this test says so. */
       'label="Share this venue"',
       'modal={false} onClose={() => setShowSearchResults(false)}',
     ].forEach((anchor) => expect(code).toContain(anchor));

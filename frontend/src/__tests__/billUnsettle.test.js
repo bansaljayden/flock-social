@@ -25,7 +25,15 @@ const API = fs.readFileSync(path.join(__dirname, '..', 'services', 'api.js'), 'u
 // The bill-split panel, bounded so a moved anchor fails loudly rather than
 // handing back the rest of a 1,700 line screen and passing on anything.
 function panelSource() {
-  const from = CHAT.indexOf('Mark as Paid');
+  /* The BUTTON's full label, not the bare phrase. On 2026-09-05 the settle
+     handlers were hoisted so the stream's BillCard and the panel could call
+     one copy each of startSettleUp, undoMySettle and commitEstimatedShare
+     instead of two that could drift. That put the words "Mark as Paid"
+     into an error string above the panel (Use "Mark as Paid" after paying),
+     so the bare phrase now matches THAT first and the slice ran from the
+     error message to the end of the file: 100,795 characters against a
+     5,000 ceiling, which is exactly the loud failure the bound exists for. */
+  const from = CHAT.indexOf('Mark as Paid (cash or other)');
   const to = CHAT.indexOf('All settled up', from);
   expect(from).toBeGreaterThan(-1);
   expect(to).toBeGreaterThan(from);
@@ -51,12 +59,36 @@ describe('the request', () => {
   });
 });
 
+/* THE WRITE LEFT THE PANEL ON 2026-09-05. THE CONTROL DID NOT.
+   The bill grew a second face that day: one BillCard in the message stream as
+   well as the sheet. So the three settle handlers were hoisted above both and
+   each is called by each, rather than two copies that could drift into
+   disagreeing about the same bill.
+
+   The panel still draws the button and decides when to draw it, which is what
+   the first three tests below are about. `undoMySettle` holds what the button
+   DOES, which is what the rest are about. Bounded the same way and for the same
+   reason as panelSource: an unbounded read hands back the rest of a 1,700 line
+   screen and then passes on anything at all. */
+function handlerSource(name) {
+  const from = CHAT.indexOf(`const ${name} = async () => {`);
+  expect(from).toBeGreaterThan(-1);
+  const to = CHAT.indexOf('\n    };', from);
+  expect(to).toBeGreaterThan(from);
+  const src = CHAT.slice(from, to);
+  expect(src.length).toBeGreaterThan(120);
+  expect(src.length).toBeLessThan(2000);
+  return src;
+}
+
 describe('the control', () => {
   const panel = panelSource();
 
   it('offers a way back once your share is settled', () => {
-    expect(panel).toContain('unsettleShare(selectedFlockId)');
     expect(panel).toContain('That was a mistake, I have not paid');
+    // The words and the write, still joined: the button calls the one handler.
+    expect(panel).toContain('undoMySettle');
+    expect(handlerSource('undoMySettle')).toContain('unsettleShare(selectedFlockId)');
   });
 
   it('appears only for a share that is actually settled', () => {
@@ -75,19 +107,19 @@ describe('the control', () => {
   it('only ever changes the caller\'s own row in local state', () => {
     // The server keys its UPDATE on the caller's user_id, so the optimistic
     // edit has to agree or the panel would show somebody else's share flipping.
-    const handler = panel.slice(panel.indexOf('unsettleShare(selectedFlockId)'));
+    const handler = handlerSource('undoMySettle');
     expect(handler).toMatch(/String\(s\.userId\) === String\(authUser\?\.id\) \? \{ \.\.\.s, settled: false/);
   });
 
   it('clears settledAt alongside settled, the way the server does', () => {
     // routes/billing.js sets settled_at = NULL in the same statement. Leaving a
     // timestamp on an unsettled share is a row that says two things at once.
-    const handler = panel.slice(panel.indexOf('unsettleShare(selectedFlockId)'));
+    const handler = handlerSource('undoMySettle');
     expect(handler).toContain('settledAt: null');
   });
 
   it('reports a refusal instead of claiming the change happened', () => {
-    const handler = panel.slice(panel.indexOf('unsettleShare(selectedFlockId)'));
+    const handler = handlerSource('undoMySettle');
     expect(handler).toMatch(/catch \(err\) \{ showToast\(err\.message, 'error'\); \}/);
     // The success toast must come after the await, never before it.
     expect(handler.indexOf('await unsettleShare')).toBeLessThan(handler.indexOf('showToast(\'Your share'));

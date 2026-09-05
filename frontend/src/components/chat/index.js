@@ -68,3 +68,7 @@ export { default as FlockProfileSheet, useSheetDialog, ChatSheet } from './sheet
 export { default as ComposerPlusSheet } from './sheets/ComposerPlusSheet';
 export { default as PinStrip } from './sheets/PinStrip';
 export { default as PinnedMessageBar } from './sheets/PinnedMessageBar';
+
+/* Who is speaking, in colour. The palette was measured for the rebuild and
+   recorded only in the plan document, so no screen could pass it. */
+export { RUN_COLOURS, DM_FRIEND_COLOUR, runColourFor } from './runColours';

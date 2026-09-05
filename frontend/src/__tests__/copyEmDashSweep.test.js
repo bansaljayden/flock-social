@@ -302,7 +302,11 @@ for (const file of files) {
 // These say the difference out loud.
 const ANCHORS = [
   ['src/App.js', 'Sent. Check your inbox, and your spam folder.'],
-  ['src/screens/ChatDetail.js', 'The host picks the spot. Vote to say where you want to go.'],
+  // The old anchor was the "no venue yet" band's copy, and that band went on
+  // 2026-09-05 when the pinned-venue banner became a 36pt PinStrip. Any real
+  // string in the file proves what this list is for, which is that the sweep is
+  // reading the file at all rather than passing on an empty read.
+  ['src/screens/ChatDetail.js', 'Your share is marked unpaid again'],
   ['src/screens/AddFriends.js', 'Matches the number you typed'],
   ['src/screens/VenueDashboard.js', 'Set your live crowd number, on any plan'],
   ['src/components/PaywallSheet.js', 'See the whole night before it happens'],
