@@ -133,8 +133,21 @@ const GROUPS_SQL = `
 //   2. then the row the corpus already attributes BestTime data to (most weekly
 //      rows) — for the real-versus-real groups this is the closest thing to
 //      evidence about which place BestTime answered for.
-//   3. then the most recently collected, then the richer Google record, then
-//      the lowest id so the answer is stable across runs.
+//   3. then the RICHER GOOGLE RECORD, which for the real-versus-real groups is
+//      the rule that actually decides, and it has to be this one rather than
+//      recency. `last_collected_at` records which row our own sweep happened to
+//      touch last; it is a fact about our loop order, not about which listing
+//      is the real place. `review_count` is Google's own measure of which
+//      listing people actually use. Ordered the other way round, the 24 groups
+//      where two real Google places resolve to one BestTime venue kept the stub
+//      and unmapped the landmark: "Mall" in Dubai with 16 reviews kept over
+//      Mall of the Emirates with 144,231, "Opry Mills Mall by walking" with 307
+//      over Opry Mills with 30,863, "Vino &" with 28 over Eataly with 5,447.
+//      Nothing is deleted in those groups, but the keeper is the row that goes
+//      on being collected hourly, so the wrong order abandons the landmark and
+//      keeps polling the stub.
+//   4. then the most recently collected, then the lowest id, so the answer is
+//      stable across runs.
 const GROUP_ROWS_SQL = `
   SELECT v.id, v.google_place_id, v.name, v.city, v.is_active,
          v.venue_category, v.price_level, v.rating, v.review_count,
@@ -147,8 +160,8 @@ const GROUP_ROWS_SQL = `
    WHERE v.besttime_venue_id = $1
    ORDER BY is_pseudo ASC,
             rows_weekly DESC,
-            v.last_collected_at DESC NULLS LAST,
             v.review_count DESC NULLS LAST,
+            v.last_collected_at DESC NULLS LAST,
             v.id ASC`;
 
 // ---------------------------------------------------------------------------
