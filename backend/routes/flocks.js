@@ -1583,7 +1583,7 @@ router.delete('/:id', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('
       await client.query('BEGIN');
       await client.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
       if (await outstandingBillFor(flockId, client)) {
-        await client.query('ROLLBACK');
+        await client.query('ROLLBACK').catch(() => {});
         return res.status(409).json({ error: OUTSTANDING_BILL_MESSAGE });
       }
       const nameResult = await client.query('SELECT name FROM flocks WHERE id = $1', [flockId]);
@@ -1617,7 +1617,7 @@ router.delete('/:id', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('
       // that matched nothing tells the caller their action landed when
       // somebody else's did, so it gets the same 404 the check would have.
       if (removed.rowCount === 0) {
-        await client.query('ROLLBACK');
+        await client.query('ROLLBACK').catch(() => {});
         return res.status(404).json({ error: 'Flock not found' });
       }
       await client.query('COMMIT');
@@ -2697,7 +2697,7 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
         await client.query('BEGIN');
         await client.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
         if (await outstandingBillFor(flockId, client)) {
-          await client.query('ROLLBACK');
+          await client.query('ROLLBACK').catch(() => {});
           return res.status(409).json({ error: OUTSTANDING_BILL_MESSAGE });
         }
         // Same read-before-delete as DELETE /:id, and the same reason: the

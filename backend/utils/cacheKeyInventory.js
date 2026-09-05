@@ -664,6 +664,29 @@ const INVENTORY = [
     why: 'Found by this round\'s sweep, never reported: 20 venues a request x 3 place-keyed caches was up to 60 forced round trips per request, unmetered, at 3000 req/15min. Now gated by allowVenueLookup — a free shape refusal (a non-shaped id cannot match a row) plus a charged per-account budget, both in front of the query so a refused caller neither queries nor writes.',
   },
   {
+    file: 'sockets/handlers.js', name: 'dmShareCounts', kind: 'cache',
+    key: '`${actorId}:${receiverId}` — the authenticated socket user and the DM peer '
+      + 'they are sharing location with',
+    callerControls: 'only receiverId, and only after isBlockedBetweenCached and '
+      + 'hasDmRelationshipCached have both passed for that pair, so a caller can '
+      + 'create an entry only for a peer they are actually allowed to share with',
+    protects: 'nothing upstream — it counts how many sockets of one account are '
+      + 'live-sharing to one peer, so dm_member_stopped_sharing is emitted once, '
+      + 'when the LAST socket stops, instead of once per device',
+    denominator: 'not a spend surface; one small integer per live (actor, receiver) pair',
+    bound: 'self-bounding: an entry exists only while at least one socket is '
+      + 'sharing to that peer, is deleted the moment the count reaches zero, and '
+      + 'every socket decrements its own entries on disconnect, so the map can '
+      + 'never hold more entries than there are live DM shares',
+    verdict: 'SAFE',
+    why: 'Added from the Codex review of 2026-09-05: the share was tracked per '
+      + 'socket while the stop is an account-level event, so a phone dropping '
+      + 'told the peer the laptop had stopped too, and a stale socket timing out '
+      + 'after a reconnect cleared the pin of the new session. The only way to grow it '
+      + 'is to open sockets and start shares, which the handshake ceiling and '
+      + 'the dm_location rate limit already meter.',
+  },
+  {
     file: 'services/mlPredictor.js', name: 'baselineMissCache', kind: 'cache',
     key: '`${placeId}_${dayOfWeek}_${hour}` — the same key as baselineCache',
     callerControls: 'the whole placeId, same 256-char batch field as baselineCache; '
