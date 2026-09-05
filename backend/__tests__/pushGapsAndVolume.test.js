@@ -265,6 +265,10 @@ test('deleting a plan notifies its members, and carries no id because there is n
   on(/SELECT name FROM flocks WHERE id = \$1/, () => ({ rows: [{ name: 'Dinner' }] }));
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [{ user_id: 2 }, { user_id: 3 }] }));
   on(/FROM user_blocks/, () => ({ rows: [] }));
+  // Both delete paths refuse while anyone still owes money on the plan: the
+  // bill and every share row are ON DELETE CASCADE, so a delete used to take
+  // them with it and nothing could recreate any of it. Nothing is owed here.
+  on(/FROM bill_split_shares bss/, () => ({ rows: [{ owed: false }] }));
   on(/DELETE FROM flocks WHERE id = \$1/, () => ({ rows: [], rowCount: 1 }));
 
   const res = await call('DELETE', '/api/flocks/42');
@@ -287,6 +291,10 @@ test('the recipient list for a deleted plan is read before the cascade removes i
     return { rows: [{ user_id: 2 }] };
   });
   on(/FROM user_blocks/, () => ({ rows: [] }));
+  // Both delete paths refuse while anyone still owes money on the plan: the
+  // bill and every share row are ON DELETE CASCADE, so a delete used to take
+  // them with it and nothing could recreate any of it. Nothing is owed here.
+  on(/FROM bill_split_shares bss/, () => ({ rows: [{ owed: false }] }));
   on(/DELETE FROM flocks WHERE id = \$1/, () => { order.push('delete'); return { rows: [], rowCount: 1 }; });
 
   await call('DELETE', '/api/flocks/42');
@@ -358,6 +366,9 @@ test('a member leaving a plan that survives does not interrupt the host', async 
 // 3. Somebody paid you back
 // ---------------------------------------------------------------------------
 function scriptSettle(paidBy) {
+  // /settle takes the same flock-row lock /create holds, so a settle cannot
+  // land inside /create's read-then-rewrite and be erased by it.
+  on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] }));
   on(/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2 AND status = 'accepted'/, () => ({ rows: [{ id: 1 }] }));
   on(/SELECT id FROM bill_splits WHERE flock_id/, () => ({ rows: [{ id: 7 }] }));
   on(/UPDATE bill_split_shares SET settled/, () => ({ rows: [{ id: 1, amount: '12.50' }] }));

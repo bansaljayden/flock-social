@@ -438,16 +438,25 @@ test('an explicit null is treated as absent wherever the handler already does', 
 test('a null splitType becomes equal, never a NULL column', async () => {
   billingReachesInsert = true;
   try {
-    for (const [sent, expected] of [[null, 'equal'], [undefined, 'equal'], ['custom', 'custom']]) {
+    // The column records what the route DID, not what was asked for (money
+    // audit 2026-09-04), so 'custom' with no amounts attached is stored as the
+    // equal split it actually ran. Only the last case here typed anything.
+    const cases = [
+      [null, 'equal', {}],
+      [undefined, 'equal', {}],
+      ['custom', 'equal', {}],
+      ['custom', 'custom', { customShares: [{ userId: 1, amount: 40 }] }],
+    ];
+    for (const [sent, expected, extra] of cases) {
       billInsert = null;
-      const body = { totalAmount: 40 };
+      const body = { totalAmount: 40, ...extra };
       if (sent !== undefined) body.splitType = sent;
       const res = await call('POST', '/api/billing/10/create', body);
       assert.strictEqual(res.status, 201, `splitType=${JSON.stringify(sent)} -> ${res.status} ${res.text}`);
       assert.ok(billInsert, `splitType=${JSON.stringify(sent)}: the upsert never ran`);
       // [flockId, billTotal, splitType, payerId, tipPct]
       assert.strictEqual(billInsert[2], expected,
-        `splitType=${JSON.stringify(sent)} reached pg as ${JSON.stringify(billInsert[2])}`);
+        `splitType=${JSON.stringify(sent)} with ${JSON.stringify(extra)} reached pg as ${JSON.stringify(billInsert[2])}`);
       assert.strictEqual(billInsert[4], 0, 'a null tipPercent must be 0, not NULL');
     }
   } finally {
