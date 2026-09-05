@@ -16025,7 +16025,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [venueListErrors, setVenueListErrors] = useState({
     promotions: false, events: false, reviews: false, incomingFlocks: false, incomingFlocksLocked: false,
   });
-  const [venueReviewsData, setVenueReviewsData] = useState({ reviews: [], stats: null });
+  const [venueReviewsData, setVenueReviewsData] = useState({ reviews: [], stats: null, hasMore: false, nextBefore: null, loadingOlder: false });
   const [replyingToReview, setReplyingToReview] = useState(null);
   const [replyText, setReplyText] = useState('');
   const [venueLogoUrl, setVenueLogoUrl] = useState(null);
@@ -16326,11 +16326,44 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const loadVenueReviews = React.useCallback(async () => {
     try {
       const d = await getVenueReviews();
-      setVenueReviewsData({ reviews: d?.reviews || [], stats: d?.stats || null });
+      setVenueReviewsData({
+        reviews: d?.reviews || [],
+        stats: d?.stats || null,
+        hasMore: !!d?.hasMore,
+        nextBefore: d?.nextBefore || null,
+        loadingOlder: false,
+      });
       setVenueListErrors(prev => (prev.reviews ? { ...prev, reviews: false } : prev));
       return true;
     } catch (err) {
       setVenueListErrors(prev => (prev.reviews ? prev : { ...prev, reviews: true }));
+      return false;
+    }
+  }, []);
+
+  // The page below the one on screen. The tab read hasMore from nowhere, so
+  // from the fifty-first review on the oldest were unreachable and could not
+  // be replied to (venue-owner audit, 2026-09-05). Appended, deduped on id in
+  // case a review landed between the two reads, and the cursor moves on.
+  const loadOlderVenueReviews = React.useCallback(async (before) => {
+    if (!before) return false;
+    setVenueReviewsData(prev => ({ ...prev, loadingOlder: true }));
+    try {
+      const d = await getVenueReviews(before);
+      setVenueReviewsData(prev => {
+        const known = new Set((prev.reviews || []).map(r => r.id));
+        const older = (d?.reviews || []).filter(r => !known.has(r.id));
+        return {
+          ...prev,
+          reviews: [...(prev.reviews || []), ...older],
+          hasMore: !!d?.hasMore,
+          nextBefore: d?.nextBefore || null,
+          loadingOlder: false,
+        };
+      });
+      return true;
+    } catch (err) {
+      setVenueReviewsData(prev => ({ ...prev, loadingOlder: false }));
       return false;
     }
   }, []);
@@ -17626,6 +17659,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         loadVenueMap,
         loadVenuePromotions,
         loadVenueReviews,
+        loadOlderVenueReviews,
         onLogout,
         openVenueDetail,
         openVenueLogoPicker,

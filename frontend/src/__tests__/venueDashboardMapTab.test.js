@@ -286,3 +286,15 @@ describe('the settings tab, venue-owner audit 2026-09-05', () => {
     expect(APP).not.toMatch(/notificationPrefs: \{ (bookings|reviews)/);
   });
 });
+
+
+describe('the reviews tab, venue-owner audit 2026-09-05', () => {
+  it('offers the page below the one on screen, and only while the server says there is one', () => {
+    expect(APP).toContain('{venueReviewsData.hasMore && (');
+    expect(APP).toContain('Show older reviews');
+    expect(APP).toContain('loadOlderVenueReviews(venueReviewsData.nextBefore)');
+    const button = APP.slice(APP.indexOf('{venueReviewsData.hasMore && ('), APP.indexOf('Show older reviews') + 40);
+    expect(button).not.toContain('—');
+    expect(button).toContain('Loading older reviews');
+  });
+});
