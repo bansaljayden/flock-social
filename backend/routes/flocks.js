@@ -1799,13 +1799,39 @@ router.post('/:id/join', requireVerified, param('id').isInt({ min: 1, max: INT4_
     // reason isUnverified() in middleware/auth.js only trips on a literal false
     // — a fail-closed reading here would lock the whole user base out of joining
     // flocks the moment a fixture or a future SELECT omitted the column.
-    const result = await pool.query(
-      `UPDATE flock_members SET status = 'accepted', joined_at = NOW()
-       WHERE flock_id = $1 AND user_id = $2 AND status <> 'accepted'
-         AND EXISTS (SELECT 1 FROM users u WHERE u.id = $2 AND u.email_verified IS NOT FALSE)
-       RETURNING *`,
-      [flockId, req.user.id]
-    );
+    //
+    // AND UNDER THE FLOCK ROW LOCK, on one connection. POST /api/billing/
+    // :flockId/create takes `SELECT id FROM flocks WHERE id = $1 FOR UPDATE`
+    // and then reads the accepted roster inside that transaction, and the
+    // bill it commits is divided across the roster it read. This UPDATE is
+    // the statement that puts somebody on that roster, and it ran on the
+    // pool, so it could commit between billing's read and billing's COMMIT:
+    // Cara accepts in that window, and a bill is committed that is split
+    // across everybody but her, on a plan whose roster now has her in it.
+    // Taking the same lock means an acceptance either commits before billing
+    // reads, and is counted, or waits until billing commits, and the bill was
+    // created against the roster it read. The statement is unchanged; only
+    // the connection is. The ROLLBACK is guarded the way reliability.test.js
+    // requires, so a dead connection cannot replace the error that broke.
+    const joinClient = await pool.connect();
+    let result;
+    try {
+      await joinClient.query('BEGIN');
+      await joinClient.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
+      result = await joinClient.query(
+        `UPDATE flock_members SET status = 'accepted', joined_at = NOW()
+         WHERE flock_id = $1 AND user_id = $2 AND status <> 'accepted'
+           AND EXISTS (SELECT 1 FROM users u WHERE u.id = $2 AND u.email_verified IS NOT FALSE)
+         RETURNING *`,
+        [flockId, req.user.id]
+      );
+      await joinClient.query('COMMIT');
+    } catch (txErr) {
+      await joinClient.query('ROLLBACK').catch(() => {});
+      throw txErr;
+    } finally {
+      joinClient.release();
+    }
     const transitioned = result.rowCount > 0;
 
     let member = result.rows[0];

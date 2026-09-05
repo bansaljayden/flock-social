@@ -379,6 +379,35 @@ test('a member leaving takes the flock lock before the membership statement', as
     'the leave statement must sit inside the transaction, not before or after it');
 });
 
+test('an invitee accepting takes the flock lock before the membership statement', async () => {
+  // The leave pin above, from the other direction. POST /api/billing/:flockId/
+  // create divides the bill across the accepted roster it reads under
+  // `SELECT id FROM flocks WHERE id = $1 FOR UPDATE`. The accept used to run
+  // its UPDATE on the pool, outside any lock, so it could commit between
+  // billing's read and billing's COMMIT: Cara accepts in that window and a
+  // bill is committed that is split across everybody but her, on a plan whose
+  // roster now has her in it. The ORDER is the property: lock first, then the
+  // statement, on one transaction.
+  CURRENT_USER = { id: 7, name: 'Cara', role: 'user' };
+  const order = [];
+  on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ status: 'invited' }] }));
+  on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => { order.push('lock'); return { rows: [{ id: 42 }] }; });
+  on(/UPDATE flock_members SET status = 'accepted'/, () => { order.push('accept'); return { rows: [{ flock_id: 42, user_id: 7, status: 'accepted' }], rowCount: 1 }; });
+  on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [] }));
+  on(/FROM user_blocks/, () => ({ rows: [] }));
+  on(/SELECT creator_id, name FROM flocks WHERE id = \$1/, () => ({ rows: [{ creator_id: 99, name: 'Dinner' }] }));
+
+  const res = await call('POST', '/api/flocks/42/join');
+  assert.strictEqual(res.status, 200, res.text);
+  assert.deepStrictEqual(order, ['lock', 'accept'],
+    'the membership must be promoted under the lock billing holds, not beside it');
+  const begin = log.findIndex((q) => /^BEGIN/.test(q.sql));
+  const commit = log.findIndex((q) => /^COMMIT/.test(q.sql));
+  const acceptAt = log.findIndex((q) => /UPDATE flock_members SET status = 'accepted'/.test(q.sql));
+  assert.ok(begin > -1 && commit > -1 && begin < acceptAt && acceptAt < commit,
+    'the accept statement must sit inside the transaction, not before or after it');
+});
+
 test('the host is told when the last member leaves, and never told about the ones before', async () => {
   CURRENT_USER = { id: 2, name: 'Bo', role: 'user' };
   on(/SELECT id, name, creator_id, status FROM flocks WHERE id = \$1/, () => ({ rows: [{ id: 42, name: 'Dinner', creator_id: 9, status: 'planning' }] }));
@@ -594,6 +623,9 @@ function scriptJoin(joiner) {
   CURRENT_USER = { id: joiner, name: `User${joiner}`, role: 'user' };
   handlers = [];
   on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ status: 'invited' }] }));
+  // The flock row lock the join takes before its UPDATE, the same one billing
+  // reads the roster under. BEGIN and COMMIT pass through the client fake above.
+  on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] }));
   on(/UPDATE flock_members SET status = 'accepted'/, () => ({ rows: [{ flock_id: 42, user_id: joiner, status: 'accepted' }], rowCount: 1 }));
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [] }));
   on(/FROM user_blocks/, () => ({ rows: [] }));
@@ -719,6 +751,7 @@ test('two flocks filling at once keep their own windows', async () => {
   CURRENT_USER = { id: 8, name: 'User8', role: 'user' };
   handlers = [];
   on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ status: 'invited' }] }));
+  on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 43 }] }));
   on(/UPDATE flock_members SET status = 'accepted'/, () => ({ rows: [{ flock_id: 43, user_id: 8, status: 'accepted' }], rowCount: 1 }));
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [] }));
   on(/FROM user_blocks/, () => ({ rows: [] }));

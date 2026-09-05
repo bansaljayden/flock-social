@@ -196,6 +196,10 @@ pool.query = async (text, params = []) => {
     const m = rowVanishes ? null : memberOf(params[1]);
     return { rows: m ? [{ flock_id: FLOCK_ID, user_id: m.user_id, status: m.status }] : [], rowCount: m ? 1 : 0 };
   }
+  // The flock row lock POST /:id/join takes before its UPDATE, the same one
+  // billing reads the accepted roster under. BEGIN and COMMIT are answered
+  // above; the lock returns the row it locked.
+  if (has('SELECT id FROM flocks WHERE id = $1 FOR UPDATE')) return { rows: [{ id: params[0] }], rowCount: 1 };
   if (has("UPDATE flock_members SET status = 'accepted', joined_at = NOW()")) {
     const m = memberOf(params[1]);
     // The fixture honours the statement's OWN guard, so the SQL predicate is

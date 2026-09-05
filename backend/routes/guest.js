@@ -1228,6 +1228,18 @@ router.post('/:token/join',
       let overCap = false;
       try {
         await client.query('BEGIN');
+        // The flock row lock first, the same one POST /api/billing/:flockId/
+        // create holds while it reads the accepted roster and commits a bill
+        // divided across it. The advisory lock below serialises this route
+        // against itself and nothing in billing takes it, so the INSERT under
+        // it could commit between billing's read and billing's COMMIT, and the
+        // bill would land split across everybody but the person who had just
+        // walked in through the link. Under the row lock a link join either
+        // commits before billing reads, and is counted, or waits until billing
+        // commits, and the bill was created against the roster it read. Row
+        // lock then advisory lock; no transaction anywhere takes the two in
+        // the other order, so the pair cannot deadlock.
+        await client.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [link.flock_id]);
         await client.query("SELECT pg_advisory_xact_lock(hashtext('flock_join:' || $1::text))", [String(link.flock_id)]);
 
         // An already-invited account is not new weight on the flock: the host

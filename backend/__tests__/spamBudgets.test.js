@@ -255,6 +255,10 @@ pool.query = async (text, params = []) => {
     for (const id of ids) members.push({ user_id: id, status: 'invited' });
     return { rows: [], rowCount: ids.length };
   }
+  // The flock row lock POST /:id/join takes before its UPDATE, the same one
+  // billing reads the accepted roster under. BEGIN and COMMIT are answered
+  // above; the lock returns the row it locked.
+  if (has('SELECT id FROM flocks WHERE id = $1 FOR UPDATE')) return { rows: [{ id: params[0] }], rowCount: 1 };
   if (has("UPDATE flock_members SET status = 'accepted', joined_at = NOW()")) {
     const m = memberOf(params[1]);
     if (!m || m.status === 'accepted') return { rows: [], rowCount: 0 };

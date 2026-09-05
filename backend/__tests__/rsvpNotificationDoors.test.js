@@ -313,6 +313,9 @@ test('a guest RSVP and an invite acceptance share ONE window, because they are o
   // The member half of the same plan. flocks.js keys its window on the flock id
   // alone, so this has to land in the window the guest above opened.
   on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ status: 'invited' }], rowCount: 1 }));
+  // The flock row lock the join takes before its UPDATE, the same one billing
+  // reads the roster under. BEGIN and COMMIT pass through the client fake above.
+  on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] }));
   on(/UPDATE flock_members SET status = 'accepted'/, () => ({ rows: [{ flock_id: 42, user_id: 1, status: 'accepted' }], rowCount: 1 }));
 
   await call('POST', `/api/guest/${LINK_TOKEN}/rsvp`, { name: 'Bo', status: 'in' });
