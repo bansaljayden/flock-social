@@ -131,6 +131,12 @@ pool.query = async (text, params = []) => {
   if (has('SELECT creator_id FROM flocks WHERE id = $1')) {
     return { rows: [{ creator_id: 1 }], rowCount: 1 };
   }
+  // The join and update routes read the plan's status first (lifecycle
+  // audit, 2026-09-05): a finished or cancelled plan is neither joined nor
+  // reopened. Every plan in this file is open.
+  if (has('SELECT status FROM flocks WHERE id = $1')) {
+    return { rows: [{ status: 'planning' }], rowCount: 1 };
+  }
   // The invite helper's best-effort card facts (time, venue, going count),
   // added 2026-09-04 so a live invite says when and where.
   if (has('SELECT f.event_time, f.venue_name')) {
@@ -175,6 +181,13 @@ pool.query = async (text, params = []) => {
   if (has("SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2")) {
     const rows = members
       .filter((m) => m.status === 'accepted' && m.user_id !== Number(params[1]))
+      .map((m) => ({ user_id: m.user_id }));
+    return { rows, rowCount: rows.length };
+  }
+  // The update and delete fan-outs reach invitees too (lifecycle audit, 2026-09-05).
+  if (has("SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'invited' AND user_id != $2")) {
+    const rows = members
+      .filter((m) => m.status === 'invited' && m.user_id !== Number(params[1]))
       .map((m) => ({ user_id: m.user_id }));
     return { rows, rowCount: rows.length };
   }

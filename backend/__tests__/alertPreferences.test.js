@@ -316,6 +316,9 @@ test('a member with no settings row still receives the alert', async () => {
 // ---------------------------------------------------------------------------
 function scriptConfirmUpdate() {
   on(/SELECT creator_id FROM flocks WHERE id/i, () => ({ rows: [{ creator_id: 1 }] }));
+  // The update and join routes read the plan's status first (lifecycle audit,
+  // 2026-09-05); every plan in this file is open.
+  on(/SELECT status FROM flocks WHERE id = \$1/i, () => ({ rows: [{ status: 'planning' }] }));
   on(/UPDATE flocks\s+SET name/i, () => ({
     rows: [{ id: 42, name: 'Taco Night', venue_name: 'Blue Bottle', status: 'confirmed', budget_ceiling: null, event_time: '2026-08-15T23:00:00Z' }],
   }));
@@ -421,6 +424,8 @@ test('the attendance push still goes out after the response', async () => {
 });
 
 function scriptJoin() {
+  // The join route reads the plan's status first (lifecycle audit, 2026-09-05).
+  on(/SELECT status FROM flocks WHERE id = \$1/i, () => ({ rows: [{ status: 'planning' }] }));
   on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/i, () => ({ rows: [{ status: 'invited' }] }));
   // The flock row lock the join takes before its UPDATE, the same one billing
   // reads the roster under. BEGIN and COMMIT pass through the client fake above.
@@ -456,6 +461,7 @@ test('the join push still names the joiner and still goes out', async () => {
 function scriptInvite() {
   on(/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2 AND status = 'accepted'/i, () => ({ rows: [{ id: 1 }] }));
   on(/SELECT id, name FROM flocks WHERE id/i, () => ({ rows: [{ id: 42, name: 'Taco Night' }] }));
+  on(/SELECT status FROM flocks WHERE id = \$1/i, () => ({ rows: [{ status: 'planning' }] }));
   on(/COUNT\(\*\)::int AS n FROM flock_members/i, () => ({ rows: [{ n: 2 }] }));
   // The invite path reads the roster, the directory and the block set one SET at
   // a time (2026-08-14), not one row at a time. These two branches answer what
