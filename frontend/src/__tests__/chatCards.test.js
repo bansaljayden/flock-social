@@ -1058,6 +1058,35 @@ describe('VenueCardRow', () => {
     expect(screen.getByText('Sushi restaurant')).toBeTruthy();
   });
 
+  test('a category that is a LIST becomes its first item, not a cut word', () => {
+    /* Most venues reach this from categorizeVenue, which answers from a short
+       closed set and always fitted. An owner-claimed venue does not:
+       venue_profiles.category is free text somebody typed, and "Bar & grill"
+       is the obvious thing to type. On the 88pt row it shared its meta line
+       with a rating, a price band and a vote count and rendered as "Bar & g...",
+       which is not a shortened category, it is a word cut in half. */
+    for (const [raw, expected] of [
+      ['Bar & grill', 'Bar'],
+      ['Bar/Restaurant', 'Bar'],
+      ['Pizza, pasta, wine', 'Pizza'],
+      ['Bar | Lounge', 'Bar'],
+    ]) {
+      const { unmount } = render(
+        <VenueCardRow venue={{ ...venue, category: raw }} onAction={() => {}} />
+      );
+      expect(screen.getByText(expected)).toBeTruthy();
+      unmount();
+    }
+  });
+
+  test('a single concept that happens to be long is left whole', () => {
+    // There is nothing to drop from "Coffee shop", so it keeps all of itself
+    // and ellipsises only if the row is genuinely too tight, which is the
+    // right outcome for a name with no list in it.
+    render(<VenueCardRow venue={{ ...venue, category: 'coffee shop' }} onAction={() => {}} />);
+    expect(screen.getByText('Coffee shop')).toBeTruthy();
+  });
+
   test('and none of the three when the data does not carry them', () => {
     // Nothing but the name: no rating, no price, no category, no crowd, no
     // vote count, and no address line any more.
