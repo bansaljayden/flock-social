@@ -286,6 +286,10 @@ function chatProps(over = {}) {
     // the card does not draw. A test that wants the card overrides this with
     // a real distance rather than relying on the stub.
     distanceKm: () => 9999,
+    // Pin and unpin (migration 068). No-ops here: these harnesses assert
+    // what the screen draws, and the pin list they hand it is empty.
+    pinMessage: () => {},
+    unpinMessage: () => {},
     colors: {},
     confirmClick: fn(),
     confirmFlockPlan: fn(),

@@ -178,6 +178,7 @@ import {
   MessageList,
   NudgeRow,
   PinStrip,
+  PinnedMessageBar,
   PollCard,
   WhoIsHereCard,
   StatusLine,
@@ -547,6 +548,8 @@ export default function ChatDetail({
   // able to close the quote bar, and that listener lives up there.
   flockReplyingTo,
   setFlockReplyingTo,
+  pinMessage,
+  unpinMessage,
   // The numeric haversine. `flockMemberLocations` is already destructured
   // further down: this screen has had the positions since the header started
   // counting "N sharing" off them, and never did anything else with them.
@@ -873,6 +876,14 @@ export default function ChatDetail({
        dismissed". That is the safe direction here: the reader sees a nudge
        again, which is a small annoyance, rather than the app silently
        swallowing a prompt it had no way to know was still wanted. */
+    /* WHICH PIN IS SHOWING. Controlled here rather than inside the bar, for
+       the two reasons its own header gives: a pin can be removed by somebody
+       else while the bar is open and only the shell sees that socket event,
+       and this screen remounts on every trip out to a venue and back, so
+       state kept inside the bar would silently reset to the first pin every
+       time. */
+    const [pinIndex, setPinIndex] = React.useState(0);
+
     const [nudgeDismissed, setNudgeDismissed] = React.useState({});
     const dismissNudge = React.useCallback((key) => {
       setNudgeDismissed((prev) => (prev[key] ? prev : { ...prev, [key]: true }));
@@ -1288,6 +1299,39 @@ export default function ChatDetail({
       }
       return (near === 0 && onTheWay === 0) ? null : { near, onTheWay, people: nearPeople, hasVenue };
     })();
+
+    /* The bar takes `{ id, preview }`. The server sends the message id and
+       enough of the row to describe it, so the preview is built here with the
+       same helper the stream and the reply quote use rather than shipped as
+       prose: a pinned photo or venue card has no text, and messagePreview is
+       what turns that into "Photo" instead of a blank line. */
+    const pinnedForBar = (flock.pins || []).map((p) => ({
+      id: p.id,
+      preview: messagePreview({ text: p.text, message_type: p.messageType, hadContent: true }),
+    }));
+
+    /* THE JUMP. MessageRow carries data-message-id, so a row is addressable
+       without the module exposing anything new. A plain query rather than
+       taking registerScroller, which the keyboard dock already owns and which
+       the module warns has to keep its identity between renders.
+
+       A PIN CAN POINT PAST THE LOADED PAGE. Three pins live for the whole
+       night and the stream pages, so the row is often simply not mounted.
+       Saying so beats a tap that does nothing, which on a control whose only
+       job is "take me there" reads as broken. */
+    const jumpToMessage = (messageId) => {
+      const id = Number(messageId);
+      if (!Number.isFinite(id)) return;
+      const el = document.querySelector(`[data-message-id="${id}"]`);
+      if (!el) {
+        showToast('That message is further back in the chat.');
+        return;
+      }
+      // No smooth scroll. Nothing in this rebuild slides, and a jump that
+      // animates past everything between here and there is slower to read
+      // than one that arrives.
+      el.scrollIntoView({ block: 'center' });
+    };
 
     const nudgeKey = `${flock.id}:no_venue`;
     const nudgeForCard = (
@@ -2271,6 +2315,23 @@ export default function ChatDetail({
             skeleton, the photo viewer and the reaction tap are all props
             computed above. onSwipeReply is deliberately absent: see the note
             at the composer. */}
+        {/* THE PINNED MESSAGES, one line under the strip. Shared pins: anyone
+            in the thread can pin, up to three, and everyone sees them.
+
+            The index is CLAMPED rather than trusted. Somebody else unpinning
+            the one you were looking at is the ordinary case on a shared
+            surface, and an index left pointing past the end would draw
+            nothing while the bar still held its 32px. */}
+        {pinnedForBar.length > 0 && (
+          <PinnedMessageBar
+            pins={pinnedForBar}
+            activeIndex={Math.min(pinIndex, pinnedForBar.length - 1)}
+            onActiveIndexChange={setPinIndex}
+            onJump={(pin) => jumpToMessage(pin.id)}
+            onUnpin={(pin) => unpinMessage(flock.id, pin.id)}
+          />
+        )}
+
         <MessageList
           /* The scroller itself, handed to the dock, and it is load-bearing:
              the hook measures how far this thread is from its own bottom before
@@ -2358,6 +2419,26 @@ export default function ChatDetail({
                   there and completely invisible until then, so the long-press
                   sheet carries the same act. */}
               <button aria-label="Reply" className="hit44" onClick={() => { closeMessageActions(); setFlockReplyingTo(originalRow(actionsMessage)); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }} title="Reply">{Icons.reply(colors.navy, 15)}</button>
+              {/* PIN, and only on a row the server has actually stored: a
+                  message it has never seen has no id to pin. One control, and
+                  its label says which way the tap goes, so it is never
+                  ambiguous about what it is about to do. */}
+              {typeof actionsMessage.id === 'number' && actionsMessage.id <= 2147483647 && (() => {
+                const alreadyPinned = (flock.pins || []).some((p) => String(p.id) === String(actionsMessage.id));
+                return (
+                  <button
+                    aria-label={alreadyPinned ? 'Unpin message' : 'Pin message'}
+                    className="hit44"
+                    onClick={() => {
+                      closeMessageActions();
+                      if (alreadyPinned) unpinMessage(flock.id, actionsMessage.id);
+                      else pinMessage(flock.id, actionsMessage.id);
+                    }}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '600' }}
+                    title={alreadyPinned ? 'Unpin' : 'Pin'}
+                  >{alreadyPinned ? 'Unpin' : 'Pin'}</button>
+                );
+              })()}
               {(actionsMessage.image || actionsMessage.thumb) && (
                 <button aria-label="View photo full size" className="hit44" onClick={() => { closeMessageActions(); openImageViewer(actionsMessage); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }} title="View photo">{Icons.eye(colors.textSecondary, 15)}</button>
               )}

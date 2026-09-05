@@ -813,6 +813,14 @@ export function onFlockRead(callback) {
   return register('flock_read', callback);
 }
 
+/* The pin list changed (migration 068). The server sends the WHOLE list, once
+   per member, because each member's copy is filtered by their own block list.
+   There is no "pin added" event for the same reason: a single row would leave
+   the client deciding whether it is allowed to see it. */
+export function onFlockPinsChanged(callback) {
+  return register('flock_pins_changed', callback);
+}
+
 // DM reactions
 // Each answers whether the emit happened. A guarded emit over a dead socket
 // used to return nothing, so the caller drew nothing, stored nothing and
