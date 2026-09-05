@@ -386,7 +386,7 @@ export default function LandingPage() {
           {/* "they happen." is held together: text-wrap balance, pretty and
               auto all break this sentence 4+1 at phone widths and leave
               "happen." alone on line four. */}
-          <h1 id="lp-h-hero">Get the flock<br /><span className="lp-keep">out the door.</span></h1>
+          <h1 id="lp-h-hero">Get the flock <span className="lp-keep">out the door.</span></h1>
           <hr className="lp-hero-rule" aria-hidden="true" />
 
           <div className="lp-hero-copy">
