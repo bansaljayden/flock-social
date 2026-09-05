@@ -41,8 +41,7 @@ const OUT = argOut
 
 /* The card's copy. Both lines are duplicated in the page and in the meta tags,
    and the test named in the header is what keeps the three in agreement. */
-const HEADLINE_1 = 'Get the flock';
-const HEADLINE_2 = 'out the door.';
+const HEADLINE = 'Get the flock out the door.';
 const SUBHEAD = 'Vote on where to go, see how busy it is, split the bill. Free.';
 const URL_PILL = 'flockcorp.com';
 
@@ -65,11 +64,17 @@ const html = `<!doctype html>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 1200px; height: 630px; overflow: hidden; }
+  /* STACKED, not side by side, and that is what buys the single line. The
+     slogan is one sentence on one line by decision, and a 280px logo beside it
+     left about 710px for 27 characters, which works out near 52px of type:
+     small enough that the line stops reading as a headline at the thumbnail
+     size these cards are actually seen at. Full width is 1056px and carries
+     the same sentence at 76px. */
   body {
     background: ${PAPER};
     display: flex;
-    align-items: center;
-    gap: 64px;
+    flex-direction: column;
+    justify-content: center;
     padding: 0 72px;
     font-family: 'Hanken Grotesk', -apple-system, sans-serif;
   }
@@ -78,20 +83,22 @@ const html = `<!doctype html>
      dropping it straight onto the cream ground shows four white corners. The
      circle touches all four edges, so a 50% radius clips exactly along it and
      the plate disappears into the background. */
-  .logo { width: 280px; height: 280px; flex: 0 0 280px; }
+  .logo { width: 132px; height: 132px; margin-bottom: 38px; }
   .logo img { width: 100%; height: 100%; display: block; border-radius: 50%; }
 
-  .copy { flex: 1 1 auto; min-width: 0; }
-
   /* Fraunces at 600. opsz is left to the optical-size axis default for the
-     rendered pixel size, which is what the landing hero does too. */
+     rendered pixel size, which is what the landing hero does too.
+     white-space: nowrap on purpose: it makes an over-long line RUN OFF the
+     card, which the guard below measures and refuses, instead of quietly
+     wrapping into the two lines this layout exists to avoid. */
   h1 {
     font-family: 'Fraunces', Georgia, serif;
     font-weight: 600;
-    font-size: 104px;
-    line-height: 0.98;
-    letter-spacing: -2.5px;
+    font-size: 76px;
+    line-height: 1.05;
+    letter-spacing: -1.8px;
     color: ${INK};
+    white-space: nowrap;
   }
 
   p {
@@ -116,11 +123,9 @@ const html = `<!doctype html>
 </style></head>
 <body>
   <div class="logo"><img src="${logoDataUri}" alt=""></div>
-  <div class="copy">
-    <h1>${HEADLINE_1}<br>${HEADLINE_2}</h1>
-    <p>${SUBHEAD}</p>
-    <div class="pill">${URL_PILL}</div>
-  </div>
+  <h1>${HEADLINE}</h1>
+  <p>${SUBHEAD}</p>
+  <div><span class="pill">${URL_PILL}</span></div>
 </body></html>`;
 
 const { chromium } = await import('playwright');
@@ -137,7 +142,7 @@ try {
   /* A missing webfont degrades to Georgia silently and the card still looks
      deliberate, so check rather than trust. */
   const loaded = await page.evaluate(() => ({
-    fraunces: document.fonts.check('600 104px Fraunces'),
+    fraunces: document.fonts.check('600 76px Fraunces'),
     hanken: document.fonts.check('700 25px "Hanken Grotesk"'),
   }));
   if (!loaded.fraunces || !loaded.hanken) {
@@ -152,15 +157,28 @@ try {
      may spill out of the 630px card. Both are silent failures in a PNG. */
   const fits = await page.evaluate(() => {
     const h1 = document.querySelector('h1');
+    const range = document.createRange();
+    range.selectNodeContents(h1);
     return {
-      h1Width: Math.ceil(h1.getBoundingClientRect().width),
-      h1Scroll: h1.scrollWidth,
+      // The INK width, measured off a range over the text rather than off the
+      // block, which is full-bleed and would always "fit".
+      textWidth: Math.ceil(range.getBoundingClientRect().width),
+      available: Math.floor(h1.getBoundingClientRect().width),
+      lines: range.getClientRects().length,
       bodyScrollH: document.body.scrollHeight,
       bodyScrollW: document.body.scrollWidth,
     };
   });
-  if (fits.h1Scroll > fits.h1Width + 1) {
-    throw new Error(`headline overflows its column (${fits.h1Scroll} > ${fits.h1Width}). Reduce font-size.`);
+  // nowrap means an over-long line runs OFF the card rather than wrapping, so
+  // the check is the text against the space it has, plus a line count, and
+  // either one failing stops the write.
+  if (fits.lines !== 1) {
+    throw new Error(`the headline must be ONE line, measured ${fits.lines}. Reduce font-size.`);
+  }
+  if (fits.textWidth > fits.available) {
+    throw new Error(
+      `the headline runs off the card (${fits.textWidth}px of text in ${fits.available}px). Reduce font-size.`
+    );
   }
   if (fits.bodyScrollH > 630 || fits.bodyScrollW > 1200) {
     throw new Error(`content overflows the card (${fits.bodyScrollW}x${fits.bodyScrollH}).`);

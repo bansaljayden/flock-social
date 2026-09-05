@@ -33,13 +33,11 @@ const indexHtml = read(path.join(FRONTEND, 'public', 'index.html'));
 const marketingPage = read(path.join(FRONTEND, 'api', 'marketing-page.js'));
 const invitePreview = read(path.join(FRONTEND, 'api', 'invite-preview.js'));
 
-/** The two lines the generator draws, in order. */
+/** The line the generator draws. */
 function bakedHeadline() {
-  const one = generator.match(/const HEADLINE_1 = '([^']+)';/);
-  const two = generator.match(/const HEADLINE_2 = '([^']+)';/);
-  expect(one).not.toBeNull();
-  expect(two).not.toBeNull();
-  return `${one[1]} ${two[1]}`;
+  const m = generator.match(/const HEADLINE = '([^']+)';/);
+  expect(m).not.toBeNull();
+  return m[1];
 }
 
 /** The hero <h1>, flattened to plain text the way a reader sees it. */
