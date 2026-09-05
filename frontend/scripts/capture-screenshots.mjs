@@ -698,6 +698,14 @@ const SCREENS = [
   { id: 'crowd', title: 'Venue search results with live crowd scores', appstore: true, replaces: { dark: ['app-crowd.png'] } },
   { id: 'birdie', title: 'Birdie answering with real venue cards', appstore: true, replaces: { dark: ['app-birdie.png', 'app-birdie.webp'] } },
   { id: 'venue-dash', title: 'Venue dashboard (reviews tab)', appstore: false, replaces: {} },
+  /* THE ANALYTICS TAB, which nothing ever looked at. the maintainer reported the real
+     blocker on this exact screen from TestFlight on 2026-08-21: it told an
+     owner to verify their venue in three places and gave them no way to do it.
+     The verification request flow shipped on 08-25/26 and was confirmed by
+     reading the code and by a test, which is not the same as somebody seeing
+     that the screen now offers a path. It is the paid B2B surface and it had
+     no visual coverage at all. */
+  { id: 'venue-analytics', title: 'Venue dashboard (analytics tab)', appstore: false, replaces: {} },
 ];
 
 async function apiLogin(email, password) {
@@ -737,6 +745,11 @@ async function waitAppReady(page) {
 }
 
 const tab = (page, name) => mainNav(page).getByRole('button', { name });
+
+/* The screens that need the OWNER token and the ?venue=true deep link rather
+   than an ordinary session. Both filters below read this, so a screen added to
+   one is never missing from the other. */
+const OWNER_SCREENS = new Set(['venue-dash', 'venue-analytics']);
 
 // Per-screen drivers. Each takes an already-logged-in page sitting on the app
 // and leaves the target screen fully rendered.
@@ -830,6 +843,14 @@ const DRIVERS = {
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
     await page.waitForTimeout(600);
   },
+  async 'venue-analytics'(page) {
+    // Same owner context as venue-dash. Analytics is the tab the dashboard
+    // opens on, so the click is belt and braces for a future default change.
+    await page.getByText('Welcome,').first().waitFor({ timeout: 20000 });
+    const analyticsTab = page.getByRole('button', { name: 'Analytics' }).first();
+    if (await analyticsTab.count()) await analyticsTab.click();
+    await settle(page);
+  },
   async 'venue-dash'(page) {
     // Separate context: owner token + venue mode + ?venue=true deep link.
     await page.getByText('Welcome,').first().waitFor({ timeout: 20000 });
@@ -922,7 +943,13 @@ async function captureAll(dbUrl) {
     for (const size of sizes) {
       for (const mode of MODES) {
         await setServerTheme(dbUrl, mode);
-        const consumerScreens = screens.filter((s) => s.id !== 'venue-dash' && (size.id === 'web' || s.appstore));
+        /* OWNER_SCREENS, not a hardcoded 'venue-dash'. This excluded that one id
+           by name, so adding venue-analytics silently put it in the CONSUMER
+           context: logged in as an ordinary user, no ?venue=true, and a
+           twenty-second wait for a "Welcome," that a regular account never
+           sees. One list, used by both filters, so a third owner screen cannot
+           repeat it. */
+        const consumerScreens = screens.filter((s) => !OWNER_SCREENS.has(s.id) && (size.id === 'web' || s.appstore));
         if (consumerScreens.length) {
           const { context, page } = await newAppContext(browser, { size, mode, token: userToken, userMode: 'user' });
           /* Collected for the failure report above. Attached here rather than
@@ -987,16 +1014,24 @@ async function captureAll(dbUrl) {
             await context.close();
           }
         }
-        const dashWanted = screens.some((s) => s.id === 'venue-dash') && size.id === 'web';
-        if (dashWanted) {
+        /* The owner shots, plural since 2026-09-05. One context and one login,
+           several tabs, each driven from the dashboard root so the order of the
+           screen list cannot decide which tab a driver starts from. That is the
+           same rule the consumer loop above follows and for the same reason. */
+        const ownerScreens = screens.filter((s) => OWNER_SCREENS.has(s.id));
+        if (ownerScreens.length > 0 && size.id === 'web') {
           const { context, page } = await newAppContext(browser, { size, mode, token: ownerToken, userMode: 'venue' });
           try {
-            await page.goto(`${WEB_ORIGIN}/app?venue=true`, { waitUntil: 'domcontentloaded' });
-            await page.addStyleTag({ content: hideCaretCss });
-            await DRIVERS['venue-dash'](page);
-            await snap(page, sharp, manifest, { screen: SCREENS.find((s) => s.id === 'venue-dash'), size, mode });
-          } catch (e) {
-            failures.push(`venue-dash [${size.id}/${mode}]: ${e.message.split('\n')[0]}`);
+            for (const screen of ownerScreens) {
+              try {
+                await page.goto(`${WEB_ORIGIN}/app?venue=true`, { waitUntil: 'domcontentloaded' });
+                await page.addStyleTag({ content: hideCaretCss });
+                await DRIVERS[screen.id](page);
+                await snap(page, sharp, manifest, { screen, size, mode });
+              } catch (e) {
+                failures.push(`${screen.id} [${size.id}/${mode}]: ${e.message.split('\n')[0]}`);
+              }
+            }
           } finally {
             await context.close();
           }

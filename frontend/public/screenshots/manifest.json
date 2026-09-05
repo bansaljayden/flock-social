@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-05T21:57:04.559Z",
+  "generatedAt": "2026-09-05T22:07:18.832Z",
   "generator": "frontend/scripts/capture-screenshots.mjs",
   "note": "Real captures of the shipping app against a seeded local stack. See WIRING.md for the swap plan.",
   "captures": [
@@ -237,6 +237,46 @@
       "file": "screenshots/nest-light@2x.webp",
       "screen": "nest",
       "title": "Nest (home): tonight status + flock list",
+      "mode": "light",
+      "set": "web",
+      "width": 780,
+      "height": 1688,
+      "replaces": null
+    },
+    {
+      "file": "screenshots/venue-analytics-dark@2x.png",
+      "screen": "venue-analytics",
+      "title": "Venue dashboard (analytics tab)",
+      "mode": "dark",
+      "set": "web",
+      "width": 780,
+      "height": 1688,
+      "replaces": null
+    },
+    {
+      "file": "screenshots/venue-analytics-dark@2x.webp",
+      "screen": "venue-analytics",
+      "title": "Venue dashboard (analytics tab)",
+      "mode": "dark",
+      "set": "web",
+      "width": 780,
+      "height": 1688,
+      "replaces": null
+    },
+    {
+      "file": "screenshots/venue-analytics-light@2x.png",
+      "screen": "venue-analytics",
+      "title": "Venue dashboard (analytics tab)",
+      "mode": "light",
+      "set": "web",
+      "width": 780,
+      "height": 1688,
+      "replaces": null
+    },
+    {
+      "file": "screenshots/venue-analytics-light@2x.webp",
+      "screen": "venue-analytics",
+      "title": "Venue dashboard (analytics tab)",
       "mode": "light",
       "set": "web",
       "width": 780,
