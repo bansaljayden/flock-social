@@ -118,13 +118,19 @@ function applyRegistry(instance) {
  * 10s) are far above the one or two rooms a real client holds.
  */
 const joinedFlocks = new Map(); // String(flockId) -> the id as the caller gave it
-const joinedVenues = new Set(); // place ids — the live sensor / check-in feed
-const joinedVenueContent = new Set(); // place ids — the open venue card's reviews and promotions
+// The two venue registries count HOLDERS rather than simply record that this
+// client wants the room, because two screens can hold the same venue room at
+// once. The note above joinVenueRoom says what that cost while they were Sets.
+const joinedVenues = new Map(); // place id -> how many screens want the live sensor and check-in feed
+const joinedVenueContent = new Map(); // place id -> how many open cards want its reviews and promotions
 
 function replayRooms(instance) {
   joinedFlocks.forEach((flockId) => instance.emit('join_flock', flockId));
-  joinedVenues.forEach((placeId) => instance.emit('join_venue', { placeId }));
-  joinedVenueContent.forEach((placeId) => instance.emit('join_venue_content', { placeId }));
+  // A Map hands its forEach the VALUE first, and the value in both of these is a
+  // reference count, so the place id is the SECOND argument. Reading the first
+  // one here would replay every venue room under the name "1".
+  joinedVenues.forEach((_holders, placeId) => instance.emit('join_venue', { placeId }));
+  joinedVenueContent.forEach((_holders, placeId) => instance.emit('join_venue_content', { placeId }));
 }
 
 // Rooms are per-identity, unlike subscriptions. A sign-out or an account switch
@@ -453,18 +459,58 @@ export function leaveFlock(flockId) {
 
 // --- Venue rooms (live sensor + check-in feed) ---
 
-// Same intent-not-emit treatment as joinFlock: the live sensor and check-in
-// feed is a room, so it goes silent after a reconnect exactly the same way.
+/**
+ * TWO SCREENS CAN HOLD ONE VENUE ROOM, SO THE HOLDERS ARE COUNTED.
+ *
+ * Same intent-not-emit treatment as joinFlock underneath everything below: the
+ * live sensor and check-in feed is a room, so it goes silent after a reconnect
+ * exactly the way the room registry note describes, and recording the join is
+ * what lets the reconnect handler put this client back in it.
+ *
+ * What a Set could not express is that `venue:{placeId}` is joined by two
+ * independent effects in App.js. The map bottom sheet joins it for whatever
+ * venue is active, keyed on that venue alone, so its claim outlives a change of
+ * screen. The venue owner's dashboard joins the same room for the owner's own
+ * place id while that screen is up. A verified owner who taps their own venue on
+ * the map and then opens their dashboard is therefore holding one room twice,
+ * which the server is perfectly happy about, since socket.join on a room you
+ * already hold does nothing.
+ *
+ * Leaving was the half that did not survive being held twice. The registry
+ * recorded that this client wanted the room and not how many screens wanted it,
+ * so the first cleanup to run deleted the id and emitted leave_venue, and the
+ * server took the connection out of a room the other screen was still listening
+ * to. The symptom was nothing at all. The listeners were still registered and
+ * the reducers were still correct, and live sensor pushes and check-ins simply
+ * stopped arriving on a sheet that looked exactly as it had a moment earlier.
+ * Deleting the id also took it out of the replay registry, so the reconnect that
+ * cures every other room-scoped silence in this file did not cure this one, and
+ * the only way back was closing the sheet and opening it again.
+ *
+ * So a join increments and a leave decrements, and only the leave that takes the
+ * count to zero drops the entry and tells the server. Each caller pairs exactly
+ * one leave with one join, which is what React effect cleanup guarantees, so the
+ * count is the number of screens that still want the feed. A leave for a room
+ * this client is not holding emits nothing now, for the same reason: what a
+ * leave releases is a claim, and there is no claim to release.
+ */
 export function joinVenueRoom(placeId) {
   if (!placeId) return;
-  joinedVenues.add(placeId);
+  joinedVenues.set(placeId, (joinedVenues.get(placeId) || 0) + 1);
   if (socket?.connected) socket.emit('join_venue', { placeId });
 }
 
 export function leaveVenueRoom(placeId) {
   if (!placeId) return;
+  const held = joinedVenues.get(placeId) || 0;
+  if (held > 1) {
+    joinedVenues.set(placeId, held - 1);
+    return;
+  }
+  // Forgotten even while offline, for the reason leaveFlock gives: a room let go
+  // during an outage must not be re-entered by the next replay.
   joinedVenues.delete(placeId);
-  if (socket?.connected) socket.emit('leave_venue', { placeId });
+  if (held === 1 && socket?.connected) socket.emit('leave_venue', { placeId });
 }
 
 // --- Venue content rooms (the open card's reviews and promotions) ---
@@ -481,16 +527,30 @@ export function leaveVenueRoom(placeId) {
 // Same intent-not-emit treatment as the rooms above, so the retraction survives
 // a reconnect; without it a card left open across a tunnel goes back to keeping
 // hidden content on screen, which is the exact bug the room was added to fix.
+//
+// Counted the same way as the crowd room above, and for a reason that is one
+// effect away rather than already here. Only the venue detail card joins this
+// room today, so it is held once. But that card opens from a map pin, a flock
+// card, a search result and a chat share, and the moment anything else on screen
+// wants the same retraction, an uncounted leave is the silent bug described
+// above, in the registry whose whole job is taking hidden content off a screen.
+// Twin registries where one counts its holders and the other does not is also
+// how the wrong one gets copied.
 export function joinVenueContentRoom(placeId) {
   if (!placeId) return;
-  joinedVenueContent.add(placeId);
+  joinedVenueContent.set(placeId, (joinedVenueContent.get(placeId) || 0) + 1);
   if (socket?.connected) socket.emit('join_venue_content', { placeId });
 }
 
 export function leaveVenueContentRoom(placeId) {
   if (!placeId) return;
+  const held = joinedVenueContent.get(placeId) || 0;
+  if (held > 1) {
+    joinedVenueContent.set(placeId, held - 1);
+    return;
+  }
   joinedVenueContent.delete(placeId);
-  if (socket?.connected) socket.emit('leave_venue_content', { placeId });
+  if (held === 1 && socket?.connected) socket.emit('leave_venue_content', { placeId });
 }
 
 export function onVenueSensorUpdate(callback) {
