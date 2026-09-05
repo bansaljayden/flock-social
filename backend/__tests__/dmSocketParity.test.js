@@ -677,6 +677,121 @@ test('a DM share that was stopped properly is not announced twice on disconnect'
     'the disconnect re-announced a share that had already ended');
 });
 
+// A second connection for the SAME account on the same io: the phone beside
+// the laptop, or the session before a network drop beside the one after it.
+// dm_stop_sharing_location answers through socket.to and the disconnect path
+// through io.to, so a count of stops has to read both.
+function reconnect(io, user, id) {
+  const socket = fakeSocket(id, user);
+  registerHandlers(io, socket);
+  socket.emitted.length = 0;
+  return socket;
+}
+const dmStops = (io, ...sockets) => [io.emitted, ...sockets.map((s) => s.emitted)]
+  .flat().filter((e) => e.event === 'dm_member_stopped_sharing');
+function dmShareWorld() {
+  routes = [
+    [/FROM user_blocks/, []],
+    [/[\s\S]*/, [{ ok: true }]],
+  ];
+}
+
+test('a share from two devices ends when the LAST of them does', async () => {
+  // dm_member_stopped_sharing is an account-level event: the recipient clears
+  // the one pin they hold for this user. The sharing set was per socket, so
+  // the phone going to the background told the peer that this user had
+  // stopped while the laptop was still sending a position every ten seconds.
+  const ava = { id: 1, name: 'Ava' };
+  const { io, socket: phone } = connect(ava);
+  const laptop = reconnect(io, ava, 's2');
+  dmShareWorld();
+
+  await fire(phone, 'dm_share_location', { receiverId: 2, lat: 40.7, lng: -74.0 });
+  await fire(laptop, 'dm_share_location', { receiverId: 2, lat: 40.7, lng: -74.0 });
+
+  await fire(phone, 'disconnect');
+  assert.strictEqual(dmStops(io, phone, laptop).length, 0,
+    'the peer was told the share ended while another device was still feeding it');
+
+  await fire(laptop, 'disconnect');
+  const stops = dmStops(io, phone, laptop);
+  assert.strictEqual(stops.length, 1, 'the last connection to go announces the end exactly once');
+  assert.strictEqual(stops[0].room, 'user:2');
+  assert.strictEqual(stops[0].payload.userId, 1);
+});
+
+test('a stale socket disconnecting late does not clear the share the new session is sending', async () => {
+  // The likelier two-socket case, on one phone: the connection drops, the
+  // client reconnects and carries on sharing on the new socket, and the old
+  // socket's disconnect only fires when its ping timeout expires, tens of
+  // seconds later. That late disconnect used to wipe the pin the live session
+  // was still feeding.
+  const ava = { id: 1, name: 'Ava' };
+  const { io, socket: stale } = connect(ava);
+  dmShareWorld();
+  await fire(stale, 'dm_share_location', { receiverId: 2, lat: 40.7, lng: -74.0 });
+
+  const live = reconnect(io, ava, 's2');
+  await fire(live, 'dm_share_location', { receiverId: 2, lat: 40.71, lng: -74.01 });
+
+  await fire(stale, 'disconnect');
+  assert.strictEqual(dmStops(io, stale, live).length, 0,
+    'the dead socket cleared a pin the live one is still sending');
+
+  await fire(live, 'dm_share_location', { receiverId: 2, lat: 40.72, lng: -74.02 });
+  assert.strictEqual(live.emitted.filter((e) => e.event === 'dm_location_update').length, 2,
+    'the live session keeps sharing');
+
+  await fire(live, 'dm_stop_sharing_location', { receiverId: 2 });
+  assert.strictEqual(dmStops(io, stale, live).length, 1,
+    'the live session ending the share is the one stop');
+});
+
+test('a stale disconnect that lands BEFORE the new session shares still ends the share', async () => {
+  // The other ordering. Nobody is feeding the pin at that moment, so the peer
+  // must be told; the new session then starts a fresh share that ends on its
+  // own terms.
+  const ava = { id: 1, name: 'Ava' };
+  const { io, socket: stale } = connect(ava);
+  dmShareWorld();
+  await fire(stale, 'dm_share_location', { receiverId: 2, lat: 40.7, lng: -74.0 });
+  await fire(stale, 'disconnect');
+  assert.strictEqual(dmStops(io, stale).length, 1);
+
+  const live = reconnect(io, ava, 's2');
+  await fire(live, 'dm_share_location', { receiverId: 2, lat: 40.7, lng: -74.0 });
+  await fire(live, 'disconnect');
+  assert.strictEqual(dmStops(io, stale, live).length, 2,
+    'each end of a share is announced once, at the moment it actually ends');
+});
+
+test('a socket that shares every ten seconds is counted once, so its own stop still lands', async () => {
+  // dm_share_location arrives per position tick. Counted per event rather
+  // than per socket, five ticks would have needed five stops before the peer
+  // heard one.
+  const { io, socket } = connect({ id: 1, name: 'Ava' });
+  dmShareWorld();
+  for (let i = 0; i < 5; i++) {
+    await fire(socket, 'dm_share_location', { receiverId: 2, lat: 40.7 + i / 1000, lng: -74.0 });
+  }
+  await fire(socket, 'dm_stop_sharing_location', { receiverId: 2 });
+  assert.strictEqual(dmStops(io, socket).length, 1);
+  // And nothing is left behind to be announced again when the socket goes.
+  await fire(socket, 'disconnect');
+  assert.strictEqual(dmStops(io, socket).length, 1);
+});
+
+test('a stop from a socket that never shared still clears a pin nobody is feeding', async () => {
+  // The reconnect case in reverse: the share was on the socket that dropped,
+  // whose disconnect already announced the end, and the user taps stop on the
+  // new socket before its first tick. Refusing that stop would only be right
+  // if another socket were still sharing, and none is.
+  const { io, socket } = connect({ id: 1, name: 'Ava' });
+  dmShareWorld();
+  await fire(socket, 'dm_stop_sharing_location', { receiverId: 2 });
+  assert.strictEqual(dmStops(io, socket).length, 1);
+});
+
 test('one disconnect costs one block lookup, however many flocks were open', async () => {
   const { socket } = connect({ id: 1, name: 'Ava' });
   routes = [
