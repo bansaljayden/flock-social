@@ -9,7 +9,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.e
 const { Pool } = require('pg');
 const { getWeather } = require('../../services/weatherService');
 const { fetchLiveBusyness, NETWORK_ERR_RE } = require('./bestTimeService');
-const { CITIES, getLocalTime, isHoliday, isSchoolBreak, sleep } = require('./config');
+const { CITIES, getLocalTime, isHoliday, isSchoolBreak, sleep, withCorpusWriteLock } = require('./config');
 const { getNearestEvent } = require('./eventService');
 const { specialNightFor, isHolidayEve } = require('./specialNights');
 const { refreshCollectedBaselines, REFUSAL_MESSAGE } = require('./buildBaselines');
@@ -405,6 +405,11 @@ async function collectRealtime() {
   // recorded. Counted and printed rather than swallowed: before migration 024
   // these became extra rows and nothing said so.
   let duplicateRows = 0;
+  // Venues that were in this run's list but, by the time their write came,
+  // had been retired or unmapped by scripts/ml/repairBestTimeDiscoveredVenues.js.
+  // Their reading is not stored (see the write below) and they are accounted
+  // for here rather than folded into `skipped`.
+  let vanished = 0;
   // Round 13: fetchLiveBusyness now throws on outage/rate-limit (transient)
   // and key/credit failures (fatal) instead of returning null. Before, a dead
   // key or a BestTime outage looked identical to "no live data for this
@@ -751,15 +756,40 @@ async function collectRealtime() {
         // what lets Postgres infer this arbiter. Legacy rows with no
         // observed_date are outside the index, so nothing here can collide with
         // or delete them.
-        const result = await pool.query(
-          `INSERT INTO ml_training_data (collection_mode, ${columns.map(([c]) => c).join(', ')})
-           VALUES ('realtime', ${columns.map((_, i) => `$${i + 1}`).join(', ')})
-           ON CONFLICT (venue_id, day_of_week, hour, observed_date)
-             WHERE collection_mode = 'realtime' AND observed_date IS NOT NULL
-           DO NOTHING`,
-          columns.map(([, v]) => v)
-        );
-        if (result.rowCount === 0) {
+        //
+        // UNDER THE CORPUS WRITE LOCK, WITH THE VENUE RE-RESOLVED FIRST. The
+        // venue list was read once at the top of this sweep and a sweep runs
+        // up to fifty minutes. scripts/ml/repairBestTimeDiscoveredVenues.js
+        // retires `bt_` twins by deleting their ml_venues row, and
+        // ml_training_data.venue_id cascades on delete: a row inserted here
+        // between the repair moving the twin's rows and deleting the twin is
+        // deleted with it, and one inserted after the delete fails its foreign
+        // key, both after the credit is spent. It also unmaps a real place
+        // sharing an id, whose reading would otherwise be filed under a second
+        // name again. So the row's existence and its id are checked inside the
+        // same transaction as the write, under the lock the repair takes per
+        // group; the answer cannot change before COMMIT. The keeper of the id
+        // is in this same list and gets its own row.
+        const result = await withCorpusWriteLock(pool, async (client) => {
+          const { rows: still } = await client.query(
+            'SELECT 1 FROM ml_venues WHERE id = $1 AND besttime_venue_id = $2',
+            [venue.id, venue.besttime_venue_id]
+          );
+          if (still.length === 0) return null;
+          return client.query(
+            `INSERT INTO ml_training_data (collection_mode, ${columns.map(([c]) => c).join(', ')})
+             VALUES ('realtime', ${columns.map((_, i) => `$${i + 1}`).join(', ')})
+             ON CONFLICT (venue_id, day_of_week, hour, observed_date)
+               WHERE collection_mode = 'realtime' AND observed_date IS NOT NULL
+             DO NOTHING`,
+            columns.map(([, v]) => v)
+          );
+        });
+        if (!result) {
+          vanished++;
+          console.warn(`[ML:Realtime] ${venue.name}: ml_venues ${venue.id} no longer holds ${venue.besttime_venue_id} `
+            + '(retired or unmapped by the venue repair mid-sweep); reading not stored');
+        } else if (result.rowCount === 0) {
           duplicateRows++;
         } else {
           totalRows++;
@@ -789,6 +819,7 @@ async function collectRealtime() {
     + `, ${closedSkips} venues not called (closed at their local hour)`
     + `, ${called} calls spent of ${venues.length} venues in scope`
     + `${duplicateRows > 0 ? `, ${duplicateRows} already recorded for this venue-hour-date` : ''}`
+    + `${vanished > 0 ? `, ${vanished} venues retired or unmapped by the venue repair mid-sweep` : ''}`
     + `${budgetHit ? `, ${leftForNextRun} venues left for the next run (time budget)` : ''}.`);
 
   await auditProvenance(runStartedAt, liveRows + forecastRows);
@@ -846,8 +877,9 @@ async function collectRealtime() {
   // a 4 AM sweep in which every venue is shut writes 0 rows and skips 0, and
   // the old condition would have called that a failure and exited non-zero
   // every night. The invariant is unchanged — every venue in scope must be
-  // accounted for by SOME skip before an empty run is allowed to pass.
-  if (totalRows === 0 && duplicateRows === 0 && skipped + closedSkips < venues.length) {
+  // accounted for by SOME skip before an empty run is allowed to pass. A venue
+  // the repair retired mid-sweep is accounted for the same way.
+  if (totalRows === 0 && duplicateRows === 0 && skipped + closedSkips + vanished < venues.length) {
     throw new Error(
       `REFUSED: the run completed without aborting and wrote 0 rows, having skipped ${skipped} `
       + `of the ${called} venues it called (and left ${closedSkips} of ${venues.length} uncalled as `

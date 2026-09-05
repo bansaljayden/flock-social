@@ -46,6 +46,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const { Pool } = require('pg');
 const EP = require('embedded-postgres');
@@ -126,7 +127,7 @@ stubModule('../scripts/ml/eventService', {
 });
 
 const { splitStatements, migrate } = require('../db/migrate');
-const { getSeason } = require('../scripts/ml/config');
+const { getSeason, ML_CORPUS_LOCK_SQL } = require('../scripts/ml/config');
 const { venueCalendar } = require('../scripts/ml/collectWeekly');
 
 // Both collectors call pool.end() when their run finishes, so a second run
@@ -860,4 +861,282 @@ test('an unknown review count is stored as unknown, not as a measured zero', asy
   );
   assert.strictEqual(v.review_count, null);
   await pool.query('DELETE FROM ml_venues WHERE id = $1', [v.id]);
+});
+
+// ---------------------------------------------------------------------------
+// The repair against the live cron, and both collectors against the repair.
+//
+// 2026-09-04 adversarial audit of repairBestTimeDiscoveredVenues.js, findings
+// F1 to F4. Every one of these is a question about what two connections see,
+// so every one of them runs here, against the server. The repair itself is
+// run the way an operator runs it: as a child process, `--commit`, pointed at
+// this embedded database through the same DATABASE_URL and PGSSLMODE the
+// collectors read, so what is judged is the script's real exit code and its
+// real output.
+// ---------------------------------------------------------------------------
+const REPAIR_SCRIPT = path.join(__dirname, '..', 'scripts', 'ml', 'repairBestTimeDiscoveredVenues.js');
+
+function runRepair(...args) {
+  return spawnSync(process.execPath, [REPAIR_SCRIPT, ...args], {
+    cwd: path.join(__dirname, '..'),
+    env: { ...process.env, DATABASE_URL: CONN, PGSSLMODE: 'disable' },
+    encoding: 'utf8',
+    timeout: 120000,
+  });
+}
+
+async function pollUntil(fn, timeoutMs, everyMs = 100) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const v = await fn();
+    if (v) return v;
+    if (Date.now() > deadline) return null;
+    await new Promise((r) => setTimeout(r, everyMs));
+  }
+}
+
+// A backend blocked on pg_advisory_xact_lock shows in pg_locks as an advisory
+// lock that is not granted. That is the observable, timing-free sign that a
+// collector is waiting its turn rather than writing.
+async function advisoryWaiters() {
+  const { rows: [r] } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`
+  );
+  return r.n;
+}
+
+async function mkVenue(place, bt, o = {}) {
+  const { rows: [v] } = await pool.query(
+    `INSERT INTO ml_venues (google_place_id, besttime_venue_id, name, city, latitude, longitude,
+                            venue_category, rating, review_count, timezone, is_active)
+     VALUES ($1, $2, $3, $4, 40.0, -75.1, $5, $6, $7, $8, true) RETURNING id`,
+    [place, bt, o.name || place, o.city || 'nowhere', o.category || 'bar',
+      o.rating ?? null, o.reviews ?? null, o.tz || 'America/New_York']
+  );
+  return v.id;
+}
+
+// `slots` weekly rows in (day, hour) order, all stamped `collectedAt`.
+async function seedWeek(venueId, busyness, collectedAt, reviewCount, category, slots = 168) {
+  let n = 0;
+  for (let dow = 0; dow < 7 && n < slots; dow++) {
+    for (let hour = 0; hour < 24 && n < slots; hour++, n++) {
+      await pool.query(
+        `INSERT INTO ml_training_data
+           (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category, review_count, busyness_pct, collected_at)
+         VALUES ($1, 'weekly', 'venue_local', $2, $3, $4, $5, $6, $7)`,
+        [venueId, dow, hour, category, reviewCount, busyness, collectedAt]
+      );
+    }
+  }
+}
+
+const trainingCount = async (venueId, mode) => {
+  const { rows: [r] } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM ml_training_data WHERE venue_id = $1` + (mode ? ' AND collection_mode = $2' : ''),
+    mode ? [venueId, mode] : [venueId]
+  );
+  return r.n;
+};
+
+const restoreIndex = () => pool.query(
+  `CREATE UNIQUE INDEX IF NOT EXISTS ${VENUE_ID_INDEX} ON ml_venues (besttime_venue_id) WHERE besttime_venue_id IS NOT NULL`
+);
+
+test('F2: collectWeekly refuses to file a forecast under a second parent even when 060 built no index', async () => {
+  // Production's state until the repair runs: 060 saw the duplicate groups and
+  // skipped its index build. A stamp guarded only by a 23505 is guarded by an
+  // error that cannot fire here.
+  await pool.query(`DROP INDEX IF EXISTS ${VENUE_ID_INDEX}`);
+  const { rows: [holder] } = await pool.query('SELECT besttime_venue_id FROM ml_venues WHERE id = $1', [venueIds.collect]);
+  assert.strictEqual(holder.besttime_venue_id, 'bt_dedupe_venue',
+    'the fixture venue no longer holds the id the stub answers with, so the collision below cannot happen');
+
+  // A second venue with no mapping, in a city of its own so the run selects
+  // only it. The stubbed lookup resolves it to the id the fixture holds.
+  const second = await mkVenue('ChIJdedupeSecondParent1', null, { name: 'Second Parent', city: 'tulsa', tz: 'America/Chicago' });
+  try {
+    process.argv.push('--city=tulsa');
+    try {
+      await freshCollector('../scripts/ml/collectWeekly').run();
+    } finally {
+      process.argv.pop();
+    }
+    const { rows: [after] } = await pool.query(
+      'SELECT besttime_venue_id, besttime_status, last_collected_at FROM ml_venues WHERE id = $1', [second]
+    );
+    assert.strictEqual(after.besttime_venue_id, null,
+      'venue B claimed the id venue A holds: no index existed to raise 23505, and the collector never asked the table');
+    assert.strictEqual(after.besttime_status, 'duplicate');
+    assert.strictEqual(after.last_collected_at, null);
+    assert.strictEqual(await trainingCount(second), 0, 'B collected a week under a duplicate parent');
+    // A is untouched.
+    const { rows: [a] } = await pool.query('SELECT besttime_venue_id FROM ml_venues WHERE id = $1', [venueIds.collect]);
+    assert.strictEqual(a.besttime_venue_id, 'bt_dedupe_venue');
+  } finally {
+    await pool.query('DELETE FROM ml_venues WHERE id = $1', [second]);
+    await restoreIndex();
+  }
+});
+
+test('F1: a collector write waits for the repair to commit, and a venue the repair retired is dropped, never cascaded', async () => {
+  await pool.query(`DROP INDEX IF EXISTS ${VENUE_ID_INDEX}`);
+  // A keeper and its bt_ twin, both holding one id, both in the sweep's scope.
+  const keeper = await mkVenue('ChIJdedupeLockKeeper1', 'bt_lock_twin', { name: 'Lock Keeper', city: 'austin', tz: 'America/Chicago', reviews: 900 });
+  const twin = await mkVenue('bt_bt_lock_twin', 'bt_lock_twin', { name: 'Lock Keeper', city: 'austin', tz: 'America/Chicago' });
+
+  // The window F1 describes, held open by hand: the repair has taken the lock
+  // for this group, moved the twin's rows, and has not yet deleted the twin.
+  const repair = await pool.connect();
+  let committed = false;
+  let run = null;
+  try {
+    await repair.query('BEGIN');
+    await repair.query(ML_CORPUS_LOCK_SQL);
+
+    // The hourly sweep starts with the twin still in its venue list.
+    run = freshCollector('../scripts/ml/collectRealtime').run();
+
+    const outcome = await pollUntil(async () => {
+      const { rows: [w] } = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM ml_training_data WHERE venue_id = ANY($1) AND collection_mode = 'realtime'`,
+        [[keeper, twin]]
+      );
+      if (w.n > 0) return 'wrote';
+      if ((await advisoryWaiters()) > 0) return 'waiting';
+      return null;
+    }, 20000);
+    assert.strictEqual(outcome, 'waiting', outcome === 'wrote'
+      ? 'the collector wrote an observation while the repair held the lock; the DELETE below would cascade it away, credit spent'
+      : 'the collector neither queued on the lock nor wrote anything within 20s');
+
+    // The repair finishes its group.
+    await repair.query('DELETE FROM ml_venues WHERE id = $1', [twin]);
+    await repair.query('COMMIT');
+    committed = true;
+  } finally {
+    if (!committed) await repair.query('ROLLBACK').catch(() => {});
+    repair.release();
+  }
+  await run;
+
+  // The keeper's reading landed; the twin's was dropped after re-resolution
+  // rather than inserted and cascaded, and nothing threw.
+  const { rows } = await pool.query(
+    `SELECT venue_id FROM ml_training_data WHERE venue_id = ANY($1) AND collection_mode = 'realtime' ORDER BY venue_id`,
+    [[keeper, twin]]
+  );
+  assert.deepStrictEqual(rows.map((r) => r.venue_id), [keeper]);
+  const { rows: gone } = await pool.query('SELECT 1 FROM ml_venues WHERE id = $1', [twin]);
+  assert.strictEqual(gone.length, 0);
+
+  await pool.query('DELETE FROM ml_venues WHERE id = $1', [keeper]);
+  await restoreIndex();
+});
+
+test('F3 and F4: the repair, run for real, merges twins, strips rivals of the keeper\'s data, builds the index and exits 0', async () => {
+  await pool.query(`DROP INDEX IF EXISTS ${VENUE_ID_INDEX}`);
+
+  // Group 1: Willow Grove, exactly. The keeper has a partial week that is NEWER
+  // than the twin's full week, so the collapse rule has something to decide.
+  const keep1 = await mkVenue('ChIJdedupeRepairKeep1', 'bt_grp_orphan', { name: 'Willow Grove Park', category: 'mall', rating: 4.4, reviews: 9880 });
+  const twin1 = await mkVenue('bt_bt_grp_orphan', 'bt_grp_orphan', { name: 'Willow Grove Park', category: 'park', rating: null, reviews: 0 });
+  await seedWeek(keep1, 20, '2026-09-02T00:00:00Z', 9880, 'mall', 100);
+  await seedWeek(twin1, 10, '2026-09-01T00:00:00Z', 0, 'park', 168);
+  await pool.query(
+    `INSERT INTO ml_venue_baselines (google_place_id, day_of_week, hour, baseline, source) VALUES ('bt_bt_grp_orphan', 1, 1, 10, 'collected')`
+  );
+
+  // Group 2: two real Google places behind one BestTime id. The richer record
+  // keeps the mapping; the rival keeps its row and loses the data bought with
+  // the shared id, but not the Google-sourced baseline that is its own.
+  const keep2 = await mkVenue('ChIJdedupeRivalKeep1', 'bt_grp_rival', { name: 'Mall of the Emirates', category: 'mall', rating: 4.6, reviews: 144231 });
+  const rival = await mkVenue('ChIJdedupeRivalLose1', 'bt_grp_rival', { name: 'Mall', category: 'mall', rating: 4.0, reviews: 16 });
+  await seedWeek(keep2, 40, '2026-09-02T00:00:00Z', 144231, 'mall', 168);
+  await seedWeek(rival, 40, '2026-09-02T00:00:00Z', 16, 'mall', 168);
+  for (const [date, busy] of [['2026-09-01', 55], [null, 66]]) {
+    await pool.query(
+      `INSERT INTO ml_training_data
+         (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category, busyness_pct, observed_date, label_source)
+       VALUES ($1, 'realtime', 'venue_local', 2, 21, 'mall', $2, $3, 'live')`,
+      [rival, busy, date]
+    );
+  }
+  for (const [day, hour, baseline, source] of [[2, 21, 40, 'collected'], [3, 10, 40, 'collected'], [5, 12, 64, 'google']]) {
+    await pool.query(
+      `INSERT INTO ml_venue_baselines (google_place_id, day_of_week, hour, baseline, source) VALUES ('ChIJdedupeRivalLose1', $1, $2, $3, $4)`,
+      [day, hour, baseline, source]
+    );
+  }
+
+  const res = runRepair('--commit');
+  assert.strictEqual(res.status, 0, `repair exited ${res.status}\n${res.stdout}\n${res.stderr}`);
+
+  // Group 1: the twin is gone, its 68 unshared slots moved onto the keeper and
+  // relabelled with the keeper's record, its baseline dropped.
+  const { rows: twinRow } = await pool.query('SELECT 1 FROM ml_venues WHERE id = $1', [twin1]);
+  assert.strictEqual(twinRow.length, 0, 'the bt_ twin survived');
+  assert.strictEqual(await trainingCount(keep1, 'weekly'), 168);
+  const { rows: [moved] } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM ml_training_data
+      WHERE venue_id = $1 AND busyness_pct = 10 AND review_count = 9880 AND venue_category = 'mall'`, [keep1]
+  );
+  assert.strictEqual(moved.n, 68, "the moved rows do not carry the keeper's record");
+  const { rows: [k1] } = await pool.query('SELECT besttime_venue_id FROM ml_venues WHERE id = $1', [keep1]);
+  assert.strictEqual(k1.besttime_venue_id, 'bt_grp_orphan');
+  const { rows: twinBase } = await pool.query(`SELECT 1 FROM ml_venue_baselines WHERE google_place_id = 'bt_bt_grp_orphan'`);
+  assert.strictEqual(twinBase.length, 0);
+
+  // Group 2, F3: the rival row stays, unmapped; the keeper's data under its
+  // name does not.
+  const { rows: [r] } = await pool.query('SELECT besttime_venue_id, besttime_status FROM ml_venues WHERE id = $1', [rival]);
+  assert.strictEqual(r.besttime_venue_id, null);
+  assert.strictEqual(r.besttime_status, 'duplicate');
+  assert.strictEqual(await trainingCount(rival, 'weekly'), 0,
+    "the rival kept 168 weekly rows bought with the keeper's id: the same forecast exported twice under two coordinate sets");
+  assert.strictEqual(await trainingCount(rival, 'realtime'), 0,
+    "the rival kept realtime rows bought with the keeper's id");
+  const { rows: rivalBase } = await pool.query(
+    `SELECT source FROM ml_venue_baselines WHERE google_place_id = 'ChIJdedupeRivalLose1' ORDER BY source`
+  );
+  assert.deepStrictEqual(rivalBase.map((b) => b.source), ['google'],
+    'the collected baselines built from the keeper\'s data survived, or the Google-sourced one did not');
+  const { rows: [k2] } = await pool.query('SELECT besttime_venue_id FROM ml_venues WHERE id = $1', [keep2]);
+  assert.strictEqual(k2.besttime_venue_id, 'bt_grp_rival');
+  assert.strictEqual(await trainingCount(keep2, 'weekly'), 168);
+  assert.match(res.stdout, /1 real rows unmapped \(168 weekly rows, 2 realtime rows and 2 collected baseline slots removed/);
+
+  // F4: the index is in place and the script says so from the catalog.
+  const ix = await indexState(VENUE_ID_INDEX);
+  assert.ok(ix && ix.indisvalid && ix.indisunique, 'the index is missing, invalid or not unique after a run that exited 0');
+  assert.match(ix.def, /\(besttime_venue_id\) WHERE \(besttime_venue_id IS NOT NULL\)/);
+  assert.match(res.stdout, /is built: unique, on \(besttime_venue_id\), WHERE besttime_venue_id IS NOT NULL, valid\./);
+});
+
+test('F4: an INVALID leftover under the index name is dropped and rebuilt, and the run exits 0', async () => {
+  // What a CREATE INDEX CONCURRENTLY that died partway leaves behind, which
+  // IF NOT EXISTS then skips forever.
+  await pool.query('UPDATE pg_index SET indisvalid = false WHERE indexrelid = $1::regclass', [VENUE_ID_INDEX]);
+  const res = runRepair('--commit');
+  assert.strictEqual(res.status, 0, `repair exited ${res.status}\n${res.stdout}\n${res.stderr}`);
+  assert.match(res.stdout + res.stderr, /INVALID, left by a build that died partway\. Dropping it before rebuilding/);
+  const ix = await indexState(VENUE_ID_INDEX);
+  assert.strictEqual(ix.indisvalid, true, 'the invalid index was skipped by IF NOT EXISTS and the run still reported success');
+  assert.strictEqual(ix.indisunique, true);
+});
+
+test('F4: a same-name index of the wrong shape fails the hard assertion, and the run exits 1', async () => {
+  await pool.query(`DROP INDEX ${VENUE_ID_INDEX}`);
+  // Valid, same name, wrong shape: not unique, no predicate. Not the repair's
+  // to drop; it must refuse and say why.
+  await pool.query(`CREATE INDEX ${VENUE_ID_INDEX} ON ml_venues (besttime_venue_id)`);
+  try {
+    const res = runRepair('--commit');
+    assert.strictEqual(res.status, 1, `the run exited ${res.status} with the constraint not in place\n${res.stdout}\n${res.stderr}`);
+    assert.match(res.stderr, /is NOT in place after the build: it is not UNIQUE; its predicate is absent/);
+    assert.match(res.stderr, /FAILED: ml_venues_besttime_venue_id_uniq is not in place/);
+  } finally {
+    await pool.query(`DROP INDEX IF EXISTS ${VENUE_ID_INDEX}`);
+    await restoreIndex();
+  }
 });
