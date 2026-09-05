@@ -322,7 +322,7 @@ function setCache(key, data) {
 }
 
 // Paid-call budget shared with venueSearch (round 8: these fetches bypassed it)
-const { allowPlacesSearch, placesRetryAfter, PER_USER_HOURLY } = require('../utils/placesBudget');
+const { allowPlacesSearch, canAffordPlacesSearch, placesRetryAfter, PER_USER_HOURLY } = require('../utils/placesBudget');
 const { waitPhrase, refusalBody } = require('../utils/retryAfter');
 
 // ---------------------------------------------------------------------------
@@ -1586,13 +1586,31 @@ router.get('/:placeId/alternatives',
       // cache and always costs one, so the floor is one and the ceiling is still
       // two. Charging a flat two on a warm cache would be charging for a call
       // nobody made.
-      const cost = willCostUpstreamCall(placeId) ? 2 : 1;
-      if (!allowPlacesSearch(req.user.id, cost)) {
-        // The SAME cost the charge asked for. This request needs two units when
-        // the Place Details half is cold, so the wait is until the second
-        // oldest charge ages out, not the first. Passing 1 here would report a
-        // window that is over before the request would actually be allowed.
-        return placesRefusal(res, req.user.id, cost);
+      // CHARGED PER UPSTREAM CALL ACTUALLY MADE, each where it is decided. This
+      // reserved one or two units up front for the whole request. The payload
+      // is deliberately not cached while an owner's live reading is in it, so
+      // every request for such a venue came through here, and once the target
+      // details and the neighbour search were both warm each of those requests
+      // made zero Google calls and still spent a unit. Thirty cache hits
+      // emptied a person's hourly allowance; enough people emptied the daily
+      // one and refused real searches. The details unit is reserved here only
+      // if the details will be fetched; the search unit is reserved below,
+      // after the search cache has been read.
+      //
+      // But not one at a time blindly. When the details are cold this request
+      // will need two units unless the search happens to be warm, and a caller
+      // one unit short would otherwise buy the details, be refused the search,
+      // and have paid for half an answer. So the whole request is checked for
+      // affordability first, read-only, and only then is the first unit
+      // reserved. On a cold cache that refuses exactly where the flat charge
+      // used to; on a warm one it charges nothing, which the flat charge never
+      // managed.
+      const detailsCost = willCostUpstreamCall(placeId) ? 1 : 0;
+      if (detailsCost && !canAffordPlacesSearch(req.user.id, 2)) {
+        return placesRefusal(res, req.user.id, 2);
+      }
+      if (detailsCost && !allowPlacesSearch(req.user.id, detailsCost)) {
+        return placesRefusal(res, req.user.id, detailsCost);
       }
 
       // Fetch target venue
@@ -1668,6 +1686,12 @@ router.get('/:placeId/alternatives',
       // going unlisted for ten minutes rather than a wrong number on a card.
       const searchCacheKey = `altsearch:${primaryType}:${lat.toFixed(2)},${lon.toFixed(2)}`;
       const cachedSearch = getCached(searchCacheKey);
+      // The search unit, reserved only on a miss. A refusal here after the
+      // details were bought is the right shape: those details are cached for
+      // the next request, so the unit was not wasted.
+      if (!cachedSearch && !allowPlacesSearch(req.user.id, 1)) {
+        return placesRefusal(res, req.user.id, 1);
+      }
       // Wrapped for the same reason as the target fetch above: the round-12
       // deadline makes a rejection here a normal upstream outcome, and it used
       // to leave as a 500 while the identical failure one status check later
@@ -1940,4 +1964,15 @@ module.exports.__test = {
   // failure has to start from a cold key; without this it silently reads the
   // answer a passing case left behind and asserts nothing at all.
   clearCache: () => crowdCache.clear(),
+  // Drop only the alternatives PAYLOAD for one venue and leave the details and
+  // neighbour-search entries warm. That is the state an owner's live reading
+  // puts the route in (the payload is never cached while one is present), and
+  // it is the state in which the route used to charge a unit for a request
+  // that made no Google call. paidCallBudgets.test.js pins that it no longer
+  // does; without this seam the only way to reach that state was a live owner.
+  evictPayload: (placeId) => {
+    for (const k of [...crowdCache.keys()]) {
+      if (k.startsWith(`alt:${placeId}:`)) crowdCache.delete(k);
+    }
+  },
 };

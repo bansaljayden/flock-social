@@ -442,8 +442,29 @@ function __resetPlacesBudget({ keepUsers = false } = {}) {
   unauthDayCount = 0;
 }
 
+// A READ-ONLY LOOK AT WHETHER A CHARGE WOULD BE ALLOWED, for a route that
+// has to reserve units one call at a time but must not START a request it
+// cannot finish. routes/crowd.js /alternatives buys Place Details, then a
+// Text Search, and charges each only when its cache misses (a flat charge was
+// spending units on requests that made no Google call at all). Reserving them
+// one at a time, though, means a caller one unit short would buy the details,
+// be refused the search, and have paid for half an answer. This is the same
+// arithmetic as allowPlacesSearch with the mutation removed, so a route can ask
+// "could I afford the whole thing" before it reserves the first part.
+function canAffordPlacesSearch(userId, units = 1) {
+  assertCost(units);
+  const id = keyOf(userId);
+  if (id === null) return false;
+  rollDay();
+  if (dayCount + units > GLOBAL_DAILY) return false;
+  const now = Date.now();
+  const hits = (userHits.get(id) || []).filter((t) => now - t < HOUR_MS);
+  return hits.length + units <= PER_USER_HOURLY;
+}
+
 module.exports = {
   allowPlacesSearch,
+  canAffordPlacesSearch,
   allowGlobalPlacesCall,
   placesRetryAfter,
   globalPlacesRetryAfter,

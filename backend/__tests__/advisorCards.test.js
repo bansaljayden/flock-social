@@ -177,6 +177,35 @@ test.beforeEach(() => {
 
 // ── 1. The fact-source invariant ─────────────────────────────────────────────
 
+test('a venue with no review count reaches the predictor as null, not as zero reviews', () => {
+  // mlPredictor fills a missing review count the way the loaded model was
+  // trained to expect: the zero the shipped v2.6.0-starling learned on today,
+  // the metadata median once a median-trained artifact ships. It can only do
+  // that if the venue object does not answer "zero reviews" first. This
+  // builder used to write `user_ratings_total: 0` for a NULL review_count,
+  // which was a measured value as far as the fill chain could tell, so the one
+  // production path that scores a venue straight out of ml_venues would have
+  // disagreed with training on every venue nobody had asked Google about.
+  const { venueForScoring } = advisorFacts.__test;
+  const base = {
+    profile: { google_place_id: 'ChIJ_advisor_null_reviews', business_name: 'Corner Bar' },
+    mlVenue: {
+      name: 'Corner Bar', rating: null, review_count: null, price_level: null,
+      google_types: ['bar'], latitude: 39.95, longitude: -75.16, timezone: 'America/New_York',
+    },
+  };
+  const unknown = venueForScoring(base);
+  assert.strictEqual(unknown.user_ratings_total, null,
+    'an unknown review count was handed to the predictor as a measured zero');
+  assert.strictEqual(unknown.rating, null, 'and rating stays null for the same reason');
+
+  // A real zero is a measurement and must survive as a number.
+  const measured = venueForScoring({ ...base, mlVenue: { ...base.mlVenue, review_count: 0 } });
+  assert.strictEqual(measured.user_ratings_total, 0);
+  const many = venueForScoring({ ...base, mlVenue: { ...base.mlVenue, review_count: '812' } });
+  assert.strictEqual(many.user_ratings_total, 812, 'a string count from pg becomes a number');
+});
+
 test('a fact without a source is unconstructible, whatever else it carries', () => {
   const ok = { id: 'peak_x', value: 42, source: 'model_holdout', asOf: '2026-08-19T00:00:00Z' };
   assert.ok(advisorFacts.makeFact(ok));
