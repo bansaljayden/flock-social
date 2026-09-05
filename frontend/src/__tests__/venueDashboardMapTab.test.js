@@ -123,7 +123,10 @@ describe('the map tab reads what users read', () => {
 
   it('a venue with no linked listing gets the honest empty state, not a blank map', () => {
     expect(loader).toContain("reason: 'no_listing'");
-    expect(APP).toContain('Link your listing in Edit Profile and the map fills in.');
+    // "Edit Profile" is a consumer screen and the venue side has no control
+    // that links a listing, so the copy names the step that exists.
+    expect(APP).toContain('Write to hello@flockcorp.com to link one and the map fills in.');
+    expect(APP).not.toContain('Link your listing in Edit Profile');
     // A failed lookup is not an empty area: it says so and offers a real retry.
     expect(loader).toContain("reason: 'load_failed'");
     expect(APP).toContain('onClick={loadVenueMap}');
@@ -262,5 +265,24 @@ describe('dashboard map behavior', () => {
     expect(mapTab).toContain('venues={allVenues}');
     expect(mapTab).toContain('ownerPlaceId={venueProfile?.google_place_id || null}');
     expect(mapTab).toContain('initialCenter={venueMapState.center}');
+  });
+});
+
+
+describe('the settings tab, venue-owner audit 2026-09-05', () => {
+  it('shows when an incoming group is coming, from event_time, and not the dead date/time keys', () => {
+    expect(APP).toContain('incomingWhen(flock.event_time)');
+    expect(APP).not.toMatch(/flock\.date \?/);
+    expect(APP).not.toMatch(/flock\.time \?/);
+  });
+
+  it('carries the one notification switch whose send exists, wired to notification_prefs.weekly', () => {
+    // The Monday digest reads notification_prefs.weekly; PUT /api/venue-profile
+    // is its only writer; the unsubscribe page and the email footer name
+    // "weekly reports" as the switch. One switch, no dead ones.
+    expect(APP).toContain('aria-label="Weekly reports by email"');
+    expect(APP).toContain('updateVenueProfile({ notificationPrefs: { weekly } })');
+    expect(APP).toContain("checked={venueProfile?.notification_prefs?.weekly === true}");
+    expect(APP).not.toMatch(/notificationPrefs: \{ (bookings|reviews)/);
   });
 });

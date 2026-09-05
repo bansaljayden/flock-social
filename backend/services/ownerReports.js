@@ -171,6 +171,10 @@ const LIVE_OWNER_REPORTS_SQL = `
       ON vp.user_id = r.venue_user_id
      AND vp.google_place_id = r.google_place_id
      AND vp.verified = true
+    -- A banned owner's live number stops overriding the crowd score the
+    -- moment the ban lands, not up to ninety minutes later (venue-owner
+    -- audit, 2026-09-05; see the promotions read in routes/venueDashboard.js).
+    JOIN users ou ON ou.id = vp.user_id AND ou.is_banned IS NOT TRUE
    WHERE r.google_place_id = ANY($1::text[])
      AND r.retracted = false
      AND r.created_at > NOW() - INTERVAL '90 minutes'

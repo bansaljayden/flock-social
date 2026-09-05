@@ -141,7 +141,10 @@ test('a claim with no google place id is refused with the next step named', asyn
   handlers = [[PROFILE_SELECT, () => ({ rows: [{ id: 7, google_place_id: null, verified: false, verification_requested_at: null }] })]];
   const res = await call('POST', '/api/venue-profile/request-verification');
   assert.strictEqual(res.status, 400);
-  assert.match(res.body.error, /Link your Google listing/);
+  // Names the step that exists: nothing on the venue side writes the listing
+  // id, and "Edit Profile" is a consumer screen (venue-owner audit 2026-09-05).
+  assert.match(res.body.error, /No Google listing is linked to this venue yet/);
+  assert.ok(!/Edit Profile/.test(res.body.error));
   assert.strictEqual(ran(REQUEST_UPDATE).length, 0, 'no request was written for a claim on nothing');
 });
 

@@ -78,9 +78,9 @@ describe('Roost card: the reason line, and no button', () => {
 
   test('an unavailable state that is not the unverified one reads its reason too', async () => {
     mount({
-      fetchCards: () => Promise.resolve({ available: false, reason: 'Link your Google listing in Edit Profile to see advisor cards', cards: [] }),
+      fetchCards: () => Promise.resolve({ available: false, reason: 'No Google listing is linked to this venue yet, so the advisor is off. Write to hello@flockcorp.com to link one.', cards: [] }),
     });
-    expect(await screen.findByText(/Link your Google listing/)).toBeInTheDocument();
+    expect(await screen.findByText(/No Google listing is linked/)).toBeInTheDocument();
     expect(screen.queryByRole('button')).toBeNull();
   });
 

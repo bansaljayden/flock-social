@@ -1983,6 +1983,19 @@ router.post('/venues/:userId/tier', async (req, res) => {
     // is an integer key, so a non-digit id names no venue owner — 404, not 500.
     const targetUserId = serialId(req.params.userId);
     if (targetUserId === null) return res.status(404).json({ error: 'Venue profile not found' });
+    // A GRANT THAT HAS ALREADY ENDED IS NOT AN END DATE TO KEEP (venue-owner
+    // audit, 2026-09-05). The tri-state above preserves the stored date when
+    // nobody named one, which is right while the grant is live. Once it has
+    // lapsed, "keep what is on file" re-activated a dead grant: status went
+    // back to active, expires_at stayed in the past, the response said
+    // tier pro until last week, the audit row said the same, and every gated
+    // route kept answering 403. So a lapsed date is read as no date. A
+    // founding_comp re-grant takes a fresh six months (the CASE in the
+    // upsert), and an omitted expiry on any other paid grant is refused,
+    // inside the same statement (the `lapsed` CTE gates `upd`), so the write
+    // and its audit row stay one statement and nothing is re-activated on
+    // the way to the refusal.
+    const needsLiveGrant = !expirySpecified && !foundingDefault && tier !== 'free';
     // One statement, three CTEs, same shape and same reasons as the verify
     // route above: `old` reads the tier from the statement's snapshot (i.e.
     // BEFORE the write), so the audit row records a transition — "tier free ->
@@ -1996,11 +2009,16 @@ router.post('/venues/:userId/tier', async (req, res) => {
       `WITH old AS (
          SELECT user_id, tier, verified FROM venue_profiles WHERE user_id = $2
        ),
+       lapsed AS (
+         SELECT expires_at FROM venue_subscriptions
+          WHERE user_id = $2 AND expires_at IS NOT NULL AND expires_at <= NOW()
+       ),
        upd AS (
          UPDATE venue_profiles SET tier = $1, updated_at = NOW()
          FROM old
          WHERE venue_profiles.user_id = old.user_id
            AND ($1 = 'free' OR old.verified = true)
+           AND NOT ($10::boolean AND EXISTS (SELECT 1 FROM lapsed))
          RETURNING venue_profiles.id, venue_profiles.business_name, venue_profiles.tier, old.tier AS old_tier
        ),
        granted AS (
@@ -2017,7 +2035,11 @@ router.post('/venues/:userId/tier', async (req, res) => {
            expires_at = CASE
              WHEN $1 = 'free' THEN NULL
              WHEN $6 THEN EXCLUDED.expires_at
-             WHEN $7 THEN COALESCE(venue_subscriptions.expires_at, EXCLUDED.expires_at)
+             -- A founding re-grant fills in a MISSING end date and never
+             -- replaces a live one; a lapsed one counts as missing.
+             WHEN $7 THEN COALESCE(
+               CASE WHEN venue_subscriptions.expires_at > NOW() THEN venue_subscriptions.expires_at END,
+               EXCLUDED.expires_at)
              ELSE venue_subscriptions.expires_at
            END,
            updated_at = NOW()
@@ -2030,29 +2052,39 @@ router.post('/venues/:userId/tier', async (req, res) => {
                   || COALESCE(' (until ' || to_char(g.expires_at, 'YYYY-MM-DD') || ')', '')
          FROM upd u LEFT JOIN granted g ON g.user_id = $2
        )
-       SELECT u.id, u.business_name, u.tier, g.expires_at, g.granted_reason
+       SELECT u.id, u.business_name, u.tier, g.expires_at, g.granted_reason,
+              (SELECT expires_at FROM lapsed) AS lapsed_at
          FROM old o
          LEFT JOIN upd u ON true
          LEFT JOIN granted g ON true`,
       [tier, targetUserId, req.user.id, reason || null, endsAt, expirySpecified, foundingDefault,
         grantReason || (tier === 'free' ? null : 'admin'),
-        grantReason === 'founding_comp' ? 'comp' : 'admin']
+        grantReason === 'founding_comp' ? 'comp' : 'admin',
+        needsLiveGrant]
     );
     // No `old` row at all: this user has no venue profile.
     if (result.rows.length === 0) return res.status(404).json({ error: 'Venue profile not found' });
+    // The grant on file has ended and nobody said when the new one does: the
+    // `lapsed` CTE stopped the write. Say when it ended and what to send.
+    const { lapsed_at: lapsedAt, ...row } = result.rows[0];
+    if ((row.id === null || row.id === undefined) && needsLiveGrant && lapsedAt) {
+      return res.status(400).json({
+        error: `The previous grant ended on ${new Date(lapsedAt).toISOString().slice(0, 10)}. Send expiresAt or durationDays to start a new one.`,
+      });
+    }
     // A profile that exists but did not update: the UPDATE's own guard refused
     // it. VENUE-BILLING.md states the rule three times because it is the one
     // that costs money if missed. A paid tier requires venue_profiles.verified,
     // because a role is not proof of ownership, and comping Roost to an
     // unverified claim hands a stranger a forecast about someone else's bar.
     // Verify the claim first, then grant. Downgrades to free are always allowed.
-    if (result.rows[0].id === null || result.rows[0].id === undefined) {
+    if (row.id === null || row.id === undefined) {
       return res.status(409).json({
         error: 'This venue is not verified yet. Verify the claim before granting a paid tier.',
         code: 'VENUE_NOT_VERIFIED',
       });
     }
-    res.json(result.rows[0]);
+    res.json(row);
   } catch (err) {
     console.error('Admin venue tier error:', err);
     res.status(500).json({ error: 'Failed to update tier' });
