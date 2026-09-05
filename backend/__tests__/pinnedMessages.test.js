@@ -40,8 +40,21 @@ async function dispatch(sql, params) {
 }
 
 pool.query = (sql, params) => dispatch(sql, params);
+/* The pin insert runs in a transaction under the flock row lock, so the fake
+   client has to answer BEGIN/COMMIT/ROLLBACK the way the real one does.
+   Everything else still goes through dispatch, and an unscripted statement is
+   still a loud failure. */
 pool.connect = async () => ({
-  query: (sql, params) => dispatch(sql, params),
+  query: (sql, params) => {
+    if (/^\s*(BEGIN|COMMIT|ROLLBACK)/i.test(String(sql))) {
+      // LOGGED as well as answered. The order of BEGIN, the lock, the count
+      // and the insert is the whole assertion below, and a statement the log
+      // never sees cannot be ordered against the ones it does.
+      log.push({ sql: String(sql).trim(), params: params || [] });
+      return Promise.resolve({ rows: [], rowCount: 0 });
+    }
+    return dispatch(sql, params);
+  },
   release: () => {},
 });
 
@@ -94,6 +107,7 @@ async function call(method, url, body) {
 function scriptPin({ member = true, target = true, count = 0, pins = [] } = {}) {
   on(/FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: member ? [{ id: 1 }] : [] }));
   on(/SELECT id FROM messages WHERE id = \$1 AND flock_id = \$2/, () => ({ rows: target ? [{ id: 5 }] : [] }));
+  on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 7 }] }));
   on(/COUNT\(\*\)::int AS n FROM pinned_messages/, () => ({ rows: [{ n: count }] }));
   on(/INSERT INTO pinned_messages/, () => ({ rows: [], rowCount: 1 }));
   on(/DELETE FROM pinned_messages/, () => ({ rows: [], rowCount: 1 }));
@@ -130,6 +144,44 @@ test('pinning something already pinned is a no-op, not a 500', async () => {
   assert.strictEqual(res.status, 201, res.text);
   const insert = log.find((q) => /INSERT INTO pinned_messages/.test(q.sql));
   assert.match(insert.sql, /ON CONFLICT \(flock_id, message_id\) DO NOTHING/);
+});
+
+test('the count and the insert run under the flock row lock', async () => {
+  /* THE COMMENT THAT USED TO STAND HERE WAS WRONG, and this test exists
+     because of it. It claimed the unique index made the count safe under a
+     race. The index is on (flock_id, message_id): it stops the SAME message
+     being pinned twice and says nothing about how many pins a flock has. Two
+     people pinning two DIFFERENT messages with two already pinned both read 2,
+     both pass the check, both insert, and the flock ends up with four.
+
+     The lock is the fix, and it is the same lock DELETE /api/flocks/:id and
+     POST /:id/leave take for the same reason. Asserted as an ORDER, because a
+     lock taken after the count is not a lock. */
+  scriptPin({ pins: [PIN_ROW] });
+  await call('POST', '/api/flocks/7/pins', { message_id: 5 });
+
+  const at = (re) => log.findIndex((q) => re.test(q.sql));
+  const began = at(/^BEGIN/i);
+  const locked = at(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/);
+  const counted = at(/COUNT\(\*\)::int AS n FROM pinned_messages/);
+  const inserted = at(/INSERT INTO pinned_messages/);
+  const committed = at(/^COMMIT/i);
+
+  assert.ok(began > -1 && locked > -1 && counted > -1 && inserted > -1 && committed > -1,
+    `missing a step: ${log.map((q) => q.sql.slice(0, 40)).join(' | ')}`);
+  assert.ok(began < locked, 'the lock must be inside the transaction');
+  assert.ok(locked < counted, 'a lock taken after the count is not a lock');
+  assert.ok(counted < inserted, 'the ceiling is checked before the write');
+  assert.ok(inserted < committed, 'the write commits with the check');
+});
+
+test('a refused fourth pin rolls back rather than leaving the transaction open', async () => {
+  scriptPin({ count: 3 });
+  const res = await call('POST', '/api/flocks/7/pins', { message_id: 5 });
+
+  assert.strictEqual(res.status, 409, res.text);
+  assert.ok(log.some((q) => /^ROLLBACK/i.test(q.sql)), 'the refusal must close its transaction');
+  assert.strictEqual(log.filter((q) => /^COMMIT/i.test(q.sql)).length, 0);
 });
 
 test('a fourth pin is REFUSED, and the refusal says what to do', async () => {
