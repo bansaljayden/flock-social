@@ -20,7 +20,7 @@ const path = require('node:path');
 const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'collectRealtime.js'), 'utf8').replace(/\r\n/g, '\n');
 
 test('the flag exists, is read from argv, and gates the refresh as a branch', () => {
-  assert.match(src, /const skipBaselines = process\.argv\.includes\('--no-baseline-refresh'\);/);
+  assert.match(src, /const skipBaselines = process\.argv\.includes\('--no-baseline-refresh'\) \|\| HOLDOUT\.active;/);
   assert.match(src, /if \(!skipBaselines\) \{\n\s+try \{\n\s+console\.log\('\[ML:Realtime\] Refreshing venue baselines\.\.\.'\);/);
   // A thrown sentinel would swallow real refresh errors; the branch must not
   // be reintroduced that way.
@@ -80,4 +80,40 @@ test('a refused run exits non zero, so a green cron cannot mean nothing was coll
   // And the top level turns any throw into a non-zero exit.
   assert.match(src, /run\(\)\.catch\(err => \{/);
   assert.match(src, /process\.exit\(1\);/);
+});
+
+test('the holdout city is resolved once, at load, from named UTC hours', () => {
+  // A sweep runs for the better part of an hour. If the decision were taken
+  // per venue it could change city halfway through when the clock ticked over.
+  assert.match(src, /const HOLDOUT = \(\(\) => \{/);
+  assert.match(src, /hours\.includes\(new Date\(\)\.getUTCHours\(\)\)/);
+  // Declared above run(), so both the scope resolution and the baseline
+  // decision read the same answer.
+  assert.ok(src.indexOf('const HOLDOUT = ') < src.indexOf('async function run()'),
+    'HOLDOUT must resolve before run()');
+});
+
+test('a holdout hour replaces the training cities, says so, and skips the corpus rebuild', () => {
+  assert.match(src, /\? \[HOLDOUT\.city\]/);
+  assert.match(src, /Holdout hour: this run collects \$\{HOLDOUT\.city\} instead of the training cities/);
+  assert.match(src, /const skipBaselines = process\.argv\.includes\('--no-baseline-refresh'\) \|\| HOLDOUT\.active;/);
+});
+
+test('half a holdout flag is refused, not guessed at', () => {
+  // --holdout-city with no hours would either never fire or, read the other
+  // way, take every hour from the training cities. Both are wrong and the
+  // difference is invisible in a log, so it refuses.
+  assert.match(src, /if \(HOLDOUT\.misconfigured\) \{/);
+  assert.match(src, /REFUSED: --holdout-city needs --holdout-utc-hours/);
+  const at = src.indexOf('if (HOLDOUT.misconfigured)');
+  assert.ok(src.slice(at, at + 500).includes('throw new Error('), 'it must throw, not return');
+});
+
+test('an hour outside 0 to 23, or a non-number, is dropped rather than trusted', () => {
+  const at = src.indexOf('const HOLDOUT = ');
+  const block = src.slice(at, src.indexOf('async function run()', at));
+  assert.match(block, /Number\.isInteger\(h\) && h >= 0 && h <= 23/);
+  // And a flag whose hours all get dropped counts as misconfigured, so it
+  // cannot quietly become "never runs".
+  assert.match(block, /misconfigured = Boolean\(cityArg\) && \(!city \|\| hours\.length === 0\)/);
 });
