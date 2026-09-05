@@ -339,7 +339,7 @@ test('flock_members_invited does not hand the inviter name to someone who blocke
 test('venue_selected does not hand the creator name to someone who blocked them', async () => {
   const { io, socket } = connect({ id: 1, name: 'Ava' });
   routes = [
-    [/SELECT creator_id FROM flocks/, [{ creator_id: 1 }]],
+    [/SELECT creator_id(, venue_name)? FROM flocks/, [{ creator_id: 1, venue_name: "Joe's Bar" }]],
     [/UPDATE flocks/, []],
     [INVISIBLE_IDS, [{ id: 9 }]],
   ];
@@ -356,7 +356,7 @@ test('venue_selected does not hand the creator name to someone who blocked them'
 test('an unreadable block list drops the venue announcement rather than leaking it', async () => {
   const { io, socket } = connect({ id: 1, name: 'Ava' });
   routes = [
-    [/SELECT creator_id FROM flocks/, [{ creator_id: 1 }]],
+    [/SELECT creator_id(, venue_name)? FROM flocks/, [{ creator_id: 1, venue_name: "Joe's Bar" }]],
     [/UPDATE flocks/, []],
     [/FROM user_blocks/, () => Promise.reject(new Error('connection terminated'))],
   ];

@@ -935,7 +935,7 @@ test('a flood is refused before it costs a database query', async () => {
 test('socket-originated flock events carry the integer id the client matches on', async () => {
   const { io, socket } = connect({ id: 1, name: 'Ava' });
   routes = [
-    [/SELECT creator_id FROM flocks/, [{ creator_id: 1 }]],
+    [/SELECT creator_id(, venue_name)? FROM flocks/, [{ creator_id: 1, venue_name: "Joe's Bar" }]],
     [/UPDATE flocks/, []],
     // Round 18: venue_selected names who confirmed, so the broadcast is now
     // block-filtered like every other identity-bearing flock event.

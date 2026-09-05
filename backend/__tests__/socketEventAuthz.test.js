@@ -480,7 +480,7 @@ test('select_venue refuses everyone but the creator and block-filters the announ
   __resetRateLimiters();
   const calls = [];
   const restore = mockPool([
-    [/SELECT creator_id FROM flocks WHERE id = \$1/, [{ creator_id: 900 }]],
+    [/SELECT creator_id(, venue_name)? FROM flocks WHERE id = \$1/, [{ creator_id: 900, venue_name: null }]],
     [/UPDATE flocks/, []],
     [INVISIBLE, [{ id: 905 }]],
   ], calls);
