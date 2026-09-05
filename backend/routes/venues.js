@@ -485,3 +485,13 @@ module.exports = router;
 // A property on the router changes nothing about the mount in server.js — an
 // express Router is a function object. Same pattern as checkin.js/stories.js.
 module.exports.broadcastGuestVote = broadcastGuestVote;
+// The tally itself, for sockets/handlers.js. `new_vote` has two producers,
+// this file and the socket handler, and the handler used to carry its own
+// copy of the SQL and its own arithmetic. The copies drifted: the socket added
+// guest_count to member_count raw, while collectVoteRows caps guest weight at
+// the member turnout (guestCap above) and tailorVotes breaks ties toward
+// members - the defence against one link-holder minting fifty guest RSVPs.
+// A comment in the handler claimed "same wire shape as tailorVotes" over
+// arithmetic that was not. Sharing the functions makes parity structural.
+module.exports.collectVoteRows = collectVoteRows;
+module.exports.tailorVotes = tailorVotes;
