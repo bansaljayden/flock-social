@@ -384,11 +384,24 @@ function flockFrom(data = {}) {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
-async function canNotify(userId, data = {}) {
+// The three answers a visibility check can give. Returned, never recorded
+// anywhere shared. Two pushes to one recipient are routinely in flight at once
+// (a DM and a flock message landing together, a Promise.allSettled fan-out
+// that names the same person twice), and the previous design marked "the check
+// itself failed" in a module-level set keyed by recipient which deliver() read
+// and cleared. A sibling delivery for the same recipient whose lookup settled
+// in the same tick cleared that mark or claimed it, so an outage was filed as
+// a permanent suppression and the outbox sweep deleted the row instead of
+// retrying it. A return value cannot be reached by another call.
+const CAN_SEE = Object.freeze({ allowed: true, uncheckable: false });
+const CANNOT_SEE = Object.freeze({ allowed: false, uncheckable: false });
+const CANNOT_TELL = Object.freeze({ allowed: false, uncheckable: true });
+
+async function checkVisibility(userId, data = {}) {
   try {
     const actorId = actorFrom(data);
     if (actorId && Number(actorId) !== Number(userId)) {
-      if (await isBlockedBetween(userId, actorId)) return false;
+      if (await isBlockedBetween(userId, actorId)) return CANNOT_SEE;
     }
 
     // One lookup answers all four questions: does the recipient still exist,
@@ -430,15 +443,15 @@ async function canNotify(userId, data = {}) {
     );
 
     const row = r.rows[0];
-    if (!row) return false;        // the account was deleted
-    if (row.is_banned) return false; // no pulling a banned user back into an app that rejects them
+    if (!row) return CANNOT_SEE;        // the account was deleted
+    if (row.is_banned) return CANNOT_SEE; // no pulling a banned user back into an app that rejects them
     // A removed account does not get to keep announcing itself, with one
     // exception: an SOS or its stand-down. routes/safety.js deliberately
     // authenticates a banned user for those (a banned person in danger is
     // still a person in danger), and this clause was silently dropping the
     // flock leg it had just allowed. The block check above still applies.
-    if (row.actor_banned && !RINGS_THROUGH_THE_NIGHT.has(data?.type)) return false;
-    return row.can_see !== false;
+    if (row.actor_banned && !RINGS_THROUGH_THE_NIGHT.has(data?.type)) return CANNOT_SEE;
+    return row.can_see !== false ? CAN_SEE : CANNOT_SEE;
   } catch (err) {
     // FAIL CLOSED. This was the one block-enforcement point in the codebase
     // that failed open, and it was the loudest one: a push is delivered to a
@@ -454,20 +467,21 @@ async function canNotify(userId, data = {}) {
     // late or not at all, which the app recovers from the moment the user opens
     // it; the cost in the other direction cannot be taken back.
     console.error('[Push] visibility check failed, suppressing push:', err.message);
-    // Still false - the paragraph above is the reason and it stands. But leave
-    // a mark so the caller can tell a suppression from an outage. Keyed on the
-    // recipient and cleared by the reader, because the only reader is the one
-    // call site below and it runs immediately after.
-    lastVisibilityError.add(Number(userId));
-    return false;
+    // Still not allowed - the paragraph above is the reason and it stands. But
+    // the answer says the check FAILED rather than that it answered no, so the
+    // one caller that needs the difference can tell a suppression from an
+    // outage without anything being left behind for another call to find.
+    return CANNOT_TELL;
   }
 }
 
-// Set by canNotify's catch, read and cleared by the one call site in deliver().
-// A plain Set rather than a returned value because canNotify's boolean is
-// consumed in several places that all want the fail-closed answer and none of
-// which want to learn a second vocabulary.
-const lastVisibilityError = new Set();
+// The boolean the rest of the codebase and the tests know. Everything that
+// asks this wants the fail-closed answer and none of it wants a second
+// vocabulary; deliver() is the one place that has to know WHY, and it asks
+// checkVisibility directly.
+async function canNotify(userId, data = {}) {
+  return (await checkVisibility(userId, data)).allowed;
+}
 
 // Debounce is per CONVERSATION, not per person. Round 7: the key was the user
 // id alone, so a DM from one friend swallowed a flock invite and a message in
@@ -842,11 +856,10 @@ async function deliver(userId, title, body, data, opts = {}) {
   // Re-run for a released outbox row too, and that is the point of doing it
   // here rather than at enqueue time: a recipient who left the flock, blocked
   // the sender, or was banned while the row waited gets nothing.
-  if (!(await canNotify(userId, data))) {
-    const uncheckable = lastVisibilityError.delete(Number(userId));
-    return skip(userId, data, uncheckable ? OUTCOME.UNCHECKABLE : OUTCOME.NOT_VISIBLE);
+  const visibility = await checkVisibility(userId, data);
+  if (!visibility.allowed) {
+    return skip(userId, data, visibility.uncheckable ? OUTCOME.UNCHECKABLE : OUTCOME.NOT_VISIBLE);
   }
-  lastVisibilityError.delete(Number(userId));
 
   if (!RINGS_THROUGH_THE_NIGHT.has(type)) {
     const zone = await recipientZone(userId);
