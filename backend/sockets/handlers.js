@@ -9,7 +9,7 @@ const { stripHtml } = require('../utils/sanitize');
 // GIF was refused was told it had failed a safety check, which is both wrong and
 // unactionable. It matters more now that the client shows these strings as a
 // toast instead of console.warn-ing them (App.js, the 'error' listener).
-const { moderateText, moderateVenueText, TEXT_REJECTED_MESSAGE, VENUE_REJECTED_MESSAGE: VENUE_TEXT_REJECTED_MESSAGE, moderateImage, imageRejectionMessage } = require('../utils/moderation');
+const { moderateText, moderateChatText, moderateVenueText, TEXT_REJECTED_MESSAGE, VENUE_REJECTED_MESSAGE: VENUE_TEXT_REJECTED_MESSAGE, moderateImage, imageRejectionMessage } = require('../utils/moderation');
 const { sanitizeVenueData, safeVenuePhotoUrl } = require('../utils/venuePayload');
 // EXIF/XMP/IPTC removal for the bytes that actually get stored. See the header
 // of utils/imageMetadata.js: a chat photo taken on a phone carries a GPS fix,
@@ -1222,7 +1222,7 @@ function registerHandlers(io, socket) {
         return;
       }
       // UGC text filter (Apple 1.2) — reject objectionable content before storing.
-      if (!moderateText(message_text).allowed) {
+      if (!moderateChatText(message_text).allowed) {
         socket.emit('error', { message: TEXT_REJECTED_MESSAGE });
         return;
       }
@@ -1937,7 +1937,7 @@ function registerHandlers(io, socket) {
         return;
       }
       // UGC text filter (Apple 1.2).
-      if (!moderateText(text).allowed) {
+      if (!moderateChatText(text).allowed) {
         socket.emit('error', { message: TEXT_REJECTED_MESSAGE });
         return;
       }

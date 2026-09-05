@@ -57,6 +57,21 @@ const PROVIDER_ALLOWED = [
 const providerFilter = new Filter();
 providerFilter.removeWords(...PROVIDER_ALLOWED);
 
+// CHAT IS NOT A NAME FIELD (Jayden, 2026-09-05). "fuck you" in a flock chat
+// or a DM was refused with "doesn't fit our community guidelines", which is
+// not true of ordinary swearing between friends, and a refused message is a
+// reason to leave the app. The everyday curse family comes off the list for
+// CHAT BODIES ONLY; slurs, hate terms and explicit sexual words stay on it,
+// and names, bios, flock names, venue text and reviews keep the full list.
+const CHAT_ALLOWED = [
+  'fuck', 'fucks', 'fucking', 'fucked', 'fucker', 'fuckers', 'motherfucker', 'motherfucking',
+  'shit', 'shits', 'shitty', 'damn', 'goddamn', 'hell', 'ass', 'asses', 'asshole', 'assholes',
+  'arse', 'bitch', 'bitches', 'bitching', 'bastard', 'bastards', 'crap', 'piss', 'pissed',
+  'dick', 'dickhead', 'screw', 'balls', 'bloody', 'prick', 'turd', 'butt',
+];
+const chatFilter = new Filter();
+chatFilter.removeWords(...CHAT_ALLOWED);
+
 const TEXT_REJECTED_MESSAGE =
   "That doesn't fit our community guidelines. Rephrase and try again.";
 
@@ -73,6 +88,29 @@ function moderateText(text) {
     return { allowed: false, flagged: true, reason: 'profanity' };
   }
   return { allowed: true, flagged: false, reason: null };
+}
+
+/**
+ * Screen a chat body (flock message or DM). Same verdict shape as
+ * moderateText, on the chat list: swearing passes, slurs do not.
+ */
+function moderateChatText(text) {
+  if (typeof text !== 'string' || text.trim() === '') {
+    return { allowed: true, flagged: false, reason: null };
+  }
+  if (chatFilter.isProfane(text)) {
+    return { allowed: false, flagged: true, reason: 'profanity' };
+  }
+  return { allowed: true, flagged: false, reason: null };
+}
+
+function rejectIfProfaneChat(res, text) {
+  const verdict = moderateChatText(text);
+  if (!verdict.allowed) {
+    res.status(400).json({ error: TEXT_REJECTED_MESSAGE, moderation: verdict.reason });
+    return true;
+  }
+  return false;
 }
 
 /**
@@ -1005,6 +1043,9 @@ function imageRejectionMessage(verdict) {
 module.exports = {
   moderateText,
   rejectIfProfane,
+  moderateChatText,
+  rejectIfProfaneChat,
+  CHAT_ALLOWED,
   rejectIfProfaneVenue,
   moderateVenueText,
   VENUE_REJECTED_MESSAGE,

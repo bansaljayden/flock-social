@@ -3,7 +3,7 @@ const { body, param, query, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { stripHtml } = require('../utils/sanitize');
-const { rejectIfProfane, moderateImage, imageRejectionMessage } = require('../utils/moderation');
+const { rejectIfProfane, rejectIfProfaneChat, moderateImage, imageRejectionMessage } = require('../utils/moderation');
 const { sanitizeVenueData, safeVenuePhotoUrl } = require('../utils/venuePayload');
 const VENUE_REJECTED_MESSAGE = "That venue card couldn't be shared.";
 const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
@@ -318,7 +318,7 @@ router.post('/flocks/:id/messages',
       const { message_type, venue_data } = req.body;
 
       // UGC text filter (Apple 1.2) — reject objectionable content before storing.
-      if (rejectIfProfane(res, message_text)) return;
+      if (rejectIfProfaneChat(res, message_text)) return;
 
       // Round 8: venue_data was stored verbatim — nested name/photo_url dodged
       // the text screen and rendered sender-controlled <img> URLs (tracking).
@@ -1057,7 +1057,7 @@ router.post('/dm/:userId',
       const { message_type, venue_data, reply_to_id } = req.body;
 
       // UGC text filter (Apple 1.2) — reject objectionable content before storing.
-      if (rejectIfProfane(res, message_text)) return;
+      if (rejectIfProfaneChat(res, message_text)) return;
 
       // Same venue-card sanitizing as flock messages (round 8).
       const venueCheck = sanitizeVenueData(venue_data);
