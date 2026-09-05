@@ -200,6 +200,21 @@ describe('there is no send button until there is something to send', () => {
     expect(screen.queryByLabelText('Send message')).toBeNull();
   });
 
+  test('a caller with no sheet behind the plus gets no plus', () => {
+    // onPlus used to default to a no-op, so the button was drawn for every
+    // caller and answered the press with silence on any caller that had not
+    // wired a sheet yet. That is the dead control SLOP-AUDIT bans, and it is
+    // worse here than most: the plus is how a bar with no visible controls
+    // offers everything that is not typing, so a reader who presses it and
+    // gets nothing concludes the feature is broken rather than absent.
+    //
+    // The slot is simply empty instead. There is nothing to send and nothing
+    // to open, so there is nothing to draw.
+    mount({ value: '', onPlus: undefined });
+    expect(screen.queryByLabelText('More to send')).toBeNull();
+    expect(screen.queryByLabelText('Send message')).toBeNull();
+  });
+
   test('one character turns the plus into send', () => {
     mount({ value: 'k' });
     expect(screen.getByLabelText('Send message')).toBeTruthy();
