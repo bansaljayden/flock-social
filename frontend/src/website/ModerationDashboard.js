@@ -1373,7 +1373,7 @@ function VenueClaim({ venue: v, busy, error, reason, onReason, onDecide }) {
       ) : (
         <div style={{ ...S.dimSmall, marginTop: 8 }}>
           This claim names no Google listing, so there is nothing to check ownership against.
-          The owner has to link one in Edit Profile before verification means anything.
+          The owner has to link one before verification means anything. Onboarding always links one, so a profile without it was made another way; link it by hand.
         </div>
       )}
     </div>
