@@ -2408,6 +2408,15 @@ function registerHandlers(io, socket) {
     if (receiverId === null || !isLatLng(lat, lng)) return;
     if (await isBlockedBetweenCached(user.id, receiverId)) return;
     if (!(await hasDmRelationshipCached(user.id, receiverId))) return;
+    // THE SOCKET MAY HAVE GONE WHILE THOSE TWO WERE AWAITED (adversarial
+    // audit round 2, 2026-09-05). The disconnect handler withdraws whatever
+    // dmSharingWith holds and clears it; if it ran during the awaits it found
+    // nothing, and this handler then resumed on a dead socket, added the peer
+    // and moved dmShareCounts up with no disconnect left to move it down. The
+    // account's next socket could stop sharing and the count would still say
+    // live, so the peer never got the stop and kept a pin on their map. A
+    // dead socket registers nothing.
+    if (socket.disconnected) return;
     // Every position tick arrives as this event; the count moves on the first.
     if (!dmSharingWith.has(receiverId)) {
       dmSharingWith.add(receiverId);

@@ -771,11 +771,19 @@ async function collectRealtime() {
         // group; the answer cannot change before COMMIT. The keeper of the id
         // is in this same list and gets its own row.
         const result = await withCorpusWriteLock(pool, async (client) => {
+          // review_count comes back with the identity check because the
+          // venue list was read before the lock: the repair's phase two nulls
+          // a synthetic zero on ml_venues under this same lock, and a value
+          // read before it would be written straight back here (adversarial
+          // audit round 2, 2026-09-05). What the row says NOW is what is
+          // stored.
           const { rows: still } = await client.query(
-            'SELECT 1 FROM ml_venues WHERE id = $1 AND besttime_venue_id = $2',
+            'SELECT review_count FROM ml_venues WHERE id = $1 AND besttime_venue_id = $2',
             [venue.id, venue.besttime_venue_id]
           );
           if (still.length === 0) return null;
+          const rc = columns.find(([c]) => c === 'review_count');
+          if (rc) rc[1] = still[0].review_count;
           return client.query(
             `INSERT INTO ml_training_data (collection_mode, ${columns.map(([c]) => c).join(', ')})
              VALUES ('realtime', ${columns.map((_, i) => `$${i + 1}`).join(', ')})

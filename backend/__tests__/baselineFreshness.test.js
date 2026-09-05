@@ -296,6 +296,48 @@ test('a venue with no usable place id stays the corpus gap, not an outage', asyn
   assert.strictEqual(baselineMissFor(junk, DOW, HOUR), 'none');
 });
 
+test('each caller learns the reason for its own zero, not the slot\'s last one', async () => {
+  // Two requests for one slot in flight together: one over its lookup budget,
+  // one allowed and finding no row. The shared map could only hold one
+  // reason, so the refused caller read the other's 'none' and reported a
+  // budget refusal as a corpus gap (adversarial audit round 2, 2026-09-05).
+  // The reason now travels with the call.
+  __resetVenueLookupCaches();
+  const slot = `${PLACE}race`;
+  const userId = 911;
+  for (let i = 0; i < VENUE_LOOKUP_USER_HOURLY; i++) allowVenueLookup(slot, userId);
+  assert.strictEqual(allowVenueLookup(slot, userId), false, 'fixture precondition');
+  BASELINE_ROWS = [];
+  const refused = {};
+  const none = {};
+  await Promise.all([
+    getBaseline(slot, DOW, HOUR, userId, refused),
+    getBaseline(slot, DOW, HOUR, undefined, none),
+  ]);
+  assert.strictEqual(refused.reason, 'refused');
+  assert.strictEqual(none.reason, 'none');
+
+  // And a thrown query is 'error' for the caller that threw.
+  const real = pool.query;
+  pool.query = (sql, params) => (/FROM ml_venue_baselines/.test(String(sql))
+    ? Promise.reject(new Error('down'))
+    : real(sql, params));
+  try {
+    __resetVenueLookupCaches();
+    const errored = {};
+    assert.strictEqual(await getBaseline(`${PLACE}err`, DOW, HOUR, undefined, errored), 0);
+    assert.strictEqual(errored.reason, 'error');
+  } finally {
+    pool.query = real;
+  }
+  // A usable number writes null, so a caller can tell "answered" from "cached".
+  __resetVenueLookupCaches();
+  BASELINE_ROWS = [{ day_of_week: DOW, hour: HOUR, baseline: 64, source: 'collected', updated_at: new Date() }];
+  const answered = {};
+  assert.ok(await getBaseline(`${PLACE}ok`, DOW, HOUR, undefined, answered) > 0);
+  assert.strictEqual(answered.reason, null);
+});
+
 test('a slot that answers clears a reason an earlier failure left behind', async () => {
   const real = pool.query;
   pool.query = (sql, params) => (/FROM ml_venue_baselines/.test(String(sql))

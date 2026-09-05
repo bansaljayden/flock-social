@@ -408,14 +408,19 @@ async function mergeGroup(g) {
 async function phase2() {
   let total = 0;
   for (;;) {
-    const res = await pool.query(`
+    // Each batch under the corpus write lock the collectors take around their
+    // own writes (adversarial audit round 2, 2026-09-05): a collector that
+    // read a venue's synthetic zero before this ran, and wrote it after,
+    // would put the artifact back. Under the lock the two cannot interleave,
+    // and the collector re-reads review_count inside its locked write.
+    const res = await withCorpusWriteLock(pool, (client) => client.query(`
       UPDATE ml_training_data
          SET review_count = NULL
        WHERE id IN (
          SELECT t.id FROM ${PHASE2_SCOPE}
           ORDER BY t.id
           LIMIT ${BATCH}
-       )`);
+       )`));
     if (res.rowCount === 0) break;
     total += res.rowCount;
     console.log(`[Repair] phase 2: ${total} training rows cleared...`);
