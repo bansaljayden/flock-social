@@ -21,6 +21,7 @@ const { isBlockedBetween, isBlockedBetweenCached, getInvisibleUserIds } = requir
 // vote_venue below.
 const { collectVoteRows, tailorVotes } = require('../routes/venues');
 const { isPlaceIdShaped, isKnownVenue } = require('../utils/places');
+const { SYSTEM_KINDS, writeSystemMessage } = require('../utils/systemMessages');
 const {
   hasDmRelationship,
   hasDmRelationshipCached,
@@ -2956,7 +2957,11 @@ function registerHandlers(io, socket) {
       }
 
       // Only the flock creator can confirm a venue
-      const flock = await pool.query('SELECT creator_id FROM flocks WHERE id = $1', [flockId]);
+      // venue_name rides along with the creator check so the system row below
+      // can tell a real change from a re-confirmation. The creator tapping the
+      // same venue twice, or a client retrying, would otherwise post "Maya set
+      // the venue: Kome" again underneath the identical line.
+      const flock = await pool.query('SELECT creator_id, venue_name FROM flocks WHERE id = $1', [flockId]);
       if (flock.rows.length === 0 || flock.rows[0].creator_id !== user.id) {
         socket.emit('error', { message: 'Only the flock creator can select a venue' });
         return;
@@ -2991,6 +2996,55 @@ function registerHandlers(io, socket) {
         venue_id,
         selected_by: { userId: user.id, name: user.name },
       });
+
+      // AND THE STREAM GETS THE RECORD (migration 067). Everything above this
+      // point tells the room the CURRENT state: the flocks row is updated, the
+      // header repaints, a toast fires. None of it survives not being looked
+      // at. A member whose phone was in their pocket, or who joins tomorrow,
+      // sees a confirmed venue and no account of when it was decided or by
+      // whom, because a header can only show what is true now.
+      //
+      // Only on an actual change. Re-confirming the same venue is a no-op and
+      // the stream should not narrate it.
+      if (flock.rows[0].venue_name !== venue_name) {
+        const systemRow = await writeSystemMessage(flockId, user.id, SYSTEM_KINDS.VENUE_SET, venue_name);
+        // Null means the write failed and logged. The venue IS confirmed
+        // either way, so there is nothing to tell the user and nothing to roll
+        // back; the stream simply does not carry the note. Wrapped again
+        // because the fan-out reads the roster, and a note about a plan change
+        // must never be able to fail the plan change.
+        if (systemRow) {
+          try {
+            systemRow.sender_name = user.name;
+            systemRow.reactions = [];
+            // Fanned out on the SAME rule as an ordinary message: per member,
+            // through the invisible set already computed above, never to the
+            // room. A system row names its actor, so somebody who blocked the
+            // creator must not be handed one. The history read drops it for
+            // them too, and needs no new code to: sender_id is a real user id,
+            // so the blocked-sender filter there does not care that the row is
+            // a system row rather than something the creator typed.
+            //
+            // The actor is included rather than echoed separately. There is no
+            // optimistic bubble to reconcile here, so their own user room is
+            // the right destination and it reaches every device they have.
+            //
+            // No push. This is a note in the stream, not somebody speaking,
+            // and venue_selected has already notified whoever needed telling.
+            const memberRows = await pool.query(
+              "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
+              [flockId]
+            );
+            const hiddenFromActor = new Set(selectInvisible);
+            for (const m of memberRows.rows) {
+              if (hiddenFromActor.has(m.user_id)) continue;
+              io.to(`user:${m.user_id}`).emit('new_message', systemRow);
+            }
+          } catch (fanErr) {
+            console.error('venue_set system row fan-out error:', fanErr.message);
+          }
+        }
+      }
     } catch (err) {
       console.error('select_venue error:', err);
       socket.emit('error', { message: 'Failed to select venue' });

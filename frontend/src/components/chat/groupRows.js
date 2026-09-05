@@ -23,7 +23,7 @@
  * the stream is swapped. The first dated row in a thread opens a day, so
  * history opens with its own date rather than sliding in unlabelled.
  *
- * SYSTEM ROWS. `message_type === 'system'` (migration 066, W4) belongs to
+ * SYSTEM ROWS. `message_type === 'system'` (migration 067) belongs to
  * nobody, so consecutive system rows collapse into one run flagged `isSystem`,
  * with no sender and no bar, and MessageGroup draws those centred. This is
  * written now rather than later because a system row falling into a person's
