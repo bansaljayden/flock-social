@@ -6,7 +6,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8').replace(/\r\n/g, '\n');
 
 test('a browser signing out without a token only clears rows of its own kind', () => {
   const api = read('services/api.js');

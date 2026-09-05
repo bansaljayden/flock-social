@@ -8,7 +8,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8').replace(/\r\n/g, '\n');
 
 test('the two list reads keep their own error, cleared on a landed read', () => {
   const app = read('App.js');
