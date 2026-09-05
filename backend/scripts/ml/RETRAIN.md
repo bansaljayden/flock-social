@@ -631,14 +631,36 @@ node scripts/ml/train/export_training_data.js
 # 2. usual pipeline from the top of this file
 ```
 
-**Still broken, deliberately out of scope of that change:**
-`scripts/ml/discoverBestTime.js` `insertForecastData()` still writes the raw
-`day_raw` index and does not set `hour_axis`. Since 023 it fails LOUDLY on the
-CHECK constraint (logged per row, 0 rows inserted) instead of silently seeding a
-second clock. The fix is the same two lines `collectWeekly.js` got. Note the
-script also spends BestTime credits, so nothing runs it right now.
-`database/ml-schema.sql` and `initTables.js` also predate the column; migrations
-are the source of truth, and both collectors self-create the column anyway.
+**~~Still broken, deliberately out of scope of that change:~~ FIXED 2026-09-04.**
+`scripts/ml/discoverBestTime.js` `insertForecastData()` wrote the raw `day_raw`
+index and never set `hour_axis`, so since 023 every row it wrote was rejected by
+the axis CHECK — logged per row, "Training rows inserted: 0", exit 0. It now
+routes the slots through `collectWeekly.bestTimeSlotToLocal` (imported, not
+copied, because migration 023's SQL is pinned against that same function), sets
+`hour_axis`, and names migration 024's weekly arbiter in its ON CONFLICT.
+`database/ml-schema.sql` and `initTables.js` still predate the column;
+migrations are the source of truth, and both collectors self-create it anyway.
+
+The same pass fixed the more expensive half of that script: it minted a pseudo
+`bt_<besttime_venue_id>` google_place_id and upserted on it, so a venue already
+stored under its real Google place id got a SECOND ml_venues row. 933 BestTime
+venue ids are held by two or more rows in the 2026-09-03 dump, 111 of those
+groups are active philly/lehigh venues, and the hourly realtime cron pays two
+credits and writes two rows for each of them. The arbiter is now
+`besttime_venue_id`; migration `060_ml_venues_besttime_identity.sql` gives that
+column its unique index and drops `ml_venues.review_count`'s `DEFAULT 0`; and
+`scripts/ml/repairBestTimeDiscoveredVenues.js` merges the groups already stored
+(report only by default, `--commit` to write). **Run it before the next export**
+— `train/export_training_data.js` joins `ml_venues`, so until it runs both
+copies are exported and every per-venue average and category baseline counts
+the same building twice.
+
+`train/prepare_features.py` also stopped filling a missing `review_count` with
+0 and now fills it with the corpus median, published as
+`median_review_count` in `venue_metadata` for the holdout. **Before the next
+model ships, `services/mlPredictor.js` `buildFeatureMap` must read that same
+median instead of `|| 0`**, or the model is trained with one fill and served
+with another.
 
 ## THE UNIQUE KEY ON `ml_training_data` (2026-08-15) — audit findings 2, 4 and 5
 
