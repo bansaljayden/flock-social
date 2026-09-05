@@ -1053,6 +1053,49 @@ describe('MessageList: the scroller', () => {
     expect(readTop()).toBe(1000);
   });
 
+  it('the pill does not blink back on during its own scroll', () => {
+    /* THE DEFECT. Tapping the pill sets nearBottom true and then animates
+       down. A smooth scroll raises scroll events all the way, and the first
+       of them ran the hysteresis band with wasOff already false, so it
+       measured against LEAVE_BOTTOM_PX: a reader 660px from the bottom is
+       still well over 600 on that first frame, so off flipped straight back
+       to true and the pill they had just pressed faded back in and rode down
+       the screen until the animation dropped under 600.
+
+       jsdom has no scroll animation, so this stages one: a scrollTo that is
+       accepted and does NOT move scrollTop, which is exactly the state the
+       real scroller is in on the first frame. */
+    const rows = [row({ id: 'a' })];
+    const { container, rerender } = render(<MessageList {...listProps} rows={rows} />);
+    const scroller = container.querySelector('.chat-scroller');
+    const readTop = makeScrollable(scroller, { scrollTop: 40 });
+    let asked = null;
+    scroller.scrollTo = (opts) => { asked = opts; };   // accepted, and goes nowhere yet
+
+    fireEvent.scroll(scroller);
+    rerender(<MessageList {...listProps} rows={[...rows, row({ id: 'b' })]} />);
+    expect(screen.getByText('1 new message')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('1 new message'));
+    expect(asked).toEqual({ top: 1000, behavior: 'smooth' });
+    expect(readTop()).toBe(40);                        // the animation has not run
+
+    // The first frame of that animation. Still 660 from the bottom.
+    fireEvent.scroll(scroller);
+    expect(screen.queryByText(/new message/)).toBeNull();
+    expect(screen.queryByText(/Jump/i)).toBeNull();
+
+    // And the latch lifts once the scroller really arrives, so a reader who
+    // scrolls away afterwards is heard again rather than being held at the
+    // bottom forever.
+    scroller.scrollTop = 700;                          // 1000 - 700 - 300 = 0
+    fireEvent.scroll(scroller);
+    scroller.scrollTop = 40;                           // back up past the band
+    fireEvent.scroll(scroller);
+    rerender(<MessageList {...listProps} rows={[...rows, row({ id: 'b' }), row({ id: 'c' })]} />);
+    expect(screen.getByText('1 new message')).toBeInTheDocument();
+  });
+
   it('follows the tail on your own send, whatever the reader was doing', () => {
     const rows = [row({ id: 'a' })];
     const { container, rerender } = render(<MessageList {...listProps} rows={rows} />);
