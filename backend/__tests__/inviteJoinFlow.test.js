@@ -302,6 +302,34 @@ test('a stranger with the link becomes an accepted member and is told where to g
   assert.ok(log.some((q) => q.sql === 'BEGIN') && log.some((q) => q.sql === 'COMMIT'));
 });
 
+test('a link join takes the flock lock before the membership statement', async () => {
+  // POST /api/billing/:flockId/create divides the bill across the accepted
+  // roster it reads under `SELECT id FROM flocks WHERE id = $1 FOR UPDATE`.
+  // This route held only its own advisory lock, which billing never takes, so
+  // the INSERT could commit between billing's read and billing's COMMIT and
+  // the bill would land split across everybody but the person who had just
+  // walked in through the link. The ORDER is the property: the row lock first,
+  // then the statement, inside one transaction.
+  scriptViewer();
+  on(/FROM flock_invite_links/, () => ({ rows: [link()] }));
+  on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [] }));
+  on(/SELECT COUNT\(\*\)::int AS n FROM flock_members/, () => ({ rows: [{ n: 4 }] }));
+  const order = [];
+  on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => { order.push('lock'); return { rows: [{ id: 42 }] }; });
+  on(/INSERT INTO flock_members/, () => { order.push('join'); return { rows: [{ id: 501 }], rowCount: 1 }; });
+  scriptAnnounce();
+
+  const res = await join(VIEWER);
+  assert.strictEqual(res.status, 200, res.text);
+  assert.deepStrictEqual(order, ['lock', 'join'],
+    'the membership must be minted under the lock billing holds, not beside it');
+  const begin = log.findIndex((q) => q.sql === 'BEGIN');
+  const commit = log.findIndex((q) => q.sql === 'COMMIT');
+  const joinAt = log.findIndex((q) => /INSERT INTO flock_members/.test(q.sql));
+  assert.ok(begin > -1 && commit > -1 && begin < joinAt && joinAt < commit,
+    'the membership statement must sit inside the transaction, not before or after it');
+});
+
 test('joining with the guest identity the page carried through signup retires its RSVP row', async () => {
   // The convert-and-count-twice hole: RSVP by name, then join for real, and
   // the plan said "5 going" over 4 people with the same name listed twice,
