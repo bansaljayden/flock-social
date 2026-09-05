@@ -3,8 +3,8 @@
 const fs = require('fs');
 const path = require('path');
 
-const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
-const api = fs.readFileSync(path.join(__dirname, '..', 'services', 'api.js'), 'utf8');
+const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
+const api = fs.readFileSync(path.join(__dirname, '..', 'services', 'api.js'), 'utf8').replace(/\r\n/g, '\n');
 
 test('"this flock" is a flock the person is looking at', () => {
   expect(app).toMatch(/const onFlock = currentScreen === 'chatDetail' \|\| currentScreen === 'detail';\s*const flock = onFlock \? \(flocks\.find\(f => f\.id === selectedFlockId\) \|\| null\) : null;/);
