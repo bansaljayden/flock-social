@@ -14,6 +14,7 @@
     "@capacitor/geolocation": "^8.2.2",
     "@capacitor/haptics": "^8.0.2",
     "@capacitor/ios": "^8.4.0",
+    "@capacitor/keyboard": "^8.0.5",
     "@capgo/capacitor-social-login": "^8.4.3",
     "@react-oauth/google": "^0.13.5",
     "@revenuecat/purchases-capacitor": "^13.4.0",
