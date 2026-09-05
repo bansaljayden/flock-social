@@ -86,6 +86,10 @@ const {
 // the model could conceivably emit is not a sentinel. Nothing outside this
 // module ever sees it.
 const CEILING = Symbol('advisorFreeText.ceiling');
+// The global daily token wall, distinct from a venue's own ceiling and from
+// a call that merely failed: it lifts at the database's next day, not
+// "shortly" (chat audit, 2026-09-05).
+const GLOBAL_WALL = Symbol('advisorFreeText.globalWall');
 
 // ── Ceilings and bounds (hard constants, same reasoning as advisorPhrasing) ──
 
@@ -623,6 +627,10 @@ function refusalCeiling(resetPhrase) {
   return `Today's questions are used up. They come back ${resetPhrase}, and the questions above still work in the meantime.`;
 }
 
+function refusalGlobalWall(resetPhrase) {
+  return `Roost is busy across Flock today. It comes back ${resetPhrase}, and the questions above still work in the meantime.`;
+}
+
 // THE PATTERNS ARE ASCII AND THE ALPHABET IS NOT. externalText already deletes
 // the invisible and bidi characters that used to break a word in half, and it
 // folds every dash family to a hyphen, so the classic evasions are gone before
@@ -708,7 +716,7 @@ async function chargedCall({ userId, charge, systemInstruction, payload, maxOutp
   // is a call that was never made.
   if (!(await allowGlobalTokens(estimate))) {
     releaseVenueReservation(userId, { tokens: estimate, ...counterFor(charge) });
-    return null;
+    return GLOBAL_WALL;
   }
 
   const config = {
@@ -831,6 +839,9 @@ async function classify({ userId, question }) {
   // time on it. null is the call never happening for a reason on our side.
   if (raw === CEILING) {
     return { mode: 'refused', intentId: null, refusal: refusalCeiling(await ceilingResetPhrase()) };
+  }
+  if (raw === GLOBAL_WALL) {
+    return { mode: 'refused', intentId: null, refusal: refusalGlobalWall(await ceilingResetPhrase()) };
   }
   if (raw === null) return { mode: 'refused', intentId: null, refusal: REFUSAL_BUSY };
 
@@ -1189,6 +1200,9 @@ async function advise({ userId, question, ctx, groundedFacts = [] }) {
   if (out === CEILING) {
     return { mode: 'refusal', text: refusalCeiling(await ceilingResetPhrase()), sources: [] };
   }
+  if (out === GLOBAL_WALL) {
+    return { mode: 'refusal', text: refusalGlobalWall(await ceilingResetPhrase()), sources: [] };
+  }
   if (out === null) return { mode: 'refusal', text: REFUSAL_BUSY, sources: [] };
 
   const valved = applyAdviceValve(out, facts);
@@ -1206,6 +1220,8 @@ function __copyStrings() {
     // varies and the walk should see every shape that can reach an owner.
     refusalCeiling(advisorPhrasing.internals.RESET_UNKNOWN),
     refusalCeiling('in about 6 hours'),
+    refusalGlobalWall(advisorPhrasing.internals.RESET_UNKNOWN),
+    refusalGlobalWall('in about 6 hours'),
     ...Object.values(REFUSAL_BY_REASON),
     ...OUT_OF_SCOPE_PATTERNS.map((p) => p.why),
     ...GUARDRAIL_PATTERNS.map((p) => p.why),
@@ -1239,6 +1255,8 @@ module.exports = {
   REFUSAL_VALVE,
   REFUSAL_BUSY,
   refusalCeiling,
+  refusalGlobalWall,
+  GLOBAL_WALL,
   INJECTION_PATTERNS,
   GUARDRAIL_PATTERNS,
   OUT_OF_SCOPE_PATTERNS,
