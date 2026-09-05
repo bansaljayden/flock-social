@@ -154,7 +154,7 @@ function scriptPayerlessBill() {
     [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, isMember],
     [/FROM bill_splits bs\s+JOIN flocks f/, () => ({ rows: [{ id: 7, paid_by: null, flock_id: 42, flock_name: 'Dinner' }] })],
-    [/SELECT amount FROM bill_split_shares/, () => ({ rows: [{ amount: '25.00' }] })],
+    [/SELECT amount, .*FROM bill_split_shares/, () => ({ rows: [{ amount: '25.00' }] })],
     noBlocks,
   ];
 }
@@ -424,6 +424,28 @@ test('the first settle does notify the payer, and says who claims what', async (
   assert.strictEqual(paid[0].userId, 2, 'one push, to the person who fronted the money');
 });
 
+test('the settle really takes the flock lock, in order, inside the transaction', async () => {
+  // scriptSettle has answered the FOR UPDATE statement since the lock was
+  // added, and nothing checked that the route ever asked. A scripted handler
+  // the route never reaches is a comment, not a test (adversarial audit
+  // 2026-09-04): the fake does not complain about handlers left unused. So
+  // the logged SQL is read back, the way money.test.js pins statements.
+  scriptSettle({ updated: true });
+  const res = await call('POST', '/api/billing/42/settle');
+  assert.strictEqual(res.status, 200, res.text);
+
+  const first = (re) => log.findIndex((q) => re.test(q.sql));
+  const begin = first(/^BEGIN/);
+  const lock = first(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/);
+  const update = first(/UPDATE bill_split_shares SET settled = true/);
+  const commit = first(/^COMMIT/);
+  assert.ok(lock >= 0, 'the lock handler was scripted but the statement was never issued');
+  assert.deepStrictEqual(log[lock].params, [42], 'it must lock THIS flock');
+  assert.ok(begin >= 0 && begin < lock, 'the lock has to be taken inside the transaction');
+  assert.ok(lock < update, 'the UPDATE ran before the lock');
+  assert.ok(update < commit, 'the UPDATE has to commit under the lock');
+});
+
 test('a settle asked for on a bill the caller has no share of is still a 404', async () => {
   handlers = [
     // /settle serialises against /create on the flock row now: one statement
@@ -460,7 +482,7 @@ function scriptUnsettle({ paidBy = 2, updated = true, existing = { settled: true
     [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, isMember],
     [/SELECT id, paid_by FROM bill_splits WHERE flock_id/, () => ({ rows: [{ id: 7, paid_by: paidBy }] })],
     [/UPDATE bill_split_shares SET settled = false/, () => ({ rows: updated ? [{ id: 1, amount: '12.50' }] : [] })],
-    [/SELECT settled FROM bill_split_shares/, () => ({ rows: existing ? [existing] : [] })],
+    [/SELECT settled, .*FROM bill_split_shares/, () => ({ rows: existing ? [existing] : [] })],
     [/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status/, () => ({ rows: [{ user_id: 1 }, { user_id: 2 }] })],
     noBlocks,
   ];
@@ -507,6 +529,55 @@ test('unsettle needs membership, like every other route that touches this bill',
   handlers = [[/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, noMember]];
   const res = await call('POST', '/api/billing/42/unsettle');
   assert.strictEqual(res.status, 403, res.text);
+});
+
+test('taking a settlement back holds the flock lock /create holds, and really issues it', async () => {
+  // THE WRITE WITH NOTHING AROUND IT (adversarial audit 2026-09-04). The
+  // unsettle UPDATE ran on the pool, no transaction, no lock, so it could land
+  // inside /create's read-then-rewrite: /create locks the flock, reads the
+  // shares into a snapshot, the unsettle commits and answers 200, and /create
+  // writes the person back settled = true out of the rows it read before the
+  // tap. The correction vanished and the payer's sheet said they had been
+  // paid. scriptUnsettle answered the FOR UPDATE statement all along, which
+  // proved nothing, because the fake does not notice a handler that is never
+  // reached. The logged SQL is what is checked.
+  scriptUnsettle();
+  const res = await call('POST', '/api/billing/42/unsettle');
+  assert.strictEqual(res.status, 200, res.text);
+
+  const first = (re) => log.findIndex((q) => re.test(q.sql));
+  const begin = first(/^BEGIN/);
+  const lock = first(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/);
+  const update = first(/UPDATE bill_split_shares SET settled = false/);
+  const commit = first(/^COMMIT/);
+  assert.ok(lock >= 0, 'the lock handler was scripted but the statement was never issued');
+  assert.deepStrictEqual(log[lock].params, [42], 'it must lock THIS flock');
+  assert.ok(begin >= 0 && begin < lock, 'the lock has to be taken inside a transaction');
+  assert.ok(lock < update, 'the UPDATE ran before the lock');
+  assert.ok(update < commit, 'the UPDATE has to commit under the lock');
+});
+
+test('a share that carried credit already covers cannot be marked unpaid', async () => {
+  // Ben paid $50, the bill was corrected and his share is $20. His row is
+  // settled by the edit that carried the $50 across (migration 061), not by a
+  // tap, so there is no report to take back, and clearing the flag would put
+  // a person who has paid in full back on the sheet as owing.
+  scriptUnsettle({ updated: false, existing: { settled: true, amount: '20.00', paid_amount: '50.00' } });
+  const res = await call('POST', '/api/billing/42/unsettle');
+  assert.strictEqual(res.status, 409, res.text);
+  assert.strictEqual(res.body.reason, 'credit');
+  assert.ok(!emits.some((e) => e.event === 'share_unsettled'));
+
+  // The rule is in the statement, not only in the branch above it, for the
+  // reason the settle statement carries its own guard: a check-then-write
+  // races the payer's /create.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'billing.js'), 'utf8');
+  const stmt = src.slice(src.indexOf('UPDATE bill_split_shares SET settled = false'));
+  const clause = stmt.slice(0, stmt.indexOf('RETURNING'));
+  assert.match(clause, /paid_amount < amount/, 'the unsettle UPDATE must refuse a share the carried credit covers');
+  // And the fallback read asks for the two columns it decides that from.
+  const sel = log.find((q) => /SELECT settled, .*FROM bill_split_shares/.test(q.sql));
+  assert.match(sel.sql, /SELECT settled, amount, paid_amount FROM bill_split_shares/);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -631,6 +702,63 @@ test('what a member who left already paid comes off the total, so the sheet stil
   assert.strictEqual(cents, 12000, `the bill's rows come to ${cents} cents against a $120 total`);
 });
 
+test('the push after an upward edit names what is still owed, not the new share', async () => {
+  // "You owe Ava $100.00" to somebody who had paid $30 is the sentence that
+  // had Ben paying $130 for a $100 share.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptCreate(THREE, {
+    existingBill: { id: 7, paid_by: 1 },
+    existingShares: [
+      { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '30.00', paid_amount: '0.00' },
+      { user_id: 2, committed: false, settled: true, settled_at: new Date(), amount: '30.00', paid_amount: '0.00' },
+      { user_id: 3, committed: false, settled: false, settled_at: null, amount: '30.00', paid_amount: '0.00' },
+    ],
+  });
+
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 300, tipPercent: 0 });
+  assert.strictEqual(res.status, 201, res.text);
+  await drain();
+
+  const toBen = pushCalls.find((p) => Number(p.userId) === 2 && p.data.type === 'bill_created');
+  assert.ok(toBen, 'Ben owes $70 more and was not told the bill moved');
+  assert.match(toBen.body, /\$70\.00/, `the push asks for the wrong figure: ${toBen.body}`);
+  assert.ok(!/\$100\.00/.test(toBen.body), `the push asks for the whole share: ${toBen.body}`);
+  const toCy = pushCalls.find((p) => Number(p.userId) === 3 && p.data.type === 'bill_created');
+  assert.match(toCy.body, /\$100\.00/, 'Cy paid nothing and owes the whole share');
+});
+
+test('GET /:flockId shows the credit and what is still owed on every share', async () => {
+  // The sheet after a refresh has to say the same thing the 201 body said,
+  // or the $30 credit exists only until the app is reopened.
+  handlers = [
+    [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, isMember],
+    [/SELECT bs\.\*, u\.name AS payer_name/, () => ({
+      rows: [{
+        id: 7, flock_id: 42, total_amount: '300.00', tip_percent: '0.0',
+        split_type: 'equal', paid_by: 1, payer_name: 'Ava', created_at: 'now',
+      }],
+    })],
+    [/SELECT bss\.\*, u\.name FROM bill_split_shares/, () => ({
+      rows: [
+        { user_id: 1, name: 'Ava', amount: '100.00', paid_amount: '0.00', committed: false, settled: true, settled_at: 'now' },
+        { user_id: 2, name: 'Ben', amount: '100.00', paid_amount: '30.00', committed: false, settled: false, settled_at: null },
+        { user_id: 3, name: 'Cy', amount: '20.00', paid_amount: '50.00', committed: false, settled: true, settled_at: 'then' },
+      ],
+    })],
+    noBlocks,
+  ];
+
+  const res = await call('GET', '/api/billing/42');
+  assert.strictEqual(res.status, 200, res.text);
+  const by = Object.fromEntries(res.body.bill.shares.map((s) => [s.userId, s]));
+  assert.strictEqual(by[2].paidAmount, 30);
+  assert.strictEqual(by[2].outstanding, 70);
+  assert.strictEqual(by[3].paidAmount, 50, 'the overpayment is the record of what Cy is owed back');
+  assert.strictEqual(by[3].outstanding, 0);
+  assert.strictEqual(by[1].outstanding, 0);
+  assert.strictEqual(res.body.bill.fullySettled, false);
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 6. Honesty
 //
@@ -706,9 +834,18 @@ test('a non-member reads nothing and settles nothing', async () => {
     ['POST', '/api/billing/42/create'],
     ['POST', '/api/billing/42/ghost-commit'],
   ]) {
-    handlers = [[/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, noMember]];
+    handlers = [
+      [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, noMember],
+      // /create opens its transaction and locks the flock row BEFORE it reads
+      // membership, so that who is in the flock and who the money goes to are
+      // decided under the lock rather than before it (adversarial audit
+      // 2026-09-04). The refusal is a ROLLBACK and then the 403, and the lock
+      // is what has to be answered for the refusal to be reached.
+      [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
+    ];
     const res = await call(method, route, method === 'POST' && route.endsWith('create') ? { totalAmount: 10 } : undefined);
     assert.strictEqual(res.status, 403, `${method} ${route} answered ${res.status}: ${res.text}`);
+    assert.ok(!log.some((q) => /^(INSERT|UPDATE|DELETE)/.test(q.sql)), `${method} ${route} wrote something for a non-member`);
   }
 });
 

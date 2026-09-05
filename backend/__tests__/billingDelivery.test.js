@@ -401,7 +401,7 @@ function scriptPaymentLinks(payer) {
     // These routes hand over the payer's payment handles, so they refuse a
     // blocked payer (2026-08-14). Nobody blocks anybody in this fixture.
     [/SELECT 1 FROM user_blocks/, () => ({ rows: [] })],
-    [/SELECT amount FROM bill_split_shares/, () => ({ rows: [{ amount: '30.00' }] })],
+    [/SELECT amount, .*FROM bill_split_shares/, () => ({ rows: [{ amount: '30.00' }] })],
     [/FROM users WHERE id = \$1/, () => ({ rows: [payer] })],
   ];
 }
