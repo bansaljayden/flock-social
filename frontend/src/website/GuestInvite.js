@@ -112,6 +112,30 @@ const writeStore = (key, value) => {
   }
 };
 
+// The identity this device already holds for a name, under ANY link's key.
+// Guest identity is stored per link token, and a host who regenerates a
+// leaked link strands every guest who already answered: the new link finds
+// no identity, the same name is refused as taken, and the guest is stuck
+// inventing a second one, which double-counts them (guest and DM audit,
+// 2026-09-05). The server accepts a guest token by flock, not by link, so an
+// identity minted under the old link is the right one to resend. Compared
+// the way the server compares names: case-folded, trimmed, one space.
+const sameGuestName = (a, b) => String(a || '').trim().toLowerCase().replace(/\s+/g, ' ')
+  === String(b || '').trim().toLowerCase().replace(/\s+/g, ' ');
+const carriedIdentityFor = (name, exceptKey) => {
+  try {
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i);
+      if (!key || !key.startsWith('flock_guest_') || key === exceptKey) continue;
+      const entry = readStore(key);
+      if (entry && entry.guestToken && sameGuestName(entry.name, name)) return entry.guestToken;
+    }
+  } catch {
+    /* no storage, no memory */
+  }
+  return null;
+};
+
 const clearStore = (key) => {
   try { window.localStorage.removeItem(key); } catch { /* see above */ }
 };
@@ -633,8 +657,8 @@ export default function GuestInvite() {
     window.location.assign(where);
   };
 
-  const submitRsvp = async (status) => {
-    if (busy) return;
+  const submitRsvp = async (status, carried = null) => {
+    if (busy && !carried) return;
     const typed = (editingName || !guest ? name : (guest.name || '')).trim();
     if (!typed) {
       setNameProblem(true);
@@ -663,12 +687,22 @@ export default function GuestInvite() {
         // answering there minted a second identity, a duplicate roster name,
         // and spent one of the per-network identity slots shared wifi lives
         // on. The store is the tabs' common ground.
-        guestToken: (guest && guest.guestToken) || (readStore(storageKey) || {}).guestToken || undefined,
+        guestToken: carried || (guest && guest.guestToken) || (readStore(storageKey) || {}).guestToken || undefined,
       }),
     });
     const body = r.body;
 
     setBusy(null);
+
+    // "Someone already answered as that name": if this device answered under
+    // an earlier link to the same plan, that identity is the answer, and it
+    // is resent once. A token from some other plan falls through to the
+    // create path on the server and comes back refused the same way, at
+    // which point the sentence stands.
+    if (r.status === 409 && body && body.code === 'NAME_TAKEN' && !carried) {
+      const remembered = carriedIdentityFor(typed, storageKey);
+      if (remembered) return submitRsvp(status, remembered);
+    }
 
     if (r.status === 404) {
       // The host revoked the link while this page was open. Say so plainly

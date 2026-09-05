@@ -2061,8 +2061,13 @@ function registerHandlers(io, socket) {
 
       // Send to receiver's personal room
       socket.to(`user:${receiverId}`).emit('new_dm', msg);
-      // Also send back to sender for confirmation
-      socket.emit('new_dm', msg);
+      // And to the whole SENDING ACCOUNT, not this socket alone. An account is
+      // several devices here (the reaction, vote and pin echoes below say so
+      // and go through io for that reason); a socket.emit reached the phone
+      // that sent and left the laptop sitting in the same thread showing
+      // nothing until it reconnected (guest and DM audit, 2026-09-05). The
+      // client dedupes on message id and matches its own optimistic bubble.
+      io.to(`user:${user.id}`).emit('new_dm', msg);
 
       // Push notification for offline DM recipient
       const preview = (text || '').substring(0, 100);
@@ -2312,7 +2317,11 @@ function registerHandlers(io, socket) {
       const safeAddress = typeof venue_address === 'string' ? stripHtml(venue_address.trim()).slice(0, 512) : null;
       if (safeAddress && !moderateText(safeAddress).allowed) return;
       const safeVenueId = typeof venue_id === 'string' ? venue_id.slice(0, 256) : null;
-      const safeRating = Number.isFinite(venue_rating) ? venue_rating : null;
+      // venue_rating is NUMERIC(2,1): 9.9 is the column's ceiling and Google's
+      // scale ends at 5. Anything else used to reach Postgres and come back a
+      // silent failure here (a swallowed 500 on the REST twin). Bounded like
+      // every other field on this event.
+      const safeRating = Number.isFinite(venue_rating) && venue_rating >= 0 && venue_rating <= 5 ? venue_rating : null;
       const safePhoto = safeVenuePhotoUrl(venue_photo_url);
 
       await pool.query(
