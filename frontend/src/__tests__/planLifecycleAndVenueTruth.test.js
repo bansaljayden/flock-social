@@ -318,7 +318,13 @@ test('none of the copy this drop added carries an em dash', () => {
   const regions = [
     ['const confirmFlockPlan = useCallback', 'const openAttendanceSheet'],
     ['const dmTarget = flockFriends.length === 1', 'const handleCreate = async'],
-    ['const handleConfirmVenue = ', 'const assignedVenue'],
+    // End marker moved 2026-09-05 with the code it scopes. handleConfirmVenue
+    // was hoisted out of the vote-panel IIFE so the poll card could call the
+    // same confirm the sheet does, which left `const assignedVenue` about
+    // 1,400 lines downstream of it: the region stopped being the confirm
+    // handler and became most of the screen, and swept up an em dash that has
+    // nothing to do with this drop. renderCard is what follows it now.
+    ['const handleConfirmVenue = ', 'const renderCard ='],
     ["What's your budget tonight?", 'Budget disabled'],
   ];
   for (const [from, to] of regions) {

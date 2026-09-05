@@ -177,6 +177,7 @@ import {
   ComposerPlusSheet,
   MessageList,
   PinStrip,
+  PollCard,
   StatusLine,
   SystemRow,
   TypingRow,
@@ -335,6 +336,11 @@ export const flockReceipt = (message, readers) => {
  * withheld.
  */
 const BILL_ROW_ID = 'bill-card';
+/* The vote's synthetic row. Same shape and same reason as the bill's: it is
+   spliced into the stream so the group can see the vote where the conversation
+   is, and it carries no system_kind, so renderCard's server-authored gate lets
+   it through to the branch that draws it. */
+const POLL_ROW_ID = 'poll-card';
 
 /* One pill per emoji, not one per person.
  *
@@ -1134,6 +1140,33 @@ export default function ChatDetail({
     // venue card is carrying a caption; otherwise `flock.messages` is handed
     // over as it arrived. It cannot be memoised, for the reason at the top of
     // this section: hooks cannot be declared below a conditional return.
+    /* THE VOTE, AS A CARD IN THE STREAM.
+       The sheet stays for browsing and suggesting. What moves here is the vote
+       itself, so scrolling back through a night shows WHEN the group decided
+       and not only what it decided.
+
+       WHERE IT SITS, and why that anchor. There is no "vote opened" timestamp
+       in the schema, so the card is anchored to the first venue card anyone
+       shared in this thread, which is the moment the vote visibly began to a
+       reader. That is an approximation and it is deliberately the honest one
+       available: inventing a real opened_at would be a migration and a server
+       change for a line of chrome. Votes cast from the sheet with no card
+       shared leave no anchor at all, and the card goes on the end.
+
+       ONLY WHILE THERE IS SOMETHING TO SHOW. No votes, no card. A locked plan
+       keeps its card, because the counts are the record of how the group got
+       there, and the system row above it says when. */
+    const pollVoteRows = flock.votes || [];
+    const pollLockedName = (flock.status === 'confirmed' || flock.status === 'completed')
+      ? (flock.venue && flock.venue !== 'TBD' ? flock.venue : null)
+      : null;
+    const pollForCard = pollVoteRows.length > 0;
+    const pollAnchorMs = (() => {
+      if (!pollForCard) return NaN;
+      const firstCard = (flock.messages || []).find((m) => m.message_type === 'venue_card' && m.venue_data);
+      return firstCard?.sentAt ? new Date(firstCard.sentAt).getTime() : NaN;
+    })();
+
     const sourceRowById = new Map((flock.messages || []).map((m) => [m.id, m]));
     const originalRow = (m) => (m && sourceRowById.get(m.id)) || m;
     const needsDressing = searchActive
@@ -1184,25 +1217,118 @@ export default function ChatDetail({
        re-rendered. Appending is the fallback for a bill whose createdAt did
        not parse, which is also the common case: a bill is usually the newest
        thing in the room. */
-    const streamRows = (billForCard && !searchActive) ? (() => {
-      const created = billForCard.createdAt ? new Date(billForCard.createdAt).getTime() : NaN;
-      let at = listRows.length;
-      if (Number.isFinite(created)) {
-        const after = listRows.findIndex((m) => {
+    /* THE TWO ROWS THAT ARE NOT MESSAGES: the bill and the vote. Both are
+       placed by a timestamp so they sit where the thing they describe
+       happened, and both are dropped while a search is open, because a search
+       shows what matches and a card that ignored the query would be the one
+       thing on screen that is not a result.
+
+       The placement rule was written for the bill and is now shared, rather
+       than copied: a second private copy of it is how the two would come to
+       disagree about where a card belongs. A row with no parseable anchor goes
+       on the end, which is also the common case for a bill, since a bill is
+       usually the newest thing in the room. */
+    const spliceByTime = (rows, row, whenMs) => {
+      let at = rows.length;
+      if (Number.isFinite(whenMs)) {
+        // The first row that is NEWER than the anchor. Synthetic rows carry no
+        // sentAt, so they read as NaN here and are skipped rather than
+        // treated as the boundary.
+        const after = rows.findIndex((m) => {
           const t = m.sentAt ? new Date(m.sentAt).getTime() : NaN;
-          return Number.isFinite(t) && t > created;
+          return Number.isFinite(t) && t > whenMs;
         });
         if (after >= 0) at = after;
       }
-      const withBill = listRows.slice();
-      withBill.splice(at, 0, { id: BILL_ROW_ID, message_type: 'system' });
-      return withBill;
-    })() : listRows;
+      const next = rows.slice();
+      next.splice(at, 0, row);
+      return next;
+    };
+
+    let streamRows = listRows;
+    if (!searchActive) {
+      if (pollForCard) {
+        streamRows = spliceByTime(streamRows, { id: POLL_ROW_ID, message_type: 'system' }, pollAnchorMs);
+      }
+      if (billForCard) {
+        const created = billForCard.createdAt ? new Date(billForCard.createdAt).getTime() : NaN;
+        streamRows = spliceByTime(streamRows, { id: BILL_ROW_ID, message_type: 'system' }, created);
+      }
+    }
 
     // A venue card is the one message shape the module does not own, so the
     // screen draws it and the module calls back for it. Same vote arithmetic
     // as the card this replaces, same exit through leaveChatScreen, and the
     // count is the real tally or nothing at all.
+    /* THE THREE VOTE ACTIONS, HOISTED OUT OF THE VOTE PANEL on 2026-09-05.
+       They were declared inside the `showVotePanel &&` IIFE, which meant only
+       that sheet could reach them. The poll card below needs the same three,
+       and this file already carries the scar from the alternative: the note on
+       the flock send path records a venue card keeping "its own private copy
+       of this whole function" and inheriting none of its fixes. Two surfaces
+       casting a vote through two implementations is how they come to disagree
+       about the tally in front of the group.
+
+       Moved verbatim. The only change is the indentation and where they are
+       declared; every comment below is the one that was already on them. */
+    const flockVotesAll = flock.votes || [];
+
+          const handleQuickVote = (venueName, venueType, venuePlaceId) => {
+      const existingVote = flockVotesAll.find(v => v.venue === venueName);
+      if (existingVote) {
+        if (existingVote.voters.includes('You')) return; // already voted
+        const newVotes = flockVotesAll.map(v => ({
+          ...v,
+          voters: v.venue === venueName
+            ? [...v.voters, 'You']
+            : v.voters.filter(x => x !== 'You')
+        }));
+        updateFlockVotes(selectedFlockId, newVotes);
+      } else {
+        const newVotes = [...flockVotesAll.map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') })), { venue: venueName, type: venueType || 'Venue', place_id: venuePlaceId || null, voters: ['You'] }];
+        updateFlockVotes(selectedFlockId, newVotes);
+      }
+    };
+
+    const handleUnvote = () => {
+      const newVotes = flockVotesAll
+        .map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') }))
+        .filter(v => v.voters.length > 0 || (v.guestCount || 0) > 0);
+      updateFlockVotes(selectedFlockId, newVotes);
+    };
+
+          // Confirm means confirm. This used to save the venue and nothing
+    // else, so a host who tapped the button labelled Confirm got a
+    // venue-assigned flock still reading "Still Planning", and the plan
+    // could never move on. The venue write has to land first: locking a
+    // plan onto a venue the server just refused would tell everyone it
+    // is happening somewhere it is not.
+    // Confirm takes the vote row, not a name. The lookup used to be by name
+    // in the nearby map pins, so a venue voted from a shared card or the
+    // popular list saved with no place id and the plan lost Details,
+    // Directions, Check In, the map and the feedback card. The row's own
+    // place id, then the chat's venue card, then the pins. One PUT
+    // carries the venue and the confirmation, so members get one push.
+    const handleConfirmVenue = (row) => {
+      const venueName = typeof row === 'string' ? row : row.venue;
+      const rowPlaceId = typeof row === 'string' ? null : (row.place_id || null);
+      const card = (flock.messages || []).find(m => m.message_type === 'venue_card' && m.venue_data && (
+        (rowPlaceId && m.venue_data.place_id === rowPlaceId) || m.venue_data.name === venueName
+      ))?.venue_data || null;
+      const pin = allVenues.find(v => (rowPlaceId && v.place_id === rowPlaceId) || v.name === venueName) || null;
+      setShowVotePanel(false);
+      return updateFlockVenue(selectedFlockId, {
+        name: venueName,
+        addr: card?.addr || pin?.addr || pin?.formatted_address || '',
+        place_id: rowPlaceId || card?.place_id || pin?.place_id || null,
+        lat: card?.lat || pin?.location?.latitude || null,
+        lng: card?.lng || pin?.location?.longitude || null,
+        photo_url: card?.photo_url || pin?.photo_url || null,
+        rating: card?.rating || card?.stars || pin?.stars || pin?.rating || null,
+        status: 'confirmed',
+      });
+    };
+
     const renderCard = (m) => {
       /* THE PLAN'S OWN EVENTS (migration 067). groupRows already collapses
          consecutive system rows into one ownerless run and MessageGroup
@@ -1256,6 +1382,54 @@ export default function ChatDetail({
          getPaymentLinks answers, and BillCard treats an unstated capability as
          unstated rather than as "no", which keeps the label honest instead of
          promising a cash-only night the server never described. */
+      if (m.id === POLL_ROW_ID) {
+        /* The footer's two figures are read separately on purpose. A vote
+           total is not a voter total: a guest voting from an invite link adds
+           to a row's count without adding a name, so the row counts and the
+           footer count are independent figures and the card is documented not
+           to guess one from the other. This is the same arithmetic the sheet
+           does, from the same hoisted list, so the two surfaces cannot print
+           different tallies for the same night. */
+        const voterNames = new Set(pollVoteRows.flatMap((v) => v.voters || []));
+        const guestVotes = pollVoteRows.reduce((sum, v) => sum + (v.guestCount || 0), 0);
+        const options = [...pollVoteRows]
+          .sort((a, b) => voteTotal(b) - voteTotal(a))
+          .map((v) => ({
+            id: v.place_id || v.venue,
+            name: v.venue,
+            voteCount: voteTotal(v),
+            voted: (v.voters || []).includes('You'),
+            // Only when the row really carries one. The card draws a star for
+            // a numeric rating and nothing at all otherwise, so passing a
+            // guess here would put a figure on screen the server never sent.
+            ...(typeof v.rating === 'number' ? { rating: v.rating } : {}),
+          }));
+        return (
+          <PollCard
+            title="Where are we going?"
+            options={options}
+            votedCount={voterNames.size + guestVotes}
+            memberCount={flock.memberCount ?? (flock.members || []).length}
+            isHost={!!flock.creatorId && String(flock.creatorId) === String(authUser?.id)}
+            lockedName={pollLockedName}
+            /* Toggle, matching the venue card row on this same screen: a tap
+               on the option you already picked takes the vote back. The
+               sheet's quick vote returns early instead, because that surface
+               has its own separate unvote control and this one does not. */
+            onVote={(o) => {
+              if (o.voted) handleUnvote();
+              else handleQuickVote(o.name, 'Venue', o.id === o.name ? null : o.id);
+            }}
+            /* The SAME confirm the sheet runs, which is the whole reason it
+               was hoisted. It writes the venue and the status in one PUT, so
+               members get one push and the plan cannot end up confirmed at a
+               venue the server refused. */
+            onLock={(o) => handleConfirmVenue({ venue: o.name, place_id: o.id === o.name ? null : o.id })}
+            onOpen={() => setShowVotePanel(true)}
+          />
+        );
+      }
+
       if (m.id === BILL_ROW_ID) {
         const roster = {};
         for (const mem of flock.members || []) {
@@ -2571,7 +2745,9 @@ export default function ChatDetail({
 
         {/* Vote Panel */}
         {showVotePanel && (() => {
-          const flockVotes = flock.votes || [];
+          // The hoisted list, so the sheet and the poll card count the same
+          // rows. It was declared here when this sheet was the only surface.
+          const flockVotes = flockVotesAll;
           const myVote = flockVotes.find(v => v.voters.includes('You'))?.venue || null;
           // Guests vote from the invite link and stay anonymous, so they add to
           // the totals without adding a name.
@@ -2583,62 +2759,6 @@ export default function ChatDetail({
           // which meant a host who had already picked a venue had no confirm
           // control anywhere and the plan could never leave planning.
           const planLocked = flock.status === 'confirmed' || flock.status === 'completed';
-
-          const handleQuickVote = (venueName, venueType, venuePlaceId) => {
-            const existingVote = flockVotes.find(v => v.venue === venueName);
-            if (existingVote) {
-              if (existingVote.voters.includes('You')) return; // already voted
-              const newVotes = flockVotes.map(v => ({
-                ...v,
-                voters: v.venue === venueName
-                  ? [...v.voters, 'You']
-                  : v.voters.filter(x => x !== 'You')
-              }));
-              updateFlockVotes(selectedFlockId, newVotes);
-            } else {
-              const newVotes = [...flockVotes.map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') })), { venue: venueName, type: venueType || 'Venue', place_id: venuePlaceId || null, voters: ['You'] }];
-              updateFlockVotes(selectedFlockId, newVotes);
-            }
-          };
-
-          const handleUnvote = () => {
-            const newVotes = flockVotes
-              .map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') }))
-              .filter(v => v.voters.length > 0 || (v.guestCount || 0) > 0);
-            updateFlockVotes(selectedFlockId, newVotes);
-          };
-
-          // Confirm means confirm. This used to save the venue and nothing
-          // else, so a host who tapped the button labelled Confirm got a
-          // venue-assigned flock still reading "Still Planning", and the plan
-          // could never move on. The venue write has to land first: locking a
-          // plan onto a venue the server just refused would tell everyone it
-          // is happening somewhere it is not.
-          // Confirm takes the vote row, not a name. The lookup used to be by name
-          // in the nearby map pins, so a venue voted from a shared card or the
-          // popular list saved with no place id and the plan lost Details,
-          // Directions, Check In, the map and the feedback card. The row's own
-          // place id, then the chat's venue card, then the pins. One PUT
-          // carries the venue and the confirmation, so members get one push.
-          const handleConfirmVenue = (row) => {
-            const venueName = typeof row === 'string' ? row : row.venue;
-            const rowPlaceId = typeof row === 'string' ? null : (row.place_id || null);
-            const card = (flock.messages || []).find(m => m.message_type === 'venue_card' && m.venue_data && (
-              (rowPlaceId && m.venue_data.place_id === rowPlaceId) || m.venue_data.name === venueName
-            ))?.venue_data || null;
-            const pin = allVenues.find(v => (rowPlaceId && v.place_id === rowPlaceId) || v.name === venueName) || null;
-            setShowVotePanel(false);
-            return updateFlockVenue(selectedFlockId, {
-              name: venueName,
-              addr: card?.addr || pin?.addr || pin?.formatted_address || '',
-              place_id: rowPlaceId || card?.place_id || pin?.place_id || null,
-              lat: card?.lat || pin?.location?.latitude || null,
-              lng: card?.lng || pin?.location?.longitude || null,
-              photo_url: card?.photo_url || pin?.photo_url || null,
-              rating: card?.rating || card?.stars || pin?.stars || pin?.rating || null,
-              status: 'confirmed',
-            });
-          };
 
           // Ensure assigned venue is in votes list
           const assignedVenue = flock.venue && flock.venue !== 'TBD' ? flock.venue : null;
