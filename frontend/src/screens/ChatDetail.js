@@ -176,6 +176,7 @@ import {
   ChatInputBar,
   ComposerPlusSheet,
   MessageList,
+  NudgeRow,
   PinStrip,
   PollCard,
   StatusLine,
@@ -341,6 +342,9 @@ const BILL_ROW_ID = 'bill-card';
    is, and it carries no system_kind, so renderCard's server-authored gate lets
    it through to the branch that draws it. */
 const POLL_ROW_ID = 'poll-card';
+/* The nudge's synthetic row. Same shape as the other two: no system_kind, so
+   renderCard's server-authored gate lets it through. */
+const NUDGE_ROW_ID = 'nudge-row';
 
 /* One pill per emoji, not one per person.
  *
@@ -836,6 +840,38 @@ export default function ChatDetail({
       return 'reconnecting';
     };
     const [connectionState, setConnectionState] = React.useState(readConnection);
+
+    /* WHICH NUDGES THIS READER HAS SENT AWAY. Declared up here with the other
+       hooks because the row that uses it is built below a conditional return
+       and hooks cannot go there.
+
+       Kept in state AND in localStorage, and read through the helper below
+       rather than from state alone. State is what makes the dismissal
+       immediate; storage is what stops the row coming back on the next reload,
+       which is the difference between a nudge and the banner this replaces.
+
+       Storage can throw outright in a private window or with site data
+       blocked, so every access is guarded and a failure reads as "not
+       dismissed". That is the safe direction here: the reader sees a nudge
+       again, which is a small annoyance, rather than the app silently
+       swallowing a prompt it had no way to know was still wanted. */
+    const [nudgeDismissed, setNudgeDismissed] = React.useState({});
+    const dismissNudge = React.useCallback((key) => {
+      setNudgeDismissed((prev) => (prev[key] ? prev : { ...prev, [key]: true }));
+      try {
+        localStorage.setItem(`flock_nudge_${key}`, '1');
+      } catch (err) {
+        /* The dismissal still holds for this session through the state above. */
+      }
+    }, []);
+    const nudgeIsDismissed = React.useCallback((key) => {
+      if (nudgeDismissed[key]) return true;
+      try {
+        return localStorage.getItem(`flock_nudge_${key}`) === '1';
+      } catch (err) {
+        return false;
+      }
+    }, [nudgeDismissed]);
     React.useEffect(() => {
       const sample = () => setConnectionState(readConnection());
       sample();
@@ -1167,6 +1203,42 @@ export default function ChatDetail({
       return firstCard?.sentAt ? new Date(firstCard.sentAt).getTime() : NaN;
     })();
 
+    /* THE NUDGE, and every rule that governs it lives here. NudgeRow draws a
+       nudge the parent has already decided to show, the same way every other
+       file in that folder takes its whole world as props.
+
+       IT REPLACES THE 40pt MOMENTUM METER pinned under the header. A prompt
+       that fires on a healthy plan is a banner, and banners between the header
+       and the first message are the thing this rebuild exists to remove, so
+       the gates below are the feature rather than trimming around it:
+
+         - Only when the plan is actually STUCK. No venue has been suggested,
+           so the group is stalled at step one, which is the failure the whole
+           product is about.
+         - Not in an empty thread. A flock nobody has spoken in yet is not
+           stuck, it is new, and greeting somebody with a prompt is the banner
+           again.
+         - Not while somebody is typing. A prompt landing mid-sentence is an
+           interruption, and what it is asking for may be about to happen.
+         - Not once the plan locks, or is called off. There is nothing left to
+           nudge toward.
+         - Not once dismissed, and that is remembered across reloads.
+
+       ONE NUDGE, not a queue. There is exactly one kind today; a second would
+       need a priority order here, not a second row on screen. */
+    const nudgeKey = `${flock.id}:no_venue`;
+    const nudgeForCard = (
+      pollVoteRows.length === 0
+      && flock.status !== 'confirmed'
+      && flock.status !== 'completed'
+      && flock.status !== 'cancelled'
+      && (flock.messages || []).length > 0
+      && !isTyping
+      && !nudgeIsDismissed(nudgeKey)
+    )
+      ? { key: nudgeKey, text: 'Nobody has picked a place yet.', actionLabel: 'Open the vote' }
+      : null;
+
     const sourceRowById = new Map((flock.messages || []).map((m) => [m.id, m]));
     const originalRow = (m) => (m && sourceRowById.get(m.id)) || m;
     const needsDressing = searchActive
@@ -1253,6 +1325,13 @@ export default function ChatDetail({
       if (billForCard) {
         const created = billForCard.createdAt ? new Date(billForCard.createdAt).getTime() : NaN;
         streamRows = spliceByTime(streamRows, { id: BILL_ROW_ID, message_type: 'system' }, created);
+      }
+      // The nudge goes last and carries no anchor, so it lands on the end. The
+      // other two describe a moment in the scrollback; this one describes the
+      // state of the plan right now, and a prompt about the present belongs
+      // where the reader already is.
+      if (nudgeForCard) {
+        streamRows = spliceByTime(streamRows, { id: NUDGE_ROW_ID, message_type: 'system' }, NaN);
       }
     }
 
@@ -1382,6 +1461,22 @@ export default function ChatDetail({
          getPaymentLinks answers, and BillCard treats an unstated capability as
          unstated rather than as "no", which keeps the label honest instead of
          promising a cash-only night the server never described. */
+      if (m.id === NUDGE_ROW_ID) {
+        return (
+          <NudgeRow
+            text={nudgeForCard.text}
+            actionLabel={nudgeForCard.actionLabel}
+            /* Acting does NOT dismiss. The nudge's condition is that nobody
+               has picked a place, so voting clears it on its own and opening
+               the sheet without voting leaves it true. Dismissing on the way
+               in would hide a prompt whose reason had not gone away, which is
+               the same lie as a banner that cannot be closed. */
+            onAction={() => setShowVotePanel(true)}
+            onDismiss={() => dismissNudge(nudgeForCard.key)}
+          />
+        );
+      }
+
       if (m.id === POLL_ROW_ID) {
         /* The footer's two figures are read separately on purpose. A vote
            total is not a voter total: a guest voting from an invite link adds
