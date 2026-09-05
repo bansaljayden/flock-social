@@ -73,6 +73,8 @@ import './chat.css';
  *   atTop         the whole thread is loaded, so no scrollback control
  *   olderLoading  a page is on the wire
  *   bottomInset   space under the last row, for the composer and the keyboard
+ *   registerScroller  (el) => void, handed the scroller node itself
+ *   onTouch       one handler for the whole touch sequence on the scroller
  *   emptyState    node, drawn when there are no rows at all AND nothing is on
  *                 the wire. A thread still loading is not an empty thread
  *   loadingState  node, drawn while the first page is on the wire. Passing it
@@ -88,6 +90,31 @@ import './chat.css';
  * keep their identity between renders, which means `useCallback` in the
  * screen. A handler rebuilt every render re-renders every row in the thread,
  * and typing alone fires several events a second.
+ *
+ * THE TWO PROPS THE KEYBOARD DOCK NEEDS, added by the integration pass on
+ * 2026-09-05, and why a scroller that keeps its node to itself was not enough.
+ *
+ * `useKeyboardComposer` is the hook that makes the composer ride the keyboard,
+ * and it cannot do its job through props alone. It needs THIS element, because
+ * three of the things it does are measurements and mutations of a real DOM
+ * node: it slides the scroller with an inline transform while the keyboard
+ * travels, it reads `scrollHeight - scrollTop - clientHeight` before the slide
+ * and puts that exact distance back after the layout snaps, and it refuses to
+ * dismiss on a drag unless the thread is already pinned to the bottom. Without
+ * the node it silently does none of the three: the restore is skipped, and the
+ * bottom of the conversation then jumps by the height of the keyboard on the
+ * frame the shell re-lays-out. So `registerScroller` hands the node over. It is
+ * a callback ref, it is called with null on unmount like any other, and it does
+ * not take the scroller away from this component, which still owns every scroll
+ * rule above.
+ *
+ * `onTouch` is ONE prop and not three because the hook's `dismissOnDrag`
+ * dispatches on `event.type` itself: it wants touchstart to record where the
+ * finger landed, touchmove to measure the travel, and touchend AND touchcancel
+ * to forget it. Wiring three named handlers is how the cancel gets forgotten,
+ * and a forgotten cancel leaves a stale start coordinate that makes the NEXT
+ * touch anywhere in the thread read as a 300px drag. All four go to the same
+ * function here, which is what the hook is written for.
  */
 
 /* THE FOLLOW BAND, and why it is two numbers and not one.
@@ -150,6 +177,8 @@ export default function MessageList({
   atTop = false,
   olderLoading = false,
   bottomInset = 0,
+  registerScroller,
+  onTouch,
   emptyState = null,
   loadingState = null,
   onLongPress,
@@ -161,6 +190,21 @@ export default function MessageList({
 }) {
   const list = Array.isArray(rows) ? rows : NO_ROWS;
   const scrollerRef = useRef(null);
+  /* The scroller is held twice: here, for the scroll rules, and by whoever
+     asked for it. Both writes happen in one callback ref rather than in an
+     effect, because the keyboard dock reads this node inside a LAYOUT effect
+     of its own and a plain effect would hand it over one paint too late.
+
+     `registerScroller` has to keep its identity between renders or React
+     detaches and reattaches the ref on every one of them, which is a null
+     followed by an element on every keystroke in the composer. The hook's
+     `registerList` is a `useCallback` with no dependencies, so it does. An
+     inline arrow from a screen would not, which is why this is documented
+     rather than left to be discovered. */
+  const attachScroller = useCallback((el) => {
+    scrollerRef.current = el || null;
+    if (typeof registerScroller === 'function') registerScroller(el || null);
+  }, [registerScroller]);
   const nearBottomRef = useRef(true);
   const mountedRef = useRef(false);
   const prevRef = useRef({ firstId: null, lastId: null, height: 0, count: 0 });
@@ -321,9 +365,16 @@ export default function MessageList({
 
   return (
     <div
-      ref={scrollerRef}
+      ref={attachScroller}
       className="chat-scroller"
       onScroll={onScroll}
+      /* All four, to one function. See the note on `onTouch` above: the hook
+         reads the type off the event, and the cancel is the one that stops a
+         lifted finger from being remembered into the next gesture. */
+      onTouchStart={onTouch}
+      onTouchMove={onTouch}
+      onTouchEnd={onTouch}
+      onTouchCancel={onTouch}
       style={{
         flex: 1,
         minHeight: 0,
