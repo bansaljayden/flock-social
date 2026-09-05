@@ -27,7 +27,13 @@ const {
   invalidateDmRelationshipCache,
   NOT_CONNECTED_MESSAGE,
 } = require('../utils/relationships');
-const { pushIfOfflineDebounced } = require('../services/pushHelper');
+// isUserOnline is the DELIVERY signal and nothing else: a socket sitting in
+// `user:{id}` means the emit went out over an open connection, which is what
+// "Delivered" claims. pushHelper's own comment above that function is the
+// reason it may not be borrowed for the OPENED half — presence is not
+// attention, and a laptop tab left open would otherwise report a person as
+// reading their messages for as long as the tab lived.
+const { pushIfOfflineDebounced, isUserOnline } = require('../services/pushHelper');
 // Round 17: the session revalidator re-verifies the handshake token, so it must
 // accept the same (and only the same) algorithms the handshake did. Without the
 // pin, a future change to how JWT_SECRET is loaded (a PEM/KeyObject) could
@@ -812,6 +818,219 @@ async function emitToFlockMembers(io, flockId, event, payload, recipients) {
   return ids;
 }
 
+// --- Read receipts ---------------------------------------------------------
+//
+// Migration 065. Four writers, and they are here rather than in
+// routes/messages.js for one reason: a receipt names a PERSON to other people,
+// so every one of them ends in a block-aware fan-out, and the block-aware
+// fan-out lives in this file. Both transports call these, so the REST door and
+// the socket door cannot answer the same question two different ways — the
+// rule the image constants at the top of this file already follow.
+//
+// utils/messageStatus.js is the other half and has no imports at all: it turns
+// stored state into the word StatusLine draws. This half writes the state.
+//
+// WHAT NEVER RECEIPTS. A moderator-hidden row and an unsent row are excluded
+// from every DM predicate below, because they are excluded from every read
+// path in routes/messages.js and a receipt on a message nobody can see is a
+// receipt about nothing. Blocked and banned people are excluded by the fan-out
+// (getInvisibleUserIds covers both) and, for DMs, by the block check the
+// callers make before they get here.
+//
+// DELIVERED VS OPENED. Delivered is "the bytes reached a device" and is
+// asserted by a live emit or by the recipient's own client pulling the thread.
+// Opened is "a person had this thread on screen" and is asserted ONLY by the
+// recipient's client saying so. Nothing here infers the second from the first.
+// The safe direction IS inferred: opening sets both, so every reader can test
+// one column and utils/messageStatus.js can rank the two words without
+// checking for the impossible pair.
+
+/**
+ * "Did this emit reach a device?", asked the only way the server can ask it.
+ *
+ * isUserOnline reads io.sockets.adapter.rooms, and a broadcaster that has no
+ * adapter behind it (a partial stub, or a shape a future Socket.io version
+ * changes) throws rather than answering. That must not become a claim: this
+ * answers FALSE for anything it cannot inspect, so an unreadable broadcaster
+ * proves no delivery instead of asserting one. Same direction attentiveTokens
+ * takes one function below it in services/pushHelper.js — "a room with no
+ * socket registry behind it names no device" — and the safe direction here,
+ * because the cost of a false negative is a receipt that arrives a moment
+ * later from the recipient's own client and the cost of a false positive is a
+ * receipt that was never true.
+ */
+function deliveredToLiveSocket(io, userId) {
+  try {
+    return isUserOnline(io, userId);
+  } catch (_) {
+    return false;
+  }
+}
+
+// The receipt event the flock side emits. One shape from every writer, so a
+// client can merge on userId: `name` rides when the caller has it (the roster
+// read has names, a send-time delivery sweep does not) and a client that
+// already holds the roster from GET /flocks/:id/messages never needs it.
+function flockReadPayload(flockId, userId, name, row) {
+  return {
+    flockId: Number(flockId),
+    userId: Number(userId),
+    ...(name ? { name } : {}),
+    lastDeliveredMessageId: Number(row.last_delivered_message_id) || 0,
+    lastOpenedMessageId: Number(row.last_opened_message_id) || 0,
+  };
+}
+
+/**
+ * The reader's own delivery watermark, moved forward only.
+ *
+ * The movement predicate is load-bearing rather than an optimisation: this is
+ * called from the history read, which fires on every reconnect, every
+ * background catch-up and every scroll to the top of a thread. Without it a
+ * member re-opening a quiet flock would fan a receipt that says nothing new
+ * out to every other member, every time.
+ *
+ * Membership is the UPDATE's own predicate, the same shape as unsend and the
+ * read cursor in routes/messages.js, so there is no check-then-act window and
+ * a non-member simply moves nothing.
+ *
+ * Returns true when the watermark actually moved.
+ */
+async function markFlockDelivered(io, flockId, readerId, readerName, upToId) {
+  const id = asId(flockId);
+  const upTo = asId(upToId);
+  if (id === null || upTo === null || !readerId) return false;
+  const result = await pool.query(
+    `UPDATE flock_members
+        SET last_delivered_message_id = $3
+      WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'
+        AND last_delivered_message_id < $3
+      RETURNING last_delivered_message_id, last_opened_message_id`,
+    [id, readerId, upTo]
+  );
+  if (result.rows.length === 0) return false;
+  if (io) {
+    // The ACTOR is the reader, not the sender: "who must not be told that this
+    // person read their message" is a question about the READER's blocks, so
+    // the fan-out is keyed on them. A room broadcast would hand the reader's
+    // identity to somebody they blocked, which is round 4's finding one event
+    // later.
+    await emitToFlockExcludingBlocked(io, id, readerId, 'flock_read',
+      flockReadPayload(id, readerId, readerName, result.rows[0]));
+  }
+  return true;
+}
+
+/**
+ * The reader's own OPEN watermark. Sets the delivery watermark alongside it,
+ * which is the "opened implies delivered" invariant the readers depend on:
+ * a thread can be opened from a push without its history read ever running.
+ *
+ * GREATEST rather than a movement predicate, and no movement predicate on the
+ * emit either, because this one is a deliberate act with a rate limiter in
+ * front of it on both transports — and the caller needs to tell "not a member"
+ * (no rows) from "already at this point" (a row, nothing moved) so it can
+ * answer 404 or 200 rather than guessing.
+ *
+ * Returns the updated row, or null when the caller is not an accepted member.
+ */
+async function markFlockOpened(io, flockId, readerId, readerName, upToId) {
+  const id = asId(flockId);
+  const upTo = asId(upToId);
+  if (id === null || upTo === null || !readerId) return null;
+  const result = await pool.query(
+    `UPDATE flock_members
+        SET last_opened_message_id = GREATEST(last_opened_message_id, $3),
+            last_delivered_message_id = GREATEST(last_delivered_message_id, $3)
+      WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'
+      RETURNING last_delivered_message_id, last_opened_message_id`,
+    [id, readerId, upTo]
+  );
+  if (result.rows.length === 0) return null;
+  if (io) {
+    await emitToFlockExcludingBlocked(io, id, readerId, 'flock_read',
+      flockReadPayload(id, readerId, readerName, result.rows[0]));
+  }
+  return result.rows[0];
+}
+
+// The DM receipt predicates. A DM has one recipient, so the receipt is a
+// property of the row rather than a watermark — and the row's own visibility
+// rules ride with it: a taken-down or unsent message is gone from every read
+// path in routes/messages.js, so it must not generate a receipt either.
+//
+// `upToId` bounds the sweep to what the client claims to have. Null means
+// "everything from this person", which is what a catch-up ack means.
+const DM_RECEIPT_SCOPE = `
+      receiver_id = $1 AND sender_id = $2
+  AND COALESCE(is_hidden, false) = false AND sender_deleted_at IS NULL
+  AND ($3::int IS NULL OR id <= $3)`;
+
+/**
+ * Mark DMs from `senderId` to `receiverId` delivered, and tell the sender.
+ *
+ * The block check is INSIDE by default and fails closed, because this is
+ * called from four places and one of them forgetting is how a blocked pair
+ * starts exchanging live receipts. `opts.blockChecked` is for the callers that
+ * have just run isBlockedBetween on this exact pair (the thread read does it
+ * twice already) and exists so the hottest read does not ask a third time.
+ *
+ * Returns the ids that moved, which is empty on a repeat: every predicate is
+ * `IS NULL`, so a second call writes nothing and emits nothing.
+ */
+async function markDmDelivered(io, receiverId, senderId, upToId, opts = {}) {
+  if (!receiverId || !senderId || Number(receiverId) === Number(senderId)) return [];
+  if (!opts.blockChecked && await isBlockedBetween(receiverId, senderId)) return [];
+  const upTo = upToId == null ? null : asId(upToId);
+  if (upToId != null && upTo === null) return [];
+  const result = await pool.query(
+    `UPDATE direct_messages SET delivered_at = NOW()
+      WHERE ${DM_RECEIPT_SCOPE} AND delivered_at IS NULL
+      RETURNING id`,
+    [receiverId, senderId, upTo]
+  );
+  const ids = result.rows.map((r) => r.id);
+  if (ids.length && io) {
+    // To the SENDER's room and nowhere else. The receipt is the sender's fact
+    // about their own message; the reader already knows they received it.
+    io.to(`user:${senderId}`).emit('dm_delivered', {
+      withUserId: Number(receiverId),
+      messageIds: ids,
+    });
+  }
+  return ids;
+}
+
+/**
+ * Mark DMs from `senderId` to `receiverId` opened, and tell the sender.
+ *
+ * Sets delivered_at alongside, for the same reason markFlockOpened does: a
+ * thread opened straight from a push never ran a delivery sweep, and a row
+ * that is opened but not delivered would make every reader check two columns
+ * to rule out a state that cannot happen.
+ */
+async function markDmOpened(io, receiverId, senderId, upToId, opts = {}) {
+  if (!receiverId || !senderId || Number(receiverId) === Number(senderId)) return [];
+  if (!opts.blockChecked && await isBlockedBetween(receiverId, senderId)) return [];
+  const upTo = upToId == null ? null : asId(upToId);
+  if (upToId != null && upTo === null) return [];
+  const result = await pool.query(
+    `UPDATE direct_messages
+        SET opened_at = NOW(), delivered_at = COALESCE(delivered_at, NOW())
+      WHERE ${DM_RECEIPT_SCOPE} AND opened_at IS NULL
+      RETURNING id`,
+    [receiverId, senderId, upTo]
+  );
+  const ids = result.rows.map((r) => r.id);
+  if (ids.length && io) {
+    io.to(`user:${senderId}`).emit('dm_opened', {
+      withUserId: Number(receiverId),
+      messageIds: ids,
+    });
+  }
+  return ids;
+}
+
 // --- Venue content viewers -------------------------------------------------
 //
 // `venue_content:{placeId}` holds the sockets that have a venue's PUBLIC UGC on
@@ -1374,7 +1593,11 @@ function registerHandlers(io, socket) {
         );
         const invisible = new Set(await getInvisibleUserIds(user.id));
         const preview = (message_text || '').substring(0, 100);
-        socket.emit('new_message', message);
+        // The echo carries 'sent' and only the echo does: the fan-out copies
+        // below reach people this message is not from, and a receipt on
+        // somebody else's row is a receipt about nothing. Same rule as the
+        // REST twin in routes/messages.js.
+        socket.emit('new_message', { ...message, status: 'sent' });
         for (const m of members.rows) {
           if (invisible.has(m.user_id)) continue;
           io.to(`user:${m.user_id}`).emit('new_message', message);
@@ -1390,6 +1613,39 @@ function registerHandlers(io, socket) {
             preview,
             { type: 'flock_message', flockId: String(flockId), senderId: String(user.id), messageId: String(message.id) }
           ).catch(() => {});
+        }
+
+        // DELIVERY, on the way out — the socket twin of the block in
+        // routes/messages.js, and the same three rules. A member with a live
+        // socket just took the emit, so the bytes reached a device. One UPDATE
+        // over the online members, not one per member. The receipt goes to the
+        // sender alone, because telling the rest of the room would need each
+        // reader's own block list and the sender's is already in hand.
+        //
+        // Its own try/catch rather than the fan-out's: the fan-out catch below
+        // fails CLOSED and tells the sender live delivery is delayed, which is
+        // the right answer for a message that did not go out and a false alarm
+        // for a receipt that did not.
+        try {
+          const online = members.rows
+            .map((m) => m.user_id)
+            .filter((id) => !invisible.has(id) && deliveredToLiveSocket(io, id));
+          if (online.length > 0) {
+            const moved = await pool.query(
+              `UPDATE flock_members
+                  SET last_delivered_message_id = $3
+                WHERE flock_id = $1 AND user_id = ANY($2::int[]) AND status = 'accepted'
+                  AND last_delivered_message_id < $3
+                RETURNING user_id, last_delivered_message_id, last_opened_message_id`,
+              [flockId, online, message.id]
+            );
+            for (const row of moved.rows) {
+              io.to(`user:${user.id}`).emit('flock_read',
+                flockReadPayload(flockId, row.user_id, null, row));
+            }
+          }
+        } catch (receiptErr) {
+          console.error('Flock delivery receipt error:', receiptErr.message);
         }
       } catch (fanoutErr) {
         // FAIL CLOSED (round 3): broadcasting to the room here would deliver
@@ -2087,7 +2343,20 @@ function registerHandlers(io, socket) {
       // that sent and left the laptop sitting in the same thread showing
       // nothing until it reconnected (guest and DM audit, 2026-09-05). The
       // client dedupes on message id and matches its own optimistic bubble.
-      io.to(`user:${user.id}`).emit('new_dm', msg);
+      io.to(`user:${user.id}`).emit('new_dm', { ...msg, status: 'sent' });
+
+      // DELIVERY. The emit above went to the recipient's room; if a socket was
+      // in it, the bytes reached a device. The dm_delivered receipt lands on
+      // the sender's room after their own new_dm echo, which is the order the
+      // client needs to have a row to attach it to.
+      //
+      // Floating with its own catch, like the push below and for the same
+      // reason: an unhandled rejection here is a process exit on Node 18+, and
+      // a receipt is never worth a message.
+      if (deliveredToLiveSocket(io, receiverId)) {
+        markDmDelivered(io, receiverId, user.id, msg.id, { blockChecked: true })
+          .catch((e) => console.error('DM delivery receipt error:', e.message));
+      }
 
       // Push notification for offline DM recipient
       const preview = (text || '').substring(0, 100);
@@ -2497,6 +2766,81 @@ function registerHandlers(io, socket) {
     });
   });
 
+  // --- Read receipts (migration 065) -------------------------------------
+  //
+  // FOUR EVENTS IN, TWO OUT PER SURFACE, AND ONE HARD LINE BETWEEN THEM.
+  //
+  //   dm_ack / flock_ack   the client received these. DELIVERED.
+  //   dm_open / flock_open the client has this thread on screen. OPENED.
+  //
+  // The `_ack` pair exists so a live client can confirm what it actually took
+  // off the wire, and the send paths above already mark delivery for a
+  // recipient whose socket was in the room when the message went out — so a
+  // client that never acks still gets an honest Delivered, and one that does
+  // ack closes the gap for a message that arrived while the socket was mid
+  // reconnect.
+  //
+  // The `_open` pair is the only thing in the entire backend that may set an
+  // open receipt. Not a history fetch, not a push tap, not the unread cursor
+  // from migration 056, and not presence: a socket in `user:{id}` proves a
+  // connection, and the whole of services/pushHelper.js's presence comment is
+  // about why that is not a person looking. Only a client saying, of itself,
+  // "this thread is on screen" can make this claim, because it is the only
+  // party that knows.
+  //
+  // ONE RATE BUCKET FOR ALL FOUR. The client batches these (a receipt has no
+  // value at keystroke resolution), and they are writes on the two hottest
+  // tables in the chat, so they are metered as one stream rather than four
+  // independent allowances that add up to four times the number written here.
+  //
+  // Everything below fans out through the markers at module scope, which is
+  // where the block rules live: a DM receipt refuses a blocked pair outright,
+  // and a flock receipt is announced through emitToFlockExcludingBlocked keyed
+  // on the READER, so a person who blocked the reader is never told they read
+  // anything.
+  const RECEIPT_LIMIT = 30;
+  const RECEIPT_WINDOW_MS = 10_000;
+
+  socket.on('dm_ack', async (data) => {
+    if (!allowEvent(socket, 'receipt', RECEIPT_LIMIT, RECEIPT_WINDOW_MS)) return;
+    const withUserId = asId(data?.withUserId);
+    if (withUserId === null) return;
+    // `upToId` is optional and absent means "everything from this person",
+    // which is what a catch-up ack means. asId refuses anything it cannot
+    // read, so a junk value bounds the sweep to nothing rather than widening
+    // it to everything.
+    const upToId = data?.upToId == null ? null : asId(data.upToId);
+    if (data?.upToId != null && upToId === null) return;
+    await markDmDelivered(io, user.id, withUserId, upToId);
+  });
+
+  socket.on('dm_open', async (data) => {
+    if (!allowEvent(socket, 'receipt', RECEIPT_LIMIT, RECEIPT_WINDOW_MS)) return;
+    const withUserId = asId(data?.withUserId);
+    if (withUserId === null) return;
+    const upToId = data?.upToId == null ? null : asId(data.upToId);
+    if (data?.upToId != null && upToId === null) return;
+    await markDmOpened(io, user.id, withUserId, upToId);
+  });
+
+  socket.on('flock_ack', async (data) => {
+    if (!allowEvent(socket, 'receipt', RECEIPT_LIMIT, RECEIPT_WINDOW_MS)) return;
+    const flockId = asId(data?.flockId);
+    const upToId = asId(data?.upToId);
+    // A flock watermark has no "everything" form: it is an id, so an absent or
+    // unreadable one is nothing to record rather than a sweep of the thread.
+    if (flockId === null || upToId === null) return;
+    await markFlockDelivered(io, flockId, user.id, user.name, upToId);
+  });
+
+  socket.on('flock_open', async (data) => {
+    if (!allowEvent(socket, 'receipt', RECEIPT_LIMIT, RECEIPT_WINDOW_MS)) return;
+    const flockId = asId(data?.flockId);
+    const upToId = asId(data?.upToId);
+    if (flockId === null || upToId === null) return;
+    await markFlockOpened(io, flockId, user.id, user.name, upToId);
+  });
+
   // --- Venue confirmed by creator ---
 
   socket.on('select_venue', async (data) => {
@@ -2731,6 +3075,24 @@ module.exports = {
   emitToVenueContentViewers,
   VENUE_CONTENT_ROOM,
   broadcastGuestRsvp,
+  // Read receipts (migration 065). The WRITE half lives here because every one
+  // of these ends in a block-aware fan-out and that lives here; routes/messages.js
+  // imports them rather than re-spelling the predicates, the same way it
+  // imports the image constants above. The READ half — which stored fact
+  // becomes which word — is utils/messageStatus.js.
+  markFlockDelivered,
+  markFlockOpened,
+  markDmDelivered,
+  markDmOpened,
+  // The delivery signal, wrapped so an uninspectable broadcaster can never
+  // become a claim. routes/messages.js takes it rather than reaching for
+  // isUserOnline itself, so both transports fail the same way.
+  deliveredToLiveSocket,
+  // One shape for the flock receipt, from every writer. routes/messages.js
+  // builds one on its send path (where it already holds the moved rows and a
+  // second membership query would buy nothing), so it takes the builder rather
+  // than spelling the keys a second time and drifting.
+  flockReadPayload,
   // Exported for tests: the security-relevant decisions, isolated from timers
   // and from Socket.io.
   allowEvent,

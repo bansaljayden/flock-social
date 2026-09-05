@@ -195,6 +195,16 @@ function scriptFlockHistory(corpus, { invisibleIds = [] } = {}) {
       .map((r) => ({ ...r, user_name: `User${r.user_id}` }));
     return { rows, rowCount: rows.length };
   });
+
+  // READ RECEIPTS (migration 065). Two statements, both CONSTANT per page,
+  // which is the property the N+1 test below actually guards. The roster
+  // carries every other member's two watermarks and is what turns each own
+  // row into "Delivered" or "Opened by N"; the UPDATE moves this reader's own
+  // delivery watermark, because these rows just reached their device.
+  // __tests__/chatReadReceipts.test.js owns the behaviour; these exist so the
+  // strict dispatcher models what the route runs.
+  on(/FROM flock_members fm JOIN users u/, () => ({ rows: [], rowCount: 0 }));
+  on(/UPDATE flock_members SET last_delivered_message_id/, () => ({ rows: [], rowCount: 0 }));
 }
 
 // GET /api/dm/:userId — same treatment for the DM thread.
@@ -252,6 +262,12 @@ function scriptDmThread(corpus, { blockedPair = false } = {}) {
       .map((r) => ({ ...r, user_name: `User${r.user_id}` }));
     return { rows, rowCount: rows.length };
   });
+
+  // READ RECEIPTS (migration 065): one constant statement that stamps
+  // delivered_at on everything from the other person that has not been
+  // receipted yet. The rows are on this device now, which is the whole of
+  // what "Delivered" claims. Behaviour lives in chatReadReceipts.test.js.
+  on(/UPDATE direct_messages SET delivered_at/, () => ({ rows: [], rowCount: 0 }));
 
   // Mark-as-read sweep — MUTATES the corpus, honouring exactly the predicate
   // the statement carries: if a hidden filter were added to this UPDATE, the
@@ -606,7 +622,14 @@ test('flock history: query count for a 50-message page equals the count for 1 me
 
   assert.strictEqual(log.length, countForOne,
     'a per-message lookup crept back in — reactions and sender profiles are batched');
-  assert.ok(countForOne <= 4, `constant part grew: ${countForOne} queries for one message`);
+  // 6 since migration 065: the four this route always ran, plus the receipt
+  // roster and this reader's own delivery watermark. Both are CONSTANT, which
+  // is the point — the group side stores a watermark per MEMBER precisely so
+  // that "Opened by Sam and two others" costs one query for a fifty-message
+  // page instead of a join per row. The equality above is the real guard;
+  // this ceiling is here so a per-row receipt lookup could not hide inside a
+  // number that was allowed to drift upward.
+  assert.ok(countForOne <= 6, `constant part grew: ${countForOne} queries for one message`);
 });
 
 test('DM thread: query count for 50 messages with reactions and replies equals the count for 1', async () => {
@@ -634,5 +657,8 @@ test('DM thread: query count for 50 messages with reactions and replies equals t
   // and nothing per-message.
   assert.ok(log.length - countForOne <= 1,
     `query count grew with the page: ${countForOne} for 1 message, ${log.length} for 50`);
-  assert.ok(log.length <= 6, `constant part grew: ${log.length} queries for a 50-message page`);
+  // 7 since migration 065: the six this route always ran, plus the one
+  // delivery sweep that stamps every unreceipted row from the other person.
+  // Constant, like the flock twin above.
+  assert.ok(log.length <= 7, `constant part grew: ${log.length} queries for a 50-message page`);
 });

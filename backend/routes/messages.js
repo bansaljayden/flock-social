@@ -8,6 +8,10 @@ const { sanitizeVenueData, safeVenuePhotoUrl } = require('../utils/venuePayload'
 const VENUE_REJECTED_MESSAGE = "That venue card couldn't be shared.";
 const { isBlockedBetween, getInvisibleUserIds } = require('../utils/blocks');
 const { hasDmRelationship, invalidateDmRelationshipCache, NOT_CONNECTED_MESSAGE } = require('../utils/relationships');
+// Read receipts (migration 065). The ladder itself — which stored fact becomes
+// which word — lives in ONE module that both transports import, never spelled
+// twice; see the header of utils/messageStatus.js.
+const { attachDmStatus, attachFlockStatus, flockRoster } = require('../utils/messageStatus');
 // CHAT_IMAGE_MAX_BYTES is the ONE ceiling on a chat photo's data: URL, defined
 // in sockets/handlers.js and imported (never re-declared) by everything that has
 // to agree with it: server.js sizes the JSON body limit from it, the socket
@@ -27,6 +31,20 @@ const {
   sanitizeStoredImage,
   IMAGE_TOO_LARGE_MESSAGE,
   IMAGE_FORMAT_MESSAGE,
+  // Receipt writers (migration 065). Imported for the same reason as the image
+  // constants directly above: two transports refusing, or confirming, the same
+  // thing in two different ways reads as two different products.
+  markFlockDelivered,
+  markFlockOpened,
+  markDmDelivered,
+  markDmOpened,
+  flockReadPayload,
+  // "Did the emit reach a device?" — the one signal the DELIVERY half of a
+  // receipt is allowed to assert on a send, and never the OPENED half. It
+  // wraps pushHelper's isUserOnline so a broadcaster it cannot inspect answers
+  // "no" instead of throwing; presence is not attention either way, and
+  // services/pushHelper.js writes out at length why.
+  deliveredToLiveSocket,
 } = require('../sockets/handlers');
 const { pushIfOfflineDebounced, pushBadgeSync } = require('../services/pushHelper');
 // Shape before content — see validators/shape.js.
@@ -254,8 +272,69 @@ router.get('/flocks/:id/messages',
         }
       }
 
+      // ── READ RECEIPTS (migration 065) ──────────────────────────────────
+      //
+      // The roster is every OTHER accepted member with their two watermarks,
+      // filtered by the same invisible set the history query above already
+      // used. That filter is the whole reason this is a separate query rather
+      // than a join onto the messages read: a blocked or banned member must
+      // not appear in an "Opened by" list, and `invisibleArr` is exactly the
+      // set utils/blocks.js says covers blocks in either direction plus bans.
+      //
+      // ONE query for the whole page, bounded by flock size. The status of
+      // each own row is then a comparison against a list already in memory —
+      // see utils/messageStatus.js for why the group side stores a watermark
+      // per member instead of a row per reader.
+      //
+      // A failure here costs the receipts and NOTHING ELSE. The messages are
+      // read, the response is owed, and a decoration on the payload must never
+      // be able to turn a history read into a 500 — the same rule the DM reply
+      // hydrate below already follows.
+      let readers = [];
+      try {
+        const rosterResult = await pool.query(
+          `SELECT fm.user_id, u.name, fm.last_delivered_message_id, fm.last_opened_message_id
+             FROM flock_members fm
+             JOIN users u ON u.id = fm.user_id
+            WHERE fm.flock_id = $1 AND fm.status = 'accepted'
+              AND fm.user_id <> $2
+              AND NOT (fm.user_id = ANY($3::int[]))`,
+          [flockId, req.user.id, invisibleArr]
+        );
+        readers = flockRoster(rosterResult.rows);
+        attachFlockStatus(messages, req.user.id, readers);
+      } catch (receiptErr) {
+        console.error('Flock receipt roster error:', receiptErr.message);
+      }
+
       // Return in chronological order
-      res.json({ messages: messages.reverse() });
+      res.json({ messages: messages.reverse(), readers });
+
+      // ── DELIVERY, THE VIEWER'S OWN ─────────────────────────────────────
+      //
+      // These rows just reached this person's device, which is what
+      // "Delivered" claims and the whole of what it claims. It is NOT an open:
+      // a client pages history on reconnect, on a background catch-up and on
+      // every scroll to the top, and none of those is somebody reading. The
+      // opened half has its own route below and is written only when the
+      // client says the thread is on screen.
+      //
+      // FIRST PAGE ONLY (`before` absent). A cursor page is older history, so
+      // it can never move a watermark that GREATEST already holds at or above
+      // it, and asking is a write on the hottest table in the chat for a row
+      // count of zero.
+      //
+      // The UPDATE's `<` predicate makes the emit conditional on the watermark
+      // actually moving, so a member re-opening a quiet thread does not fan a
+      // no-op receipt out to everybody every time.
+      if (!before && messages.length > 0) {
+        try {
+          const newest = Math.max(...messages.map((m) => Number(m.id) || 0));
+          if (newest > 0) await markFlockDelivered(req.app.get('io'), flockId, req.user.id, req.user.name, newest);
+        } catch (deliverErr) {
+          console.error('Flock delivery receipt error:', deliverErr.message);
+        }
+      }
     } catch (err) {
       console.error('Get messages error:', err);
       res.status(500).json({ error: 'Failed to get messages' });
@@ -381,7 +460,12 @@ router.post('/flocks/:id/messages',
       message.sender_name = req.user.name;
       message.reactions = [];
 
-      res.status(201).json({ message });
+      // The send echo carries 'sent' and only the SENDER's copy does. The row
+      // below fans out to every member, and a status on somebody else's copy
+      // would be a receipt about a message that is not theirs — harmless to
+      // draw (StatusLine only ever renders under the viewer's own last
+      // message) and wrong to send, so it is not sent.
+      res.status(201).json({ message: { ...message, status: 'sent' } });
 
       // Offline push, mirroring the socket send_message path in
       // sockets/handlers.js. The socket client falls back to THIS endpoint when
@@ -441,6 +525,36 @@ router.post('/flocks/:id/messages',
                 );
               })
           );
+
+          // DELIVERY, on the way out. A member with a live socket in
+          // `user:{id}` just took the emit above, so the bytes reached a
+          // device — which is the whole of what "Delivered" claims, and is
+          // deliberately not a claim about attention (services/pushHelper.js
+          // writes out at length why a socket is not a person looking, and the
+          // OPENED half never uses this signal).
+          //
+          // One UPDATE over the online members rather than one per member, and
+          // the receipt goes to the SENDER alone: telling the rest of the room
+          // would need each reader's own block list, and the sender's is
+          // already in hand as `invisible`. Everyone else learns the same fact
+          // from their own history read, which carries the roster.
+          const online = members.rows
+            .map((m) => m.user_id)
+            .filter((id) => !invisible.has(id) && deliveredToLiveSocket(io, id));
+          if (online.length > 0) {
+            const moved = await pool.query(
+              `UPDATE flock_members
+                  SET last_delivered_message_id = $3
+                WHERE flock_id = $1 AND user_id = ANY($2::int[]) AND status = 'accepted'
+                  AND last_delivered_message_id < $3
+                RETURNING user_id, last_delivered_message_id, last_opened_message_id`,
+              [flockId, online, message.id]
+            );
+            for (const row of moved.rows) {
+              io.to(`user:${req.user.id}`).emit('flock_read',
+                flockReadPayload(flockId, row.user_id, null, row));
+            }
+          }
         }
       } catch (pushErr) {
         console.error('Flock message push error:', pushErr.message);
@@ -643,6 +757,104 @@ router.put('/flocks/:id/read',
       pushBadgeSync(req.user.id).catch(() => {});
     } catch (err) {
       console.error('Mark flock read error:', err);
+      res.status(500).json({ error: 'Server error' });
+    }
+  }
+);
+
+// -------------------------------------------------------------------------
+// OPENED — the receipt, which is NOT the read cursor above
+// -------------------------------------------------------------------------
+// Two watermarks on the same row that look alike and mean different things,
+// so it is worth being blunt about which is which.
+//
+//   last_read_message_id (056, the PUT above) is the UNREAD BADGE. The client
+//   writes it whenever it decides the dot should clear, which includes a
+//   background catch-up and a history page it never showed anyone. It is a
+//   count, and a count that runs ahead of the truth costs nothing.
+//
+//   last_opened_message_id (065, this route) is a CLAIM MADE TO SOMEBODY
+//   ELSE. It tells the sender a person looked. Nothing may set it except a
+//   client saying, of itself, that the thread is on screen — which is why
+//   this is its own route and its own column, and why the history read
+//   below does not touch it. Reusing 056 here is the one shortcut that would
+//   make every receipt in the product a lie.
+//
+// Delivery is set alongside, because opening a thread from a push is a real
+// path that never ran a history read (see markFlockOpened).
+router.put('/flocks/:id/opened',
+  [
+    param('id').isInt({ min: 1, max: INT4_MAX }),
+    body('lastMessageId').isInt({ min: 1, max: INT4_MAX }),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+      const flockId = parseInt(req.params.id);
+      // Membership is the UPDATE's own predicate inside the helper, the same
+      // shape as unsend and the read cursor, so there is no check-then-act
+      // window and a non-member learns only 404.
+      const row = await markFlockOpened(
+        req.app.get('io'), flockId, req.user.id, req.user.name, parseInt(req.body.lastMessageId)
+      );
+      if (!row) return res.status(404).json({ error: 'Flock not found' });
+      res.json({
+        success: true,
+        lastOpenedMessageId: row.last_opened_message_id,
+        lastDeliveredMessageId: row.last_delivered_message_id,
+      });
+    } catch (err) {
+      console.error('Mark flock opened error:', err);
+      res.status(500).json({ error: 'Server error' });
+    }
+  }
+);
+
+// The DM twin. `lastMessageId` is optional here and absent means "everything
+// from this person": a DM thread has one counterparty, so there is no
+// ambiguity about what was on screen, and a client that opened a thread from
+// a push has no id to send.
+//
+// 403 rather than 404 on a block, matching every other DM metadata route in
+// this file — the pair already know each other exists, so nothing is leaked
+// by saying the interaction is over.
+router.put('/dm/:userId/opened',
+  [
+    param('userId').isInt({ min: 1, max: INT4_MAX }),
+    body('lastMessageId').optional({ values: 'null' }).isInt({ min: 1, max: INT4_MAX }),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+      const otherUserId = parseInt(req.params.userId);
+      if (otherUserId === req.user.id) {
+        return res.status(400).json({ error: 'Cannot receipt your own messages' });
+      }
+      if (await isBlockedBetween(req.user.id, otherUserId)) {
+        return res.status(403).json({ error: 'You can no longer interact with this user.' });
+      }
+      // A banned counterpart is invisible everywhere else in this file, and a
+      // receipt is a message to them; the thread read a few routes down
+      // refuses the same pair for the same reason.
+      if ((await getInvisibleUserIds(req.user.id)).some((id) => Number(id) === otherUserId)) {
+        return res.status(403).json({ error: 'You can no longer interact with this user.' });
+      }
+      const upTo = req.body.lastMessageId == null ? null : parseInt(req.body.lastMessageId);
+      const opened = await markDmOpened(
+        req.app.get('io'), req.user.id, otherUserId, upTo, { blockChecked: true }
+      );
+      // Idempotent: a repeat opens nothing and says so with an empty list
+      // rather than an error. Nothing about this call can fail in a way the
+      // caller can fix.
+      res.json({ success: true, openedMessageIds: opened });
+    } catch (err) {
+      console.error('Mark DM opened error:', err);
       res.status(500).json({ error: 'Server error' });
     }
   }
@@ -976,6 +1188,12 @@ router.get('/dm/:userId',
         }
       }
 
+      // Receipts (migration 065). Nothing is fetched for this: the two
+      // timestamp columns arrived on `dm.*` above, and attachDmStatus turns
+      // them into the one word StatusLine draws, on the viewer's OWN rows
+      // only. A receipt belongs to the person who sent the message.
+      attachDmStatus(messages, req.user.id);
+
       // Mark unread messages from the other user as read
       await pool.query(
         `UPDATE direct_messages SET read_status = TRUE
@@ -990,6 +1208,20 @@ router.get('/dm/:userId',
       // unread left the old number on the icon. Best effort, after the
       // response, never fails a read.
       pushBadgeSync(req.user.id).catch(() => {});
+
+      // DELIVERY, and deliberately not opening. This client just pulled the
+      // thread, so the bytes reached a device and "Delivered" is true. Whether
+      // anyone LOOKED is a different fact with a different door
+      // (PUT /dm/:userId/opened): a history read fires on reconnect, on a
+      // background catch-up and on a scroll to the top, and calling any of
+      // those "Opened" is the lie StatusLine refuses to draw.
+      //
+      // After the response and self-contained, like the badge sync above it: a
+      // receipt is worth less than the read it rides on, so it never delays it
+      // and never fails it. blockChecked because both block gates ran at the
+      // top of this route.
+      markDmDelivered(req.app.get('io'), req.user.id, otherUserId, null, { blockChecked: true })
+        .catch((e) => console.error('DM delivery receipt error:', e.message));
     } catch (err) {
       console.error('Get DMs error:', err);
       res.status(500).json({ error: 'Failed to get messages' });
@@ -1169,7 +1401,9 @@ router.post('/dm/:userId',
       // for the rest of the 30s TTL.
       invalidateDmRelationshipCache(req.user.id, receiverId);
 
-      res.status(201).json({ message });
+      // Same rule as the flock twin: the send echo carries 'sent', the
+      // recipient's copy carries no status at all.
+      res.status(201).json({ message: { ...message, status: 'sent' } });
 
       // Offline push, mirroring the socket send_dm path in sockets/handlers.js.
       // This route is the socket client's fallback when disconnected, so without
@@ -1196,7 +1430,17 @@ router.post('/dm/:userId',
           // account is several devices, and the one that posted this over
           // REST is the one whose socket is down, so the others are the ones
           // that need telling. The client dedupes on id.
-          io.to(`user:${req.user.id}`).emit('new_dm', message);
+          io.to(`user:${req.user.id}`).emit('new_dm', { ...message, status: 'sent' });
+          // The emit above went out over the recipient's open connection, so
+          // the bytes reached a device: that is "Delivered", and it is the
+          // only claim a live socket may support. The dm_delivered receipt
+          // that follows lands on the sender's room AFTER their own new_dm
+          // echo, which is the order the client needs to have a row to attach
+          // it to. Ordering within one room is Socket.io's own guarantee.
+          if (deliveredToLiveSocket(io, receiverId)) {
+            await markDmDelivered(io, receiverId, req.user.id, message.id, { blockChecked: true })
+              .catch((e) => console.error('DM delivery receipt error:', e.message));
+          }
           const preview = (message_text || '').substring(0, 100);
           await pushIfOfflineDebounced(io, receiverId,
             req.user.name,
