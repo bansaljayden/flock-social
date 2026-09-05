@@ -510,6 +510,12 @@ async function buildFrontend() {
     const old = JSON.parse(fs.readFileSync(BUILD_STAMP, 'utf8').replace(/^﻿/, ''));
     if (old.apiUrl === API_ORIGIN) {
       log('reusing existing build (--skip-build)');
+      // Re-applied on the reuse path too. It is idempotent in effect (the
+      // origin is already listed on a build this run made), and without it a
+      // build carried over from a run on a different port keeps a policy that
+      // names a server this one is not using, which is the failure this
+      // function exists to stop.
+      allowLocalApiInCsp();
       return;
     }
     log('build stamp mismatch; rebuilding');
@@ -545,7 +551,49 @@ async function buildFrontend() {
   });
   fs.mkdirSync(SCRATCH, { recursive: true });
   fs.writeFileSync(BUILD_STAMP, JSON.stringify(stamp));
+  allowLocalApiInCsp();
   log(`build done -> ${BUILD_DIR}`);
+}
+
+/**
+ * Let the throwaway build talk to the throwaway backend.
+ *
+ * WHY THIS IS HERE AT ALL. public/index.html carries a Content-Security-Policy
+ * meta tag whose connect-src lists the production API and nothing else, which
+ * is exactly right for a shipped build. react-scripts copies it verbatim, so
+ * the build this rig makes against a local backend on 127.0.0.1 could not
+ * reach it: every request was refused by the browser, the app painted
+ * "Couldn't reach Flock", the tab bar never rendered and every driver timed
+ * out after thirty seconds with no clue why.
+ *
+ * That is what had broken this rig, and it produces App Store submission
+ * material, so it mattered more than it looked. It was invisible because the
+ * failure reported only "Timeout 30000ms exceeded"; the diagnostics added
+ * alongside this named the CSP on the first run.
+ *
+ * ONLY THE TEMP BUILD. BUILD_DIR lives under os.tmpdir() and is rebuilt from
+ * scratch; frontend/public/index.html is never touched and neither is anything
+ * that ships. The API origin is the one this process just started on a random
+ * port, so the widened policy names a server that stops existing when the run
+ * ends.
+ */
+function allowLocalApiInCsp() {
+  const indexPath = path.join(BUILD_DIR, 'index.html');
+  if (!fs.existsSync(indexPath)) return;
+  const html = fs.readFileSync(indexPath, 'utf8');
+  // Both the http origin (REST) and its ws twin (Socket.IO), because the app
+  // opens a socket as soon as a session lands and a refused socket is a second
+  // silent failure behind the first.
+  const wsOrigin = API_ORIGIN.replace(/^http/, 'ws');
+  const widened = html.replace(
+    /connect-src ([^";]*)/,
+    (_m, sources) => `connect-src ${sources} ${API_ORIGIN} ${wsOrigin}`
+  );
+  if (widened === html) {
+    log('WARNING: no connect-src found in the built index.html; the app may not reach the local API');
+    return;
+  }
+  fs.writeFileSync(indexPath, widened);
 }
 
 // ---------------------------------------------------------------------------
@@ -712,7 +760,12 @@ const DRIVERS = {
   async chat(page) {
     await tab(page, 'Messages').click();
     await page.getByRole('button', { name: new RegExp(DEMO.flockName) }).filter({ visible: true }).first().click();
-    await page.locator('#chat-input').waitFor({ timeout: 15000 });
+    /* `.chat-composer-field`, not `#chat-input`. The chat rebuild replaced
+       both composers with components/chat/ChatInputBar, which carries neither
+       that id nor the DM's old data attribute, so this waited fifteen seconds
+       for an element that had stopped existing. The class is the field's own
+       and is what chatInput.css styles it by. */
+    await page.locator('.chat-composer-field').first().waitFor({ timeout: 15000 });
     // The venue card must be on screen: its name renders as an h4.
     await page.getByText(DEMO.venue.name).first().waitFor({ timeout: 15000 });
     await settle(page);
@@ -861,6 +914,15 @@ async function captureAll(dbUrl) {
         const consumerScreens = screens.filter((s) => s.id !== 'venue-dash' && (size.id === 'web' || s.appstore));
         if (consumerScreens.length) {
           const { context, page } = await newAppContext(browser, { size, mode, token: userToken, userMode: 'user' });
+          /* Collected for the failure report above. Attached here rather than
+             inside newAppContext so the venue-dash context, which has its own
+             driver and its own failure mode, is not silently sharing an array
+             with the consumer one. */
+          page.__consoleErrors = [];
+          page.on('console', (m) => {
+            if (m.type() === 'error') page.__consoleErrors.push(m.text().slice(0, 200));
+          });
+          page.on('pageerror', (err) => page.__consoleErrors.push(`pageerror: ${String(err).slice(0, 200)}`));
           try {
             for (const screen of consumerScreens) {
               try {
@@ -874,7 +936,40 @@ async function captureAll(dbUrl) {
                 await DRIVERS[screen.id](page);
                 await snap(page, sharp, manifest, { screen, size, mode });
               } catch (e) {
-                failures.push(`${screen.id} [${size.id}/${mode}]: ${e.message.split('\n')[0]}`);
+                /* SAY WHY, not just that. This reported "Timeout 30000ms
+                   exceeded" and nothing else, which is a sentence that fits
+                   every possible cause: a stale selector, a login that did not
+                   land, a crash on boot. The rig produces App Store submission
+                   material, so a failure nobody can diagnose is a failure
+                   nobody fixes, and this one had gone unnoticed.
+
+                   A screenshot of whatever WAS on screen, plus the console and
+                   any page error, turns thirty seconds of silence into an
+                   answer. Best effort throughout: diagnostics must never
+                   replace the real failure with one of their own. */
+                const why = [`${screen.id} [${size.id}/${mode}]: ${e.message.split('\n')[0]}`];
+                try {
+                  /* SCRATCH, not OUT_DIR. OUT_DIR is frontend/public/screenshots,
+                     which is deployed with the site, so a debug capture there
+                     would ship a picture of a broken app to production. */
+                  const shot = path.join(SCRATCH, `FAILED-${screen.id}-${size.id}-${mode}.png`);
+                  fs.mkdirSync(SCRATCH, { recursive: true });
+                  await page.screenshot({ path: shot });
+                  why.push(`  screen at failure: ${shot}`);
+                } catch { /* the page may be gone */ }
+                try {
+                  const logged = (page.__consoleErrors || []).slice(0, 6);
+                  if (logged.length) why.push(`  console: ${logged.join(' | ')}`);
+                  const url = page.url();
+                  const visible = await page.evaluate(() => ({
+                    nav: !!document.querySelector('nav[aria-label="Main"]'),
+                    loading: document.body.innerText.includes('Loading...'),
+                    firstText: document.body.innerText.replace(/\s+/g, ' ').trim().slice(0, 160),
+                  }));
+                  why.push(`  at ${url} | nav:${visible.nav} loading:${visible.loading}`);
+                  why.push(`  page reads: ${visible.firstText}`);
+                } catch { /* ditto */ }
+                failures.push(why.join('\n'));
               }
             }
           } finally {
