@@ -35,6 +35,8 @@ const multer = require('multer');
 const { stripImageMetadata } = require('../utils/imageMetadata');
 const path = require('path');
 const pool = require('../config/database');
+const { waitPhrase, refusalBody } = require('../utils/retryAfter');
+const { isDisposableEmail } = require('../utils/disposableEmail');
 const {
   authenticate,
   authenticateAllowBanned,
@@ -589,7 +591,18 @@ function attemptLimiter({ limit, windowMs }) {
 // then a cooling-off period still leaves deletion genuinely reachable, which is
 // the Apple 5.1.1(v) line this must not cross.
 const proofFailures = attemptLimiter({ limit: 5, windowMs: 15 * 60 * 1000 });
-const TOO_MANY_PROOFS_MESSAGE = 'Too many incorrect passwords. Try again in a few minutes.';
+// The refusal, with the real window in it. lockedFor() has always returned the
+// milliseconds left, and the three routes that call this threw them away for
+// "a few minutes" against a window of fifteen. That is the advice
+// utils/retryAfter.js exists to stop: the person came back at three, was
+// refused again, and read that as the feature being broken. /login already
+// says it this way, and the client renders the sentence as sent.
+function tooManyProofs(res, lockedMs, extra = {}) {
+  return res.status(429).json({
+    ...refusalBody(res, lockedMs, `Too many incorrect passwords. You can try again ${waitPhrase(lockedMs)}.`),
+    ...extra,
+  });
+}
 
 // Phone-number CHANGE attempts, successful ones included. The uniqueness check
 // added below answers "is this number registered here?", which is an
@@ -1029,7 +1042,12 @@ router.put('/profile',
       .isLength({ max: MAX_EMAIL }).withMessage('Email address is too long')
       .isEmail().withMessage('Valid email required')
       .normalizeEmail()
-      .isLength({ max: MAX_EMAIL }).withMessage('Email address is too long'),
+      .isLength({ max: MAX_EMAIL }).withMessage('Email address is too long')
+      // The same block all three account-creation paths in routes/auth.js
+      // apply. Without it a throwaway address that signup refused was one
+      // profile save away: create the account on an address you keep, then
+      // move it to the disposable one here.
+      .custom((v) => !isDisposableEmail(v)).withMessage('Temporary email addresses cannot be used. Use an address you keep.'),
     // Round 16: this was `body('phone').optional()` with NO validation at all,
     // while signup runs isMobilePhone(). Two separate problems came out of that:
     // anything at all could be written into the column (a name, a URL, an
@@ -1141,9 +1159,8 @@ router.put('/profile',
       if (user.password) {
         // Round 16: bounded. See proofFailures above — this is a password
         // guessing surface for anyone holding a token, and it counted nothing.
-        if (proofFailures.lockedFor(user.id) > 0) {
-          return res.status(429).json({ error: TOO_MANY_PROOFS_MESSAGE });
-        }
+        const lockedMs = proofFailures.lockedFor(user.id);
+        if (lockedMs > 0) return tooManyProofs(res, lockedMs);
         const validPassword = await bcrypt.compare(
           typeof current_password === 'string' ? current_password : '',
           user.password
@@ -2377,9 +2394,8 @@ router.get('/export', async (req, res) => {
       if (supplied.length > MAX_PASSWORD) {
         return res.status(400).json({ error: 'Password is too long', reauthRequired: 'password' });
       }
-      if (proofFailures.lockedFor(userId) > 0) {
-        return res.status(429).json({ error: TOO_MANY_PROOFS_MESSAGE, reauthRequired: 'password' });
-      }
+      const lockedMs = proofFailures.lockedFor(userId);
+      if (lockedMs > 0) return tooManyProofs(res, lockedMs, { reauthRequired: 'password' });
       const proven = supplied ? await bcrypt.compare(supplied, account.password) : false;
       if (!proven) {
         // An absent header is a client that has not prompted yet, not a guess.
@@ -2726,9 +2742,8 @@ async function deleteAccount(req, res) {
       // Bounded (see proofFailures): without a ceiling this endpoint is an
       // offline-grade password guessing oracle for anyone holding a token, and
       // every guess costs a bcrypt round of server CPU.
-      if (proofFailures.lockedFor(account.id) > 0) {
-        return res.status(429).json({ error: TOO_MANY_PROOFS_MESSAGE, reauthRequired: 'password' });
-      }
+      const lockedMs = proofFailures.lockedFor(account.id);
+      if (lockedMs > 0) return tooManyProofs(res, lockedMs, { reauthRequired: 'password' });
       const supplied = typeof req.body?.password === 'string' ? req.body.password : '';
       const proven = supplied ? await bcrypt.compare(supplied, account.password) : false;
       if (!proven) {

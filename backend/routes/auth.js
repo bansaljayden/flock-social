@@ -2201,6 +2201,13 @@ router.post('/signup', signupValidation, async (req, res) => {
     // used to say the link was still worth asking for.
     res.status(201).json({ token, user, emailVerificationRequired: true, verificationSent, mailRefused });
   } catch (err) {
+    // Two signups for one address in the same moment: both pass the existence
+    // check above, one INSERT wins, and users.email is UNIQUE, so the other
+    // lands here with 23505. That is the answer the check gives when it is
+    // not raced, not a server fault, and it was being reported as one.
+    if (err.code === '23505') {
+      return res.status(400).json({ error: 'Email already registered' });
+    }
     console.error('Signup error:', err);
     res.status(500).json({ error: 'Failed to create account' });
   }
@@ -2593,6 +2600,14 @@ router.post('/login', loginValidation, async (req, res) => {
 
     // Strip password from response
     const { password: _, apple_refresh_token: _art, token_version: _tv, ...safeUser } = user;
+    // How this account signs in, derived the way GET /me derives it. Only /me
+    // carried the field until now, so an account that had just signed in was
+    // read by the edit-profile form and by the export and delete sheets as a
+    // password account until the next cold start refetched it. For an Apple or
+    // Google account that meant a first session in which no profile edit could
+    // be saved, because the form demanded a password the account never had.
+    // The Google and Apple responses below set it the same way.
+    safeUser.sign_in_method = user.oauth_provider || 'password';
     res.json({ token, user: safeUser });
   } catch (err) {
     console.error('Login error:', err);
@@ -3159,6 +3174,9 @@ router.post('/google', [
 
     const token = signUserToken(user);
     const { password: _, apple_refresh_token: _art, token_version: _tv, ...safeUser } = user;
+    // See the /login response: the field the profile form and the account
+    // sheets read, present from the first session rather than the second.
+    safeUser.sign_in_method = user.oauth_provider || 'password';
     res.json({ token, user: safeUser });
   } catch (err) {
     console.error('Google OAuth error:', err);
@@ -3595,6 +3613,9 @@ router.post('/apple', [
 
     const token = signUserToken(user);
     const { password: _, apple_refresh_token: _art, token_version: _tv, ...safeUser } = user;
+    // See the /login response: the field the profile form and the account
+    // sheets read, present from the first session rather than the second.
+    safeUser.sign_in_method = user.oauth_provider || 'password';
     res.json({ token, user: safeUser });
   } catch (err) {
     console.error('Apple Sign In error:', err);
