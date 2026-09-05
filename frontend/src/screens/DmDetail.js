@@ -74,7 +74,7 @@ import React from 'react';
 import { sendFriendRequest, trackDmVenueVote, getDmMessageImage, addDmReaction, removeDmReaction } from '../services/api';
 import { dmReact, dmRemoveReact, dmStopSharingLocation, dmVoteVenue, getSocket } from '../services/socket';
 import { groupReactions } from './ChatDetail';
-import { MessageList, StatusLine, TypingRow, VenueCardRow, ChatInputBar, ComposerPlusSheet } from '../components/chat';
+import { MessageList, StatusLine, TypingRow, VenueCardRow, ChatInputBar, ComposerPlusSheet, PinStrip, DM_FRIEND_COLOUR } from '../components/chat';
 import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
 import Icons from '../components/ui/Icons';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
@@ -265,6 +265,21 @@ export default function DmDetail({
   // anywhere else in the app.
   const leaveDmScreen = () => {
     setChatInput('');
+    /* THE PHOTO GOES WITH THE DRAFT, and for exactly the reason in this
+       function's own header: `dmPendingImage` is App-level state that nothing
+       in App.js ever clears, so a photo picked and then abandoned rode into
+       the NEXT conversation opened. It armed send on its own, and the first
+       thing typed in that thread went out as ITS caption, which means one
+       person's photo delivered to another person entirely.
+
+       It was unreachable until 2026-09-05 because the full-screen confirm
+       covered the whole screen including the back arrow: the only ways out
+       were Cancel and Send, and Send passed `text: ''` so the composer's draft
+       could never become the caption. Moving the preview into the composer's
+       own row removed both of those accidental guards at once, so the clear
+       has to be explicit and it has to live here. */
+    setShowDmImagePreview(false);
+    setDmPendingImage(null);
     setShowDmMenu(false);
     setShowDeleteDmConfirm(false);
     setShowDmChatSearch(false);
@@ -278,6 +293,55 @@ export default function DmDetail({
     // over the next thread the moment it opened.
     setShowDmReactionPicker(null);
     if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); }
+  };
+
+  /* THE TWO THINGS THE PINNED-VENUE BANNER DID, LIFTED OUT AS NAMED FUNCTIONS.
+     The banner is a 36pt strip now (see PinStrip below) and a strip hands its
+     menu one callback per item, so these had to leave the JSX either way. They
+     are named rather than inlined into the props for a second reason:
+     __tests__/dmComposerLeave.test.js walks this file for every function that
+     calls setCurrentScreen or setCurrentTab and fails the build if one of them
+     does not also call leaveDmScreen(). Two anonymous arrows buried in a prop
+     object are two more places to forget that call, and forgetting it is the
+     defect the walk exists for. The composer's text and its armed flag are
+     App-level state shared with every other thread, so a half-written message
+     abandoned here is offered to the next person you open, over a box that
+     looks empty. Leaving also ends a live location share, which for a long
+     time only the back arrow did. */
+
+  // The strip's tap, which is what the banner's "Map" button did, unchanged.
+  // Hand the Discover tab a return address, go there, then pan onto the place.
+  // The wait is not a guess at network time: window.__flockPanToVenue is
+  // installed by the Discover screen itself, so it does not exist until that
+  // screen has mounted, and calling it in the same tick did nothing at all.
+  const openPinnedVenueOnMap = () => {
+    leaveDmScreen();
+    setVenueDetailReturnTo({ tab: 'chat', screen: 'dmDetail', dmId: selectedDmId });
+    setCurrentTab('explore');
+    setCurrentScreen('main');
+    if (dmPinnedVenue?.place_id) {
+      setTimeout(() => {
+        if (window.__flockPanToVenue) {
+          window.__flockPanToVenue({ place_id: dmPinnedVenue.place_id, name: dmPinnedVenue.name, address: dmPinnedVenue.addr, rating: dmPinnedVenue.rating, photo_url: dmPinnedVenue.photo_url });
+        }
+      }, 300);
+    }
+  };
+
+  // "Change place" on the strip's menu, and the only door to a FIRST pin now
+  // that the 61pt "Add a Venue" card under the header is gone. Both flags are
+  // load bearing and they are not the same flag: pickingVenueForCreate is what
+  // puts a pick control on the Discover screen at all, and pickingVenueForDm is
+  // what makes the chosen place pin back to THIS conversation instead of to a
+  // flock. App.js reads both at its two pick sites and writes the pin over the
+  // socket, falling back to PUT /api/dm/:userId/pinned-venue when the socket is
+  // down, so the pin survives the next load either way.
+  const pickAPlaceForThisDm = () => {
+    leaveDmScreen();
+    setPickingVenueForDm(true);
+    setPickingVenueForCreate(true);
+    setCurrentTab('explore');
+    setCurrentScreen('main');
   };
 
   // THE VOTE, WRITTEN ONCE. This screen has three vote buttons (the panel's
@@ -365,6 +429,9 @@ export default function DmDetail({
   const dmSearchQuery = showDmChatSearch && dmChatSearch.trim() ? dmChatSearch : '';
   const dmSourceRows = selectedDm?.messages || NO_DM_ROWS;
   const myDmId = authUser?.id;
+  /* Your own runs, in one place, because MessageList is handed it twice: once
+     as ownColour and once from colourFor, and two copies of a colour drift. */
+  const DM_OWN_COLOUR = 'var(--chat-accent, var(--accent-purple-text))';
 
   const dmRowsById = React.useMemo(() => {
     const byId = new Map();
@@ -640,7 +707,17 @@ export default function DmDetail({
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '5px', paddingLeft: '74px', marginTop: '2px' }}>
-          {dmIsTyping ? <span style={{ fontSize: 'var(--t-meta)', color: '#86EFAC', fontWeight: '500' }}>{dmTypingUser || selectedDm.name} is typing...</span> : dmSharingLocation ? <span style={{ fontSize: 'var(--t-meta)', color: '#34d399', fontWeight: '500', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>{Icons.mapPin('#34d399', 12)}sharing location</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: connectionState === 'online' ? '#22c55e' : connectionState === 'offline' ? '#9CA3AF' : '#F59E0B', boxShadow: 'none' }} /><span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>{connectionState === 'online' ? 'online' : connectionState === 'offline' ? 'offline' : 'reconnecting...'}</span></>}
+          {/* THE HEADER SAYS ONE THING: whether the socket is up.
+              It used to say three, and the other two were already being said
+              somewhere else at the same moment. Typing is drawn by TypingRow
+              above the composer, which is where the eye is and where Snapchat
+              puts it, so the header line was a second copy firing on the same
+              socket event. A live location share is drawn by the chip
+              ChatInputBar draws over the field, which also carries the Stop,
+              so the header was a third copy of that one after the banner.
+              Saying the same thing twice does not make it clearer, it makes a
+              reader check whether they are two different things. */}
+          {<><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: connectionState === 'online' ? '#22c55e' : connectionState === 'offline' ? '#9CA3AF' : '#F59E0B', boxShadow: 'none' }} /><span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>{connectionState === 'online' ? 'online' : connectionState === 'offline' ? 'offline' : 'reconnecting...'}</span></>}
         </div>
       </div>
 
@@ -678,60 +755,49 @@ export default function DmDetail({
         </div>
       )}
 
-      {/* Pinned Venue Banner — top-voted or manually pinned venue */}
-      {dmPinnedVenue ? (
-        <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.steel}12)`, borderBottom: `1px solid ${colors.creamDark}`, flexShrink: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            {dmPinnedVenue.photo_url ? (
-              <img src={dmPinnedVenue.photo_url} alt="" style={{ width: '52px', height: '52px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} onError={onVenuePhotoError} />
-            ) : (
-              <div style={{ width: '52px', height: '52px', borderRadius: '12px', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}>
-                {Icons.mapPin('white', 22)}
-              </div>
-            )}
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.name}</h4>
-                {dmPinnedVenue.rating && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#F59E0B', display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>{Icons.starFilled('#F59E0B', 12)} {dmPinnedVenue.rating}</span>}
-              </div>
-              {dmPinnedVenue.addr && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dmPinnedVenue.addr}</p>}
-            </div>
-            <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-              <button
-                className="hit44 glass-btn glass-navy"
-                onClick={() => {
-                  leaveDmScreen();
-                  setVenueDetailReturnTo({ tab: 'chat', screen: 'dmDetail', dmId: selectedDmId });
-                  setCurrentTab('explore');
-                  setCurrentScreen('main');
-                  if (dmPinnedVenue.place_id) {
-                    setTimeout(() => {
-                      if (window.__flockPanToVenue) {
-                        window.__flockPanToVenue({ place_id: dmPinnedVenue.place_id, name: dmPinnedVenue.name, address: dmPinnedVenue.addr, rating: dmPinnedVenue.rating, photo_url: dmPinnedVenue.photo_url });
-                      }
-                    }, 300);
-                  }
-                }}
-                style={{ padding: '8px 10px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', boxShadow: '0 1px 2px rgba(30,41,59,0.10)' }}
-              >
-                {Icons.mapPin('white', 12)} Map
-              </button>
-              <button className="hit44 glass-btn glass-secondary" onClick={() => { leaveDmScreen(); setPickingVenueForDm(true); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ padding: '8px 10px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, background: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                Change
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <button className="hit44 glass-btn glass-secondary" onClick={() => { leaveDmScreen(); setPickingVenueForDm(true); setPickingVenueForCreate(true); setCurrentTab('explore'); setCurrentScreen('main'); }} style={{ margin: '0', padding: '10px 14px', background: `linear-gradient(135deg, var(--bg-primary), var(--bg-card-solid))`, borderBottom: `1px solid ${colors.creamDark}`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', width: '100%', flexShrink: 0 }}>
-          <div style={{ width: '40px', height: '40px', borderRadius: '12px', border: `2px dashed ${colors.steel}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin(colors.steel, 18)}</div>
-          <div style={{ flex: 1, textAlign: 'left' }}>
-            <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>Add a Venue</p>
-            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0' }}>Pick a spot on the map</p>
-          </div>
-          <div style={{ color: colors.steel, fontWeight: '700', fontSize: 'var(--t-title)' }}>+</div>
-        </button>
-      )}
+      {/* THE PINNED PLACE, IN ONE 36pt STRIP.
+          What stood here was a two-branch block that always drew something. A
+          pinned venue got a 73pt banner: a 52px photo with its own drop shadow,
+          the name, a star rating, the address, and two buttons (Map, Change).
+          No pinned venue got a 61pt dashed-tile card reading "Add a Venue" over
+          "Pick a spot on the map". So a DM spent 61 to 73pt of the screen on
+          the venue before a single message, whether or not there was a venue,
+          and the thread you opened to read was pushed down by a card about
+          something else. The reference app spends zero there. This is 36 when
+          there is a place, and nothing at all when there is not.
+
+          WHAT THE STRIP STOPPED DRAWING, and why that is not a loss. The
+          rating, the address and the big photo are facts about the venue, and
+          the venue has a page. The strip is a pointer to that page, not a copy
+          of it: tapping it lands you on the place with all three. Repeating
+          them here cost 37pt of every conversation to save one tap on a screen
+          nobody opened to read an address.
+
+          NO UNPIN, AND THAT IS DELIBERATE. PinStrip offers Change place and
+          Unpin on its menu and draws only the items it is handed a callback
+          for. There is no unpin anywhere in this product: no handler among this
+          screen's props, no setter to clear dmPinnedVenue from here, and no
+          route or socket event behind it. A menu item that cannot unpin is the
+          dead control DESIGN-STANDARD rule 5 bans, so it is not drawn. Changing the
+          place is how a wrong pin is corrected today, exactly as it was under
+          the old banner, which had no unpin either.
+
+          THE PHOTO GOES THROUGH THE RESOLVER. Two of the four places that write
+          dmPinnedVenue in App.js already resolve the URL and two hand over
+          whatever the venue payload carried, which is routinely a relative
+          /api/ path. The old banner used the raw value and showed a broken
+          image for those two; resolving here is the same call VenueCardRow gets
+          for the same reason. A missing or unresolvable photo falls through to
+          the strip's own map-pin glyph rather than to a gap. */}
+      <PinStrip
+        model={dmPinnedVenue ? {
+          kind: 'venue',
+          name: dmPinnedVenue.name,
+          thumbUrl: resolveVenuePhoto(dmPinnedVenue.photo_url),
+        } : null}
+        onOpen={openPinnedVenueOnMap}
+        onChangePlace={pickAPlaceForThisDm}
+      />
 
       {/* Vote panel. It is NOT identical to the flock's, which is what the
           sentence that stood here for months claimed, and that claim is how the
@@ -955,8 +1021,22 @@ export default function DmDetail({
                 <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); sendDmMessage({ text: `Check out ${dmPinnedVenue.name}!`, message_type: 'venue_card', venue_data: { name: dmPinnedVenue.name, addr: dmPinnedVenue.addr, stars: dmPinnedVenue.rating, rating: dmPinnedVenue.rating, photo_url: dmPinnedVenue.photo_url, place_id: dmPinnedVenue.place_id }, noReply: true }); setShowDmVenueSearch(false); }} style={{ padding: '8px 12px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', position: 'relative', overflow: 'hidden' }}>Share This</button>
               </div>
             ) : (
-              <div style={{ padding: '10px 12px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', marginBottom: '16px' }}>
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, fontStyle: 'italic' }}>No venue pinned. Pick one below:</p>
+              /* WHERE THE FIRST PIN IS MADE NOW. The 61pt "Add a Venue" card
+                 that used to sit under the header was the only door to the map
+                 picker in a DM, and the rebuild's rule is that nothing stacks
+                 between the header and the first message. This sheet is where
+                 the door belongs: it is the place sheet, and the "+" opens it
+                 under "Suggest a place". Nothing moved further away than one
+                 control the thumb was already reaching for.
+
+                 The sentence changed with it, because the old one was not true.
+                 "No venue pinned. Pick one below:" pointed at a list that
+                 SHARES a venue card into the thread and pins nothing, so the
+                 one instruction on the screen did not do what it said. Pinning
+                 and sharing are two acts and this now names both. */
+              <div style={{ padding: '12px', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, flex: 1 }}>Nothing is pinned to this chat yet. Pick a place to pin it, or share one from the list below.</p>
+                <button className="hit44 glass-btn glass-secondary" onClick={pickAPlaceForThisDm} style={{ padding: '8px 12px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, background: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0 }}>Pick a place</button>
               </div>
             )}
 
@@ -1049,19 +1129,23 @@ export default function DmDetail({
       )}
 
       {/* Image preview modal */}
-      {showDmImagePreview && dmPendingImage && (
-        <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.9)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '20px' }}>
-          <DialogBehavior onClose={() => { setShowDmImagePreview(false); setDmPendingImage(null); }} label="Send this photo" />
-          <img src={dmPendingImage} alt="Preview" style={{ maxWidth: '100%', maxHeight: '60%', borderRadius: '12px', objectFit: 'contain' }} />
-          <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
-            <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowDmImagePreview(false); setDmPendingImage(null); }} style={{ padding: '12px 24px', borderRadius: '24px', border: '2px solid var(--bg-card-solid)', backgroundColor: 'transparent', color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-            {/* An image-only message: text is '', not the word "Photo". The
-                explicit '' also stops the composer's half-typed draft from
-                being swept in as a caption. */}
-            <button className="hit44 glass-btn glass-navy" onClick={() => { const img = dmPendingImage; setShowDmImagePreview(false); setDmPendingImage(null); sendDmMessage({ text: '', message_type: 'image', image_url: img, noReply: true }); }} style={{ padding: '12px 24px', borderRadius: '24px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Send</button>
-          </div>
-        </div>
-      )}
+      {/* THE FULL SCREEN PHOTO CONFIRM STOOD HERE.
+          A black overlay with the picture centred and Cancel / Send under it,
+          and it was the reason a DM photo could never carry a caption: it sent
+          `text: ''` explicitly, with a comment saying the explicit empty string
+          was there to stop the composer's half typed draft being swept in. That
+          is the right call for a modal that has nothing to do with the
+          composer, and the wrong shape for a chat.
+
+          The flock side has never worked that way. It puts the photo in a row
+          above the field and sends whatever is typed alongside it as the
+          caption (App.js, shareImageToChat). Two chat surfaces in one app
+          disagreeing about whether a photo can have words on it is not a
+          feature, and the DM was the one that could not.
+
+          It is ChatInputBar's pending-image row now, on both surfaces, which is
+          also what the rebuild plan asks for: "Preview bar above the composer
+          before send". */}
 
       {/* Messages area */}
       {imageViewer && (
@@ -1105,7 +1189,26 @@ export default function DmDetail({
            themes are answered. --chat-accent is defined by the module's own
            cards.css, which VenueCardRow below pulls in; the second value keeps
            the name legible if that ever stops being true. */
-        ownColour="var(--chat-accent, var(--accent-purple-text))"
+        ownColour={DM_OWN_COLOUR}
+        /* THE OTHER PERSON HAS A COLOUR. Without this every run that was not
+           yours fell through to --chat-name-fallback, which is
+           --text-secondary, so the person you are talking to was drawn in the
+           same grey as every other secondary word on the screen.
+
+           `colourFor` rather than `colours`, because `colours` is a map keyed
+           on run.senderId and the rows this screen builds carry no senderId at
+           all: that lookup would miss every time and fall through to the same
+           grey. It also has to answer for YOUR runs, not just theirs, because
+           MessageList consults colourFor FIRST and returns whatever it says,
+           so a colourFor that returns nothing for your own messages takes your
+           own colour away rather than deferring to ownColour. Both branches
+           read the same two constants, which is why the own colour is hoisted
+           rather than written inline twice.
+
+           One fixed blue and not the group palette: a one to one thread has
+           nobody to tell apart, and this is the colour the reference capture
+           uses for whoever you are talking to. */
+        colourFor={(run) => (run.isMine ? DM_OWN_COLOUR : DM_FRIEND_COLOUR)}
         renderCard={renderDmCard}
         renderStatus={renderDmStatus}
         /* Scrollback. The button and its Loading state are the module's; the
@@ -1213,16 +1316,23 @@ export default function DmDetail({
         }]}
       />
 
-      {/* Reply bar */}
-      {dmReplyingTo && (
-        <div style={{ padding: '8px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-          <div style={{ flex: 1, paddingLeft: '10px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)', padding: '6px 10px' }}>
-            <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>Replying to {dmReplyingTo.sender}</span>
-            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{messagePreview(dmReplyingTo)}</p>
-          </div>
-          <button aria-label="Cancel reply" className="hit44" onClick={() => setDmReplyingTo(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textSecondary, 14)}</button>
-        </div>
-      )}
+      {/* THE REPLY QUOTE STOOD HERE, AND SO DID A SECOND COPY OF IT.
+          This screen drew its own "Replying to <name>" bar AND passed
+          `replyTo` to ChatInputBar, which draws the same thing, so starting a
+          reply put two identical quote bars above the field, one on top of the
+          other. The bar's is the one that stays: it sits inside the composer
+          it belongs to, so it moves with the keyboard dock instead of being
+          left behind above it.
+
+          It also sat OUTSIDE the blocked-pair gate below, so a blocked thread,
+          which deliberately draws no composer at all, could still show a reply
+          bar for a reply that had nowhere to go.
+
+          The preview goes with it. ChatInputBar reads `replyTo.preview` before
+          `replyTo.text`, and a quoted photo or venue card has no text, so the
+          preview is resolved here through App.js's messagePreview and handed
+          over on the object. Without that a reply to a photo quoted an empty
+          line. */}
 
       {/* Input bar — text + camera + venue search + send */}
       {/* DM composer. The DM conversation screen does not render the tab bar,
@@ -1265,11 +1375,35 @@ export default function DmDetail({
                the handler being reached around. */
             handleDmInputChange({ target: { value: next } });
           }}
-          onSend={() => { if (canSendDmText) sendDmMessage(); }}
+          onSend={() => {
+            /* A PHOTO WAITING TO GO WINS, and it takes the draft with it as its
+               caption, which is exactly what the flock side does. The photo is
+               the message; the words are about the photo. */
+            if (showDmImagePreview && dmPendingImage) {
+              const image = dmPendingImage;
+              const caption = dmDraft.trim();
+              setShowDmImagePreview(false);
+              setDmPendingImage(null);
+              setDmDraft('');
+              setDmComposerHasRealText(false);
+              /* Cleared through App.js as well, because it owns the shared
+                 draft ref and chatInputHasText, and the local mirror above is
+                 only what the controlled field renders. */
+              setChatInput('');
+              sendDmMessage({ text: caption, message_type: 'image', image_url: image, noReply: true });
+              return;
+            }
+            if (canSendDmText) sendDmMessage();
+          }}
           onCamera={() => openCameraViewfinder('dm')}
           onLibrary={() => dmGalleryInputRef.current?.click()}
           onPlus={() => setDmPlusOpen(true)}
-          replyTo={dmReplyingTo}
+          /* The photo waiting to go, in a row above the field. This is also
+             what arms send with an empty box: a photo on its own is a message,
+             so the bar offers send for it with nothing typed. */
+          pendingImage={showDmImagePreview ? dmPendingImage : null}
+          onRemoveImage={() => { setShowDmImagePreview(false); setDmPendingImage(null); }}
+            replyTo={dmReplyingTo && { ...dmReplyingTo, preview: messagePreview(dmReplyingTo) }}
           onCancelReply={() => setDmReplyingTo(null)}
           sharingLocation={!!dmSharingLocation}
           locationLabel="Sharing your location"

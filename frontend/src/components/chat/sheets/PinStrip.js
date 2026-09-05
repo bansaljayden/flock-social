@@ -59,6 +59,9 @@ export default function PinStrip({
   onUnpin,         // long-press menu, venue model only
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  /* Reset by the model's own url, so pinning a DIFFERENT place after a broken
+     one tries the new picture instead of staying on the glyph forever. */
+  const [brokenUrl, setBrokenUrl] = useState(null);
   const holdTimer = useRef(null);
   const holdStart = useRef(null);
   // A long press fires pointerup and then click; without this the menu opens
@@ -211,8 +214,25 @@ export default function PinStrip({
         }}
       >
         <span className="cs-strip-thumb" aria-hidden="true">
-          {isVenue && model.thumbUrl
-            ? <img src={model.thumbUrl} alt="" className="cs-strip-thumb-img" />
+          {/* A THUMBNAIL THAT 404s FALLS BACK TO THE GLYPH, not to the browser's
+              broken-image mark. The banner this strip replaced passed the app's
+              own onVenuePhotoError and swapped to a placeholder; the strip is
+              20px, far too small for that placeholder to read as anything, so
+              the honest fallback is the same map pin drawn when there is no
+              photo at all. Without this a dead URL puts a torn-page icon inside
+              a 20px square, which reads as the strip being broken rather than
+              the picture being gone, and venue photo URLs do die: two of the
+              four write sites for a DM's pinned venue hand over a relative
+              /api/ path that only resolves against the API host. */}
+          {isVenue && model.thumbUrl && brokenUrl !== model.thumbUrl
+            ? (
+              <img
+                src={model.thumbUrl}
+                alt=""
+                className="cs-strip-thumb-img"
+                onError={() => setBrokenUrl(model.thumbUrl)}
+              />
+            )
             : (isVenue ? Icons.mapPin('currentColor', 14) : Icons.vote('currentColor', 14))}
         </span>
         <span className="cs-strip-name">{name}</span>
