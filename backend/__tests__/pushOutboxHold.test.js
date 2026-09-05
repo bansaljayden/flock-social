@@ -11,7 +11,7 @@ test('a quiet-hour hold is one row per conversation, with the newest words', () 
   const src = read('services/pushHelper.js');
   const enq = src.slice(src.indexOf('async function enqueue('), src.indexOf('startOutboxSweep();', src.indexOf('async function enqueue(')));
   assert.match(enq, /if \(reason === 'quiet'\) \{/);
-  assert.match(enq, /UPDATE push_outbox\s+SET title = \$3, body = \$4, data = \$5::jsonb,\s+expires_at = GREATEST\(expires_at, \$6\)/);
+  assert.match(enq, /UPDATE push_outbox\s+SET title = \$3, body = \$4,\s+data = \$5::jsonb \|\| jsonb_build_object\([^`]*?\n\s*\),\s+expires_at = GREATEST\(expires_at, \$6\)/);
   assert.match(enq, /WHERE user_id = \$1 AND reason = 'quiet'/);
   assert.match(enq, /if \(merged && merged\.rowCount > 0\) return true;/);
 });

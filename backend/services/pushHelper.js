@@ -401,6 +401,64 @@ async function contentGoneFor(data = {}) {
   return false;
 }
 
+// For a merged quiet row whose newest message is gone: the newest message
+// in the same conversation that the recipient can still see, no older than
+// the first message the hold carried and past the recipient's read cursor
+// (the same predicates unreadBadge uses). null when the newest is still
+// visible, when nothing survives, or when the read fails (the sweep then
+// behaves as it did).
+async function repairMergedHold(userId, data = {}) {
+  try {
+    if (!(await contentGoneFor(data))) return null;
+    const flockId = flockFrom(data);
+    const senderId = Number(data.senderId);
+    const firstMessageId = Number(data.firstMessageId);
+    const firstDmId = Number(data.firstDmId);
+    if (flockId && Number.isInteger(firstMessageId) && firstMessageId > 0) {
+      const r = await pool.query(
+        `SELECT m.id
+           FROM messages m
+           JOIN flock_members fm ON fm.flock_id = m.flock_id
+                                AND fm.user_id = $2
+                                AND fm.status = 'accepted'
+          WHERE m.flock_id = $1
+            AND m.id >= $3
+            AND m.id > COALESCE(fm.last_read_message_id, 0)
+            AND m.sender_id IS NOT NULL
+            AND m.sender_id != $2
+            AND m.is_hidden IS NOT TRUE
+            AND m.sender_deleted_at IS NULL
+          ORDER BY m.id DESC
+          LIMIT 1`,
+        [flockId, userId, firstMessageId]
+      );
+      if (r.rows.length === 0) return null;
+      return { body: 'New messages', data: { ...data, messageId: String(r.rows[0].id) } };
+    }
+    if (Number.isInteger(senderId) && senderId > 0 && Number.isInteger(firstDmId) && firstDmId > 0) {
+      const r = await pool.query(
+        `SELECT dm.id
+           FROM direct_messages dm
+          WHERE dm.receiver_id = $1
+            AND dm.sender_id = $2
+            AND dm.id >= $3
+            AND dm.read_status = FALSE
+            AND COALESCE(dm.is_hidden, false) = false
+            AND dm.sender_deleted_at IS NULL
+          ORDER BY dm.id DESC
+          LIMIT 1`,
+        [userId, senderId, firstDmId]
+      );
+      if (r.rows.length === 0) return null;
+      return { body: 'New messages', data: { ...data, dmId: String(r.rows[0].id) } };
+    }
+    return null;
+  } catch (err) {
+    console.error('[Push] merged hold repair failed, releasing as held:', err.message);
+    return null;
+  }
+}
+
 function flockFrom(data = {}) {
   if (data.flockId === undefined || data.flockId === null) return null;
   const n = Number(data.flockId);
@@ -745,7 +803,12 @@ async function enqueue(userId, title, body, data, reason, nextAttemptAt, expires
       try {
         merged = await pool.query(
           `UPDATE push_outbox
-              SET title = $3, body = $4, data = $5::jsonb,
+              SET title = $3, body = $4,
+                  data = $5::jsonb || jsonb_build_object(
+                    'merged', true,
+                    'firstMessageId', COALESCE(push_outbox.data->'firstMessageId', push_outbox.data->'messageId'),
+                    'firstDmId', COALESCE(push_outbox.data->'firstDmId', push_outbox.data->'dmId')
+                  ),
                   expires_at = GREATEST(expires_at, $6)
             WHERE user_id = $1 AND reason = 'quiet'
               AND COALESCE(data->>'type', '') = COALESCE($2, '')
@@ -1024,7 +1087,21 @@ async function sweepPushOutbox() {
 
     let result = null;
     try {
-      result = await deliver(row.user_id, row.title, row.body, data, { fromOutbox: true });
+      // A merged quiet row names only its newest message. When that one was
+      // unsent or hidden before morning, the release used to drop the whole
+      // conversation's notification (notifications audit, 2026-09-05). The row
+      // is re-pointed at the newest message the person can still see, with a
+      // body that quotes nothing, and the visibility check inside deliver()
+      // then judges that message.
+      const repaired = row.reason === 'quiet' && data.merged === true
+        ? await repairMergedHold(row.user_id, data)
+        : null;
+      result = await deliver(
+        row.user_id, row.title,
+        repaired ? repaired.body : row.body,
+        repaired ? repaired.data : data,
+        { fromOutbox: true }
+      );
     } catch (err) {
       console.error('[Push] outbox delivery threw:', err.message);
     }
@@ -1322,6 +1399,7 @@ module.exports = {
   DROPPED_IN_QUIET_HOURS,
   // The presence fix: which devices a live socket actually speaks for.
   attentiveTokens,
+  repairMergedHold,
   everyDeviceAttended,
   OUTCOME,
   // ---------------------------------------------------------------------------
