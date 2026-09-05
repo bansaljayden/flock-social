@@ -1155,8 +1155,9 @@ export async function getIncomingFlocks() {
   return request('/api/venue-dashboard/incoming-flocks');
 }
 
-export async function getVenueReviews() {
-  return request('/api/venue-dashboard/reviews');
+// `before` is the previous page's nextBefore, for the page below it.
+export async function getVenueReviews(before) {
+  return request(`/api/venue-dashboard/reviews${before ? `?before=${encodeURIComponent(before)}` : ''}`);
 }
 export async function replyToReview(id, reply) {
   return request(`/api/venue-dashboard/reviews/${id}/reply`, { method: 'POST', body: JSON.stringify({ reply }) });

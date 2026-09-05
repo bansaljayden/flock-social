@@ -108,6 +108,7 @@ export default function VenueDashboard({
   loadVenueMap,
   loadVenuePromotions,
   loadVenueReviews,
+  loadOlderVenueReviews,
   onLogout,
   openVenueDetail,
   openVenueLogoPicker,
@@ -1815,6 +1816,23 @@ export default function VenueDashboard({
                           which is the stronger signal anyway. */}
                     </div>
                   ))}
+                  {/* The page below this one. The server has said hasMore since
+                      the list became a page; nothing read it, so the oldest
+                      reviews past fifty were unreachable and could never be
+                      replied to (venue-owner audit, 2026-09-05). */}
+                  {venueReviewsData.hasMore && (
+                    <button
+                      className="hit44 glass-btn glass-secondary"
+                      disabled={!!venueReviewsData.loadingOlder}
+                      onClick={async () => {
+                        const ok = await loadOlderVenueReviews(venueReviewsData.nextBefore);
+                        if (!ok) showToast('Could not load older reviews. Try again.', 'error');
+                      }}
+                      style={{ width: '100%', padding: '10px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', marginTop: '4px' }}
+                    >
+                      {venueReviewsData.loadingOlder ? 'Loading older reviews' : 'Show older reviews'}
+                    </button>
+                  )}
                 </div>
               )}
             </div>

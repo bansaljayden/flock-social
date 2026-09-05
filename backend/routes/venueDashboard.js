@@ -795,6 +795,37 @@ function reviewPageSize(raw) {
   return Math.min(n, REVIEW_PAGE_MAX);
 }
 
+// THE PAGE AFTER THE FIRST ONE (venue-owner audit, 2026-09-05). Both review
+// reads were one page with no way to ask for the next: `hasMore` was computed
+// and sent, nothing read it, and from the fifty-first review on the oldest
+// ones were unreachable, which for the owner meant a review they could never
+// reply to. `?before=<created_at ISO>,<id>` is the previous page's last row,
+// and the list continues strictly below it in the same (created_at, id) order
+// the page is sorted in, so a review written while the owner reads cannot
+// shift a row onto two pages or off both. Malformed is read as absent.
+function reviewCursor(raw) {
+  if (typeof raw !== 'string' || !raw) return null;
+  const comma = raw.lastIndexOf(',');
+  if (comma < 1) return null;
+  const when = new Date(raw.slice(0, comma));
+  const id = parseInt(raw.slice(comma + 1), 10);
+  if (Number.isNaN(when.getTime()) || !Number.isInteger(id) || id < 1) return null;
+  return { at: when.toISOString(), id };
+}
+// One row more than the page is asked for, so `hasMore` is a fact about the
+// rows below the page rather than a guess from the total, which paging past
+// takedowns and blocks would get wrong.
+function reviewPage(page, limit) {
+  const hasMore = page.length > limit;
+  const rows = hasMore ? page.slice(0, limit) : page;
+  const last = rows[rows.length - 1];
+  return {
+    rows,
+    hasMore,
+    nextBefore: hasMore && last ? `${new Date(last.created_at).toISOString()},${last.id}` : null,
+  };
+}
+
 // THE SAME RULE THE PROMOTION VIEW COUNTER ALREADY ENFORCES, APPLIED TO THE
 // NUMBER THAT ACTUALLY SELLS THE VENUE.
 //
@@ -875,7 +906,11 @@ router.get('/reviews', async (req, res) => {
     const s = statsResult.rows[0] || {};
     const total = s.total || 0;
 
-    const { rows } = await pool.query(
+    const cursor = reviewCursor(req.query.before);
+    const listParams = cursor
+      ? [venue.google_place_id, cursor.at, cursor.id, limit + 1]
+      : [venue.google_place_id, limit + 1];
+    const { rows: page } = await pool.query(
       // Same visibility predicate as the stats above, for the same reason the
       // JOIN is duplicated: the two must never disagree about which rows count.
       //
@@ -895,10 +930,12 @@ router.get('/reviews', async (req, res) => {
        WHERE vr.google_place_id = $1
          AND COALESCE(vr.is_hidden, false) = false
          ${NOT_OWNER_OF_THE_PLACE}
+         ${cursor ? 'AND (vr.created_at, vr.id) < ($2::timestamptz, $3::int)' : ''}
        ORDER BY vr.created_at DESC, vr.id DESC
-       LIMIT $2`,
-      [venue.google_place_id, limit]
+       LIMIT ${cursor ? '$4' : '$2'}`,
+      listParams
     );
+    const { rows, hasMore, nextBefore } = reviewPage(page, limit);
 
     res.json({
       reviews: rows,
@@ -909,8 +946,11 @@ router.get('/reviews', async (req, res) => {
         total,
         distribution: [s.r1 || 0, s.r2 || 0, s.r3 || 0, s.r4 || 0, s.r5 || 0],
       },
-      // The list is a page now; `total` above is the real count.
-      hasMore: total > rows.length,
+      // The list is a page; `total` above is the real count, and `hasMore`
+      // says whether rows lie below this page. `nextBefore` is what to send
+      // as ?before= to get them.
+      hasMore,
+      nextBefore,
     });
   } catch (err) {
     console.error('Get reviews error:', err);
@@ -1302,7 +1342,11 @@ router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
     // keeping the text (see submit-review). Without this line a retired reply
     // would go straight back onto the card attached to words its author never
     // read, which is the harm the retirement exists to prevent.
-    const { rows } = await pool.query(
+    const cursor = reviewCursor(req.query.before);
+    const listParams = cursor
+      ? [req.params.placeId, req.user.id, cursor.at, cursor.id, limit + 1]
+      : [req.params.placeId, req.user.id, limit + 1];
+    const { rows: page } = await pool.query(
       `SELECT vr.id, vr.rating, vr.text,
               -- The reply is the business speaking in public; a banned owner
               -- no longer speaks (see the promotions read). Both CASEs.
@@ -1327,14 +1371,16 @@ router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
               OR (b.blocker_id = vr.user_id AND b.blocked_id = $2)
          )
          ${NOT_OWNER_OF_THE_PLACE}
+         ${cursor ? 'AND (vr.created_at, vr.id) < ($3::timestamptz, $4::int)' : ''}
        -- A LIMIT over a tie is a page that can drop a row and show another
        -- twice. id DESC breaks it deterministically, and it is the write order.
        ORDER BY vr.created_at DESC, vr.id DESC
-       LIMIT $3`,
-      [req.params.placeId, req.user.id, limit]
+       LIMIT ${cursor ? '$5' : '$3'}`,
+      listParams
     );
+    const { rows, hasMore, nextBefore } = reviewPage(page, limit);
 
-    res.json({ reviews: rows, average, total, hasMore: total > rows.length });
+    res.json({ reviews: rows, average, total, hasMore, nextBefore });
   } catch (err) {
     console.error('Get public reviews error:', err);
     res.status(500).json({ error: 'Failed to get reviews' });
