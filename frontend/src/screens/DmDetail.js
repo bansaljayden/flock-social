@@ -629,11 +629,33 @@ export default function DmDetail({
      can see. Clearing on the value instead would rub out the space somebody
      typed before a venue name. */
   const [dmDraft, setDmDraft] = React.useState('');
+  /* What the box holds right now, readable from the effect below without
+     putting dmDraft in its dependency list. Every write to the draft goes
+     through writeDmDraft so the two cannot drift. */
+  const dmDraftRef = React.useRef('');
+  const writeDmDraft = React.useCallback((next) => {
+    dmDraftRef.current = next;
+    setDmDraft(next);
+  }, []);
   const dmHadTextRef = React.useRef(false);
   React.useEffect(() => {
-    if (dmHadTextRef.current && !chatInputHasText) setDmDraft('');
+    /* THE FALLING EDGE IS NOT ONLY App.js CLEARING THE BOX, which is what the
+       comment above used to assume. It said chatInputHasText is `!!value`, so a
+       box of spaces would stay truthy and produce no edge. That was wrong:
+       App.js computes `!!e.target.value.trim()`, so typing "  hello" and
+       backspacing down to two spaces ALSO drops the flag, and this effect then
+       wiped the spaces the person had just typed. The exact case the comment
+       claimed to protect was the one it broke.
+
+       So the edge alone is not enough. Clear only when the local mirror still
+       holds real text, which means the box was emptied by App.js on a send, a
+       photo going out or an exit, none of which this screen sees as a change
+       event. A mirror holding nothing but whitespace means the person typed
+       that whitespace, and it is theirs to keep. */
+    const mirrorHasRealText = dmDraftRef.current.trim().length > 0;
+    if (dmHadTextRef.current && !chatInputHasText && mirrorHasRealText) writeDmDraft('');
     dmHadTextRef.current = chatInputHasText;
-  }, [chatInputHasText]);
+  }, [chatInputHasText, writeDmDraft]);
 
   /* chatInputHasText is `!!value` in App.js, so a boxful of spaces is truthy
      there. This is the other half of the AND: what the field actually holds.
@@ -1244,10 +1266,16 @@ export default function DmDetail({
            --text-secondary, so the person you are talking to was drawn in the
            same grey as every other secondary word on the screen.
 
-           `colourFor` rather than `colours`, because `colours` is a map keyed
-           on run.senderId and the rows this screen builds carry no senderId at
-           all: that lookup would miss every time and fall through to the same
-           grey. It also has to answer for YOUR runs, not just theirs, because
+           `colourFor` rather than `colours`, because there is exactly one
+           other person in this thread. A map keyed on senderId would be a
+           one-entry object rebuilt on every render to answer a question with
+           one possible answer. (An earlier version of this comment justified it
+           by claiming these rows carry no senderId. That was simply false: all
+           three DM row builders in App.js set one, dmRows spreads it through
+           and groupRows copies it onto the run, so a map WOULD have resolved.
+           It was wrong in the direction that teaches the next reader an
+           id-keyed lookup cannot work here, which it can.) It also has to
+           answer for YOUR runs, not just theirs, because
            MessageList consults colourFor FIRST and returns whatever it says,
            so a colourFor that returns nothing for your own messages takes your
            own colour away rather than deferring to ownColour. Both branches
@@ -1429,7 +1457,7 @@ export default function DmDetail({
           registerInput={keyboard.registerInput}
           value={dmDraft}
           onChange={(next) => {
-            setDmDraft(next);
+            writeDmDraft(next);
             setDmComposerHasRealText(next.trim().length > 0);
             /* App.js's handler is written against a change event and owns the
                shared draft ref, the typing emit and chatInputHasText. The bar
@@ -1446,7 +1474,7 @@ export default function DmDetail({
               const caption = dmDraft.trim();
               setShowDmImagePreview(false);
               setDmPendingImage(null);
-              setDmDraft('');
+              writeDmDraft('');
               setDmComposerHasRealText(false);
               /* Cleared through App.js as well, because it owns the shared
                  draft ref and chatInputHasText, and the local mirror above is
