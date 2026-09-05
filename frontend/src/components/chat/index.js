@@ -45,3 +45,26 @@ export { typingSentence, presenceSentence } from './TypingRow';
 /* No default export on purpose. Six components come out of here and none of
    them is the obvious "the" one, so naming them at the import site is the
    difference between reading a screen's header and guessing at it. */
+
+/* THE REST OF THE MODULE.
+   Four workstreams wrote this folder in parallel and each appended to this one
+   file, so only the first group's exports survived: the input bar, every card
+   and every sheet were unreachable from outside. The integration pass imports
+   from here and nowhere else, so anything the screens need has a line below.
+   Helpers come with their component rather than in a bag of their own, because
+   the component is the thing a reader is looking for. */
+
+export { default as ChatInputBar } from './ChatInputBar';
+
+export { default as BillCard, billTally } from './cards/BillCard';
+export { default as PollCard } from './cards/PollCard';
+export { default as VenueCardRow } from './cards/VenueCardRow';
+export { default as LocationCard, remainingLabel, distanceLabel } from './cards/LocationCard';
+export { default as WhoIsHereCard } from './cards/WhoIsHereCard';
+export { default as SystemRow, formatMoney, CardShell, MemberAvatar } from './cards/SystemRow';
+export { default as NudgeRow } from './cards/NudgeRow';
+
+export { default as FlockProfileSheet, useSheetDialog, ChatSheet } from './sheets/FlockProfileSheet';
+export { default as ComposerPlusSheet } from './sheets/ComposerPlusSheet';
+export { default as PinStrip } from './sheets/PinStrip';
+export { default as PinnedMessageBar } from './sheets/PinnedMessageBar';
