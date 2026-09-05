@@ -232,3 +232,8 @@ tools/e2e/playwright-report/
 
 # Playwright writes here when run from the repo root; tools/e2e/test-results/ is already covered below.
 test-results/
+
+# Two-head candidate artifacts: trained locally, evaluated, never shipped from here.
+# The shipped model lives in backend/scripts/ml/models/ and is tracked on purpose;
+# a candidate is 60 MB of ONNX per run and must not follow it into the repo.
+backend/scripts/ml/models/candidate/
