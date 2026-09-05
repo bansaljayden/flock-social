@@ -304,11 +304,22 @@ async function collectRealtime() {
   const citiesArg = process.argv.find((a) => a.startsWith('--cities='));
   const cityArg = process.argv.find((a) => a.startsWith('--city='));
   const allCities = process.argv.includes('--all-cities');
+  if (HOLDOUT.misconfigured) {
+    await pool.end();
+    throw new Error(
+      'REFUSED: --holdout-city needs --holdout-utc-hours=<0-23,...> with at least one valid hour. '
+      + 'Without it the holdout city would either never run, or silently take every hour away from '
+      + 'the training cities. Exiting non-zero rather than guessing which was meant.');
+  }
   const cityScope = allCities
     ? null
-    : (citiesArg ? citiesArg.split('=')[1].split(',').map((c) => c.trim()).filter(Boolean)
+    : (HOLDOUT.active ? [HOLDOUT.city]
+      : citiesArg ? citiesArg.split('=')[1].split(',').map((c) => c.trim()).filter(Boolean)
       : cityArg ? [cityArg.split('=')[1].trim()]
       : ['philly', 'lehigh']);
+  if (HOLDOUT.active) {
+    console.log(`[ML:Realtime] Holdout hour: this run collects ${HOLDOUT.city} instead of the training cities.`);
+  }
   const { rows: venues } = await pool.query(
     `SELECT * FROM ml_venues WHERE is_active = true AND besttime_venue_id IS NOT NULL`
     + (cityScope ? ' AND city = ANY($1)' : '')
@@ -959,6 +970,42 @@ async function auditProvenance(runStartedAt, expected) {
     + `${audit.live} live, ${audit.forecast} forecast, 0 unlabelled.`);
 }
 
+// THE HOLDOUT CITY GETS A FEW NAMED HOURS OF THE DAY, ON THIS SAME CRON.
+//
+// The trainer holds out by CITY (train/export_training_data.js pins the list to
+// miami, tokyo and barcelona), and it has never had a live-labelled holdout at
+// all, so the ship gate has nothing current to measure a model on. The holdout
+// needs very little: about a hundred servable rows across five distinct dates.
+// That is a handful of sweeps, not a second collection programme.
+//
+// It runs here rather than on a second Railway service on purpose. A second
+// service needs its own copy of nine variables, and a collector whose key is
+// missing calls nothing, skips every venue and exits 0, which Railway paints
+// green for as long as nobody looks. That is the failure this file's header
+// exists to prevent, so the safer shape is the one service that already has its
+// variables spending a named hour on a different city.
+//
+// The cost is those hours of Pennsylvania collection, which is the corpus the
+// 50,000 row training floor is counted from. Two hours in twenty four is about
+// eight per cent. The hours are named rather than random so the holdout gets
+// more than one time of day in it: a holdout that only ever saw six in the
+// evening would not test a model that has to answer at noon.
+//
+// Resolved once, at load, because a sweep runs for the better part of an hour
+// and must not change which city it is collecting halfway through.
+const HOLDOUT = (() => {
+  const cityArg = process.argv.find((a) => a.startsWith('--holdout-city='));
+  const hoursArg = process.argv.find((a) => a.startsWith('--holdout-utc-hours='));
+  const city = cityArg ? cityArg.split('=')[1].trim() : null;
+  const hours = hoursArg
+    ? hoursArg.split('=')[1].split(',')
+      .map((h) => parseInt(h.trim(), 10))
+      .filter((h) => Number.isInteger(h) && h >= 0 && h <= 23)
+    : [];
+  const misconfigured = Boolean(cityArg) && (!city || hours.length === 0);
+  return { city, hours, misconfigured, active: Boolean(city) && hours.includes(new Date().getUTCHours()) };
+})();
+
 async function run() {
   // try/finally, not a bare sequence: collectRealtime() can now REFUSE (the
   // provenance audit throws), and the old form skipped pool.end() on any throw,
@@ -978,7 +1025,9 @@ async function run() {
     // clock keeps ticking. A holdout-city collector therefore passes
     // --no-baseline-refresh and leaves the rebuild to the hourly PA run, which
     // already covers every city because the statement is not city-scoped.
-    const skipBaselines = process.argv.includes('--no-baseline-refresh');
+    // A holdout hour skips it too. The rebuild is corpus-wide and not city
+    // scoped, so the training-city runs either side of this one cover it.
+    const skipBaselines = process.argv.includes('--no-baseline-refresh') || HOLDOUT.active;
     if (skipBaselines) {
       console.log('[ML:Realtime] Skipping the baseline refresh (--no-baseline-refresh); another collector owns it.');
     }
