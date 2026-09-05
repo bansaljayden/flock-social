@@ -2,7 +2,7 @@ const express = require('express');
 const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
-const { rejectIfProfane } = require('../utils/moderation');
+const { rejectIfProfane, rejectIfProfaneVenue } = require('../utils/moderation');
 const { getInvisibleUserIds } = require('../utils/blocks');
 // Shape before content — see validators/shape.js.
 const { scalarOnly, freeText } = require('../validators/shape');
@@ -313,8 +313,9 @@ router.post('/:id/vote',
 
       const { venue_name, venue_id } = req.body;
 
-      // Same UGC screen the socket path runs (Apple 1.2).
-      if (rejectIfProfane(res, venue_name)) return;
+      // Same UGC screen the socket path runs (Apple 1.2). Google's text is
+      // screened as Google's text; see moderateVenueText.
+      if (rejectIfProfaneVenue(res, venue_name, venue_id)) return;
 
       // One vote per member per flock. Switching venues used to stack a second
       // row (the unique key is per venue name), so both venues came back from

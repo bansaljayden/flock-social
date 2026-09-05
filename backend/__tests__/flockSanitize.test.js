@@ -617,3 +617,38 @@ test('a verified account is untouched by any of this', async () => {
   assert.strictEqual(create.status, 201);
   assertQueriesUnderstood();
 });
+
+
+test('a plan name over the limit is told it is long, not that it is missing', async () => {
+  // One isLength chain carried one sentence, so 256 characters answered
+  // "Flock name is required" while the field was visibly filled in
+  // (first-session audit 2026-09-05).
+  reset();
+  // A run of one letter trips the profanity list on its own, so the fixture
+  // is words.
+  const words = 'Dinner at the park with everyone '.repeat(12);
+  const res = await call('POST', '/api/flocks', 1, { name: words.slice(0, 256) });
+  assert.strictEqual(res.status, 400);
+  assert.strictEqual((await res.json()).error, 'Flock name is too long (255 characters max)');
+  assert.strictEqual(lastWrite('INSERT INTO flocks'), undefined);
+  reset();
+  const ok = await call('POST', '/api/flocks', 1, { name: words.slice(0, 255) });
+  assert.strictEqual(ok.status, 201, await ok.text());
+});
+
+test('a real venue picked from Google is not refused for its name', async () => {
+  // "Dick's Sporting Goods" with its place id used to answer the community
+  // guidelines sentence on Create, with the venue still attached and nothing
+  // on screen saying the venue was the problem.
+  reset();
+  const res = await call('POST', '/api/flocks', 1, {
+    name: 'Gear run', venue_name: "Dick's Sporting Goods", venue_address: '1 Dick Rd, Bath, PA',
+    venue_id: 'ChIJN1t_tDeuEmsRUsoyG83frY4',
+  });
+  assert.strictEqual(res.status, 201, await res.text());
+  // Typed, with no place id, the full list still applies.
+  reset();
+  const typed = await call('POST', '/api/flocks', 1, { name: 'Gear run', venue_name: "Dick's Sporting Goods" });
+  assert.strictEqual(typed.status, 400);
+  assert.match((await typed.json()).error, /venue's name or address/);
+});

@@ -15,7 +15,7 @@ test('opening the editor picks the chip that lands on the plan\'s own day', () =
 
 test('a plan on no relative day gets its own date as a chip, and it resolves to that date', () => {
   expect(src).toMatch(/\[\.\.\.FLOCK_DAY_CHOICES, \.\.\.\(isDateKey\(timeEditDay\) \? \[timeEditDay\] : \[\]\)\]\.map/);
-  expect(src).toMatch(/resolveEditTime\(resolveEventTime, timeEditDay, timeEditHour\)\.toISOString\(\)/);
+  expect(src).toMatch(/const chosen = resolveEditTime\(resolveEventTime, timeEditDay, timeEditHour\);[\s\S]{0,500}?saveFlockEventTime\(flock\.id, chosen\.toISOString\(\)\)/);
   expect(src).not.toMatch(/resolveEventTime\(timeEditDay, timeEditHour\)/);
 });
 

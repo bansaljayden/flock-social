@@ -85,3 +85,26 @@ test('image: safe verdict -> allowed', async () => {
   const res = await moderation.moderateImage(TINY_PNG);
   assert.strictEqual(res.allowed, true);
 });
+
+
+test('venue text from a map provider is not refused for being a real name', () => {
+  // Every one of these is a business or a street Google Places returns
+  // verbatim, and the full list refuses each (first-session audit
+  // 2026-09-05). With a place id they pass; without one the full list holds.
+  const PLACE = 'ChIJN1t_tDeuEmsRUsoyG83frY4';
+  for (const name of ["Dick's Sporting Goods", 'Cox Farms', "Wang's Kitchen", "Hell's Kitchen", 'Sexy Fish', 'Bloody Run Road', 'Butt Rd', "Fanny's Diner"]) {
+    assert.strictEqual(moderation.moderateVenueText(name, PLACE).allowed, true, `${name} refused with a place id`);
+    assert.strictEqual(moderation.moderateVenueText(name, null).allowed, moderation.moderateText(name).allowed,
+      `${name}: without a place id the verdict must be the general one`);
+  }
+  // A slur or an explicit term is still refused whatever the source.
+  const hard = 'the ' + String.fromCharCode(102, 117, 99, 107) + ' bar';
+  assert.strictEqual(moderation.moderateVenueText(hard, PLACE).allowed, false);
+  assert.strictEqual(moderation.moderateVenueText(hard, null).allowed, false);
+  // Empty and a too-short id fall back to the full list.
+  assert.strictEqual(moderation.moderateVenueText('', PLACE).allowed, true);
+  assert.strictEqual(moderation.moderateVenueText("Dick's", 'abc').allowed, false);
+  // The refusal names the venue rather than the person.
+  assert.match(moderation.VENUE_REJECTED_MESSAGE, /venue/);
+  assert.ok(!/—/.test(moderation.VENUE_REJECTED_MESSAGE));
+});
