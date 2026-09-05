@@ -45,8 +45,16 @@ describe('both transports carry the quote', () => {
     // The whole point of the fallback is that the SAME message goes out. A
     // reply that silently became a loose message on the weak signal that put
     // it on this transport is the drift this file's backend twin exists for.
+    //
+    // TWO HALVES, AND THIS TEST ONLY CHECKED ONE. It asserted the body builder
+    // in api.js and passed while App.js's CALL SITE was still not passing the
+    // field, so the option was read from an object nobody put it on and every
+    // reply sent on the fallback arrived as a loose message. The backend's
+    // transport-parity suite caught it, deriving the field list from the
+    // function rather than from a list somebody maintained. Both halves now.
     const body = slice(apiSrc, 'export async function sendMessage(flockId, text', 1400);
     expect(body).toMatch(/reply_to_id: opts\.reply_to_id \|\| undefined,/);
+    expect(appSrc).toMatch(/apiSendMessage\(flockId, text, \{[^}]*reply_to_id: replyToId \|\| undefined \}\)/);
   });
 });
 
