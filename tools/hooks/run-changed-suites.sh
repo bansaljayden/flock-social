@@ -78,7 +78,29 @@ if touched "backend/"; then
   # contends with itself when anything else is using the machine's cores, which
   # shows up as a file-level failure with no failing test inside it.
   echo "pre-push: backend suite (this one is long)"
-  ( cd backend && npm test ) || FAILED="$FAILED backend"
+  # RUN IT, AND IF IT FAILS RUN IT ONCE MORE.
+  #
+  # Not indulgence. The suite starts embedded PostgreSQL instances, and when
+  # the machine is still busy it fails at the FILE level: the file never gets
+  # far enough to run a test, so the tally reads "5373 pass, 3 fail" with three
+  # failures that name files and no test inside any of them. The frontend suite
+  # and the production build run immediately above this, and their workers are
+  # still exiting when this starts, which is precisely when it happens.
+  #
+  # A gate that refuses valid pushes is worse than the flake it is reporting,
+  # because the way people learn to get past it is --no-verify, and then it
+  # catches nothing at all. So a first failure buys a second run on a quieter
+  # machine rather than a refusal.
+  #
+  # A REAL failure still fails, it just costs twice. That is the right trade
+  # for the thing standing between a mistake and origin/main.
+  if ( cd backend && npm test ); then
+    :
+  else
+    echo "pre-push: backend suite failed once. Re-running on a quieter machine"
+    echo "pre-push: (a file-level failure with no failing test inside it is contention, not a break)"
+    ( cd backend && npm test ) || FAILED="$FAILED backend"
+  fi
 fi
 
 if [ -n "$FAILED" ]; then
