@@ -294,27 +294,52 @@ router.post('/flocks/:id/pins',
         return res.status(404).json({ error: 'That message is no longer there to pin' });
       }
 
-      // Counted before the insert, and the unique index below is what makes
-      // the count safe under a race: two people pinning a third and fourth
-      // message at once both read 2, and the second insert either adds a
-      // fourth row or hits the index. The ceiling is re-checked after.
-      const existing = await pool.query(
-        'SELECT COUNT(*)::int AS n FROM pinned_messages WHERE flock_id = $1',
-        [flockId]
-      );
-      if (existing.rows[0].n >= MAX_PINS) {
-        return res.status(409).json({ error: `Only ${MAX_PINS} messages can be pinned. Unpin one first.` });
-      }
+      /* THE COUNT AND THE INSERT ARE ONE TRANSACTION, UNDER THE FLOCK ROW
+         LOCK, which is the same lock and the same reason DELETE /api/flocks/:id
+         and POST /:id/leave take: "a guard in one autocommit statement and a
+         write in another leaves a gap".
 
-      // ON CONFLICT DO NOTHING, so pinning something already pinned is a
-      // no-op rather than a 500. Two people tapping Pin on the same message
-      // within a second of each other is the ordinary case.
-      await pool.query(
-        `INSERT INTO pinned_messages (flock_id, message_id, pinned_by)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (flock_id, message_id) DO NOTHING`,
-        [flockId, messageId, req.user.id]
-      );
+         The comment that stood here claimed the unique index made the count
+         safe under a race. IT DOES NOT, and I wrote that without checking. The
+         index is on (flock_id, message_id), so it stops the SAME message being
+         pinned twice and has nothing to say about how many pins a flock has.
+         Two people pinning two DIFFERENT messages with two already pinned both
+         read 2, both pass the check, both insert, and the flock ends up with
+         four. The same comment also promised the ceiling was "re-checked
+         after", which was never written.
+
+         Under the lock the second request either reads 3 and is refused, or
+         waits and then reads 3 and is refused. Three is three.
+
+         ON CONFLICT DO NOTHING stays, and is a separate concern: two people
+         tapping Pin on the SAME message within a second of each other is the
+         ordinary case and must be a no-op rather than a 23505 the catch turns
+         into a 500. */
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
+        const existing = await client.query(
+          'SELECT COUNT(*)::int AS n FROM pinned_messages WHERE flock_id = $1',
+          [flockId]
+        );
+        if (existing.rows[0].n >= MAX_PINS) {
+          await client.query('ROLLBACK').catch(() => {});
+          return res.status(409).json({ error: `Only ${MAX_PINS} messages can be pinned. Unpin one first.` });
+        }
+        await client.query(
+          `INSERT INTO pinned_messages (flock_id, message_id, pinned_by)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (flock_id, message_id) DO NOTHING`,
+          [flockId, messageId, req.user.id]
+        );
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
 
       const invisible = await getInvisibleUserIds(req.user.id);
       const pins = await readFlockPins(flockId, invisible);
