@@ -561,6 +561,23 @@ appId: com.flockcorp.flock
             - tapOn:
                 point: "45%,92%"
                 optional: true
+      # LEAVE THIS REQUIRED. It is the last unguarded step on the half of
+      # the flow that has never executed, so it is the obvious thing to want
+      # to soften, and softening it is the wrong call.
+      #
+      # Checked against Maestro's own docs corpus (docs.maestro.dev
+      # llms-full.txt, 2026-09-05): inputText is documented ONLY in the
+      # scalar form used here, and `optional` is not documented as a field
+      # available on every command. It plainly works on tapOn and
+      # scrollUntilVisible throughout this file, but an unsupported key on
+      # inputText would fail at PARSE time, which loses the WHOLE run
+      # instead of this one step. That is a worse failure than the one it
+      # would prevent, and a run costs about $4.75.
+      #
+      # The gate above is the protection instead: if the composer text is
+      # not visible, it taps where the field sits. If a future run does die
+      # here, the fix is another focus attempt above this line, not a key on
+      # it.
       - inputText: "message from B for the report shot"
       - pressKey: Enter                         # ChatDetail.js:1269 onKeyDown Enter
       - tapOn:
