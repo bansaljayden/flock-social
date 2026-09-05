@@ -586,7 +586,10 @@ export function unregisterPushToken() {
   const request = token
     ? unregisterDeviceToken(token).catch(() => {})
     : everRegistered
-      ? unregisterAllTokens().catch(() => {})
+      // Only rows of this device's kind: a browser cannot own the phone's
+      // token, so it must not be the one to delete it (notifications audit,
+      // 2026-09-05).
+      ? unregisterAllTokens(isNativeApp() ? (window.Capacitor.getPlatform() === 'android' ? 'android' : 'ios') : 'web').catch(() => {})
       : Promise.resolve();
 
   // Drop the token on the device too, so the next account on this device gets

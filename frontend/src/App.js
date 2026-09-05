@@ -3,7 +3,7 @@ import { useTheme } from './context/ThemeContext';
 // The revenue simulator math (lib/finance.js) moved to screens/RevenueScreen.js
 // with the admin console on 2026-08-27 and is imported there now. It was the
 // only reader of it in App.js, so the import went with it.
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue } from './services/api';
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
@@ -4863,6 +4863,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // Geolocation state — restore last known location immediately so map isn't empty
   const [locationEnabled, setLocationEnabled] = useState(() => localStorage.getItem('flock_location_enabled') !== 'false');
+  // Read by the settings-loaded listener, which runs outside this state's
+  // render cycle and must not toggle what is already so.
+  const locationEnabledRef = useRef(locationEnabled);
+  useEffect(() => { locationEnabledRef.current = locationEnabled; }, [locationEnabled]);
   const [userLocation, setUserLocation] = useState(() => {
     if (localStorage.getItem('flock_location_enabled') === 'false') return null;
     const savedLat = localStorage.getItem('flock_user_lat');
@@ -6589,8 +6593,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [editingFlockList, setEditingFlockList] = useState(false);
 
   // Persist pin/order changes
-  useEffect(() => { localStorage.setItem('flock_pinned', JSON.stringify(pinnedFlockIds)); queueSync({ pinnedFlockIds }); }, [pinnedFlockIds]);
-  useEffect(() => { localStorage.setItem('flock_order', JSON.stringify(flockOrder)); queueSync({ flockOrder }); }, [flockOrder]);
+  // The mount run of each effect below used to push this device's copy to
+  // the account before pullSettings had delivered the account's, so a fresh
+  // install could write [] over the pins the person made elsewhere (settings
+  // audit, 2026-09-05). Same first-run guard interests have.
+  const pinsSyncedRef = useRef(false);
+  useEffect(() => {
+    localStorage.setItem('flock_pinned', JSON.stringify(pinnedFlockIds));
+    if (!pinsSyncedRef.current) { pinsSyncedRef.current = true; return; }
+    queueSync({ pinnedFlockIds });
+  }, [pinnedFlockIds]);
+  const orderSyncedRef = useRef(false);
+  useEffect(() => {
+    localStorage.setItem('flock_order', JSON.stringify(flockOrder));
+    if (!orderSyncedRef.current) { orderSyncedRef.current = true; return; }
+    queueSync({ flockOrder });
+  }, [flockOrder]);
 
   // Create Flock form
   const [flockName, setFlockName] = useState('');
@@ -7260,6 +7278,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [dmSearchText, setDmSearchText] = useState('');
   const [showDmMenu, setShowDmMenu] = useState(false);
   const [showDeleteDmConfirm, setShowDeleteDmConfirm] = useState(false);
+  // One read mark per open thread per 1.5 s while messages arrive live,
+  // because each PUT fans a badge push out to every device (notifications
+  // audit, 2026-09-05). Keyed by the other person's id; the timer that fires
+  // carries the newest id seen.
+  const dmReadTimersRef = useRef({});
   const [deletedDmUserIds, setDeletedDmUserIds] = useState(() => {
     try { return JSON.parse(localStorage.getItem('flock_deleted_dms') || '[]'); } catch { return []; }
   });
@@ -7725,10 +7748,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         localStorage.setItem('flock_crowd_alerts', on ? 'true' : 'false');
       }
       if (Array.isArray(s.userInterests)) setUserInterests(s.userInterests);
+      // The rest of the synced keys reached localStorage and nothing else
+      // (settings audit, 2026-09-05): Location switched off on one device read
+      // On here until a force quit, and the Explore tab kept asking for a
+      // position. The location toggle is the same handler the switch uses,
+      // so Off drops the stored position too. userMode and mapType stay
+      // boot-time reads on purpose: the map owns its own state, and flipping
+      // the whole app mid-session is not a sync.
+      if (s.locationEnabled !== undefined && s.locationEnabled !== null) {
+        const on = String(s.locationEnabled) !== 'false';
+        if (on !== locationEnabledRef.current) toggleLocation(on);
+      }
+      if (Array.isArray(s.pinnedFlockIds)) setPinnedFlockIds(s.pinnedFlockIds);
+      if (Array.isArray(s.flockOrder)) setFlockOrder(s.flockOrder);
     };
     window.addEventListener('flock-settings-loaded', onSettings);
     return () => window.removeEventListener('flock-settings-loaded', onSettings);
-  }, []);
+  }, [toggleLocation]);
 
   // Modals
   const [showSOS, setShowSOS] = useState(false);
@@ -10743,6 +10779,25 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
   }, [profilePic, showToast]);
 
+  // A photo could be replaced but never taken down (settings audit,
+  // 2026-09-05): the only two writers set a URL, so a person who had put
+  // their face up could only swap in a cartoon. Same optimistic shape as the
+  // avatar above, reverting on failure.
+  const removePhoto = useCallback(async () => {
+    const previousPic = profilePic;
+    setProfilePic(null);
+    setShowPicModal(false);
+    try {
+      await removeProfileImage();
+      showToast('Photo removed.', 'success');
+    } catch (err) {
+      console.error('Photo removal failed:', err);
+      setProfilePic(previousPic);
+      if (err?.sessionExpired) return;
+      showToast(err?.message || "That photo didn't come off. Try again.", 'error');
+    }
+  }, [profilePic, showToast]);
+
   // Toggle Component
   // role="switch" + aria-checked is the only thing that makes an unlabelled
   // 44x24 pill announce as a control with a state. `label` is passed by every
@@ -11698,6 +11753,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             <input type="file" accept="image/*" onChange={handlePhotoUpload} style={{ display: 'none' }} />
           </label>
           <button className="hit44 glass-btn glass-secondary" onClick={generateAIAvatar} style={{ ...styles.gradientButton, background: 'var(--bg-card-solid)', color: colors.navy, border: `2px solid ${colors.navy}`, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.robot(colors.navy, 16)} Generate AI Avatar</button>
+          {profilePic && (
+            <button className="hit44 glass-btn glass-secondary" onClick={removePhoto} style={{ ...styles.gradientButton, background: 'var(--bg-card-solid)', color: colors.redText, border: '2px solid var(--border-mid)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>Remove photo</button>
+          )}
           <button className="hit44 glass-btn glass-secondary" onClick={() => setShowPicModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', padding: '8px', cursor: 'pointer' }}>Cancel</button>
         </div>
       </div>
@@ -11906,7 +11964,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // for a DM photo is the only copy of it. It also left the thread empty
         // for up to twelve seconds behind the throttled re-read, which renders
         // as "Say hi to start the conversation" on a thread with history.
-        const fresh = (data.conversations || []).filter(c => !hidden.includes(c.userId));
+        // A thread deleted here stays hidden unless something new arrived in
+        // it; a message that landed while the app was closed only ever revived
+        // it through the live event, so the icon badge counted a thread the
+        // list would not show (notifications audit, 2026-09-05).
+        const revivedIds = (data.conversations || [])
+          .filter(c => hidden.includes(c.userId) && Number(c.unread) > 0)
+          .map(c => c.userId);
+        if (revivedIds.length > 0) {
+          setDeletedDmUserIds(prevDeleted => {
+            const revived = prevDeleted.filter(id => !revivedIds.includes(id));
+            try { localStorage.setItem('flock_deleted_dms', JSON.stringify(revived)); } catch {}
+            return revived;
+          });
+        }
+        const fresh = (data.conversations || []).filter(c => !hidden.includes(c.userId) || revivedIds.includes(c.userId));
         setDirectMessages(prev => fresh.map(c => {
           const old = Array.isArray(prev) ? prev.find(p => p.userId === c.userId) : null;
           return {
@@ -12274,7 +12346,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (threadOpen && isServerId(msg.id)) {
         // Best effort. A failed mark is a stale badge on the next load, not a
         // lost message, and the next open of the thread fixes it anyway.
-        markDmRead(msg.id).catch(() => {});
+        const timers = dmReadTimersRef.current;
+        if (timers[otherUserId]) clearTimeout(timers[otherUserId]);
+        timers[otherUserId] = setTimeout(() => {
+          delete timers[otherUserId];
+          markDmRead(msg.id).catch(() => {});
+        }, 1500);
       }
       const mapped = {
         id: msg.id,
@@ -19828,6 +19905,10 @@ const SESSION_END_COPY = {
   session_expired: 'Your session expired. Sign in again to pick up where you left off.',
   session_revoked: 'Your sign-in details changed, so Flock signed you out everywhere. Sign in again.',
   signed_out_everywhere: 'Signed out on every device, this one included. Sign in again to pick up where you left off.',
+  // The everywhere button used to say the line above even when the server
+  // call that signs the other devices out had failed (settings audit,
+  // 2026-09-05). This is what it says instead when only this phone is out.
+  signed_out_here_only: 'Signed out on this phone only. Flock could not be reached to sign out your other devices. Sign in and try Sign out everywhere again when you are back online.',
   account_deleted: 'This account was deleted. Sign in with another one, or make a new account.',
   account_suspended: 'This account is suspended. Email social@flockcorp.com if that looks wrong.',
 };

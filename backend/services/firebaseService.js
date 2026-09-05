@@ -519,8 +519,8 @@ async function sendBadgeNotification(token, badge, opts = {}) {
 
 // Send push notification to all devices belonging to a user
 // Cleans up stale tokens automatically
-async function sendPushToUser(userId, title, body, data = {}) {
-  return sendToUserDevices(userId, (row) => sendPushNotification(row.token, title, body, data));
+async function sendPushToUser(userId, title, body, data = {}, opts = {}) {
+  return sendToUserDevices(userId, (row) => sendPushNotification(row.token, title, body, data), opts);
 }
 
 async function sendBadgeToUser(userId, badge) {
@@ -530,7 +530,7 @@ async function sendBadgeToUser(userId, badge) {
 // One send loop for every per-user push. `perToken(row)` returns the same
 // { success, stale } shape sendPushNotification does, so the stale-token prune
 // below applies to badge syncs exactly as it applies to alerts.
-async function sendToUserDevices(userId, perToken) {
+async function sendToUserDevices(userId, perToken, opts = {}) {
   if (!senderOverride && !init()) return { sent: 0, failed: 0 };
 
   try {
@@ -548,11 +548,20 @@ async function sendToUserDevices(userId, perToken) {
 
     if (result.rows.length === 0) return { sent: 0, failed: 0 };
 
+    // Tokens the caller says are being looked at right now get nothing;
+    // services/pushHelper.js hands the attentive set down (notifications
+    // audit, 2026-09-05). `attended` says how many were left out so the
+    // caller can tell "everyone was here" from "no device".
+    const skip = opts.skipTokens instanceof Set && opts.skipTokens.size > 0 ? opts.skipTokens : null;
+    const rows = skip ? result.rows.filter((row) => !skip.has(row.token)) : result.rows;
+    const attended = result.rows.length - rows.length;
+    if (rows.length === 0) return { sent: 0, failed: 0, attended };
+
     // Round 7: this was a sequential await per token, inside route handlers
     // that already await once per recipient. A confirmed flock of twenty
     // members held the HTTP response open for twenty round trips to Google.
     const outcomes = await Promise.all(
-      result.rows.map((row) =>
+      rows.map((row) =>
         Promise.resolve()
           .then(() => perToken(row))
           .then((res) => ({ id: row.id, ...res }))
@@ -600,7 +609,7 @@ async function sendToUserDevices(userId, perToken) {
         });
     }
 
-    return { sent, failed };
+    return attended > 0 ? { sent, failed, attended } : { sent, failed };
   } catch (err) {
     console.error('[Firebase] sendToUserDevices error:', err.message);
     return { sent: 0, failed: 0 };

@@ -579,6 +579,15 @@ function attemptLimiter({ limit, windowMs }) {
     // else. proofFailures uses it on a correct password so a user who mistypes
     // and then gets it right is not held back; the key is the authenticated
     // users.id, so the only counter a caller can clear here is their own.
+    // Hands one recorded attempt back, for a slot spent on work that then
+    // failed on our side (settings audit, 2026-09-05: an export 500 cost one
+    // of the five hourly tries).
+    forgive(key) {
+      const entry = hits.get(key);
+      if (!entry) return;
+      if (entry.count <= 1) hits.delete(key);
+      else entry.count -= 1;
+    },
     clear(key) { hits.delete(key); },
     // Tests only. Production code must never reset a throttle wholesale.
     clearAll() { hits.clear(); },
@@ -1996,6 +2005,24 @@ router.post('/upload-image', (req, res) => {
 });
 
 // PUT /api/users/profile-image - Save an external avatar URL (e.g. DiceBear)
+// TAKING A PHOTO DOWN (settings audit, 2026-09-05). The upload above and the
+// avatar save below were the only writers of profile_image_url, and both set
+// a value, so a person who had uploaded their face could not remove it
+// without putting a cartoon in its place. NULL is what a new account has and
+// every reader already renders the initial in that case.
+router.delete('/profile-image', async (req, res) => {
+  try {
+    await pool.query(
+      'UPDATE users SET profile_image_url = NULL, updated_at = NOW() WHERE id = $1',
+      [req.user.id]
+    );
+    res.json({ profile_image_url: null });
+  } catch (err) {
+    console.error('Remove profile image error:', err);
+    res.status(500).json({ error: 'Failed to remove photo' });
+  }
+});
+
 router.put('/profile-image',
   [
     // Shape first (round 20). `{"url": ["https://api.dicebear.com/x"]}`
@@ -2436,6 +2463,7 @@ router.get('/export', async (req, res) => {
       return res.status(429).json({ error: TOO_MANY_EXPORTS_MESSAGE });
     }
     exportRequests.record(userId);
+    res.locals.exportMetered = true;
 
     const flocks = await exportRows(
       `SELECT f.id AS flock_id, f.name, f.status AS flock_status, f.venue_name,
@@ -2704,6 +2732,9 @@ router.get('/export', async (req, res) => {
     res.json(payload);
   } catch (err) {
     console.error('Export data error:', err);
+    // The slot was spent before the queries ran; a failure on our side
+    // hands it back so a mid-export 500 does not count against the person.
+    if (res.locals.exportMetered) exportRequests.forgive(req.user.id);
     res.status(500).json({ error: 'Failed to export your data' });
   }
 });

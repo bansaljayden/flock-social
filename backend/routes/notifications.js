@@ -126,7 +126,16 @@ router.delete('/unregister',
 // DELETE /api/notifications/unregister-all — Remove all tokens for this user (logout)
 router.delete('/unregister-all', async (req, res) => {
   try {
-    await pool.query('DELETE FROM device_tokens WHERE user_id = $1', [req.user.id]);
+    // Scoped to the caller's kind of device when it says which (notifications
+    // audit, 2026-09-05): a browser that had been granted permission but never
+    // held a token signed out and took the PHONE's token with it, and the phone
+    // does not re-register until a force quit. A browser cannot own an iOS
+    // row, so it must not delete one. No kind given keeps the old reach.
+    const kind = ['web', 'ios', 'android'].includes(req.query.deviceType) ? req.query.deviceType : null;
+    await pool.query(
+      'DELETE FROM device_tokens WHERE user_id = $1 AND ($2::text IS NULL OR device_type = $2)',
+      [req.user.id, kind]
+    );
     res.json({ cleared: true });
   } catch (err) {
     console.error('Unregister all tokens error:', err);
