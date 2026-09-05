@@ -343,6 +343,69 @@ describe('socket resilience', () => {
     expect(instance.emit).not.toHaveBeenCalledWith('join_flock', 42);
   });
 
+  test('a venue room outlives one screen leaving while another still holds it', () => {
+    // `venue:{placeId}` is joined from two independent effects in App.js, the map
+    // bottom sheet and the venue owner's dashboard, so a verified owner who taps
+    // their own venue and then opens their dashboard holds one room twice. While
+    // the registry was a Set the dashboard's cleanup emitted leave_venue and took
+    // the id out of the replay registry, and the sheet behind it went quiet with
+    // no symptom at all: its listeners were still registered, and the events were
+    // addressed to a room this connection had just been removed from.
+    localStorage.setItem('flockToken', 'tok');
+    const instance = socketApi.connectSocket();
+    instance.connected = true;
+
+    socketApi.joinVenueRoom('place-owned'); // the map bottom sheet
+    socketApi.joinVenueRoom('place-owned'); // the owner dashboard, same venue
+
+    instance.emit.mockClear();
+    socketApi.leaveVenueRoom('place-owned'); // the dashboard closes
+    expect(instance.emit).not.toHaveBeenCalledWith('leave_venue', { placeId: 'place-owned' });
+
+    // Still held, so a reconnect puts the sheet back in the room rather than
+    // leaving it listening to one this connection is no longer in.
+    instance._fire('connect');
+    expect(instance.emit).toHaveBeenCalledWith('join_venue', { placeId: 'place-owned' });
+
+    // The last holder leaving is the one the server hears about.
+    instance.emit.mockClear();
+    socketApi.leaveVenueRoom('place-owned'); // the sheet closes
+    expect(instance.emit).toHaveBeenCalledWith('leave_venue', { placeId: 'place-owned' });
+
+    // And the id is gone from the replay registry, so nothing re-joins it.
+    instance.emit.mockClear();
+    instance._fire('connect');
+    expect(instance.emit).not.toHaveBeenCalledWith('join_venue', { placeId: 'place-owned' });
+  });
+
+  test('a leave for a venue room this client never joined says nothing to the server', () => {
+    localStorage.setItem('flockToken', 'tok');
+    const instance = socketApi.connectSocket();
+    instance.connected = true;
+    instance.emit.mockClear();
+    socketApi.leaveVenueRoom('place-never-opened');
+    expect(instance.emit).not.toHaveBeenCalled();
+  });
+
+  test('the venue content room counts its holders the same way the crowd room does', () => {
+    localStorage.setItem('flockToken', 'tok');
+    const instance = socketApi.connectSocket();
+    instance.connected = true;
+
+    socketApi.joinVenueContentRoom('place-card');
+    socketApi.joinVenueContentRoom('place-card');
+
+    instance.emit.mockClear();
+    socketApi.leaveVenueContentRoom('place-card');
+    expect(instance.emit).not.toHaveBeenCalledWith('leave_venue_content', { placeId: 'place-card' });
+    instance._fire('connect');
+    expect(instance.emit).toHaveBeenCalledWith('join_venue_content', { placeId: 'place-card' });
+
+    instance.emit.mockClear();
+    socketApi.leaveVenueContentRoom('place-card');
+    expect(instance.emit).toHaveBeenCalledWith('leave_venue_content', { placeId: 'place-card' });
+  });
+
   test('sendMessage tells the truth about whether the emit happened', () => {
     localStorage.setItem('flockToken', 'tok');
     const instance = socketApi.connectSocket();
