@@ -314,9 +314,18 @@ test('the carried columns ride into both pickles, with NaN preserved', () => {
   assert.ok(!/\['vendor_forecast_pct'\]\.fillna\(0\)/.test(PREPARE_SRC),
     'vendor_forecast_pct must never be filled with 0 — that turns "we have no forecast" ' +
     'into "the vendor predicted an empty venue" on every row in the corpus');
-  assert.match(PREPARE_SRC, /train_df\[feature_cols\] = train_df\[feature_cols\]\.fillna\(0\)/,
-    'the blanket fillna(0) must stay scoped to feature_cols, which is what keeps it away ' +
-    'from every carried column');
+  // Round 26 removed the blanket fill altogether: every feature has its own
+  // named fill and a NaN that survives them stops the run. That is strictly
+  // stronger than "scoped to feature_cols", because a fill that does not exist
+  // cannot reach a carried column either. What must not come back is a blanket
+  // fillna over the whole frame, or over anything that is not feature_cols.
+  assert.ok(!/\[feature_cols\]\.fillna\(0\)/.test(PREPARE_SRC),
+    'the blanket fillna(0) over the feature columns is back; refuse_unfilled_features ' +
+    'replaced it so a forgotten fill is named rather than trained as zero');
+  assert.match(PREPARE_SRC, /refuse_unfilled_features\(train_df, feature_cols, 'train'\)/);
+  assert.match(PREPARE_SRC, /refuse_unfilled_features\(holdout_df, feature_cols, 'holdout'\)/);
+  assert.ok(!/(train_df|holdout_df)\.fillna\(0\)/.test(PREPARE_SRC),
+    'a fillna(0) over a whole frame would reach the carried columns');
 });
 
 test('the two columns are made to check each other, and the run stops when they disagree', () => {
