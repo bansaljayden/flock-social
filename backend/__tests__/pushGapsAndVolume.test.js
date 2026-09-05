@@ -45,6 +45,11 @@ let handlers = [];
 let log = [];
 
 function dispatch(sql, params) {
+  // The join and update routes read the plan's status first, and the update and
+  // delete fan-outs reach invitees (lifecycle audit, 2026-09-05). Every plan in
+  // this file is open and nobody holds an invite, so both default quietly.
+  if (/^SELECT status FROM flocks WHERE id = \$1$/.test(String(sql).trim())) return Promise.resolve({ rows: [{ status: 'planning' }], rowCount: 1 });
+  if (/status = 'invited' AND user_id != \$2/.test(String(sql))) return Promise.resolve({ rows: [], rowCount: 0 });
   log.push({ sql: String(sql).replace(/\s+/g, ' ').trim(), params });
   for (const [re, fn] of handlers) {
     if (re.test(sql)) {

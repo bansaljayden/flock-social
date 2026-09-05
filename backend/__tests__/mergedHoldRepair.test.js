@@ -40,7 +40,7 @@ test('newest still visible: nothing to repair, one read', async () => {
 test('flock: newest gone, an older held message survives past the cursor: re-pointed with a body that quotes nothing', async () => {
   script = [
     { rows: [{ gone: true }], rowCount: 1 },
-    { rows: [{ id: 86 }], rowCount: 1 },
+    { rows: [{ id: 86, sender_id: 2 }], rowCount: 1 },
   ];
   const data = { type: 'flock_message', flockId: '3', senderId: '2', messageId: '90', firstMessageId: '80', merged: true };
   const out = await repairMergedHold(7, data);
