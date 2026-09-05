@@ -1,248 +1,8 @@
 {
-  "generatedAt": "2026-08-14T19:57:01.257Z",
+  "generatedAt": "2026-09-05T21:41:03.783Z",
   "generator": "frontend/scripts/capture-screenshots.mjs",
   "note": "Real captures of the shipping app against a seeded local stack. See WIRING.md for the swap plan.",
   "captures": [
-    {
-      "file": "store-assets/birdie-dark-6.5in.png",
-      "screen": "birdie",
-      "title": "Birdie answering with real venue cards",
-      "mode": "dark",
-      "set": "appstore-6.5",
-      "width": 1284,
-      "height": 2778,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/birdie-dark-6.9in.png",
-      "screen": "birdie",
-      "title": "Birdie answering with real venue cards",
-      "mode": "dark",
-      "set": "appstore-6.9",
-      "width": 1320,
-      "height": 2868,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/birdie-light-6.5in.png",
-      "screen": "birdie",
-      "title": "Birdie answering with real venue cards",
-      "mode": "light",
-      "set": "appstore-6.5",
-      "width": 1284,
-      "height": 2778,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/birdie-light-6.9in.png",
-      "screen": "birdie",
-      "title": "Birdie answering with real venue cards",
-      "mode": "light",
-      "set": "appstore-6.9",
-      "width": 1320,
-      "height": 2868,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/chat-dark-6.5in.png",
-      "screen": "chat",
-      "title": "Flock chat with a venue card",
-      "mode": "dark",
-      "set": "appstore-6.5",
-      "width": 1284,
-      "height": 2778,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/chat-dark-6.9in.png",
-      "screen": "chat",
-      "title": "Flock chat with a venue card",
-      "mode": "dark",
-      "set": "appstore-6.9",
-      "width": 1320,
-      "height": 2868,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/chat-light-6.5in.png",
-      "screen": "chat",
-      "title": "Flock chat with a venue card",
-      "mode": "light",
-      "set": "appstore-6.5",
-      "width": 1284,
-      "height": 2778,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/chat-light-6.9in.png",
-      "screen": "chat",
-      "title": "Flock chat with a venue card",
-      "mode": "light",
-      "set": "appstore-6.9",
-      "width": 1320,
-      "height": 2868,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/create-dark-6.5in.png",
-      "screen": "create",
-      "title": "Start a flock form",
-      "mode": "dark",
-      "set": "appstore-6.5",
-      "width": 1284,
-      "height": 2778,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/create-dark-6.9in.png",
-      "screen": "create",
-      "title": "Start a flock form",
-      "mode": "dark",
-      "set": "appstore-6.9",
-      "width": 1320,
-      "height": 2868,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/create-light-6.5in.png",
-      "screen": "create",
-      "title": "Start a flock form",
-      "mode": "light",
-      "set": "appstore-6.5",
-      "width": 1284,
-      "height": 2778,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/create-light-6.9in.png",
-      "screen": "create",
-      "title": "Start a flock form",
-      "mode": "light",
-      "set": "appstore-6.9",
-      "width": 1320,
-      "height": 2868,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/crowd-dark-6.5in.png",
-      "screen": "crowd",
-      "title": "Venue search results with live crowd scores",
-      "mode": "dark",
-      "set": "appstore-6.5",
-      "width": 1284,
-      "height": 2778,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/crowd-dark-6.9in.png",
-      "screen": "crowd",
-      "title": "Venue search results with live crowd scores",
-      "mode": "dark",
-      "set": "appstore-6.9",
-      "width": 1320,
-      "height": 2868,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/crowd-light-6.5in.png",
-      "screen": "crowd",
-      "title": "Venue search results with live crowd scores",
-      "mode": "light",
-      "set": "appstore-6.5",
-      "width": 1284,
-      "height": 2778,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/crowd-light-6.9in.png",
-      "screen": "crowd",
-      "title": "Venue search results with live crowd scores",
-      "mode": "light",
-      "set": "appstore-6.9",
-      "width": 1320,
-      "height": 2868,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/discover-dark-6.5in.png",
-      "screen": "discover",
-      "title": "Discover map with venue pins",
-      "mode": "dark",
-      "set": "appstore-6.5",
-      "width": 1284,
-      "height": 2778,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/discover-dark-6.9in.png",
-      "screen": "discover",
-      "title": "Discover map with venue pins",
-      "mode": "dark",
-      "set": "appstore-6.9",
-      "width": 1320,
-      "height": 2868,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/discover-light-6.5in.png",
-      "screen": "discover",
-      "title": "Discover map with venue pins",
-      "mode": "light",
-      "set": "appstore-6.5",
-      "width": 1284,
-      "height": 2778,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/discover-light-6.9in.png",
-      "screen": "discover",
-      "title": "Discover map with venue pins",
-      "mode": "light",
-      "set": "appstore-6.9",
-      "width": 1320,
-      "height": 2868,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/nest-dark-6.5in.png",
-      "screen": "nest",
-      "title": "Nest (home): tonight status + flock list",
-      "mode": "dark",
-      "set": "appstore-6.5",
-      "width": 1284,
-      "height": 2778,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/nest-dark-6.9in.png",
-      "screen": "nest",
-      "title": "Nest (home): tonight status + flock list",
-      "mode": "dark",
-      "set": "appstore-6.9",
-      "width": 1320,
-      "height": 2868,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/nest-light-6.5in.png",
-      "screen": "nest",
-      "title": "Nest (home): tonight status + flock list",
-      "mode": "light",
-      "set": "appstore-6.5",
-      "width": 1284,
-      "height": 2778,
-      "replaces": null
-    },
-    {
-      "file": "store-assets/nest-light-6.9in.png",
-      "screen": "nest",
-      "title": "Nest (home): tonight status + flock list",
-      "mode": "light",
-      "set": "appstore-6.9",
-      "width": 1320,
-      "height": 2868,
-      "replaces": null
-    },
     {
       "file": "screenshots/birdie-dark@2x.png",
       "screen": "birdie",
@@ -521,6 +281,246 @@
       "set": "web",
       "width": 780,
       "height": 1688,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/birdie-dark-6.5in.png",
+      "screen": "birdie",
+      "title": "Birdie answering with real venue cards",
+      "mode": "dark",
+      "set": "appstore-6.5",
+      "width": 1284,
+      "height": 2778,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/birdie-dark-6.9in.png",
+      "screen": "birdie",
+      "title": "Birdie answering with real venue cards",
+      "mode": "dark",
+      "set": "appstore-6.9",
+      "width": 1320,
+      "height": 2868,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/birdie-light-6.5in.png",
+      "screen": "birdie",
+      "title": "Birdie answering with real venue cards",
+      "mode": "light",
+      "set": "appstore-6.5",
+      "width": 1284,
+      "height": 2778,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/birdie-light-6.9in.png",
+      "screen": "birdie",
+      "title": "Birdie answering with real venue cards",
+      "mode": "light",
+      "set": "appstore-6.9",
+      "width": 1320,
+      "height": 2868,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/chat-dark-6.5in.png",
+      "screen": "chat",
+      "title": "Flock chat with a venue card",
+      "mode": "dark",
+      "set": "appstore-6.5",
+      "width": 1284,
+      "height": 2778,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/chat-dark-6.9in.png",
+      "screen": "chat",
+      "title": "Flock chat with a venue card",
+      "mode": "dark",
+      "set": "appstore-6.9",
+      "width": 1320,
+      "height": 2868,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/chat-light-6.5in.png",
+      "screen": "chat",
+      "title": "Flock chat with a venue card",
+      "mode": "light",
+      "set": "appstore-6.5",
+      "width": 1284,
+      "height": 2778,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/chat-light-6.9in.png",
+      "screen": "chat",
+      "title": "Flock chat with a venue card",
+      "mode": "light",
+      "set": "appstore-6.9",
+      "width": 1320,
+      "height": 2868,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/create-dark-6.5in.png",
+      "screen": "create",
+      "title": "Start a flock form",
+      "mode": "dark",
+      "set": "appstore-6.5",
+      "width": 1284,
+      "height": 2778,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/create-dark-6.9in.png",
+      "screen": "create",
+      "title": "Start a flock form",
+      "mode": "dark",
+      "set": "appstore-6.9",
+      "width": 1320,
+      "height": 2868,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/create-light-6.5in.png",
+      "screen": "create",
+      "title": "Start a flock form",
+      "mode": "light",
+      "set": "appstore-6.5",
+      "width": 1284,
+      "height": 2778,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/create-light-6.9in.png",
+      "screen": "create",
+      "title": "Start a flock form",
+      "mode": "light",
+      "set": "appstore-6.9",
+      "width": 1320,
+      "height": 2868,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/crowd-dark-6.5in.png",
+      "screen": "crowd",
+      "title": "Venue search results with live crowd scores",
+      "mode": "dark",
+      "set": "appstore-6.5",
+      "width": 1284,
+      "height": 2778,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/crowd-dark-6.9in.png",
+      "screen": "crowd",
+      "title": "Venue search results with live crowd scores",
+      "mode": "dark",
+      "set": "appstore-6.9",
+      "width": 1320,
+      "height": 2868,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/crowd-light-6.5in.png",
+      "screen": "crowd",
+      "title": "Venue search results with live crowd scores",
+      "mode": "light",
+      "set": "appstore-6.5",
+      "width": 1284,
+      "height": 2778,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/crowd-light-6.9in.png",
+      "screen": "crowd",
+      "title": "Venue search results with live crowd scores",
+      "mode": "light",
+      "set": "appstore-6.9",
+      "width": 1320,
+      "height": 2868,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/discover-dark-6.5in.png",
+      "screen": "discover",
+      "title": "Discover map with venue pins",
+      "mode": "dark",
+      "set": "appstore-6.5",
+      "width": 1284,
+      "height": 2778,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/discover-dark-6.9in.png",
+      "screen": "discover",
+      "title": "Discover map with venue pins",
+      "mode": "dark",
+      "set": "appstore-6.9",
+      "width": 1320,
+      "height": 2868,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/discover-light-6.5in.png",
+      "screen": "discover",
+      "title": "Discover map with venue pins",
+      "mode": "light",
+      "set": "appstore-6.5",
+      "width": 1284,
+      "height": 2778,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/discover-light-6.9in.png",
+      "screen": "discover",
+      "title": "Discover map with venue pins",
+      "mode": "light",
+      "set": "appstore-6.9",
+      "width": 1320,
+      "height": 2868,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/nest-dark-6.5in.png",
+      "screen": "nest",
+      "title": "Nest (home): tonight status + flock list",
+      "mode": "dark",
+      "set": "appstore-6.5",
+      "width": 1284,
+      "height": 2778,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/nest-dark-6.9in.png",
+      "screen": "nest",
+      "title": "Nest (home): tonight status + flock list",
+      "mode": "dark",
+      "set": "appstore-6.9",
+      "width": 1320,
+      "height": 2868,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/nest-light-6.5in.png",
+      "screen": "nest",
+      "title": "Nest (home): tonight status + flock list",
+      "mode": "light",
+      "set": "appstore-6.5",
+      "width": 1284,
+      "height": 2778,
+      "replaces": null
+    },
+    {
+      "file": "store-assets/nest-light-6.9in.png",
+      "screen": "nest",
+      "title": "Nest (home): tonight status + flock list",
+      "mode": "light",
+      "set": "appstore-6.9",
+      "width": 1320,
+      "height": 2868,
       "replaces": null
     }
   ]

@@ -7110,13 +7110,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const setChatInput = useCallback((val) => {
     chatInputRef.current = val;
     setChatInputHasText(!!val);
-    // Also sync DOM inputs when clearing
-    if (!val) {
-      const el = document.getElementById('chat-input');
-      if (el) el.value = '';
-      const dmEl = document.querySelector('[data-dm-input]');
-      if (dmEl) dmEl.value = '';
-    }
+      /* THE DOM SYNC IS GONE, and it was doing nothing before it went.
+         Both composers are components/chat/ChatInputBar now, a CONTROLLED
+         textarea (`value={value}`) that hands its node to the keyboard dock
+         through registerInput. It carries neither `id="chat-input"` nor
+         `data-dm-input`, so both selectors below resolved to null after the
+         chat rebuild and every one of these lines was a guarded no-op.
+
+         Nothing broke, because React owns the value: the screens clear their
+         own `draft` / `dmDraft` and the field follows. What the code did was
+         worse than useless, it was misleading: it read as the safety net that
+         catches a field React did not clear, and there has been no such field
+         for weeks. */
   }, []);
   const [showChatPool, setShowChatPool] = useState(false);
   const aiInputRef = useRef(null);
@@ -10724,9 +10729,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const text = currentInput;
       chatInputRef.current = '';
       setChatInputHasText(false);
-      // Clear the DOM input element
-      const inputEl = document.getElementById('chat-input');
-      if (inputEl) inputEl.value = '';
+      // The DOM clear that used to sit here is gone: ChatInputBar is
+      // controlled, and `#chat-input` stopped existing with the chat rebuild.
+      // See the note in setChatInput.
       if (typingTimeoutRef.current) {
         clearTimeout(typingTimeoutRef.current);
         stopTyping(selectedFlockId);
@@ -12745,8 +12750,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (fromComposer) {
       chatInputRef.current = '';
       setChatInputHasText(false);
-      const inputEl = document.querySelector('[data-dm-input]');
-      if (inputEl) inputEl.value = '';
+      // Same as the flock twin: `[data-dm-input]` went with the rebuild and
+      // DmDetail's own `dmDraft` is what clears the field.
     }
     // Stop typing indicator
     if (dmTypingTimeoutRef.current) {
