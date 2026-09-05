@@ -238,6 +238,16 @@ const ownerLabels = require('./ownerLabelExport');
 
 const HOLDOUT_CITIES = ['miami', 'tokyo', 'barcelona'];
 
+// Round 26: the five levels the etype_* one-hots are built over, in
+// prepare_features.EVENT_TYPE_VOCABULARY and in mlPredictor.buildFeatureMap
+// alike; __tests__/mlTrainingContracts.test.js pins the three lists equal. This
+// file does NOT map anything onto it. The CSV carries nearest_event_type as
+// stored, the census in preflight() says which values fall outside the list,
+// and prepare_features.py owns the two legacy aliases (concert, film) and the
+// refusal for anything else. A value normalised here would leave the raw
+// corpus looking cleaner than it is.
+const EVENT_TYPE_VOCABULARY = ['music', 'sports', 'arts', 'family', 'other'];
+
 // Mirrors buildBaselines.HOUR_AXIS_VENUE_LOCAL, collectWeekly's literal and the
 // value migration 023 stamps. Deliberately a copy rather than a require: this
 // module must stay importable without touching the collectors.
@@ -1264,7 +1274,42 @@ async function preflight(db, log = console.log) {
       + 'may be a Ticketmaster answer or may be a timeout, and nothing recorded which.');
   }
 
-  return { optional, undeclaredWeekly, calendarGaps, provenance, feedback, events, ownerContext };
+  // Round 26: every distinct nearest_event_type in the labelled corpus, and
+  // which of them the model's one-hot cannot describe. eventService.js wrote
+  // 'concert' for the Music segment and 'film' for Film until 2026-09-04, and
+  // collectRealtime.js copied it into this column from 2026-09-01, so 1,964
+  // live rows carried a level that has no etype slot. prepare_features.py maps
+  // those two by their exact reading and refuses any other; this is where the
+  // export says so before a two-hour run rather than after.
+  const eventTypes = await eventTypeCensus(db);
+  if (eventTypes.values.length > 0) {
+    log(`[Export] Event types: ${eventTypes.values.map((v) => `${v.type} (${v.rows})`).join(', ')}.`);
+    if (eventTypes.outside.length > 0) {
+      log(`[Export] WARNING: ${eventTypes.outside.length} nearest_event_type value(s) fall outside `
+        + `the etype vocabulary [${EVENT_TYPE_VOCABULARY.join(', ')}]: `
+        + `${eventTypes.outside.map((v) => `${v.type} (${v.rows})`).join(', ')}. The CSV carries `
+        + 'them as stored. prepare_features.py maps the two legacy values eventService.js '
+        + 'used to write (concert -> music, film -> other) and REFUSES any other by name.');
+    }
+  }
+
+  return { optional, undeclaredWeekly, calendarGaps, provenance, feedback, events, ownerContext, eventTypes };
+}
+
+// Round 26: one GROUP BY over the labelled rows that carry a type. A few
+// thousand rows carry one, so the aggregate is cheap even though the scan is
+// the same full pass the other censuses make.
+async function eventTypeCensus(db) {
+  const { rows } = await db.query(
+    `SELECT nearest_event_type AS type, COUNT(*)::bigint AS rows
+       FROM ml_training_data
+      WHERE busyness_pct IS NOT NULL AND nearest_event_type IS NOT NULL
+      GROUP BY nearest_event_type
+      ORDER BY rows DESC, nearest_event_type`
+  );
+  const values = rows.map((r) => ({ type: String(r.type), rows: Number(r.rows) }));
+  const outside = values.filter((v) => !EVENT_TYPE_VOCABULARY.includes(v.type.trim().toLowerCase()));
+  return { values, outside };
 }
 
 // One pass, both counts, and NULL-safe against a database missing either
@@ -1750,4 +1795,7 @@ module.exports = {
   boolField,
   eventsObserved,
   eventProvenanceCensus,
+  // Round 26: the etype vocabulary, and the census that names what sits outside it.
+  EVENT_TYPE_VOCABULARY,
+  eventTypeCensus,
 };
