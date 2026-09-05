@@ -132,6 +132,9 @@ const VICTIM_AMOUNT = 37.11;
 // routes/budget.js.
 function scriptBudgetStatus({ nonSkip, skip, ceiling, callerRow, locked = false }) {
   handlers = [
+    // /settle takes the same flock-row lock /create holds, so a settle cannot
+    // land inside /create's read-then-rewrite and be erased by it.
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/SELECT id FROM flock_members/, isMember],
     [/SELECT budget_enabled, budget_context/, () => ({
       rows: [{
@@ -219,6 +222,9 @@ test('a non-member gets 403 from budget status, not a redacted body it can diff'
 
 test('submitting a budget echoes aggregates only, never a neighbour amount', async () => {
   handlers = [
+    // /settle takes the same flock-row lock /create holds, so a settle cannot
+    // land inside /create's read-then-rewrite and be erased by it.
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/SELECT id FROM flock_members WHERE flock_id/, isMember],
     [/SELECT budget_enabled, budget_locked FROM flocks/, () => ({ rows: [{ budget_enabled: true, budget_locked: false }] })],
     [/SELECT skipped FROM budget_submissions/, () => ({ rows: [] })],
@@ -240,6 +246,9 @@ test('submitting a budget echoes aggregates only, never a neighbour amount', asy
 
 test('the budget lock refuses to publish a ceiling backed by fewer than three people', async () => {
   handlers = [
+    // /settle takes the same flock-row lock /create holds, so a settle cannot
+    // land inside /create's read-then-rewrite and be erased by it.
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     // The membership gate /lock now runs first, so that a stranger's refusal
     // cannot be used to tell a real flock id from a fake one. The creator is
     // always an accepted member.
@@ -327,27 +336,40 @@ test('a payer who stays the payer keeps their settled row', async () => {
   assert.strictEqual(res.body.bill.shares.find((s) => s.userId === 1).settled, true);
 });
 
-test('a settled share survives a rewrite that drops it from the split', async () => {
-  // The re-issue exploit: rewrite once with custom shares that omit Cy (who
-  // already paid), rewrite again including him, and he is billed twice with no
-  // record of the first payment. The delete must spare settled rows.
+test('a settled share survives a rewrite that drops it from the split, and is credited against it', async () => {
+  // Two rules in one place, because the second is what makes the first honest.
+  //
+  // The re-issue exploit: rewrite once so Cy (who already paid) is off the
+  // split, rewrite again including him, and he is billed twice with no record
+  // of the first payment. The delete must spare settled rows, which is what the
+  // assertions on the two DELETE statements pin.
+  //
+  // Sparing the row was only half of it (money audit 2026-09-04). Nothing then
+  // credited Cy's $20 against the new total, so the two people still on the
+  // split divided the whole $60 between them at $30 each and the bill's rows
+  // came to $80 for a $60 dinner. The credit comes off the total first now:
+  // $60 less Cy's $20 is $40, which is $20 each, and the rows add back to $60.
   CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
   scriptBillCreate({
     existingBill: { id: 7, paid_by: 1 },
     existingShares: [
-      { user_id: 1, committed: false, settled: true, settled_at: new Date() },
-      { user_id: 3, committed: false, settled: true, settled_at: new Date() },
+      { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '20.00' },
+      { user_id: 3, committed: false, settled: true, settled_at: new Date(), amount: '20.00' },
     ],
-    members: THREE,
+    // Cy has left the flock, so the roster this rewrite divides between is Ava
+    // and Ben and his settled row is not on the new split.
+    members: [{ id: 1, name: 'Ava' }, { id: 2, name: 'Ben' }],
   });
 
-  const res = await call('POST', '/api/billing/42/create', {
-    totalAmount: 60,
-    splitType: 'custom',
-    customShares: [{ userId: 1, amount: 30 }, { userId: 2, amount: 30 }],
-  });
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 60, tipPercent: 0 });
 
-  assert.strictEqual(res.status, 201);
+  assert.strictEqual(res.status, 201, res.text);
+  assert.deepStrictEqual(res.body.bill.shares.map((s) => s.amount), [20, 20],
+    'Cy already paid $20 of this $60 bill and it was never taken off the total');
+  // The assertion that matters is over every row the bill still has: the two
+  // rewritten shares plus Cy's retained $20.
+  const onTheSheet = res.body.bill.shares.reduce((sum, s) => sum + Math.round(s.amount * 100), 0) + 2000;
+  assert.strictEqual(onTheSheet, 6000, `the bill's rows come to ${onTheSheet} cents against a $60 bill`);
 
   const dels = deletes('bill_split_shares');
   assert.strictEqual(dels.length, 2, 'expected a scoped delete plus an unsettled-only delete');
@@ -364,6 +386,61 @@ test('a settled share survives a rewrite that drops it from the split', async ()
 
   // No unconditional "DELETE ... WHERE bill_id = $1" remains.
   assert.ok(!dels.some((d) => /WHERE bill_id = \$1$/.test(d.sql)), 'blanket share delete is back');
+});
+
+test('custom shares are refused, not quietly rewritten, when somebody who left has already paid', async () => {
+  // The other half of the credit, and the reason it is not applied everywhere.
+  // The payer typed these numbers. Scaling them down to make room for a credit
+  // they were never shown would be the route inventing a split nobody asked
+  // for, and the payer would find amounts on the sheet they did not choose with
+  // nothing to say where they came from. So it refuses, names what has already
+  // been paid and names the figure the typed shares now have to reach, and the
+  // payer can retype them against a bill that will add up.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptBillCreate({
+    existingBill: { id: 7, paid_by: 1 },
+    existingShares: [
+      { user_id: 3, committed: false, settled: true, settled_at: new Date(), amount: '20.00' },
+    ],
+    members: [{ id: 1, name: 'Ava' }, { id: 2, name: 'Ben' }],
+  });
+
+  const res = await call('POST', '/api/billing/42/create', {
+    totalAmount: 60,
+    tipPercent: 0,
+    splitType: 'custom',
+    customShares: [{ userId: 1, amount: 30 }, { userId: 2, amount: 30 }],
+  });
+
+  assert.strictEqual(res.status, 400, res.text);
+  assert.match(res.body.error, /\$20\.00/, 'the refusal must name what has already been paid');
+  assert.match(res.body.error, /add up to \$40\.00/, 'and the figure the typed shares have to reach');
+  // Nothing was written, so the bill on the table is still the one that adds up.
+  assert.strictEqual(inserts('bill_splits').length, 0, 'the bill was rewritten anyway');
+  assert.strictEqual(inserts('bill_split_shares').length, 0);
+  assert.strictEqual(deletes('bill_split_shares').length, 0);
+});
+
+test('a corrected total below what the people who left already paid is refused', async () => {
+  // There is no division of a negative number that is not somebody being handed
+  // money they are not owed, so the route does not invent one. Without the
+  // guard the equal split runs on minus $10 and writes two shares of -$5.00
+  // into a DECIMAL column the whole app reads as a debt.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptBillCreate({
+    existingBill: { id: 7, paid_by: 1 },
+    existingShares: [
+      { user_id: 3, committed: false, settled: true, settled_at: new Date(), amount: '70.00' },
+    ],
+    members: [{ id: 1, name: 'Ava' }, { id: 2, name: 'Ben' }],
+  });
+
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 60, tipPercent: 0 });
+
+  assert.strictEqual(res.status, 400, res.text);
+  assert.match(res.body.error, /more than the new total/);
+  assert.strictEqual(inserts('bill_splits').length, 0);
+  assert.strictEqual(inserts('bill_split_shares').length, 0);
 });
 
 test('a bill revised upward un-settles whoever now owes more than they paid', async () => {
@@ -509,6 +586,9 @@ test('custom shares cannot assign debt to someone outside the flock', async () =
 
 test('settling requires flock membership, not merely a leftover share row', async () => {
   handlers = [
+    // /settle takes the same flock-row lock /create holds, so a settle cannot
+    // land inside /create's read-then-rewrite and be erased by it.
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/SELECT id FROM flock_members/, noMember],
     [/SELECT id FROM bill_splits/, () => ({ rows: [{ id: 7 }] })],
     [/UPDATE bill_split_shares SET settled/, () => ({ rows: [{ id: 1 }] })],
@@ -523,6 +603,9 @@ test('settling requires flock membership, not merely a leftover share row', asyn
 test('payment handles are not readable by an ex-member holding a stale share', async () => {
   for (const path of ['/api/billing/42/venmo-link', '/api/billing/42/payment-links']) {
     handlers = [
+    // /settle takes the same flock-row lock /create holds, so a settle cannot
+    // land inside /create's read-then-rewrite and be erased by it.
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
       [/SELECT id FROM flock_members/, noMember],
       [/FROM bill_splits bs/, () => ({ rows: [{ id: 7, paid_by: 2, flock_id: 42, flock_name: 'Dinner' }] })],
       [/SELECT amount FROM bill_split_shares/, () => ({ rows: [{ amount: '30.00' }] })],
@@ -542,6 +625,9 @@ test('ghost commit cannot write a share into a bill that is already finalized', 
   // share at the budget ceiling, flip `committed` on the payer's finalized
   // rows, and unlock /payment-links (which discloses the payer's handles).
   handlers = [
+    // /settle takes the same flock-row lock /create holds, so a settle cannot
+    // land inside /create's read-then-rewrite and be erased by it.
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/SELECT id FROM flock_members/, isMember],
     [/SELECT budget_ceiling, budget_locked, status, ghost_mode_enabled/, () => ({ rows: [{ budget_ceiling: '40.00', budget_locked: true, status: 'confirmed', ghost_mode_enabled: true }] })],
     [/COUNT\(\*\)::int AS n FROM budget_submissions/, () => ({ rows: [{ n: 3 }] })],
@@ -558,6 +644,9 @@ test('ghost commit cannot write a share into a bill that is already finalized', 
 
 test('ghost commit still works against an unclaimed placeholder bill', async () => {
   handlers = [
+    // /settle takes the same flock-row lock /create holds, so a settle cannot
+    // land inside /create's read-then-rewrite and be erased by it.
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/SELECT id FROM flock_members/, isMember],
     [/SELECT budget_ceiling, budget_locked, status, ghost_mode_enabled/, () => ({ rows: [{ budget_ceiling: '40.00', budget_locked: true, status: 'confirmed', ghost_mode_enabled: true }] })],
     [/COUNT\(\*\)::int AS n FROM budget_submissions/, () => ({ rows: [{ n: 3 }] })],
@@ -574,6 +663,9 @@ test('ghost commit still works against an unclaimed placeholder bill', async () 
 
 test('ghost commit stays below the anonymity threshold and inside DECIMAL(8,2)', async () => {
   handlers = [
+    // /settle takes the same flock-row lock /create holds, so a settle cannot
+    // land inside /create's read-then-rewrite and be erased by it.
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/SELECT id FROM flock_members/, isMember],
     [/SELECT budget_ceiling, budget_locked, status, ghost_mode_enabled/, () => ({ rows: [{ budget_ceiling: '9999.00', budget_locked: true, status: 'confirmed', ghost_mode_enabled: true }] })],
     [/COUNT\(\*\)::int AS n FROM budget_submissions/, () => ({ rows: [{ n: 2 }] })],
@@ -585,6 +677,9 @@ test('ghost commit stays below the anonymity threshold and inside DECIMAL(8,2)',
   // Same ceiling, threshold met, an oversized roster: the placeholder total is
   // clamped rather than overflowing the column into a 500.
   handlers = [
+    // /settle takes the same flock-row lock /create holds, so a settle cannot
+    // land inside /create's read-then-rewrite and be erased by it.
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/SELECT id FROM flock_members/, isMember],
     [/SELECT budget_ceiling, budget_locked, status, ghost_mode_enabled/, () => ({ rows: [{ budget_ceiling: '9999.00', budget_locked: true, status: 'confirmed', ghost_mode_enabled: true }] })],
     [/COUNT\(\*\)::int AS n FROM budget_submissions/, () => ({ rows: [{ n: 3 }] })],
@@ -707,6 +802,9 @@ test('a venue cannot promote itself by sending a tier', async () => {
 
 test('venue onboarding never downgrades an existing privileged role', async () => {
   handlers = [
+    // /settle takes the same flock-row lock /create holds, so a settle cannot
+    // land inside /create's read-then-rewrite and be erased by it.
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/SELECT 1 FROM venue_profiles WHERE google_place_id/, () => ({ rows: [] })],
     [/UPDATE users SET role/, () => ({ rows: [] })],
     // The saved row must carry the place id: the self-promotion gate

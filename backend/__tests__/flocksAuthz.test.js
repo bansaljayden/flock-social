@@ -440,6 +440,11 @@ async function dispatch(text, params = []) {
   }
   if (has('UPDATE users SET reliability_score')) return { rows: [], rowCount: (params[0] || []).length };
   if (has('INSERT INTO research_analytics')) return { rows: [], rowCount: 1 };
+  // Both delete paths now refuse while anyone still owes money on the plan:
+  // bill_splits.flock_id and bill_split_shares.bill_id are ON DELETE CASCADE, so
+  // the delete used to take the bill and every share row with it and there was
+  // no way to get any of it back. This fixture has no bills, so nothing is owed.
+  if (has('FROM bill_split_shares bss')) return { rows: [{ owed: false }] };
 
   unknown.push(sql);
   return { rows: [], rowCount: 0 };

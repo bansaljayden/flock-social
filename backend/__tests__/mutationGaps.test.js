@@ -910,15 +910,45 @@ test('when two shares tie for largest, the absorbed cent has one settled owner',
     'the FIRST of the tied shares takes the cent, every time');
 });
 
-test('an empty custom-share list is an equal split, not a bill with no shares', async () => {
+test('an empty custom-share list is an equal split, and is recorded as one', async () => {
   // `customShares.length > 0` decides which branch runs. With `>= 0` an empty
   // array takes the custom branch, whose sum is 0 against the bill total — so
   // a client that sends `splitType: 'custom'` before the user has typed
   // anything gets a 400 instead of the sensible default.
+  //
+  // What it RECORDS is the branch it ran (money audit 2026-09-04). The guard
+  // above decided the arithmetic and the UPSERT then wrote the requested split
+  // type whatever the arithmetic had been, so this bill was stored as 'custom'
+  // over three identical $30 shares nobody had typed. GET /:flockId serves that
+  // column back as the split type the client renders, so the sheet offered to
+  // edit amounts the payer had never chosen and the record of how the bill was
+  // actually divided was wrong on a row nobody would think to doubt.
   scriptBill();
   const res = await createBill({ totalAmount: 90, splitType: 'custom', customShares: [] });
   assert.strictEqual(res.status, 201, res.text);
   assert.deepStrictEqual(res.body.bill.shares.map((s) => s.amount), [30, 30, 30]);
+  assert.strictEqual(res.body.bill.splitType, 'equal',
+    'the 201 body claims three identical shares were typed by hand');
+  // [flockId, billTotal, splitType, payerId, tipPct]
+  const upsert = ran('INSERT INTO bill_splits')[0];
+  assert.ok(upsert, 'the upsert never ran');
+  assert.strictEqual(upsert.params[2], 'equal',
+    'bill_splits.split_type says custom over a split the route made itself');
+});
+
+test('a split the payer really did type is still recorded as custom', async () => {
+  // The other side of the same rule: effectiveSplit must not flatten every bill
+  // to 'equal'. These amounts were typed, they are not an even division of $90,
+  // and the column has to say so.
+  scriptBill();
+  const res = await createBill({
+    totalAmount: 90,
+    splitType: 'custom',
+    customShares: [{ userId: 1, amount: 50 }, { userId: 2, amount: 25 }, { userId: 3, amount: 15 }],
+  });
+  assert.strictEqual(res.status, 201, res.text);
+  assert.strictEqual(res.body.bill.splitType, 'custom');
+  assert.strictEqual(ran('INSERT INTO bill_splits')[0].params[2], 'custom');
 });
 
 // ---------------------------------------------------------------------------
