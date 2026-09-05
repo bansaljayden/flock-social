@@ -189,6 +189,7 @@ export default function DmDetail({
   dmNotConnected,
   dmPendingImage,
   dmPinnedVenue,
+  unpinDmVenueNow,
   dmReactions,
   dmReplyingTo,
   dmRequestSending,
@@ -860,14 +861,28 @@ export default function DmDetail({
           them here cost 37pt of every conversation to save one tap on a screen
           nobody opened to read an address.
 
-          NO UNPIN, AND THAT IS DELIBERATE. PinStrip offers Change place and
-          Unpin on its menu and draws only the items it is handed a callback
-          for. There is no unpin anywhere in this product: no handler among this
-          screen's props, no setter to clear dmPinnedVenue from here, and no
-          route or socket event behind it. A menu item that cannot unpin is the
-          dead control SLOP-AUDIT rule 5 bans, so it is not drawn. Changing the
-          place is how a wrong pin is corrected today, exactly as it was under
-          the old banner, which had no unpin either.
+          THERE IS AN UNPIN NOW, and the note that stood here is why there
+          was not one. It read: "NO UNPIN, AND THAT IS DELIBERATE ... there is
+          no unpin anywhere in this product: no handler among this screen's
+          props, no setter to clear dmPinnedVenue from here, and no route or
+          socket event behind it. A menu item that cannot unpin is the dead
+          control SLOP-AUDIT rule 5 bans, so it is not drawn."
+
+          Every word of that was true and the conclusion was right: PinStrip
+          draws only the items it is handed a callback for, so withholding the
+          callback was the honest thing to do with a missing feature. What it
+          described was not a design decision about pins, though. It was a
+          one-way door. dm_pinned_venues UPSERTS on the pair, so a pin could be
+          replaced forever and never cleared, and once a DM had one that 36pt
+          strip was in the conversation for good. "Change place is how a wrong
+          pin is corrected" only answers the case where you still want A pin.
+
+          So the missing half was built rather than explained again: DELETE
+          /api/dm/:userId/pinned-venue, the same event carrying a null name so
+          both sides clear, and the handler above. Anyone in the pair may
+          unpin, which is the rule the flock's message pins follow, because a
+          shared strip only its author can clear is one somebody can fill and
+          walk away from.
 
           THE PHOTO GOES THROUGH THE RESOLVER. Two of the four places that write
           dmPinnedVenue in App.js already resolve the URL and two hand over
@@ -884,6 +899,7 @@ export default function DmDetail({
         } : null}
         onOpen={openPinnedVenueOnMap}
         onChangePlace={pickAPlaceForThisDm}
+        onUnpin={() => unpinDmVenueNow(selectedDmId)}
       />
 
       {/* Vote panel. It is NOT identical to the flock's, which is what the

@@ -2127,17 +2127,90 @@ router.put('/dm/:userId/pinned-venue',
       );
 
       const venue = { venue_name, venue_address, venue_id, venue_rating, venue_photo_url, pinned_by: req.user.id };
-      // The socket path announces the pin to both sides; this route is the
-      // client's fallback when its socket is down, and it told nobody.
+      /* THE ANNOUNCEMENT IS IN THE SHAPE THE CLIENT ACTUALLY READS, which it
+         was not. This emitted `{ userId, venue }` while sockets/handlers.js
+         emits the fields FLAT alongside `withUserId`, and App.js's listener
+         gates on `data.withUserId` and then reads `data.venue_name`. Against
+         the nested payload that gate saw undefined, returned early, and the
+         update was dropped. So the comment below was half right: this route
+         told nobody, and adding an emit in a shape nothing parses did not
+         change that.
+         `withUserId` is the OTHER person from each recipient's point of view,
+         which is why it differs per emit and cannot be one shared object. */
       const io = req.app.get('io');
       if (io) {
-        io.to(`user:${otherUserId}`).emit('dm_venue_pinned', { userId: req.user.id, venue });
-        io.to(`user:${req.user.id}`).emit('dm_venue_pinned', { userId: req.user.id, venue });
+        io.to(`user:${otherUserId}`).emit('dm_venue_pinned', { ...venue, withUserId: req.user.id });
+        io.to(`user:${req.user.id}`).emit('dm_venue_pinned', { ...venue, withUserId: otherUserId });
       }
       res.json({ venue });
     } catch (err) {
       console.error('DM pin venue error:', err);
       res.status(500).json({ error: 'Failed to pin venue' });
+    }
+  }
+);
+
+/* DELETE /api/dm/:userId/pinned-venue - take the pin down.
+ *
+ * WHY THIS DID NOT EXIST. dm_pinned_venues UPSERTS on the ordered pair, so a
+ * pin could be REPLACED forever and never cleared: once a DM had a pinned
+ * venue, that 36pt strip was in the conversation for good. DmDetail's own note
+ * recorded the consequence honestly rather than papering over it: PinStrip
+ * draws an Unpin item only when handed a callback, "there is no unpin anywhere
+ * in this product", and "a menu item that cannot unpin is the dead control
+ * SLOP-AUDIT rule 5 bans, so it is not drawn". The screen was right; the door
+ * was one-way.
+ *
+ * THE SAME GATES AS THE PUT, and for the same reasons. A blocked pair cannot
+ * touch each other's thread, and the row is keyed on the PAIR rather than on
+ * the pinner, so an outsider clearing it would be deleting what two other
+ * people pinned. That is the case the socket side closed on its own.
+ *
+ * ANYONE IN THE PAIR MAY UNPIN, not only whoever pinned it, which is the rule
+ * the flock's message pins already follow: a shared surface only its author
+ * can clear is one somebody can fill and walk away from. A DM has two people
+ * and the strip is in both their conversations.
+ *
+ * The delete is unconditional, so unpinning nothing is a 200 rather than a
+ * 404. Two people tapping Unpin at once is the ordinary case, and the second
+ * one has not made a mistake.
+ */
+router.delete('/dm/:userId/pinned-venue',
+  [param('userId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid user ID')],
+  async (req, res) => {
+    try {
+      if (rejectInvalid(req, res)) return;
+      const otherUserId = parseInt(req.params.userId);
+      if (await isBlockedBetween(req.user.id, otherUserId)) {
+        return res.status(403).json({ error: 'You can no longer interact with this user.' });
+      }
+      if (!(await hasDmRelationship(req.user.id, otherUserId))) {
+        return res.status(403).json({ error: NOT_CONNECTED_MESSAGE });
+      }
+      const { user1, user2 } = dmPairKey(req.user.id, otherUserId);
+
+      await pool.query(
+        'DELETE FROM dm_pinned_venues WHERE user1_id = $1 AND user2_id = $2',
+        [user1, user2]
+      );
+
+      /* THE SAME EVENT THE PIN USES, with venue_name null. A second event
+         name would be a second thing every listener has to learn and a second
+         place to forget, and the client already stores whatever this carries.
+         A null name is the honest value for "there is no pinned venue" and is
+         exactly what the history read returns for a pair that never pinned
+         one, so the listener needs one branch rather than a new code path.
+         Flat, with a per-recipient `withUserId`, for the reason spelled out on
+         the PUT above: that is the shape App.js parses. */
+      const io = req.app.get('io');
+      if (io) {
+        io.to(`user:${otherUserId}`).emit('dm_venue_pinned', { venue_name: null, withUserId: req.user.id });
+        io.to(`user:${req.user.id}`).emit('dm_venue_pinned', { venue_name: null, withUserId: otherUserId });
+      }
+      res.json({ venue: null });
+    } catch (err) {
+      console.error('DM unpin venue error:', err);
+      res.status(500).json({ error: 'Failed to unpin venue' });
     }
   }
 );

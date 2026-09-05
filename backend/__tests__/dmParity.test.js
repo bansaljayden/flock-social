@@ -23,10 +23,44 @@ test('opening a DM resyncs the app badge, as opening a flock chat does', () => {
   assert.match(get, /res\.json\(\{ messages: messages\.reverse\(\) \}\);\s*[\s\S]*?pushBadgeSync\(req\.user\.id\)\.catch\(\(\) => \{\}\);/);
 });
 
-test('the pinned-venue route tells both sides live', () => {
+test('the pinned-venue route tells both sides live, IN A SHAPE THE CLIENT READS', () => {
+  /* THIS TEST USED TO PIN THE BUG. It asserted the emit was
+     `{ userId: req.user.id, venue }`, which told both sides and reached
+     neither: sockets/handlers.js emits the fields FLAT beside `withUserId`,
+     and App.js's listener gates on `data.withUserId` and then reads
+     `data.venue_name`. Against the nested payload that gate saw undefined,
+     returned early, and dropped the update. So the route announced into the
+     void, on the transport that exists precisely for when the socket is down.
+
+     "Tells both sides live" was the property the test meant to hold, and the
+     shape is what makes it true, so the shape is what is asserted now. The
+     per-recipient `withUserId` is checked in both directions because one
+     shared payload would send each person their own id and both gates would
+     miss. __tests__/dmUnpinVenue.test.js drives the routes and asserts the
+     same thing on the emitted objects rather than on the source. */
   const src = read('routes/messages.js');
   const put = src.slice(src.indexOf("router.put('/dm/:userId/pinned-venue'"), src.indexOf("router.put('/dm/:userId/pinned-venue'") + 4000);
-  assert.match(put, /emit\('dm_venue_pinned', \{ userId: req\.user\.id, venue \}\)/);
+  assert.match(put, /emit\('dm_venue_pinned', \{ \.\.\.venue, withUserId: req\.user\.id \}\)/);
+  assert.match(put, /emit\('dm_venue_pinned', \{ \.\.\.venue, withUserId: otherUserId \}\)/);
+  assert.ok(!/\{ userId: req\.user\.id, venue \}/.test(put),
+    'the nested shape is what nothing parsed');
+});
+
+test('a pinned venue can be UNPINNED, and the clear rides the same event', () => {
+  /* dm_pinned_venues UPSERTS on the pair, so a pin could be replaced forever
+     and never cleared. DmDetail withheld PinStrip's Unpin callback for exactly
+     the right reason, that "there is no unpin anywhere in this product", which
+     described a one-way door rather than a decision about pins. */
+  const src = read('routes/messages.js');
+  const del = src.slice(src.indexOf("router.delete('/dm/:userId/pinned-venue'"));
+  assert.ok(del.length > 0, 'the unpin route exists');
+  assert.match(del, /DELETE FROM dm_pinned_venues WHERE user1_id = \$1 AND user2_id = \$2/);
+  assert.ok(!/pinned_by/.test(del.slice(0, del.indexOf('res.json'))),
+    'anyone in the pair may unpin, not only whoever pinned it');
+  // The same event with a null name, so the listener needs one branch rather
+  // than a second event name every consumer has to learn.
+  assert.match(del, /emit\('dm_venue_pinned', \{ venue_name: null, withUserId: req\.user\.id \}\)/);
+  assert.match(del, /emit\('dm_venue_pinned', \{ venue_name: null, withUserId: otherUserId \}\)/);
 });
 
 test('a failed or unreplyable DM send says so over the socket', () => {
