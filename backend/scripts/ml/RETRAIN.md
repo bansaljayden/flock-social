@@ -1,7 +1,7 @@
 # Crowd model: retrain runbook + the continuous-learning loop
 
-**Currently shipped: v2.5.0 "Starling"** (`models/model_metadata.json`,
-trained 2026-08-12, 106 features, ship gate `verdict: ship` on the realtime
+**Currently shipped: v2.6.0-starling** (`models/model_metadata.json`,
+trained 2026-08-18 on the clock-corrected corpus, 106 features, ship gate `verdict: ship` on the realtime
 holdout slice). The narrative below was written during the v2.3 work and is
 kept because the *reasoning* still holds; the version numbers in it are not
 current. Always read `model_metadata.json` for live figures.
