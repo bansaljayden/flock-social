@@ -180,6 +180,7 @@ import {
   PinStrip,
   PinnedMessageBar,
   PollCard,
+  runColourFor,
   WhoIsHereCard,
   StatusLine,
   SystemRow,
@@ -347,6 +348,11 @@ const POLL_ROW_ID = 'poll-card';
 /* The nudge's synthetic row. Same shape as the other two: no system_kind, so
    renderCard's server-authored gate lets it through. */
 const NUDGE_ROW_ID = 'nudge-row';
+
+/* Hoisted for the same reason DmDetail hoists its own: colourFor has to answer
+   for YOUR runs as well as everybody else's, so the value would otherwise be
+   written twice and two copies of a colour drift. */
+const OWN_RUN_COLOUR = 'var(--chat-accent)';
 const WHO_ROW_ID = 'who-is-here';
 
 /* WHAT COUNTS AS "AT THE VENUE", and why these two numbers.
@@ -2358,7 +2364,30 @@ export default function ChatDetail({
           threadKey={flock.id}
           myId={authUser?.id}
           ownName="You"
-          ownColour="var(--chat-accent)"
+          ownColour={OWN_RUN_COLOUR}
+          /* EVERY SENDER GETS THEIR OWN COLOUR, which is the whole point of a
+             GROUP thread and was wired to nothing.
+
+             components/chat/runColours.js exists for this: six colours, each
+             measured against the chat ground in both themes, picked by a hash
+             of the sender's id so the same person keeps the same colour across
+             reloads and across devices. Nothing in the app imported
+             runColourFor. Without a colourFor here every run that was not
+             yours fell through to --chat-name-fallback, which is
+             --text-secondary, so in a five-person flock all four other people
+             were drawn in the same grey as every secondary word on the screen
+             and the colours told you nothing.
+
+             It answers for your own runs too, because MessageList consults
+             colourFor FIRST and returns whatever it says, so one that returned
+             nothing for your runs would take your own colour away rather than
+             defer to ownColour. That is DmDetail's note, and it is the same
+             trap here.
+
+             A system run has a null senderId; runColourFor answers null for
+             one, and MessageList's fallback covers it. Those rows draw no name
+             anyway. */
+          colourFor={(run) => (run.isMine ? OWN_RUN_COLOUR : runColourFor(run.senderId))}
           renderCard={renderCard}
           renderStatus={renderStatus}
           onLoadOlder={loadOlderHere}
