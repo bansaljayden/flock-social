@@ -8,7 +8,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.e
 
 const { Pool } = require('pg');
 const { fetchWeeklyForecast } = require('./bestTimeService');
-const { bestTimeDayToJsDay, getLocalTime, getSeason, sleep } = require('./config');
+const { bestTimeDayToJsDay, getLocalTime, getSeason, sleep, withCorpusWriteLock } = require('./config');
 
 if (!process.env.DATABASE_URL && process.env.PGHOST) {
   const host = process.env.PGHOST;
@@ -289,32 +289,73 @@ async function collectWeekly() {
         continue;
       }
 
+      // The id this forecast was bought with. Either the one already stored
+      // (a by-id refresh) or the one BestTime just answered with (a by-name
+      // lookup). Every write below is conditioned on the row still holding
+      // exactly this id, because the repair script can take it away mid-run.
+      const claimedId = venue.besttime_venue_id || forecast.venueId || null;
+
       // Update besttime_venue_id if we got one + mark found
       if (forecast.venueId && !venue.besttime_venue_id) {
-        // TWO GOOGLE PLACES CAN RESOLVE TO ONE BESTTIME VENUE, and since
-        // migration 060 that is a 23505 rather than a silent second claim on the
-        // same forecast. It is rare and it is real: the 2026-09-03 dump holds 24
-        // such pairs, among them a Bangkok "Taco Bell" at two addresses and
-        // Sydney-style near-name collisions ("100 Gramm Bar" / "100 GRAMM
-        // Lounge"), where BestTime's own matcher answered with one venue id for
-        // both. Only one row may hold the mapping, or the hourly sweep pays two
-        // credits and writes two rows for one physical venue, which is the whole
-        // defect 060 exists to end.
+        // TWO GOOGLE PLACES CAN RESOLVE TO ONE BESTTIME VENUE. It is rare and
+        // it is real: the 2026-09-03 dump holds 24 such pairs, among them a
+        // Bangkok "Taco Bell" at two addresses and Sydney-style near-name
+        // collisions ("100 Gramm Bar" / "100 GRAMM Lounge"), where BestTime's
+        // own matcher answered with one venue id for both. Only one row may
+        // hold the mapping, or the hourly sweep pays two credits and writes two
+        // rows for one physical venue, which is the whole defect migration 060
+        // exists to end.
         //
-        // The venue is left unmapped and marked, rather than retried forever:
-        // besttime_status = 'duplicate' is the same vocabulary
-        // scripts/ml/repairBestTimeDiscoveredVenues.js writes on the losing row
-        // of an existing pair, so a later reader has one word to look for. The
-        // run continues; this is not a per-venue failure.
+        // THE TABLE IS ASKED, NOT THE INDEX. 060 gives besttime_venue_id a
+        // unique index, which would turn a second claim into a 23505, but 060
+        // SKIPS the build while production still holds its duplicate groups,
+        // and that is the intended state until the repair script has run. A
+        // stamp that relied on the 23505 alone relied on an error that could
+        // not fire: venue B resolving to an id venue A already held simply
+        // succeeded, and B went on to collect 168 rows under a duplicate
+        // parent, which is the defect the repair exists to undo. So the holder
+        // is looked up first, inside the same transaction as the stamp and
+        // under the corpus write lock that every writer of ml_venues takes, so
+        // nothing can claim the id between the look and the write. The 23505
+        // path stays as a second net for the day the index is present and a
+        // writer that does not take the lock gets there first.
+        //
+        // The forecast was already paid for by the lookup that revealed the
+        // id; what is refused is storing it twice. The venue is left unmapped
+        // and marked rather than retried forever: besttime_status = 'duplicate'
+        // is the same vocabulary scripts/ml/repairBestTimeDiscoveredVenues.js
+        // writes on the losing row of an existing pair, so a later reader has
+        // one word to look for. The run continues; this is not a per-venue
+        // failure.
+        let holder = null;
         try {
-          await safeQuery(
-            `UPDATE ml_venues
-             SET besttime_venue_id = $1,
-                 besttime_attempted_at = NOW(),
-                 besttime_status = 'found'
-             WHERE id = $2`,
-            [forecast.venueId, venue.id]
-          );
+          holder = await withCorpusWriteLock(pool, async (client) => {
+            const { rows } = await client.query(
+              `SELECT id, name, google_place_id FROM ml_venues
+                WHERE besttime_venue_id = $1 AND id <> $2
+                LIMIT 1`,
+              [forecast.venueId, venue.id]
+            );
+            if (rows[0]) {
+              await client.query(
+                `UPDATE ml_venues
+                 SET besttime_attempted_at = NOW(),
+                     besttime_status = 'duplicate'
+                 WHERE id = $1`,
+                [venue.id]
+              );
+              return rows[0];
+            }
+            await client.query(
+              `UPDATE ml_venues
+               SET besttime_venue_id = $1,
+                   besttime_attempted_at = NOW(),
+                   besttime_status = 'found'
+               WHERE id = $2`,
+              [forecast.venueId, venue.id]
+            );
+            return null;
+          });
         } catch (err) {
           if (err.code !== '23505') throw err;
           await safeQuery(
@@ -324,27 +365,33 @@ async function collectWeekly() {
              WHERE id = $1`,
             [venue.id]
           );
-          const { rows: holder } = await safeQuery(
+          const { rows } = await safeQuery(
             'SELECT id, name, google_place_id FROM ml_venues WHERE besttime_venue_id = $1',
             [forecast.venueId]
           );
-          const h = holder[0];
+          holder = rows[0] || { id: '?', name: 'another row', google_place_id: '?' };
+        }
+        if (holder) {
           console.warn(
             `  BestTime resolved this to ${forecast.venueId}, already held by ml_venues `
-            + `${h ? `${h.id} (${h.name}, ${h.google_place_id})` : 'another row'}. `
-            + 'Left unmapped and marked duplicate; collecting it would buy the same forecast twice.'
+            + `${holder.id} (${holder.name}, ${holder.google_place_id}). `
+            + 'Left unmapped and marked duplicate; storing it would file the same forecast under a second parent.'
           );
           skipped++;
           consecutiveErrors = 0;
           continue;
         }
       } else {
+        // Only onto a row that still holds the id this forecast was bought
+        // with. The repair can unmap a venue between this run's SELECT and
+        // this line, writing 'duplicate'; an unconditional stamp would then
+        // overwrite that verdict with 'found' beside a NULL id.
         await safeQuery(
           `UPDATE ml_venues
            SET besttime_attempted_at = NOW(),
                besttime_status = 'found'
-           WHERE id = $1`,
-          [venue.id]
+           WHERE id = $1 AND besttime_venue_id IS NOT DISTINCT FROM $2`,
+          [venue.id, claimedId]
         );
       }
 
@@ -445,6 +492,9 @@ async function collectWeekly() {
       if (duplicateCells > 0) {
         console.warn(`  ${duplicateCells} repeated (day, hour) cells in the forecast — kept the first of each`);
       }
+      // Set when the venue was retired or unmapped by the repair between this
+      // run's SELECT and the write; read by the skip below the insert.
+      let vanished = false;
       if (valueRows.length > 0) {
         try {
           // THE CONFLICT TARGET IS REAL NOW. This clause used to be a bare
@@ -469,7 +519,26 @@ async function collectWeekly() {
           //
           // Every non-key column of the INSERT must appear below. If you add a
           // column above and not here, a re-collection keeps the stale value.
-          const res = await safeQuery(
+          //
+          // UNDER THE CORPUS WRITE LOCK, WITH THE VENUE RE-RESOLVED FIRST. The
+          // venue list was read once at the top of this run and a run is
+          // minutes to hours. scripts/ml/repairBestTimeDiscoveredVenues.js may
+          // since have deleted this row (a `bt_` twin, whose ml_training_data
+          // rows cascade with it) or taken its mapping away (a real place
+          // sharing an id with another). An insert against a deleted row fails
+          // its foreign key after the credit is spent; one that lands just
+          // before the delete is cascaded away with it; one under an unmapped
+          // row files the keeper's forecast under a second name again. So the
+          // row's existence and its id are checked inside the same transaction
+          // as the write, under the lock the repair also takes per group, and
+          // the answer cannot change before COMMIT.
+          const res = await withCorpusWriteLock(pool, async (client) => {
+            const { rows: still } = await client.query(
+              'SELECT 1 FROM ml_venues WHERE id = $1 AND besttime_venue_id IS NOT DISTINCT FROM $2',
+              [venue.id, claimedId]
+            );
+            if (still.length === 0) return null;
+            return client.query(
             `INSERT INTO ml_training_data
               (venue_id, collection_mode, hour_axis, day_of_week, hour, month, season,
                venue_category, price_level, rating, review_count,
@@ -521,18 +590,35 @@ async function collectWeekly() {
                collected_at           = NOW()
              RETURNING (xmax = 0) AS inserted`,
             params
-          );
-          // `xmax = 0` on a row returned by an upsert means it was INSERTed;
-          // a non-zero xmax means the conflict path updated an existing row.
-          // The old log said "168 rows inserted" for a run that inserted
-          // nothing, which is the same class of untruth that let the missing
-          // unique index hide for so long.
-          venueRows = res.rows.length;
-          venueNew = res.rows.filter((r) => r.inserted).length;
+            );
+          });
+          if (!res) {
+            vanished = true;
+          } else {
+            // `xmax = 0` on a row returned by an upsert means it was INSERTed;
+            // a non-zero xmax means the conflict path updated an existing row.
+            // The old log said "168 rows inserted" for a run that inserted
+            // nothing, which is the same class of untruth that let the missing
+            // unique index hide for so long.
+            venueRows = res.rows.length;
+            venueNew = res.rows.filter((r) => r.inserted).length;
+          }
         } catch (err) {
           console.error(`  Batch insert error:`, err.message);
           insertFailed = true;
         }
+      }
+
+      if (vanished) {
+        // Not an error and not a collection: the row is gone or no longer
+        // holds this id, so there is nothing to file the week under. The
+        // keeper of that id is collected on its own turn. Paced like every
+        // other venue, because the call was made.
+        console.warn(`  ml_venues ${venue.id} no longer holds ${claimedId} (retired or unmapped by the venue repair mid-run); forecast not stored`);
+        skipped++;
+        consecutiveErrors = 0;
+        await sleep(1000);
+        continue;
       }
 
       totalRows += venueRows;

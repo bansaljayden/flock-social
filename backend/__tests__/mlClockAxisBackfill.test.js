@@ -115,6 +115,7 @@ const collectWeekly = require('../scripts/ml/collectWeekly');
 const collectRealtime = require('../scripts/ml/collectRealtime');
 const { bestTimeSlotToLocal, BESTTIME_DAY_START_HOUR } = collectWeekly;
 const { refreshCollectedBaselines } = require('../scripts/ml/buildBaselines');
+const { ML_CORPUS_LOCK_SQL } = require('../scripts/ml/config');
 
 const NY_PLACE = 'ChIJaxisNewYork01';   // ordinary venue, real timezone
 const NOTZ_PLACE = 'ChIJaxisNoZone001'; // ml_venues.timezone is garbage
@@ -604,4 +605,83 @@ test('the discovery collector shares this transform rather than keeping its own'
     'the discovery collector still writes an undeclared weekly row');
   assert.match(src, /HOUR_AXIS_VENUE_LOCAL/,
     "the axis literal is hand-typed instead of taken from the collector that defines it");
+});
+
+// ---------------------------------------------------------------------------
+// 2026-09-04 audit, F5. refreshCollectedBaselines runs at the end of every
+// hourly cron and by hand after a repair, so two can overlap. The upsert
+// overwrote the value whenever it differed while the stamp took GREATEST on
+// its own, so a refresh over an older snapshot committing second published the
+// OLD value under the NEW stamp. Two properties close that: the stamp written
+// is always the evidence date of the value written, and two refreshes cannot
+// run at once.
+// ---------------------------------------------------------------------------
+async function pollUntil(fn, timeoutMs, everyMs = 100) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const v = await fn();
+    if (v) return v;
+    if (Date.now() > deadline) return null;
+    await new Promise((r) => setTimeout(r, everyMs));
+  }
+}
+
+test('a rewritten baseline carries the date of its own evidence, not a newer stamp it inherited', async () => {
+  // Whatever the corpus says for this slot right now, computed the way the
+  // refresh computes it, so the expectation cannot drift from the fixture.
+  const { rows: [ev] } = await pool.query(
+    `SELECT MAX(t.collected_at) AS evidence, ROUND(AVG(t.busyness_pct))::int AS value
+       FROM ml_training_data t JOIN ml_venues v ON v.id = t.venue_id
+      WHERE v.google_place_id = $1 AND t.day_of_week = 6 AND t.hour = 20
+        AND t.collection_mode = 'weekly' AND t.hour_axis = 'venue_local' AND t.busyness_pct IS NOT NULL`,
+    [NY_PLACE]
+  );
+  assert.ok(ev.evidence, 'the slot has no dated evidence, so nothing here can judge the stamp');
+
+  // The state a racing refresh leaves behind: a wrong value under a stamp
+  // newer than any row that could have fed it.
+  await pool.query(
+    `UPDATE ml_venue_baselines SET baseline = 1, updated_at = NOW() + interval '1 day'
+      WHERE google_place_id = $1 AND day_of_week = 6 AND hour = 20`,
+    [NY_PLACE]
+  );
+  const result = await refreshCollectedBaselines(pool);
+  assert.strictEqual(result.ok, true);
+  const { rows: [row] } = await pool.query(
+    'SELECT baseline, updated_at FROM ml_venue_baselines WHERE google_place_id = $1 AND day_of_week = 6 AND hour = 20',
+    [NY_PLACE]
+  );
+  assert.strictEqual(row.baseline, ev.value, 'the value was not corrected');
+  assert.strictEqual(row.updated_at.getTime(), ev.evidence.getTime(),
+    'the corrected value carries a stamp newer than any row that fed it: the stamp and the value describe different moments');
+});
+
+test('two baseline refreshes cannot overlap: the second waits on the corpus write lock', async () => {
+  const holder = await pool.connect();
+  let released = false;
+  try {
+    await holder.query('BEGIN');
+    await holder.query(ML_CORPUS_LOCK_SQL);
+
+    let settled = false;
+    const refresh = refreshCollectedBaselines(pool).then((r) => { settled = true; return r; });
+    const seen = await pollUntil(async () => {
+      if (settled) return 'finished';
+      const { rows: [w] } = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`
+      );
+      return w.n > 0 ? 'waiting' : null;
+    }, 5000);
+    assert.strictEqual(seen, 'waiting', seen === 'finished'
+      ? 'the refresh ran to completion while another refresh held the lock'
+      : 'the refresh neither queued on the lock nor finished within 5s');
+
+    await holder.query('COMMIT');
+    released = true;
+    const result = await refresh;
+    assert.strictEqual(result.ok, true);
+  } finally {
+    if (!released) await holder.query('ROLLBACK').catch(() => {});
+    holder.release();
+  }
 });
