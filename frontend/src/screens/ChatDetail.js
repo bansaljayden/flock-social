@@ -179,6 +179,7 @@ import {
   NudgeRow,
   PinStrip,
   PollCard,
+  WhoIsHereCard,
   StatusLine,
   SystemRow,
   TypingRow,
@@ -345,6 +346,19 @@ const POLL_ROW_ID = 'poll-card';
 /* The nudge's synthetic row. Same shape as the other two: no system_kind, so
    renderCard's server-authored gate lets it through. */
 const NUDGE_ROW_ID = 'nudge-row';
+const WHO_ROW_ID = 'who-is-here';
+
+/* WHAT COUNTS AS "AT THE VENUE", and why these two numbers.
+   200m is a radius, not a doorstep: a phone indoors behind a bar's walls
+   drifts, and a card that flipped somebody from "near" to "on the way"
+   because they walked to the back is worse than one that is slightly
+   generous. It is small enough that the next block over is not "near".
+   Ten minutes is how long a position stays worth reporting. A fix from
+   forty minutes ago is not where somebody is, and a card built on it would
+   be the app claiming to know where people are while knowing nothing, which
+   is the exact failure the component refuses to render for. */
+const AT_VENUE_KM = 0.2;
+const POSITION_FRESH_MS = 10 * 60 * 1000;
 
 /* One pill per emoji, not one per person.
  *
@@ -533,6 +547,10 @@ export default function ChatDetail({
   // able to close the quote bar, and that listener lives up there.
   flockReplyingTo,
   setFlockReplyingTo,
+  // The numeric haversine. `flockMemberLocations` is already destructured
+  // further down: this screen has had the positions since the header started
+  // counting "N sharing" off them, and never did anything else with them.
+  distanceKm,
   confirmClick,
   confirmFlockPlan,
   copiedInviteUrl,
@@ -1226,6 +1244,51 @@ export default function ChatDetail({
 
        ONE NUDGE, not a queue. There is exactly one kind today; a second would
        need a priority order here, not a second row on screen. */
+    /* WHO IS HERE. One card, updated in place, rather than one row per
+       arrival: six people arriving over twenty minutes is six system rows,
+       which is a chat nobody can read.
+
+       Member positions have existed since the map was built and the chat said
+       nothing about them, so a member sharing a location showed up on a screen
+       the reader had to leave the conversation to see. This is the one line
+       the group actually wants at nine o'clock.
+
+       COUNTS ONLY, and only from FRESH positions. A stale fix is not where
+       somebody is. The card refuses to draw when both counts are zero, so a
+       night where nobody is sharing shows nothing at all rather than an empty
+       claim.
+
+       The viewer is not counted. "3 near Kome" meaning two other people and
+       yourself reads as a bigger group than there is, and you already know
+       where you are. */
+    const whoIsHere = (() => {
+      const positions = flockMemberLocations || {};
+      const nowMs = Date.now();
+      const hasVenue = Number.isFinite(Number(flock.venueLat)) && Number.isFinite(Number(flock.venueLng));
+      let near = 0;
+      let onTheWay = 0;
+      const nearPeople = [];
+      for (const [uid, loc] of Object.entries(positions)) {
+        if (String(uid) === String(authUser?.id)) continue;
+        if (!loc || !Number.isFinite(Number(loc.lat)) || !Number.isFinite(Number(loc.lng))) continue;
+        const at = loc.timestamp ? new Date(loc.timestamp).getTime() : NaN;
+        if (!Number.isFinite(at) || nowMs - at > POSITION_FRESH_MS) continue;
+        // No venue yet means nobody can be "near" it, but people are still
+        // moving toward each other and "2 on the way" is true. The card drops
+        // the venue name in that case rather than naming one nobody picked.
+        const isNear = hasVenue
+          && distanceKm(Number(loc.lat), Number(loc.lng), Number(flock.venueLat), Number(flock.venueLng)) <= AT_VENUE_KM;
+        if (isNear) {
+          near += 1;
+          const member = (flock.members || []).find((mm) => String(mm.id) === String(uid)) || null;
+          nearPeople.push({ id: uid, name: loc.name || member?.name || 'Member', avatarUrl: member?.image || undefined });
+        } else {
+          onTheWay += 1;
+        }
+      }
+      return (near === 0 && onTheWay === 0) ? null : { near, onTheWay, people: nearPeople, hasVenue };
+    })();
+
     const nudgeKey = `${flock.id}:no_venue`;
     const nudgeForCard = (
       pollVoteRows.length === 0
@@ -1325,6 +1388,11 @@ export default function ChatDetail({
       if (billForCard) {
         const created = billForCard.createdAt ? new Date(billForCard.createdAt).getTime() : NaN;
         streamRows = spliceByTime(streamRows, { id: BILL_ROW_ID, message_type: 'system' }, created);
+      }
+      // Also on the end, and for the same reason as the nudge: this is the
+      // state of the room right now, not a moment in the scrollback.
+      if (whoIsHere) {
+        streamRows = spliceByTime(streamRows, { id: WHO_ROW_ID, message_type: 'system' }, NaN);
       }
       // The nudge goes last and carries no anchor, so it lands on the end. The
       // other two describe a moment in the scrollback; this one describes the
@@ -1461,6 +1529,26 @@ export default function ChatDetail({
          getPaymentLinks answers, and BillCard treats an unstated capability as
          unstated rather than as "no", which keeps the label honest instead of
          promising a cash-only night the server never described. */
+      if (m.id === WHO_ROW_ID) {
+        return (
+          <WhoIsHereCard
+            /* Named only when the group has actually picked one. "3 near Kome"
+               is a claim about a venue; without one the card says "3 nearby",
+               which is still true. */
+            venueName={whoIsHere.hasVenue ? (flock.venue && flock.venue !== 'TBD' ? flock.venue : null) : null}
+            nearCount={whoIsHere.near}
+            onTheWayCount={whoIsHere.onTheWay}
+            members={whoIsHere.people}
+            onOpenMap={() => {
+              leaveChatScreen();
+              setVenueDetailReturnTo({ tab: 'chat', screen: 'chatDetail', flockId: selectedFlockId });
+              setCurrentTab('explore');
+              setCurrentScreen('main');
+            }}
+          />
+        );
+      }
+
       if (m.id === NUDGE_ROW_ID) {
         return (
           <NudgeRow
