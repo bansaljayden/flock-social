@@ -28,6 +28,12 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   // first real action is a bad first five minutes, so the screen says what
   // happened and offers to send the link again.
   const [awaitingVerification, setAwaitingVerification] = useState(false);
+  // The account the signup created, held while the confirm screen is up so
+  // "Continue for now" can enter the app with it (first-session audit,
+  // 2026-09-05): the server, the boot path and the VerifyEmailSheet all
+  // admit an unverified session, and this screen was the only thing that
+  // did not, so a reviewer on a throwaway address had no forward door.
+  const [pendingUser, setPendingUser] = useState(null);
   // Did the mail actually go out. POST /api/auth/signup answers this in
   // `verificationSent`, and nothing read it: the screen said "We sent a link"
   // whatever the server had done. It is false whenever the provider is
@@ -216,6 +222,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
           setMailRefused(true);
           setResendNote('We cannot mail this address: mail to it bounced or was reported as spam before. Email social@flockcorp.com from it and we will clear that.');
         }
+        setPendingUser(data.user || null);
         setAwaitingVerification(true);
         return;
       }
@@ -231,7 +238,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
     <>
       <img className="auth-mark" src="/logo192.png" alt="" aria-hidden="true" />
       <h1 className="auth-h1">Create your account</h1>
-      <p className="auth-sub">Four fields and you're in.</p>
+      <p className="auth-sub">Four fields, then one link in your inbox.</p>
     </>
   );
 
@@ -275,6 +282,20 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
         >
           {confirmChecking ? 'Checking' : 'I opened the link, continue'}
         </button>
+        {/* The forward door. What an unverified account cannot do is said
+            above and enforced by the server (UNVERIFIED_DENY), and each of
+            those refusals opens the verify sheet inside the app, so holding
+            the person here bought nothing and cost a reviewer the session. */}
+        {pendingUser && (
+          <button
+            type="button"
+            onClick={() => onSignupSuccess(pendingUser)}
+            className="auth-textbtn"
+            style={{ display: 'block', margin: '14px auto 0' }}
+          >
+            Continue for now, confirm later
+          </button>
+        )}
         <p className="auth-foot">
           Signed up before?
           <button type="button" className="auth-textbtn" onClick={onSwitchToLogin}>Sign in</button>

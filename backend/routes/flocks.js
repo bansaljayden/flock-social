@@ -11,7 +11,7 @@ const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate, requireVerified, UNVERIFIED_MESSAGE } = require('../middleware/auth');
 const { stripHtml } = require('../utils/sanitize');
-const { rejectIfProfane } = require('../utils/moderation');
+const { rejectIfProfane, rejectIfProfaneVenue } = require('../utils/moderation');
 const { safeVenuePhotoUrl } = require('../utils/venuePayload');
 // isBlockedBetween is NOT imported here any more: the two places in this file
 // that asked the block question — flock creation and POST /:id/invite — both ask
@@ -649,7 +649,11 @@ router.post('/',
   // middleware deny list (see the note above `router.use(authenticate)`).
   requireVerified,
   [
-    freeText(body('name'), 'flock name').isLength({ min: 1, max: NAME_MAX }).withMessage('Flock name is required'),
+    // Two sentences for two mistakes. One chain said "required" to a name
+    // that was visibly filled in and merely long (first-session audit,
+    // 2026-09-05).
+    freeText(body('name'), 'flock name').isLength({ min: 1 }).withMessage('Flock name is required')
+      .isLength({ max: NAME_MAX }).withMessage(`Flock name is too long (${NAME_MAX} characters max)`),
     freeText(body('venue_name').optional(), 'venue name').isLength({ max: VENUE_NAME_MAX }).withMessage('Venue name is too long'),
     freeText(body('venue_address').optional(), 'venue address').isLength({ max: VENUE_ADDRESS_MAX }).withMessage('Venue address is too long'),
     // Google place id shape (utils/places.js). flocks.venue_id is one of the
@@ -682,8 +686,9 @@ router.post('/',
       // UGC text filter on user-writable flock fields (Apple 1.2).
       if (rejectIfProfane(res, name)) return;
       if (budget_context && rejectIfProfane(res, budget_context)) return;
-      if (venue_name && rejectIfProfane(res, venue_name)) return;
-      if (venue_address && rejectIfProfane(res, venue_address)) return;
+      // Google's text is screened as Google's text; see moderateVenueText.
+      if (venue_name && rejectIfProfaneVenue(res, venue_name, venue_id)) return;
+      if (venue_address && rejectIfProfaneVenue(res, venue_address, venue_id)) return;
       // Photo URLs render as <img> for every member — proxy path only (round 8).
       const safePhotoUrl = safeVenuePhotoUrl(venue_photo_url);
 
@@ -1214,7 +1219,8 @@ router.put('/:id',
     // used to be a bare `.trim()`: a flock created clean could be renamed into
     // stored markup one request later, and the column kept it. Rename is not a
     // weaker action than create, so it does not get a weaker filter.
-    freeText(body('name').optional(), 'flock name').isLength({ min: 1, max: NAME_MAX }).withMessage('Flock name is required'),
+    freeText(body('name').optional(), 'flock name').isLength({ min: 1 }).withMessage('Flock name is required')
+      .isLength({ max: NAME_MAX }).withMessage(`Flock name is too long (${NAME_MAX} characters max)`),
     freeText(body('venue_name').optional(), 'venue name').isLength({ max: VENUE_NAME_MAX }).withMessage('Venue name is too long'),
     freeText(body('venue_address').optional(), 'venue address').isLength({ max: VENUE_ADDRESS_MAX }).withMessage('Venue address is too long'),
     // Google place id shape (utils/places.js). flocks.venue_id is one of the
@@ -1257,8 +1263,8 @@ router.put('/:id',
 
       // Same UGC screen as creation — editing must not be a bypass (round 7).
       if (name && rejectIfProfane(res, name)) return;
-      if (venue_name && rejectIfProfane(res, venue_name)) return;
-      if (venue_address && rejectIfProfane(res, venue_address)) return;
+      if (venue_name && rejectIfProfaneVenue(res, venue_name, venue_id)) return;
+      if (venue_address && rejectIfProfaneVenue(res, venue_address, venue_id)) return;
       // Photo-proxy-only, same as creation (round 8).
       const safePhotoUrl = safeVenuePhotoUrl(venue_photo_url);
 

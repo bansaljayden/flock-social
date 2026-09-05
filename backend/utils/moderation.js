@@ -33,6 +33,30 @@ const { Filter } = require('content-checker');
 // OpenModerator, which no longer exists; images go through Cloud Vision below.
 const filter = new Filter();
 
+// TEXT A MAP PROVIDER WROTE IS NOT TEXT A PERSON TYPED (first-session audit,
+// 2026-09-05). The general list above refuses "Dick's Sporting Goods", "Cox
+// Farms", "Wang's Kitchen", "Hell's Kitchen", "Sexy Fish", "Bloody Run Road"
+// and "Butt Rd", every one of them a real business or street that Google
+// Places hands the app verbatim, and the refusal told the person who picked
+// it that THEY had written something objectionable, with nothing to rephrase.
+// The Create screen is the first thing a new account is pointed at, so this
+// was a first-session dead end on a real venue.
+//
+// So a venue name or address that arrives WITH a place id is screened by this
+// second instance: the same list, less the words that are also surnames,
+// street names and ordinary English. A slur or an explicit term is still on
+// it, because a crafted request can put any string under a place-id-shaped
+// value and the card renders to the whole flock. Text with no place id (a
+// venue somebody typed) keeps the full list. The allow-list is short and
+// deliberate; add to it from a real venue, not a guess.
+const PROVIDER_ALLOWED = [
+  'dick', 'dicks', 'cox', 'wang', 'wangs', 'willy', 'willys', 'willie', 'fanny', 'fannys',
+  'sexy', 'hell', 'hells', 'god', 'damn', 'bloody', 'butt', 'butts', 'crap', 'screw',
+  'balls', 'bum', 'knob', 'hooker', 'hookers', 'woody', 'arse', 'poo', 'pee',
+];
+const providerFilter = new Filter();
+providerFilter.removeWords(...PROVIDER_ALLOWED);
+
 const TEXT_REJECTED_MESSAGE =
   "That doesn't fit our community guidelines. Rephrase and try again.";
 
@@ -59,6 +83,34 @@ function rejectIfProfane(res, text) {
   const verdict = moderateText(text);
   if (!verdict.allowed) {
     res.status(400).json({ error: TEXT_REJECTED_MESSAGE, moderation: verdict.reason });
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Screen a venue name or address. With a place id (Google's text) the
+ * provider list applies; without one (typed) the full list does. Same
+ * verdict shape as moderateText.
+ */
+function moderateVenueText(text, placeId) {
+  if (typeof text !== 'string' || text.trim() === '') {
+    return { allowed: true, flagged: false, reason: null };
+  }
+  const fromProvider = typeof placeId === 'string' && placeId.trim().length >= 6;
+  if ((fromProvider ? providerFilter : filter).isProfane(text)) {
+    return { allowed: false, flagged: true, reason: 'profanity' };
+  }
+  return { allowed: true, flagged: false, reason: null };
+}
+
+// The venue twin: the refusal names the venue, because the person cannot
+// rephrase a name Google gave them and the general sentence blamed them.
+const VENUE_REJECTED_MESSAGE = "That venue's name or address can't be shown here. Pick a different spot.";
+function rejectIfProfaneVenue(res, text, placeId) {
+  const verdict = moderateVenueText(text, placeId);
+  if (!verdict.allowed) {
+    res.status(400).json({ error: VENUE_REJECTED_MESSAGE, moderation: verdict.reason });
     return true;
   }
   return false;
@@ -953,6 +1005,10 @@ function imageRejectionMessage(verdict) {
 module.exports = {
   moderateText,
   rejectIfProfane,
+  rejectIfProfaneVenue,
+  moderateVenueText,
+  VENUE_REJECTED_MESSAGE,
+  PROVIDER_ALLOWED,
   moderateImage,
   probeVisionEnabled,
   filter,
