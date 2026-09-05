@@ -279,6 +279,10 @@ test('flock_updated reaches members personally and skips the one who blocked the
 
 test('flock_deleted names the deleter, so it is filtered — and its recipients are read before the cascade', async () => {
   on(/SELECT creator_id FROM flocks/, () => ({ rows: [{ creator_id: 1 }] }));
+  // Both delete paths refuse while anyone still owes money on the plan: the bill
+  // and every share row are ON DELETE CASCADE, so a delete used to take them
+  // with it and nothing could recreate any of it. Nothing is owed here.
+  on(/FROM bill_split_shares bss/, () => ({ rows: [{ owed: false }] }));
   on(/SELECT name FROM flocks WHERE id/, () => ({ rows: [{ name: 'Dinner' }] }));
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [{ user_id: 2 }, { user_id: 3 }] }));
   on(INVISIBLE_IDS, () => ({ rows: [{ id: 3 }] }));

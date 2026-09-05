@@ -179,6 +179,9 @@ test('membership is re-read at emit time, so a stale room member gets nothing', 
 
 test('share_settled and bill_fully_settled use the same per-member delivery', async () => {
   handlers = [
+    // /settle takes the same flock-row lock /create holds, so a settle cannot
+    // land inside /create's read-then-rewrite and be erased by it.
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status/, () => ({ rows: [{ user_id: 1 }, { user_id: 2 }] })],
     [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ id: 1 }] })],
     [/SELECT id FROM bill_splits WHERE flock_id/, () => ({ rows: [{ id: 7 }] })],
@@ -202,6 +205,9 @@ test('share_settled and bill_fully_settled use the same per-member delivery', as
 
 test('the fully-settled check counts a NULL settled flag as unsettled', async () => {
   handlers = [
+    // /settle takes the same flock-row lock /create holds, so a settle cannot
+    // land inside /create's read-then-rewrite and be erased by it.
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status/, () => ({ rows: [{ user_id: 1 }] })],
     [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ id: 1 }] })],
     [/SELECT id FROM bill_splits WHERE flock_id/, () => ({ rows: [{ id: 7 }] })],
@@ -243,6 +249,9 @@ test('a push notification that throws cannot turn a created bill into a 500', as
 test('a settle whose fan-out fails is still reported as settled', async () => {
   // The UPDATE has already landed. Answering 500 here makes the user pay twice.
   handlers = [
+    // /settle takes the same flock-row lock /create holds, so a settle cannot
+    // land inside /create's read-then-rewrite and be erased by it.
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status/, () => { throw new Error('replica down'); }],
     [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ id: 1 }] })],
     [/SELECT id FROM bill_splits WHERE flock_id/, () => ({ rows: [{ id: 7 }] })],
@@ -384,6 +393,9 @@ test('customShares has a maximum length', async () => {
 
 function scriptPaymentLinks(payer) {
   handlers = [
+    // /settle takes the same flock-row lock /create holds, so a settle cannot
+    // land inside /create's read-then-rewrite and be erased by it.
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ id: 1 }] })],
     [/FROM bill_splits bs\s+JOIN flocks f/, () => ({ rows: [{ id: 7, paid_by: 2, flock_id: 42, flock_name: 'Dinner' }] })],
     // These routes hand over the payer's payment handles, so they refuse a
@@ -440,6 +452,9 @@ test('the same rule covers every method on /payment-links', async () => {
 
 test('one venue is one row even when members voted for it with different place ids', async () => {
   handlers = [
+    // /settle takes the same flock-row lock /create holds, so a settle cannot
+    // land inside /create's read-then-rewrite and be erased by it.
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ id: 1 }] })],
     [/FROM user_blocks/, () => ({ rows: [] })],
     [/FROM venue_votes vv/, () => ({
@@ -470,6 +485,9 @@ test('one venue is one row even when members voted for it with different place i
 test('a check-in whose insert fails can be retried immediately', async () => {
   let attempt = 0;
   handlers = [
+    // /settle takes the same flock-row lock /create holds, so a settle cannot
+    // land inside /create's read-then-rewrite and be erased by it.
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/INSERT INTO venue_checkins/, () => {
       attempt++;
       if (attempt === 1) throw new Error('deadlock detected');
@@ -510,6 +528,9 @@ test('crossing the dedupe bound evicts a handful, not the whole cache', async ()
 
 test('a check-in that SUCCEEDS still holds the window', async () => {
   handlers = [
+    // /settle takes the same flock-row lock /create holds, so a settle cannot
+    // land inside /create's read-then-rewrite and be erased by it.
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
     [/INSERT INTO venue_checkins/, () => ({ rows: [{ created_at: '2026-08-14T00:00:00Z' }] })],
     [/UPDATE flock_members SET attendance/, () => ({ rows: [], rowCount: 0 })],
   ];

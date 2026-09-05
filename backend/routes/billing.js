@@ -339,10 +339,31 @@ router.post('/:flockId/create',
       // $25 payment, and the notification loop skips settled rows so Bob was
       // never told the bill had gone up.
       const existingAmounts = new Map();
+      // Cents that people who are no longer on this split have already handed
+      // over. Filled under the flock lock below; spent by the credit block that
+      // sits just above the UPSERT, which is where the reasoning lives.
+      let retainedSettledCents = 0;
+
+      // WHAT THE CLIENT ASKED FOR IS NOT ALWAYS WHAT HAPPENED (money audit
+      // 2026-09-04). The branch below takes the custom path only when there is
+      // actually a list of typed amounts to honour, so a client that sends
+      // splitType 'custom' before anybody has typed anything, which is the shape
+      // the bill sheet posts while the custom fields are still blank, runs the
+      // EQUAL split. The INSERT underneath then wrote the REQUESTED split type
+      // into bill_splits.split_type regardless. A $90 bill over three members
+      // was stored as 'custom' over three identical $30 shares nobody had
+      // chosen, GET /:flockId handed that back as the split type the client
+      // renders, and the sheet opened an "edit these amounts" affordance on
+      // numbers the payer had never seen. The record of how the bill was
+      // actually divided was simply wrong, quietly, on a row nobody would think
+      // to doubt. effectiveSplit is what this route DID, and it is what both the
+      // column and the response body carry from here down.
+      const useCustomShares = !!(splitType === 'custom' && customShares && customShares.length > 0);
+      const effectiveSplit = useCustomShares ? 'custom' : 'equal';
 
       // Calculate shares
       let shares;
-      if (splitType === 'custom' && customShares && customShares.length > 0) {
+      if (useCustomShares) {
         // Round 16: `s.amount` was read straight off each element, so a single
         // `null` or a bare string in the array threw a TypeError that surfaced
         // as a 500 from the outer catch. Malformed input is a 400.
@@ -508,7 +529,23 @@ router.post('/:flockId/create',
             'SELECT user_id, amount, committed, settled, settled_at FROM bill_split_shares WHERE bill_id = $1',
             [existingBill.rows[0].id]
           );
+          // Exactly the rows the two DELETEs further down will LEAVE BEHIND,
+          // decided from the same id list those statements are handed, so the
+          // credit taken below and the retention rule cannot drift apart.
+          const plannedShareIds = new Set(shares.map((s) => s.userId));
           for (const row of shareResult.rows) {
+            // Somebody who is settled and is not on the new split keeps their
+            // row, because that row is the only record that they paid. What
+            // they paid is money this bill has already collected, so it is
+            // banked here and taken off the total the remaining roster is asked
+            // to cover. A row whose amount is not a number has nothing to
+            // credit and is skipped: that is a corrupt row rather than a
+            // payment, and letting NaN into the sum would ruin every share on
+            // the bill instead of leaving one row uncounted.
+            if (row.settled && !plannedShareIds.has(row.user_id)) {
+              const paidCents = Math.round(Number(row.amount) * 100);
+              if (Number.isFinite(paidCents)) retainedSettledCents += paidCents;
+            }
             if (row.committed) existingCommitments.set(row.user_id, true);
             // The payer's share is auto-settled below as an artifact of having
             // paid the venue — it is NOT a record that they settled a debt.
@@ -541,6 +578,65 @@ router.post('/:flockId/create',
           }
         }
 
+        // CREDIT WHAT THE PEOPLE WHO LEFT HAVE ALREADY PAID (money audit
+        // 2026-09-04). This is the second half of sparing their settled rows,
+        // and until now it was recorded at the DELETE below as a known gap
+        // rather than done.
+        //
+        // Keeping a settled row for somebody the rewrite dropped is right,
+        // because they paid. Nothing then took what they paid off the new
+        // total, so the shares stopped summing to the bill and the people still
+        // on it covered the difference. Four friends, $100, $25 each; Bob pays
+        // his $25 and leaves the flock; the payer corrects the total to $120;
+        // the equal split ran over the three who were left at $40 each, Bob's
+        // settled $25 stayed on the sheet, and the sheet came to $145 for a $120
+        // dinner. Carol and Dave were each out $8.33, the payer collected more
+        // than they spent, and fullySettled in GET /:flockId ranged over Bob's
+        // stale row on top of that.
+        //
+        // The remaining roster now covers the total MINUS what those rows
+        // already carry, in the same integer cents and under the same
+        // deterministic leftover rule the equal split above uses, so the sheet
+        // adds to the total exactly again. That $120 reads $31.67, $31.67,
+        // $31.66 beside Bob's retained $25, which is $120.00 to the cent.
+        //
+        // The custom branch is refused rather than corrected. The payer typed
+        // those numbers, and quietly scaling them to fit a credit they were
+        // never shown would be this route inventing a split nobody asked for,
+        // which is the same kind of lie as storing 'custom' over an equal split.
+        // The 400 names the amount already paid and the figure the typed shares
+        // now have to reach, so the payer can retype them, and it is worded like
+        // the tolerance failure above because it is the same complaint: these
+        // numbers do not cover this bill.
+        if (retainedSettledCents > 0) {
+          const totalCents = Math.round(totalWithTip * 100);
+          const remainingCents = totalCents - retainedSettledCents;
+          const alreadyPaid = (retainedSettledCents / 100).toFixed(2);
+          if (remainingCents < 0) {
+            // More has been paid than the corrected bill is worth. There is no
+            // division of a negative number that is not somebody being handed
+            // money they are not owed, so this one is the payer's to sort out
+            // with the people who left, not the route's to guess at.
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+              error: `People who are no longer in this split have already paid $${alreadyPaid} toward this bill, which is more than the new total of $${totalWithTip.toFixed(2)}. Pay them back directly or raise the total.`,
+            });
+          }
+          if (useCustomShares) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+              error: `People who are no longer in this split have already paid $${alreadyPaid} toward this bill, so custom shares must add up to $${(remainingCents / 100).toFixed(2)}, not $${totalWithTip.toFixed(2)}`,
+            });
+          }
+          const memberCount = members.length;
+          const baseCents = Math.floor(remainingCents / memberCount);
+          const remainderCents = remainingCents - baseCents * memberCount;
+          shares = members.map((m, i) => ({
+            userId: m.id,
+            amount: (baseCents + (i < remainderCents ? 1 : 0)) / 100,
+          }));
+        }
+
         // UPSERT bill_splits
         const billResult = await client.query(
           `INSERT INTO bill_splits (flock_id, total_amount, split_type, paid_by, tip_percent)
@@ -548,7 +644,7 @@ router.post('/:flockId/create',
            ON CONFLICT (flock_id) DO UPDATE
            SET total_amount = $2, split_type = $3, paid_by = $4, tip_percent = $5, updated_at = NOW()
            RETURNING id`,
-          [flockId, billTotal, splitType, payerId, tipPct]
+          [flockId, billTotal, effectiveSplit, payerId, tipPct]
         );
         billId = billResult.rows[0].id;
 
@@ -561,24 +657,13 @@ router.post('/:flockId/create',
         // trace of the first payment. Rows still in the split are rewritten
         // just below; rows dropped from it only go if they were unsettled.
         //
-        // KNOWN GAP, recorded here rather than half-fixed (bill split audit
-        // 2026-08-26). Keeping a settled row for somebody the rewrite dropped
-        // is right, because they paid, but nothing then credits what they paid
-        // against the new total, so the shares stop summing to the bill and the
-        // people still on it make up the difference. Four friends, $100, $25
-        // each; Bob pays his $25 and leaves the flock; the payer corrects the
-        // total to $120; the equal split now runs over the three who are left
-        // at $40 each, Bob's settled $25 stays on the sheet, and the sheet adds
-        // to $145 for a $120 dinner. Carol and Dave are each out $8.33 and the
-        // payer collects more than they spent.
-        //
-        // The fix is to split (total - sum of retained settled rows) over the
-        // remaining roster, which is arithmetic this route can do but not from
-        // here: `shares` is computed before the transaction opens, and the
-        // amounts it would need are in a SELECT six test suites match on by its
-        // exact column list. It also needs a product answer for the custom
-        // branch, where the payer typed the numbers themselves and the same
-        // credit would silently overwrite them. Not guessed at mid-audit.
+        // The gap this comment used to record, that a retained settled row was
+        // never credited against the new total, is closed by the block above:
+        // what those rows carry comes off the total before the remaining roster
+        // divides it, and the custom branch is refused rather than rewritten
+        // behind the payer's back. Read that block for the arithmetic. The one
+        // rule to keep in step is which rows survive, because the credit is
+        // taken over precisely the set these two statements leave behind.
         const keepIds = shares.map((s) => s.userId);
         await client.query(
           'DELETE FROM bill_split_shares WHERE bill_id = $1 AND user_id = ANY($2::int[])',
@@ -665,7 +750,10 @@ router.post('/:flockId/create',
         totalAmount: billTotal,
         tipPercent: tipPct,
         totalWithTip,
-        splitType,
+        // effectiveSplit, not the requested splitType: the 201 body and the
+        // socket payload have to say what the route did, for the same reason
+        // the column does. See the note where it is derived.
+        splitType: effectiveSplit,
         // Always true on this path, because payerId is req.user.id or a validated
         // member id, never NULL. Sent anyway so the created bill and the
         // fetched bill are the same shape and the client has one field to
@@ -928,13 +1016,37 @@ router.post('/:flockId/settle',
       // the read would have to be its own round trip and this route's queries
       // are what several suites match on to script it, but also because a
       // check-then-write here is a race with the payer's own /create.
-      const updateResult = await pool.query(
-        `UPDATE bill_split_shares SET settled = true, settled_at = NOW()
-         WHERE bill_id = $1 AND user_id = $2 AND settled IS NOT TRUE
-           AND EXISTS (SELECT 1 FROM bill_splits WHERE id = $1 AND paid_by IS NOT NULL)
-         RETURNING *`,
-        [billId, userId]
-      );
+      //
+      // AND IT TAKES THE FLOCK LOCK, because one statement is not enough
+      // against /create. That route BEGINs, holds
+      // `SELECT id FROM flocks WHERE id = $1 FOR UPDATE`, READS the existing
+      // shares, and only then DELETEs and re-INSERTs them from that snapshot.
+      // A settle landing anywhere in that window commits, returns 200, sends
+      // the payer "Bob says they paid you $25" - and is then erased, because
+      // /create re-inserts Bob's row with settled = false out of a snapshot
+      // taken before he paid. The sheet says he owes it again and the money is
+      // already gone. Serialising on the same row is what closes it; the
+      // statement below stays single because everything it guards is still
+      // true.
+      const client = await pool.connect();
+      let updateResult;
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
+        updateResult = await client.query(
+          `UPDATE bill_split_shares SET settled = true, settled_at = NOW()
+           WHERE bill_id = $1 AND user_id = $2 AND settled IS NOT TRUE
+             AND EXISTS (SELECT 1 FROM bill_splits WHERE id = $1 AND paid_by IS NOT NULL)
+           RETURNING *`,
+          [billId, userId]
+        );
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
       if (updateResult.rows.length === 0) {
         // Nothing moved, and the three reasons are three different answers.
         // Only reached on the path where nothing was written, so the ordinary
@@ -1291,6 +1403,16 @@ router.post('/:flockId/ghost-commit',
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
+        // THE SAME ROW /create HOLDS. The paid_by IS NULL check below is the
+        // guard that keeps a ghost commit off a real bill, and without this
+        // lock it is a check-then-write across a transaction boundary: read
+        // paid_by NULL, let /create run to completion with a custom split, then
+        // INSERT anyway. The result is a share row on a bill that now has a
+        // payer - which is the write primitive on someone else's split that
+        // check exists to prevent, and which also passes the
+        // `shareResult.rows.length === 0` gate in /payment-links and hands the
+        // committer the payer's Venmo, Cash App and Zelle identifiers.
+        await client.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
 
         let billId;
         const existingBill = await client.query(

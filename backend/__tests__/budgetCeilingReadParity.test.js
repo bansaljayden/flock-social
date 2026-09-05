@@ -265,6 +265,13 @@ async function dispatch(text, params = []) {
     return { rows: [], rowCount: 1 };
   }
 
+  // Both ghost-commit and settle now take the same flock-row lock POST /create
+  // holds, so a check-then-write across a transaction boundary cannot be raced:
+  // ghost-commit read paid_by NULL, /create ran a custom split to completion,
+  // and the INSERT landed anyway - a share row on somebody else's real bill,
+  // which also passes the empty-share gate in /payment-links and hands out the
+  // payer's Venmo, Cash App and Zelle identifiers.
+  if (has('FROM flocks WHERE id = $1 FOR UPDATE')) return { rows: [{ id: params[0] }] };
   unknown.push(sql);
   return { rows: [], rowCount: 0 };
 }
