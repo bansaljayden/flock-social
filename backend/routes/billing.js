@@ -123,6 +123,24 @@ function noPayerRefusal(res, payerId) {
   return true;
 }
 
+// WHAT IS STILL OWED ON A SHARE, decided in one place for every reader that
+// publishes it: the 201 body of /create, GET /:flockId, the two payment-link
+// routes and the settle push. bill_split_shares.paid_amount (migration 061) is
+// what this person had already paid before the current version of the bill
+// was posted, and `settled` says the rest was paid too, so the figure to ask
+// for is the share less the credit while unsettled and nothing once settled.
+// Integer cents, because that is the only representation in which "100 minus
+// 30" is exactly 70 and not a float that renders as 69.99999. Never negative:
+// a share revised below what was paid is owed BACK, and that is a number for
+// the sheet to show beside the credit, not a debt to put in a Venmo link.
+function outstandingOn(amount, paidAmount, settled) {
+  if (settled) return 0;
+  const shareCents = Math.round(Number(amount) * 100);
+  const paidCents = Math.round(Number(paidAmount == null ? 0 : paidAmount) * 100);
+  if (!Number.isFinite(shareCents)) return 0;
+  return Math.max(0, shareCents - (Number.isFinite(paidCents) ? paidCents : 0)) / 100;
+}
+
 // ---------------------------------------------------------------------------
 // Blocks on the bill (audit 2026-08-14)
 //
@@ -256,57 +274,6 @@ router.post('/:flockId/create',
       const splitType = req.body.splitType ?? 'equal';
       const payerId = paidBy ? parseInt(paidBy) : userId;
 
-      // Verify membership
-      const memberCheck = await pool.query(
-        "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
-        [flockId, userId]
-      );
-      if (memberCheck.rows.length === 0) {
-        return res.status(403).json({ error: 'You are not a member of this flock' });
-      }
-
-      // Verify payer is a member
-      const payerCheck = await pool.query(
-        "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
-        [flockId, payerId]
-      );
-      if (payerCheck.rows.length === 0) {
-        return res.status(400).json({ error: 'Payer must be a member of the flock' });
-      }
-
-      // Get accepted members.
-      //
-      // ORDER BY is load-bearing, not tidiness: the equal split hands its
-      // leftover cents to the FIRST members of this list, and without an
-      // explicit order Postgres may return the same roster in a different
-      // sequence on the next read (a plan change, an UPDATE that moved a row).
-      // The extra cent would then land on a different person every time the
-      // bill was re-created, so "why do I owe a cent more than Ben" would have
-      // no stable answer. Lowest user id carries it.
-      const membersResult = await pool.query(
-        `SELECT u.id, u.name FROM flock_members fm
-         JOIN users u ON u.id = fm.user_id
-         WHERE fm.flock_id = $1 AND fm.status = 'accepted'
-         ORDER BY u.id`,
-        [flockId]
-      );
-      const members = membersResult.rows;
-      if (members.length === 0) {
-        return res.status(400).json({ error: 'No accepted members in this flock' });
-      }
-
-      // Read PRE-COMMIT, on purpose. It only shapes the 201 body, but every
-      // query after the COMMIT below is post-commit work: a throw there answers
-      // 500 for a bill that exists, and the client's retry rewrites the split it
-      // thinks failed. Asking here means a block-lookup failure is a clean 500
-      // with nothing written.
-      const invisibleToCreator = new Set(await getInvisibleUserIds(userId));
-
-      // Get flock name + creator
-      const flockResult = await pool.query('SELECT name, creator_id FROM flocks WHERE id = $1', [flockId]);
-      const flockName = flockResult.rows[0]?.name || 'Flock';
-      const flockCreatorId = flockResult.rows[0]?.creator_id;
-
       // Quantize the two inputs to the precision their columns actually hold,
       // BEFORE anything is computed from them or written.
       //
@@ -326,23 +293,9 @@ router.post('/:flockId/create',
 
       // Calculate total with tip
       const totalWithTip = Math.round(billTotal * (1 + tipPct / 100) * 100) / 100;
-
-      // Existing-bill authorization + preserved states are read INSIDE the
-      // transaction below, under the flock row lock — checking here let two
-      // concurrent "first" bills both pass and the loser silently overwrite
-      // the winner without being its payer (round 5).
-      const existingCommitments = new Map();
-      const existingSettled = new Map();
-      // What each of them settled FOR. A settled flag was carried onto a
-      // rewritten share without ever comparing the two amounts, so re-posting a
-      // corrected, higher total left the row reading "Bob $50.00, paid" over a
-      // $25 payment, and the notification loop skips settled rows so Bob was
-      // never told the bill had gone up.
-      const existingAmounts = new Map();
-      // Cents that people who are no longer on this split have already handed
-      // over. Filled under the flock lock below; spent by the credit block that
-      // sits just above the UPSERT, which is where the reasoning lives.
-      let retainedSettledCents = 0;
+      // The one figure every split below is checked against and divided from,
+      // in the integer cents all of the arithmetic is done in.
+      const totalCents = Math.round(totalWithTip * 100);
 
       // WHAT THE CLIENT ASKED FOR IS NOT ALWAYS WHAT HAPPENED (money audit
       // 2026-09-04). The branch below takes the custom path only when there is
@@ -361,112 +314,194 @@ router.post('/:flockId/create',
       const useCustomShares = !!(splitType === 'custom' && customShares && customShares.length > 0);
       const effectiveSplit = useCustomShares ? 'custom' : 'equal';
 
-      // Calculate shares
-      let shares;
-      if (useCustomShares) {
-        // Round 16: `s.amount` was read straight off each element, so a single
-        // `null` or a bare string in the array threw a TypeError that surfaced
-        // as a 500 from the outer catch. Malformed input is a 400.
-        if (customShares.some(s => s === null || typeof s !== 'object' || Array.isArray(s))) {
-          return res.status(400).json({ error: 'Each custom share must be an object with userId and amount' });
-        }
-        // Round 16 (reliability audit): the tolerance used to be checked
-        // against the RAW sum, and each share was rounded to cents only
-        // afterwards. Three shares of 33.333333 on a $100.00 bill therefore
-        // passed the check (raw sum 99.999999, within two cents) and then
-        // stored as 33.33 three times — $99.99. The payer quietly ate the
-        // difference, and the app showed a bill that did not add up.
-        //
-        // Everything below works in INTEGER CENTS, which is the only
-        // representation in which "these shares equal that total" is a question
-        // with an exact answer. Floating point never decides anything here.
-        const parsed = customShares.map(s => ({
-          userId: parseInt(s.userId),
-          cents: Math.round(parseFloat(s.amount) * 100),
-        }));
+      // Filled inside the transaction, after the membership check and before
+      // anything is written; see the note where it is read.
+      let invisibleToCreator;
 
-        // Round 3: every amount finite and non-negative, no duplicate users —
-        // negative shares could offset an oversized one and NaN skipped the
-        // total check entirely. Checked BEFORE the sum, so NaN cannot poison it.
-        if (parsed.some(s => !Number.isFinite(s.cents) || s.cents < 0)) {
-          return res.status(400).json({ error: 'Every share must be a valid non-negative amount' });
-        }
-        if (new Set(parsed.map(s => s.userId)).size !== parsed.length) {
-          return res.status(400).json({ error: 'Each member can appear only once in custom shares' });
-        }
-        // Access control: every share must belong to an accepted flock member —
-        // otherwise arbitrary user ids could be assigned debt + pushed notifications.
-        const memberIds = new Set(members.map(m => m.id));
-        const invalidShare = parsed.find(s => !Number.isFinite(s.userId) || !memberIds.has(s.userId));
-        if (invalidShare) {
-          return res.status(400).json({ error: 'All custom shares must be for members of this flock' });
-        }
+      // Existing-bill authorization + preserved states are read INSIDE the
+      // transaction below, under the flock row lock — checking here let two
+      // concurrent "first" bills both pass and the loser silently overwrite
+      // the winner without being its payer (round 5).
+      const existingCommitments = new Map();
+      const existingSettled = new Map();
+      // What each of them has PAID so far, in cents, which is not the same
+      // thing as whether they are settled. A settled flag was carried onto a
+      // rewritten share without ever comparing the two amounts, so re-posting
+      // a corrected, higher total left the row reading "Bob $50.00, paid" over
+      // a $25 payment, and the notification loop skips settled rows so Bob was
+      // never told the bill had gone up. Then the comparison was added and it
+      // fixed the flag while losing the money: Bob's $25 was cleared off the
+      // row along with the flag, /payment-links asked him for the whole $50,
+      // and a Bob who trusted the app paid $75 against a $50 share. The credit
+      // now rides on its own column (bill_split_shares.paid_amount, migration
+      // 061) and this map is what feeds it. The reading rule is in the loop
+      // that fills it.
+      const existingPaidCents = new Map();
+      // Cents that people who are no longer on this split have already handed
+      // over. Filled under the flock lock below; spent by the credit block that
+      // sits just above the UPSERT, which is where the reasoning lives.
+      let retainedPaidCents = 0;
+      // Rows of departed people whose allocation has to be restated as what
+      // they paid so the sheet still adds up. See the credit block.
+      const retainedRewrites = [];
 
-        const totalCents = Math.round(totalWithTip * 100);
-        const sumCents = parsed.reduce((sum, s) => sum + s.cents, 0);
-        const remainder = totalCents - sumCents;
-        if (Math.abs(remainder) > 2) {
-          return res.status(400).json({ error: `Custom shares must add up to $${totalWithTip.toFixed(2)}` });
-        }
-        // Within tolerance: absorb the last one or two cents rather than
-        // leaving them unassigned. The largest share takes it, because that is
-        // the one where a cent is least visible and it cannot be pushed
-        // negative by a rounding remainder of at most two.
-        if (remainder !== 0) {
-          let biggest = 0;
-          for (let i = 1; i < parsed.length; i++) {
-            if (parsed[i].cents > parsed[biggest].cents) biggest = i;
-          }
-          parsed[biggest].cents += remainder;
-          if (parsed[biggest].cents < 0) {
-            return res.status(400).json({ error: `Custom shares must add up to $${totalWithTip.toFixed(2)}` });
-          }
-        }
-
-        shares = parsed.map(s => ({ userId: s.userId, amount: s.cents / 100 }));
-      } else {
-        // Equal split, in integer cents — the same representation the custom
-        // branch above was moved to, and for the same reason.
-        //
-        // (mutation audit 2026-08-14) The old arithmetic divided in DOLLARS and
-        // then handed the leftover cents out as `baseShare + 0.01`. Neither
-        // 0.01 nor 33.33 is representable in binary floating point, so about
-        // 23% of (total, member count) pairs produced a share the client could
-        // not render: $100.00 split three ways answered 33.339999999999996
-        // while the DECIMAL(8,2) column stored the same share as 33.34. Three
-        // surfaces then disagreed about one debt — the 201 body and the socket
-        // payload carried the artifact, GET /:flockId (parseFloat off the
-        // column) carried 33.34, and the push notification's toFixed(2)
-        // carried a third rendering. The cent TOTALS were always right, so no
-        // money was lost; what was lost was two friends being able to agree on
-        // what one of them owes.
-        //
-        // Cents stay integers end to end and the divide by 100 happens once,
-        // at the edge, which is the only place a rounding decision is made.
-        // The leftover is deterministic and bounded: the first
-        // `remainderCents` members in id order take exactly one extra cent
-        // each (remainderCents < memberCount always), so the shares sum to the
-        // total exactly and no share is more than a cent above the even split.
-        const memberCount = members.length;
-        const totalCents = Math.round(totalWithTip * 100);
-        const baseCents = Math.floor(totalCents / memberCount);
-        const remainderCents = totalCents - baseCents * memberCount;
-
-        shares = members.map((m, i) => ({
-          userId: m.id,
-          amount: (baseCents + (i < remainderCents ? 1 : 0)) / 100,
-        }));
-      }
-
-      // Use transaction
+      // EVERYTHING THAT DECIDES WHO IS IN THIS FLOCK, WHO MAY TOUCH THE BILL
+      // AND WHO THE MONEY GOES TO IS READ UNDER THE LOCK (adversarial audit
+      // 2026-09-04). The membership check, the payer check and the roster used
+      // to be read on the pool before the transaction opened, with the row
+      // lock taken only afterwards to serialise the write. That left a window
+      // between the reads and the BEGIN in which the world could change and
+      // the request would carry on with the old one. Bob starts posting the
+      // bill naming himself as payer, leaves the flock before this handler
+      // reaches BEGIN, and the stale request commits a bill payable to a
+      // person who is no longer in the flock. Bob cannot open the bill sheet
+      // any more (every route here checks membership), and the creator cannot
+      // hand the bill to anybody else, because the rule below reserves a payer
+      // change for the outgoing payer, who cannot reach it either. The bill is
+      // stuck with the money pointed at somebody who has left.
+      //
+      // So the transaction opens FIRST, the flock row is locked, and every
+      // read this handler makes a decision from happens inside it. What that
+      // buys is exact and worth stating exactly: the reads and the write are
+      // now one transaction, so the roster this bill is divided across and the
+      // payer it is written against are the ones that existed when the lock was
+      // taken, not some earlier moment. What it does not buy is a lock on the
+      // membership table itself. routes/flocks.js does not take this row lock
+      // to leave or remove somebody, so a departure can still commit between
+      // the read and the COMMIT below; closing that fully means that route
+      // taking the same lock, which is that file's change and not this one.
+      //
+      // A refusal in here is a ROLLBACK and then the answer, in that order.
+      // Nothing has been written at any of those points, and the rollback is
+      // what releases the row lock for the next request on this flock.
       const client = await pool.connect();
       let billId;
+      let members;
+      let shares;
+      let flockName;
       try {
         await client.query('BEGIN');
-
-        // Serialize bill writes per flock, then authorize replacement against
-        // the row that actually exists at commit time.
         await client.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
+        const refuse = async (status, payload) => {
+          await client.query('ROLLBACK');
+          res.status(status).json(payload);
+        };
+
+        // Verify membership
+        const memberCheck = await client.query(
+          "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
+          [flockId, userId]
+        );
+        if (memberCheck.rows.length === 0) {
+          return refuse(403, { error: 'You are not a member of this flock' });
+        }
+
+        // Verify payer is a member
+        const payerCheck = await client.query(
+          "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
+          [flockId, payerId]
+        );
+        if (payerCheck.rows.length === 0) {
+          return refuse(400, { error: 'Payer must be a member of the flock' });
+        }
+
+        // Get accepted members.
+        //
+        // ORDER BY is load-bearing, not tidiness: the equal split hands its
+        // leftover cents to the FIRST members of this list, and without an
+        // explicit order Postgres may return the same roster in a different
+        // sequence on the next read (a plan change, an UPDATE that moved a row).
+        // The extra cent would then land on a different person every time the
+        // bill was re-created, so "why do I owe a cent more than Ben" would have
+        // no stable answer. Lowest user id carries it.
+        const membersResult = await client.query(
+          `SELECT u.id, u.name FROM flock_members fm
+           JOIN users u ON u.id = fm.user_id
+           WHERE fm.flock_id = $1 AND fm.status = 'accepted'
+           ORDER BY u.id`,
+          [flockId]
+        );
+        members = membersResult.rows;
+        if (members.length === 0) {
+          return refuse(400, { error: 'No accepted members in this flock' });
+        }
+
+        // Read PRE-COMMIT, on purpose. It only shapes the 201 body, but every
+        // query after the COMMIT below is post-commit work: a throw there
+        // answers 500 for a bill that exists, and the client's retry rewrites
+        // the split it thinks failed. Asking here means a block-lookup failure
+        // is a clean 500 with nothing written. It sits after the membership
+        // check for the same reason every other read does: a caller who is
+        // not in this flock gets the 403 and nothing else is looked up on
+        // their behalf. It goes through the pool rather than the client
+        // because utils/blocks.js owns that query, and a block is a fact
+        // about two people, not about the row this transaction holds.
+        invisibleToCreator = new Set(await getInvisibleUserIds(userId));
+
+        // Get flock name + creator. creator_id is an authorization input for
+        // the existing-bill rules below, which is why it is read in here.
+        const flockResult = await client.query('SELECT name, creator_id FROM flocks WHERE id = $1', [flockId]);
+        flockName = flockResult.rows[0]?.name || 'Flock';
+        const flockCreatorId = flockResult.rows[0]?.creator_id;
+
+        // The SHAPE of a custom split is checked here, against the roster just
+        // read. The SUM is not, and that is deliberate: what the typed shares
+        // have to add up to depends on what people who have left this split
+        // already paid, and that is not known until the existing rows have
+        // been read further down. One sum check, in one place, against the
+        // right figure. See the credit block.
+        let parsed = null;
+        if (useCustomShares) {
+          // Round 16: `s.amount` was read straight off each element, so a single
+          // `null` or a bare string in the array threw a TypeError that surfaced
+          // as a 500 from the outer catch. Malformed input is a 400.
+          if (customShares.some(s => s === null || typeof s !== 'object' || Array.isArray(s))) {
+            return refuse(400, { error: 'Each custom share must be an object with userId and amount' });
+          }
+          // Round 16 (reliability audit): the tolerance used to be checked
+          // against the RAW sum, and each share was rounded to cents only
+          // afterwards. Three shares of 33.333333 on a $100.00 bill therefore
+          // passed the check (raw sum 99.999999, within two cents) and then
+          // stored as 33.33 three times — $99.99. The payer quietly ate the
+          // difference, and the app showed a bill that did not add up.
+          //
+          // Everything below works in INTEGER CENTS, which is the only
+          // representation in which "these shares equal that total" is a question
+          // with an exact answer. Floating point never decides anything here.
+          parsed = customShares.map(s => ({
+            userId: parseInt(s.userId),
+            cents: Math.round(parseFloat(s.amount) * 100),
+          }));
+
+          // Round 3: every amount finite and non-negative, no duplicate users —
+          // negative shares could offset an oversized one and NaN skipped the
+          // total check entirely. Checked BEFORE the sum, so NaN cannot poison it.
+          if (parsed.some(s => !Number.isFinite(s.cents) || s.cents < 0)) {
+            return refuse(400, { error: 'Every share must be a valid non-negative amount' });
+          }
+          if (new Set(parsed.map(s => s.userId)).size !== parsed.length) {
+            return refuse(400, { error: 'Each member can appear only once in custom shares' });
+          }
+          // Access control: every share must belong to an accepted flock member —
+          // otherwise arbitrary user ids could be assigned debt + pushed notifications.
+          const memberIds = new Set(members.map(m => m.id));
+          const invalidShare = parsed.find(s => !Number.isFinite(s.userId) || !memberIds.has(s.userId));
+          if (invalidShare) {
+            return refuse(400, { error: 'All custom shares must be for members of this flock' });
+          }
+        }
+
+        // WHO the new split is for is known before HOW MUCH each of them owes,
+        // and the two are separated on purpose: the credit taken below is
+        // decided over the rows that are NOT on this list, and the amounts on
+        // the list depend on that credit. Exactly the rows the two DELETEs
+        // further down will leave behind, decided from the same id list those
+        // statements are handed, so the credit and the retention rule cannot
+        // drift apart.
+        const plannedShareIds = new Set(useCustomShares ? parsed.map((s) => s.userId) : members.map((m) => m.id));
+
+        // Authorize replacement against the row that actually exists at commit
+        // time, under the lock taken above.
         const existingBill = await client.query(
           'SELECT id, paid_by FROM bill_splits WHERE flock_id = $1',
           [flockId]
@@ -475,9 +510,14 @@ router.post('/:flockId/create',
           // Round 6: creating the FIRST bill with someone else as payer let any
           // member assign visible debts in another member's name. Only the
           // payer themselves (or the flock creator) can open a bill.
-          await client.query('ROLLBACK');
-          return res.status(403).json({ error: 'Only the person who paid can start the bill' });
+          return refuse(403, { error: 'Only the person who paid can start the bill' });
         }
+        // Whether anything already on this bill can count as money. A shell
+        // (paid_by NULL) has nobody to have been paid, so nothing on it is a
+        // payment, and the DELETE below is handed this so it clears every
+        // departed row on a shell rather than sparing a flag that was never a
+        // receipt.
+        let hadRealPayer = false;
         if (existingBill.rows.length > 0) {
           const prevPayer = existingBill.rows[0].paid_by;
           // A ghost-commit shell has paid_by NULL — nobody has claimed the
@@ -485,12 +525,10 @@ router.post('/:flockId/create',
           // (round 7: NULL rejected every legitimate first payer).
           if (prevPayer === null) {
             if (payerId !== userId && userId !== flockCreatorId) {
-              await client.query('ROLLBACK');
-              return res.status(403).json({ error: 'Only the person who paid can start the bill' });
+              return refuse(403, { error: 'Only the person who paid can start the bill' });
             }
           } else if (userId !== prevPayer && userId !== flockCreatorId) {
-            await client.query('ROLLBACK');
-            return res.status(403).json({ error: 'Only the person who paid or the flock creator can change this bill' });
+            return refuse(403, { error: 'Only the person who paid or the flock creator can change this bill' });
           } else if (payerId !== prevPayer && userId !== prevPayer) {
             // WHO MAY EDIT IS NOT WHO MAY BECOME THE PAYER.
             //
@@ -512,40 +550,27 @@ router.post('/:flockId/create',
             // their own receivable is theirs to give - that is the case
             // money.test.js pins. What cannot happen is somebody else moving it
             // onto themselves.
-            await client.query('ROLLBACK');
-            return res.status(403).json({ error: 'Only the person who paid can hand this bill to someone else' });
+            return refuse(403, { error: 'Only the person who paid can hand this bill to someone else' });
           }
+          hadRealPayer = prevPayer !== null;
           const shareResult = await client.query(
-            // `amount` IS LOAD-BEARING, not decoration. It feeds existingAmounts,
-            // which feeds `owesMore` below, which is the only thing that clears a
-            // settled flag when a bill is revised upward. It was missing from
-            // this list, so `Number(row.amount)` was Number(undefined) = NaN;
-            // `typeof NaN === 'number'` passes, and every comparison against NaN
-            // is false, so owesMore was false for every share on every edit. A
-            // settled row survived any increase, and the push loop at the bottom
-            // only notifies UNSETTLED shares — so a $100 bill re-posted at $400
-            // left everyone who had already paid $25 marked paid, told nothing,
-            // and the payer $75 short with no record of it.
-            'SELECT user_id, amount, committed, settled, settled_at FROM bill_split_shares WHERE bill_id = $1',
+            // `amount` and `paid_amount` ARE LOAD-BEARING, not decoration. They
+            // feed existingPaidCents, which is the only thing that decides
+            // whether a settled flag survives a revision and what the revised
+            // share is credited with. `amount` was missing from this list once,
+            // so `Number(row.amount)` was Number(undefined) = NaN; `typeof NaN
+            // === 'number'` passes, and every comparison against NaN is false,
+            // so the upward-revision guard was false for every share on every
+            // edit. A settled row survived any increase, and the push loop at
+            // the bottom only notifies UNSETTLED shares, so a $100 bill
+            // re-posted at $400 left everyone who had already paid $25 marked
+            // paid, told nothing, and the payer $75 short with no record of it.
+            // money.test.js pins the SELECT list because the fake hands back
+            // whatever the fixture holds whether or not the SQL asked for it.
+            'SELECT user_id, amount, paid_amount, committed, settled, settled_at FROM bill_split_shares WHERE bill_id = $1',
             [existingBill.rows[0].id]
           );
-          // Exactly the rows the two DELETEs further down will LEAVE BEHIND,
-          // decided from the same id list those statements are handed, so the
-          // credit taken below and the retention rule cannot drift apart.
-          const plannedShareIds = new Set(shares.map((s) => s.userId));
           for (const row of shareResult.rows) {
-            // Somebody who is settled and is not on the new split keeps their
-            // row, because that row is the only record that they paid. What
-            // they paid is money this bill has already collected, so it is
-            // banked here and taken off the total the remaining roster is asked
-            // to cover. A row whose amount is not a number has nothing to
-            // credit and is skipped: that is a corrupt row rather than a
-            // payment, and letting NaN into the sum would ruin every share on
-            // the bill instead of leaving one row uncounted.
-            if (row.settled && !plannedShareIds.has(row.user_id)) {
-              const paidCents = Math.round(Number(row.amount) * 100);
-              if (Number.isFinite(paidCents)) retainedSettledCents += paidCents;
-            }
             if (row.committed) existingCommitments.set(row.user_id, true);
             // The payer's share is auto-settled below as an artifact of having
             // paid the venue — it is NOT a record that they settled a debt.
@@ -553,7 +578,8 @@ router.post('/:flockId/create',
             // paid forever (audit 2026-08-13): Alice opens the bill (settled as
             // payer), then rewrites it with Bob as payer, and walks away owing
             // Bob nothing while everyone else still owes. Only a payer who is
-            // still the payer keeps that flag.
+            // still the payer keeps that flag, and for the same reason the
+            // artifact is never credited as money either.
             if (row.user_id === prevPayer && prevPayer !== payerId) continue;
             // A SETTLED FLAG ON A BILL NOBODY PAID IS NOT A PAYMENT (bill split
             // audit 2026-08-26). `settled` means "this person paid the payer
@@ -570,11 +596,43 @@ router.post('/:flockId/create',
             // POST /:flockId/settle now refuses a payerless bill outright, so
             // no new row can reach this loop in that state. This is the second
             // lock, and it is the one that covers rows already in the database.
+            // It covers the credit too: an estimate somebody "settled" on a
+            // shell is not money this bill has collected, so a departed
+            // committer's shell row is neither credited nor kept.
             if (prevPayer === null) continue;
-            if (row.settled) {
-              existingSettled.set(row.user_id, row.settled_at || new Date());
-              existingAmounts.set(row.user_id, Number(row.amount));
+            // WHAT THIS PERSON HAS PAID, read the way migration 061 defines the
+            // two columns. paid_amount is what was credited from earlier
+            // versions of the bill; settled says the rest of the current share
+            // was paid too. So an unsettled row has paid exactly its credit,
+            // and a settled row has paid the larger of its share and its
+            // credit (larger, because a share revised DOWN below a payment
+            // keeps the flag and the payment both). A row whose numbers are not
+            // numbers has paid nothing this code can vouch for and is skipped:
+            // that is a corrupt row rather than a payment, and letting NaN into
+            // a sum would ruin every share on the bill instead of leaving one
+            // row uncounted.
+            const amountCents = Math.round(Number(row.amount) * 100);
+            const creditCents = Math.round(Number(row.paid_amount == null ? 0 : row.paid_amount) * 100);
+            if (!Number.isFinite(amountCents) || !Number.isFinite(creditCents)) continue;
+            const paidCents = row.settled ? Math.max(amountCents, creditCents) : creditCents;
+            if (!plannedShareIds.has(row.user_id)) {
+              // Somebody who has paid and is not on the new split keeps their
+              // row, because that row is the only record that they paid. What
+              // they paid is money this bill has already collected, so it is
+              // banked here and taken off the total the remaining roster is
+              // asked to cover. If the row does not already read as "paid this
+              // much, nothing outstanding" it is restated below so that it
+              // does; the reason is with the credit block.
+              if (paidCents > 0) {
+                retainedPaidCents += paidCents;
+                if (!row.settled || paidCents !== amountCents) {
+                  retainedRewrites.push({ userId: row.user_id, paidCents });
+                }
+              }
+              continue;
             }
+            if (row.settled) existingSettled.set(row.user_id, row.settled_at || new Date());
+            if (paidCents > 0) existingPaidCents.set(row.user_id, paidCents);
           }
         }
 
@@ -596,41 +654,97 @@ router.post('/:flockId/create',
         //
         // The remaining roster now covers the total MINUS what those rows
         // already carry, in the same integer cents and under the same
-        // deterministic leftover rule the equal split above uses, so the sheet
-        // adds to the total exactly again. That $120 reads $31.67, $31.67,
-        // $31.66 beside Bob's retained $25, which is $120.00 to the cent.
+        // deterministic leftover rule the equal split uses, so the sheet adds
+        // to the total exactly again. That $120 reads $31.67, $31.67, $31.66
+        // beside Bob's retained $25, which is $120.00 to the cent.
         //
-        // The custom branch is refused rather than corrected. The payer typed
+        // The custom branch was refused rather than corrected, and it still is
+        // when the typed numbers do not reach the right figure: the payer typed
         // those numbers, and quietly scaling them to fit a credit they were
         // never shown would be this route inventing a split nobody asked for,
-        // which is the same kind of lie as storing 'custom' over an equal split.
-        // The 400 names the amount already paid and the figure the typed shares
-        // now have to reach, so the payer can retype them, and it is worded like
-        // the tolerance failure above because it is the same complaint: these
-        // numbers do not cover this bill.
-        if (retainedSettledCents > 0) {
-          const totalCents = Math.round(totalWithTip * 100);
-          const remainingCents = totalCents - retainedSettledCents;
-          const alreadyPaid = (retainedSettledCents / 100).toFixed(2);
-          if (remainingCents < 0) {
-            // More has been paid than the corrected bill is worth. There is no
-            // division of a negative number that is not somebody being handed
-            // money they are not owed, so this one is the payer's to sort out
-            // with the people who left, not the route's to guess at.
-            await client.query('ROLLBACK');
-            return res.status(400).json({
-              error: `People who are no longer in this split have already paid $${alreadyPaid} toward this bill, which is more than the new total of $${totalWithTip.toFixed(2)}. Pay them back directly or raise the total.`,
-            });
+        // which is the same kind of lie as storing 'custom' over an equal
+        // split. What changed (adversarial audit 2026-09-04) is that the custom
+        // branch could not be SUBMITTED at all once a credit existed. The sum
+        // used to be checked against the full total before the credit had been
+        // read, and then refused again if it did not equal the remainder, and
+        // no list of numbers satisfies both. So a payer who took the 400 at its
+        // word and retyped the shares to the figure it named got the other 400
+        // instead. There is one sum check now, here, against the remainder,
+        // and its refusal names the amount already paid and the figure the
+        // typed shares have to reach so the payer can actually retype them.
+        //
+        // A departed person's allocation is what they paid. That is what
+        // "the remaining roster covers the rest" means, and it is also the only
+        // way the rows on the sheet can add up to the total. A row of theirs
+        // that says otherwise, because the bill went up after they paid and
+        // before they left, or went down below what they paid, is restated
+        // to their credit and marked settled: the one restatement here that is
+        // not a lie, because nobody is being asked for anything they did not
+        // already hand over.
+        const remainingCents = totalCents - retainedPaidCents;
+        if (remainingCents < 0) {
+          // More has been paid than the corrected bill is worth. There is no
+          // division of a negative number that is not somebody being handed
+          // money they are not owed, so this one is the payer's to sort out
+          // with the people who left, not the route's to guess at.
+          return refuse(400, {
+            error: `People who are no longer in this split have already paid $${(retainedPaidCents / 100).toFixed(2)} toward this bill, which is more than the new total of $${totalWithTip.toFixed(2)}. Pay them back directly or raise the total.`,
+          });
+        }
+
+        // Calculate shares
+        if (useCustomShares) {
+          const sumRefusal = () => (retainedPaidCents > 0
+            ? `People who are no longer in this split have already paid $${(retainedPaidCents / 100).toFixed(2)} toward this bill, so custom shares must add up to $${(remainingCents / 100).toFixed(2)}, not $${totalWithTip.toFixed(2)}`
+            : `Custom shares must add up to $${totalWithTip.toFixed(2)}`);
+          const sumCents = parsed.reduce((sum, s) => sum + s.cents, 0);
+          const remainder = remainingCents - sumCents;
+          if (Math.abs(remainder) > 2) {
+            return refuse(400, { error: sumRefusal() });
           }
-          if (useCustomShares) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({
-              error: `People who are no longer in this split have already paid $${alreadyPaid} toward this bill, so custom shares must add up to $${(remainingCents / 100).toFixed(2)}, not $${totalWithTip.toFixed(2)}`,
-            });
+          // Within tolerance: absorb the last one or two cents rather than
+          // leaving them unassigned. The largest share takes it, because that is
+          // the one where a cent is least visible and it cannot be pushed
+          // negative by a rounding remainder of at most two.
+          if (remainder !== 0) {
+            let biggest = 0;
+            for (let i = 1; i < parsed.length; i++) {
+              if (parsed[i].cents > parsed[biggest].cents) biggest = i;
+            }
+            parsed[biggest].cents += remainder;
+            if (parsed[biggest].cents < 0) {
+              return refuse(400, { error: sumRefusal() });
+            }
           }
+
+          shares = parsed.map(s => ({ userId: s.userId, amount: s.cents / 100 }));
+        } else {
+          // Equal split, in integer cents — the same representation the custom
+          // branch above was moved to, and for the same reason.
+          //
+          // (mutation audit 2026-08-14) The old arithmetic divided in DOLLARS and
+          // then handed the leftover cents out as `baseShare + 0.01`. Neither
+          // 0.01 nor 33.33 is representable in binary floating point, so about
+          // 23% of (total, member count) pairs produced a share the client could
+          // not render: $100.00 split three ways answered 33.339999999999996
+          // while the DECIMAL(8,2) column stored the same share as 33.34. Three
+          // surfaces then disagreed about one debt — the 201 body and the socket
+          // payload carried the artifact, GET /:flockId (parseFloat off the
+          // column) carried 33.34, and the push notification's toFixed(2)
+          // carried a third rendering. The cent TOTALS were always right, so no
+          // money was lost; what was lost was two friends being able to agree on
+          // what one of them owes.
+          //
+          // Cents stay integers end to end and the divide by 100 happens once,
+          // at the edge, which is the only place a rounding decision is made.
+          // The leftover is deterministic and bounded: the first
+          // `remainderCents` members in id order take exactly one extra cent
+          // each (remainderCents < memberCount always), so the shares sum to the
+          // total exactly and no share is more than a cent above the even split.
           const memberCount = members.length;
           const baseCents = Math.floor(remainingCents / memberCount);
           const remainderCents = remainingCents - baseCents * memberCount;
+
           shares = members.map((m, i) => ({
             userId: m.id,
             amount: (baseCents + (i < remainderCents ? 1 : 0)) / 100,
@@ -655,15 +769,20 @@ router.post('/:flockId/create',
         // once with custom shares that omit Bob (his settled row is gone),
         // rewrite again including Bob, and he is billed a second time with no
         // trace of the first payment. Rows still in the split are rewritten
-        // just below; rows dropped from it only go if they were unsettled.
+        // just below; rows dropped from it only go if nothing has been paid on
+        // them, which since migration 061 means unsettled AND no carried
+        // credit, because a person who paid $25 of a $40 share and then left
+        // has a record that is worth exactly as much as a settled one.
         //
-        // The gap this comment used to record, that a retained settled row was
-        // never credited against the new total, is closed by the block above:
-        // what those rows carry comes off the total before the remaining roster
-        // divides it, and the custom branch is refused rather than rewritten
-        // behind the payer's back. Read that block for the arithmetic. The one
-        // rule to keep in step is which rows survive, because the credit is
-        // taken over precisely the set these two statements leave behind.
+        // The gap this comment used to record, that a retained row was never
+        // credited against the new total, is closed by the block above: what
+        // those rows carry comes off the total before the remaining roster
+        // divides it. Read that block for the arithmetic. The one rule to keep
+        // in step is which rows survive, because the credit is taken over
+        // precisely the set these two statements leave behind, and the loop
+        // that banks the credit and the third parameter here answer the same
+        // question the same way: on a bill that never had a payer nothing is a
+        // payment, so nothing of a departed person's is kept.
         const keepIds = shares.map((s) => s.userId);
         await client.query(
           'DELETE FROM bill_split_shares WHERE bill_id = $1 AND user_id = ANY($2::int[])',
@@ -671,33 +790,48 @@ router.post('/:flockId/create',
         );
         await client.query(
           `DELETE FROM bill_split_shares
-           WHERE bill_id = $1 AND user_id <> ALL($2::int[]) AND settled = false`,
-          [billId, keepIds]
+           WHERE bill_id = $1 AND user_id <> ALL($2::int[])
+             AND ($3::boolean OR (settled = false AND paid_amount = 0))`,
+          [billId, keepIds, !hadRealPayer]
         );
+        for (const rewrite of retainedRewrites) {
+          await client.query(
+            `UPDATE bill_split_shares SET amount = $3, paid_amount = $3, settled = true
+             WHERE bill_id = $1 AND user_id = $2`,
+            [billId, rewrite.userId, rewrite.paidCents / 100]
+          );
+        }
 
-        // Insert shares — settled records survive the rewrite (a paid debt
-        // must not silently become unpaid because the bill was edited)
+        // Insert shares. What was paid survives the rewrite (a paid debt
+        // must not silently become unpaid because the bill was edited, and a
+        // payment must not silently become unpaid either)
         for (const share of shares) {
           const isPayer = share.userId === payerId;
           const wasCommitted = existingCommitments.has(share.userId);
-          // A settled debt survives a rewrite, but only for the amount it
-          // settled. If the replacement asks this person for MORE than they
-          // paid, the flag is theirs no longer: they owe the difference and the
-          // sheet has to say so, and the notification loop below can only tell
-          // somebody the bill moved if their row is unsettled. A smaller
-          // replacement keeps the flag, because they are square or ahead and
-          // un-settling a paid debt is the bug this whole branch exists to
-          // avoid.
-          const paidBefore = existingAmounts.get(share.userId);
-          const owesMore = typeof paidBefore === 'number' && Number(share.amount) > paidBefore + 0.004;
-          const wasSettled = existingSettled.has(share.userId) && !owesMore;
-          const settledAt = isPayer ? new Date() : (wasSettled ? (existingSettled.get(share.userId) || null) : null);
-          share.settled = isPayer || wasSettled; // response mirrors DB truth (round 3)
+          const newCents = Math.round(share.amount * 100);
+          // A payment survives a rewrite for exactly its amount. What this
+          // person paid against the old share rides across as paid_amount, and
+          // the flag is then a plain consequence: if the payment covers the new
+          // share they are settled (square, or ahead, and un-settling a paid
+          // debt is the bug this whole branch exists to avoid), and if it does
+          // not they owe the difference, the sheet says so, and the push loop
+          // below can tell them the bill moved because their row is unsettled.
+          // Nothing they paid is asked for twice in either direction, and a
+          // share revised below a payment keeps the payment on the row, which
+          // is the record of what they are owed back. The payer's own row
+          // carries no credit: it is settled as an artifact of having paid the
+          // venue, and they are not a debtor on their own bill.
+          const carriedCents = isPayer ? 0 : (existingPaidCents.get(share.userId) || 0);
+          const coveredByCredit = carriedCents > 0 && carriedCents >= newCents;
+          const settledAt = isPayer ? new Date() : (coveredByCredit ? (existingSettled.get(share.userId) || null) : null);
+          share.settled = isPayer || coveredByCredit; // response mirrors DB truth (round 3)
           share.committed = wasCommitted;
+          share.paidAmount = carriedCents / 100;
+          share.outstanding = share.settled ? 0 : (newCents - carriedCents) / 100;
           await client.query(
-            `INSERT INTO bill_split_shares (bill_id, user_id, amount, committed, settled, settled_at)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [billId, share.userId, share.amount, wasCommitted, share.settled, settledAt]
+            `INSERT INTO bill_split_shares (bill_id, user_id, amount, committed, settled, settled_at, paid_amount)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [billId, share.userId, share.amount, wasCommitted, share.settled, settledAt, share.paidAmount]
           );
         }
 
@@ -730,6 +864,11 @@ router.post('/:flockId/create',
           userId: s.userId,
           name: member?.name || 'Unknown',
           amount: s.amount,
+          // Same two fields GET /:flockId serves, so the sheet the creator
+          // sees straight after posting and the sheet after a refresh agree
+          // about who has paid what and who still owes what.
+          paidAmount: s.paidAmount,
+          outstanding: s.outstanding,
           settled: !!s.settled,
           committed: !!s.committed,
         };
@@ -804,9 +943,12 @@ router.post('/:flockId/create',
       await Promise.allSettled(
         shares
           .filter((share) => share.userId !== payerId && !share.settled)
+          // The OUTSTANDING figure, not the share. Somebody who paid $30
+          // against a share that is now $100 owes $70, and "You owe $100.00"
+          // was the sentence that had Ben paying $130 for a $100 share.
           .map((share) => pushIfOffline(io, share.userId,
             'Bill split created',
-            `You owe ${payerName} $${share.amount.toFixed(2)} for ${flockName}`,
+            `You owe ${payerName} $${share.outstanding.toFixed(2)} for ${flockName}`,
             { type: 'bill_created', flockId: String(flockId), fromUserId: String(payerId) }
           ))
       );
@@ -938,6 +1080,11 @@ router.get('/:flockId',
               userId: s.user_id,
               name: s.name,
               amount: money(s.amount),
+              // The credit carried from earlier versions of this bill and
+              // what is still owed after it, see outstandingOn. Both are
+              // money, so both are withheld on a shell the reveal rule hides.
+              paidAmount: money(s.paid_amount == null ? 0 : s.paid_amount),
+              outstanding: revealShellAmounts ? outstandingOn(s.amount, s.paid_amount, s.settled) : null,
               committed: s.committed,
               settled: s.settled,
               settledAt: s.settled_at,
@@ -1147,7 +1294,13 @@ router.post('/:flockId/settle',
             [billId]
           );
           const payerId = payerRow.rows[0]?.paid_by;
-          const amount = Number(updateResult.rows[0]?.amount);
+          // What this tap cleared is the share less whatever was already
+          // credited to it from an earlier version of the bill, which is the
+          // figure the payer has to look for in their payment app. The row
+          // came back from RETURNING * already marked settled, so the
+          // outstanding is asked for as it stood before the UPDATE.
+          const settledRow = updateResult.rows[0] || {};
+          const amount = outstandingOn(settledRow.amount, settledRow.paid_amount, false);
           // Nobody is told they paid themselves back, and a bill with no
           // recorded payer has nobody to tell.
           if (payerId && Number(payerId) !== Number(userId)) {
@@ -1248,19 +1401,58 @@ router.post('/:flockId/unsettle',
         });
       }
 
-      const updateResult = await pool.query(
-        `UPDATE bill_split_shares SET settled = false, settled_at = NULL
-         WHERE bill_id = $1 AND user_id = $2 AND settled IS TRUE
-         RETURNING *`,
-        [billId, userId]
-      );
+      // UNDER THE SAME FLOCK LOCK /create AND /settle HOLD (adversarial audit
+      // 2026-09-04). This UPDATE ran on the pool with no transaction around
+      // it, which is the exact shape /settle was corrected out of: /create
+      // BEGINs, locks the flock row, READS the existing shares into a
+      // snapshot, and then deletes and re-inserts them from that snapshot. An
+      // unsettle landing anywhere in that window committed, answered 200,
+      // told every open sheet the debt was owed again, and was then erased,
+      // because /create wrote the person back settled = true from the rows it
+      // had read before the tap. The debtor's correction vanished and the
+      // payer was left with a sheet that said they had been paid. Serialising
+      // on the same row is what closes it, and billSplitEndToEnd.test.js pins
+      // that the lock is actually issued, in order, rather than merely
+      // scripted.
+      //
+      // `paid_amount < amount` is the credit rule from migration 061. A share
+      // whose carried credit already covers it was marked settled by the bill
+      // edit that carried the credit, not by a tap, so there is no report to
+      // take back and clearing the flag would put somebody who has paid in
+      // full back on the sheet as owing. That case is told apart below and
+      // refused with its own reason.
+      const client = await pool.connect();
+      let updateResult;
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
+        updateResult = await client.query(
+          `UPDATE bill_split_shares SET settled = false, settled_at = NULL
+           WHERE bill_id = $1 AND user_id = $2 AND settled IS TRUE AND paid_amount < amount
+           RETURNING *`,
+          [billId, userId]
+        );
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
       if (updateResult.rows.length === 0) {
         const existing = await pool.query(
-          'SELECT settled FROM bill_split_shares WHERE bill_id = $1 AND user_id = $2',
+          'SELECT settled, amount, paid_amount FROM bill_split_shares WHERE bill_id = $1 AND user_id = $2',
           [billId, userId]
         );
         if (existing.rows.length === 0) {
           return res.status(404).json({ error: 'No share found for you on this bill' });
+        }
+        const row = existing.rows[0];
+        if (row.settled && outstandingOn(row.amount, row.paid_amount, false) === 0) {
+          return res.status(409).json({
+            error: 'What you paid on an earlier version of this bill already covers your share, so there is nothing to mark unpaid.',
+            reason: 'credit',
+          });
         }
         // Already unsettled. What the caller wanted is already true.
         return res.json({ settled: false, alreadyUnsettled: true });
@@ -1547,15 +1739,21 @@ router.get('/:flockId/venmo-link',
       if (await refuseIfBlockedPayer(res, userId, bill.paid_by)) return;
       if (noPayerRefusal(res, bill.paid_by)) return;
 
-      // Get the user's share
+      // Get the user's share. The link carries what is still OWED, which is
+      // the share less anything already credited to it from an earlier
+      // version of the bill (migration 061); handing a wallet app the whole
+      // share was how a person who had paid $30 got asked for $100.
       const shareResult = await pool.query(
-        'SELECT amount FROM bill_split_shares WHERE bill_id = $1 AND user_id = $2',
+        'SELECT amount, settled, paid_amount FROM bill_split_shares WHERE bill_id = $1 AND user_id = $2',
         [bill.id, userId]
       );
       if (shareResult.rows.length === 0) {
         return res.status(404).json({ error: 'No share found for you' });
       }
-      const amount = parseFloat(shareResult.rows[0].amount);
+      const shareRow = shareResult.rows[0];
+      const shareAmount = parseFloat(shareRow.amount);
+      const paidAmount = shareRow.paid_amount == null ? 0 : parseFloat(shareRow.paid_amount);
+      const amount = outstandingOn(shareRow.amount, shareRow.paid_amount, shareRow.settled);
 
       // Get payer's venmo username
       const payerResult = await pool.query(
@@ -1572,6 +1770,8 @@ router.get('/:flockId/venmo-link',
           deepLink: null,
           webLink: null,
           amount,
+          shareAmount,
+          paidAmount,
           payTo: payer.name,
           note: `Flock - ${bill.flock_name}`,
           reason: 'no_venmo',
@@ -1594,6 +1794,8 @@ router.get('/:flockId/venmo-link',
         deepLink: `venmo://paycharge?txn=pay&recipients=${venmoUser}&amount=${amount}&note=${note}`,
         webLink: `https://venmo.com/${venmoUser}?txn=pay&amount=${amount}&note=${note}`,
         amount,
+        shareAmount,
+        paidAmount,
         payTo: payer.name,
         note: `Flock - ${bill.flock_name}`,
       });
@@ -1642,15 +1844,23 @@ router.get('/:flockId/payment-links',
       if (await refuseIfBlockedPayer(res, userId, bill.paid_by)) return;
       if (noPayerRefusal(res, bill.paid_by)) return;
 
-      // Get the user's share amount
+      // Get the user's share. `amount` below is what is still OWED, which
+      // every link and the Zelle instruction carry, and it is the share less
+      // anything already credited to it from an earlier version of the bill
+      // (migration 061). The share and the credit ride alongside so the sheet
+      // can say "$70.00 of $100.00, $30.00 already paid" instead of a bare
+      // figure nobody can reconcile.
       const shareResult = await pool.query(
-        'SELECT amount FROM bill_split_shares WHERE bill_id = $1 AND user_id = $2',
+        'SELECT amount, settled, paid_amount FROM bill_split_shares WHERE bill_id = $1 AND user_id = $2',
         [bill.id, userId]
       );
       if (shareResult.rows.length === 0) {
         return res.status(404).json({ error: 'No share found for you' });
       }
-      const amount = parseFloat(shareResult.rows[0].amount);
+      const shareRow = shareResult.rows[0];
+      const shareAmount = parseFloat(shareRow.amount);
+      const paidAmount = shareRow.paid_amount == null ? 0 : parseFloat(shareRow.paid_amount);
+      const amount = outstandingOn(shareRow.amount, shareRow.paid_amount, shareRow.settled);
 
       // Get payer's payment details
       const payerResult = await pool.query(
@@ -1704,7 +1914,7 @@ router.get('/:flockId/payment-links',
         });
       }
 
-      res.json({ amount, payTo: payer.name, note, methods });
+      res.json({ amount, shareAmount, paidAmount, payTo: payer.name, note, methods });
     } catch (err) {
       console.error('Payment links error:', err);
       res.status(500).json({ error: 'Failed to generate payment links' });
