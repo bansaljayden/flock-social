@@ -209,6 +209,9 @@ router.post('/reports',
       // reporter still has to be able to see the row, but "already handled" is
       // answered with the same success string as a fresh report (and files
       // nothing, because there is nothing left to do).
+      // The author the content row resolves to, carried out of the block so
+      // the INSERT can name them when the client could not (see there).
+      let contentAuthorId = null;
       if (content_id) {
         let row = null;
         // 'flock_message' is the validated type name — checking 'message' here
@@ -330,6 +333,7 @@ router.post('/reports',
           // identically to every other success.
           return res.status(201).json({ message: REPORT_ACCEPTED, report: null });
         }
+        contentAuthorId = row.sender_id != null ? row.sender_id : null;
         if (reported_user_id && row.sender_id !== reported_user_id) {
           return res.status(400).json({ error: 'Reported user does not match the content author' });
         }
@@ -369,7 +373,13 @@ router.post('/reports',
         `INSERT INTO content_reports (reporter_id, reported_user_id, content_type, content_id, reason, details)
          VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING id, status, created_at`,
-        [req.user.id, reported_user_id || null, content_type, content_id || null, reason, details || null]
+        // The author the content row resolved to, when the client could not
+        // name one: the public promotion read carries no owner id, so a
+        // promotion report reached the queue with no reported user, no prior
+        // history, and neither Warn nor Ban to press (UGC-loop audit,
+        // 2026-09-05). The author-mismatch check above already holds the two
+        // consistent when both are present; a guest row resolves to null.
+        [req.user.id, reported_user_id || contentAuthorId, content_type, content_id || null, reason, details || null]
       );
 
       // Alert moderators (A6 — push/email). Fire-and-forget; never block the reporter.
@@ -605,6 +615,14 @@ router.delete('/blocks/:userId', [param('userId').isInt({ min: 1, max: INT4_MAX 
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Not blocked' });
     invalidateBlockCache(req.user.id, blockedId);
+    // Both sides hear it, the way both hear a block: the other person's
+    // thread used to stay on "closed on both sides" with no composer until
+    // they left it and came back (UGC-loop audit, 2026-09-05).
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`user:${blockedId}`).emit('unblocked_by', { userId: req.user.id });
+      io.to(`user:${req.user.id}`).emit('unblocked_by', { userId: blockedId });
+    }
     res.json({ message: 'User unblocked' });
   } catch (err) {
     console.error('Unblock user error:', err);

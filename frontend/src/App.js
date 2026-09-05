@@ -23,7 +23,7 @@ import { resendVerificationEmail } from './services/api';
 // The reasoning, and everything the token has to survive, is in the service.
 import { redeemPendingInvite, openJoinedFlock, rememberInvite } from './services/inviteHandoff';
 import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
-import { joinVenueRoom, leaveVenueRoom, joinVenueContentRoom, leaveVenueContentRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked, onSocketError, onAvailabilityUpdated, onBlockedBy, onContentRemoved, onContentRestored } from './services/socket';
+import { joinVenueRoom, leaveVenueRoom, joinVenueContentRoom, leaveVenueContentRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked, onSocketError, onAvailabilityUpdated, onBlockedBy, onUnblockedBy, onContentRemoved, onContentRestored } from './services/socket';
 import { pullSettings, queueSync } from './services/userSettings';
 // html5-qrcode is NOT imported here on purpose. It is loaded with a dynamic
 // import() inside startQrScanner, the one place that uses it. See the note
@@ -12472,6 +12472,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       handleUserBlocked(userId, { keepDmOpen: true });
     });
   }, [dmSharingLocation, handleUserBlocked]);
+
+  // The reverse. An unblock told nobody, so the other person's open thread
+  // kept its "closed on both sides" panel and no composer until they left it
+  // and came back (UGC-loop audit, 2026-09-05). The block flag clears, and an
+  // open thread with that person re-reads itself, which is the read that
+  // clears dmBlocked on the server's word rather than on the event alone.
+  useEffect(() => {
+    return onUnblockedBy(({ userId }) => {
+      if (userId == null) return;
+      setDmBlocked(prev => {
+        if (!prev[String(userId)]) return prev;
+        const next = { ...prev };
+        delete next[String(userId)];
+        return next;
+      });
+      if (String(selectedDmId) === String(userId)) loadDmMessages(userId);
+    });
+  }, [selectedDmId, loadDmMessages]);
 
   // Arming a DM share asks for a fix on the tap, the way startSharingLocation
   // does for a flock. The composer used to call a bare setDmSharingLocation(id)
