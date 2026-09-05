@@ -139,12 +139,17 @@ export function intentFromData(data) {
     if (!userId) return null;
     const lat = Number(data.latitude);
     const lng = Number(data.longitude);
+    // FCM data values arrive as strings; the count is coerced like the
+    // coordinates and dropped unless finite, so the alarm screen's
+    // "contacts have been emailed" sentence rests on a number it was sent.
+    const contactsAlerted = data.contactsAlerted != null ? Number(data.contactsAlerted) : NaN;
     return {
       screen: 'safety',
       userId,
       name: data.fromUserName ? String(data.fromUserName) : '',
       lat: Number.isFinite(lat) ? lat : null,
       lng: Number.isFinite(lng) ? lng : null,
+      ...(Number.isFinite(contactsAlerted) ? { contactsAlerted } : {}),
       at: data.at ? String(data.at) : null,
       type,
     };

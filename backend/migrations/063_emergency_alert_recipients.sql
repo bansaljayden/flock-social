@@ -1,0 +1,37 @@
+-- 063: who an SOS actually reached, written on the alert row, so the
+-- stand-down can reach exactly those people.
+--
+-- ---------------------------------------------------------------------------
+-- WHAT WENT WRONG (safety audit, 2026-09-05)
+--
+-- POST /api/safety/alert has two legs: the trusted-contact emails and the
+-- flock alarm (a full-screen "X needs help" on every phone in tonight's
+-- confirmed plan). POST /api/safety/alert/cancel, the all-clear, rebuilt both
+-- audiences from scratch at cancel time:
+--
+--   * the flock audience was the SAME query the alarm used, re-run against
+--     live flock status. A plan that the sweep marked completed twelve hours
+--     after its event time, a plan the host cancelled, or a plan the sender
+--     had since left, answered no rows, and every flockmate's alarm stayed up
+--     for good;
+--   * the contact audience was the CURRENT trusted_contacts list, so a
+--     contact removed after the alarm never got the all-clear, and removing
+--     every contact made the alarm impossible to withdraw at all;
+--   * and the cancel refused outright unless contacts_alerted > 0, so an
+--     alarm whose emails failed (Resend down) could not be called off even
+--     though the flock had been told.
+--
+-- The alert row now records who each leg reached, at the moment it reached
+-- them. The stand-down reads those two columns and goes to exactly those
+-- people, filtering only bans and blocks made since.
+--
+-- flock_recipient_ids: the users the flock leg addressed (socket and push
+-- attempted), by id. contact_recipients: the trusted contacts whose alert
+-- email was accepted by the mail provider, as [{name, email}]. The email is
+-- stored so a removed contact can still be told the alarm is withdrawn; it is
+-- the same address that sits on trusted_contacts, held for the six hours the
+-- stand-down window lasts and then inert. Both default empty, so every row
+-- written before this migration keeps the old behaviour (the live re-query)
+-- and nothing needs backfilling.
+ALTER TABLE emergency_alerts ADD COLUMN IF NOT EXISTS flock_recipient_ids INTEGER[] NOT NULL DEFAULT '{}';
+ALTER TABLE emergency_alerts ADD COLUMN IF NOT EXISTS contact_recipients JSONB NOT NULL DEFAULT '[]'::jsonb;

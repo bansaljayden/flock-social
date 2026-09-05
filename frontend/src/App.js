@@ -4473,13 +4473,15 @@ const DialogBehavior = ({ onClose, label, modal = true }) => {
    position from 40 seconds ago than no position at all.
 
    The follow-up chases a fix for a while longer and sends it as a second
-   alert. POST /api/safety/alert treats "the last alert had no location, this
-   one does" as an escalation and lets it through the five minute cooldown,
-   but it still enforces a sixty second floor between sends, so the follow-up
-   has to wait that floor out rather than be refused at the door. */
+   alert the moment one lands. POST /api/safety/alert treats "the last alert
+   had no location, this one does" as a location follow-up: it is let through
+   the five minute cooldown AND the sixty second floor (isLocationFollowUp on
+   the server), so there is nothing to wait out. This used to sit on the fix
+   for the rest of a 65 second gap, so a parent got the map over a minute late
+   and, past the server's follow-up window, with copy saying the child had
+   moved (safety audit, 2026-09-05). */
 const SOS_FIRST_FIX_MS = 4000;
 const SOS_FOLLOW_UP_FIX_MS = 45000;
-const SOS_FOLLOW_UP_GAP_MS = 65000;
 
 // Resolves { coords, denied } and never rejects: an emergency path has no use
 // for an exception. `denied` means the user refused location permission, which
@@ -7106,6 +7108,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         name: String(intent.name || 'Someone on your plan').slice(0, 80),
         lat: Number.isFinite(intent.lat) ? intent.lat : null,
         lng: Number.isFinite(intent.lng) ? intent.lng : null,
+        ...(Number.isFinite(intent.contactsAlerted) ? { contactsAlerted: intent.contactsAlerted } : {}),
         at: intent.at || new Date().toISOString(),
       });
     }
@@ -9819,6 +9822,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // map pin would put somebody at the equator.
         lat: Number.isFinite(data.latitude) ? data.latitude : null,
         lng: Number.isFinite(data.longitude) ? data.longitude : null,
+        // How many trusted contacts were actually emailed. The server has
+        // sent this since 2026-09-04 and the screen branches on it; nothing
+        // carried it into state, so "their trusted contacts have already
+        // been emailed" rendered even when none were (safety audit,
+        // 2026-09-05). Absent stays absent: the sentence then says nothing
+        // it cannot know.
+        ...(Number.isFinite(Number(data.contactsAlerted)) ? { contactsAlerted: Number(data.contactsAlerted) } : {}),
         at: data.at || new Date().toISOString(),
       });
     });
@@ -11202,21 +11212,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     s.gen += 1;
     const gen = s.gen;
     const sentAt = Date.now();
-    getSosPosition(SOS_FOLLOW_UP_FIX_MS, 0).then(({ coords }) => {
+    getSosPosition(SOS_FOLLOW_UP_FIX_MS, 0).then(async ({ coords }) => {
       if (!coords || sosFollowUpRef.current.gen !== gen) return;
-      const wait = Math.max(0, SOS_FOLLOW_UP_GAP_MS - (Date.now() - sentAt));
-      sosFollowUpRef.current.timer = setTimeout(async () => {
-        sosFollowUpRef.current.timer = null;
-        if (sosFollowUpRef.current.gen !== gen) return;
-        try {
-          await sendEmergencyAlert({ latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy, includeLocation: true });
-          showToast('Your location has been sent to your contacts');
-        } catch (err) {
-          // The alert itself was delivered, so this is a smaller failure than
-          // it sounds and the copy has to say which half worked.
-          showToast('Could not send your location. Your alert already went out.', 'error');
-        }
-      }, wait);
+      // Sent now, not after a gap: the server admits a location follow-up
+      // inside its floor, and every second here is a second the parent does
+      // not have the map. `sentAt` stays for the log line.
+      try {
+        await sendEmergencyAlert({ latitude: coords.latitude, longitude: coords.longitude, accuracy: coords.accuracy, includeLocation: true });
+        showToast('Your location has been sent to your contacts');
+      } catch (err) {
+        // The alert itself was delivered, so this is a smaller failure than
+        // it sounds and the copy has to say which half worked.
+        showToast('Could not send your location. Your alert already went out.', 'error');
+      }
+      if (Date.now() - sentAt > SOS_FOLLOW_UP_FIX_MS + 5000) console.warn('[SOS] the location follow-up took longer than its chase');
     });
   }, [showToast]);
 
@@ -11267,6 +11276,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // out and this device just did not know (a second phone, cleared
       // storage), so the stand-down band arms off the server's word.
       if (err?.status === 429 && err?.data?.alreadySent === true) rememberSosAlert(Date.now());
+      // A 502 is "no contact could be emailed", and the flock alarm went out
+      // regardless, so there IS something to withdraw. The band is offered;
+      // if the flock leg reached nobody either, the server answers the tap
+      // with nothingToCancel and the band clears itself.
+      if (err?.status === 502) rememberSosAlert(Date.now());
       const line = err?.message || 'Failed to send alert';
       // The offline and timeout failures are client-authored and were the
       // only SOS failures that did not name 911; every server refusal does.
@@ -19223,7 +19237,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               They pressed SOS on a plan you are both on.
               {safetyAlert.contactsAlerted === 0
                 ? ' We could not reach any of their trusted contacts, so you may be the only person who knows.'
-                : ' Their trusted contacts have already been emailed.'}
+                : safetyAlert.contactsAlerted > 0
+                  ? ' Their trusted contacts have already been emailed.'
+                  : ''}
               {safetyAlert.lat === null ? ' They did not share their location.' : ''}
               {/* The alarm's own time. A push tapped at 9am used to read as a
                   live 9am alarm; the hour it actually fired changes what the
