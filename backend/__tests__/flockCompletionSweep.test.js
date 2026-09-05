@@ -78,10 +78,10 @@ test('the sweep moves confirmed flocks to completed and touches nothing else', a
   assert.equal(db.log.length, 1, 'one statement per sweep');
   const sql = lastSql();
   assert.match(sql, /UPDATE flocks/i);
-  assert.match(sql, /SET status = 'completed'/i);
+  assert.match(sql, /SET status = CASE WHEN status = 'confirmed' THEN 'completed' ELSE 'cancelled' END/i);
   // The three halves of the predicate, each of which is a separate way to
   // close a plan that is not over.
-  assert.match(sql, /WHERE status = 'confirmed'/i);
+  assert.match(sql, /WHERE status IN \('planning', 'confirmed'\)/i);
   assert.match(sql, /event_time IS NOT NULL/i);
   // NOT bare NOW(). event_time is TIMESTAMP WITHOUT TIME ZONE holding a UTC
   // wall clock (the writers in App.js all send .toISOString(), and Postgres
@@ -139,15 +139,18 @@ test('a failure part way through reports the batches that did commit', async () 
   assert.equal(moved, sweep.SWEEP_BATCH_SIZE * 2);
 });
 
-test('a planning flock is never swept, however old it is', async () => {
+test('a planning flock past its night is cancelled, never completed', async () => {
   reset();
   await runFlockCompletionSweep();
   // 'planning' is the status every flock in production is stuck at, and a plan
   // nobody ever confirmed did not happen. Completing it would invent an
-  // outcome and would put it in everyone's history.
-  assert.ok(!/status IN|status <>|status !=/i.test(lastSql()),
-    'the predicate must be an equality on confirmed, not a set or a negation');
-  assert.match(lastSql(), /status = 'confirmed'/);
+  // outcome; leaving it forever (the rule until 2026-09-05) kept it on the
+  // Nest as "Time passed" with no exit. Cancelled says what is true.
+  const sql = lastSql();
+  assert.match(sql, /WHERE status IN \('planning', 'confirmed'\)/);
+  assert.match(sql, /CASE WHEN status = 'confirmed' THEN 'completed' ELSE 'cancelled' END/);
+  assert.ok(!/status <>|status !=/i.test(sql), 'a set of two, never a negation that would sweep completed rows');
+  assert.match(sql, /RETURNING id, status/);
 });
 
 test('the grace window is measured from event_time, not from created_at', async () => {
@@ -262,7 +265,8 @@ test('a swept flock is announced to its members over their user rooms', async ()
   const memberQuery = db.log.find((q) => q.sql.includes('FROM flock_members'));
   assert.ok(memberQuery, 'members are read for the fan-out');
   assert.deepStrictEqual(memberQuery.params[0], [7, 9]);
-  assert.match(memberQuery.sql, /status = 'accepted'/);
+  // Invitees hear it too, so a stale invite card leaves (lifecycle audit).
+  assert.match(memberQuery.sql, /status IN \('accepted', 'invited'\)/);
   assert.deepStrictEqual(emits, [
     { room: 'user:1', event: 'flock_updated', payload: { flockId: 7, status: 'completed' } },
     { room: 'user:2', event: 'flock_updated', payload: { flockId: 7, status: 'completed' } },

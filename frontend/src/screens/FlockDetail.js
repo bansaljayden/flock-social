@@ -172,7 +172,9 @@ export default function FlockDetail({
     const goingGuests = (flock.guests || []).filter(g => g.status === 'accepted');
     const goingCount = acceptedMembers.length + goingGuests.length;
     const roster = [...acceptedMembers, ...goingGuests];
-    const isCompleted = flock.status === 'completed';
+    // A cancelled plan (reachable by API) rendered as "Planning" with the time
+    // editor and "Lock it in" still offered (lifecycle audit, 2026-09-05).
+    const isCompleted = flock.status === 'completed' || flock.status === 'cancelled';
     const isConfirmed = flock.status === 'confirmed' || flock.status === 'locked';
     // A completed flock whose roster still carries an unmarked member. Two
     // ways to get one: the host skipped the sheet, or the server's own sweep
@@ -213,7 +215,7 @@ export default function FlockDetail({
           {/* Status badge */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 12px', background: isCompleted ? 'rgba(74,123,167,0.25)' : isConfirmed ? 'rgba(34,197,94,0.25)' : 'rgba(245,158,11,0.25)', borderRadius: '20px', fontSize: 'var(--t-meta)', fontWeight: '500', color: isCompleted ? '#a9c7e4' : isConfirmed ? '#86efac' : '#fcd34d' }}>
-              {isCompleted ? 'Done' : isConfirmed ? 'Locked In' : 'Planning'}
+              {isCompleted ? (flock.status === 'cancelled' ? 'Cancelled' : 'Done') : isConfirmed ? 'Locked In' : 'Planning'}
             </span>
             {flock.time && flock.time !== 'TBD' && (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '5px 12px', background: 'rgba(255,255,255,0.15)', borderRadius: '20px', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white' }}>

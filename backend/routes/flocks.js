@@ -1261,6 +1261,17 @@ router.put('/:id',
 
       const { name, venue_name, venue_address, venue_id, venue_latitude, venue_longitude, venue_rating, venue_photo_url, event_time, status } = req.body;
 
+      // A finished or cancelled plan does not reopen (lifecycle audit,
+      // 2026-09-05): the route accepted completed -> planning from anyone with
+      // the creator's token.
+      if (status !== undefined && status !== null) {
+        const was = await pool.query('SELECT status FROM flocks WHERE id = $1', [flockId]);
+        const wasStatus = was.rows[0] && was.rows[0].status;
+        if ((wasStatus === 'completed' || wasStatus === 'cancelled') && status !== wasStatus) {
+          return res.status(409).json({ error: 'This plan is finished and cannot be reopened' });
+        }
+      }
+
       // Same UGC screen as creation — editing must not be a bypass (round 7).
       if (name && rejectIfProfane(res, name)) return;
       if (venue_name && rejectIfProfaneVenue(res, venue_name, venue_id)) return;
@@ -1360,7 +1371,7 @@ router.put('/:id',
           event_time: updated.event_time,
           status: updated.status,
           updatedBy: req.user.name,
-        }).catch((e) => console.error('flock_updated fan-out failed:', e.message));
+        }, { includeInvited: true }).catch((e) => console.error('flock_updated fan-out failed:', e.message));
       }
 
       // Auto-populate research analytics on completion or cancellation
@@ -1615,7 +1626,7 @@ router.delete('/:id', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('
         // nothing has changed yet at this point.
         await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_deleted', {
           flockId: parseInt(flockId), flockName, deletedBy: req.user.name,
-        }).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
+        }, { includeInvited: true }).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
       }
       const removed = await client.query('DELETE FROM flocks WHERE id = $1', [flockId]);
       // Same two-statement window as PUT: the ownership check read a row that
@@ -1781,6 +1792,14 @@ router.post('/:id/join', requireVerified, param('id').isInt({ min: 1, max: INT4_
     );
     if (membership.rows.length === 0) {
       return res.status(404).json({ error: 'Flock not found' });
+    }
+    // A stale invite card could be accepted after the plan finished or was
+    // cancelled, joining a night that already happened (lifecycle audit,
+    // 2026-09-05).
+    const flockState = await pool.query('SELECT status FROM flocks WHERE id = $1', [flockId]);
+    const flockStatus = flockState.rows[0] && flockState.rows[0].status;
+    if (flockStatus === 'completed' || flockStatus === 'cancelled') {
+      return res.status(409).json({ error: 'This plan is no longer open', code: 'FLOCK_CLOSED' });
     }
 
     // Flip membership to 'accepted'. Round 9: the UPDATE matched unconditionally,
@@ -2747,7 +2766,7 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
         if (io) {
           await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_deleted', {
             flockId: parseInt(flockId), flockName, deletedBy: req.user.name,
-          }).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
+          }, { includeInvited: true }).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
         }
         // Creator leaving deletes the entire flock (cascade removes members, messages, votes)
         await client.query('DELETE FROM flocks WHERE id = $1', [flockId]);

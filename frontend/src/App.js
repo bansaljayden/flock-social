@@ -5925,6 +5925,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       }
       showToast('Invite declined');
     } catch (err) {
+      if (err?.status === 404 || err?.status === 409) {
+        setPendingFlockInvites(prev => prev.filter(f => f.id !== flockId));
+        showToast(err.message || 'That plan is no longer open.');
+        return;
+      }
       showToast(err.message || 'Failed to decline invite', 'error');
     }
   }, [pendingFlockInvites, showToast]);
@@ -6365,6 +6370,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       loadFlocks();
     } catch (err) {
       if (needsEmailVerification(err, 'join a flock')) return;
+      // The plan is gone or finished: the card leaves instead of staying
+      // behind a red toast (lifecycle audit, 2026-09-05).
+      if (err?.status === 404 || err?.status === 409) {
+        setPendingFlockInvites(prev => prev.filter(f => f.id !== flockId));
+        showToast(err.message || 'That plan is no longer open.');
+        return;
+      }
       showToast(err.message || 'Failed to accept invite', 'error');
     }
   }, [pendingFlockInvites, showToast, needsEmailVerification, loadFlocks]);
@@ -9714,6 +9726,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             ...f,
             memberCount: (f.memberCount || 0) + 1,
             members: alreadyMember ? f.members : [...(f.members || []), { id: data.userId, name: data.userName, image: data.userImage || null, status: 'accepted' }],
+            // The card draws memberPreviews when it has them (lifecycle audit,
+            // 2026-09-05): a joiner's face appears, a leaver's goes.
+            memberPreviews: Array.isArray(f.memberPreviews) && !f.memberPreviews.some(m => m.id === data.userId)
+              ? [...f.memberPreviews, { id: data.userId, name: data.userName, profile_image_url: data.userImage || null }]
+              : f.memberPreviews,
           };
         }));
       }
@@ -9972,6 +9989,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   useEffect(() => {
     const unsub = onFlockDeleted((data) => {
       setFlocks(prev => prev.filter(f => f.id !== data.flockId));
+      setPendingFlockInvites(prev => prev.filter(f => f.id !== data.flockId));
       if (selectedFlockId === data.flockId) {
         // 'home' is not a screen this app has ever had. It fell through the
         // renderScreen switch to whatever tab happened to be selected, so
@@ -10024,6 +10042,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           status: data.status === 'planning' ? 'voting' : (data.status || f.status),
         };
       }));
+      // Pending invitees hear it too (lifecycle audit, 2026-09-05): the card
+      // follows the time and venue, and leaves when the plan finishes.
+      setPendingFlockInvites(prev => prev.map(f => {
+        if (f.id !== data.flockId) return f;
+        return {
+          ...f,
+          name: data.name || f.name,
+          venue: data.venue_name || f.venue,
+          time: data.event_time ? formatEventTime(data.event_time) : f.time,
+          eventTime: data.event_time || f.eventTime || null,
+          status: data.status === 'planning' ? 'voting' : (data.status || f.status),
+        };
+      }).filter(f => f.status !== 'completed' && f.status !== 'cancelled'));
     });
     return unsub;
   }, [showToast]);
@@ -10122,6 +10153,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         return {
           ...f,
           members: (f.members || []).filter(m => m.id !== data.userId),
+          memberPreviews: Array.isArray(f.memberPreviews) ? f.memberPreviews.filter(m => m.id !== data.userId) : f.memberPreviews,
           memberCount: Math.max(0, (f.memberCount || 1) - 1),
         };
       }));
@@ -15692,27 +15724,38 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const filteredFlocks = sortedFlocks.filter(f => !chatSearch || f.name.toLowerCase().includes(chatSearch.toLowerCase()));
     const filteredDeclinedInvites = declinedFlockInvites.filter(f => !chatSearch || f.name.toLowerCase().includes(chatSearch.toLowerCase()));
 
+    // The swap happens between the two VISIBLE neighbours but is written into
+    // the full order; writing the filtered list as the order threw away every
+    // plan the search had hidden, on every device (lifecycle audit,
+    // 2026-09-05).
+    const swapInFullOrder = (flockId, otherId) => {
+      const full = sortedFlocks.map(f => f.id);
+      const i = full.indexOf(flockId);
+      const j = full.indexOf(otherId);
+      if (i === -1 || j === -1) return;
+      [full[i], full[j]] = [full[j], full[i]];
+      setFlockOrder(full);
+    };
+
     const moveFlockUp = (flockId) => {
-      const ids = filteredFlocks.map(f => f.id);
-      const idx = ids.indexOf(flockId);
+      const visible = filteredFlocks.map(f => f.id);
+      const idx = visible.indexOf(flockId);
       if (idx <= 0) return;
       // Only swap within the same group (pinned/unpinned)
       const isPinned = pinnedFlockIds.includes(flockId);
-      const aboveIsPinned = pinnedFlockIds.includes(ids[idx - 1]);
+      const aboveIsPinned = pinnedFlockIds.includes(visible[idx - 1]);
       if (isPinned !== aboveIsPinned) return;
-      [ids[idx - 1], ids[idx]] = [ids[idx], ids[idx - 1]];
-      setFlockOrder(ids);
+      swapInFullOrder(flockId, visible[idx - 1]);
     };
 
     const moveFlockDown = (flockId) => {
-      const ids = filteredFlocks.map(f => f.id);
-      const idx = ids.indexOf(flockId);
-      if (idx === -1 || idx >= ids.length - 1) return;
+      const visible = filteredFlocks.map(f => f.id);
+      const idx = visible.indexOf(flockId);
+      if (idx === -1 || idx >= visible.length - 1) return;
       const isPinned = pinnedFlockIds.includes(flockId);
-      const belowIsPinned = pinnedFlockIds.includes(ids[idx + 1]);
+      const belowIsPinned = pinnedFlockIds.includes(visible[idx + 1]);
       if (isPinned !== belowIsPinned) return;
-      [ids[idx], ids[idx + 1]] = [ids[idx + 1], ids[idx]];
-      setFlockOrder(ids);
+      swapInFullOrder(flockId, visible[idx + 1]);
     };
 
     const togglePin = (flockId) => {

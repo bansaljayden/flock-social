@@ -747,13 +747,26 @@ async function announceToRoomExcludingBlocked(socket, room, event, payload) {
 // Block-aware alternative to a flock-room broadcast: emits to each accepted
 // member individually, skipping anyone blocked either way with the actor.
 // Room broadcasts leaked typing/vote identity across blocks (round 4).
-async function emitToFlockExcludingBlocked(io, flockId, actorId, event, payload) {
+async function emitToFlockExcludingBlocked(io, flockId, actorId, event, payload, opts = {}) {
   const members = await pool.query(
     "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
     [flockId, actorId]
   );
+  const rows = [...members.rows];
+  if (opts.includeInvited) {
+    // A person holding an invite card hears a time or venue change, and a
+    // deletion, the same as a member; until now every fan-out went to accepted
+    // rows only, so the card kept the old time and Accept on a deleted plan
+    // answered "Flock not found" with the card still there (lifecycle audit,
+    // 2026-09-05).
+    const invited = await pool.query(
+      "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'invited' AND user_id != $2",
+      [flockId, actorId]
+    );
+    rows.push(...invited.rows);
+  }
   const invisible = new Set(await getInvisibleUserIds(actorId));
-  for (const m of members.rows) {
+  for (const m of rows) {
     if (invisible.has(m.user_id)) continue;
     io.to(`user:${m.user_id}`).emit(event, payload);
   }

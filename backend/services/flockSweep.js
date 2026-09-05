@@ -128,9 +128,17 @@ function flockSweepEnabled() {
  * NEVER REJECTS. It runs inside setInterval, where an unhandled rejection is a
  * process crash on a timer.
  *
- * Idempotent by construction: the WHERE clause matches only 'confirmed', so a
- * second pass (a redeploy, two instances running at once) finds nothing left to
- * move rather than re-completing what it already did. `event_time IS NOT NULL`
+ * Idempotent by construction: the WHERE clause matches only 'planning' and
+ * 'confirmed', so a second pass (a redeploy, two instances running at once)
+ * finds nothing left to move rather than re-completing what it already did.
+ * A plan that was never locked in ends too (lifecycle audit, 2026-09-05), as
+ * CANCELLED, never completed: a plan nobody confirmed did not happen, and
+ * completing it would invent an outcome and a night in everyone's history.
+ * Cancelled says exactly what is true, leaves the Nest, and still offers
+ * "Do it again" from Past. It used to keep 'planning' for life, sit on the
+ * Nest as "Time passed", and never reach Past, with the host's only exits a
+ * "Lock it in" that pushed "It's happening!" for a night already gone, or
+ * Leave, which deletes the plan for everyone. `event_time IS NOT NULL`
  * matters as much: a confirmed plan with no time on it has no night to be past,
  * and guessing one from created_at would close plans nobody has been to yet.
  */
@@ -139,25 +147,30 @@ async function runFlockCompletionSweep(io) {
   const hours = graceHours();
   let moved = 0;
   const movedIds = [];
+  const endedAs = new Map();
   try {
     for (let batch = 0; batch < SWEEP_MAX_BATCHES; batch++) {
       const result = await pool.query(
         `UPDATE flocks
-            SET status = 'completed', updated_at = NOW()
+            SET status = CASE WHEN status = 'confirmed' THEN 'completed' ELSE 'cancelled' END,
+                updated_at = NOW()
           WHERE id IN (
             SELECT id FROM flocks
-             WHERE status = 'confirmed'
+             WHERE status IN ('planning', 'confirmed')
                AND event_time IS NOT NULL
                AND event_time < (NOW() AT TIME ZONE 'UTC') - make_interval(hours => $1::int)
              ORDER BY event_time
              LIMIT $2::int
           )
-          RETURNING id`,
+          RETURNING id, status`,
         [hours, SWEEP_BATCH_SIZE]
       );
       const n = result.rowCount || 0;
       moved += n;
-      for (const row of result.rows || []) movedIds.push(row.id);
+      for (const row of result.rows || []) {
+        movedIds.push(row.id);
+        if (row.status) endedAs.set(row.id, row.status);
+      }
       // A short batch means the backlog is drained. Only a FULL batch can have
       // left anything behind, so this is the one condition worth another round
       // trip for.
@@ -176,11 +189,11 @@ async function runFlockCompletionSweep(io) {
       try {
         const members = await pool.query(
           `SELECT flock_id, user_id FROM flock_members
-            WHERE flock_id = ANY($1::int[]) AND status = 'accepted'`,
+            WHERE flock_id = ANY($1::int[]) AND status IN ('accepted', 'invited')`,
           [movedIds]
         );
         for (const row of members.rows || []) {
-          io.to(`user:${row.user_id}`).emit('flock_updated', { flockId: row.flock_id, status: 'completed' });
+          io.to(`user:${row.user_id}`).emit('flock_updated', { flockId: row.flock_id, status: endedAs.get(row.flock_id) || 'completed' });
         }
       } catch (err) {
         console.error('[flockSweep] completion fan-out failed:', err.message);
