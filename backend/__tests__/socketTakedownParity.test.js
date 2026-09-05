@@ -241,13 +241,22 @@ test('the reply-target lookup keeps its predicate, so the sweep stays swept', ()
     assert.ok(!HANDLERS_SRC.includes(table),
       `${table} appeared in sockets/handlers.js — it carries is_hidden, so it needs the predicate too`);
   }
-  // guest_rsvps IS read, by the vote tally, and every read of it anywhere in
-  // the product filters the takedown flag — a guest whose RSVP a moderator
-  // removed must not still be moving the venue vote.
+  // guest_rsvps used to be read by this file's own copy of the vote tally.
+  // That copy is gone: the handler imports routes/venues.js collectVoteRows
+  // and tailorVotes, so the one read of guest_rsvps on the socket path is the
+  // same statement REST runs. The sweep follows the import rather than
+  // assuming the SQL still lives here, and pins both halves: this file makes
+  // no direct read of its own, and the shared read carries the takedown flag,
+  // so a guest whose RSVP a moderator removed cannot move the venue vote from
+  // either producer.
   const guestReads = HANDLERS_SRC.split('\n').filter((l) => /guest_rsvps/.test(l) && !/^\s*\/\//.test(l.trim()));
-  assert.ok(guestReads.length > 0, 'the tally reads guest_rsvps');
-  assert.match(HANDLERS_SRC, /JOIN guest_rsvps gr[\s\S]{0,200}?COALESCE\(gr\.is_hidden, false\) = false/,
-    'every guest_rsvps read must carry the takedown predicate');
+  assert.strictEqual(guestReads.length, 0,
+    'sockets/handlers.js grew its own guest_rsvps read again; the tally is routes/venues.js collectVoteRows, import it');
+  assert.match(HANDLERS_SRC, /require\('\.\.\/routes\/venues'\)/, 'the socket tally must come from routes/venues.js');
+  assert.match(HANDLERS_SRC, /const rows = await collectVoteRows\(flockId\)/, 'vote_venue must call the shared tally');
+  const VENUES_SRC = require('fs').readFileSync(require('path').join(__dirname, '..', 'routes', 'venues.js'), 'utf8');
+  assert.match(VENUES_SRC, /JOIN guest_rsvps gr[\s\S]{0,200}?COALESCE\(gr\.is_hidden, false\) = false/,
+    'the shared guest tally must carry the takedown predicate');
 });
 
 // ---------------------------------------------------------------------------
@@ -532,11 +541,14 @@ test('the socket vote tally counts what the REST tally counts', async () => {
     [/pg_advisory_xact_lock/, []],
     [/DELETE FROM venue_votes/, []],
     [/INSERT INTO venue_votes/, []],
+    // routes/venues.js collectVoteRows runs two statements: members, then
+    // guests. The socket handler calls it now instead of carrying a one-CTE
+    // copy, so the fake answers each statement on its own.
     [/FROM venue_votes vv/, [
-      { venue_name: "Joe's Bar", venue_id: 'abc', member_count: 1, guest_count: 0, voter_rows: [{ id: 1, name: 'Ava' }] },
-      // A venue only guests have voted for still has to appear.
-      { venue_name: 'The Diner', venue_id: null, member_count: 0, guest_count: 3, voter_rows: [] },
+      { venue_name: "Joe's Bar", venue_id: 'abc', member_count: 1, voter_rows: [{ id: 1, name: 'Ava' }] },
     ]],
+    // A venue only guests have voted for still has to appear.
+    [/FROM guest_votes gv/, [{ venue_name: 'The Diner', guest_count: 3 }]],
     [/FROM flock_members WHERE flock_id = \$1 AND status/, [{ user_id: 1 }]],
     [/FROM user_blocks/, []],
   ];
@@ -546,20 +558,27 @@ test('the socket vote tally counts what the REST tally counts', async () => {
   const tally = sqlFor(/FROM venue_votes vv/);
   assert.match(tally.sql, /JOIN flock_members fm[\s\S]*?fm\.status = 'accepted'/,
     "round 17 stopped a departed member's vote counting on REST; leaving, then voting from a second account, skewed the live tally instead");
-  assert.match(tally.sql, /FROM guest_votes gv/,
-    'the REST tally adds guest-link votes; a live tally that ignores them ranks venues differently');
-  assert.match(tally.sql, /COALESCE\(gr\.is_hidden, false\) = false/,
+  const guests = sqlFor(/FROM guest_votes gv/);
+  assert.ok(guests, 'the REST tally adds guest-link votes; a live tally that ignores them ranks venues differently');
+  assert.match(guests.sql, /COALESCE\(gr\.is_hidden, false\) = false/,
     'and a guest whose RSVP was taken down must not move either tally');
 
   const emitted = socket.emitted.find((e) => e.event === 'new_vote');
   const byName = Object.fromEntries(emitted.payload.votes.map((v) => [v.venue_name, v]));
   assert.strictEqual(byName["Joe's Bar"].vote_count, 1);
-  assert.strictEqual(byName['The Diner'].vote_count, 3, 'guests count toward the bars, as they do on REST');
+  // CAPPED, exactly as REST caps it. This line used to assert 3 and its
+  // message said "as they do on REST", which was the defect: REST weighs guest
+  // votes at min(guests, member turnout), the defence against one link-holder
+  // minting fifty guest RSVPs, and the socket added them raw. With one member
+  // vote cast the cap is 1, so three guests weigh 1 here and on GET /votes.
+  assert.strictEqual(byName['The Diner'].vote_count, 1,
+    'guest votes are capped at the member turnout on REST and must be here too');
   assert.strictEqual(byName['The Diner'].guest_count, 3, 'and guest_count is on the wire so the UI can say "+3 guests"');
   assert.strictEqual(typeof byName["Joe's Bar"].vote_count, 'number',
     'COUNT(*) comes back from node-pg as a string for a bigint; the REST payload carries a number');
-  assert.deepStrictEqual(emitted.payload.votes.map((v) => v.venue_name), ['The Diner', "Joe's Bar"],
-    'ordering is by the blended total, not by the member count alone');
+  // Blended totals tie at 1, and tailorVotes breaks the tie toward members.
+  assert.deepStrictEqual(emitted.payload.votes.map((v) => v.venue_name), ["Joe's Bar", 'The Diner'],
+    'ordering is by the blended total with members breaking ties, as on REST');
 });
 
 test('revalidateSession refuses a token that names a different account', async () => {
