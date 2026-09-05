@@ -308,19 +308,31 @@ describe('the harness is handed the same screen App.js hands it', () => {
 // The most-used control in the product.
 // ---------------------------------------------------------------------------
 describe('the send button', () => {
-  test('an empty composer cannot fire it, and the click proves it', () => {
-    // The mutation that survived was deleting `disabled={!chatInputHasText}`.
-    // The button keeps its dimmed look either way, because `opacity` and
-    // `cursor` are separate expressions on the same element, so what ships
-    // without this attribute is a control that LOOKS unavailable and is not:
-    // every tap posts an empty message. This dispatches the click rather than
-    // reading the attribute, so the assertion is about what happens.
+  /* THE MECHANISM CHANGED, THE DEFECT DID NOT.
+     This screen draws its composer with the shared ChatInputBar now, and that
+     bar holds ONE slot on the right: the plus until there is something to send,
+     the send control after that. There is no disabled send button any more,
+     which is why these read for the control's absence rather than its
+     `disabled` attribute.
+
+     That is a stronger guarantee than the one they used to make, not a weaker
+     one. A disabled button still had to be given the attribute, and the whole
+     reason this block exists is that deleting the attribute left a control that
+     LOOKED unavailable, took the tap, and posted an empty message. A control
+     that is not rendered cannot be clicked at all.
+
+     The plus assertion is what stops a permanently-absent send button passing:
+     the slot has to hold something, and it has to be the other one. */
+  const noSendOffered = () => {
+    expect(screen.queryByLabelText('Send message')).toBeNull();
+    expect(screen.getByLabelText('More to send')).toBeTruthy();
+  };
+
+  test('an empty composer offers no send control at all', () => {
     const p = chatProps({ chatInputHasText: false });
     render(React.createElement(ChatDetail, p));
 
-    const send = screen.getByLabelText('Send message');
-    expect(send.disabled).toBe(true);
-    fireEvent.click(send);
+    noSendOffered();
     expect(p.sendChatMessage).not.toHaveBeenCalled();
   });
 
@@ -361,16 +373,14 @@ describe('the send button', () => {
     // fails this test, which is the point.
     const p = chatProps({ chatInputHasText: true });
     render(React.createElement(ChatDetail, p));
-    const send = screen.getByLabelText('Send message');
 
     fireEvent.change(screen.getByLabelText('Message'), { target: { value: '     ' } });
-    expect(send.disabled).toBe(true);
-    fireEvent.click(send);
+    noSendOffered();
     expect(p.sendChatMessage).not.toHaveBeenCalled();
 
     // Tabs and newlines are whitespace too, and a paste is the way they arrive.
     fireEvent.change(screen.getByLabelText('Message'), { target: { value: '\t\n  \t' } });
-    expect(send.disabled).toBe(true);
+    noSendOffered();
   });
 
   test('it disarms again when the text is rubbed out down to spaces', () => {
@@ -381,12 +391,11 @@ describe('the send button', () => {
     const p = chatProps({ chatInputHasText: true });
     render(React.createElement(ChatDetail, p));
     const input = screen.getByLabelText('Message');
-    const send = screen.getByLabelText('Send message');
 
     fireEvent.change(input, { target: { value: 'see you there' } });
-    expect(send.disabled).toBe(false);
+    expect(screen.getByLabelText('Send message')).toBeTruthy();
     fireEvent.change(input, { target: { value: ' ' } });
-    expect(send.disabled).toBe(true);
+    noSendOffered();
   });
 
   test('a clear from App.js disarms it, whatever this screen last saw typed', () => {
@@ -399,10 +408,10 @@ describe('the send button', () => {
     const p = chatProps({ chatInputHasText: true });
     const { rerender } = render(React.createElement(ChatDetail, p));
     fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'sent already' } });
-    expect(screen.getByLabelText('Send message').disabled).toBe(false);
+    expect(screen.getByLabelText('Send message')).toBeTruthy();
 
     rerender(React.createElement(ChatDetail, { ...p, chatInputHasText: false }));
-    expect(screen.getByLabelText('Send message').disabled).toBe(true);
+    noSendOffered();
   });
 
   test('the Enter key agrees with the button about what is sendable', () => {
@@ -716,8 +725,11 @@ describe('leaving the flock chat leaves the half-written message behind', () => 
     expect(p.setVenueDetailReturnTo).toHaveBeenCalled();
   });
 
-  test('"View details" on a venue card somebody shared into the thread', () => {
-    const p = clicked('View details', {
+  test('opening a venue card somebody shared into the thread', () => {
+    // There is no "View details" button any more. The shared venue card draws
+    // one action (Vote), and the CARD ITSELF is what opens the place, so the
+    // way in is the card's own accessible name.
+    const p = clicked('Kome. Open the place.', {
       VenueCard: VenueCardStub,
       getSelectedFlock: () => ({
         ...FLOCK,

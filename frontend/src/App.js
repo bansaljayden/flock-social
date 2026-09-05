@@ -39,6 +39,8 @@ import ModerationSheet from './components/ModerationSheet';
 import ErrorBoundary from './components/ErrorBoundary';
 import EmergencySheet from './components/safety/EmergencySheet';
 import { deliverExport } from './services/dataExport';
+import { crowdLabelFor } from './lib/crowd';
+import { onVenuePhotoError } from './lib/venuePhoto';
 import PaywallSheet from './components/PaywallSheet';
 import { initPurchases } from './services/purchases';
 import { trackScreenView, trackEmailVerified, trackFlockMessageSent, trackDmSent, getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock } from './services/api';
@@ -983,13 +985,8 @@ const resolveVenuePhoto = (u) => (u && u.startsWith('/api/') ? `${BASE_URL}${u}`
 // A photo that failed to load is not a venue with no photo. It is a request to
 // retry, and until then the same cream placeholder every other surface uses,
 // so the card keeps its shape and reads as a venue rather than as a hole.
-// Guarded against a placeholder that itself 404s, which would otherwise loop.
-const VENUE_PHOTO_PLACEHOLDER = '/marks/venue-placeholder.jpg';
-const onVenuePhotoError = (e) => {
-  if (!e || !e.target || String(e.target.src || '').endsWith(VENUE_PHOTO_PLACEHOLDER)) return;
-  e.target.onerror = null;
-  e.target.src = VENUE_PHOTO_PLACEHOLDER;
-};
+/* Both moved to src/lib/venuePhoto.js so the chat module can reach the
+   placeholder too. Imported above. */
 
 // HTML-escape a user-derived string before it is interpolated into any raw
 // HTML sink (e.g. MapLibre Popup.setHTML, which assigns innerHTML). This must
@@ -1694,14 +1691,7 @@ const ownerReportShown = (prediction) => prediction?.confidenceBasis === 'owner_
 // Re-cut 2026-08-28 with the qmap arming; the reasoning lives on the
 // canonical copy in backend/services/crowdEngine.js getLabel, which this
 // mirrors word for word and cut for cut.
-const crowdLabelFor = (score) => {
-  if (!Number.isFinite(score)) return null;
-  if (score <= 20) return 'Quiet';
-  if (score <= 39) return 'Not Busy';
-  if (score <= 69) return 'Steady';
-  if (score <= 84) return 'Busy';
-  return 'Packed';
-};
+/* Moved to src/lib/crowd.js so the chat module can share it. Imported above. */
 // THE MEASURED HOUR-ORDERING FLOOR, mirrored from
 // backend/services/crowdEngine.js HOUR_ORDERING_MIN_GAP.
 //
@@ -7025,13 +7015,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
   }, []);
   const [showChatPool, setShowChatPool] = useState(false);
-  const chatEndRef = useRef(null);
-  // Written by ChatDetail's onScroll, the same handler that drives the jump
-  // pill: true whenever the reader is within the pill's own hysteresis band
-  // of the bottom. Read by the tail-follow effect below, so a message
-  // arriving while someone is deep in history defers to the pill instead of
-  // yanking them down. Starts true: a freshly opened chat has not scrolled.
-  const chatNearBottomRef = useRef(true);
   const aiInputRef = useRef(null);
   const aiChatEndRef = useRef(null);
   // Always-fresh snapshot for Birdie context (sendAiMessage useCallback would otherwise capture stale values)
@@ -7412,9 +7395,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [dmIsTyping, setDmIsTyping] = useState(false);
   const [dmTypingUser, setDmTypingUser] = useState('');
   const dmTypingTimeoutRef = useRef(null);
-  const dmChatEndRef = useRef(null);
-  // Same contract as chatNearBottomRef, written by DmDetail's onScroll.
-  const dmNearBottomRef = useRef(true);
   const [dmChatSearch, setDmChatSearch] = useState('');
   const [showDmChatSearch, setShowDmChatSearch] = useState(false);
   const dmChatSearchRef = useRef(null);
@@ -8831,51 +8811,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // earlier messages" exists, the list can grow at the TOP, and a length check
   // read that as new traffic and threw the reader straight back down to the
   // newest message the instant they asked for scrollback.
-  const chatTailRef = useRef(null);
-  const chatLenRef = useRef(0);
-  // Which flock the tail refs describe. A push notification can swap
-  // selectedFlockId while the screen stays chatDetail, and without this the
-  // old thread's tail id and near-bottom flag leaked into the new one: its
-  // first render read as non-entering traffic and the entry scroll was
-  // suppressed (code review, 2026-09-01).
-  const chatThreadRef = useRef(null);
-  useEffect(() => {
-    if (currentScreen === 'chatDetail' && chatEndRef.current) {
-      if (chatThreadRef.current !== selectedFlockId) {
-        chatThreadRef.current = selectedFlockId;
-        chatTailRef.current = null;
-        chatLenRef.current = 0;
-        chatNearBottomRef.current = true;
-      }
-      const msgs = selectedFlock?.messages || [];
-      const tail = msgs.length ? String(msgs[msgs.length - 1].id) : 'empty';
-      const prevLen = chatLenRef.current;
-      chatLenRef.current = msgs.length;
-      if (tail !== chatTailRef.current) {
-        const entering = chatTailRef.current === null;
-        chatTailRef.current = tail;
-        // An unsend can remove the newest message, which changes the tail
-        // without being traffic. A shrinking list must not yank a reader who
-        // is deep in history down to the bottom.
-        if (!entering && msgs.length < prevLen) return;
-        // the maintainer, 2026-08-29: a message arriving while the reader is
-        // scrolled up is exactly what the jump pill exists for. Force-
-        // scrolling here would yank them off whatever they were reading;
-        // only entering the chat, or already being near the bottom, follows
-        // the tail automatically.
-        if (!entering && !chatNearBottomRef.current) return;
-        // Always instant scroll when entering the chat
-        chatEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' });
-        setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'instant', block: 'end' }), 50);
-      }
-    } else {
-      // Reset when leaving chat so re-entering triggers instant scroll
-      chatThreadRef.current = null;
-      chatTailRef.current = null;
-      chatLenRef.current = 0;
-      chatNearBottomRef.current = true;
-    }
-  }, [selectedFlock?.messages, currentScreen, selectedFlockId]);
+  // The flock tail-follow effect stood here, and its five refs with it. Both
+  // chat screens draw the shared MessageList now, and that component anchors
+  // its own bottom, follows your own send, defers to its jump pill when a
+  // reader is deep in history, and ignores a list that SHRANK because an
+  // unsend is not new traffic. Every rule this effect enforced moved with it.
+  //
+  // It had already stopped running before it was removed: its guard was
+  // `chatEndRef.current`, the sentinel that ref pointed at left with the old
+  // stream, and a ref that is never attached is null forever. So the whole
+  // block was dead, and the comment on the DM twin below said this one was
+  // still live, which would have sent the next reader looking for a scroll
+  // behaviour that no longer had any code behind it.
 
   // Having the chat open IS reading it, so the caught-up mark follows the
   // messages while you are in there rather than only on the way out: a message
@@ -12772,35 +12719,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
   }, [selectedDmId]);
 
-  // Auto-scroll DM chat to bottom
-  // Tail, not length. See the flock twin above, same reason.
-  const dmTailRef = useRef(null);
-  const dmLenRef = useRef(0);
-  // Same thread-change reset as the flock twin above, same code review finding.
-  const dmThreadRef = useRef(null);
-  useEffect(() => {
-    const msgs = selectedDm?.messages || [];
-    if (currentScreen !== 'dmDetail') { dmThreadRef.current = null; dmTailRef.current = null; dmLenRef.current = 0; dmNearBottomRef.current = true; return; }
-    if (dmThreadRef.current !== selectedDmId) {
-      dmThreadRef.current = selectedDmId;
-      dmTailRef.current = null;
-      dmLenRef.current = 0;
-      dmNearBottomRef.current = true;
-    }
-    if (msgs.length === 0) { dmLenRef.current = 0; return; }
-    const tail = String(msgs[msgs.length - 1].id);
-    const prevLen = dmLenRef.current;
-    dmLenRef.current = msgs.length;
-    if (tail === dmTailRef.current) return;
-    const entering = dmTailRef.current === null;
-    dmTailRef.current = tail;
-    // Same shrink guard as the flock twin: an unsend is not new traffic.
-    if (!entering && msgs.length < prevLen) return;
-    // Same jump-pill deference as the flock twin (the maintainer, 2026-08-29): only
-    // entering, or already being near the bottom, follows a new message down.
-    if (!entering && !dmNearBottomRef.current) return;
-    requestAnimationFrame(() => dmChatEndRef.current?.scrollIntoView({ behavior: 'auto' }));
-  }, [currentScreen, selectedDm?.messages, selectedDmId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The DM tail-follow effect stood here. It scrolled `dmChatEndRef` into
+  // view, and the sentinel that ref pointed at left with the old DM stream:
+  // screens/DmDetail.js draws the chat module's MessageList now, which anchors
+  // its own bottom, follows your own send, and raises a pill instead of moving
+  // the page under a reader who is scrolled up. So the effect could only call
+  // scrollIntoView on null, and its four refs (the end sentinel, the near
+  // bottom flag, the tail and the length) had nothing left reading them. The
+  // flock twin went the same way, and for the same reason, above.
 
   // Keep DM chat search focused
   useEffect(() => {
@@ -17616,11 +17542,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         budgetFilteredVenues,
         budgetStatus,
         budgetSubmitting,
-        chatEndRef,
         chatGalleryInputRef,
         chatInputHasText,
         chatNavOpen,
-        chatNearBottomRef,
         chatSearch,
         chatSearchRef,
         colors,
@@ -17765,7 +17689,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         deletedDmUserIds,
         dmAtTop,
         dmBlocked,
-        dmChatEndRef,
         dmChatSearch,
         dmChatSearchRef,
         dmGalleryInputRef,
@@ -17773,7 +17696,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         dmMemberLocation,
         dmMessagesLoading,
         dmNavOpen,
-        dmNearBottomRef,
         dmNotConnected,
         dmPendingImage,
         dmPinnedVenue,

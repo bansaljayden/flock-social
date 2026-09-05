@@ -212,3 +212,113 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
+/* ==========================================================================
+   THE SHARED VENUE CARD
+
+   The photo runs the full width and the card's own corners clip it, so the
+   picture is the top of the card rather than an object sitting inside a padded
+   box. That is the whole reason the shell is given padding: 0 and the words
+   carry their own.
+
+   The height is fixed first and replaced by a 16:9 ratio where the browser
+   supports it. Both reserve the space before the image loads, so a card
+   arriving in the stream never shoves the messages above it upward.
+   ========================================================================== */
+.chat-venue-hero {
+  position: relative;
+  width: 100%;
+  height: 168px;
+  background-color: var(--bg-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@supports (aspect-ratio: 16 / 9) {
+  .chat-venue-hero {
+    height: auto;
+    aspect-ratio: 16 / 9;
+  }
+}
+
+/* THE CROWD DIAL. How full the place is, as a ring that fills, with the
+   capacity in the middle of it. It sits on an arbitrary photograph, so the disc
+   behind it is a neutral scrim and only the ARC takes the crowd colour: a green
+   or red plate on a photo of a green or red room reads as decoration, while a
+   ring plainly reads as a gauge. */
+.chat-venue-dial {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.chat-venue-dial svg {
+  position: absolute;
+  inset: 0;
+}
+
+.chat-venue-dial-num {
+  position: relative;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* One action, the full width of the card, divided from the words by a hairline
+   rather than floated over them. 44 tall by construction, so it needs no hit44
+   overlay of its own. */
+.chat-venue-action {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 14px;
+  border: none;
+  border-top: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--chat-accent);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Already voted or already pinned. The word itself changes to say so, and the
+   colour steps back because the action is no longer the thing to do. */
+.chat-venue-action[data-active='true'] {
+  color: var(--text-secondary);
+}
+
+.chat-venue-action:active {
+  background: var(--pill-bg);
+}
+
+.chat-venue-action:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+/* No picture and no placeholder. A short band with the pin, because holding a
+   16:9 rectangle open around a single glyph reads as a photo that failed to
+   load rather than a card that never had one. */
+.chat-venue-hero--empty {
+  height: 72px;
+}
+
+@supports (aspect-ratio: 16 / 9) {
+  .chat-venue-hero--empty {
+    height: 72px;
+    aspect-ratio: auto;
+  }
+}

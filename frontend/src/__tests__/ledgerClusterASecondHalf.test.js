@@ -45,6 +45,11 @@ const ADD_FRIENDS = codeOnly(readRaw('screens', 'AddFriends.js'));
 const CREATE = codeOnly(readRaw('screens', 'CreateScreen.js'));
 const NEW_DM = codeOnly(readRaw('components', 'NewDmModal.js'));
 const EDIT_PROFILE = codeOnly(readRaw('components', 'EditProfileForm.js'));
+// The reaction PILL left both chat screens for the chat module: one MessageRow
+// draws it for the flock thread and the DM thread alike. The screens still
+// decide what a tap DOES, so A1 is now two reads: the row that renders the
+// pressed state, and the DM handler that adds or removes the reaction.
+const ROW = codeOnly(readRaw('components', 'chat', 'MessageRow.js'));
 
 /** Anchored slice with a size floor, so a moved anchor is a red test not a
  *  green one that quietly reads half the file or nothing at all. */
@@ -75,6 +80,7 @@ describe('the comment stripper and the reads are real', () => {
     [['App.js', APP], ['ChatDetail.js', CHAT], ['DmDetail.js', DM],
       ['AddFriends.js', ADD_FRIENDS], ['NewDmModal.js', NEW_DM],
       ['EditProfileForm.js', EDIT_PROFILE], ['CreateScreen.js', CREATE],
+      ['chat/MessageRow.js', ROW],
     ].forEach(([name, src]) => {
       expect(`${name}:${src.length > 2000}`).toBe(`${name}:true`);
     });
@@ -89,15 +95,22 @@ describe('A1: a DM reaction can be taken back after a reload', () => {
     // it existed but not that it was yours.
     expect(DM).toMatch(/import \{ groupReactions \} from '\.\/ChatDetail'/);
     expect(DM).toContain('groupReactions(m.reactions)');
+    // And the row that draws the pill reaches for the same helper.
+    expect(ROW).toMatch(/groupReactions\(message && message\.reactions\)/);
   });
 
   it('ownership is compared as a string, because the two read paths disagree on type', () => {
     // REST history hands user_id back as a number, the live socket as a string.
-    // The block that decides whether a DM reaction is yours must coerce both.
-    const block = between(DM, 'groupReactions(m.reactions).map((g)', 'dmRemoveReact(m.id', 120, 1200);
+    // The two places that decide whether a DM reaction is yours must coerce
+    // both, and they are no longer the same expression: the DM handler now
+    // FINDS the tapped emoji's group where the old pill MAPPED over all of
+    // them, because the mapping belongs to MessageRow.
+    const block = between(DM, 'groupReactions(m.reactions).find((r)', 'dmRemoveReact(m.id', 100, 1200);
     expect(block).toContain('String(id) === String(authUser?.id)');
     // And the strict, un-coerced comparison that broke reload is gone.
     expect(block).not.toMatch(/r\.user_id === authUser\?\.id/);
+    // Same rule where the pressed state is drawn.
+    expect(ROW).toContain('r.userIds.some((id) => String(id) === String(myId))');
   });
 
   it('groupReactions is still exported from where App.js imports it', () => {

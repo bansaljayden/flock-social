@@ -87,49 +87,98 @@
  * character. What has changed since is three defects the browser suite proved
  * from the screen: the draft that followed the user into a private thread, the
  * Send button armed over whitespace, and the "online" literal wired to nothing.
+ *
+ * WHAT THE CHAT REBUILD TOOK OUT OF THIS FILE (2026-09-05)
+ *
+ * Three things, and nothing else. The message stream, the composer and the
+ * typing indicator are `components/chat` now, imported through that module's
+ * one index and nowhere deeper. The header, the Features rail, the plan bar,
+ * the pinned venue banner, the bill bar, the ghost commit card, the momentum
+ * meter and every sheet below are untouched and stay exactly where they are;
+ * re-homing those is a later pass and doing it here would have made this diff
+ * unreadable, which is the same reason the DM thread moved out separately.
+ *
+ * The deletions are the point of the swap, so they are named here as well as
+ * where they happened. The `<div onScroll>` is gone, and with it the blur()
+ * it ran on the focused input on every scroll event, which is what closed the
+ * keyboard whenever a message arrived. The "Jump to latest" pill, the writes
+ * to chatNearBottomRef and the end-ref sentinel went with it. The per-message
+ * avatar, name, bullet, timestamp and bubble are gone: a run carries its
+ * sender's name once, in that person's colour, with a bar down its left. The
+ * fixed 58px typing slot is gone. The always-present Send button at 45%
+ * opacity is gone.
+ *
+ * FIVE PROPS ARE NOW UNREAD and stay in the parameter list on purpose:
+ * VenueCard, getRelativeTime, profilePic, isDark and colorsLight. It was seven
+ * until the two scroll refs went: chatEndRef and chatNearBottomRef existed only
+ * to feed a tail-follow effect in App.js, and MessageList does that work now,
+ * so App.js no longer computes them and there is nothing left to keep in step. `__tests__/extractionEquivalence.test.js` pins this
+ * list against what App.js passes, so dropping a name here would fail there
+ * and would also hide the fact that App.js still computes them.
+ *
+ * REPLIES ARE STILL NOT WIRED. MessageRow reports a right swipe and
+ * ChatInputBar can draw a quote bar, and neither is connected on this surface
+ * because `messages` has no reply column. See the note at the composer.
  */
 import React from 'react';
-import { leaveFlock as apiLeaveFlock, BASE_URL, createBillSplit, createFlockInviteLink, getFlockMessageImage, getPaymentLinks, ghostCommit, lockBudget, sendBudgetReminder, settleShare, submitBudget, trackNotificationPermission, unsettleShare, getBillSplit } from '../services/api';
+import { leaveFlock as apiLeaveFlock, createBillSplit, createFlockInviteLink, getFlockMessageImage, getPaymentLinks, ghostCommit, lockBudget, sendBudgetReminder, settleShare, submitBudget, trackNotificationPermission, unsettleShare, getBillSplit } from '../services/api';
 import { getSocket, leaveFlock } from '../services/socket';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
 
-// Day separators. Long threads used to be one undifferentiated scroll where
-// last Tuesday touched tonight with nothing between them. A row draws a
-// divider when its calendar day differs from the previous row's; rows with no
-// sentAt (old cached rows, failed sends) inherit the previous day so a
-// missing timestamp can never invent a boundary. Mirrored in ChatDetail.js
-// and DmDetail.js by design; the copy vocabulary is Today / Yesterday / the
-// dated weekday.
-const dayKeyOf = (iso) => {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-};
-const dayLabelOf = (iso) => {
-  const d = new Date(iso);
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const that = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const diffDays = Math.round((today - that) / 86400000);
-  if (diffDays <= 0) return 'Today';
-  if (diffDays === 1) return 'Yesterday';
-  if (diffDays < 7) return d.toLocaleDateString([], { weekday: 'long' });
-  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-};
-const daySeparatorFor = (rows, idx) => {
-  const cur = dayKeyOf(rows[idx]?.sentAt);
-  if (!cur) return null;
-  for (let i = idx - 1; i >= 0; i--) {
-    const prev = dayKeyOf(rows[i]?.sentAt);
-    if (prev) return prev === cur ? null : dayLabelOf(rows[idx].sentAt);
-  }
-  // First dated row in the thread: label it so history opens with its day.
-  return dayLabelOf(rows[idx].sentAt);
-};
 
+/* THE CHAT MODULE'S ONE DOOR. The stream, the composer and the typing strip
+   are `components/chat` now, and this screen imports from that index and from
+   no file inside it, so the module's surface is one line to keep in step with
+   rather than a dozen paths spread through a 2,400 line screen. */
+import {
+  ChatInputBar,
+  ComposerPlusSheet,
+  MessageList,
+  StatusLine,
+  TypingRow,
+  VenueCardRow,
+} from '../components/chat';
+import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
+
+/* THE DAY SEPARATORS LEFT THIS FILE. `dayKeyOf`, `dayLabelOf` and
+   `daySeparatorFor` were declared here and mirrored verbatim in DmDetail.js:
+   two copies of the one rule that decides where history is cut. They live in
+   `components/chat/groupRows.js` now, which MessageList calls for both
+   surfaces, so a divider cannot move on one and stay put on the other. The
+   vocabulary is unchanged, deliberately: Today, Yesterday, the weekday, the
+   dated weekday, and a row with no sentAt still inherits the previous dated
+   row's day rather than inventing a boundary of its own. */
+
+
+
+/**
+ * A search term marked inside a message body.
+ *
+ * The stream draws `message.text`, whatever that is, so a highlighted row
+ * carries an ARRAY of nodes rather than a string. That is the one thing the
+ * chat module deliberately leaves to the caller, because a highlight belongs
+ * to whoever owns the search box.
+ *
+ * DUPLICATED IN DmDetail.js, and it should not be. The two screens run the
+ * same rule over the same shape and the module is where a rule like that
+ * stops being two things that can drift, but `components/chat` is not this
+ * pass's to edit. It wants an export next to `groupRows`.
+ *
+ * The term is escaped before it becomes a pattern: a person searching for
+ * "$5 (each)" is not writing a regular expression, and an unescaped one throws
+ * inside render, which React answers by unmounting the app.
+ */
+const highlightMatches = (text, query) => (
+  String(text)
+    .split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'))
+    .map((part, pi) => (
+      part.toLowerCase() === query.toLowerCase()
+        ? <mark key={pi} style={{ background: 'var(--search-highlight)', color: 'inherit', borderRadius: '2px', padding: '0 1px' }}>{part}</mark>
+        : part
+    ))
+);
 
 /* How often the header re-reads whether the socket is actually up. The same
  * 2000ms App.js's reconnect catch-up samples on, and for the same reason: a
@@ -288,8 +337,8 @@ export default function ChatDetail({
   ListSkeleton,
   MOMENTUM_STAGES,
   SearchInputLocal,
-  VenueCard,
-  colorsLight,
+  VenueCard, // unused: VenueCardRow from components/chat draws venue messages
+  colorsLight, // unused: the text bubble it tinted is gone
   crowdColorFor,
   memberCountLabel,
   messagePreview,
@@ -313,8 +362,6 @@ export default function ChatDetail({
   budgetFilteredVenues,
   budgetStatus,
   budgetSubmitting,
-  chatEndRef,
-  chatNearBottomRef,
   chatGalleryInputRef,
   chatInputHasText,
   chatNavOpen,
@@ -342,14 +389,14 @@ export default function ChatDetail({
   flockMemberLocations,
   getCategoryColor,
   getMaxPriceLevel,
-  getRelativeTime,
+  getRelativeTime, // unused: the per-message time stamp; the stream carries none
   getSelectedFlock,
   handleChatImageSelect,
   handleChatInputChange,
   handleUnsendFlockMessage,
   handleFlockInviteSearch,
   handleSendFlockInvites,
-  isDark,
+  isDark, // unused: the same bubble fill's dark variant
   isLoading,
   isTyping,
   loadFlockInviteFriends,
@@ -367,7 +414,7 @@ export default function ChatDetail({
   votesError,
   pendingImage,
   popularVenues,
-  profilePic,
+  profilePic, // unused: the 34px own-avatar beside every own message
   renderFlockInviteRow,
   retryFailedMessage,
   discardFailedMessage,
@@ -433,40 +480,84 @@ export default function ChatDetail({
   updateFlockVotes,
   userLocation,
 }) {
-    // TWO PIECES OF STATE, AND WHY THEY ARE HERE RATHER THAN IN App.js.
+    // THE STATE THAT LIVES HERE, AND WHY NONE OF IT IS IN App.js.
     //
     // This screen arrived from App.js as a pure function of its props and the
-    // header of this file says so. These two are the exceptions, and both are
-    // here because what they hold is a fact about THIS screen's own DOM and
-    // this screen's own connection, which App.js cannot see:
+    // header of this file says so. The exceptions below are all one kind of
+    // thing: a fact about THIS screen's own DOM, its own connection or its own
+    // sheets, which App.js cannot see and no other screen wants.
     //
-    //   composerHasRealText. The composer is an uncontrolled input, so the
-    //   only place the difference between "" and "   " is ever visible is its
-    //   change event, below. App.js computes chatInputHasText as `!!value`
-    //   while sendChatMessage guards on `.trim()`, so a box holding nothing
-    //   but spaces lit the Send button up and then threw the tap away in
-    //   silence. That is the dead control DESIGN-STANDARD rule C1 bans, on the
-    //   most-used button in the product.
+    //   composerHasRealText. The composer's change event is the only place the
+    //   difference between "" and "   " was ever visible. App.js computed
+    //   chatInputHasText as `!!value` while sendChatMessage guards on
+    //   `.trim()`, so a box holding nothing but spaces lit the Send button up
+    //   and then threw the tap away in silence. That is the dead control
+    //   DESIGN-STANDARD rule C1 bans, on the most-used button in the product.
     //
     //   connectionState. The header printed "online" beside a green dot as a
     //   hardcoded literal wired to nothing. It said online with the socket
     //   dead, on the one screen a person opens to work out why nothing is
     //   arriving.
     //
-    // Both are declared above the `!flock` return below, because a hook after
-    // a conditional return is a hook that does not always run.
+    //   draft, actionsRect and plusOpen came in with the chat module and each
+    //   is explained where it is declared: a mirror of App.js's draft so the
+    //   module's controlled field has something to render, the rectangle a
+    //   long press was raised over, and whether the "+" sheet is open.
+    //
+    // All of them are declared above the `!flock` return below, because a hook
+    // after a conditional return is a hook that does not always run.
     // Full-size photo viewer. A history row carries only the thumbnail, so
     // opening one fetches the original through the membership-gated endpoint;
-    // a live row still holds the full image and opens instantly. Reached from
-    // the message's reaction row, because the bubble's own tap is already the
-    // accessibility door to react and report and may not be nested inside.
+    // a live row still holds the full image and opens instantly. It has two
+    // doors now and both are real: the photo itself, which MessageRow makes a
+    // button whenever `onOpenImage` is passed, and View photo in the
+    // long-press menu. It used to have only the second, because the whole
+    // bubble was the tap target for the reaction row and a button may not be
+    // nested inside a button. Nothing nests any more.
 
-  // Jump-to-latest. Scrolled deep into history, the way back down was a long
-  // manual drag and a live message arriving off-screen was invisible. The
-  // pill appears once the reader is more than ~600px from the bottom and one
-  // tap returns them to now. Sticky inside the scroll container, so it needs
-  // no coordination with the composer's layout.
-    const [showJumpPill, setShowJumpPill] = React.useState(false);
+    // THE JUMP-TO-LATEST PILL WENT WITH THE SCROLL HANDLER, and so did the
+    // handler. It was a `<div onScroll>` doing four things: raising this pill,
+    // writing the hysteresis band into chatNearBottomRef for App.js's
+    // tail-follow effect, holding the end-ref sentinel to scroll back to, and,
+    // first in the function, calling blur() on whatever input was focused.
+    // That last one is why the keyboard closed every time a message arrived:
+    // an arriving message moves the list, moving the list is a scroll event,
+    // and a scroll event blurred the field somebody was typing in. None of it
+    // is carried over in any form. MessageList owns the scroll now: it anchors
+    // to the bottom, follows the tail on the viewer's own send, holds still
+    // for somebody else's arrival and raises its own "N new messages", and it
+    // corrects the offset when an older page is prepended.
+
+    // THE COMPOSER'S TEXT, MIRRORED, and App.js is still the authority. The
+    // draft lives in its `chatInputRef`, every keystroke below goes through
+    // `handleChatInputChange`, and `chatInputHasText` remains the only thing
+    // that knows the box was cleared from outside this screen. ChatInputBar's
+    // field is controlled, so it needs a value to render, and this is that
+    // value and nothing else.
+    //
+    // CLEARED ON THE FALLING EDGE, not whenever the flag is false. A box
+    // holding only spaces is honestly "no text" to App.js, so a level check
+    // would rub out the space somebody typed before a venue name. The edge is
+    // what a send, a photo caption going out and every exit on this screen all
+    // produce, and it is the only thing that should empty the field.
+    const [draft, setDraft] = React.useState('');
+    const hadTextRef = React.useRef(false);
+    React.useEffect(() => {
+      if (hadTextRef.current && !chatInputHasText) setDraft('');
+      hadTextRef.current = chatInputHasText;
+    }, [chatInputHasText]);
+
+    // Where a long press was raised, so the actions menu can be drawn over the
+    // row it belongs to. WHICH message is open is still App.js's
+    // `showReactionPicker`, so every existing close of that prop still closes
+    // this menu; only the rectangle is local, because a DOM measurement is not
+    // App.js's to hold and it has nothing to do with any other screen.
+    const [actionsRect, setActionsRect] = React.useState(null);
+    // The "+" at the right of the input bar. New UI with nothing behind it in
+    // App.js, so there is nothing to move down here: it holds the composer
+    // controls that have no slot of their own in the new bar.
+    const [plusOpen, setPlusOpen] = React.useState(false);
+
     const [imageViewer, setImageViewer] = React.useState(null);
     const openImageViewer = (m) => {
       if (m.image) { setImageViewer({ src: m.image }); return; }
@@ -532,6 +623,14 @@ export default function ChatDetail({
     const leaveChatScreen = () => {
       setChatInput('');
       setComposerHasRealText(false);
+      /* The field is controlled now, so the box on screen is `draft`.
+         setChatInput above clears App.js and the falling edge of
+         chatInputHasText usually clears this with it, but a box holding
+         only spaces never armed that flag and so produces no edge, and
+         leaving spaces behind for the next visit is the small half of
+         the draft leak this function exists to close. */
+      setDraft('');
+      setPlusOpen(false);
       setShowFlockMenu(false);
       setShowLeaveConfirm(false);
       setShowChatSearch(false);
@@ -545,12 +644,14 @@ export default function ChatDetail({
     // the header. An empty flock list here is a TypeError during render, which
     // React answers by unmounting the entire app.
     if (!flock) return <MissingFlockPanel />;
-    // Hot-loop precomputation. The search filter used to run twice per render
-    // (once for the count line, once for the list), and the avatar cell ran
-    // flock.members.find up to four times per MESSAGE ROW per render, which at
-    // a few pages of history times a full roster is thousands of string
-    // comparisons on every app-level state change while the chat is open. One
-    // filtered list, one name-to-image Map, both O(n) once.
+    // Hot-loop precomputation. The search filter used to run twice per render,
+    // once for the count line and once for the list, so it runs once here and
+    // both read the result.
+    //
+    // The name-to-image Map that sat beside it went with the stream. It
+    // existed because the avatar cell ran flock.members.find up to four times
+    // per MESSAGE ROW per render; the new stream draws no per-message avatar
+    // at all, so there is nothing left to look a member's photo up for.
     // The share-location banner belongs to the night itself. It used to
     // render from the second a plan was confirmed, so a Saturday plan
     // confirmed on Tuesday asked for live location for four days; and a
@@ -580,11 +681,7 @@ export default function ChatDetail({
           return (m.text || '').toLowerCase().includes(q) || (m.sender || '').toLowerCase().includes(q);
         })
       : flock.messages;
-    const memberImageByName = new Map(
-      (flock.members || [])
-        .filter(mb => mb && typeof mb === 'object' && mb.name && mb.image)
-        .map(mb => [mb.name, mb.image])
-    );
+    // The four quick emoji the long-press menu offers.
     const reactions = ['❤️', '👍', '😂', '🔥'];
     // PUT /api/flocks/:id is creator-only. The venue controls below are the
     // same route the vote panel's Confirm button already gates on this.
@@ -605,6 +702,252 @@ export default function ChatDetail({
     // is only visible in here, because chatInputHasText is `!!value` and a
     // string of spaces is truthy.
     const canSendComposerText = chatInputHasText && composerHasRealText;
+
+    // ── WHAT THE STREAM IS HANDED ───────────────────────────────────────────
+    //
+    // Plain functions, not useCallback, and that is a decision rather than an
+    // oversight. MessageList asks for stable callbacks so its memoised runs
+    // can skip a rebuild, and a hook cannot be declared down here: everything
+    // below the `!flock` return above is conditional, and a hook after a
+    // conditional return is a hook that does not always run. The alternative
+    // is lifting this screen's props into state it owns, which is the one
+    // thing this pass was told not to do. So the runs re-render with the
+    // screen, exactly as every row did before the swap.
+
+    const searchActive = showChatSearch && !!chatSearch.trim();
+
+    // TWO ARRAYS, AND THE DIFFERENCE BETWEEN THEM MATTERS.
+    //
+    // `flock.messages` is what App.js owns, and every handler that hands a
+    // message back to it takes one of those rows: retry, remove, unsend,
+    // report and the photo viewer all read fields off the row they are given,
+    // and `retryFailedMessage` puts `text` back on the wire. `listRows` is the
+    // same list dressed for the stream, and a dressed row's `text` can be an
+    // array of highlight nodes, which is not a thing to send to a server. So
+    // anything travelling outward is resolved back through `originalRow`
+    // first, by id.
+    //
+    // WHAT THE DRESSING IS. Search matches wrapped in <mark>, which is the
+    // highlighting this screen has always drawn and the one thing the module
+    // deliberately leaves to the caller. And a venue card's caption dropped:
+    // the old stream drew EITHER the card OR the text and a shared venue
+    // always carried a generated sentence ("Check out Kome!") that nobody ever
+    // saw, while MessageRow draws a card AND its text, so leaving it on would
+    // print that sentence under a card whose first line is the venue's name.
+    // App.js's copy keeps it, which is what the flock list previews.
+    //
+    // AND THE ARRAY IS THE SAME OBJECT WHEN THERE IS NOTHING TO DRESS.
+    // MessageList's scroll rules key off the identity of the row array, and
+    // this screen re-renders on every socket event App.js holds state for, so
+    // a fresh array on each of those would re-run its layout effect several
+    // times a second for nothing. The map runs only when a search is open or a
+    // venue card is carrying a caption; otherwise `flock.messages` is handed
+    // over as it arrived. It cannot be memoised, for the reason at the top of
+    // this section: hooks cannot be declared below a conditional return.
+    const sourceRowById = new Map((flock.messages || []).map((m) => [m.id, m]));
+    const originalRow = (m) => (m && sourceRowById.get(m.id)) || m;
+    const needsDressing = searchActive
+      || visibleMessages.some((m) => m.message_type === 'venue_card' && m.venue_data && m.text);
+    const listRows = needsDressing ? visibleMessages.map((m) => {
+      const carded = m.message_type === 'venue_card' && m.venue_data ? { ...m, text: '' } : m;
+      if (!searchActive || typeof m.text !== 'string' || !m.text.toLowerCase().includes(chatSearch.toLowerCase())) return carded;
+      return { ...carded, text: highlightMatches(m.text, chatSearch) };
+    }) : visibleMessages;
+
+    // A venue card is the one message shape the module does not own, so the
+    // screen draws it and the module calls back for it. Same vote arithmetic
+    // as the card this replaces, same exit through leaveChatScreen, and the
+    // count is the real tally or nothing at all.
+    const renderCard = (m) => {
+      if (m.message_type === 'venue_card' && m.venue_data) {
+        const vc = m.venue_data;
+        const existingVote = (flock.votes || []).find(v => v.venue === vc.name);
+        const voted = !!existingVote && (existingVote.voters || []).includes('You');
+        return (
+          <VenueCardRow
+            venue={vc}
+            surface="flock"
+            actionActive={voted}
+            count={existingVote ? voteTotal(existingVote) : null}
+            /* The card is presentational and has no BASE_URL, so the path
+               resolver is handed in, and so is the placeholder the rest of the
+               app swaps to on an error. Both used to be withheld here on the
+               grounds that the asset path was not reachable from this screen.
+               It is: it moved to lib/venuePhoto.js for exactly this reason, so
+               a shared venue whose photo dies now falls back to the same bird
+               as every other venue photo in the product. */
+            resolvePhoto={resolveVenuePhoto}
+            placeholder={VENUE_PHOTO_PLACEHOLDER}
+            onOpen={vc.place_id ? () => {
+              leaveChatScreen();
+              setVenueDetailReturnTo({ tab: 'chat', screen: 'chatDetail', flockId: selectedFlockId });
+              setCurrentTab('explore');
+              setCurrentScreen('main');
+              setTimeout(() => {
+                openVenueDetail(vc.place_id, { name: vc.name, formatted_address: vc.addr || vc.formatted_address, place_id: vc.place_id, rating: vc.stars || vc.rating, photo_url: vc.photo_url }, { panMap: true });
+              }, 500);
+            } : undefined}
+            onAction={() => {
+              const current = flock.votes || [];
+              const mine = current.find(v => v.venue === vc.name);
+              // Already yours: the tap takes the vote back, the way the vote
+              // panel's row does.
+              if (mine && (mine.voters || []).includes('You')) {
+                updateFlockVotes(selectedFlockId, current
+                  .map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') }))
+                  .filter(v => v.voters.length > 0 || (v.guestCount || 0) > 0));
+                return;
+              }
+              if (mine) {
+                updateFlockVotes(selectedFlockId, current.map(v => ({
+                  ...v,
+                  voters: v.venue === vc.name
+                    ? (v.voters.includes('You') ? v.voters : [...v.voters, 'You'])
+                    : v.voters.filter(x => x !== 'You')
+                })));
+                return;
+              }
+              // Moving your vote here takes it off whatever you picked before.
+              updateFlockVotes(selectedFlockId, [
+                ...current.map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') })),
+                { venue: vc.name, type: vc.type, place_id: vc.place_id || null, voters: ['You'] },
+              ]);
+            }}
+          />
+        );
+      }
+      return null;
+    };
+
+    // THE RECEIPT, AND ONLY WHAT THE ROW CAN BACK. There is no delivered and
+    // no opened on the flock side: no column, no event, nothing to read. So
+    // the two states a row really carries are the two that appear, a send in
+    // flight and a send that failed, and StatusLine refuses to invent the
+    // rest. "Sending" sits under the last own message only, which is where the
+    // stream puts a receipt. The failed line, with its Retry and its Remove,
+    // sits under the message that did not send, wherever in the run that is.
+    const lastOwnId = (() => {
+      for (let i = listRows.length - 1; i >= 0; i--) {
+        if (listRows[i] && listRows[i].sender === 'You') return listRows[i].id;
+      }
+      return null;
+    })();
+    const renderStatus = (m) => {
+      if (!m || m.sender !== 'You') return null;
+      if (m.failed) {
+        /* originalRow, not the row the stream is holding. A failed message
+           that matches an open search travels with an array of highlight
+           nodes where its text was, and retryFailedMessage puts that text
+           back on the wire. */
+        return (
+          <StatusLine
+            status="failed"
+            onRetry={() => retryFailedMessage(flock.id, originalRow(m))}
+            onRemove={() => discardFailedMessage(flock.id, originalRow(m))}
+          />
+        );
+      }
+      if (m.pending && m.id === lastOwnId) return <StatusLine status="sending" />;
+      return null;
+    };
+
+    // Scrollback, the same three-part condition the old control carried, said
+    // in the module's words: there is nothing further back while a first page
+    // is on the wire, once the paging reader has hit the top, or when the
+    // whole thread is shorter than one page. That last clause is the one
+    // flockAtTop alone gets wrong, because only the paging reader sets it.
+    const scrollbackExhausted = messagesLoading || !!flockAtTop[flock.id] || flock.messages.length < DM_PAGE_SIZE;
+    const loadOlderHere = () => loadOlderFlockMessages(flock.id, oldestServerId(flock.messages));
+
+    // The two empty states, and neither can be drawn over a fetch: MessageList
+    // takes a loading node and an empty node, and the loading one wins.
+    const emptyState = searchActive ? (
+      <div style={{ textAlign: 'center', padding: '40px 20px' }}>
+        {/* The scrollback control, ABOVE the sentence that points at it. With
+            no matching rows MessageList draws no control of its own, there
+            being nothing to put it above, and the sentence would then name a
+            button that is not on the screen. */}
+        {!flockAtTop[flock.id] && flock.messages.length >= DM_PAGE_SIZE && (
+          <div style={{ marginBottom: '14px' }}>
+            <button
+              className="hit44"
+              disabled={olderLoading}
+              onClick={loadOlderHere}
+              style={{ padding: '8px 14px', borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: olderLoading ? 'default' : 'pointer', opacity: olderLoading ? 0.6 : 1 }}
+            >
+              {olderLoading ? 'Loading' : 'Load earlier messages'}
+            </button>
+          </div>
+        )}
+        <BirdieStill bird={WARM_BIRD} size={72} style={{ margin: '0 auto 8px' }} />
+        {/* "No messages match" is a claim about the whole flock and this only
+            read the rows that are loaded. Say which. */}
+        <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-tertiary)', fontWeight: '500' }}>
+          {/* Everything is on screen when the reader has hit the top OR when
+              the whole thread is shorter than one page, which is the common
+              case and the one flockAtTop alone gets wrong. */}
+          {(flockAtTop[flock.id] || flock.messages.length < DM_PAGE_SIZE)
+            ? `No messages match "${chatSearch}"`
+            : `Nothing loaded so far matches "${chatSearch}"`}
+        </p>
+        {!flockAtTop[flock.id] && flock.messages.length >= DM_PAGE_SIZE && (
+          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>
+            Load earlier messages above to search further back.
+          </p>
+        )}
+      </div>
+    ) : (!messagesLoading && flock.messages.length === 0 ? (
+      /* A brand-new flock lands you here with nothing on screen at all, which
+         is the first thing anyone sees after creating one. Say what this room
+         is for and give the two openers. */
+      <div style={{ textAlign: 'center', padding: '40px 24px 48px' }}>
+        {/* The warm bird, not cobalt: in this app cobalt Birdie IS the AI, and
+            his photo on a human chat's first screen would read as "the
+            assistant lives here". The cream bird is the brand without that
+            promise. */}
+        <BirdieStill bird={WARM_BIRD} size={96} style={{ margin: '0 auto 10px' }} />
+        <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Nothing here yet</p>
+        <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.5' }}>
+          This is where {flock.name} gets sorted out. Say hi, or put a place on the table for everyone to vote on.
+        </p>
+        <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
+          <button className="hit44 glass-btn glass-navy" onClick={() => { setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); }} style={{ padding: '10px 16px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            {Icons.userPlus('white', 14)} Invite friends
+          </button>
+          <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowVotePanel(true); loadPopularVenues(); }} style={{ padding: '10px 16px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            {Icons.mapPin(colors.navy, 14)} Suggest a place
+          </button>
+        </div>
+      </div>
+    ) : null);
+
+    // THE MESSAGE ACTIONS ARE A LONG PRESS NOW, and the trigger is the only
+    // thing about them that changed. A tap used to open this row, which meant
+    // a tap on a photo could not open the photo and a tap on a reaction pill
+    // could not take the reaction back. Every action is still here: the four
+    // emoji, View photo, Unsend and Report, on the same conditions as before.
+    const openMessageActions = (m, detail) => {
+      setActionsRect(detail && detail.rect ? detail.rect : null);
+      setShowReactionPicker(showReactionPicker === m.id ? null : m.id);
+    };
+    const closeMessageActions = () => { setShowReactionPicker(null); setActionsRect(null); };
+    /* Read off App.js's own rows, not the dressed ones: Report sends the
+       message id and the sender to the moderation sheet and Unsend sends the
+       id, and neither wants a display copy. */
+    const actionsMessage = showReactionPicker != null
+      ? (sourceRowById.get(showReactionPicker) || null)
+      : null;
+    /* Anchored over the row the press was held on, clamped to the screen. With
+       no rectangle (a keyboard activation, or App.js closing and reopening the
+       picker itself) it sits above the composer, which is where a thumb
+       already is. */
+    const actionsAnchor = actionsRect
+      ? {
+        top: `${Math.max(8, actionsRect.top - 54)}px`,
+        left: `${Math.max(8, Math.min(actionsRect.left, (typeof window !== 'undefined' ? window.innerWidth : 390) - 268))}px`,
+      }
+      : { bottom: 'calc(96px + var(--safe-bottom))', left: '12px' };
+
 
     return (
       <div key="chat-detail-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
@@ -653,13 +996,13 @@ export default function ChatDetail({
               <div style={{ display: 'flex', gap: '6px', overflow: 'hidden', maxWidth: chatNavOpen ? '300px' : '0px', opacity: chatNavOpen ? 1 : 0, visibility: chatNavOpen ? undefined : 'hidden', transition: `max-width 0.3s ease, opacity 0.25s ease, visibility 0s linear ${chatNavOpen ? '0s' : '0.3s'}` }}>
                 {/* Birdie, present in the chat: the same panel as Home, opened over
                     this chat, and the model is told which flock this is. */}
-                <button aria-label="Ask Birdie" className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); openBirdie(); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.birdie('white', 18)}</button>
-                <button aria-label="Vote on a venue" className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowVotePanel(true); loadPopularVenues(); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: flock.status === 'voting' ? colors.steel : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 15)}</button>
-                <button aria-label="Invite friends" className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('white', 15)}</button>
-                <button aria-label="Search messages" className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowChatSearch(!showChatSearch); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 15)}</button>
+                <button aria-label="Ask Birdie" className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); openBirdie(); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.birdie('white', 15)}</button>
+                <button aria-label="Vote on a venue" className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowVotePanel(true); loadPopularVenues(); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: flock.status === 'voting' ? colors.steel : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 17)}</button>
+                <button aria-label="Invite friends" className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('white', 17)}</button>
+                <button aria-label="Search messages" className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowChatSearch(!showChatSearch); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 17)}</button>
                 <button aria-label="Group cash pool" className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowChatPool(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.dollar('white', 15)}</button>
               </div>
-              <button aria-label="Features" aria-expanded={chatNavOpen} className="hit44" onClick={() => setChatNavOpen(!chatNavOpen)} style={{ height: '42px', minWidth: chatNavOpen ? '42px' : 'auto', width: chatNavOpen ? '42px' : 'auto', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: chatNavOpen ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: chatNavOpen ? '0' : '0 18px', fontSize: 'var(--t-body)', fontWeight: '600', flexShrink: 0, transition: 'all 0.3s ease', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)' }}>{chatNavOpen ? Icons.x('white', 16) : <span style={{ fontSize: 'var(--t-body)', fontWeight: '600' }}>Features</span>}</button>
+              <button aria-label="Features" aria-expanded={chatNavOpen} className="hit44" onClick={() => setChatNavOpen(!chatNavOpen)} style={{ height: '42px', minWidth: chatNavOpen ? '42px' : 'auto', width: chatNavOpen ? '42px' : 'auto', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: chatNavOpen ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: chatNavOpen ? '0' : '0 18px', fontSize: 'var(--t-body)', fontWeight: '600', flexShrink: 0, transition: 'all 0.3s ease', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)' }}>{chatNavOpen ? Icons.x('white', 17) : <span style={{ fontSize: 'var(--t-body)', fontWeight: '600' }}>Features</span>}</button>
             </div>
             <div style={{ position: 'relative', flexShrink: 0 }}>
               <button aria-label="More options" className="hit44" onClick={() => setShowFlockMenu(!showFlockMenu)} style={{ width: '42px', height: '42px', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)' }}>{Icons.moreVertical('white', 18)}</button>
@@ -1007,476 +1350,211 @@ export default function ChatDetail({
           </div>
         )}
 
-        <div onScroll={(e) => {
-          const el = document.activeElement;
-          if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) el.blur();
-          const c = e.currentTarget;
-          const fromBottom = c.scrollHeight - c.scrollTop - c.clientHeight;
-          setShowJumpPill((prev) => {
-            const next = prev ? fromBottom > 200 : fromBottom > 600;
-            // Same hysteresis band, read by App.js's tail-follow effect so a
-            // message arriving off-screen does not force a scroll the pill
-            // was just built to make optional.
-            chatNearBottomRef.current = !next;
-            return next;
-          });
-        }} style={{ flex: 1, padding: '16px', overflowY: 'auto', overflowX: 'hidden', background: `linear-gradient(180deg, ${colors.cream} 0%, ${colors.cream}cc 100%)`, scrollBehavior: 'smooth' }}>
-          {showChatSearch && chatSearch.trim() && flock.messages.filter(m => {
-            const q = chatSearch.toLowerCase();
-            return (m.text || '').toLowerCase().includes(q) || (m.sender || '').toLowerCase().includes(q);
-          }).length === 0 && (
-            <div style={{ textAlign: 'center', padding: '40px 20px' }}>
-              <BirdieStill bird={WARM_BIRD} size={72} style={{ margin: '0 auto 8px' }} />
-              {/* "No messages match" is a claim about the whole flock and
-                  this only read the rows that are loaded. Say which. */}
-              <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-tertiary)', fontWeight: '500' }}>
-                {/* Everything is on screen when the reader has hit the top OR
-                    when the whole thread is shorter than one page, which is the
-                    common case and the one flockAtTop alone gets wrong: it is
-                    only ever set by the paging reader, so a three message flock
-                    never sets it and would have been told its own contents were
-                    merely "not loaded so far". */}
-                {(flockAtTop[flock.id] || flock.messages.length < DM_PAGE_SIZE)
-                  ? `No messages match "${chatSearch}"`
-                  : `Nothing loaded so far matches "${chatSearch}"`}
-              </p>
-              {!flockAtTop[flock.id] && flock.messages.length >= DM_PAGE_SIZE && (
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>
-                  Load earlier messages above to search further back.
-                </p>
-              )}
-            </div>
-          )}
+        {/* THE STREAM.
+            What was here was a `<div onScroll>` holding a map over the rows,
+            and each row drew a 34px avatar, a name, a bullet, a timestamp and
+            a rounded bubble with a shadow. All of it is MessageList's now, and
+            four things went with the scroll handler and are not carried over
+            in any form: the blur() on the focused input, which is what closed
+            the keyboard whenever a message arrived; the "Jump to latest" pill;
+            the writes to chatNearBottomRef; and the end-ref sentinel.
+            MessageList does the bottom anchoring, the tail follow on the
+            viewer's own send, the "N new messages" affordance for somebody
+            else's arrival, and the offset correction when an older page is
+            prepended above the reader.
 
-          {/* The history is on the wire. Bubbles in the shape of bubbles beat
-              the blank rectangle this used to be, and the empty state below
-              stays gated so it can never claim an empty chat during a fetch. */}
-          {messagesLoading && flock.messages.length === 0 && <ChatSkeleton label={`Loading messages in ${flock.name}`} />}
+            EVERYTHING THIS SCREEN STILL OWNS IT HANDS OVER. The rows, the
+            venue card, the receipt, the scrollback, the two empty states, the
+            skeleton, the photo viewer and the reaction tap are all props
+            computed above. onSwipeReply is deliberately absent: see the note
+            at the composer. */}
+        <MessageList
+          rows={listRows}
+          threadKey={flock.id}
+          myId={authUser?.id}
+          ownName="You"
+          ownColour="var(--chat-accent)"
+          renderCard={renderCard}
+          renderStatus={renderStatus}
+          onLoadOlder={loadOlderHere}
+          atTop={scrollbackExhausted}
+          olderLoading={olderLoading}
+          onLongPress={openMessageActions}
+          onOpenImage={(m) => openImageViewer(originalRow(m))}
+          onReactionTap={(emoji, m) => addReactionToMessage(flock.id, m.id, emoji)}
+          loadingState={messagesLoading && flock.messages.length === 0
+            ? <ChatSkeleton label={`Loading messages in ${flock.name}`} />
+            : null}
+          emptyState={emptyState}
+        />
 
-          {/* Scrollback, same contract as the DM thread.
-              NOT hidden during a search. There is no server-side message
-              search, so the filter runs over the rows this client happens to
-              hold, which on entry is the newest fifty. Hiding this while a
-              search was open meant a term three hundred messages back could
-              never be reached from inside search, and the empty state below
-              announced it did not exist. */}
-          {!messagesLoading && !flockAtTop[flock.id] && flock.messages.length >= DM_PAGE_SIZE && (
-            <div style={{ textAlign: 'center', marginBottom: '14px' }}>
-              <button
-                className="hit44"
-                disabled={olderLoading}
-                onClick={() => loadOlderFlockMessages(flock.id, oldestServerId(flock.messages))}
-                style={{ padding: '8px 14px', borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: olderLoading ? 'default' : 'pointer', opacity: olderLoading ? 0.6 : 1 }}
-              >
-                {olderLoading ? 'Loading' : 'Load earlier messages'}
-              </button>
-            </div>
-          )}
-
-          {/* A brand-new flock lands you here with nothing on screen at all,
-              which is the first thing anyone sees after creating one. Say what
-              this room is for and give the two openers. */}
-          {!messagesLoading && flock.messages.length === 0 && !(showChatSearch && chatSearch.trim()) && (
-            <div style={{ textAlign: 'center', padding: '40px 24px 48px' }}>
-              {/* The warm bird, not cobalt: in this app cobalt Birdie IS the
-                  AI, and his photo on a human chat's first screen would read
-                  as "the assistant lives here". The cream bird is the brand
-                  without that promise. Still image — this is a screen people
-                  live in, and it also replaced an icon-in-rounded-square. */}
-              <BirdieStill bird={WARM_BIRD} size={96} style={{ margin: '0 auto 10px' }} />
-              <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>Nothing here yet</p>
-              <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.5' }}>
-                This is where {flock.name} gets sorted out. Say hi, or put a place on the table for everyone to vote on.
-              </p>
-              <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                <button className="hit44 glass-btn glass-navy" onClick={() => { setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); }} style={{ padding: '10px 16px', borderRadius: '12px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  {Icons.userPlus('white', 14)} Invite friends
-                </button>
-                <button className="hit44 glass-btn glass-secondary" onClick={() => { setShowVotePanel(true); loadPopularVenues(); }} style={{ padding: '10px 16px', borderRadius: '12px', border: `1.5px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  {Icons.mapPin(colors.navy, 14)} Suggest a place
-                </button>
-              </div>
-            </div>
-          )}
-          {visibleMessages.map((m, idx) => {
-            const separatorLabel = daySeparatorFor(visibleMessages, idx);
-            return (
-            <React.Fragment key={m.id}>
-                {separatorLabel && (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '4px 0 16px' }}>
-                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-tertiary)', background: 'var(--bg-hover)', padding: '3px 12px', borderRadius: '10px' }}>{separatorLabel}</span>
-                  </div>
-                )}
+        {/* The actions a long press raises. Same four emoji, same View photo,
+            same Unsend on your own server-side row, same Report on somebody
+            else's, and the same one-tap close on every one of them. It is
+            fixed rather than inline now because the row it belongs to lives
+            inside a scroller this screen no longer controls, and a menu drawn
+            inside a run would move the run. */}
+        {actionsMessage && (
+          <>
+            {/* Tap anywhere else to put it away. Decorative to a screen
+                reader: the menu's own controls are the way out for anyone not
+                using a pointer, and Escape is handled by nothing here because
+                nothing here traps focus. */}
+            <div aria-hidden="true" onClick={closeMessageActions} style={{ position: 'fixed', inset: 0, zIndex: 70 }} />
             <div
+              role="group"
+              aria-label="Message actions"
               style={{
+                position: 'fixed',
+                ...actionsAnchor,
+                zIndex: 71,
                 display: 'flex',
-                gap: '10px',
-                marginBottom: '16px',
-                flexDirection: m.sender === 'You' ? 'row-reverse' : 'row',
-                position: 'relative',
-                animation: 'fadeIn 0.3s ease-out'
+                gap: '4px',
+                padding: '6px 10px',
+                backgroundColor: 'var(--bg-card-solid)',
+                borderRadius: '24px',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.10)',
+                animation: 'reactionPop 0.25s ease-out',
               }}
             >
-              <div style={{ position: 'relative', flexShrink: 0 }}>
-                <div style={{ width: '34px', height: '34px', borderRadius: '17px', background: m.sender === 'You' ? colors.navyBg : 'white', border: m.sender === 'You' ? 'none' : '2px solid rgba(13,40,71,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: m.sender === 'You' ? 'white' : colors.navy, boxShadow: m.sender === 'You' ? '0 3px 10px rgba(13,40,71,0.10)' : '0 2px 6px rgba(0,0,0,0.06)', overflow: 'hidden' }}>
-                  {(() => {
-                    const raw = m.sender === 'You' ? profilePic : (m.senderImage || memberImageByName.get(m.sender) || null);
-                    const imgUrl = raw ? (raw.startsWith('/uploads/') ? `${BASE_URL}${raw}` : raw) : null;
-                    return imgUrl ? <img src={imgUrl} alt="" style={{ width: '34px', height: '34px', borderRadius: '17px', objectFit: 'cover' }} /> : m.sender[0];
-                  })()}
-                </div>
-                {/* The green dot that sat here was painted on whichever
-                    message happened to be first in the loaded page, wired to
-                    no presence data at all. A fabricated online claim is the
-                    header lie 9d87b73 removed, in miniature. */}
-              </div>
-              {/* Dimmed while in flight, same as the DM bubble. */}
-              <div style={{ maxWidth: '72%', display: 'inline-flex', flexDirection: 'column', alignItems: m.sender === 'You' ? 'flex-end' : 'flex-start', opacity: m.pending ? 0.6 : 1, transition: 'opacity 0.2s ease' }}>
-                {/* Sender name and timestamp */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px', padding: '0 4px' }}>
-                  <span style={{ fontSize: 'var(--t-meta)', color: colors.navy, fontWeight: '500' }}>{m.sender}</span>
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>•</span>
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500' }}>{m.pending ? 'Sending' : (m.time || getRelativeTime(m.time))}</span>
-                </div>
-                {m.failed && (
-                  <div role="alert">
-                    {/* role="alert" on a wrapper, not on the button: a button
-                        that claims the alert role stops announcing as a
-                        button. This text arrives on an eight second timeout
-                        with no keypress behind it, so without a region a
-                        screen reader user is left believing it sent. */}
-                  <button className="hit44" onClick={() => retryFailedMessage(flock.id, m)} style={{ background: 'none', border: 'none', padding: '0 4px 4px', cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--accent-red-text, #b91c1c)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    Didn't send. Tap to retry
-                  </button>
-                  {/* Some sends can never succeed. A photo the image screen
-                      refuses, or text the language filter rejects, comes back
-                      here on every open of this chat with a retry that runs the
-                      same refusal again. Without this the bubble is permanent. */}
-                  <button
-                    className="hit44"
-                    aria-label="Remove this message that did not send"
-                    onClick={() => discardFailedMessage(flock.id, m)}
-                    style={{ background: 'none', border: 'none', padding: '0 4px 4px', cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-tertiary)' }}
-                  >
-                    Remove
-                  </button>
-                  </div>
-                )}
-
-                {/* Image message. Photos used to be cropped into a fixed
-                    200x150 letterbox, so a portrait shot arrived with its top
-                    and bottom cut off. They now run as large as the row allows
-                    and keep their own shape. Tapping still opens the reaction
-                    and report row, which is a 1.2 requirement. */}
-                {(m.image || m.thumb) && (
-                  /* A button, not a div-with-onClick: the tap opens the
-                     reaction and report row (a 1.2 requirement), and a
-                     pointer-only door locks VoiceOver and keyboard users out
-                     of reacting to and reporting this exact message. The
-                     button's accessible name is the img alt. */
-                  <button
-                    type="button"
-                    onClick={() => setShowReactionPicker(showReactionPicker === m.id ? null : m.id)}
-                    style={{ borderRadius: '18px', overflow: 'hidden', boxShadow: '0 4px 15px rgba(0,0,0,0.1)', marginBottom: '4px', cursor: 'pointer', lineHeight: 0, padding: 0, border: 'none', background: 'none', display: 'block' }}
-                  >
-                    {/* Thumb first: history ships only the thumbnail for new
-                        rows (the full image would be re-downloaded at ~700KB
-                        to paint a 260px box). Legacy rows still carry the
-                        full image and render exactly as before. */}
-                    <img src={m.thumb || m.image} alt={`From ${m.sender}`} loading="lazy" style={{ width: '100%', maxWidth: '260px', maxHeight: '340px', objectFit: 'cover', display: 'block' }} />
-                  </button>
-                )}
-
-                {/* Venue Card message. Wrapped in the same tap target the text
-                    bubbles and photos use, so a venue card posted into a chat
-                    can be reported too. Its own buttons stop propagation. */}
-                {m.message_type === 'venue_card' && m.venue_data && (
-                  <div
-                    onClick={() => setShowReactionPicker(showReactionPicker === m.id ? null : m.id)}
-                    style={{ cursor: 'pointer' }}
-                  >
-                  <VenueCard
-                    venue={m.venue_data}
-                    voted={(flock.votes || []).some(v => v.venue === m.venue_data.name && (v.voters || []).includes('You'))}
-                    colors={colors}
-                    Icons={Icons}
-                    getCategoryColor={getCategoryColor}
-                    onViewDetails={() => {
-                      const vc = m.venue_data;
-                      const pid = vc.place_id;
-                      if (pid) {
-                        leaveChatScreen();
-                        setVenueDetailReturnTo({ tab: 'chat', screen: 'chatDetail', flockId: selectedFlockId });
-                        setCurrentTab('explore');
-                        setCurrentScreen('main');
-                        setTimeout(() => {
-                          openVenueDetail(pid, { name: vc.name, formatted_address: vc.addr || vc.formatted_address, place_id: pid, rating: vc.stars || vc.rating, photo_url: vc.photo_url }, { panMap: true });
-                        }, 500);
-                      }
-                    }}
-                    onVote={() => {
-                      const current = flock.votes || [];
-                      const existingVote = current.find(v => v.venue === m.venue_data.name);
-                      // Already yours: the tap takes the vote back, the way the
-                      // vote panel's row does.
-                      if (existingVote && (existingVote.voters || []).includes('You')) {
-                        updateFlockVotes(selectedFlockId, current
-                          .map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') }))
-                          .filter(v => v.voters.length > 0 || (v.guestCount || 0) > 0));
-                        return;
-                      }
-                      if (existingVote) {
-                        const newVotes = current.map(v => ({
-                          ...v,
-                          voters: v.venue === m.venue_data.name
-                            ? (v.voters.includes('You') ? v.voters : [...v.voters, 'You'])
-                            : v.voters.filter(x => x !== 'You')
-                        }));
-                        updateFlockVotes(selectedFlockId, newVotes);
-                      } else {
-                        // Moving your vote here takes it off whatever you picked before
-                        const newVotes = [
-                          ...current.map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') })),
-                          { venue: m.venue_data.name, type: m.venue_data.type, place_id: m.venue_data.place_id || null, voters: ['You'] },
-                        ];
-                        updateFlockVotes(selectedFlockId, newVotes);
-                      }
-                    }}
-                  />
-                  </div>
-                )}
-
-                {/* Regular text message */}
-                {m.text && m.message_type !== 'venue_card' && (
-                  /* Same conversion as the photo above: the reactions and the
-                     per-message report live behind this tap. No aria-label on
-                     purpose: a button's name is its content, and the content
-                     is the message. */
-                  <button
-                    type="button"
-                    onClick={() => setShowReactionPicker(showReactionPicker === m.id ? null : m.id)}
-                    style={{
-                      borderRadius: '18px',
-                      padding: '8px 12px',
-                      display: 'inline-block',
-                      textAlign: 'left',
-                      font: 'inherit',
-                      background: m.sender === 'You' ? (isDark ? '#2d5a87' : colorsLight.navy) : 'var(--msg-received-bg)',
-                      color: m.sender === 'You' ? 'white' : 'var(--msg-received-text)',
-                      borderBottomRightRadius: m.sender === 'You' ? '4px' : '18px',
-                      borderBottomLeftRadius: m.sender === 'You' ? '18px' : '4px',
-                      boxShadow: m.sender === 'You' ? '0 3px 12px rgba(13,40,71,0.10)' : '0 2px 10px rgba(0,0,0,0.05)',
-                      border: m.sender === 'You' ? 'none' : 'var(--card-border)',
-                      cursor: 'pointer',
-                      position: 'relative',
-                      transition: 'transform 0.15s ease, box-shadow 0.15s ease'
-                    }}
-                  >
-                    {/* overflowWrap: 'anywhere', same reason as the DM bubble:
-                        a message with nowhere to break used to widen the row
-                        past the phone and give the whole chat a horizontal
-                        scrollbar. */}
-                    <p style={{ fontSize: 'var(--t-body)', lineHeight: '1.45', margin: 0, fontWeight: '500', overflowWrap: 'anywhere' }}>{showChatSearch && chatSearch.trim() && m.text && m.text.toLowerCase().includes(chatSearch.toLowerCase()) ? (() => {
-                      const q = chatSearch.toLowerCase();
-                      const i = m.text.toLowerCase().indexOf(q);
-                      return <>{m.text.slice(0, i)}<mark style={{ backgroundColor: 'var(--search-highlight)', color: 'inherit', borderRadius: '2px', padding: '0 1px' }}>{m.text.slice(i, i + chatSearch.length)}</mark>{m.text.slice(i + chatSearch.length)}</>;
-                    })() : m.text}</p>
-                    {/* The double-check receipt used to sit under every one of
-                        your own bubbles and under every conversation preview.
-                        It said the same thing on every row and cost a line of
-                        height each time, so it is gone from all three places.
-                        A send that fails still says so, once, in a toast. */}
-                  </button>
-                )}
-
-                {/* Reaction picker */}
-                {showReactionPicker === m.id && (
-                  <div style={{
-                    display: 'flex',
-                    gap: '4px',
-                    marginTop: '6px',
-                    padding: '6px 10px',
-                    backgroundColor: 'var(--bg-card-solid)',
-                    borderRadius: '24px',
-                    boxShadow: '0 2px 8px rgba(0,0,0,0.10)',
-                    animation: 'reactionPop 0.25s ease-out'
-                  }}>
-                    {reactions.map(r => (
-                      <button aria-label={`React with ${r}`} className="hit44"
-                        key={r}
-                        onClick={(e) => { e.stopPropagation(); addReactionToMessage(flock.id, m.id, r); }}
-                        style={{
-                          background: 'none',
-                          border: 'none',
-                          fontSize: 'var(--t-title)',
-                          cursor: 'pointer',
-                          padding: '6px',
-                          borderRadius: '10px',
-                          transition: 'transform 0.15s ease, background-color 0.15s ease'
-                        }}
-                      >{r}</button>
-                    ))}
-                    {(m.image || m.thumb) && (
-                      <button aria-label="View photo full size" className="hit44" onClick={(e) => { e.stopPropagation(); setShowReactionPicker(null); openImageViewer(m); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }} title="View photo">{Icons.eye(colors.textSecondary, 15)}</button>
-                    )}
-                    {m.sender === 'You' && typeof m.id === 'number' && m.id <= 2147483647 && (
-                      <button aria-label="Unsend message" className="hit44" onClick={(e) => { e.stopPropagation(); setShowReactionPicker(null); handleUnsendFlockMessage(flock.id, m.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '600' }} title="Unsend">Unsend</button>
-                    )}
-                    {m.sender !== 'You' && (
-                      <button aria-label="Report" className="hit44" onClick={(e) => { e.stopPropagation(); setShowReactionPicker(null); setModerationTarget({ userId: m.senderId, userName: m.sender, contentType: 'flock_message', contentId: m.id }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: 'var(--t-body)', color: '#EF4444' }} title="Report">{Icons.flag('#EF4444', 15)}</button>
-                    )}
-                  </div>
-                )}
-
-                {/* Reactions display.
-                    Grouped by emoji, because the server sends one ROW per
-                    person ({ emoji, user_id, user_name }) and this used to map
-                    straight over those rows: four people reacting with the same
-                    heart drew four separate pills, each hardcoded to say "1".
-                    The count is now the number of people, and the pill is a
-                    button, so a reaction can be taken back by tapping it rather
-                    than only through the picker. Yours is outlined. */}
-                {m.reactions && m.reactions.length > 0 && (
-                  <div style={{ display: 'flex', gap: '4px', marginTop: '6px', flexWrap: 'wrap' }}>
-                    {groupReactions(m.reactions).map((g) => {
-                      const mine = g.userIds.some((id) => String(id) === String(authUser?.id));
-                      return (
-                        <button
-                          key={g.emoji}
-                          type="button"
-                          className="reaction-pop hit44"
-                          aria-pressed={mine}
-                          aria-label={`${g.emoji} ${g.count}${mine ? ', including you. Tap to remove your reaction' : '. Tap to react'}`}
-                          onClick={(e) => { e.stopPropagation(); addReactionToMessage(flock.id, m.id, g.emoji); }}
-                          style={{
-                            fontSize: 'var(--t-body)',
-                            backgroundColor: 'var(--bg-card-solid)',
-                            borderRadius: '14px',
-                            padding: '4px 8px',
-                            boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-                            border: mine ? `1px solid ${colors.steel}` : '1px solid var(--border-subtle)',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '4px',
-                            cursor: 'pointer',
-                            minHeight: 'auto',
-                          }}
-                        >
-                          {g.emoji}
-                          <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500' }}>{g.count}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+              {reactions.map(r => (
+                <button aria-label={`React with ${r}`} className="hit44"
+                  key={r}
+                  onClick={() => { closeMessageActions(); addReactionToMessage(flock.id, actionsMessage.id, r); }}
+                  style={{ background: 'none', border: 'none', fontSize: 'var(--t-title)', cursor: 'pointer', padding: '6px', borderRadius: '10px', transition: 'transform 0.15s ease, background-color 0.15s ease' }}
+                >{r}</button>
+              ))}
+              {(actionsMessage.image || actionsMessage.thumb) && (
+                <button aria-label="View photo full size" className="hit44" onClick={() => { closeMessageActions(); openImageViewer(actionsMessage); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }} title="View photo">{Icons.eye(colors.textSecondary, 15)}</button>
+              )}
+              {actionsMessage.sender === 'You' && typeof actionsMessage.id === 'number' && actionsMessage.id <= 2147483647 && (
+                <button aria-label="Unsend message" className="hit44" onClick={() => { closeMessageActions(); handleUnsendFlockMessage(flock.id, actionsMessage.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '600' }} title="Unsend">Unsend</button>
+              )}
+              {actionsMessage.sender !== 'You' && (
+                /* The token, not the literal this line carried across from the
+                   old picker. index.css defines --accent-red-text in BOTH
+                   themes and the dark value was picked to clear 4.5:1; a fixed
+                   #EF4444 is a light mode red shipped into dark mode. */
+                <button aria-label="Report" className="hit44" onClick={() => { closeMessageActions(); setModerationTarget({ userId: actionsMessage.senderId, userName: actionsMessage.sender, contentType: 'flock_message', contentId: actionsMessage.id }); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: 'var(--t-body)', color: 'var(--accent-red-text)' }} title="Report">{Icons.flag('var(--accent-red-text)', 15)}</button>
+              )}
             </div>
-            </React.Fragment>
-            );
-          })}
+          </>
+        )}
 
-          {/* Enhanced typing indicator with user name — fixed height to prevent layout shift */}
-          {/* `visibility` as well as opacity, because opacity 0 still leaves
-              the name and the bubble in the accessibility tree: VoiceOver
-              read a phantom "Someone" at the bottom of every quiet chat. The
-              58px box stays reserved either way, so nothing shifts. */}
-          <div style={{ height: '58px', overflow: 'hidden', opacity: isTyping ? 1 : 0, visibility: isTyping ? undefined : 'hidden', transition: `opacity 0.2s ease, visibility 0s linear ${isTyping ? '0s' : '0.2s'}`, pointerEvents: isTyping ? 'auto' : 'none' }}>
-            <div style={{ display: 'flex', gap: '10px' }}>
-              <div style={{ width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'var(--bg-card-solid)', border: '2px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{typingUser?.[0] || 'A'}</div>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-                <span style={{ fontSize: 'var(--t-meta)', color: colors.navy, fontWeight: '500', marginBottom: '4px', paddingLeft: '4px' }}>{typingUser || 'Someone'}</span>
-                <div style={{ padding: '12px 16px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', borderBottomLeftRadius: '4px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: colors.navyBg, animation: 'typingDot 1.4s ease-in-out infinite', opacity: 0.7 }} />
-                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: colors.navyBg, animation: 'typingDot 1.4s ease-in-out 0.2s infinite', opacity: 0.7 }} />
-                  <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: colors.navyBg, animation: 'typingDot 1.4s ease-in-out 0.4s infinite', opacity: 0.7 }} />
-                </div>
-              </div>
-            </div>
-          </div>
-          {showJumpPill && (
-            <div style={{ position: 'sticky', bottom: '8px', display: 'flex', justifyContent: 'center', zIndex: 5, pointerEvents: 'none' }}>
-              <button className="hit44" onClick={() => chatEndRef?.current?.scrollIntoView({ behavior: 'smooth' })} style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', borderRadius: '18px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', boxShadow: '0 4px 14px rgba(0,0,0,0.14)' }}>
-                {Icons.chevronDown(colors.navy, 14)} Jump to latest
-              </button>
-            </div>
-          )}
-          <div ref={chatEndRef} />
-        </div>
+
 
         {/* Reply bar */}
         {/* The "Replying to" bar sat here until 2026-08-27. It was the
             sender-facing half of a reply feature whose other half never
-            existed on the flock side; see the removal note in App.js. */}
+            existed on the flock side; see the removal note in App.js.
+
+            AND IT STAYS GONE THROUGH THIS REBUILD. MessageRow reports a right
+            swipe through `onSwipeReply` and ChatInputBar draws a quote bar
+            from `replyTo`, and neither is wired here on purpose: `messages`
+            has no reply column, nothing on the flock side sends one and no row
+            ever arrives carrying one, so a swipe would open a quote bar over a
+            send path that drops it. The DM thread's reply is real and keeps
+            its own wiring. */}
 
         {/* Image preview bar */}
-        {showImagePreview && pendingImage && (
-          <div style={{ padding: '12px 16px', backgroundColor: 'var(--bg-tertiary)', borderTop: '1px solid var(--border-subtle)', display: 'flex', alignItems: 'center', gap: '12px', animation: 'slideUp 0.2s ease-out' }}>
-            <div style={{ position: 'relative' }}>
-              <img src={pendingImage} alt="Preview" style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} />
-              <button aria-label="Remove photo" className="hit44"
-                onClick={() => { setPendingImage(null); setShowImagePreview(false); }}
-                style={{ position: 'absolute', top: '-6px', right: '-6px', width: '22px', height: '22px', borderRadius: '11px', backgroundColor: colors.red, border: '2px solid var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-              >
-                {Icons.x('white', 12)}
-              </button>
-            </div>
-            <div style={{ flex: 1 }}>
-              <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>Ready to send</p>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>Type a caption below if you want one</p>
-            </div>
-            <button aria-label="Send photo" className="hit44"
-              onClick={() => shareImageToChat(selectedFlockId)}
-              style={{
-                width: '44px',
-                height: '44px',
-                borderRadius: '22px',
-                border: 'none',
-                background: colors.navyBg,
-                color: 'white',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxShadow: '0 3px 10px rgba(13,40,71,0.10)'
-              }}
-            >
-              {Icons.send('white', 18)}
-            </button>
-          </div>
-        )}
+        {/* It is ChatInputBar's now. The photo waiting to go, its caption
+            prompt and its remove button are the bar's own pending-image row,
+            drawn above the field, so the composer is one stack instead of two
+            elements with two hairlines between them. */}
+
+        {/* TYPING, ABOVE THE FIELD, AND THE FIXED 58px SLOT IS GONE. That slot
+            was reserved inside the message list at all times so that a bubble
+            appearing for a few seconds an hour did not shift the layout: 58px
+            of a phone screen, permanently, for something almost always
+            absent. TypingRow collapses to nothing instead. The list above it
+            is bottom anchored, so the stream slides up under the strip as it
+            appears and the composer does not move.
+
+            MOUNTED ACROSS THE EMPTY STATE, not rendered conditionally. Its
+            live region has to already be in the accessibility tree for a
+            screen reader to hear the sentence arrive, which is the same rule
+            the status line and the composer notice follow.
+
+            ONE MEMBER, AND ONLY WHAT THE SOCKET SAID. App.js hands this screen
+            a boolean and a name, so that is all the strip draws. Nothing is
+            marked `present`: this surface has no presence data, and an avatar
+            peeking over a pill would be claiming some. */}
+        <TypingRow members={isTyping && typingUser ? [{ id: 'typing', name: typingUser, typing: true }] : []} />
 
         {/* Input area */}
-        {/* Flock chat composer. This screen has no tab bar, so the composer sits
-            on the physical screen edge and carries the home-indicator inset. */}
-        <div style={{ padding: '10px 12px calc(10px + var(--safe-bottom))', backgroundColor: 'var(--bg-nav)', backdropFilter: 'blur(10px)', WebkitBackdropFilter: 'blur(10px)', borderTop: '1px solid var(--border-subtle)', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0, boxShadow: 'var(--nav-shadow)' }}>
-          {/* Two taps became one. The camera button used to open an "Add
-              Photo" sheet whose only job was to ask camera or library; the
-              library input was rendered but nothing outside that sheet ever
-              opened it. Both routes now sit in the composer, and the camera
-              screen itself carries a library button too. */}
-          <button aria-label="Take a photo" className="hit44" onClick={() => openCameraViewfinder('flock')} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'var(--bg-hover)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease', flexShrink: 0 }}>
-            {Icons.camera(colors.textSecondary, 18)}
-          </button>
-          <button aria-label="Choose a photo from your library" className="hit44" onClick={() => chatGalleryInputRef.current?.click()} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'var(--bg-hover)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease', flexShrink: 0 }}>
-            {Icons.image(colors.textSecondary, 18)}
-          </button>
-          <input ref={chatGalleryInputRef} type="file" accept="image/*" onChange={handleChatImageSelect} style={{ display: 'none' }} />
-          <button aria-label={sharingLocationForFlock === flock.id ? 'Stop sharing your location' : 'Share your location'} aria-pressed={sharingLocationForFlock === flock.id} className="hit44" onClick={() => { if (sharingLocationForFlock === flock.id) { stopLocationSharing(); } else { const otherMembers = (flock.members || []).filter(m => m.id !== authUser?.id).length; if (otherMembers === 0) { showToast('No one else in this flock to share with', 'error'); return; } startSharingLocation(flock.id); } }} style={{ width: '38px', height: '38px', borderRadius: '19px', border: 'none', backgroundColor: sharingLocationForFlock === flock.id ? '#10b981' : 'var(--bg-hover)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s ease', flexShrink: 0 }}>{Icons.mapPin(sharingLocationForFlock === flock.id ? 'white' : colors.textSecondary, 16)}</button>
-          {/* minWidth:0 is load-bearing. A text input's `min-width: auto`
-              resolves to its intrinsic ~20-character width (~215px), so at
-              390px the row's min-content exceeded the viewport, the input
-              refused to shrink, and the overflow was pushed onto the only
-              flex item that could still shrink: the send button. It measured
-              20px wide with its right edge 7px off-screen. */}
-          <input key="chat-input" id="chat-input" aria-label="Message" type="text" defaultValue="" onChange={(e) => { setComposerHasRealText(e.target.value.trim().length > 0); handleChatInputChange(e); }} onKeyDown={(e) => { if (e.key === 'Enter' && canSendComposerText) sendChatMessage(); }} placeholder="Type a message..." style={{ flex: '1 1 0%', minWidth: 0, padding: '15px 18px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '16px', outline: 'none', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
-          {/* The mic button that lived here only toasted "coming soon" (dead
-              button, DESIGN-STANDARD.md C1). The send button now stays put and
-              disables when there is nothing sendable in the input. Spaces are
-              nothing: armed on a box holding only spaces, this button lit up
-              and sendChatMessage's own `.trim()` guard then dropped the tap
-              without a word. See canSendComposerText above. */}
-          <button aria-label="Send message" className="hit44 glass-btn glass-navy" onClick={sendChatMessage} disabled={!canSendComposerText} style={{ width: '42px', height: '42px', minWidth: '42px', flexShrink: 0, borderRadius: '21px', border: 'none', background: colors.navyBg, color: 'white', cursor: canSendComposerText ? 'pointer' : 'default', opacity: canSendComposerText ? 1 : 0.45, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 3px 10px rgba(13,40,71,0.10)', transition: 'opacity 0.2s ease' }}>{Icons.send('white', 18)}</button>
-        </div>
+        {/* THE COMPOSER IS THE MODULE'S NOW. What was here was three icon
+            buttons crowded to the left of a single-line input, plus a send
+            button that stayed on screen at 45% opacity whenever there was
+            nothing to send. ChatInputBar is the measured shape: camera at the
+            far left, the field in a pill that grows to five lines with the
+            library icon inside its right edge, and one slot at the right that
+            is a "+" until you type and the send button after that.
+
+            WHAT THE SCREEN STILL DECIDES, because the bar cannot know it: that
+            a tap on send is `shareImageToChat` when a photo is waiting and
+            `sendChatMessage` otherwise, since those are two different calls in
+            App.js. And that the field is armed by an AND of two facts owned by
+            two places, which is `canSendComposerText` above.
+
+            THE HIDDEN FILE INPUT STAYS HERE. It is the library button's
+            target, it is what `handleChatImageSelect` reads, and the bar has
+            no business owning a DOM node App.js holds a ref to. */}
+        <ChatInputBar
+          variant="flock"
+          ownColor="var(--chat-accent)"
+          value={draft}
+          onChange={(next) => {
+            setDraft(next);
+            setComposerHasRealText(next.trim().length > 0);
+            /* App.js's handler is written against a change event and owns the
+               draft ref, the typing emit and chatInputHasText. The bar reports
+               a string, so the event is rebuilt around it rather than the
+               handler being reached around. */
+            handleChatInputChange({ target: { value: next } });
+          }}
+          onSend={() => {
+            if (showImagePreview && pendingImage) { shareImageToChat(selectedFlockId); return; }
+            if (canSendComposerText) sendChatMessage();
+          }}
+          onCamera={() => openCameraViewfinder('flock')}
+          onLibrary={() => chatGalleryInputRef.current?.click()}
+          onPlus={() => setPlusOpen(true)}
+          pendingImage={showImagePreview ? pendingImage : null}
+          onRemoveImage={() => { setPendingImage(null); setShowImagePreview(false); }}
+          sharingLocation={sharingLocationForFlock === flock.id}
+          locationLabel="Sharing your location"
+          onStopSharingLocation={stopLocationSharing}
+        />
+        <input ref={chatGalleryInputRef} type="file" accept="image/*" onChange={handleChatImageSelect} style={{ display: 'none' }} />
+
+        {/* The "+" sheet. Three tiles in this pass, and each one is a thing
+            you send into the stream: the two photo routes, which the bar also
+            carries because that is what the "+" is opened for most, and
+            starting a live location share, which is the one control in the old
+            composer row with no slot in the new bar. Everything else keeps the
+            home it has today, in the header rail and the sheets below.
+            A tile with no handler does not render, so this sheet grows as
+            later passes wire the rest.
+
+            SHARE LOCATION DISAPPEARS WHILE IT IS RUNNING, because the control
+            for a share that is already on is the Stop beside the chip above
+            the field, and two doors that mean different things do not both
+            get to say "Share location". */}
+        <ComposerPlusSheet
+          open={plusOpen}
+          onClose={() => setPlusOpen(false)}
+          chatName={flock.name}
+          DialogBehavior={DialogBehavior}
+          onPickPhoto={() => { setPlusOpen(false); chatGalleryInputRef.current?.click(); }}
+          onTakePhoto={() => { setPlusOpen(false); openCameraViewfinder('flock'); }}
+          onShareLocation={sharingLocationForFlock === flock.id ? undefined : () => {
+            setPlusOpen(false);
+            const otherMembers = (flock.members || []).filter(m => m.id !== authUser?.id).length;
+            if (otherMembers === 0) { showToast('No one else in this flock to share with', 'error'); return; }
+            startSharingLocation(flock.id);
+          }}
+        />
+
 
 
         {/* Money Layer Modal — Budget Submit / Bill Split */}

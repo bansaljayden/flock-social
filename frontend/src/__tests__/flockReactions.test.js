@@ -28,6 +28,12 @@ const path = require('path');
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
 const API = fs.readFileSync(path.join(__dirname, '..', 'services', 'api.js'), 'utf8');
 const CHAT = fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatDetail.js'), 'utf8');
+// The reaction pills moved. Both chat screens draw their stream with the shared
+// chat module now, so the markup that used to sit in ChatDetail.js lives in
+// MessageRow.js and is the same code on the DM side. Reading the screen for it
+// would go quietly green on nothing, because indexOf on a missing marker just
+// hands back a slice of a file that does not contain what is being asked about.
+const ROW = fs.readFileSync(path.join(__dirname, '..', 'components', 'chat', 'MessageRow.js'), 'utf8');
 
 const row = (emoji, userId, name) => ({ emoji, user_id: userId, user_name: name });
 
@@ -148,24 +154,28 @@ describe('one shape for one field', () => {
   });
 
   it('the renderer never hands a raw reaction to React', () => {
-    const block = CHAT.slice(CHAT.indexOf('{/* Reactions display'));
-    const list = block.slice(0, block.indexOf('</div>'));
-    expect(list).toContain('groupReactions(m.reactions)');
-    // `{r}` was the crash: an object child is refused outright by React.
-    expect(list).not.toMatch(/\{r\}/);
+    // groupReactions turns the raw rows into { emoji, count, userIds }, and a
+    // bare emoji string from an older cached payload degrades to a pill with
+    // no owner. `{r}` was the crash: React refuses an object child outright.
+    expect(ROW).toContain('const reactions = groupReactions(message && message.reactions);');
+    expect(ROW).toContain('{reactions.map((r) => {');
+    expect(ROW).not.toMatch(/>\s*\{r\}\s*</);
   });
 
   it('the pill shows how many people reacted, not a hardcoded 1', () => {
-    const block = CHAT.slice(CHAT.indexOf('{/* Reactions display'));
-    const list = block.slice(0, block.indexOf('</div>'));
-    expect(list).toContain('{g.count}');
-    expect(list).not.toMatch(/>1</);
+    expect(ROW).toContain('{r.count}');
+    // And the count is spoken as well as drawn, so it is not a bare numeral.
+    expect(ROW).toContain("const counted = r.count === 1 ? '1 reaction' : `${r.count} reactions`;");
   });
 
   it('a pill is tappable and announces whether the reaction is yours', () => {
-    const block = CHAT.slice(CHAT.indexOf('{/* Reactions display'));
-    const list = block.slice(0, block.indexOf('</button>'));
-    expect(list).toContain('aria-pressed={mine}');
-    expect(list).toContain('addReactionToMessage(flock.id, m.id, g.emoji)');
+    expect(ROW).toContain('onReactionTap(r.emoji, message)');
+    // Ownership is only claimed when it can be known. An older cached payload
+    // carries no user ids, and a pressed={false} there would tell a viewer the
+    // reaction is not theirs when the row simply cannot say either way.
+    expect(ROW).toContain('aria-pressed={canTellMine ? mine : undefined}');
+    expect(ROW).toContain("const owned = mine ? ', including you' : '';");
+    // And the flock screen is the thing that turns a tap into the write.
+    expect(CHAT).toContain('addReactionToMessage');
   });
 });

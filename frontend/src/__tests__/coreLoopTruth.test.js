@@ -83,6 +83,15 @@ test('a chat venue card shows your vote and can take it back', () => {
   expect(app).toMatch(/const VenueCard = React\.memo\(\(\{ venue, onViewDetails, onVote, voted = false,/);
   expect(app).toMatch(/\{voted \? 'Voted' : 'Vote for This'\}/);
   expect(app).toMatch(/aria-pressed=\{voted\}/);
-  expect(chat).toMatch(/voted=\{\(flock\.votes \|\| \[\]\)\.some\(v => v\.venue === m\.venue_data\.name && \(v\.voters \|\| \[\]\)\.includes\('You'\)\)\}/);
-  expect(chat).toMatch(/if \(existingVote && \(existingVote\.voters \|\| \[\]\)\.includes\('You'\)\) \{/);
+  // The flock chat draws shared venues with the chat module's VenueCardRow now,
+  // so the same two facts are carried by different names: the screen works out
+  // whether the vote on this venue is yours, and hands that to the card as the
+  // state of its one action.
+  expect(chat).toMatch(/const existingVote = \(flock\.votes \|\| \[\]\)\.find\(v => v\.venue === vc\.name\);/);
+  expect(chat).toMatch(/const voted = !!existingVote && \(existingVote\.voters \|\| \[\]\)\.includes\('You'\);/);
+  expect(chat).toMatch(/actionActive=\{voted\}/);
+  // And tapping it while it is already yours takes the vote back rather than
+  // casting it twice.
+  expect(chat).toMatch(/if \(mine && \(mine\.voters \|\| \[\]\)\.includes\('You'\)\) \{/);
+  expect(chat).toMatch(/\.map\(v => \(\{ \.\.\.v, voters: v\.voters\.filter\(x => x !== 'You'\) \}\)\)/);
 });
