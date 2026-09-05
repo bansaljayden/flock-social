@@ -180,6 +180,10 @@ import {
   VenueCardRow,
 } from '../components/chat';
 import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
+/* The keyboard lane. It is a hook and not part of the chat module's index on
+   purpose: it owns DOM nodes and a native bridge rather than any markup, and
+   both screens reach it the same way. See the block at its call below. */
+import useKeyboardComposer from '../hooks/useKeyboardComposer';
 
 /* THE DAY SEPARATORS LEFT THIS FILE. `dayKeyOf`, `dayLabelOf` and
    `daySeparatorFor` were declared here and mirrored verbatim in DmDetail.js:
@@ -586,6 +590,76 @@ export default function ChatDetail({
     // to the bottom, follows the tail on the viewer's own send, holds still
     // for somebody else's arrival and raises its own "N new messages", and it
     // corrects the offset when an older page is prepended.
+
+    /* THE KEYBOARD DOCK.
+     *
+     * Settled decision 4 of the rebuild, in the owner's own words: the
+     * keyboard is already up when the chat opens, the cursor is in the field,
+     * the field rides on top of the keyboard, and nothing jumps.
+     *
+     * WHAT WAS HERE BEFORE. Nothing at all. `hooks/useKeyboardComposer.js` was
+     * written, documented at length and covered by `chatInputBar.test.js`, and
+     * outside that test it was called by no file in the app. So both chat
+     * screens shipped with the composer wherever the WebView happened to leave
+     * it and with no field focused on entry, which is the one item of the
+     * brief a person feels within a second of opening a chat.
+     *
+     * WHERE THE COMMITTED INSET IS SPENT, AND WHY NOT ON THE STREAM. The hook
+     * publishes one number at the end of every slide and the shell has to
+     * spend it as real layout. It is spent here, as padding under this whole
+     * column, because that is the one place that moves BOTH things that have
+     * to move: the bar has to finish above the keyboard, and the scroller's
+     * BOX has to end above it too. `MessageList`'s own `bottomInset` prop is
+     * padding INSIDE the scroller, which lifts the last row but leaves the box
+     * running on down behind the keys, so a reader who then scrolls up reads
+     * the next few messages through the keyboard. Spending it in both places
+     * is worse than either: the two insets add, and the thread ends up a
+     * keyboard's height above the composer with an empty band between them.
+     * One number, one place, and the stream is left at its default of zero.
+     *
+     * WHY `boxSizing` TRAVELS WITH THE PADDING. This app has no global
+     * box-sizing reset; `chatInput.css` says so in as many words and carries
+     * its own, which is why the composer once shipped 64 tall instead of 52.
+     * On a content box, padding lands OUTSIDE the `height: 100%` written on
+     * this column, so the composer would be pushed a keyboard's height BELOW
+     * the bottom of the phone. That is the exact opposite of the fix, and it
+     * would only appear on a device with a keyboard, so it is declared on the
+     * same object as the padding rather than somewhere a later edit can lose.
+     *
+     * WHAT IT DOES TODAY, AND WHAT THE PLUGIN WOULD ADD. `@capacitor/keyboard`
+     * is deliberately not installed, so the hook runs its `visualViewport`
+     * fallback: the browser reports the keyboard once it has finished moving
+     * it, and the dock commits the new layout in one step rather than riding a
+     * 250ms curve into it. Everything else is identical on both paths, the
+     * scroll restore and the drag dismissal included. Installing the plugin
+     * adds the will-show and will-hide events, which arrive BEFORE the motion
+     * and are the only thing that can turn that step into the slide.
+     *
+     * ONE THING THE PLUGIN WILL BRING WITH IT, AND IT IS NOT IN THE PLAN.
+     * The slide moves the stream and the bar with a transform, and a
+     * transformed element becomes a stacking context, which paints ABOVE the
+     * in-flow siblings around it. Nothing between the header and the first
+     * message is lifted, and neither is the typing strip between the stream
+     * and the bar, so for the length of a rise the stream would be drawn over
+     * the header, the pin strip and the search bar, and for the length of a
+     * fall it would be drawn over the typing strip. None of that is reachable
+     * today: the fallback commits with no transition at all, so `applyLift` is
+     * never called on the way up, and on the way down the stream travels away
+     * from the header rather than into it. It is written here because the
+     * obvious fix is a trap of its own. Giving this header a z-index would put
+     * the DM header's own overflow menu inside a stacking context it does not
+     * have today, and that menu sits at 60 specifically to clear the dismissal
+     * layer at 55 that is NOT inside the header. Work the painting order out
+     * on a device with the plugin in hand, not from this file.
+     *
+     * THE SHEETS STAY SIBLINGS OF THE BAR. Every one of them below is rendered
+     * out here rather than inside the composer, and it has to stay that way: a
+     * transformed element is the containing block for a `position: fixed`
+     * descendant, so a sheet inside the bar would position itself against a
+     * bar part way through a slide and land somewhere different depending on
+     * when the tap arrived. `__tests__/chatSheetOpensClean.test.js` pins it.
+     */
+    const keyboard = useKeyboardComposer();
 
     // THE COMPOSER'S TEXT, MIRRORED, and App.js is still the authority. The
     // draft lives in its `chatInputRef`, every keystroke below goes through
@@ -1237,7 +1311,13 @@ export default function ChatDetail({
 
 
     return (
-      <div key="chat-detail-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
+      /* The keyboard's committed height, spent once, here. Both halves are
+         explained at the hook call above: the padding is what puts the bar and
+         the bottom of the stream above the keys, and the border box is what
+         keeps that padding inside the 100% instead of hanging off the end of
+         the phone. With the keyboard down this is `0px` and the column is what
+         it always was. */
+      <div key="chat-detail-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box', paddingBottom: keyboard.bottomInset, backgroundColor: 'var(--bg-card-solid)' }}>
         <div style={{ padding: '10px 10px 8px 6px', background: colors.navyBg, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
           <div style={{ display: 'flex', alignItems: 'stretch', gap: '6px' }}>
             <button aria-label="Back" className="hit44" onClick={() => { leaveChatScreen(); setCurrentScreen('main'); }} style={{ width: '34px', borderRadius: '10px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
@@ -1637,6 +1717,27 @@ export default function ChatDetail({
             computed above. onSwipeReply is deliberately absent: see the note
             at the composer. */}
         <MessageList
+          /* The scroller itself, handed to the dock, and it is load-bearing:
+             the hook measures how far this thread is from its own bottom before
+             the layout changes and puts exactly that distance back after, and
+             without the node it cannot, so the conversation would drop by the
+             height of the keyboard on the frame the column re-lays-out.
+             `registerList` is a stable callback, which is what keeps React
+             from detaching this ref on every keystroke.
+
+             `bottomInset` is deliberately NOT passed. The keyboard's height is
+             spent on the column instead, for the reason written out at the
+             hook call: this prop pads the inside of the scroller, and a
+             scroller whose BOX still runs on behind the keyboard hides
+             messages from anyone who scrolls up. */
+          registerScroller={keyboard.registerList}
+          /* A downward drag at the end of the thread puts the keyboard away.
+             WebKit exposes no interactive dismissal to JavaScript, so the
+             gesture is recognised rather than followed: the list has to be
+             pinned to the bottom already and the finger has to travel more
+             than 24px down. The hook reads the type off the event, so one
+             function serves the whole sequence. */
+          onTouch={keyboard.dismissOnDrag}
           rows={streamRows}
           threadKey={flock.id}
           myId={authUser?.id}
@@ -1770,6 +1871,28 @@ export default function ChatDetail({
         <ChatInputBar
           variant="flock"
           ownColor="var(--chat-accent)"
+          /* THE FIELD IS FOCUSED ON ENTRY, which is the half of decision 4
+             that nothing else can do: the dock can only move a keyboard that
+             something has asked for. A flock chat is a room you came here to
+             say something in, and every reference app in the plan opens with
+             the caret already in the box.
+
+             It is unconditional here, and that is a decision about this
+             surface rather than an oversight. This screen has no state in
+             which the composer is drawn but must not be used: the flock is one
+             you are a member of, the field is never disabled, and the search
+             box, which is the one other field on the screen, is opened from
+             the plus long after this mount. The DM thread is the surface where
+             that is not true, and it answers it by drawing no composer at all
+             for a blocked pair rather than by withholding this. */
+          autoFocus
+          /* The two nodes the dock moves. The bar is what rides the keyboard;
+             the field is what it watches, because a focusout is the earliest
+             honest signal that the keyboard is on its way down and waiting for
+             the platform event instead leaves the bar hanging over a keyboard
+             that is no longer there. */
+          registerBar={keyboard.registerBar}
+          registerInput={keyboard.registerInput}
           value={draft}
           onChange={(next) => {
             setDraft(next);
