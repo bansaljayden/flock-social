@@ -74,7 +74,7 @@ import React from 'react';
 import { sendFriendRequest, trackDmVenueVote, getDmMessageImage, addDmReaction, removeDmReaction } from '../services/api';
 import { dmReact, dmRemoveReact, dmStopSharingLocation, dmVoteVenue, getSocket } from '../services/socket';
 import { groupReactions } from './ChatDetail';
-import { MessageList, StatusLine, TypingRow, VenueCardRow } from '../components/chat';
+import { MessageList, StatusLine, TypingRow, VenueCardRow, ChatInputBar, ComposerPlusSheet } from '../components/chat';
 import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
 import Icons from '../components/ui/Icons';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
@@ -519,6 +519,37 @@ export default function DmDetail({
      screen coordinate is not app state and cannot be anything but stale by the
      time anyone else reads it. */
   const [dmActionRect, setDmActionRect] = React.useState(null);
+
+  /* THE COMPOSER'S OWN COPY OF THE DRAFT.
+     App.js owns this field: `handleDmInputChange` writes the shared
+     `chatInputRef`, emits typing and sets `chatInputHasText`, and the input
+     that stood here was uncontrolled so it never had to hold a string.
+     ChatInputBar is controlled, so the screen holds one and forwards every
+     change on to App.js's handler in the shape that handler was written for.
+
+     It is cleared on the FALLING EDGE of chatInputHasText, never on the value
+     itself. A send, a photo going out and every exit on this screen all empty
+     the box through App.js, and none of those is a change event this screen
+     can see. Clearing on the value instead would rub out the space somebody
+     typed before a venue name. */
+  const [dmDraft, setDmDraft] = React.useState('');
+  const dmHadTextRef = React.useRef(false);
+  React.useEffect(() => {
+    if (dmHadTextRef.current && !chatInputHasText) setDmDraft('');
+    dmHadTextRef.current = chatInputHasText;
+  }, [chatInputHasText]);
+
+  /* chatInputHasText is `!!value` in App.js, so a boxful of spaces is truthy
+     there. This is the other half of the AND: what the field actually holds.
+     Both are needed, because only App.js sees a clear it performed itself and
+     only this screen sees what was typed. */
+  const [dmComposerHasRealText, setDmComposerHasRealText] = React.useState(false);
+  const canSendDmText = chatInputHasText && dmComposerHasRealText;
+
+  /* The "+" at the right of the bar. New UI with nothing behind it in App.js,
+     so it is local: it opens the sheet holding the composer controls that have
+     no slot of their own on the bar. */
+  const [dmPlusOpen, setDmPlusOpen] = React.useState(false);
   const openDmActions = (m, detail) => {
     setDmActionRect(detail && detail.rect ? { top: detail.rect.top, bottom: detail.rect.bottom } : null);
     setShowDmReactionPicker(m.id);
@@ -1200,23 +1231,82 @@ export default function DmDetail({
           all for a blocked pair: the bar above has taken its place and its
           safe-area inset with it. */}
       {!dmBlocked[String(selectedDmId)] && (
-      <div style={{ padding: '10px 12px calc(10px + var(--safe-bottom))', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)' }}>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          {/* Camera and camera roll, both one tap (see the flock composer). */}
-          <button aria-label="Take a photo" className="hit44" onClick={() => openCameraViewfinder('dm')} style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'var(--bg-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, border: 'none', position: 'relative' }}>
-            {Icons.camera(colors.textSecondary, 16)}
-          </button>
-          <button aria-label="Choose a photo from your library" className="hit44" onClick={() => dmGalleryInputRef.current?.click()} style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: 'var(--bg-hover)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0, border: 'none' }}>
-            {Icons.image(colors.textSecondary, 16)}
-          </button>
-          <input ref={dmGalleryInputRef} type="file" accept="image/*" onChange={handleDmImageSelect} style={{ display: 'none' }} />
-          {/* Location share button */}
-          <button aria-label="Share your location" className="hit44" onClick={() => { if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); setDmMemberLocation(null); } else { startDmLocationSharing(selectedDmId); } }} style={{ width: '36px', height: '36px', borderRadius: '18px', backgroundColor: dmSharingLocation ? '#10b981' : 'var(--bg-hover)', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>{Icons.mapPin(dmSharingLocation ? 'white' : colors.textSecondary, 16)}</button>
-          {/* minWidth:0 / flexShrink:0 — same story as the flock composer. */}
-          <input data-dm-input aria-label="Message" type="text" defaultValue="" onChange={handleDmInputChange} onKeyDown={(e) => e.key === 'Enter' && sendDmMessage()} placeholder={dmReplyingTo ? `Reply...` : `Message ${selectedDm.name}...`} style={{ flex: '1 1 0%', minWidth: 0, padding: '15px 18px', borderRadius: '24px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', fontSize: '16px', outline: 'none' }} autoComplete="off" />
-          <button aria-label="Send" className="hit44 glass-btn glass-navy" onClick={() => sendDmMessage()} disabled={!chatInputHasText} style={{ width: '42px', height: '42px', minWidth: '42px', flexShrink: 0, borderRadius: '21px', border: 'none', background: chatInputHasText ? colors.navyBg : 'var(--pill-bg)', color: 'white', cursor: chatInputHasText ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.send('white', 18)}</button>
-        </div>
-      </div>
+      <>
+        {/* THE BAR IS THE MODULE'S NOW.
+            What stood here was a row of four round buttons and an uncontrolled
+            input: camera, library, a location toggle, the field, and a Send
+            button that was always drawn and merely dimmed when there was
+            nothing to send. The wrapper went with them, because ChatInputBar
+            draws its own hairline, its own ground and its own home-indicator
+            inset, and keeping the old one would have doubled all three.
+
+            Two controls do not move, they go. The location toggle becomes a
+            tile in the "+" sheet plus the chip the bar draws over the field
+            while a share is running, because one control meaning "start" or
+            "stop" depending on state is two doors wearing one label. And the
+            always-present Send goes with it: the bar holds ONE slot on the
+            right, the plus until there is something to send and the send
+            control after that, which is the shape this rebuild copies.
+
+            THE HIDDEN FILE INPUT STAYS OUT HERE. It is the library button's
+            target, `handleDmImageSelect` reads it, and App.js holds the ref,
+            so it is not the bar's DOM node to own. */}
+        <ChatInputBar
+          variant="dm"
+          threadName={selectedDm.name}
+          ownColor="var(--chat-accent)"
+          value={dmDraft}
+          onChange={(next) => {
+            setDmDraft(next);
+            setDmComposerHasRealText(next.trim().length > 0);
+            /* App.js's handler is written against a change event and owns the
+               shared draft ref, the typing emit and chatInputHasText. The bar
+               reports a string, so the event is rebuilt around it rather than
+               the handler being reached around. */
+            handleDmInputChange({ target: { value: next } });
+          }}
+          onSend={() => { if (canSendDmText) sendDmMessage(); }}
+          onCamera={() => openCameraViewfinder('dm')}
+          onLibrary={() => dmGalleryInputRef.current?.click()}
+          onPlus={() => setDmPlusOpen(true)}
+          replyTo={dmReplyingTo}
+          onCancelReply={() => setDmReplyingTo(null)}
+          sharingLocation={!!dmSharingLocation}
+          locationLabel="Sharing your location"
+          onStopSharingLocation={() => {
+            dmStopSharingLocation(dmSharingLocation);
+            setDmSharingLocation(null);
+            setDmMemberLocation(null);
+          }}
+        />
+        <input ref={dmGalleryInputRef} type="file" accept="image/*" onChange={handleDmImageSelect} style={{ display: 'none' }} />
+
+        {/* The "+" sheet, four tiles, each a thing you SEND into this thread.
+            Suggest a place rather than Vote on a venue, because two people do
+            not need a poll and the second of two suggestions auto-pins.
+
+            Request cash, Ask Birdie and Check in are absent: this screen holds
+            no handler for any of them. A tile with no handler does not render,
+            so none of them appears greyed out promising something unwired.
+
+            SHARE LOCATION DISAPPEARS WHILE IT IS RUNNING, because the control
+            for a share already on is the Stop beside the chip the bar draws
+            over the field. */}
+        <ComposerPlusSheet
+          open={dmPlusOpen}
+          onClose={() => setDmPlusOpen(false)}
+          isDm
+          chatName={selectedDm.name}
+          DialogBehavior={DialogBehavior}
+          onPickPhoto={() => { setDmPlusOpen(false); dmGalleryInputRef.current?.click(); }}
+          onTakePhoto={() => { setDmPlusOpen(false); openCameraViewfinder('dm'); }}
+          onSuggestPlace={() => { setDmPlusOpen(false); setShowDmVenueSearch(true); loadPopularVenues(); }}
+          onShareLocation={dmSharingLocation ? undefined : () => {
+            setDmPlusOpen(false);
+            startDmLocationSharing(selectedDmId);
+          }}
+        />
+      </>
       )}
 
       {/* MESSAGE ACTIONS, ON A LONG PRESS.

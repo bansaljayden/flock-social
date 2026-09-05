@@ -1527,14 +1527,17 @@ export default function ChatDetail({
         />
         <input ref={chatGalleryInputRef} type="file" accept="image/*" onChange={handleChatImageSelect} style={{ display: 'none' }} />
 
-        {/* The "+" sheet. Three tiles in this pass, and each one is a thing
-            you send into the stream: the two photo routes, which the bar also
-            carries because that is what the "+" is opened for most, and
-            starting a live location share, which is the one control in the old
-            composer row with no slot in the new bar. Everything else keeps the
-            home it has today, in the header rail and the sheets below.
-            A tile with no handler does not render, so this sheet grows as
-            later passes wire the rest.
+        {/* The "+" sheet. Six tiles, and each one is a thing you SEND into the
+            stream: the two photo routes, which the bar also carries because
+            that is what the "+" is opened for most; a live location share,
+            which is the one control in the old composer row with no slot in
+            the new bar; and the venue vote, the bill split and Birdie, which
+            post a poll card, a bill card and an answer.
+
+            Check in is the seventh and is absent, because this screen has no
+            handler for it. A tile with no handler does not render at all, so
+            the sheet grows when the handler arrives and never shows a greyed
+            control promising something that is not wired.
 
             SHARE LOCATION DISAPPEARS WHILE IT IS RUNNING, because the control
             for a share that is already on is the Stop beside the chip above
