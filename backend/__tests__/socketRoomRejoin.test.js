@@ -474,6 +474,7 @@ test('sendMessage carries text and image together, and reports whether it sent',
     venue_data: null,
     image_url: 'data:x',
     thumb_url: null,
+    reply_to_id: null,
   }], 'a captioned photo must go out as ONE message carrying both');
 });
 
@@ -489,6 +490,7 @@ test('sendImageMessage is the same code path and keeps a caption', () => {
     venue_data: null,
     image_url: 'data:y',
     thumb_url: null,
+    reply_to_id: null,
   }]);
 });
 
@@ -560,9 +562,22 @@ function objField(args, key) {
 // kind of attachment is covered by these tests the day it is added, instead of
 // shipping wired to one transport and not the other — which is exactly how both
 // bugs below happened.
+// Two exclusions, and both are named rather than pattern-matched, so adding a
+// third is a deliberate act somebody has to justify here.
+//
+//   message_type   the LABEL, not an attachment; checked on its own above.
+//   reply_to       the quoted row's DISPLAY SHAPE, which exists only to draw
+//                  the optimistic bubble before any echo comes back. It is
+//                  local and must reach neither transport: the wire field is
+//                  reply_to_id, and the server builds the quote itself from
+//                  that id after scoping it to the flock. Sending this object
+//                  instead would let a client dictate the text shown as
+//                  somebody else's quoted message.
+const NOT_ATTACHMENTS = new Set(['message_type', 'reply_to']);
+
 function attachmentFields(fnSrc) {
   return [...new Set([...fnSrc.matchAll(/\bopts\.(\w+)/g)].map((m) => m[1]))]
-    .filter((f) => f !== 'message_type');
+    .filter((f) => !NOT_ATTACHMENTS.has(f));
 }
 
 // This test used to pin the literal source text of the two send calls, which

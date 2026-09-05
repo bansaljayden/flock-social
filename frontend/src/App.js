@@ -10562,7 +10562,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       pendingEchoRef.current.set(tempId, { flockId, text, message_type: msgType, image, venue_data: venueData, timer });
     } else {
       try {
-        const data = await apiSendMessage(flockId, text, { message_type: msgType, image_url: image || undefined, thumb_url: thumb || undefined, venue_data: venueData || undefined });
+        const data = await apiSendMessage(flockId, text, { message_type: msgType, image_url: image || undefined, thumb_url: thumb || undefined, venue_data: venueData || undefined, reply_to_id: replyToId || undefined });
         // The REST route returns the stored row and emits no echo, so this is
         // where the bubble stops being a temp id — without it, reacting to or
         // reporting the photo you just sent addressed a row number the server

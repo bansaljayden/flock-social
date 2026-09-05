@@ -621,6 +621,13 @@ test('client sendImageMessage is now a spelling of sendMessage, and keeps a capt
       // The chat-photo thumbnail (2026-08-27) rides both transports; null
       // here because this caller derived none.
       thumb_url: null,
+      // Migration 066 added the flock reply, so the emit carries a reply
+      // target too. null here because this caller is quoting nothing, and
+      // these are deepStrictEqual pins on the WHOLE payload on purpose: the
+      // socket and REST bodies drifted four separate ways before this suite
+      // existed, and a pin that ignored unknown keys would not have caught
+      // any of them.
+      reply_to_id: null,
     }
   );
 });
