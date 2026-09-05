@@ -317,6 +317,18 @@ async function collectRealtime() {
       : citiesArg ? citiesArg.split('=')[1].split(',').map((c) => c.trim()).filter(Boolean)
       : cityArg ? [cityArg.split('=')[1].trim()]
       : ['philly', 'lehigh']);
+  /* THE HOLDOUT CONFIG IS LOGGED EVERY RUN, not only on the hours it fires.
+     On 2026-09-05 the service was given --holdout-city=miami and the flags
+     never reached the process, because a start-command change does not apply
+     until the service is redeployed and every push since had been filtered out
+     by the watch patterns. The only evidence in the log was the ABSENCE of the
+     line below, and an absent line is indistinguishable from an hour that is
+     simply not a holdout hour. Stating the parsed configuration unconditionally
+     makes "did the flags arrive" answerable by reading one line instead of
+     inferring it from which cities got collected. */
+  console.log(`[ML:Realtime] Holdout config: ${HOLDOUT.city
+    ? `city=${HOLDOUT.city} hours=${HOLDOUT.hours.join(',')} activeThisRun=${HOLDOUT.active}`
+    : 'none (no --holdout-city flag reached this process)'}`);
   if (HOLDOUT.active) {
     console.log(`[ML:Realtime] Holdout hour: this run collects ${HOLDOUT.city} instead of the training cities.`);
   }
