@@ -272,6 +272,59 @@ router.get('/flocks/:id/messages',
         }
       }
 
+      // The quoted parent for any reply on this page, in one query.
+      //
+      // THREE FILTERS, AND EACH CLOSES A REAL HOLE RATHER THAN A THEORETICAL
+      // ONE. Scoped to this flock, so a reply_to_id aimed at another flock
+      // cannot pull its text in here. Filtered by `invisible`, because a quote
+      // is a SECOND PATH TO A BLOCKED MEMBER'S WORDS: the history query drops
+      // Bob's own rows and the reactions loop above drops his reactions, but
+      // without this line Alice's reply would still carry his sentence inside
+      // it, quoted, to somebody who blocked him. And hidden or unsent parents
+      // are dropped, so a quote cannot outlive the message it quotes.
+      //
+      // A miss leaves reply_to_id on the row with no reply_to beside it, and
+      // the bubble draws that as an ordinary message. That is the honest
+      // fallback: the reply is still its author's message and still theirs to
+      // read; only the quote is withheld.
+      //
+      // message_type rides along so a reply to a photo or a venue card can say
+      // so instead of quoting an empty string. The DM twin does not fetch it
+      // and shows a blank quote in that case, which is a real gap on that side
+      // and not one to fix silently from here.
+      const replyIds = messages.filter((m) => m.reply_to_id).map((m) => m.reply_to_id);
+      if (replyIds.length > 0) {
+        try {
+          const replyResult = await pool.query(
+            `SELECT m.id, m.message_text, m.message_type, m.sender_id, u.name AS sender_name
+               FROM messages m
+               LEFT JOIN users u ON u.id = m.sender_id
+              WHERE m.id = ANY($1) AND m.flock_id = $2
+                AND m.is_hidden IS NOT TRUE AND m.sender_deleted_at IS NULL`,
+            [replyIds, flockId]
+          );
+          const replyMap = {};
+          for (const r of replyResult.rows) {
+            if (r.sender_id != null && invisible.has(r.sender_id)) continue;
+            replyMap[r.id] = {
+              id: r.id,
+              message_text: r.message_text,
+              message_type: r.message_type,
+              sender_name: r.sender_name,
+            };
+          }
+          for (const msg of messages) {
+            if (msg.reply_to_id && replyMap[msg.reply_to_id]) {
+              msg.reply_to = replyMap[msg.reply_to_id];
+            }
+          }
+        } catch (quoteErr) {
+          // Same rule as the receipts block below: a decoration failing must
+          // never cost the history read that is already owed.
+          console.error('Flock reply hydrate error:', quoteErr.message);
+        }
+      }
+
       // ── READ RECEIPTS (migration 065) ──────────────────────────────────
       //
       // The roster is every OTHER accepted member with their two watermarks,
@@ -367,6 +420,10 @@ router.post('/flocks/:id/messages',
     // No format rejection for the thumb: readImageThumb drops anything
     // mis-shaped, because a bad thumbnail must never cost the message.
     scalarOnly(body('thumb_url').optional({ values: 'null' }), 'thumbnail'),
+    // messages.reply_to_id is int4 (migration 066), and the DM twin's warning
+    // further down this file applies here word for word: `[5]` passes isInt
+    // and then reaches the query as an array. scalarOnly is what stops that.
+    scalarOnly(body('reply_to_id').optional({ values: 'null' }), 'reply target').isInt({ min: 1, max: INT4_MAX }),
   ],
   async (req, res) => {
     try {
@@ -394,7 +451,7 @@ router.post('/flocks/:id/messages',
         return res.status(403).json({ error: 'Not a member of this flock' });
       }
 
-      const { message_type, venue_data } = req.body;
+      const { message_type, venue_data, reply_to_id } = req.body;
 
       // UGC text filter (Apple 1.2) — reject objectionable content before storing.
       if (rejectIfProfaneChat(res, message_text)) return;
@@ -437,9 +494,33 @@ router.post('/flocks/:id/messages',
         } catch { /* no thumbnail, full image serves as before */ }
       }
 
+      // SECURITY: the quoted message must live in THIS flock. A stored
+      // reply_to_id pointing anywhere else would hydrate another flock's text
+      // into this thread for every member of it, which is a cross-flock read
+      // through a field the sender controls. Hidden and unsent parents are
+      // refused too, so a reply can never be used to resurrect a line that
+      // moderation removed or its author withdrew.
+      //
+      // A bad target is a 400 rather than a silent null, matching the DM twin:
+      // the person meant to quote something, and a reply that quietly arrives
+      // quoting nothing reads as the app losing their intent.
+      let safeReplyId = null;
+      if (reply_to_id) {
+        const replyCheck = await pool.query(
+          `SELECT id FROM messages
+           WHERE id = $1 AND flock_id = $2
+             AND is_hidden IS NOT TRUE AND sender_deleted_at IS NULL`,
+          [reply_to_id, flockId]
+        );
+        if (replyCheck.rows.length === 0) {
+          return res.status(400).json({ error: 'Invalid reply target' });
+        }
+        safeReplyId = reply_to_id;
+      }
+
       const result = await pool.query(
-        `INSERT INTO messages (flock_id, sender_id, message_text, message_type, venue_data, image_url, thumb_url)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO messages (flock_id, sender_id, message_text, message_type, venue_data, image_url, thumb_url, reply_to_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING *`,
         [
           flockId,
@@ -453,12 +534,35 @@ router.post('/flocks/:id/messages',
           // home address nobody meant to send.
           image_url ? sanitizeStoredImage(image_url) : null,
           safeThumb,
+          safeReplyId,
         ]
       );
 
       const message = result.rows[0];
       message.sender_name = req.user.name;
       message.reactions = [];
+
+      // The quoted row every other member's bubble reads, same shape the
+      // history read builds below. Without it a reply sent over this transport
+      // drew a blank line under a blank name for everyone receiving it. The id
+      // is already scope-checked above, so this only fetches display fields,
+      // and a failure drops the QUOTE rather than the message: the row is
+      // stored and reply_to_id is on it either way, and a decoration on the
+      // payload must never turn a saved message into a 500.
+      if (safeReplyId) {
+        try {
+          const quoted = await pool.query(
+            `SELECT m.id, m.message_text, m.message_type, u.name AS sender_name
+               FROM messages m
+               LEFT JOIN users u ON u.id = m.sender_id
+              WHERE m.id = $1`,
+            [safeReplyId]
+          );
+          if (quoted.rows[0]) message.reply_to = quoted.rows[0];
+        } catch (quoteErr) {
+          console.error('Flock reply hydrate error:', quoteErr.message);
+        }
+      }
 
       // The send echo carries 'sent' and only the SENDER's copy does. The row
       // below fans out to every member, and a status on somebody else's copy

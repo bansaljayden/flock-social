@@ -1421,7 +1421,7 @@ function registerHandlers(io, socket) {
       // TypeError into the catch below and came back as the generic "Failed to
       // send message" — a server-fault sentence for a client-shaped mistake.
       // send_dm has always read its payload defensively (`data?.receiverId`).
-      const { message_type, venue_data, image_url } = data || {};
+      const { message_type, venue_data, image_url, reply_to_id } = data || {};
       const message_text = stripHtml(typeof data?.message_text === 'string' ? data.message_text.trim() : '');
 
       // Validate inputs. Round 23: asId, like vote_venue — the raw value used
@@ -1550,11 +1550,61 @@ function registerHandlers(io, socket) {
         return;
       }
 
+      // SECURITY: a reply may only reference a message from THIS flock.
+      // Without the flock_id predicate any member could quote an arbitrary
+      // message id and have its text fanned out to everyone here, which is a
+      // cross-flock read through a field the sender controls. is_hidden and
+      // sender_deleted_at ride along for the reason the DM twin gives further
+      // down: this SELECT returns message_text and the row is fanned out
+      // verbatim, so a reply to an unsent message would re-broadcast the exact
+      // words unsend had just removed.
+      //
+      // Normalized with asId like every other id on this handler. A
+      // non-numeric value would otherwise throw inside the query and drop the
+      // whole message with nothing said to the sender, which is the failure
+      // round 16 fixed on the DM side.
+      //
+      // LEFT JOIN, not the DM twin's inner JOIN: messages.sender_id is ON
+      // DELETE SET NULL, so an inner join would refuse a reply to a departed
+      // member's message and the socket would answer "no longer there" for a
+      // message that is plainly still on screen.
+      const replyToId = reply_to_id === undefined || reply_to_id === null ? null : asId(reply_to_id);
+      let replyRow = null;
+      if (reply_to_id !== undefined && reply_to_id !== null && replyToId === null) {
+        // A reply target that is not an id at all. The DM twin answers this
+        // with a bare `return`, which is the SILENT DROP that this file's own
+        // parity suite lists as defect 4: the sender watches their message
+        // disappear and is told nothing. The REST twin answers 400 through its
+        // validator, so saying it here is the parity-preserving choice, not a
+        // divergence. The DM side keeps its bare return until somebody fixes
+        // it there on purpose rather than as a side effect of this change.
+        socket.emit('error', { message: 'That message is no longer there to reply to.' });
+        return;
+      }
+      if (replyToId) {
+        const replyResult = await pool.query(
+          `SELECT m.id, m.message_text, m.message_type, m.sender_id, u.name AS sender_name
+             FROM messages m
+             LEFT JOIN users u ON u.id = m.sender_id
+            WHERE m.id = $1 AND m.flock_id = $2
+              AND m.is_hidden IS NOT TRUE AND m.sender_deleted_at IS NULL`,
+          [replyToId, flockId]
+        );
+        replyRow = replyResult.rows[0] || null;
+        if (!replyRow) {
+          // Foreign, hidden, unsent, or nonexistent target. Same sentence as
+          // the branch above, because from the sender's side it is the same
+          // event: the thing they tried to quote is not available to quote.
+          socket.emit('error', { message: 'That message is no longer there to reply to.' });
+          return;
+        }
+      }
+
       // Persist to database (membership was verified above, before the billed
       // image screen)
       const result = await pool.query(
-        `INSERT INTO messages (flock_id, sender_id, message_text, message_type, venue_data, image_url, thumb_url)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+        `INSERT INTO messages (flock_id, sender_id, message_text, message_type, venue_data, image_url, thumb_url, reply_to_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          RETURNING *`,
         [
           flockId,
@@ -1567,6 +1617,7 @@ function registerHandlers(io, socket) {
           // see restampImageMime above; the REST twin does the same.
           imageCheck ? sanitizeStoredImage(image_url) : null,
           safeThumb,
+          replyToId,
         ]
       );
 
@@ -1579,6 +1630,42 @@ function registerHandlers(io, socket) {
           ? user.profile_image_url
           : null;
       message.reactions = [];
+      if (replyRow) {
+        // sender_id was selected for the block check below and is not part of
+        // the quote's shape. routes/messages.js builds the same four fields on
+        // the history read, and a payload that carried a fifth here would make
+        // a live reply and a reloaded one different objects.
+        message.reply_to = {
+          id: replyRow.id,
+          message_text: replyRow.message_text,
+          message_type: replyRow.message_type,
+          sender_name: replyRow.sender_name,
+        };
+      }
+
+      // A QUOTE IS A SECOND PATH TO A BLOCKED MEMBER'S WORDS, and it needs its
+      // own answer here because the fan-out below sends ONE payload object to
+      // everybody. The history read in routes/messages.js can filter per
+      // viewer, since it builds a response per request. This loop cannot.
+      //
+      // `invisible` immediately below is the SENDER's set and decides who
+      // receives the message at all. It says nothing about the quoted person:
+      // if Alice replies to Bob and Carol has blocked Bob, Carol is not in
+      // Alice's invisible set and would receive Bob's sentence quoted inside
+      // Alice's reply. Blocking would then hold on reload and fail live, which
+      // is precisely the split the comment below this one was written about.
+      //
+      // So ask once, and only when a quote actually names somebody: who cannot
+      // see the QUOTED sender. That set is small, the query runs at most once
+      // per send, and members in it get the reply with the quote stripped
+      // rather than not getting the reply, which would hide a message Alice is
+      // entitled to send them.
+      const quoteHiddenFrom = replyRow && replyRow.sender_id
+        ? new Set(await getInvisibleUserIds(replyRow.sender_id))
+        : null;
+      const messageWithoutQuote = quoteHiddenFrom && quoteHiddenFrom.size > 0
+        ? (() => { const { reply_to: _hidden, ...rest } = message; return rest; })()
+        : message;
 
       // Fan out per-member instead of to the whole room, so mutual blocks are
       // honored live (the room broadcast let blocked users inject messages
@@ -1600,7 +1687,10 @@ function registerHandlers(io, socket) {
         socket.emit('new_message', { ...message, status: 'sent' });
         for (const m of members.rows) {
           if (invisible.has(m.user_id)) continue;
-          io.to(`user:${m.user_id}`).emit('new_message', message);
+          io.to(`user:${m.user_id}`).emit(
+            'new_message',
+            quoteHiddenFrom && quoteHiddenFrom.has(m.user_id) ? messageWithoutQuote : message
+          );
           // Floating promise: a rejection here is an UNHANDLED rejection, which
           // Node 18+ turns into a process exit — the enclosing try only catches
           // what it awaits. The DM path already guards this way.
