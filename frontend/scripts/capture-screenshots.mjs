@@ -13,6 +13,14 @@
  *       node scripts/capture-screenshots.mjs --only=nest,birdie
  *       node scripts/capture-screenshots.mjs --set=web      (web|appstore|all)
  *
+ * THIS RUN COSTS MONEY. The backend child keeps the real external API keys
+ * on purpose, which is what makes the screens real, and `discover` and `crowd`
+ * both perform live Google Places searches. A capture is therefore not free and
+ * not idempotent: running it in a loop while iterating spends quota on a key
+ * whose photo cache has already been the subject of one cost incident. Use
+ * --only to drive the one screen you are working on, and expect discover and
+ * crowd to be the two that fail first when the API pushes back.
+ *
  * PRODUCTION SAFETY (read before touching):
  *   - The database is an embedded Postgres in a temp dir, created fresh every
  *     run and torn down after. Its port is random.
@@ -1048,7 +1056,66 @@ async function captureAll(dbUrl) {
   if (failures.length) process.exitCode = 1;
 }
 
+/* Collected across a run and printed at the end, so one overflowing screen
+   does not fail a capture that is otherwise fine and useful. */
+const overflowFindings = [];
+
+/**
+ * SLOP-AUDIT rule 6, checked by the thing that already visits every screen.
+ *
+ * "Mobile 320-390px: zero horizontal overflow, nothing cut off." That rule has
+ * been enforced by somebody remembering to look, and this rig walks every
+ * screen in both themes on the way to photographing it. Measuring the document
+ * costs nothing and turns a standard into a check.
+ *
+ * A screenshot cannot show this. The viewport clips at its own width, so a row
+ * running 40px off the side photographs as a tidy edge and reads as correct;
+ * the only tell is the number.
+ */
+async function checkOverflow(page, { screen, size, mode }) {
+  try {
+    const m = await page.evaluate(() => ({
+      scrollW: document.documentElement.scrollWidth,
+      clientW: document.documentElement.clientWidth,
+      // The widest element sticking out, to name what to look at rather than
+      // reporting that something, somewhere, is too wide.
+      worst: (() => {
+        let worstEl = null;
+        let worstRight = 0;
+        const limit = document.documentElement.clientWidth;
+        for (const el of document.querySelectorAll('body *')) {
+          const r = el.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) continue;
+          if (r.right > limit + 1 && r.right > worstRight) {
+            worstRight = r.right;
+            worstEl = el;
+          }
+        }
+        if (!worstEl) return null;
+        const cls = typeof worstEl.className === 'string' ? worstEl.className : '';
+        return {
+          tag: worstEl.tagName.toLowerCase(),
+          cls: cls.split(/\s+/).filter(Boolean).slice(0, 3).join('.'),
+          right: Math.round(worstRight),
+          text: (worstEl.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60),
+        };
+      })(),
+    }));
+    const over = m.scrollW - m.clientW;
+    if (over > 0) {
+      const w = m.worst;
+      overflowFindings.push(
+        `${screen.id} [${size.id}/${mode}]: ${over}px of horizontal overflow`
+        + (w ? ` | widest: <${w.tag}${w.cls ? ` class="${w.cls}"` : ''}> reaches ${w.right}px "${w.text}"` : '')
+      );
+    }
+  } catch {
+    /* A measurement must never cost the capture. */
+  }
+}
+
 async function snap(page, sharp, manifest, { screen, size, mode }) {
+  await checkOverflow(page, { screen, size, mode });
   const raw = await page.screenshot({ type: 'png' });
   const px = { w: size.viewport.width * size.dsf, h: size.viewport.height * size.dsf };
   const meta = await sharp(raw).metadata();
@@ -1140,6 +1207,15 @@ March) are referenced nowhere and can be deleted whenever.
 `;
   fs.writeFileSync(path.join(OUT_DIR, 'WIRING.md'), wiring);
   log('wrote manifest.json + WIRING.md');
+  /* SLOP-AUDIT rule 6, reported rather than enforced. A capture run that is
+     otherwise good should not fail on this, but nobody should have to go
+     looking for it either. */
+  if (overflowFindings.length) {
+    log(`HORIZONTAL OVERFLOW on ${overflowFindings.length} screen(s) - SLOP-AUDIT rule 6:`);
+    for (const f of overflowFindings) log(`  ${f}`);
+  } else {
+    log('no horizontal overflow on any screen (SLOP-AUDIT rule 6)');
+  }
 }
 
 main().catch((e) => die(e.stack || e.message));
