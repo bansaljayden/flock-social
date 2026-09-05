@@ -432,13 +432,51 @@ function alreadyRelayed(key, actorId) {
   return false;
 }
 
-// Test seam: rate limiting is process-global state, so tests need a way back
-// to a known-empty starting point.
+// HOW MANY OF THIS ACCOUNT'S SOCKETS ARE SHARING THEIR LOCATION WITH A PEER.
+//
+// dm_member_stopped_sharing is an ACCOUNT-level event: the recipient holds one
+// pin per user and clears it on the first stop they hear. The peers a share is
+// running for are tracked per socket inside registerHandlers (a socket may
+// only ever withdraw what it added), but the stop itself has to wait for the
+// account's LAST sharing socket to go. Without that, a phone dropping to the
+// background told the peer that this user had stopped while the same user's
+// laptop was still sending a position every ten seconds, and the likelier
+// single-phone case was worse: a network drop, a reconnect that carries on
+// sharing on the new socket, and then the dead socket's ping timeout firing a
+// disconnect that wiped the pin the live session was feeding.
+//
+// Keyed by the pair. Counted rather than set, because the pair can be live on
+// several sockets at once. The count moves once per socket, never per position
+// tick, so an entry is released exactly as many times as it was taken.
+const dmShareCounts = new Map(); // "actorId:receiverId" -> sockets currently sharing
+
+function dmShareBegan(actorId, receiverId) {
+  const key = `${actorId}:${receiverId}`;
+  dmShareCounts.set(key, (dmShareCounts.get(key) || 0) + 1);
+}
+
+// True when this was the account's last sharing socket for the pair, which is
+// the moment the peer may be told the share is over.
+function dmShareEnded(actorId, receiverId) {
+  const key = `${actorId}:${receiverId}`;
+  const left = (dmShareCounts.get(key) || 0) - 1;
+  if (left > 0) { dmShareCounts.set(key, left); return false; }
+  dmShareCounts.delete(key);
+  return true;
+}
+
+function dmShareLive(actorId, receiverId) {
+  return dmShareCounts.has(`${actorId}:${receiverId}`);
+}
+
+// Test seam: rate limiting and the share count are process-global state, so
+// tests need a way back to a known-empty starting point.
 function __resetRateLimiters() {
   socketBuckets.clear();
   userBuckets.clear();
   userSockets.clear();
   relayedNotifications.clear();
+  dmShareCounts.clear();
 }
 
 // --- Live session revalidation -------------------------------------------
@@ -2357,7 +2395,10 @@ function registerHandlers(io, socket) {
   // never resume and never send the stop themselves.
   //
   // Per socket, so a second device sharing to the same peer is tracked on its
-  // own connection, exactly like the flock rooms above.
+  // own connection and a socket can only withdraw what it added. Whether the
+  // peer is TOLD the share ended is decided by dmShareCounts above the
+  // handlers, which knows how many of this account's sockets are still
+  // sharing with them.
   const dmSharingWith = new Set();
 
   socket.on('dm_share_location', async (data) => {
@@ -2367,7 +2408,11 @@ function registerHandlers(io, socket) {
     if (receiverId === null || !isLatLng(lat, lng)) return;
     if (await isBlockedBetweenCached(user.id, receiverId)) return;
     if (!(await hasDmRelationshipCached(user.id, receiverId))) return;
-    dmSharingWith.add(receiverId);
+    // Every position tick arrives as this event; the count moves on the first.
+    if (!dmSharingWith.has(receiverId)) {
+      dmSharingWith.add(receiverId);
+      dmShareBegan(user.id, receiverId);
+    }
     socket.to(`user:${receiverId}`).emit('dm_location_update', {
       userId: user.id, name: user.name, lat, lng, timestamp: Date.now(),
     });
@@ -2379,7 +2424,12 @@ function registerHandlers(io, socket) {
     if (receiverId === null) return;
     if (await isBlockedBetweenCached(user.id, receiverId)) return;
     if (!(await hasDmRelationshipCached(user.id, receiverId))) return;
-    dmSharingWith.delete(receiverId);
+    // Withdraw only what this socket added, and stay quiet while another
+    // socket of this account is still feeding the pin. A stop from a socket
+    // that never shared (the client reconnected and tapped stop before its
+    // next tick) still goes out when nothing is live, as it always did.
+    if (dmSharingWith.delete(receiverId)) dmShareEnded(user.id, receiverId);
+    if (dmShareLive(user.id, receiverId)) return;
     socket.to(`user:${receiverId}`).emit('dm_member_stopped_sharing', { userId: user.id });
   });
 
@@ -2555,8 +2605,15 @@ function registerHandlers(io, socket) {
     // pin of where this user is; clearing it can only reduce what they know,
     // and withholding it would leave the location on their screen. That is the
     // opposite trade from the flock presence events, which ADD identity.
+    //
+    // And only when this was the account's last socket sharing with that peer.
+    // A stale socket's late disconnect after a reconnect, or the phone going
+    // to the background beside a laptop, must not clear a pin another socket
+    // is still feeding; see dmShareCounts.
     for (const receiverId of dmSharingWith) {
-      io.to(`user:${receiverId}`).emit('dm_member_stopped_sharing', { userId: user.id });
+      if (dmShareEnded(user.id, receiverId)) {
+        io.to(`user:${receiverId}`).emit('dm_member_stopped_sharing', { userId: user.id });
+      }
     }
     dmSharingWith.clear();
 
