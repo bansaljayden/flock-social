@@ -270,7 +270,7 @@ export { backendEnv }; // exported for eyeballing in a REPL, nothing imports it
 // ---------------------------------------------------------------------------
 const DEMO = {
   password: 'Screenshot1',
-  camera: { email: 'maya@shots.flock.local', name: 'Maya Chen' },
+  camera: { email: 'maya@shots.flock.local', name: 'Judge' },
   friends: [
     { email: 'jordan@shots.flock.local', name: 'Jordan Avery' },
     { email: 'sam@shots.flock.local', name: 'Sam Rivera' },
@@ -705,6 +705,12 @@ const SCREENS = [
   { id: 'discover', title: 'Discover map with venue pins', appstore: true, replaces: {} },
   { id: 'crowd', title: 'Venue search results with live crowd scores', appstore: true, replaces: { dark: ['app-crowd.png'] } },
   { id: 'birdie', title: 'Birdie answering with real venue cards', appstore: true, replaces: { dark: ['app-birdie.png', 'app-birdie.webp'] } },
+  /* TWO WHOLE TABS THAT NOTHING HAS EVER PHOTOGRAPHED. The rig covered Nest,
+     Discover, Messages and three sub-screens, and Plans and You had no visual
+     coverage at all. Neither performs a Google Places search, so they cost
+     nothing to capture, unlike discover and crowd. */
+  { id: 'plans', title: 'Plans tab', appstore: false, replaces: {} },
+  { id: 'you', title: 'Profile tab', appstore: false, replaces: {} },
   { id: 'venue-dash', title: 'Venue dashboard (reviews tab)', appstore: false, replaces: {} },
   /* THE ANALYTICS TAB, which nothing ever looked at. the maintainer reported the real
      blocker on this exact screen from TestFlight on 2026-08-21: it told an
@@ -800,8 +806,25 @@ const DRIVERS = {
     await tab(page, 'Discover').click();
     await page.getByText('Finding venues near you...').waitFor({ state: 'detached', timeout: 45000 }).catch(() => {});
     await page.locator('.mlb-venue-marker').first().waitFor({ timeout: 45000 });
+    /* COLLAPSE THE ATTRIBUTION. MapLibre renders "MapTiler (c) OpenStreetMap
+       contributors" expanded by default and it reads as a stray bar of legal
+       text across the bottom of the shot. Its own (i) button collapses it to
+       a single dot, which is the state a real user sees after one tap and is
+       still compliant: the credit remains one click away. */
+    const attrib = page.locator('.maplibregl-ctrl-attrib-button').first();
+    if (await attrib.count()) await attrib.click().catch(() => {});
+    /* WAIT FOR THE PHOTO PINS. Each marker paints a lettered SVG fallback
+       immediately and swaps to the venue's circular photo only once
+       buildPhotoPin resolves, so a short settle photographs the fallback and
+       makes the map look like it failed to load. Wait for the swap. */
+    await page.waitForFunction(() => {
+      const pins = [...document.querySelectorAll('.mlb-marker-inner')];
+      if (!pins.length) return false;
+      const withPhoto = pins.filter((p) => p.style.backgroundImage && p.style.backgroundImage !== 'none');
+      return withPhoto.length >= Math.min(6, Math.ceil(pins.length * 0.5));
+    }, null, { timeout: 60000 }).catch(() => {});
     // Let tiles finish rendering; maplibre paints async after markers land.
-    await settle(page, { quiet: 2500 });
+    await settle(page, { quiet: 3500 });
   },
   async crowd(page) {
     await tab(page, 'Discover').click();
@@ -850,6 +873,14 @@ const DRIVERS = {
       .evaluate((el) => el.scrollIntoView({ block: 'start' }));
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
     await page.waitForTimeout(600);
+  },
+  async plans(page) {
+    await tab(page, 'Plans').click();
+    await settle(page);
+  },
+  async you(page) {
+    await tab(page, 'You').click();
+    await settle(page);
   },
   async 'venue-analytics'(page) {
     // Same owner context as venue-dash. Analytics is the tab the dashboard
