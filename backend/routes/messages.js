@@ -169,6 +169,202 @@ async function verifyFlockMember(flockId, userId) {
   return result.rows.length > 0;
 }
 
+
+/* ── PINNED MESSAGES (migration 068) ──────────────────────────────────────
+ *
+ * SHARED pins, not the reference app's private save: anyone in the thread can
+ * pin, up to three, and everyone sees them. The thing a group needs to keep is
+ * the Venmo handle, the address, the door code, and every one of those is
+ * worth keeping for the whole group rather than for whoever thought to save
+ * it.
+ *
+ * THE CEILING LIVES HERE, not in the schema. A CHECK cannot count rows in a
+ * sibling group and a trigger would put the rule somewhere nobody reading this
+ * route would find it. Migration 068 says so at length and 067 left
+ * system_kind unconstrained for the same reason: a rule the database enforces
+ * and the route does not know about surfaces as a 23514 that the catch turns
+ * into a 500 on a feature nobody can reach.
+ *
+ * A FOURTH PIN IS REFUSED, NOT SWAPPED IN. Evicting the oldest would let one
+ * person silently remove something another person put there, on a surface
+ * whose whole point is that it is shared. The refusal says which.
+ */
+const MAX_PINS = 3;
+
+/**
+ * This flock's pins, in the order the bar pages through them.
+ *
+ * SAME THREE FILTERS AS THE REPLY QUOTE, and for the same reason: a pin is
+ * another path to a message's words. Scoped to the flock, hidden and unsent
+ * parents dropped so a pin cannot outlive what it points at, and blocked
+ * senders dropped so a pin is not how a blocked member's line reaches the
+ * person who blocked them. The CASCADE in 068 covers a DELETED message; these
+ * cover a message that still exists and must not be shown to this reader.
+ */
+async function readFlockPins(flockId, invisibleArr) {
+  const result = await pool.query(
+    `SELECT p.id, p.message_id, p.pinned_by, p.created_at,
+            m.message_text, m.message_type, m.sender_id,
+            u.name AS sender_name
+       FROM pinned_messages p
+       JOIN messages m ON m.id = p.message_id
+       LEFT JOIN users u ON u.id = m.sender_id
+      WHERE p.flock_id = $1
+        AND m.is_hidden IS NOT TRUE
+        AND m.sender_deleted_at IS NULL
+        AND (m.sender_id IS NULL OR NOT (m.sender_id = ANY($2::int[])))
+      ORDER BY p.created_at ASC, p.id ASC`,
+    [flockId, invisibleArr]
+  );
+  return result.rows.map((r) => ({
+    id: r.message_id,
+    messageId: r.message_id,
+    text: r.message_text,
+    messageType: r.message_type,
+    senderName: r.sender_name,
+    pinnedBy: r.pinned_by,
+  }));
+}
+
+/**
+ * Tell the room its pin list changed.
+ *
+ * Per member and never to the flock room, the same rule the message fan-out
+ * follows: a pin names a message and a sender, so the list one member should
+ * see is not the list another should. Each member's own invisible set decides
+ * their copy, which is why this reads the list once per recipient rather than
+ * broadcasting one array.
+ *
+ * NEVER THROWS. The pin is already written; a failure to announce it costs the
+ * live update and nothing else, and the next history read carries the truth.
+ */
+async function broadcastPins(req, flockId) {
+  try {
+    const io = req.app.get('io');
+    if (!io) return;
+    const members = await pool.query(
+      "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
+      [flockId]
+    );
+    for (const m of members.rows) {
+      try {
+        const invisible = await getInvisibleUserIds(m.user_id);
+        const pins = await readFlockPins(flockId, invisible);
+        io.to(`user:${m.user_id}`).emit('flock_pins_changed', { flockId, pins });
+      } catch (perMember) {
+        // One member's block list being unreadable must not cost everybody
+        // else the update.
+        console.error('Pin broadcast (member) error:', perMember.message);
+      }
+    }
+  } catch (err) {
+    console.error('Pin broadcast error:', err.message);
+  }
+}
+
+// POST /api/flocks/:id/pins - pin a message
+router.post('/flocks/:id/pins',
+  authenticate,
+  [
+    param('id').isInt({ min: 1, max: INT4_MAX }),
+    scalarOnly(body('message_id'), 'message').isInt({ min: 1, max: INT4_MAX }),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+
+      const flockId = parseInt(req.params.id, 10);
+      const messageId = parseInt(req.body.message_id, 10);
+
+      if (!(await verifyFlockMember(flockId, req.user.id))) {
+        return res.status(403).json({ error: 'You are not in this flock' });
+      }
+
+      // The message must live in THIS flock and still be readable. Without the
+      // flock_id predicate any member could pin an arbitrary message id and
+      // have its text drawn at the top of a thread it was never in.
+      const target = await pool.query(
+        `SELECT id FROM messages
+          WHERE id = $1 AND flock_id = $2
+            AND is_hidden IS NOT TRUE AND sender_deleted_at IS NULL`,
+        [messageId, flockId]
+      );
+      if (target.rows.length === 0) {
+        return res.status(404).json({ error: 'That message is no longer there to pin' });
+      }
+
+      // Counted before the insert, and the unique index below is what makes
+      // the count safe under a race: two people pinning a third and fourth
+      // message at once both read 2, and the second insert either adds a
+      // fourth row or hits the index. The ceiling is re-checked after.
+      const existing = await pool.query(
+        'SELECT COUNT(*)::int AS n FROM pinned_messages WHERE flock_id = $1',
+        [flockId]
+      );
+      if (existing.rows[0].n >= MAX_PINS) {
+        return res.status(409).json({ error: `Only ${MAX_PINS} messages can be pinned. Unpin one first.` });
+      }
+
+      // ON CONFLICT DO NOTHING, so pinning something already pinned is a
+      // no-op rather than a 500. Two people tapping Pin on the same message
+      // within a second of each other is the ordinary case.
+      await pool.query(
+        `INSERT INTO pinned_messages (flock_id, message_id, pinned_by)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (flock_id, message_id) DO NOTHING`,
+        [flockId, messageId, req.user.id]
+      );
+
+      const invisible = await getInvisibleUserIds(req.user.id);
+      const pins = await readFlockPins(flockId, invisible);
+      res.status(201).json({ pins });
+      broadcastPins(req, flockId);
+    } catch (err) {
+      console.error('Pin message error:', err);
+      res.status(500).json({ error: 'Server error' });
+    }
+  }
+);
+
+// DELETE /api/flocks/:id/pins/:messageId - unpin
+router.delete('/flocks/:id/pins/:messageId',
+  authenticate,
+  [
+    param('id').isInt({ min: 1, max: INT4_MAX }),
+    param('messageId').isInt({ min: 1, max: INT4_MAX }),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+
+      const flockId = parseInt(req.params.id, 10);
+      const messageId = parseInt(req.params.messageId, 10);
+
+      if (!(await verifyFlockMember(flockId, req.user.id))) {
+        return res.status(403).json({ error: 'You are not in this flock' });
+      }
+
+      // ANYONE IN THE FLOCK CAN UNPIN, not only whoever pinned it. A shared
+      // surface that only its author can clear is a surface one person can
+      // fill and walk away from, and the three slots are the whole group's.
+      await pool.query(
+        'DELETE FROM pinned_messages WHERE flock_id = $1 AND message_id = $2',
+        [flockId, messageId]
+      );
+
+      const invisible = await getInvisibleUserIds(req.user.id);
+      const pins = await readFlockPins(flockId, invisible);
+      res.json({ pins });
+      broadcastPins(req, flockId);
+    } catch (err) {
+      console.error('Unpin message error:', err);
+      res.status(500).json({ error: 'Server error' });
+    }
+  }
+);
+
 // GET /api/flocks/:id/messages - Get messages for a flock (paginated)
 router.get('/flocks/:id/messages',
   [
@@ -360,8 +556,20 @@ router.get('/flocks/:id/messages',
         console.error('Flock receipt roster error:', receiptErr.message);
       }
 
+      /* The pins ride with the history read rather than costing a second
+         round trip, the same way the receipt roster above does. A failure
+         here costs the pins and NOTHING else: the messages are read, the
+         response is owed, and a decoration on the payload must never be able
+         to turn a history read into a 500. */
+      let pins = [];
+      try {
+        pins = await readFlockPins(flockId, invisibleArr);
+      } catch (pinErr) {
+        console.error('Flock pin read error:', pinErr.message);
+      }
+
       // Return in chronological order
-      res.json({ messages: messages.reverse(), readers });
+      res.json({ messages: messages.reverse(), readers, pins });
 
       // ── DELIVERY, THE VIEWER'S OWN ─────────────────────────────────────
       //

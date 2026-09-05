@@ -622,14 +622,20 @@ test('flock history: query count for a 50-message page equals the count for 1 me
 
   assert.strictEqual(log.length, countForOne,
     'a per-message lookup crept back in — reactions and sender profiles are batched');
-  // 6 since migration 065: the four this route always ran, plus the receipt
-  // roster and this reader's own delivery watermark. Both are CONSTANT, which
-  // is the point — the group side stores a watermark per MEMBER precisely so
-  // that "Opened by Sam and two others" costs one query for a fifty-message
-  // page instead of a join per row. The equality above is the real guard;
-  // this ceiling is here so a per-row receipt lookup could not hide inside a
-  // number that was allowed to drift upward.
-  assert.ok(countForOne <= 6, `constant part grew: ${countForOne} queries for one message`);
+  // 7 since migration 068: the four this route always ran, the receipt roster
+  // and this reader's own delivery watermark (065), and the pin list (068).
+  // Every one is CONSTANT, which is the point — the group side stores a
+  // watermark per MEMBER precisely so that "Opened by Sam and two others"
+  // costs one query for a fifty-message page instead of a join per row, and
+  // the pin read is one statement for a list that is at most three rows long.
+  //
+  // The pins ride HERE rather than on a route of their own deliberately: one
+  // more query inside a request the client is already waiting for beats a
+  // second HTTP round trip on the network that made it open the thread. The
+  // equality above is the real guard; this ceiling exists so a per-row lookup
+  // could not hide inside a number allowed to drift upward, so raising it is
+  // a decision to be argued for in this comment rather than a formality.
+  assert.ok(countForOne <= 7, `constant part grew: ${countForOne} queries for one message`);
 });
 
 test('DM thread: query count for 50 messages with reactions and replies equals the count for 1', async () => {

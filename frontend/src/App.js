@@ -3,7 +3,7 @@ import { useTheme } from './context/ThemeContext';
 // The revenue simulator math (lib/finance.js) moved to screens/RevenueScreen.js
 // with the admin console on 2026-08-27 and is imported there now. It was the
 // only reader of it in App.js, so the import went with it.
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue, pinFlockMessage as apiPinFlockMessage, unpinFlockMessage as apiUnpinFlockMessage } from './services/api';
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
@@ -15,7 +15,7 @@ import { hapticTap, hapticSuccess, hapticAlarm } from './services/haptics';
 // Flock. App Review has that on tape. See the shim's header for the whole
 // story, including why moving the origin was the wrong fix.
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from './services/geolocation';
-import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled, sendDmAck, sendDmOpen, sendFlockAck, sendFlockOpen, onDmDelivered, onDmOpened, onFlockRead } from './services/socket';
+import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled, sendDmAck, sendDmOpen, sendFlockAck, sendFlockOpen, onDmDelivered, onDmOpened, onFlockRead, onFlockPinsChanged } from './services/socket';
 import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
@@ -9224,11 +9224,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // a live event would put the roster back to how it looked when the
         // request went out.
         const readers = Array.isArray(data.readers) ? data.readers : [];
+        /* The pins, on the same terms as the roster: REPLACED rather than
+           merged, because the route answers with the whole list and that list
+           is filtered by THIS reader's block set. A client merging one row
+           into a list it already had would be deciding for itself whether it
+           is allowed to see that row. */
+        const pins = Array.isArray(data.pins) ? data.pins : [];
         setFlocks(prev => prev.map(f => {
           if (f.id !== flockId) return f;
           const have = new Set((f.messages || []).map(m => m.id));
           const localWithFailed = [...(f.messages || []), ...failed.filter(fm => !have.has(fm.id))];
-          return { ...f, messages: mergeHistory(localWithFailed, msgs, { keepOlder }), readers };
+          return { ...f, messages: mergeHistory(localWithFailed, msgs, { keepOlder }), readers, pins };
         }));
         // DELIVERY, THE VIEWER'S OWN. These rows just reached this device,
         // which is the whole of what "Delivered" claims. The route already
@@ -9818,7 +9824,36 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       });
     });
 
-    return () => { unsubDelivered(); unsubOpened(); unsubFlockRead(); };
+    /* THE PIN LIST CHANGED (migration 068). The server sends the WHOLE list
+       and sends it per member, because each member's copy is filtered by
+       their own block set, so this replaces rather than merges. There is no
+       "pin added" event for the same reason: one row would leave this client
+       deciding whether it is allowed to see it.
+
+       Only for a flock this client already holds. A pin event for a flock
+       that has not been loaded has nowhere to go, and creating a shell to
+       hold it would put a flock in the list that the user never opened. */
+    const unsubPins = onFlockPinsChanged((ev) => {
+      const flockId = Number(ev?.flockId);
+      if (!Number.isInteger(flockId)) return;
+      const pins = Array.isArray(ev?.pins) ? ev.pins : [];
+      setFlocks(prev => {
+        let touched = false;
+        const next = prev.map(f => {
+          if (f.id !== flockId) return f;
+          // Same array back when nothing moved, so an open thread does not
+          // re-render on a pin event that changed nothing for this reader.
+          const before = f.pins || [];
+          if (before.length === pins.length
+            && before.every((p, i) => String(p.id) === String(pins[i].id))) return f;
+          touched = true;
+          return { ...f, pins };
+        });
+        return touched ? next : prev;
+      });
+    });
+
+    return () => { unsubDelivered(); unsubOpened(); unsubFlockRead(); unsubPins(); };
   }, []);
 
   // Listen for typing indicators via WebSocket (scoped to current flock, multi-user)
@@ -10635,6 +10670,32 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       ? { ...f, messages: (f.messages || []).filter(m => m.id !== failedMsg.id) }
       : f)));
   }, []);
+
+  /* PIN AND UNPIN (migration 068). Both answer with the WHOLE new list,
+     because the server is the only thing that knows what this reader is
+     allowed to see, and both write it straight onto the flock. A failure
+     shows the server's own sentence: the ceiling refusal ("Only 3 messages
+     can be pinned. Unpin one first.") is the one a person is most likely to
+     meet and the only one they can act on. */
+  const applyPins = useCallback((flockId, pins) => {
+    setFlocks(prev => prev.map(f => (f.id === flockId ? { ...f, pins } : f)));
+  }, []);
+
+  const pinMessage = useCallback(async (flockId, messageId) => {
+    try {
+      applyPins(flockId, await apiPinFlockMessage(flockId, messageId));
+    } catch (err) {
+      showToast(err?.message || "That didn't pin.", 'error');
+    }
+  }, [applyPins, showToast]);
+
+  const unpinMessage = useCallback(async (flockId, messageId) => {
+    try {
+      applyPins(flockId, await apiUnpinFlockMessage(flockId, messageId));
+    } catch (err) {
+      showToast(err?.message || "That didn't unpin.", 'error');
+    }
+  }, [applyPins, showToast]);
 
   const retryFailedMessage = useCallback((flockId, failedMsg) => {
     // The old failed bubble is dropped from state and from the reload store; the
@@ -17975,6 +18036,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const chatDetailProps = {
         flockReplyingTo,
         setFlockReplyingTo,
+        pinMessage,
+        unpinMessage,
         // The numeric distance, for the who-is-here card.
         // flockMemberLocations is already passed further down this object: the
         // header has counted "N sharing" off it for a while, so the chat had

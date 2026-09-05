@@ -1317,6 +1317,25 @@ export async function setFlockEventTime(flockId, eventTime) {
   });
 }
 
+/* PINNED MESSAGES (migration 068). Shared pins: anyone in the thread can
+   pin, up to three, and everyone sees them. Both answer with the WHOLE new
+   list rather than the one row that changed, because the server is the only
+   thing that knows what this reader is allowed to see: a pin whose message
+   was posted by somebody they blocked is filtered out of their copy, so a
+   client splicing one row into a list it already had would be guessing. */
+export async function pinFlockMessage(flockId, messageId) {
+  const data = await request(`/api/flocks/${flockId}/pins`, {
+    method: 'POST',
+    body: JSON.stringify({ message_id: messageId }),
+  });
+  return Array.isArray(data?.pins) ? data.pins : [];
+}
+
+export async function unpinFlockMessage(flockId, messageId) {
+  const data = await request(`/api/flocks/${flockId}/pins/${messageId}`, { method: 'DELETE' });
+  return Array.isArray(data?.pins) ? data.pins : [];
+}
+
 // Move a flock through its lifecycle. Statuses match the server's enum
 // exactly; anything else is rejected here rather than spending a round trip.
 const FLOCK_STATUSES = ['planning', 'confirmed', 'completed', 'cancelled'];

@@ -149,6 +149,12 @@ const DE_ATTRIBUTED = {
   'messages.sender_id':
     'the schema default, overridden: deleteAccount DELETEs the rows outright so no ' +
     'authored content is retained',
+  'pinned_messages.pinned_by':
+    "a pin somebody else's flock still holds stops saying who put it there. The "
+    + "message it points at belongs to another member and stays; this account's own "
+    + 'messages are DELETED outright by deleteAccount and the pin CASCADEs with them, '
+    + 'so nothing this person wrote survives here. Nothing for the delete-account or '
+    + 'privacy page to say: after the null the row names no one and holds no content.',
   'moderation_actions.moderator_id':
     'the moderator who took an action, on an action that outlives them',
   'push_sends.user_id':
