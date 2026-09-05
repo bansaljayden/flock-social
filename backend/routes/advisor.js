@@ -840,6 +840,24 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
     // finding one.
     const canReadVenue = !!advisorFacts && typeof advisorFacts.getVenueContext === 'function';
     const ctx = canReadVenue ? await advisorFacts.getVenueContext(userId) : null;
+    // AND THE SAME GATE /questions APPLIES, before a single unit is charged.
+    // /questions tells an unlinked or unverified venue that free text is off
+    // and offers nothing; this route only checked that a venue_profiles row
+    // existed, which a verified email and one POST with a business name is
+    // enough to create. So an account that could not get a chip could still
+    // spend two model calls per typed question, twenty a day, and the
+    // route's own arithmetic says sixteen such accounts empty the global
+    // token wall for every real venue until midnight. Verification is set by
+    // an admin, so this closes throwaway accounts outright.
+    if (canReadVenue && ctx && ctx.profile
+        && !(ctx.profile.google_place_id && ctx.profile.verified)) {
+      return res.json({
+        mode: 'refusal',
+        text: unverifiedReason(ctx.profile),
+        sources: [],
+        question: clean.text,
+      });
+    }
     if (canReadVenue && !(ctx && ctx.profile)) {
       return res.json({
         mode: 'refusal',

@@ -799,13 +799,17 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
   const canAsk = !busy && freeText && draft.trim().length > 0;
 
   const retry = useCallback((turn) => {
+    // The same guard askIntent and submitQuestion have. Without it a tap on
+    // Retry while another turn was still pending sent a second paid
+    // question on top of the first.
+    if (busy) return;
     setThread((t) => t.filter((x) => x.key !== turn.key));
     if (turn.key.startsWith('typed-')) {
       if (typeof askQuestion === 'function') runTurn(`typed-${Date.now()}`, turn.question, () => askQuestion(turn.question), true);
       return;
     }
     askIntent(turn.key.slice(0, turn.key.lastIndexOf('-')), turn.question);
-  }, [askIntent, askQuestion, runTurn]);
+  }, [askIntent, askQuestion, busy, runTurn]);
 
   if (state === 'locked') {
     return (
