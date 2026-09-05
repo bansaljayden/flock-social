@@ -88,6 +88,26 @@ const read = (p) => fs.readFileSync(path.join(SRC, p), 'utf8');
 const app = read('App.js') + read('screens/ChatDetail.js') + read('screens/DmDetail.js') + read('screens/VenueDashboard.js') + read('screens/AddFriends.js')
   + read('screens/ProfileSettings.js') + read('screens/FlockDetail.js') + read('screens/CreateScreen.js')
   + read('components/EditProfileForm.js') + read('components/NewDmModal.js') + read('components/VerifyEmailSheet.js');
+// THE CHAT STREAM AND THE CHAT COMPOSER LEFT BOTH SCREENS AT ONCE, for
+// components/chat/. The message row, the scroller, the status line, the input
+// bar, the "+" sheet and the stream cards are written once there and drawn by
+// the flock thread and the DM thread alike, so several controls this file
+// counts twice now exist once. They are read separately rather than folded
+// into `app`: the scans below that walk `app` for palette literals, for
+// collapsed containers and for copy-pasted labels are about the screens, and a
+// module that names only CSS variables would dilute them. Where an assertion
+// is about a CONTROL, it reads whichever of the two now draws that control.
+const CHAT_MODULE_FILES = [
+  'components/chat/MessageList.js', 'components/chat/MessageGroup.js', 'components/chat/MessageRow.js',
+  'components/chat/StatusLine.js', 'components/chat/TypingRow.js', 'components/chat/DayDivider.js',
+  'components/chat/ChatInputBar.js',
+  'components/chat/cards/VenueCardRow.js', 'components/chat/cards/BillCard.js', 'components/chat/cards/PollCard.js',
+  'components/chat/cards/LocationCard.js', 'components/chat/cards/WhoIsHereCard.js',
+  'components/chat/cards/SystemRow.js', 'components/chat/cards/NudgeRow.js',
+  'components/chat/sheets/FlockProfileSheet.js', 'components/chat/sheets/ComposerPlusSheet.js',
+  'components/chat/sheets/PinStrip.js', 'components/chat/sheets/PinnedMessageBar.js',
+];
+const chatModule = CHAT_MODULE_FILES.map(read).join('\n');
 const css = read('index.css');
 const paywall = read('components/PaywallSheet.js');
 const birdieBird = read('components/ui/BirdieBird.js');
@@ -268,7 +288,6 @@ describe('icon-only controls on the hot paths are named', () => {
     ['handleAcceptFlockInvite(f.id)', 'Accept invite'],
     ['handleDeclineFlockInvite(f.id)', 'Decline invite'],
     ['onClick={sendAiMessage}', 'Send'],
-    ['shareImageToChat(selectedFlockId)', 'Send photo'],
     ['setShowFlockMenu(!showFlockMenu)', 'More options'],
     ['setShowPicModal(true)', 'Change your profile photo'],
     ['setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() - 1, 1))', 'Previous month'],
@@ -285,7 +304,23 @@ describe('icon-only controls on the hot paths are named', () => {
     });
   });
 
-  // The nine cases above are a hand-written list, and a hand-written list is
+  // "Send photo" was in that list and is not a control any more. Both chat
+  // composers are ChatInputBar, and it carries ONE slot on the right: plus
+  // until there is something to send, send after that, with a queued photo
+  // going out through the same button. So the assertion is that the composer's
+  // send control and its photo doors are named where they now live, rather
+  // than that a second, flock-only photo button still exists.
+  it('the chat composer names its send control and both photo doors', () => {
+    [
+      'aria-label="Send message"',
+      'aria-label="More to send"',
+      'aria-label="Take a photo"',
+      'aria-label="Choose a photo from your library"',
+      'aria-label="Remove photo"',
+    ].forEach((label) => expect(chatModule).toContain(label));
+  });
+
+  // The cases above are a hand-written list, and a hand-written list is
   // exactly as good as whoever last edited it. It named Birdie's Send button
   // and not the flock chat one, so `onClick={sendChatMessage}` could lose its
   // aria-label with all 1,666 assertions still green. This derives the set
@@ -295,6 +330,13 @@ describe('icon-only controls on the hot paths are named', () => {
   // whose ENTIRE child is one Icons.* call renders a glyph and nothing else,
   // so its accessible name can only come from an attribute. Buttons that mix
   // an icon with text are not in scope here; they name themselves.
+  //
+  // THE CHAT MODULE IS SCANNED TOO, and it has to be. Both chat composers and
+  // both message rows are drawn there now, so a derived set that read only the
+  // screens would lose about a dozen icon-only controls on the surface people
+  // use most, and the "did the scan find anything" floor below is exactly the
+  // guard that catches code moving out from under this file.
+  const iconScanSource = `${app}\n${chatModule}`;
   const iconOnlyButtons = (() => {
     const BACKSLASH = String.fromCharCode(92);
     // Find the '>' that closes an opening <button tag, skipping any '>' that
@@ -321,13 +363,13 @@ describe('icon-only controls on the hot paths are named', () => {
     };
     const found = [];
     let i = 0;
-    while ((i = app.indexOf('<button', i)) !== -1) {
-      const end = openTagEnd(app, i);
+    while ((i = iconScanSource.indexOf('<button', i)) !== -1) {
+      const end = openTagEnd(iconScanSource, i);
       if (end === -1) { i += '<button'.length; break; }
-      const attrs = app.slice(i, end);
-      const close = app.indexOf('</button>', end);
-      const inner = close === -1 ? '' : app.slice(end + 1, close);
-      const line = app.slice(0, i).split('\n').length;
+      const attrs = iconScanSource.slice(i, end);
+      const close = iconScanSource.indexOf('</button>', end);
+      const inner = close === -1 ? '' : iconScanSource.slice(end + 1, close);
+      const line = iconScanSource.slice(0, i).split('\n').length;
       i = end + 1;
       // One Icons.* call, alone, allowing one level of nested parens for
       // arguments like `colors.navy` or a ternary.
@@ -340,7 +382,9 @@ describe('icon-only controls on the hot paths are named', () => {
   it('the scan finds the icon-only buttons rather than an empty set', () => {
     // Without this, every assertion below passes on a scan that matched
     // nothing, which is how a sweep survives the code moving out from under
-    // it. 90 at the time of writing across App.js and the three screens.
+    // it. 90 at the time of writing across App.js and the three screens; 77
+    // once the chat stream and both composers moved into components/chat and
+    // the module joined the scan.
     expect(iconOnlyButtons.length).toBeGreaterThan(70);
   });
 
@@ -361,7 +405,23 @@ describe('icon-only controls on the hot paths are named', () => {
 
   it('state toggles say which state they are in', () => {
     expect(app).toMatch(/aria-label=\{isPinned \? 'Unpin' : 'Pin'\} aria-pressed=\{isPinned\}/);
-    expect(app).toMatch(/aria-pressed=\{sharingLocationForFlock === flock\.id\}/);
+    // The flock chat's share-location toggle was the second one here. It is
+    // not a toggle any more: Share location is a named row in the composer's
+    // "+" sheet, and the flock screen withholds the handler entirely while a
+    // share is already running, so the row is not drawn as a control it
+    // cannot honour. A pressed state is the wrong announcement for a control
+    // that is not there. What has to stay true is that the sheet's rows are
+    // named and that the screen still tells the composer it is sharing.
+    expect(chatModule).toContain("label: 'Share location'");
+    expect(app).toMatch(/sharingLocation=\{sharingLocationForFlock === flock\.id\}/);
+    expect(app).toMatch(/onShareLocation=\{sharingLocationForFlock === flock\.id \? undefined :/);
+  });
+
+  it('the reaction pills in a message row announce their own pressed state', () => {
+    // Both threads draw one MessageRow, and it makes the claim only when it
+    // can: an older cached payload carries bare emoji with no owner ids, and
+    // `aria-pressed` is left off rather than answered false.
+    expect(chatModule).toMatch(/aria-pressed=\{canTellMine \? mine : undefined\}/);
   });
 
   it('emoji reaction buttons do not rely on the glyph as their name', () => {
@@ -436,10 +496,19 @@ describe('states that arrive on their own announce themselves', () => {
 
   it('a chat send that times out is announced, not just drawn', () => {
     // The failure lands eight seconds later with no keypress behind it.
-    const wraps = app.match(/<div role="alert">\s*\{\/\* role="alert" on a wrapper/g) || [];
-    expect(wraps.length).toBe(2); // flock chat and DM
-    expect(app).toMatch(/role="alert"[\s\S]{0,700}?retryFailedDm/);
-    expect(app).toMatch(/role="alert"[\s\S]{0,700}?retryFailedMessage/);
+    //
+    // The two wrappers this counted were the flock chat's and the DM's, one
+    // each. They are one StatusLine now, so the count moved to the wirings:
+    // the region is written once and BOTH threads still route their failed
+    // row through it, which is what the pair of two was ever standing for.
+    const wraps = chatModule.match(/role="alert"\s*\n\s*style=\{\{/g) || [];
+    expect(wraps.length).toBe(1);
+    // Still on the wrapper, never on Retry or Remove: a button that claims
+    // the alert role stops announcing as a button.
+    expect(chatModule).toMatch(/role="alert"[\s\S]{0,900}?Didn&apos;t send/);
+    expect(chatModule).not.toMatch(/<button[^>]*role="alert"/);
+    expect(app).toMatch(/status="failed"[\s\S]{0,300}?retryFailedDm/);
+    expect(app).toMatch(/status="failed"[\s\S]{0,300}?retryFailedMessage/);
   });
 
   it('a saved profile says so', () => {
@@ -537,8 +606,17 @@ const styleAround = (s, i) => {
 
 describe('a container that hides its contents hides them from the keyboard too', () => {
   // Every style that clips its children and fades them out: the three header
-  // navs and the two typing indicators. Derived, not listed, so a fourth one
-  // added tomorrow is held to the same rule on the day it is written.
+  // navs. Derived, not listed, so a fourth one added tomorrow is held to the
+  // same rule on the day it is written.
+  //
+  // THE TWO TYPING INDICATORS WERE IN THIS SET AND ARE NOT ANY MORE. Both
+  // screens kept a fixed slot at the bottom of the stream and faded it out
+  // when nobody was typing, which is the exact shape this block is about.
+  // components/chat/TypingRow.js does not fade: it draws no strip at all
+  // until somebody is present or typing, so there is nothing left in the tree
+  // to hide. That is a better answer to the same defect than a visibility
+  // toggle, and the test below holds it to it rather than letting the pair
+  // simply disappear from the count.
   const collapsers = (() => {
     const found = [];
     const re = /overflow: 'hidden'[^\n]*?opacity: (\w+) \? 1 : 0/g;
@@ -552,12 +630,25 @@ describe('a container that hides its contents hides them from the keyboard too',
   })();
 
   it('the scan finds the collapsing containers rather than an empty set', () => {
-    // Five when this was written: chatNavOpen, dmNavOpen, discoverNavOpen and
-    // the two typing indicators. Without this floor every assertion below
-    // passes on nothing the moment the pattern is written differently.
-    expect(collapsers.length).toBeGreaterThanOrEqual(5);
+    // Three, and the set is named: chatNavOpen, dmNavOpen, discoverNavOpen.
+    // Without this floor every assertion below passes on nothing the moment
+    // the pattern is written differently.
+    expect(collapsers.length).toBeGreaterThanOrEqual(3);
     expect(collapsers.map((c) => c.state).sort())
-      .toEqual(['chatNavOpen', 'discoverNavOpen', 'dmIsTyping', 'dmNavOpen', 'isTyping']);
+      .toEqual(['chatNavOpen', 'discoverNavOpen', 'dmNavOpen']);
+  });
+
+  it('the typing strip is unmounted rather than faded, on both threads', () => {
+    const typingRow = stripComments(read('components/chat/TypingRow.js'));
+    // Nothing to hide: no pill exists until somebody is present or typing.
+    expect(typingRow).toMatch(/\{shown\.length > 0 && \(/);
+    expect(typingRow).not.toMatch(/opacity: \w+ \? 1 : 0/);
+    // The one thing that IS always mounted is the live region, because a
+    // screen reader only notices text arriving inside a region that was
+    // already in the tree. It holds a string and nothing focusable.
+    expect(typingRow).toMatch(/<div className="chat-sr-only" aria-live="polite">\{spoken\}<\/div>/);
+    // And neither screen kept its own faded slot behind.
+    expect(code).not.toMatch(/opacity: (dmIsTyping|isTyping) \? 1 : 0/);
   });
 
   it('each one toggles visibility on the same state it fades on', () => {

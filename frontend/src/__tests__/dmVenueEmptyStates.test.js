@@ -33,7 +33,7 @@
  */
 
 const React = require('react');
-const { render, screen } = require('@testing-library/react');
+const { render, screen, fireEvent } = require('@testing-library/react');
 
 // The screen imports these at module scope. None is under test and both reach
 // the network or the socket.
@@ -92,8 +92,6 @@ function dmProps(over = {}) {
     deletedDmUserIds: [],
     dmAtTop: false,
     dmBlocked: false,
-    dmChatEndRef: { current: null },
-    dmNearBottomRef: { current: true },
     dmChatSearch: '',
     dmChatSearchRef: { current: null },
     dmGalleryInputRef: { current: null },
@@ -266,5 +264,154 @@ describe('the DM Share a Venue sheet with an empty list', () => {
     expect(screen.getByText(/doesn't have your location/i)).toBeTruthy();
     expect(screen.getByText(/Discover tab/i)).toBeTruthy();
     expect(screen.queryByText(/unavailable/i)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE STREAM, AFTER THE CHAT MODULE TOOK IT OVER.
+//
+// This harness is the only one in the suite that RENDERS the DM screen, which
+// is why these live here rather than beside the module's own unit tests: the
+// module is proven against fixture rows, and what is proven below is that this
+// screen still says the same things through it. Six claims, and the last three
+// are defects and not preferences.
+//
+//   1. An empty thread still opens with the invitation, not with silence.
+//   2. A blocked pair still gets its own sentence, because a conversation with
+//      months of history behind it must not read as a fresh chat.
+//   3. In-chat search still counts its matches, still marks them inside the
+//      message, and still says so when nothing matched.
+//   4. Scrolling the thread does not take the keyboard down with it. The list
+//      container used to blur whatever input held focus on every scroll event,
+//      so a message arriving mid-sentence closed the keyboard under the
+//      person typing. MessageList's scroller does not do that, and this fires
+//      a real scroll at it with the composer focused to prove it.
+//   5. "Sending" sits under EVERY message in flight. It was pinned to the
+//      thread's last own row, so a second send while the first was still on
+//      the wire left one of them silent, and during a search "the last own
+//      row" was the last own row that MATCHED, which is a different message
+//      from the one that has not landed.
+//   6. A shared venue card draws its card and no caption, on the search path
+//      as well as off it. The caption ("Check out Kome!") is blanked from the
+//      display row because the card's first line is already the venue's name;
+//      the highlight pass rebuilt `text` from the shell's own copy and put it
+//      straight back, so a search for a word in the caption grew a duplicate
+//      line under the card.
+// ---------------------------------------------------------------------------
+
+const THREAD = (messages) => ({ ...DM, messages });
+
+describe('the DM stream through the chat module', () => {
+  test('an empty thread still invites the first message', () => {
+    render(React.createElement(DmDetail, dmProps()));
+    expect(screen.getByText('Say hi to start the conversation.')).toBeTruthy();
+  });
+
+  test('a blocked pair is told its history is gone, not that it is new', () => {
+    render(React.createElement(DmDetail, dmProps({ dmBlocked: { 7: true } })));
+    expect(screen.getByText('These messages are not available.')).toBeTruthy();
+    expect(screen.queryByText('Say hi to start the conversation.')).toBeNull();
+  });
+
+  test('a search counts its matches and marks them inside the message', () => {
+    const { container } = render(React.createElement(DmDetail, dmProps({
+      selectedDm: THREAD([
+        { id: 1, sender: 'Sam Diaz', senderId: 7, text: 'pizza at eight?', sentAt: '2026-09-05T18:00:00Z' },
+        { id: 2, sender: 'You', senderId: 1, text: 'on my way', sentAt: '2026-09-05T18:01:00Z' },
+      ]),
+      showDmChatSearch: true,
+      dmChatSearch: 'pizza',
+    })));
+    expect(screen.getByText(/1 matching messages/)).toBeTruthy();
+    // The unmatched row is filtered out, and the match itself is highlighted
+    // in place rather than the whole message being recoloured.
+    expect(screen.queryByText('on my way')).toBeNull();
+    const marks = [...container.querySelectorAll('mark')].map((el) => el.textContent);
+    expect(marks).toEqual(['pizza']);
+  });
+
+  test('a search that matches nothing says so', () => {
+    render(React.createElement(DmDetail, dmProps({
+      selectedDm: THREAD([{ id: 1, sender: 'Sam Diaz', senderId: 7, text: 'pizza at eight?', sentAt: '2026-09-05T18:00:00Z' }]),
+      showDmChatSearch: true,
+      dmChatSearch: 'tacos',
+    })));
+    expect(screen.getByText('No messages match "tacos"')).toBeTruthy();
+    expect(screen.queryByText(/matching messages/)).toBeNull();
+  });
+
+  test('every message in flight says so, not just the newest one', () => {
+    // Two sends on a slow network, neither acknowledged. The second one is not
+    // more in flight than the first.
+    render(React.createElement(DmDetail, dmProps({
+      selectedDm: THREAD([
+        { id: 1, sender: 'Sam Diaz', senderId: 7, text: 'here yet?', sentAt: '2026-09-05T18:00:00Z' },
+        { id: 'temp-1', sender: 'You', senderId: 1, text: 'omw', pending: true, sentAt: '2026-09-05T18:01:00Z' },
+        { id: 'temp-2', sender: 'You', senderId: 1, text: 'two mins', pending: true, sentAt: '2026-09-05T18:01:30Z' },
+      ]),
+    })));
+    expect(screen.getAllByText('Sending')).toHaveLength(2);
+  });
+
+  test('a search cannot move Sending onto a row that already landed', () => {
+    // The row still on the wire is not the last own row here, and a filtered
+    // list makes that ordinary rather than rare. Pinned to "last own", the one
+    // message that had not sent was the one with nothing under it.
+    const { container } = render(React.createElement(DmDetail, dmProps({
+      selectedDm: THREAD([
+        { id: 'temp-1', sender: 'You', senderId: 1, text: 'pizza soon', pending: true, sentAt: '2026-09-05T18:00:00Z' },
+        { id: 9, sender: 'You', senderId: 1, text: 'pizza later', sentAt: '2026-09-05T18:01:00Z' },
+      ]),
+      showDmChatSearch: true,
+      dmChatSearch: 'pizza',
+    })));
+    const sending = screen.getAllByText('Sending');
+    expect(sending).toHaveLength(1);
+    const inFlight = container.querySelectorAll('.chat-swipe');
+    const owner = [...inFlight].find((row) => row.contains(sending[0]));
+    expect(owner).toBeTruthy();
+    expect(owner.textContent).toContain('pizza soon');
+    expect(owner.textContent).not.toContain('pizza later');
+  });
+
+  test('a shared venue card draws no caption line, search running or not', () => {
+    const card = {
+      id: 3,
+      sender: 'You',
+      senderId: 1,
+      text: 'Check out Kome!',
+      message_type: 'venue_card',
+      venue_data: { name: 'Kome', addr: '10 Main St', place_id: 'p1' },
+      sentAt: '2026-09-05T18:00:00Z',
+    };
+    const plain = render(React.createElement(DmDetail, dmProps({ selectedDm: THREAD([card]) })));
+    expect(screen.getByText('Kome')).toBeTruthy();
+    expect(screen.queryByText(/check out/i)).toBeNull();
+    plain.unmount();
+
+    // The search path took the caption from the shell's own copy, so the line
+    // the blanking had just removed came back under the card, highlighted.
+    const searched = render(React.createElement(DmDetail, dmProps({
+      selectedDm: THREAD([card]),
+      showDmChatSearch: true,
+      dmChatSearch: 'check out',
+    })));
+    expect(screen.getByText('Kome')).toBeTruthy();
+    expect(screen.queryByText(/check out/i)).toBeNull();
+    expect(searched.container.querySelectorAll('mark')).toHaveLength(0);
+  });
+
+  test('scrolling the thread leaves the composer focused', () => {
+    const { container } = render(React.createElement(DmDetail, dmProps({
+      selectedDm: THREAD([{ id: 1, sender: 'Sam Diaz', senderId: 7, text: 'here yet?', sentAt: '2026-09-05T18:00:00Z' }]),
+    })));
+    const field = container.querySelector('[data-dm-input]');
+    expect(field).toBeTruthy();
+    field.focus();
+    expect(document.activeElement).toBe(field);
+    const scroller = container.querySelector('.chat-scroller');
+    expect(scroller).toBeTruthy();
+    fireEvent.scroll(scroller);
+    expect(document.activeElement).toBe(field);
   });
 });

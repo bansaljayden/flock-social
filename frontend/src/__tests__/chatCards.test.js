@@ -871,6 +871,163 @@ describe('VenueCardRow', () => {
     const { container } = render(<VenueCardRow venue={{ addr: '17 W Broad St' }} onAction={() => {}} />);
     expect(container.firstChild).toBeNull();
   });
+
+  test('a relative photo path goes through the resolver the screen hands in', () => {
+    /* A venue photo often arrives as an api path that only resolves against
+       the API host. Rendered raw it 404s and the card shows a broken box, so
+       the screen hands in its own resolver rather than this module reaching
+       for a BASE_URL it has no business knowing. */
+    const { container } = render(
+      <VenueCardRow
+        venue={{ ...venue, photo_url: '/api/places/photo?ref=abc' }}
+        resolvePhoto={(u) => `https://api.test${u}`}
+        onAction={() => {}}
+      />
+    );
+    expect(container.querySelector('img').getAttribute('src'))
+      .toBe('https://api.test/api/places/photo?ref=abc');
+  });
+
+  test('a photo that fails to load shows the placeholder rather than a broken box', () => {
+    const { container } = render(
+      <VenueCardRow
+        venue={{ ...venue, photo_url: 'https://cdn.test/kome.jpg' }}
+        placeholder="/marks/venue-placeholder.jpg"
+        onAction={() => {}}
+      />
+    );
+    const img = container.querySelector('img');
+    expect(img.getAttribute('src')).toBe('https://cdn.test/kome.jpg');
+    fireEvent.error(img);
+    expect(container.querySelector('img').getAttribute('src')).toBe('/marks/venue-placeholder.jpg');
+  });
+
+  test('the picture runs the full width, clipped by the card itself', () => {
+    // A shared place shrunk to a 64px thumbnail turns the one thing worth
+    // looking at into a bullet point. It is a hero now, and full bleed means
+    // the CARD carries no padding and clips the photo with its own corners,
+    // so what to pin is the shell's padding and the hero class, not a height.
+    const { container } = render(
+      <VenueCardRow venue={venue} placeholder="/marks/venue-placeholder.jpg" onAction={() => {}} />
+    );
+    const img = container.querySelector('img');
+    // No photo on the venue, so the placeholder stands in rather than nothing.
+    expect(img.getAttribute('src')).toBe('/marks/venue-placeholder.jpg');
+    const hero = img.parentElement;
+    expect(hero.className).toContain('chat-venue-hero');
+    expect(hero.className).not.toContain('chat-venue-hero--empty');
+    const shell = container.querySelector('.chat-card');
+    expect(shell.style.padding).toBe('0px');
+    expect(shell.style.overflow).toBe('hidden');
+  });
+
+  test('with no picture at all the hero collapses instead of holding a void open', () => {
+    const { container } = render(<VenueCardRow venue={venue} onAction={() => {}} />);
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.querySelector('.chat-venue-hero--empty')).toBeTruthy();
+  });
+
+  test('with no photo, no resolver and no placeholder it draws no image at all', () => {
+    const { container } = render(<VenueCardRow venue={venue} onAction={() => {}} />);
+    expect(container.querySelector('img')).toBeNull();
+  });
+
+  test('the rating, the price band and the crowd reading draw when they are supplied', () => {
+    render(<VenueCardRow venue={venue} rating={4.5} price="$$" crowd={62} onAction={() => {}} />);
+    expect(screen.getByText('4.5')).toBeTruthy();
+    expect(screen.getByText('$$')).toBeTruthy();
+    // The crowd is a dial now: the ring carries the capacity figure and the
+    // accessible name carries the ladder's word, so the number a reader sees
+    // still arrives with a scale attached for anyone who cannot see it.
+    expect(screen.getByText('62')).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'Steady. 62% of capacity.' })).toBeTruthy();
+  });
+
+  test('the dial fills to the score and names it off the server ladder', () => {
+    const cases = [[10, 'Quiet'], [30, 'Not Busy'], [62, 'Steady'], [80, 'Busy'], [95, 'Packed']];
+    cases.forEach(([score, word]) => {
+      const { container, unmount } = render(
+        <VenueCardRow venue={venue} crowd={score} onAction={() => {}} />
+      );
+      expect(screen.getByRole('img', { name: `${word}. ${score}% of capacity.` })).toBeTruthy();
+      // The filled arc really is the score's share of the circumference, so a
+      // dial that reads 95 cannot be drawn a quarter full.
+      const arc = container.querySelectorAll('.chat-venue-dial circle')[1];
+      const [on] = arc.getAttribute('stroke-dasharray').split(' ').map(Number);
+      const circumference = 2 * Math.PI * 13;
+      expect(on / circumference).toBeCloseTo(score / 100, 2);
+      unmount();
+    });
+  });
+
+  test('no crowd reading means no dial at all', () => {
+    const { container } = render(<VenueCardRow venue={venue} onAction={() => {}} />);
+    expect(container.querySelector('.chat-venue-dial')).toBeNull();
+  });
+
+  test('a shared venue carrying its own figures draws those', () => {
+    // venue_data holds stars, price and crowd as the sender shared them, which
+    // is where the old card read all three from.
+    render(<VenueCardRow venue={{ ...venue, stars: 4.2, price: '$$$', crowd: 30 }} onAction={() => {}} />);
+    expect(screen.getByText('4.2')).toBeTruthy();
+    expect(screen.getByText('$$$')).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'Not Busy. 30% of capacity.' })).toBeTruthy();
+  });
+
+  test('a price_level with no price string still draws its band', () => {
+    // Birdie's share path writes price_level and no price. The old card in
+    // App.js derived the band and the rebuild dropped the derivation, so every
+    // card Birdie shared lost its price silently.
+    render(<VenueCardRow venue={{ ...venue, price_level: 2 }} onAction={() => {}} />);
+    expect(screen.getByText('$$')).toBeTruthy();
+  });
+
+  test('a price_level outside 1 to 4 draws nothing rather than an empty band', () => {
+    [0, 5, null, 'free'].forEach((level) => {
+      const { container, unmount } = render(
+        <VenueCardRow venue={{ ...venue, price_level: level }} onAction={() => {}} />
+      );
+      expect(container.textContent).not.toContain('$');
+      unmount();
+    });
+  });
+
+  test('the review count and the category draw beside the rating when they arrive', () => {
+    render(
+      <VenueCardRow
+        venue={{ ...venue, rating: 4.6, user_ratings_total: 1284, category: 'sushi_restaurant' }}
+        onAction={() => {}}
+      />
+    );
+    expect(screen.getByText('4.6')).toBeTruthy();
+    expect(screen.getByText('(1,284)')).toBeTruthy();
+    // Underscores opened up and sentence cased, so a raw Places type never
+    // reaches a reader as night_club.
+    expect(screen.getByText('Sushi restaurant')).toBeTruthy();
+  });
+
+  test('and none of the three when the data does not carry them', () => {
+    const { container } = render(<VenueCardRow venue={venue} onAction={() => {}} />);
+    expect(textOf(container)).toBe('Kome17 W Broad StVote');
+  });
+
+  test('a venue with nothing to open is not announced as a button', () => {
+    /* A card with no place_id has no page behind it. Announced as a button it
+       is a promise the card cannot keep: a screen reader calls it a button, a
+       finger presses it, and nothing happens. */
+    const onOpen = jest.fn();
+    const { container } = render(
+      <VenueCardRow venue={{ name: 'Kome', addr: '17 W Broad St' }} onOpen={onOpen} onAction={() => {}} />
+    );
+    const shell = container.querySelector('.chat-card');
+    expect(shell.getAttribute('role')).toBeNull();
+    expect(shell.getAttribute('tabindex')).toBeNull();
+    expect(shell.className).not.toContain('chat-card-tappable');
+    // The footer action is the only control on the card.
+    expect(screen.getAllByRole('button')).toHaveLength(1);
+    fireEvent.click(shell);
+    expect(onOpen).not.toHaveBeenCalled();
+  });
 });
 
 // ===========================================================================
@@ -1138,8 +1295,13 @@ describe('the folder as a whole', () => {
     // A dollar sign that is not part of a template interpolation is one
     // somebody typed into a string, which is how "$undefined", "$16.9" and a
     // bare "$" have each shipped in this app before. formatMoney in
-    // SystemRow.js is the only place allowed to write one, and it is the only
-    // file that has one.
+    // SystemRow.js is the only place allowed to write an AMOUNT.
+    //
+    // VenueCardRow.js is allowed exactly one, and it is not an amount: Places
+    // grades a venue's price 1 to 4 and the band is that grade repeated, so
+    // `'$'.repeat(n)` is a conversion, not a number becoming a string. The
+    // count stays exact on purpose. A second dollar sign in either file is a
+    // real money string and still fails this.
     CARD_JS.forEach((file) => {
       const code = readCard(file)
         .split('\n')
@@ -1149,7 +1311,8 @@ describe('the folder as a whole', () => {
         })
         .join('\n');
       const bare = (code.match(/\$(?!\{)/g) || []).length;
-      expect({ file, bare }).toEqual({ file, bare: file === 'SystemRow.js' ? 1 : 0 });
+      const allowed = { 'SystemRow.js': 1, 'VenueCardRow.js': 1 };
+      expect({ file, bare }).toEqual({ file, bare: allowed[file] || 0 });
     });
   });
 });

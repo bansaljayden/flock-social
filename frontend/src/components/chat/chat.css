@@ -28,6 +28,9 @@
  *             --chat-reaction-h --chat-reaction-overlap
  *   classes   .chat-dot .chat-pill-in .chat-swipe .chat-row-body
  *             .chat-sr-only .chat-actions-key .chat-scroller
+ *             .chat-row-time (the tapped-open time, drawn inline off the
+ *             tokens above, named so a test and the integration pass can
+ *             find it)
  *   colour    --chat-ground --chat-ink --chat-meta --chat-notice
  *             --chat-name-fallback --chat-quote-ink
  *             --chat-quote-bg --chat-reaction-bg --chat-reaction-border

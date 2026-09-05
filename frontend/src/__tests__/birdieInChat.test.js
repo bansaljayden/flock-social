@@ -9,8 +9,12 @@ const chat = fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatDetail.j
 test('the chat header has an Ask Birdie control that opens the panel', () => {
   expect(chat).toMatch(/<button aria-label="Ask Birdie" className="hit44 glass-btn" onClick=\{\(\) => \{ setChatNavOpen\(false\); openBirdie\(\); \}\}/);
   // The bird glyph, not a still bird: still birds have a 40px floor and this
-  // is a 36px header control.
-  expect(chat).toMatch(/aria-label="Ask Birdie"[^\n]*\{Icons\.birdie\('white', 18\)\}<\/button>/);
+  // is a 36px header control. The SIZE is deliberately not pinned. It was 18
+  // while every other glyph in that rail was 15, which made the one solid mark
+  // in the row both the largest and the heaviest thing in it, and pinning the
+  // number here meant the rail could not be balanced without editing a test
+  // about whether the control exists at all.
+  expect(chat).toMatch(/aria-label="Ask Birdie"[^\n]*\{Icons\.birdie\('white', \d+\)\}<\/button>/);
   expect(chat).toMatch(/^  openBirdie,$/m);
 });
 

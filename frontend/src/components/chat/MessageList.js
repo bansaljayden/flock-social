@@ -19,7 +19,9 @@ import './chat.css';
  *      It raises a "3 new messages" pill instead. The old screens kept a
  *      hysteresis band in App.js for the same reason and the tail-follow
  *      effect read it; that knowledge moves in here, where the scroll
- *      position actually lives.
+ *      position actually lives. The same pill is the way back to the present
+ *      for somebody who scrolled up and simply read: off the bottom it says
+ *      "Jump to latest", and it counts only what actually arrived.
  *   2. Your own send always follows the tail, whatever the reader was doing.
  *      Pressing send is a statement that you want to be at the bottom.
  *   3. Loading an older page keeps the reader on the message they were
@@ -88,7 +90,23 @@ import './chat.css';
  * and typing alone fires several events a second.
  */
 
-const NEAR_BOTTOM_PX = 48;
+/* THE FOLLOW BAND, and why it is two numbers and not one.
+
+   The stream keeps following new messages until the reader is WELL off the
+   bottom, and only then stops and offers the pill. The two old screens used
+   600 to leave the bottom and 200 to come back to it, and those are the
+   numbers here. A single threshold was tried in the rebuild at 48px, which is
+   a thumb's worth of scroll: a reader who nudged the list an inch to see the
+   message above stopped being followed, so the thread froze under them and
+   every arrival raised a pill instead of landing where they were looking.
+
+   The gap between the two is hysteresis, and it is the reason the state does
+   not flap. With one number, a reader parked exactly on it flips in and out of
+   following on every pixel of momentum scrolling, and the pill blinks. Leaving
+   costs 600, returning costs coming within 200, so nothing sits on a knife
+   edge. */
+const LEAVE_BOTTOM_PX = 600;
+const RETURN_BOTTOM_PX = 200;
 
 /* One shared empty array, so a screen that renders before its rows exist does
    not hand the layout effect a new reference on every render. */
@@ -147,6 +165,12 @@ export default function MessageList({
   const mountedRef = useRef(false);
   const prevRef = useRef({ firstId: null, lastId: null, height: 0, count: 0 });
   const [newCount, setNewCount] = useState(0);
+  /* The same reading as nearBottomRef, kept as state because the pill is
+     rendered from it. The ref is what the layout effect reads before paint,
+     and it also carries the PREVIOUS answer into the next scroll event, which
+     is what makes the band above hysteretic rather than two thresholds
+     fighting each other. */
+  const [offBottom, setOffBottom] = useState(false);
 
   const isMineRow = useCallback((m) => (
     !!m && (m.sender === ownName || (myId != null && m.senderId != null && String(m.senderId) === String(myId)))
@@ -161,6 +185,7 @@ export default function MessageList({
     mountedRef.current = false;
     prevRef.current = { firstId: null, lastId: null, height: 0, count: 0 };
     nearBottomRef.current = true;
+    setOffBottom(false);
     setNewCount(0);
   }, [threadKey]);
 
@@ -201,10 +226,12 @@ export default function MessageList({
         if (isMineRow(lastRow) || nearBottomRef.current) {
           scrollToBottom(el, true);
           /* Following the tail IS catching up, so the pill has nothing left
-             to count. Clearing it here rather than waiting for the scroll
-             event matters: a programmatic scroll does not always raise one,
-             and a pill left behind at the bottom of the thread is a control
-             that does nothing. */
+             to say, on either of its two grounds. Clearing both here rather
+             than waiting for the scroll event matters: a programmatic scroll
+             does not always raise one, and a pill left behind at the bottom
+             of the thread is a control with nowhere to go. */
+          nearBottomRef.current = true;
+          setOffBottom(false);
           setNewCount(0);
         } else {
           const at = list.findIndex((m) => m.id === prev.lastId);
@@ -220,10 +247,14 @@ export default function MessageList({
   const onScroll = (e) => {
     const c = e.currentTarget;
     const fromBottom = c.scrollHeight - c.scrollTop - c.clientHeight;
-    const near = fromBottom <= NEAR_BOTTOM_PX;
-    nearBottomRef.current = near;
+    // The ref holds the previous answer, which is the half of the band that
+    // decides which threshold this event is measured against.
+    const wasOff = !nearBottomRef.current;
+    const off = wasOff ? fromBottom > RETURN_BOTTOM_PX : fromBottom > LEAVE_BOTTOM_PX;
+    nearBottomRef.current = !off;
+    setOffBottom(off);
     // Reaching the bottom IS reading them, so the pill has nothing left to say.
-    if (near && newCount !== 0) setNewCount(0);
+    if (!off && newCount !== 0) setNewCount(0);
   };
 
   /* Memoised because the parent re-renders on every socket event the chat
@@ -282,7 +313,7 @@ export default function MessageList({
               opacity: olderLoading ? 0.6 : 1,
             }}
           >
-            {olderLoading ? 'Loading' : 'Earlier messages'}
+            {olderLoading ? 'Loading' : 'Load earlier messages'}
           </button>
         </div>
       )}
@@ -311,8 +342,20 @@ export default function MessageList({
         </React.Fragment>
       ))}
 
-      {newCount > 0 && (
-        /* Sticky, so it rides the bottom of the viewport without leaving the
+      {(offBottom || newCount > 0) && (
+        /* THE WAY BACK TO NOW, and it is offered on either of two grounds.
+
+           Something arrived while you were reading back, which the count says.
+           Or you simply scrolled up, which is the plain "Jump to latest" the
+           two old screens carried: a reader deep in last Tuesday had no
+           control at all once this became a new-message counter, and the way
+           home was a long manual drag.
+
+           One pill, not two. The count is the headline when there is one, and
+           the plain wording is what is left when there is not, so the control
+           never claims messages arrived that did not.
+
+           Sticky, so it rides the bottom of the viewport without leaving the
            scroller and without a fixed element to position against the
            keyboard. It fades in over 120ms and does nothing else. */
         <div
@@ -332,6 +375,7 @@ export default function MessageList({
             onClick={() => {
               setNewCount(0);
               nearBottomRef.current = true;
+              setOffBottom(false);
               scrollToBottom(scrollerRef.current, true);
             }}
             style={{
@@ -348,7 +392,9 @@ export default function MessageList({
               cursor: 'pointer',
             }}
           >
-            {newCount === 1 ? '1 new message' : `${newCount} new messages`}
+            {newCount === 0
+              ? 'Jump to latest'
+              : (newCount === 1 ? '1 new message' : `${newCount} new messages`)}
           </button>
         </div>
       )}

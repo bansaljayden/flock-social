@@ -46,7 +46,7 @@ import {
 } from '../components/chat/groupRows';
 import MessageGroup from '../components/chat/MessageGroup';
 import MessageList from '../components/chat/MessageList';
-import MessageRow, { groupReactions, imageOf, aspectOf } from '../components/chat/MessageRow';
+import MessageRow, { groupReactions, imageOf, aspectOf, timeOf } from '../components/chat/MessageRow';
 import StatusLine from '../components/chat/StatusLine';
 import TypingRow from '../components/chat/TypingRow';
 import DayDivider from '../components/chat/DayDivider';
@@ -524,6 +524,106 @@ describe('MessageRow: reactions, photos, quotes', () => {
   });
 });
 
+/* ═══════════════════════════════════════════════════════════════════════
+   3b. The time. A tap, not a line under every message
+   ═══════════════════════════════════════════════════════════════════════ */
+
+describe('MessageRow: the time is a tap', () => {
+  it('reads the formatted time the mappers already write, and formats the instant when there is none', () => {
+    expect(timeOf({ time: '9:41 PM' })).toBe('9:41 PM');
+    // Locale is the machine's, so the assertion is that a real instant
+    // produces a real string rather than what that string says.
+    expect(typeof timeOf({ sentAt: '2026-09-05T20:00:00' })).toBe('string');
+    expect(timeOf({ sentAt: 'what time is it' })).toBeNull();
+    expect(timeOf({ time: '   ' })).toBeNull();
+    expect(timeOf({})).toBeNull();
+    expect(timeOf(null)).toBeNull();
+  });
+
+  it('toggles the time on a tap and hides it on the next one', () => {
+    render(<MessageRow message={row({ id: 'a', text: 'hey', time: '9:41 PM' })} />);
+    expect(screen.queryByText('9:41 PM')).toBeNull();
+    fireEvent.click(screen.getByText('hey'));
+    expect(screen.getByText('9:41 PM')).toBeInTheDocument();
+    fireEvent.click(screen.getByText('hey'));
+    expect(screen.queryByText('9:41 PM')).toBeNull();
+  });
+
+  it('reveals it out of flow, in the space every row already reserves, so nothing else moves', () => {
+    /* The whole reason the time came back as a tap and not as a line under
+       every message: revealing one must not push the rows below it down or
+       jump the scroll. It hangs in the same reserved strip the reactions use,
+       bottom aligned and out of flow. */
+    render(<MessageRow message={row({ id: 'a', text: 'hey', time: '9:41 PM' })} />);
+    fireEvent.click(screen.getByText('hey'));
+    const stamp = screen.getByText('9:41 PM');
+    expect(stamp.style.position).toBe('absolute');
+    expect(stamp.style.bottom).toBe('0px');
+  });
+
+  it('reveals only the row that was tapped', () => {
+    const runs = groupRows([
+      row({ id: 'a', text: 'first', time: '9:41 PM' }),
+      row({ id: 'b', text: 'second', time: '9:42 PM' }),
+    ], { now: NOW });
+    render(<MessageGroup run={runs[0]} colour={RUN_COLOUR} />);
+    fireEvent.click(screen.getByText('first'));
+    expect(screen.getByText('9:41 PM')).toBeInTheDocument();
+    expect(screen.queryByText('9:42 PM')).toBeNull();
+  });
+
+  it('offers nothing on a row with no time to show', () => {
+    // A failed send has no instant behind it. A tap draws no time rather than
+    // an empty slot or a guess.
+    const { container } = render(
+      <MessageRow message={row({ id: 'temp-1', text: 'hey', time: null, sentAt: null })} />
+    );
+    fireEvent.click(screen.getByText('hey'));
+    expect(container.querySelector('.chat-row-time')).toBeNull();
+  });
+
+  it('leaves the space alone on a row that already carries a control', () => {
+    /* Retry and Remove live under the message that did not send. The time does
+       not fight them for that space, and a tap there belongs to them. */
+    const { container } = render(
+      <MessageRow
+        message={row({ id: 'a', text: 'hey', time: '9:41 PM' })}
+        status={<StatusLine status="failed" onRetry={() => {}} onRemove={() => {}} />}
+      />
+    );
+    fireEvent.click(screen.getByText('hey'));
+    expect(container.querySelector('.chat-row-time')).toBeNull();
+  });
+
+  it('does not open the time behind the menu a long press just asked for', () => {
+    jest.useFakeTimers();
+    try {
+      const onLongPress = jest.fn();
+      const { container } = render(
+        <MessageRow
+          message={row({ id: 'a', text: 'hey', time: '9:41 PM' })}
+          onLongPress={onLongPress}
+        />
+      );
+      const node = container.querySelector('.chat-swipe');
+      fireEvent.touchStart(node, { touches: [{ clientX: 10, clientY: 100 }] });
+      act(() => { jest.advanceTimersByTime(360); });
+      fireEvent.touchEnd(node, { changedTouches: [{ clientX: 10, clientY: 100 }] });
+      expect(onLongPress).toHaveBeenCalledTimes(1);
+      // The click the browser dispatches on release is spent by the press.
+      fireEvent.click(screen.getByText('hey'));
+      expect(screen.queryByText('9:41 PM')).toBeNull();
+
+      // And the next real tap still works.
+      fireEvent.click(screen.getByText('hey'));
+      expect(screen.getByText('9:41 PM')).toBeInTheDocument();
+    } finally {
+      jest.runOnlyPendingTimers();
+      jest.useRealTimers();
+    }
+  });
+});
+
 describe('MessageRow gestures: 350ms and 48px, reported and not handled', () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => {
@@ -890,11 +990,14 @@ describe('MessageList: the scroller', () => {
     const { rerender } = render(
       <MessageList {...listProps} rows={[row({ id: 'a' })]} onLoadOlder={onLoadOlder} atTop={false} />
     );
-    fireEvent.click(screen.getByText('Earlier messages'));
+    /* The sentence, not a shouted fragment. The style is the module's
+       (uppercase, tracked, in the notice type) and the WORDS are the ones
+       ChatDetail, App.js and the rest of the suites already use. */
+    fireEvent.click(screen.getByText('Load earlier messages'));
     expect(onLoadOlder).toHaveBeenCalledTimes(1);
 
     rerender(<MessageList {...listProps} rows={[row({ id: 'a' })]} onLoadOlder={onLoadOlder} atTop />);
-    expect(screen.queryByText('Earlier messages')).toBeNull();
+    expect(screen.queryByText('Load earlier messages')).toBeNull();
   });
 
   it('says it is loading a page rather than pretending the button is idle', () => {
@@ -909,13 +1012,16 @@ describe('MessageList: the scroller', () => {
     const rows = [row({ id: 'a' })];
     const { container, rerender } = render(<MessageList {...listProps} rows={rows} />);
     const scroller = container.querySelector('.chat-scroller');
-    const readTop = makeScrollable(scroller, { scrollTop: 120 });
+    /* 1000 - 40 - 300 is 660, which is past the 600 it takes to stop being
+       followed. At the 48px this module briefly used, half a thumb of scroll
+       did that, which is the defect the band replaces. */
+    const readTop = makeScrollable(scroller, { scrollTop: 40 });
     fireEvent.scroll(scroller);
-    expect(readTop()).toBe(120);
+    expect(readTop()).toBe(40);
 
     rerender(<MessageList {...listProps} rows={[...rows, row({ id: 'b', text: 'and another' })]} />);
 
-    expect(readTop()).toBe(120);
+    expect(readTop()).toBe(40);
     expect(screen.getByText('1 new message')).toBeInTheDocument();
   });
 
@@ -936,7 +1042,7 @@ describe('MessageList: the scroller', () => {
     const rows = [row({ id: 'a' })];
     const { container, rerender } = render(<MessageList {...listProps} rows={rows} />);
     const scroller = container.querySelector('.chat-scroller');
-    const readTop = makeScrollable(scroller, { scrollTop: 120 });
+    const readTop = makeScrollable(scroller, { scrollTop: 40 });
     fireEvent.scroll(scroller);
 
     rerender(<MessageList {...listProps} rows={[...rows, row({ id: 'b' }), row({ id: 'c' })]} />);
@@ -951,7 +1057,7 @@ describe('MessageList: the scroller', () => {
     const rows = [row({ id: 'a' })];
     const { container, rerender } = render(<MessageList {...listProps} rows={rows} />);
     const scroller = container.querySelector('.chat-scroller');
-    const readTop = makeScrollable(scroller, { scrollTop: 120 });
+    const readTop = makeScrollable(scroller, { scrollTop: 40 });
     fireEvent.scroll(scroller);
 
     rerender(
@@ -970,7 +1076,7 @@ describe('MessageList: the scroller', () => {
       <MessageList {...listProps} rows={[row({ id: 'a' }), pending]} />
     );
     const scroller = container.querySelector('.chat-scroller');
-    makeScrollable(scroller, { scrollTop: 120 });
+    makeScrollable(scroller, { scrollTop: 40 });
     fireEvent.scroll(scroller);
 
     rerender(
@@ -1000,9 +1106,9 @@ describe('MessageList: the scroller', () => {
       <MessageList {...listProps} threadKey="flock-1" rows={[row({ id: 'a' })]} />
     );
     const scroller = container.querySelector('.chat-scroller');
-    const readTop = makeScrollable(scroller, { scrollTop: 120 });
+    const readTop = makeScrollable(scroller, { scrollTop: 40 });
     fireEvent.scroll(scroller);
-    expect(readTop()).toBe(120);
+    expect(readTop()).toBe(40);
 
     rerender(
       <MessageList
@@ -1022,6 +1128,74 @@ describe('MessageList: the scroller', () => {
     );
     fireEvent.click(screen.getByText("Actions for Ava's message"));
     expect(onLongPress).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps following the tail until the reader is well off the bottom', () => {
+    /* 1000 - 250 - 300 is 450 from the bottom, which is a couple of screens of
+       scrollback and still inside the 600 the old screens followed through.
+       At the 48px this module briefly used, this reader had already stopped
+       being followed and the thread froze under them. */
+    const rows = [row({ id: 'a' })];
+    const { container, rerender } = render(<MessageList {...listProps} rows={rows} />);
+    const scroller = container.querySelector('.chat-scroller');
+    const readTop = makeScrollable(scroller, { scrollTop: 250 });
+    fireEvent.scroll(scroller);
+    expect(screen.queryByText('Jump to latest')).toBeNull();
+
+    rerender(<MessageList {...listProps} rows={[...rows, row({ id: 'b' })]} />);
+    expect(readTop()).toBe(1000);
+    expect(screen.queryByText(/new message/)).toBeNull();
+  });
+
+  it('offers the way back to now to a reader who scrolled up and simply read', () => {
+    /* Nothing has arrived, so there is nothing to count, and the reader still
+       needs a way out of last Tuesday. Deleting "Jump to latest" and keeping
+       only the counter left them with a long manual drag and no control. */
+    const { container } = render(<MessageList {...listProps} rows={[row({ id: 'a' })]} />);
+    const scroller = container.querySelector('.chat-scroller');
+    const readTop = makeScrollable(scroller, { scrollTop: 40 });
+    fireEvent.scroll(scroller);
+
+    const pill = screen.getByText('Jump to latest');
+    expect(pill).toBeInTheDocument();
+    fireEvent.click(pill);
+    expect(readTop()).toBe(1000);
+    expect(screen.queryByText('Jump to latest')).toBeNull();
+  });
+
+  it('holds the pill through the band, so it does not flap on one scroll', () => {
+    /* Leaving the bottom costs 600 and coming back costs reaching 200. A
+       single threshold blinks the control on and off for a reader parked on
+       it, which is what the gap between the two numbers is for. */
+    const { container } = render(<MessageList {...listProps} rows={[row({ id: 'a' })]} />);
+    const scroller = container.querySelector('.chat-scroller');
+    makeScrollable(scroller, { scrollTop: 40 });
+    fireEvent.scroll(scroller);
+    expect(screen.getByText('Jump to latest')).toBeInTheDocument();
+
+    // 350 from the bottom: past the 200 it takes to be back, so still off it.
+    scroller.scrollTop = 350;
+    fireEvent.scroll(scroller);
+    expect(screen.getByText('Jump to latest')).toBeInTheDocument();
+
+    // 150 from the bottom: inside the return, so the control has nothing to do.
+    scroller.scrollTop = 550;
+    fireEvent.scroll(scroller);
+    expect(screen.queryByText('Jump to latest')).toBeNull();
+  });
+
+  it('says what arrived when something did, and says nothing about arrivals when nothing has', () => {
+    const rows = [row({ id: 'a' })];
+    const { container, rerender } = render(<MessageList {...listProps} rows={rows} />);
+    const scroller = container.querySelector('.chat-scroller');
+    makeScrollable(scroller, { scrollTop: 40 });
+    fireEvent.scroll(scroller);
+    expect(screen.getByText('Jump to latest')).toBeInTheDocument();
+
+    rerender(<MessageList {...listProps} rows={[...rows, row({ id: 'b' })]} />);
+    expect(screen.getByText('1 new message')).toBeInTheDocument();
+    // One pill, not two, and the count is the headline while there is one.
+    expect(screen.queryByText('Jump to latest')).toBeNull();
   });
 });
 

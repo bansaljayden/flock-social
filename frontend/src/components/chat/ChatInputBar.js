@@ -279,7 +279,10 @@ export default function ChatInputBar({
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 13px 0 18px' }}>
           <img
             src={pendingImage}
-            alt="The photo waiting to send"
+            /* Decorative: the paragraph beside this thumbnail already says what it
+               is and what state it is in, so an alt here would make a screen
+               reader announce the same thing twice. */
+            alt=""
             style={{ width: '44px', height: '44px', objectFit: 'cover', borderRadius: '10px', flexShrink: 0 }}
           />
           <div style={{ flex: 1, minWidth: 0 }}>
