@@ -1,0 +1,282 @@
+/*
+ * chat.css: the parts of the new chat stream that an inline style object
+ * cannot express, plus the tokens the module adds.
+ *
+ * WHAT THIS REPLACES. Nothing on its own. The stream it dresses replaces the
+ * bubble lists inside `screens/ChatDetail.js` and `screens/DmDetail.js`. Those
+ * two screens carry their own inline styles and share `index.css`; this file
+ * is loaded by the chat module only, so nothing outside `components/chat/`
+ * changes shape because of it.
+ *
+ * WHY A STYLESHEET AT ALL, when the repo styles with inline objects. Three
+ * things inline styles cannot do: keyframes (the typing dots), a media query
+ * (the reduced motion guard), and a token definition. Everything else in this
+ * module is still an inline object reading a var(), which is how the rest of
+ * the app is written.
+ *
+ * THE MEASUREMENTS ARE TOKENS, not literals scattered through six components.
+ * They came off a real iPhone capture at 3x and they are read in points, which
+ * on iOS is CSS px, so 14 pt body text is `14px` here. Every number below is
+ * the measured value or one derived from it by the arithmetic written beside
+ * it. If a measurement is ever re-taken, this block is the only place to edit.
+ *
+ * NEW TOKENS ADDED BY THIS FILE (nothing else in the repo defines them):
+ *   geometry  --chat-bar-w --chat-bar-x --chat-content-x --chat-name-x
+ *             --chat-body-size --chat-body-line --chat-row-gap --chat-run-gap
+ *             --chat-name-size --chat-name-line --chat-name-track
+ *             --chat-divider-size --chat-notice-size --chat-notice-line
+ *             --chat-reaction-h --chat-reaction-overlap
+ *   classes   .chat-dot .chat-pill-in .chat-swipe .chat-row-body
+ *             .chat-sr-only .chat-actions-key .chat-scroller
+ *   colour    --chat-ground --chat-ink --chat-meta --chat-notice
+ *             --chat-name-fallback --chat-quote-ink
+ *             --chat-quote-bg --chat-reaction-bg --chat-reaction-border
+ *             --chat-reaction-ink --chat-media-ph --chat-pill-bg
+ *             --chat-pill-ink --chat-pill-shadow
+ */
+
+:root {
+  /* ── Geometry. Measured in points at 3x; points are CSS px on iOS. ────
+     The bar sits at x 9.3 and is 1.7 wide, so its right edge lands at 11,
+     and the content starts at 18, which is the 7 pt gutter in the capture.
+     The name label starts at 22, four further in than the body, because the
+     label is optically lighter and lines up on its cap rather than its box. */
+  --chat-bar-w: 1.7px;
+  --chat-bar-x: 9.3px;
+  --chat-content-x: 18px;
+  --chat-name-x: 22px;
+
+  /* Body 14 / 19. Half leading is (19 - 14) / 2 = 2.5, the ascender sits
+     about 10.5 above the baseline, so the first baseline is 13 below the
+     top of a line box and the cap top is about 3.5 below it. Those two
+     numbers are what the run spacing below is derived from. */
+  --chat-body-size: 14px;
+  --chat-body-line: 19px;
+
+  /* 4 to 6 between lines inside a run. 5 is the middle of the measured band. */
+  --chat-row-gap: 5px;
+
+  /* Between runs. The measurement is: last baseline to the next name's cap
+     top 16, and bar bottom to that same cap top 11, which agree only if the
+     bar overshoots the last BASELINE by 5. Working back: the row block ends
+     6 below the last baseline (half leading plus descender space), the name
+     box puts its cap top 0.9 below its own top, so the gap between the two
+     boxes is 16 - 6 - 0.9 = 9.1, rounded to 9. */
+  --chat-run-gap: 9px;
+
+  /* Name label: cap height 8, which is 11 to 12 px semibold. 11.5 measures
+     an 8.05 cap in the system face. Tracked about +1. */
+  --chat-name-size: 11.5px;
+  --chat-name-line: 12px;
+  --chat-name-track: 1px;
+
+  --chat-divider-size: 9px;
+  --chat-notice-size: 10px;
+  --chat-notice-line: 20px;
+
+  /* Reactions hang off the bottom edge of a row. The pill is 16 tall and
+     overlaps by 8, so the part below the row is 8, and every row reserves
+     exactly 8 whether it has reactions or not. That is why the first reaction
+     on a message moves nothing on the page.
+
+     THE CAPTURE READS 28 TO 30 AND THIS IS 16, which is a departure and needs
+     its reason written down. Two other measured numbers box it in. The run gap
+     is 9, and MessageGroup spends the reserve out of it
+     (`--chat-run-gap` minus this token), so a reserve above 9 turns that into a
+     negative margin and a pill on the last row of a run lands on top of the
+     next sender's name label. And the body line box is 19, so the part of a
+     pill sitting ABOVE the reserve, which is the height minus the overlap, has
+     to stay inside the descender space or the pill covers the words it belongs
+     to. Reserve at most 9, overshoot at most about 8: the tallest pill this
+     rhythm carries is about 17, and 16 is that with a pixel in hand.
+
+     Getting the measured 28 needs one of the three to give, and each is a
+     product decision above this file: a wider run gap (every run further
+     apart, in the one dimension the brief says to match), reactions that push
+     the stream when they arrive (the plan says a first reaction moves
+     nothing), or reactions drawn clear below the row rather than overlapping
+     it. Do not raise this token on its own. */
+  --chat-reaction-h: 16px;
+  --chat-reaction-overlap: 8px;
+
+  /* ── Colour. Flock's cream and navy at the capture's contrast, never the
+     other app's palette. Most of these are aliases, so a palette change in
+     index.css carries into the chat without a second edit. The four that
+     hold real values are restated under [data-theme="dark"] below. */
+  --chat-ground: var(--bg-primary);
+  --chat-ink: var(--text-primary);
+  --chat-meta: var(--text-secondary);
+  --chat-notice: var(--text-tertiary);
+  --chat-name-fallback: var(--text-secondary);
+  --chat-quote-ink: var(--text-secondary);
+  --chat-reaction-bg: var(--bg-card-solid);
+  --chat-reaction-border: var(--border-default);
+  --chat-reaction-ink: var(--text-primary);
+  --chat-media-ph: var(--bg-tertiary);
+
+  --chat-quote-bg: rgba(30, 41, 59, 0.05);
+  --chat-pill-bg: #1e293b;
+  --chat-pill-ink: #f1ede0;
+  --chat-pill-shadow: 0 4px 14px rgba(30, 41, 59, 0.18);
+}
+
+[data-theme="dark"] {
+  /* Geometry is not restated on purpose: a measurement does not change with
+     the theme, and two copies of 1.7px is how one of them goes stale. Only
+     the tokens whose VALUES differ are here. */
+  --chat-quote-bg: rgba(241, 237, 224, 0.08);
+  --chat-pill-bg: #f1ede0;
+  --chat-pill-ink: #0f172a;
+  --chat-pill-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+
+/* ── The typing dots ──────────────────────────────────────────────────────
+   Three dots in a thought bubble. The only looping motion in the module, and
+   it is the one the design asks for by name. 1.4s so it reads as breathing
+   rather than blinking, staggered 0.16s so the eye follows left to right. */
+@keyframes chatTypingDot {
+  0%, 60%, 100% { opacity: 0.35; transform: translateY(0); }
+  30% { opacity: 1; transform: translateY(-1.5px); }
+}
+
+.chat-dot {
+  animation: chatTypingDot 1.4s ease-in-out infinite;
+}
+.chat-dot:nth-child(2) { animation-delay: 0.16s; }
+.chat-dot:nth-child(3) { animation-delay: 0.32s; }
+
+/* ── The new-messages pill ────────────────────────────────────────────────
+   A fade, not a rise and not a bounce. 120ms, because the pill appears while
+   the reader is mid scroll and anything slower reads as a page element
+   arriving rather than a notice. */
+@keyframes chatPillIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.chat-pill-in {
+  animation: chatPillIn 120ms ease-out both;
+}
+
+/* ── Swipe to reply ───────────────────────────────────────────────────────
+   The row follows the finger with no transition while the finger is down, and
+   springs nothing on release: it just returns over 120ms. `is-dragging` is the
+   finger-down state, so the row cannot lag behind the touch. */
+.chat-swipe {
+  transition: transform 120ms ease-out;
+  touch-action: pan-y;
+  /* iOS raises its own callout on a long press, and it wins the race against
+     the app's actions menu. It is turned off for the WHOLE row rather than for
+     the text alone: the row also holds a photo, and a long press on an image
+     raises Save Image / Copy, which is the same collision one element over.
+     The property inherits, so a photo, a reply quote, a reaction pill and any
+     card the parent renders inside a row are all covered by this one line.
+     Selection is untouched. See `.chat-row-body` below. */
+  -webkit-touch-callout: none;
+}
+.chat-swipe.is-dragging {
+  transition: none;
+}
+
+/* The message text. The callout is already off for the whole row above; this
+   rule exists for the other half of that decision. Selection itself stays ON:
+   a person copying an address out of a message is doing something reasonable,
+   and it is the grey bubble menu that has to go, not the text. The callout is
+   restated here so a row rendered outside `.chat-swipe` still suppresses it
+   over the words. */
+.chat-row-body {
+  -webkit-touch-callout: none;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* ── Screen reader only ───────────────────────────────────────────────────
+   The presence pills and the status line say things visually that need words
+   for a screen reader. Standard clip pattern, kept local so the module does
+   not depend on a utility class living in index.css. */
+.chat-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── The keyboard door onto a message's actions ───────────────────────────
+   Long press and swipe are finger gestures, so a keyboard or switch user has
+   no way into the reactions, reply, pin, report and unsend that hang off a
+   message. This button is that way in. It is clipped out of sight until it
+   takes focus, at which point it becomes a real, visible pill sitting under
+   its own message, so a sighted keyboard user can see where they are.
+
+   The cost is one extra tab stop per message and it is worth it: the
+   alternative on offer was activating the menu from the message itself, which
+   cannot work once a message may hold a card with buttons of its own. */
+.chat-actions-key {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  background: none;
+  color: inherit;
+}
+.chat-actions-key:focus {
+  position: static;
+  width: auto;
+  height: auto;
+  margin: 4px 0 0;
+  overflow: visible;
+  clip: auto;
+  padding: 3px 8px;
+  border: 1px solid var(--chat-reaction-border);
+  border-radius: 9px;
+  background: var(--chat-reaction-bg);
+  color: var(--chat-reaction-ink);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+/* ── Reduced motion ───────────────────────────────────────────────────────
+   index.css already carries an app-wide guard, and this restates it for the
+   module so the chat is correct even if it is ever mounted somewhere that
+   stylesheet is not. The dots stop on their visible frame rather than
+   vanishing, because a typing indicator that disappears reads as "they
+   stopped typing", which is a state the server never sent. */
+@media (prefers-reduced-motion: reduce) {
+  .chat-dot {
+    animation: none !important;
+    opacity: 0.75 !important;
+    transform: none !important;
+  }
+  .chat-pill-in {
+    animation: none !important;
+  }
+  .chat-swipe {
+    transition: none !important;
+  }
+  .chat-scroller {
+    scroll-behavior: auto !important;
+  }
+}
+
+/* A reaction's tap target is 44 tall for the finger; the pill drawn inside it
+   is 16. The global focus-visible rule would ring the button, which overflows
+   into the message above and the row below, so the button turns its own ring
+   off and the pill wears it instead. */
+.chat-reaction-pill { border-radius: 999px; }
+button:focus-visible > .chat-reaction-pill {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}

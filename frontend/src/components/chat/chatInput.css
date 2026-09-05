@@ -1,0 +1,160 @@
+/* ---------------------------------------------------------------------------
+   chatInput.css - everything the composer cannot say with an inline style.
+
+   WHAT THIS IS
+   The stylesheet for `ChatInputBar.js` and the caret class that
+   `useKeyboardComposer.js` toggles. It replaces nothing: the composers in
+   ChatDetail.js and DmDetail.js are entirely inline styles today, which is why
+   neither of them can style a placeholder, hide a caret, or hide a scrollbar.
+   Everything here is a rule an inline style cannot write, plus the two that
+   have to OUTRANK one: the field's transparent background, which fights
+   index.css's `[data-theme="dark"] textarea`, and the caret colour, which has
+   to stay beatable by the hidden class.
+
+   THE TOKENS THIS FILE ADDS
+   Every colour below is new to the project and is defined twice, once on
+   :root and once under [data-theme="dark"], which is the selector index.css
+   uses. The geometry tokens under them are defined ONCE on purpose: a bar is
+   52 tall in both themes, and a second identical copy is just a second place
+   to forget to edit.
+
+   The palette is Flock's cream and navy held at the contrast Snapchat's chrome
+   holds, per decision 6 in CHAT-REBUILD-PLAN.md. It is never Snapchat's own
+   colours. Where an existing index.css token already carries the right value
+   the new token aliases it rather than restating the hex, so a theme change in
+   one place still reaches here.
+   --------------------------------------------------------------------------- */
+
+:root {
+  /* The pill the field sits in. Cream, one step darker than the chat ground. */
+  --chat-input-fill: var(--bg-tertiary);
+  /* The camera circle at the far left. Snapchat fills it a shade lighter than
+     the pill so the two read as different controls rather than one bar. */
+  --chat-camera-fill: var(--bg-hover);
+  /* Composer glyphs: camera, library, plus. */
+  --chat-composer-icon: var(--text-secondary);
+  /* "Send a chat" before anything is typed. */
+  --chat-input-placeholder: var(--text-tertiary);
+  /* The hairline across the top of the whole composer. */
+  --chat-composer-hairline: var(--divider);
+  /* The send control, which is the one filled thing in the bar. Navy on cream
+     in light, cream on navy in dark, so the glyph inside it always clears
+     contrast without depending on which member colour the viewer holds. */
+  --chat-send-fill: #14304e;
+  --chat-send-glyph: #ffffff;
+  /* The sentence that explains a disabled composer. */
+  --chat-composer-notice: var(--text-secondary);
+
+  /* Geometry, measured from the iPhone capture at 3x and written down in
+     CHAT-REBUILD-PLAN.md. Theme invariant, so declared once. */
+  --chat-composer-bar-h: 52px;
+  --chat-composer-pill-h: 40px;
+  --chat-composer-pill-max-h: 120px;   /* five lines of 20px plus 20px padding */
+  --chat-composer-pill-radius: 20px;
+  --chat-composer-camera: 38px;
+}
+
+[data-theme="dark"] {
+  --chat-input-fill: var(--bg-tertiary);
+  --chat-camera-fill: var(--bg-hover);
+  --chat-composer-icon: var(--text-secondary);
+  --chat-input-placeholder: var(--text-tertiary);
+  --chat-composer-hairline: var(--divider);
+  --chat-send-fill: #f1ede0;
+  --chat-send-glyph: #0f172a;
+  --chat-composer-notice: var(--text-secondary);
+}
+
+/* This app has no global box-sizing reset. index.css's only `*` rule sets
+   font-family, and the two `* { box-sizing: border-box }` blocks in src/ are
+   scoped to the marketing pages, so by default padding lands OUTSIDE the number
+   written on the box. Every measurement in this file is a border box: the bar
+   is 52 from the hairline INCLUDING its 6 above and 6 below, the pill is 40
+   INCLUDING the field's 10 and 10, and the five-line ceiling of 120 is 100 of
+   text plus that same 20. Without this the composer shipped 64 and 60. Declared
+   for the whole composer at once; sheets.css does the same by hand next door. */
+.chat-composer,
+.chat-composer * {
+  box-sizing: border-box;
+}
+
+/* The field itself. 16px is not a style choice: WKWebView zooms the whole
+   viewport when a focused control computes under 16px, and index.css already
+   carries an app-wide floor rule for exactly that. Stated here as well so this
+   file is readable on its own. */
+.chat-composer-field {
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--text-primary);
+  /* The viewer's own colour arrives as --chat-caret, set on the element by
+     ChatInputBar. It is NOT an inline `caret-color`, and that is the whole
+     point: an inline declaration outranks every class rule without
+     !important, and this caret has to stay overridable, because
+     .chat-composer-caret-hidden below is toggled on this same element for the
+     length of every keyboard slide. */
+  caret-color: var(--chat-caret, var(--text-primary));
+  border: none;
+  outline: none;
+  resize: none;
+  width: 100%;
+  min-width: 0;
+  overflow-y: hidden;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+/* Scoped, not bare, and the extra class is load-bearing. index.css carries
+   `[data-theme="dark"] textarea { background-color: var(--bg-tertiary); }` at
+   (0,1,1), which beats a lone class, so in dark mode the field painted its own
+   opaque square-cornered rectangle over the pill's 20px left radius. Through
+   the wrapper this is (0,2,0) and wins in both themes, whatever
+   --chat-input-fill is later re-pointed to. */
+.chat-composer .chat-composer-field {
+  background-color: transparent;
+}
+
+.chat-composer-field::placeholder {
+  color: var(--chat-input-placeholder);
+  opacity: 1;   /* Firefox dims placeholders by default and then the copy is unreadable. */
+}
+
+/* A visible scrollbar inside a 40px pill is louder than the text it is next
+   to. The field still scrolls at five lines; it just does it quietly. */
+.chat-composer-field::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* Set by useKeyboardComposer for the length of a keyboard slide. iOS draws the
+   caret natively, outside the compositor, so it does not ride a CSS transform:
+   left visible it detaches from the field and slides on its own.
+
+   This is (0,1,0), the same as .chat-composer-field, and it is declared AFTER
+   it, so it wins on source order. Both halves of that matter: move this rule up
+   the file, or put the caret colour back in an inline style, and the class is
+   applied on every slide and changes nothing. */
+.chat-composer-caret-hidden {
+  caret-color: transparent;
+}
+
+/* The library glyph inside the pill's right edge, and the plus outside it,
+   swap as the field fills. A width and opacity change, no scale, no bounce:
+   the only motion this screen is allowed is the keyboard curve. */
+.chat-composer-collapse {
+  transition: opacity 140ms ease, width 140ms ease;
+}
+
+/* The composer is one of the two things allowed to move, and only because the
+   keyboard is moving it. Under reduce, it snaps. index.css already collapses
+   every transition globally under this query; the rule is restated here so a
+   future edit to this file cannot quietly opt out of it. */
+@media (prefers-reduced-motion: reduce) {
+  .chat-composer,
+  .chat-composer-bar,
+  .chat-composer-collapse {
+    transition: none !important;
+    animation: none !important;
+  }
+}
