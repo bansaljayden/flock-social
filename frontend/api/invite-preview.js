@@ -131,7 +131,7 @@ const CANONICAL_HOST = 'https://www.flockcorp.com';
 // apex -> www redirect when fetching an image. Same file and same dimensions as
 // the default tags in public/index.html; keep them in sync.
 const OG_IMAGE = CANONICAL_HOST + '/og-image.png';
-const OG_IMAGE_ALT = 'Flock. Plans die in the group chat. Flock is where they happen.';
+const OG_IMAGE_ALT = 'Flock. Get the flock out the door.';
 
 // Preview bots give up fast. Facebook's scraper allows a few seconds and
 // iMessage is stricter, so a slow backend must not turn into a dead preview:

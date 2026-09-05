@@ -754,7 +754,7 @@ html:has(.lp) body { overflow-x: clip; }
 }
 
 /* The headline spans the full measure; the supporting copy and the phone hang
-   under it. In the old half-width column "Plans die in the group chat. Flock is
+   under it. In the old half-width column the two-line hero headline was
    where they happen." broke into four ragged lines at 1280 — two sentences at
    72px need about 900px to sit on two. Giving the h1 the whole grid is also the
    only composition here that isn't text-left / image-right. */

@@ -107,9 +107,9 @@ test('real doc: every computed count matches the doc-declared count, zero valida
   // Spot-check against the doc's own numbers (section 6).
   assert.equal(listing.name, 'Flock: Plan Nights Out');
   assert.equal(listing.name.length, listing.declaredCounts.name.chars);
-  assert.equal(listing.subtitle, 'Vote, match budgets, go');
-  assert.equal(listing.subtitle.length, 23);
-  assert.equal(listing.description.length, 2140);
+  assert.equal(listing.subtitle, 'Get the flock out the door');
+  assert.equal(listing.subtitle.length, 26);
+  assert.equal(listing.description.length, 2139);
   assert.equal(Buffer.byteLength(listing.keywords, 'utf8'), 98);
   assert.equal(listing.promotionalText.length, 157);
   assert.equal(listing.whatsNew.length, 177);
@@ -154,8 +154,8 @@ test('mutation: broken paste-block delimiter fails naming section 6.4', () => {
 
 test('mutation: oversized description fails naming the 4000 limit', () => {
   const mutated = DOC.replace(
-    'Plans die in the group chat.',
-    `Plans die in the group chat.${'x'.repeat(2000)}`
+    'Get the flock out the door.',
+    `Get the flock out the door.${'x'.repeat(2000)}`
   );
   const errors = validateListing(parseSubmissionDoc(mutated));
   const limitError = errors.find((e) => e.field === 'description' && /limit is 4000.*FIX/s.test(e.message));
@@ -164,8 +164,8 @@ test('mutation: oversized description fails naming the 4000 limit', () => {
 
 test('mutation: over-100-byte keyword field fails naming the byte limit', () => {
   const mutated = DOC.replace(
-    'weekend,meet up,decide,invite',
-    'weekend,meet up,decide,invite,anextremelylongkeywordthatpushesitover'
+    'weekend,meet up,budget,invite',
+    'weekend,meet up,budget,invite,anextremelylongkeywordthatpushesitover'
   );
   const errors = validateListing(parseSubmissionDoc(mutated));
   const limitError = errors.find((e) => e.field === 'keywords' && /limit is 100 bytes.*FIX/s.test(e.message));
@@ -188,9 +188,9 @@ test('mutation: an em dash in listing copy fails, naming the copy standard', () 
 });
 
 test('mutation: copy changed without its recorded count fails as doc drift', () => {
-  const mutated = DOC.replace('Plans die in the group chat.', 'Plans die in the group chat'); // one char shorter
+  const mutated = DOC.replace('Get the flock out the door.', 'Get the flock out the door'); // one char shorter
   const errors = validateListing(parseSubmissionDoc(mutated));
-  const drift = errors.find((e) => e.field === 'description' && /Doc drift.*declares.*2140.*2139.*FIX/s.test(e.message));
+  const drift = errors.find((e) => e.field === 'description' && /Doc drift.*declares.*2139.*2138.*FIX/s.test(e.message));
   assert.ok(drift, `expected a doc-drift error, got: ${JSON.stringify(errors)}`);
 });
 
@@ -300,7 +300,7 @@ test('first run (empty remote): plan creates version, localization, set; no dele
   assert.ok(!kinds.includes('delete-screenshot'));
   const createLoc = steps.find((s) => s.kind === 'create-version-localization');
   assert.equal(createLoc.body.attributes.locale, 'en-US');
-  assert.equal(createLoc.body.attributes.description.length, 2140);
+  assert.equal(createLoc.body.attributes.description.length, 2139);
   assert.equal(createLoc.body.attributes.supportUrl, 'https://www.flockcorp.com/support');
 });
 
