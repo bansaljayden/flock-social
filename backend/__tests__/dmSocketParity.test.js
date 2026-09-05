@@ -983,3 +983,29 @@ test('vote_venue tallies group by venue_name alone, so one venue is one row', as
   const upsert = calls.find((c) => /INSERT INTO venue_votes/.test(c.sql));
   assert.ok(/COALESCE\(EXCLUDED\.venue_id/.test(upsert.sql), upsert.sql);
 });
+
+
+test('a socket that disconnects while dm_share_location is still authorizing registers nothing', async () => {
+  // The handler awaits the block and relationship checks, then adds the peer
+  // and moves the account-level count up. If the transport went during those
+  // awaits, the disconnect handler had already run over an empty set, and the
+  // late registration was never withdrawn: the count said live for good, so
+  // the account's next session could stop sharing and the peer would never be
+  // told (adversarial audit round 2, 2026-09-05).
+  const ava = { id: 1, name: 'Ava' };
+  const { io, socket: dead } = connect(ava);
+  dmShareWorld();
+
+  const pending = fire(dead, 'dm_share_location', { receiverId: 2, lat: 40.7, lng: -74.0 });
+  dead.disconnect(); // the transport is gone before the awaits resolve
+  await fire(dead, 'disconnect');
+  await pending;
+
+  // The next session shares and stops; the stop must reach the peer.
+  const live = reconnect(io, ava, 's2');
+  await fire(live, 'dm_share_location', { receiverId: 2, lat: 40.71, lng: -74.01 });
+  const before = dmStops(io, dead, live).length;
+  await fire(live, 'dm_stop_sharing_location', { receiverId: 2 });
+  assert.strictEqual(dmStops(io, dead, live).length, before + 1,
+    'the stop was swallowed by a share the dead socket left behind');
+});

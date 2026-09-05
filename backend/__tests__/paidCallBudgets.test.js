@@ -718,3 +718,37 @@ test('a model with no climatology falls back rather than inventing a temperature
   // the same global fill prepare_features.add_climate_anomaly uses.
   assert.ok(Number.isFinite(mlInternals.climateNorm(-89, 7)));
 });
+
+
+test('a cold request reserves both units before the first call, and a warm search hands one back', async () => {
+  // Round 2 of the adversarial audit (2026-09-05): the route peeked at
+  // affordability for two units and reserved one, so another request could
+  // spend the caller's last unit while the details were in flight; the search
+  // was then refused after a paid call, half an answer. Both units are
+  // reserved atomically now, and the search unit is returned when the
+  // neighbour search is answered from cache.
+  const first = await get('/api/crowd/PLACE_ALT_REFUND_A/alternatives?localHour=20&localDay=5');
+  assert.strictEqual(first.status, 200);
+  assert.strictEqual(placesBudgetStatus(7).globalUsed, 2);
+
+  // A different venue at the fixture's one address: cold details, warm search.
+  googleCalls = [];
+  const second = await get('/api/crowd/PLACE_ALT_REFUND_B/alternatives?localHour=20&localDay=5');
+  assert.strictEqual(second.status, 200);
+  assert.strictEqual(googleCalls.length, 1, 'only the details were bought; the search was warm');
+  assert.strictEqual(placesBudgetStatus(7).globalUsed, 3, 'two reserved, one handed back');
+  assert.strictEqual(placesBudgetStatus(7).userRemaining, 27);
+});
+
+test('refundPlacesSearch gives back at most what the caller holds', () => {
+  __resetPlacesBudget();
+  assert.strictEqual(placesBudget.allowPlacesSearch(8, 2), true);
+  const used = placesBudgetStatus(8).globalUsed;
+  assert.strictEqual(placesBudget.refundPlacesSearch(8, 1), 1);
+  assert.strictEqual(placesBudgetStatus(8).globalUsed, used - 1);
+  assert.strictEqual(placesBudgetStatus(8).userRemaining, PER_USER_HOURLY - 1);
+  // Bounded: a refund larger than the holding returns only the holding.
+  assert.strictEqual(placesBudget.refundPlacesSearch(8, 5), 1);
+  assert.strictEqual(placesBudgetStatus(8).userRemaining, PER_USER_HOURLY);
+  assert.strictEqual(placesBudget.refundPlacesSearch(8, 1), 0);
+});

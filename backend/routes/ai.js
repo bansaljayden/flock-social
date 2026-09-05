@@ -1238,9 +1238,21 @@ function buildContextLine(ctx) {
 
 // The other half of the context, carried in the USER turn as data. Same
 // sanitiser and the same bounds as before; only the slot changed.
+//
+// WHY NOT OPAQUE IDS. Round 2 of the adversarial audit asked for the names to
+// be replaced with ids resolved at render time, on the grounds that a label
+// saying "data" is not an isolation boundary for a language model. It is not,
+// and no boundary exists that is: the same names reach the model at the same
+// trust level through get_user_flocks and every venue tool, whose outputs are
+// clamped but not withheld, so removing them from this line removes nothing
+// the model can see. What this line CAN do is refuse to be closed from
+// inside: the brackets and quotes that would let a name end the data line and
+// open a second one are swapped for characters that cannot. The residual is
+// the one every LLM product carries, and it is bounded by the tool clamps.
 function buildContextDataLine(ctx) {
   if (!ctx || typeof ctx !== 'object') return '';
-  const clean = (v) => promptSafe(v, MAX_CONTEXT_CHARS);
+  const clean = (v) => String(promptSafe(v, MAX_CONTEXT_CHARS) || '')
+    .replace(/\[/g, '(').replace(/\]/g, ')').replace(/"/g, "'");
   const parts = [];
   const flockName = clean(ctx.flock?.name);
   if (flockName) {
