@@ -378,6 +378,29 @@ function actorFrom(data = {}) {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+// Whether the message a push is about has been hidden, unsent, or deleted
+// since the push was made. `messageId` is a flock message, `dmId` a direct
+// message; each producer sets exactly one. No id, nothing to check.
+async function contentGoneFor(data = {}) {
+  const messageId = Number(data.messageId);
+  const dmId = Number(data.dmId);
+  if (Number.isInteger(messageId) && messageId > 0) {
+    const r = await pool.query(
+      'SELECT (COALESCE(is_hidden, false) OR sender_deleted_at IS NOT NULL) AS gone FROM messages WHERE id = $1',
+      [messageId]
+    );
+    return r.rows.length === 0 || r.rows[0].gone === true;
+  }
+  if (Number.isInteger(dmId) && dmId > 0) {
+    const r = await pool.query(
+      'SELECT (COALESCE(is_hidden, false) OR sender_deleted_at IS NOT NULL) AS gone FROM direct_messages WHERE id = $1',
+      [dmId]
+    );
+    return r.rows.length === 0 || r.rows[0].gone === true;
+  }
+  return false;
+}
+
 function flockFrom(data = {}) {
   if (data.flockId === undefined || data.flockId === null) return null;
   const n = Number(data.flockId);
@@ -403,6 +426,16 @@ async function checkVisibility(userId, data = {}) {
     if (actorId && Number(actorId) !== Number(userId)) {
       if (await isBlockedBetween(userId, actorId)) return CANNOT_SEE;
     }
+
+    // THE CONTENT ITSELF, when the payload names it (UGC-loop audit,
+    // 2026-09-05). A push held for quiet hours carries its body verbatim, and
+    // the sweep handed that body back hours later whatever had happened to
+    // the row in between: a message a moderator hid at 23:50 landed on the
+    // lock screen at 08:00, text and sender name included. A row that is
+    // hidden, unsent, or gone answers CANNOT_SEE; a payload with no id (the
+    // older producers, and every non-message type) is unchanged.
+    const contentGone = await contentGoneFor(data);
+    if (contentGone) return CANNOT_SEE;
 
     // One lookup answers all four questions: does the recipient still exist,
     // are they allowed to be here at all, can they still see the thing, and is

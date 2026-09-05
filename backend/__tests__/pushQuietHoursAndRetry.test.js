@@ -631,3 +631,53 @@ test('a deployment with no Firebase still touches no database', async () => {
     firebaseService.isEnabled = wasEnabled;
   }
 });
+
+
+test('a held notification is not released once its message has been hidden or unsent', async () => {
+  // The body was stored verbatim and handed back hours later whatever had
+  // happened to the row (UGC-loop audit, 2026-09-05). With the row named in
+  // the payload the sweep re-reads it and drops the push.
+  for (const [data, table] of [
+    [{ type: 'flock_message', flockId: 5, senderId: 2, messageId: 900 }, 'messages'],
+    [{ type: 'dm_message', senderId: 2, dmId: 901 }, 'direct_messages'],
+  ]) {
+    reset();
+    visible();
+    zoneIs(null);
+    ledgerAndLiveness();
+    let deleted = null;
+    on(new RegExp(`AS gone FROM ${table} WHERE id = \\$1`), () => ({ rows: [{ gone: true }] }));
+    on(/UPDATE push_outbox o/i, () => ({
+      rows: [{ id: 12, user_id: 1, reason: 'quiet', title: 'Ava', body: 'the hidden words', data, attempts: 1, expires_at: new Date(Date.now() + 60000) }],
+    }));
+    on(/DELETE FROM push_outbox WHERE id = ANY/i, (params) => { deleted = params[0]; return { rowCount: 1 }; });
+    await pushHelper.sweepPushOutbox();
+    assert.strictEqual(sends.length, 0, `${table}: hidden text reached the lock screen`);
+    assert.deepStrictEqual(deleted, [12], 'a dropped row is still forgotten');
+  }
+
+  // A row that is still there is delivered as before.
+  reset();
+  visible();
+  zoneIs(null);
+  ledgerAndLiveness();
+  on(/AS gone FROM messages WHERE id = \$1/, () => ({ rows: [{ gone: false }] }));
+  on(/UPDATE push_outbox o/i, () => ({
+    rows: [{ id: 13, user_id: 1, reason: 'quiet', title: 'Ava in Dinner', body: 'still here', data: { type: 'flock_message', flockId: 5, senderId: 2, messageId: 902 }, attempts: 1, expires_at: new Date(Date.now() + 60000) }],
+  }));
+  on(/DELETE FROM push_outbox WHERE id = ANY/i, () => ({ rowCount: 1 }));
+  await pushHelper.sweepPushOutbox();
+  assert.strictEqual(sends.length, 1);
+  assert.strictEqual(sends[0].body, 'still here');
+});
+
+test('the four message producers name the sender and the row, so a release can re-check both', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const handlers = fs.readFileSync(path.join(__dirname, '..', 'sockets', 'handlers.js'), 'utf8');
+  const messages = fs.readFileSync(path.join(__dirname, '..', 'routes', 'messages.js'), 'utf8');
+  assert.match(handlers, /\{ type: 'flock_message', flockId: String\(flockId\), senderId: String\(user\.id\), messageId: String\(message\.id\) \}/);
+  assert.match(handlers, /\{ type: 'dm_message', senderId: String\(user\.id\), dmId: String\(msg\.id\) \}/);
+  assert.match(messages, /\{ type: 'flock_message', flockId: String\(flockId\), senderId: String\(req\.user\.id\), messageId: String\(message\.id\) \}/);
+  assert.match(messages, /\{ type: 'dm_message', senderId: String\(req\.user\.id\), dmId: String\(message\.id\) \}/);
+});

@@ -150,7 +150,13 @@ test('a REST flock message pushes each offline member with the socket debounce k
     assert.strictEqual(p.title, 'Ava in Dinner');
     assert.strictEqual(p.body, 'hello');
     // Same key shape as sockets/handlers.js send_message: type + flockId string.
-    assert.deepStrictEqual(p.data, { type: 'flock_message', flockId: '42' });
+    // senderId and messageId let a held push be re-checked at release
+    // (UGC-loop audit 2026-09-05); the id is whatever the INSERT returned.
+    assert.strictEqual(p.data.type, 'flock_message');
+    assert.strictEqual(p.data.flockId, '42');
+    assert.strictEqual(p.data.senderId, '1');
+    assert.match(String(p.data.messageId), /^\d+$/);
+    assert.deepStrictEqual(Object.keys(p.data).sort(), ['flockId', 'messageId', 'senderId', 'type']);
   }
 });
 
@@ -195,7 +201,10 @@ test('a REST DM pushes the receiver with the socket dm debounce key', async () =
   assert.strictEqual(p.userId, 2);
   assert.strictEqual(p.title, 'Ava');
   assert.strictEqual(p.body, 'hey');
-  assert.deepStrictEqual(p.data, { type: 'dm_message', senderId: '1' });
+  assert.strictEqual(p.data.type, 'dm_message');
+  assert.strictEqual(p.data.senderId, '1');
+  assert.match(String(p.data.dmId), /^\d+$/);
+  assert.deepStrictEqual(Object.keys(p.data).sort(), ['dmId', 'senderId', 'type']);
 });
 
 // ---------------------------------------------------------------------------

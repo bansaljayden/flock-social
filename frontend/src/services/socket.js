@@ -773,6 +773,12 @@ export function onBlockedBy(callback) {
   return register('blocked_by', callback);
 }
 
+// The reverse of blocked_by, to both sides: the thread that closed on the
+// block reopens without leaving the screen.
+export function onUnblockedBy(callback) {
+  return register('unblocked_by', callback);
+}
+
 // --- Live location sharing ---
 
 export function emitLocation(flockId, lat, lng) {

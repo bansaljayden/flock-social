@@ -841,3 +841,21 @@ test('hiding a moderator\'s own content IS allowed, deliberately', async () => {
   assert.strictEqual(res.status, 200, res.text);
   assert.strictEqual(res.body.action, 'content_hidden');
 });
+
+
+test('un-banning an account that is not banned is refused, so one ban cannot be reversed twice', async () => {
+  // Two moderators with the same card open: the second Unban used to answer
+  // 200, write a second user_unbanned row and dismiss the report again
+  // (UGC-loop audit, 2026-09-05). The recovery direction stays open for an
+  // account that IS banned; only the no-op is refused.
+  handlers = [
+    reportLookup(reportRow('profile', { content_id: null, reported_user_id: 3 })),
+    [/UPDATE users SET is_banned = false/, () => ({ rows: [], rowCount: 0 })],
+    [/SELECT id, is_banned FROM users WHERE id = \$1/, () => ({ rows: [{ id: 3, is_banned: false }] })],
+    ...resolveAndAudit,
+  ];
+  const res = await call('PUT', '/api/admin/reports/7', { action: 'unban' });
+  assert.strictEqual(res.status, 409, res.text);
+  assert.match(res.body.error, /not banned/);
+  assert.strictEqual(ran(/INSERT INTO moderation_actions/).length, 0, 'a refused unban writes no audit row');
+});
