@@ -145,6 +145,12 @@ if (!process.env.DATABASE_URL && process.env.PGHOST) {
 }
 
 const pool = new Pool({
+  // A stalled connect must fail, not hang. The first --commit run of this
+  // script sat for two hours with no session on the server, no lock held and
+  // nothing written: the TLS connect to the Railway proxy never answered and
+  // pg's default is to wait forever. Twenty seconds is far longer than a
+  // healthy connect and short enough that an operator sees the failure.
+  connectionTimeoutMillis: 20000,
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false },
 });
