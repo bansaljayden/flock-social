@@ -6,15 +6,21 @@ const path = require('path');
 const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
 const chat = fs.readFileSync(path.join(__dirname, '..', 'screens', 'ChatDetail.js'), 'utf8');
 
-test('the chat header has an Ask Birdie control that opens the panel', () => {
-  expect(chat).toMatch(/<button aria-label="Ask Birdie" className="hit44 glass-btn" onClick=\{\(\) => \{ setChatNavOpen\(false\); openBirdie\(\); \}\}/);
-  // The bird glyph, not a still bird: still birds have a 40px floor and this
-  // is a 36px header control. The SIZE is deliberately not pinned. It was 18
-  // while every other glyph in that rail was 15, which made the one solid mark
-  // in the row both the largest and the heaviest thing in it, and pinning the
-  // number here meant the rail could not be balanced without editing a test
-  // about whether the control exists at all.
-  expect(chat).toMatch(/aria-label="Ask Birdie"[^\n]*\{Icons\.birdie\('white', \d+\)\}<\/button>/);
+test('the chat has an Ask Birdie control that opens the panel', () => {
+  // BIRDIE MOVED TO THE PLUS. It was a glyph in the header's "Features" rail,
+  // behind a pill that cost the plan's name its last few characters. The rail
+  // is gone and every one of its controls is a tile in the composer sheet, so
+  // what this asserts is that the chat still opens the panel, from the control
+  // the thumb is already on.
+  expect(chat).toMatch(/onAskBirdie=\{\(\) => \{ setPlusOpen\(false\); openBirdie\(\); \}\}/);
+  // The tile draws the bird glyph, and the sheet steps it down a size because
+  // it is the icon set's one solid mark: a filled glyph reads heavier than an
+  // outline at the same nominal size, which is exactly what went wrong in the
+  // rail it came from.
+  const sheet = fs.readFileSync(
+    path.join(__dirname, '..', 'components', 'chat', 'sheets', 'ComposerPlusSheet.js'), 'utf8'
+  );
+  expect(sheet).toMatch(/glyph: Icons\.birdie, label: 'Ask Birdie'/);
   expect(chat).toMatch(/^  openBirdie,$/m);
 });
 

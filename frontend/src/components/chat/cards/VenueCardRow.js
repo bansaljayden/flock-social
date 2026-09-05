@@ -1,38 +1,18 @@
 /**
  * A SHARED VENUE, AS A MESSAGE.
  *
- * WHAT IT REPLACES. A place somebody dropped into the chat IS the message, the
- * way a photo message is, so it gets the room a message gets. It was a 64px
- * thumbnail row during the rebuild, which turned the one thing worth looking at
- * into a bullet point, and before that a tile with two competing buttons and an
- * inset photo floating inside a padded box.
+ * WHAT IT REPLACES. This card has been three things. A tile with two competing
+ * buttons and an inset photo floating in a padded box; then a 64px thumbnail
+ * row, which turned the one thing worth looking at into a bullet point; then a
+ * full-bleed hero with a footer action, which came to 331pt on a 390pt phone
+ * where the visible stream with the keyboard up is 327. That last one was the
+ * whole screen, and its own Vote button sat underneath the keyboard.
  *
- * THE PICTURE RUNS THE FULL WIDTH OF THE CARD. Not inset with its own corner
- * radius inside a padded box: the card's own corners clip it, so the photo is
- * the top of the card rather than an object sitting on it. The card is padded
- * where the words are and nowhere else.
- *
- * AND IT IS CROPPED, NOT FITTED. This card is ONE MESSAGE and has to read as
- * one. At 16:9 the photo alone was 201pt on a 390pt phone, the card came to
- * 331pt, and the visible stream with the keyboard up is 327pt: a single shared
- * venue was the entire screen. The photo is a fixed 140pt band now (about
- * 2.6:1 at this width) and the card lands at 205pt, which is 63% of the
- * keyboard-up stream and leaves room for about one message above it.
- *
- * NO FOOTER BUTTON, AND THE ADDRESS IS GONE. A survey of how iMessage,
- * WhatsApp, Telegram, Signal, Discord, Messenger and Instagram DMs draw an
- * inline rich card found that not one of them puts a persistent full-width
- * button inside it, and not one shows more than a title and a single meta
- * line. The whole card is the tap target everywhere. So the address went (it
- * is one tap away on the venue's own page, which is where you go to navigate)
- * and the 44pt footer went with it.
- *
- * THE ACTION DID NOT GO. It moved onto the photo, opposite the crowd dial,
- * where it costs the card no height at all. Flock is the one product in that
- * survey where a shared place carries a vote, and tapping the card opens the
- * venue rather than casting one, so the action is the single thing a tap
- * cannot do and deleting it would have cost the coordination loop to save
- * 44pt that the crop had already found.
+ * IT IS A CHAT. That is the constraint everything below answers to. A shared
+ * place is ONE MESSAGE in a thread of messages and has to read as one, so the
+ * card is a row 88pt tall: about a quarter of the keyboard-up stream, with
+ * room for four more messages under it. A picture big enough to judge a place
+ * by is worth having. It is not worth the thread.
  *
  * WHAT IT MAY DRAW IS FIXED BY THE SERVER. `sanitizeVenueData` in
  * `backend/utils/venuePayload.js` is the only thing that reaches a client, and
@@ -44,24 +24,31 @@
  * price_level of 2 IS "$$", and a crowd of 72 IS "Busy" on the server's own
  * ladder.
  *
+ * ONE LINE OF FACTS, because there is one line's worth of room. Rating with
+ * its review count, price band, category, and how many people have voted, in
+ * that order, ellipsised as a whole rather than stacked. The address is not
+ * among them: it is a tap away on the venue's own page, which is where you go
+ * when you want to navigate, and it survives in the card's accessible name so
+ * a screen reader user still hears which place this is.
+ *
  * THE PHOTO PATH IS THE CALLER'S, NOT THIS FILE'S. A venue photo can arrive
  * as an absolute Google URL or as a relative api path that only resolves
  * against the API host, and this module is presentational: it has no BASE_URL
- * and must not reach for one. So the screen hands in `resolvePhoto` (the
- * app's own resolveVenuePhoto) and `placeholder` (the app's bird on cream).
- * With neither, the raw url is used as it arrived, which is right for an
- * absolute one and is all a card with no resolver can honestly do.
+ * and must not reach for one. So the screen hands in `resolvePhoto` (the app's
+ * own resolveVenuePhoto) and `placeholder` (the app's bird on cream). With
+ * neither, the raw url is used as it arrived, which is right for an absolute
+ * one and is all a card with no resolver can honestly do.
  *
- * A PHOTO THAT FAILS SHOWS THE PLACEHOLDER, NOT A BROKEN BOX. `onError` swaps
- * once. With no placeholder to swap to it falls back to the map pin rather
- * than leaving the browser's broken image glyph inside a message.
+ * THE ACTION IS AN ICON, and that is a size decision too. Spelling it "Vote"
+ * cost about 72pt of width, which came straight out of the line of facts and
+ * truncated the category on every card. The count moved into that line, where
+ * it reads as one more fact about the place, and the control kept its 44pt
+ * target with none of the width. Its accessible name still says the word.
  *
- * ONE ACTION, AND NEVER THE WORD "VIEW". The whole card opens the venue. A
- * "View details" button next to a card that already opens on tap teaches the
- * reader that the card does not, which is the confusion the rebuild removed.
- * So the footer carries the one thing tap cannot do: Vote inside a flock, Pin
- * inside a DM. The surface decides which, because a DM has no vote to join
- * and a flock has no single pinned venue.
+ * ONE ACTION, AND NEVER THE WORD "VIEW". The whole card opens the venue, so
+ * the button carries the one thing a tap cannot do: Vote inside a flock, Pin
+ * inside a DM. The surface decides which, because a DM has no vote to join and
+ * a flock has no single pinned venue.
  *
  * AND WHEN THERE IS NOTHING TO OPEN, IT IS NOT A CONTROL. A venue card whose
  * `venue_data` carries no place_id has no page behind it. Announced as a
@@ -118,7 +105,7 @@ const categoryFor = (venue) => {
    a reader who can see it gets the precision and a screen reader gets the
    meaning rather than a number with no scale attached to it. */
 function CrowdDial({ score, word }) {
-  const R = 13;
+  const R = 11;
   const C = 2 * Math.PI * R;
   const filled = Math.max(0, Math.min(100, score)) / 100;
   return (
@@ -127,18 +114,18 @@ function CrowdDial({ score, word }) {
       role="img"
       aria-label={word ? `${word}. ${score}% of capacity.` : `${score}% of capacity.`}
     >
-      <svg width="34" height="34" viewBox="0 0 34 34" aria-hidden="true">
-        <circle cx="17" cy="17" r={R} fill="none" stroke="rgba(255,255,255,0.28)" strokeWidth="3.5" />
+      <svg width="28" height="28" viewBox="0 0 28 28" aria-hidden="true">
+        <circle cx="14" cy="14" r={R} fill="none" stroke="rgba(255,255,255,0.28)" strokeWidth="3" />
         <circle
-          cx="17"
-          cy="17"
+          cx="14"
+          cy="14"
           r={R}
           fill="none"
           stroke={crowdArcFor(score)}
-          strokeWidth="3.5"
+          strokeWidth="3"
           strokeLinecap="round"
           strokeDasharray={`${(C * filled).toFixed(2)} ${(C * (1 - filled)).toFixed(2)}`}
-          transform="rotate(-90 17 17)"
+          transform="rotate(-90 14 14)"
         />
       </svg>
       <span className="chat-venue-dial-num" aria-hidden="true">{score}</span>
@@ -186,19 +173,22 @@ export default function VenueCardRow({
   const crowdValue = crowdRaw != null && Number.isFinite(Number(crowdRaw)) ? Math.round(Number(crowdRaw)) : null;
   const crowdWord = crowdValue !== null ? crowdLabelFor(crowdValue) : null;
   const category = categoryFor(venue);
+  const tally = Number.isFinite(Number(count)) && Number(count) > 0 ? Number(count) : null;
 
-  // The middot line. Built as a list so a missing figure closes the gap
-  // instead of leaving a separator with nothing on one side of it.
+  /* The one line of facts. Built as a list so a missing one closes the gap
+     instead of leaving a separator with nothing on one side of it. */
   const meta = [];
   if (ratingValue !== null) meta.push('rating');
   if (priceValue !== null) meta.push('price');
   if (category !== null) meta.push('category');
+  if (tally !== null) meta.push('tally');
 
-  const base = isDm
+  const actionWord = isDm
     ? (actionActive ? 'Pinned' : 'Pin')
     : (actionActive ? 'Voted' : 'Vote');
-  const tally = Number.isFinite(Number(count)) && Number(count) > 0 ? Number(count) : null;
-  const actionLabel = tally !== null ? `${base} · ${tally}` : base;
+  const actionGlyph = isDm
+    ? (actionActive ? Icons.pinFilled : Icons.pin)
+    : Icons.vote;
 
   // A card with no page behind it is content, not a control.
   const canOpen = typeof onOpen === 'function' && !!venue.place_id;
@@ -208,37 +198,27 @@ export default function VenueCardRow({
     if (typeof fn === 'function') fn(e);
   };
 
-  const metaText = {
-    fontSize: '13px',
-    fontWeight: 500,
-    color: 'var(--text-secondary)',
-    lineHeight: '18px',
-  };
   const dot = (
-    <span aria-hidden="true" style={{ color: 'var(--text-tertiary)', padding: '0 6px' }}>·</span>
+    <span aria-hidden="true" style={{ color: 'var(--text-tertiary)', padding: '0 5px' }}>·</span>
   );
 
   return (
     <CardShell
       onOpen={canOpen ? onOpen : undefined}
-      /* The address is no longer drawn, so this is where it survives: a
-         screen reader user still hears which place this is before deciding to
-         open it, and a sighted reader has the name, the category and the
-         picture. */
+      /* The address is no longer drawn, so this is where it survives: a screen
+         reader user still hears which place this is before deciding to open
+         it, and a sighted reader has the name, the category and the picture. */
       ariaLabel={canOpen
         ? `${venue.name}${address ? `, ${address}` : ''}. Open the place.`
         : undefined}
       data-card="venue"
       data-venue-surface={surface}
-      style={{ padding: 0, overflow: 'hidden' }}
+      style={{ padding: 0, overflow: 'hidden', display: 'flex', alignItems: 'stretch' }}
     >
       {/* No photo and no placeholder means no photo. There is no stock image
           and no coloured block pretending to be one: a map pin on the app's
           own ground says it has a place and not a picture of it. */}
-      {/* With no picture at all the hero collapses to a short band rather
-          than holding a 16:9 void open. Both screens pass the placeholder,
-          so this is the defensive path, and it should still look deliberate. */}
-      <div className={photo ? 'chat-venue-hero' : 'chat-venue-hero chat-venue-hero--empty'}>
+      <div className={photo ? 'chat-venue-thumb' : 'chat-venue-thumb chat-venue-thumb--empty'}>
         {photo
           ? (
             <img
@@ -250,32 +230,15 @@ export default function VenueCardRow({
               style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
             />
           )
-          : Icons.mapPin('var(--text-tertiary)', 28)}
+          : Icons.mapPin('var(--text-tertiary)', 24)}
 
-        {/* The reading the sender shared, in the ladder's own word rather than
-            a bare number, because "Busy" is what a reader acts on and 72 is
-            not. The scrim is neutral so it sits on any photograph; the colour
-            ladder belongs on the venue's own page, where the figure is. */}
         {crowdValue !== null && <CrowdDial score={crowdValue} word={crowdWord} />}
-
-        {/* Opposite the dial, on the photo, so it costs the card no height. */}
-        {typeof onAction === 'function' && (
-          <button
-            type="button"
-            className="chat-venue-action"
-            aria-pressed={actionActive}
-            onClick={stop(onAction)}
-            data-active={actionActive ? 'true' : 'false'}
-          >
-            {actionLabel}
-          </button>
-        )}
       </div>
 
-      <div style={{ padding: '12px 14px', minWidth: 0 }}>
+      <div className="chat-venue-text">
         <div
           className="chat-truncate"
-          style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text-primary)', lineHeight: '20px' }}
+          style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', lineHeight: '18px' }}
         >
           {venue.name}
         </div>
@@ -283,26 +246,51 @@ export default function VenueCardRow({
         {meta.length > 0 && (
           <div
             className="chat-truncate"
-            style={{ ...metaText, marginTop: '3px', display: 'flex', alignItems: 'center' }}
+            style={{
+              fontSize: '12px',
+              fontWeight: 500,
+              color: 'var(--text-secondary)',
+              lineHeight: '16px',
+              marginTop: '2px',
+              display: 'flex',
+              alignItems: 'center',
+            }}
           >
             {meta.map((kind, i) => (
               <React.Fragment key={kind}>
                 {i > 0 && dot}
                 {kind === 'rating' && (
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', whiteSpace: 'nowrap' }}>
-                    {Icons.starFilled('var(--accent-amber-text)', 12)}
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px', whiteSpace: 'nowrap' }}>
+                    {Icons.starFilled('var(--accent-amber-text)', 11)}
                     <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{ratingValue}</span>
                     {reviews !== null && <span>({reviews.toLocaleString()})</span>}
                   </span>
                 )}
                 {kind === 'price' && <span style={{ whiteSpace: 'nowrap' }}>{priceValue}</span>}
                 {kind === 'category' && <span className="chat-truncate">{category}</span>}
+                {kind === 'tally' && (
+                  <span style={{ whiteSpace: 'nowrap' }}>
+                    {tally} {tally === 1 ? 'vote' : 'votes'}
+                  </span>
+                )}
               </React.Fragment>
             ))}
           </div>
         )}
-
       </div>
+
+      {typeof onAction === 'function' && (
+        <button
+          type="button"
+          className="chat-venue-action"
+          aria-label={actionWord}
+          aria-pressed={actionActive}
+          onClick={stop(onAction)}
+          data-active={actionActive ? 'true' : 'false'}
+        >
+          {actionGlyph('currentColor', 18)}
+        </button>
+      )}
     </CardShell>
   );
 }

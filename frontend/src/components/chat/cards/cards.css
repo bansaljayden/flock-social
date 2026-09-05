@@ -216,41 +216,54 @@
 /* ==========================================================================
    THE SHARED VENUE CARD
 
-   The photo runs the full width and the card's own corners clip it, so the
-   picture is the top of the card rather than an object sitting inside a padded
-   box. That is the whole reason the shell is given padding: 0 and the words
-   carry their own.
+   IT IS A CHAT, so the card is a ROW 88 tall: about a quarter of the visible
+   stream with the keyboard up, with room for four more messages under it. It
+   was a full bleed hero and came to 331 on a 390pt phone where that stream is
+   327, which is the whole screen for one shared place.
 
-   A FIXED 140, not a ratio. A ratio grows the card with the phone, and the
-   thing this height is measured against is not the width: it is the visible
-   stream with the keyboard up, which is about 327pt and does not grow. At 16:9
-   the photo alone was 201pt and one card filled the screen. The band crops
-   through object-fit, which is the trade the product owner asked for.
-
-   Fixed also reserves the space before the image loads, so a card arriving in
-   the stream never shoves the messages above it upward.
+   88 is fixed rather than a ratio. A ratio grows the card with the phone, and
+   the thing this is measured against is not the width: it is the height of the
+   stream, which does not grow with it. Fixed also reserves the space before
+   the image loads, so a card arriving never shoves the messages above it up.
    ========================================================================== */
-.chat-venue-hero {
+.chat-venue-thumb {
   position: relative;
-  width: 100%;
-  height: 140px;
+  flex: none;
+  width: 88px;
+  height: 88px;
   background-color: var(--bg-tertiary);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
-/* THE CROWD DIAL. How full the place is, as a ring that fills, with the
-   capacity in the middle of it. It sits on an arbitrary photograph, so the disc
-   behind it is a neutral scrim and only the ARC takes the crowd colour: a green
-   or red plate on a photo of a green or red room reads as decoration, while a
-   ring plainly reads as a gauge. */
+/* No picture and no placeholder. The square stays, because the row's height is
+   the square's and a card that loses it would sit at a different height from
+   every other one in the thread. */
+.chat-venue-thumb--empty {
+  background-color: var(--bg-tertiary);
+}
+
+.chat-venue-text {
+  flex: 1;
+  min-width: 0;
+  padding: 0 10px 0 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* The crowd reading, as a ring that fills with the capacity in the middle. A
+   neutral scrim rather than the crowd colours, because it sits on an arbitrary
+   photograph: only the ARC takes the colour, since a green or red plate on a
+   photo of a green or red room reads as decoration while a ring reads as a
+   gauge. */
 .chat-venue-dial {
   position: absolute;
-  left: 10px;
-  bottom: 10px;
-  width: 34px;
-  height: 34px;
+  left: 5px;
+  bottom: 5px;
+  width: 28px;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -268,57 +281,45 @@
 .chat-venue-dial-num {
   position: relative;
   color: #ffffff;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 700;
   line-height: 1;
   font-variant-numeric: tabular-nums;
 }
 
-/* ONE ACTION, ON THE PHOTO, opposite the crowd dial. It was a full-width
-   footer divided off by a hairline, which cost the card 44pt of height in a
-   stream where the whole card had to fit inside about 327. Here it costs
-   nothing: the photo is already there.
-
-   44 tall so it is a real target without an overlay, and the scrim is the same
-   neutral one the dial uses, for the same reason: it sits on an arbitrary
-   photograph and has to stay legible on all of them. */
+/* ONE ACTION, AS AN ICON. Spelling it "Vote" cost about 72 of width, which came
+   straight out of the line of facts and truncated the category on every card.
+   The count moved into that line and the control kept its 44 target with none
+   of the width. Its accessible name still says the word. */
 .chat-venue-action {
-  position: absolute;
-  right: 10px;
-  bottom: 10px;
-  min-height: 44px;
-  padding: 0 16px;
+  flex: none;
+  align-self: center;
+  margin-right: 10px;
+  width: 44px;
+  height: 44px;
   border: none;
-  border-radius: 22px;
-  background: rgba(0, 0, 0, 0.62);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  color: #ffffff;
-  font-family: inherit;
-  font-size: 14px;
-  font-weight: 600;
+  border-radius: 14px;
+  background: var(--icon-bg);
+  color: var(--chat-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
 }
 
-/* Already voted or already pinned. The word itself changes to say so, and the
-   fill steps back because the action is no longer the thing to do. */
+/* Already voted or already pinned. The glyph fills on the DM side and the
+   whole control inverts on both, because the action is no longer the thing to
+   do and a control that looks identical either way says nothing happened. */
 .chat-venue-action[data-active='true'] {
-  background: rgba(0, 0, 0, 0.42);
-  color: rgba(255, 255, 255, 0.75);
+  background: var(--chat-accent);
+  color: var(--chat-on-fill);
 }
 
 .chat-venue-action:active {
-  background: rgba(0, 0, 0, 0.78);
+  opacity: 0.75;
 }
 
 .chat-venue-action:focus-visible {
-  outline: 2px solid #ffffff;
-  outline-offset: -2px;
-}
-
-/* No picture and no placeholder. A shorter band with the pin, because holding
-   the full height open around a single glyph reads as a photo that failed to
-   load rather than a card that never had one. */
-.chat-venue-hero--empty {
-  height: 72px;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }

@@ -385,7 +385,14 @@ describe('icon-only controls on the hot paths are named', () => {
     // it. 90 at the time of writing across App.js and the three screens; 77
     // once the chat stream and both composers moved into components/chat and
     // the module joined the scan.
-    expect(iconOnlyButtons.length).toBeGreaterThan(70);
+    // 65, down from 70 on 2026-09-05 when both chat headers lost their
+    // "Features" pill and the five-button and two-button rails behind them.
+    // Those seven controls are tiles in the composer's plus sheet now, where
+    // each carries a visible LABEL under its glyph and so is correctly not an
+    // icon-only control any more. The floor moves with the app rather than
+    // being deleted: it exists so the assertion below cannot pass on an empty
+    // scan, and 65 still catches that.
+    expect(iconOnlyButtons.length).toBeGreaterThan(65);
   });
 
   it('every button whose only child is an icon carries a name', () => {
@@ -395,12 +402,22 @@ describe('icon-only controls on the hot paths are named', () => {
     expect(unnamed).toEqual([]);
   });
 
-  it('the three "Features" toggles keep a name when they collapse to an X', () => {
-    // Each renders the word "Features" when closed and a bare Icons.x when
-    // open, so the name vanished exactly when the control mattered.
-    ['chatNavOpen', 'dmNavOpen', 'discoverNavOpen'].forEach((state) => {
+  it('the "Features" toggle that is left keeps a name when it collapses to an X', () => {
+    // It renders the word "Features" when closed and a bare Icons.x when open,
+    // so the name vanished exactly when the control mattered.
+    //
+    // ONE, not three. Both chat headers carried this pill and both lost it on
+    // 2026-09-05: a labelled pill wide enough to push the plan's name into an
+    // ellipsis, hiding a rail of five more controls, on a header that already
+    // held a back arrow, a title, a member count, a presence dot and an
+    // overflow button. Everything behind it is a tile in the composer's plus
+    // sheet now. Discover is a different screen and keeps its own.
+    ['discoverNavOpen'].forEach((state) => {
       expect(app).toContain(`aria-label="Features" aria-expanded={${state}}`);
     });
+    // And neither chat grew one back.
+    expect(app).not.toContain('aria-label="Features" aria-expanded={chatNavOpen}');
+    expect(app).not.toContain('aria-label="Features" aria-expanded={dmNavOpen}');
   });
 
   it('state toggles say which state they are in', () => {
@@ -630,12 +647,13 @@ describe('a container that hides its contents hides them from the keyboard too',
   })();
 
   it('the scan finds the collapsing containers rather than an empty set', () => {
-    // Three, and the set is named: chatNavOpen, dmNavOpen, discoverNavOpen.
-    // Without this floor every assertion below passes on nothing the moment
-    // the pattern is written differently.
-    expect(collapsers.length).toBeGreaterThanOrEqual(3);
-    expect(collapsers.map((c) => c.state).sort())
-      .toEqual(['chatNavOpen', 'discoverNavOpen', 'dmNavOpen']);
+    // One, and it is named: discoverNavOpen. Without this floor every
+    // assertion below passes on nothing the moment the pattern is written
+    // differently. The two chat rails left on 2026-09-05, so the pair that
+    // used to sit here is gone rather than merely unmatched, and the two
+    // assertions in the toggle test above hold them to it.
+    expect(collapsers.length).toBeGreaterThanOrEqual(1);
+    expect(collapsers.map((c) => c.state).sort()).toEqual(['discoverNavOpen']);
   });
 
   it('the typing strip is unmounted rather than faded, on both threads', () => {

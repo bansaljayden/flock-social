@@ -8,13 +8,19 @@
  * removed. The split with FlockProfileSheet is the one the rebuild plan
  * settles and it is the only rule this file follows:
  *
- *   THIS SHEET HOLDS ONLY THINGS YOU SEND INTO THE STREAM.
+ *   THIS SHEET HOLDS EVERYTHING THE HEADER USED TO.
  *
- * If tapping it posts a message, a card or a system row, it belongs here. If
- * it opens, configures or reads something, it belongs in the profile sheet. So
- * Search in chat is not here, member management is not here, and mute is not
- * here, while Photo, Take a photo, the venue action, Share location, the money
- * action, Ask Birdie and Check in are.
+ * It began as "only things you send into the stream", with reading and
+ * configuring left to the profile sheet. the maintainer settled it the other way on
+ * 2026-09-05, looking at the shipped screen: the flock header carried a
+ * "Features" pill wide enough to push the plan's name into an ellipsis, and
+ * behind it a rail of five more controls. Snapchat's header carries a name and
+ * three small glyphs, and everything else lives behind the plus. "The plus
+ * should have all those features."
+ *
+ * So Search in chat, Invite friends and the cash pool are here now, beside
+ * Photo, Take a photo, the venue action, Share location, the money action,
+ * Ask Birdie and Check in. The header keeps only what it can say about STATE.
  *
  * TWO OF THE SEVEN CHANGE WITH THE SURFACE
  *   Venue: a flock votes ("Vote on a venue"), a DM suggests ("Suggest a
@@ -34,7 +40,9 @@
  *
  * MEASUREMENTS
  *   Tiles are a 4 column grid. The icon well is 56, radius 28, filled with
- *   --icon-bg, the glyph at 22, except the solid bird at 20. The label sits under it at --t-meta, two lines
+ *   --icon-bg, the glyph at 22, except the solid bird at 20. Ten tiles is
+ *   three rows, and the sheet scrolls inside its own max height rather than
+ *   growing past it. The label sits under it at --t-meta, two lines
  *   maximum, centred. Whole tile is 44 minimum in both directions by
  *   construction (56 alone clears it), so no tile needs the hit44 overlay.
  *   Sheet geometry, backdrop, grabber, focus handling and keyboard dismissal
@@ -77,6 +85,12 @@ export default function ComposerPlusSheet({
   onSplitBill,      // flock
   onAskBirdie,
   onCheckIn,
+  /* The three the header rail used to hold. Flock and DM both search; only a
+     flock has friends to invite or a pool to put money in. */
+  onSearchMessages,
+  onInviteFriends,
+  onCashPool,
+  onVenueVotes,
 }) {
   const venueHandler = isDm ? onSuggestPlace : onOpenVote;
   const venueLabel = isDm ? 'Suggest a place' : 'Vote on a venue';
@@ -100,6 +114,10 @@ export default function ComposerPlusSheet({
        outline at the same nominal size. At 22 beside these outlines it was the
        largest and darkest thing in the sheet. */
     { key: 'birdie', glyph: Icons.birdie, label: 'Ask Birdie', onClick: onAskBirdie, size: 20 },
+    { key: 'votes', glyph: Icons.vote, label: 'Venue votes', onClick: onVenueVotes },
+    { key: 'pool', glyph: Icons.dollar, label: 'Cash pool', onClick: onCashPool },
+    { key: 'invite', glyph: Icons.userPlus, label: 'Invite friends', onClick: onInviteFriends },
+    { key: 'search', glyph: Icons.search, label: 'Search chat', onClick: onSearchMessages },
     { key: 'checkin', glyph: Icons.checkCircle, label: 'Check in', onClick: onCheckIn },
   ].filter((t) => typeof t.onClick === 'function');
 
