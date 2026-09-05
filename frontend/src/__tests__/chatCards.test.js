@@ -814,6 +814,22 @@ describe('PollCard, sitting on screen as its deadline passes', () => {
 describe('VenueCardRow', () => {
   const venue = { name: 'Kome', addr: '17 W Broad St', photo_url: null, place_id: 'p1' };
 
+  test('the card is one message tall, not one screen tall', () => {
+    // THE ARITHMETIC THIS CARD IS BUILT TO. On a 390pt phone the card is 358pt
+    // wide after the gutters, and the visible stream with the keyboard up is
+    // about 327pt. At 16:9 the photo alone was 201pt and the whole card 331,
+    // so a single shared venue was the entire screen. A fixed band is what
+    // keeps that from coming back: a ratio grows the photo with the width, and
+    // the constraint here is the stream's HEIGHT, which does not grow with it.
+    const css = fs.readFileSync(
+      path.join(__dirname, '..', 'components', 'chat', 'cards', 'cards.css'), 'utf8'
+    ).replace(/\r\n/g, '\n');
+    const hero = css.slice(css.indexOf('.chat-venue-hero {'));
+    expect(hero.slice(0, hero.indexOf('}'))).toMatch(/height: 140px;/);
+    // And no ratio anywhere near it, which is what this replaced.
+    expect(css).not.toMatch(/aspect-ratio: 16 \/ 9/);
+  });
+
   test('a flock gets Vote, a DM gets Pin, and neither gets View', () => {
     const { unmount } = render(<VenueCardRow venue={venue} surface="flock" onAction={() => {}} onOpen={() => {}} />);
     expect(screen.getByRole('button', { name: 'Vote' })).toBeTruthy();
@@ -825,19 +841,28 @@ describe('VenueCardRow', () => {
     expect(screen.queryByRole('button', { name: /^View/ })).toBeNull();
   });
 
-  test('exactly one footer action, and the whole card opens the place', () => {
+  test('exactly one action, on the photo, and the whole card opens the place', () => {
     const onOpen = jest.fn();
     const onAction = jest.fn();
-    render(<VenueCardRow venue={venue} onOpen={onOpen} onAction={onAction} />);
+    const { container } = render(<VenueCardRow venue={venue} onOpen={onOpen} onAction={onAction} />);
 
     expect(screen.getAllByRole('button')).toHaveLength(2); // the card, and the one action
-    fireEvent.click(screen.getByRole('button', { name: 'Kome. Open the place.' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Kome/ }));
     expect(onOpen).toHaveBeenCalledTimes(1);
 
     fireEvent.click(screen.getByRole('button', { name: 'Vote' }));
     expect(onAction).toHaveBeenCalledTimes(1);
     // The action does not also open the card underneath it.
     expect(onOpen).toHaveBeenCalledTimes(1);
+
+    // IT SITS ON THE PHOTO, not in a footer of its own. A full-width footer
+    // cost the card 44pt in a stream that is only about 327pt tall with the
+    // keyboard up; on the photo it costs nothing. No app surveyed (iMessage,
+    // WhatsApp, Telegram, Signal, Discord, Messenger, Instagram) puts a
+    // persistent full-width button inside an inline card at all.
+    const action = screen.getByRole('button', { name: 'Vote' });
+    expect(action.parentElement.className).toContain('chat-venue-hero');
+    expect(container.querySelector('.chat-venue-hero').contains(action)).toBe(true);
   });
 
   test('an active action says what it already is', () => {
@@ -859,12 +884,22 @@ describe('VenueCardRow', () => {
     expect(screen.getByRole('button', { name: 'Vote · 1' })).toBeTruthy();
   });
 
-  test('the address is optional and a missing one leaves no empty line', () => {
-    // The name and the one action, and nothing between them. This asserted
-    // 'Vote' alone, which no card has ever rendered: the venue name is the
-    // whole point of the row and it is always drawn.
+  test('the address is not drawn at all, and survives in the accessible name', () => {
+    // It used to be its own line under the name. Every app surveyed draws a
+    // title and at most ONE meta line in an inline card, and the address is a
+    // tap away on the venue's own page, which is where you go to navigate. So
+    // the line went, and with it 21pt of a card that had to fit in about 327.
+    const { container } = render(
+      <VenueCardRow venue={venue} onOpen={() => {}} onAction={() => {}} />
+    );
+    expect(textOf(container)).not.toContain('17 W Broad St');
+    // But a screen reader user still hears which place it is before opening.
+    expect(screen.getByRole('button', { name: 'Kome, 17 W Broad St. Open the place.' })).toBeTruthy();
+  });
+
+  test('a card with nothing but a name draws the name and the action', () => {
     const { container } = render(<VenueCardRow venue={{ name: 'Kome' }} onAction={() => {}} />);
-    expect(textOf(container)).toBe('KomeVote');
+    expect(textOf(container)).toBe('VoteKome');
   });
 
   test('a venue with no name is not a card', () => {
@@ -1007,8 +1042,11 @@ describe('VenueCardRow', () => {
   });
 
   test('and none of the three when the data does not carry them', () => {
+    // The action comes first in the DOM because it sits on the photo, which is
+    // above the words. Nothing between the name and it: no rating, no price,
+    // no category, no crowd, and no address line any more.
     const { container } = render(<VenueCardRow venue={venue} onAction={() => {}} />);
-    expect(textOf(container)).toBe('Kome17 W Broad StVote');
+    expect(textOf(container)).toBe('VoteKome');
   });
 
   test('a venue with nothing to open is not announced as a button', () => {

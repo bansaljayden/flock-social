@@ -12,6 +12,28 @@
  * the top of the card rather than an object sitting on it. The card is padded
  * where the words are and nowhere else.
  *
+ * AND IT IS CROPPED, NOT FITTED. This card is ONE MESSAGE and has to read as
+ * one. At 16:9 the photo alone was 201pt on a 390pt phone, the card came to
+ * 331pt, and the visible stream with the keyboard up is 327pt: a single shared
+ * venue was the entire screen. The photo is a fixed 140pt band now (about
+ * 2.6:1 at this width) and the card lands at 205pt, which is 63% of the
+ * keyboard-up stream and leaves room for about one message above it.
+ *
+ * NO FOOTER BUTTON, AND THE ADDRESS IS GONE. A survey of how iMessage,
+ * WhatsApp, Telegram, Signal, Discord, Messenger and Instagram DMs draw an
+ * inline rich card found that not one of them puts a persistent full-width
+ * button inside it, and not one shows more than a title and a single meta
+ * line. The whole card is the tap target everywhere. So the address went (it
+ * is one tap away on the venue's own page, which is where you go to navigate)
+ * and the 44pt footer went with it.
+ *
+ * THE ACTION DID NOT GO. It moved onto the photo, opposite the crowd dial,
+ * where it costs the card no height at all. Flock is the one product in that
+ * survey where a shared place carries a vote, and tapping the card opens the
+ * venue rather than casting one, so the action is the single thing a tap
+ * cannot do and deleting it would have cost the coordination loop to save
+ * 44pt that the crop had already found.
+ *
  * WHAT IT MAY DRAW IS FIXED BY THE SERVER. `sanitizeVenueData` in
  * `backend/utils/venuePayload.js` is the only thing that reaches a client, and
  * it passes exactly: place_id, name, addr, rating, user_ratings_total,
@@ -199,7 +221,13 @@ export default function VenueCardRow({
   return (
     <CardShell
       onOpen={canOpen ? onOpen : undefined}
-      ariaLabel={canOpen ? `${venue.name}. Open the place.` : undefined}
+      /* The address is no longer drawn, so this is where it survives: a
+         screen reader user still hears which place this is before deciding to
+         open it, and a sighted reader has the name, the category and the
+         picture. */
+      ariaLabel={canOpen
+        ? `${venue.name}${address ? `, ${address}` : ''}. Open the place.`
+        : undefined}
       data-card="venue"
       data-venue-surface={surface}
       style={{ padding: 0, overflow: 'hidden' }}
@@ -229,6 +257,19 @@ export default function VenueCardRow({
             not. The scrim is neutral so it sits on any photograph; the colour
             ladder belongs on the venue's own page, where the figure is. */}
         {crowdValue !== null && <CrowdDial score={crowdValue} word={crowdWord} />}
+
+        {/* Opposite the dial, on the photo, so it costs the card no height. */}
+        {typeof onAction === 'function' && (
+          <button
+            type="button"
+            className="chat-venue-action"
+            aria-pressed={actionActive}
+            onClick={stop(onAction)}
+            data-active={actionActive ? 'true' : 'false'}
+          >
+            {actionLabel}
+          </button>
+        )}
       </div>
 
       <div style={{ padding: '12px 14px', minWidth: 0 }}>
@@ -261,27 +302,7 @@ export default function VenueCardRow({
           </div>
         )}
 
-        {address && (
-          <div
-            className="chat-truncate"
-            style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-tertiary)', lineHeight: '18px', marginTop: '3px' }}
-          >
-            {address}
-          </div>
-        )}
       </div>
-
-      {typeof onAction === 'function' && (
-        <button
-          type="button"
-          className="chat-venue-action"
-          aria-pressed={actionActive}
-          onClick={stop(onAction)}
-          data-active={actionActive ? 'true' : 'false'}
-        >
-          {actionLabel}
-        </button>
-      )}
     </CardShell>
   );
 }

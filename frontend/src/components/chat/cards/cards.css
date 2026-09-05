@@ -221,25 +221,23 @@
    box. That is the whole reason the shell is given padding: 0 and the words
    carry their own.
 
-   The height is fixed first and replaced by a 16:9 ratio where the browser
-   supports it. Both reserve the space before the image loads, so a card
-   arriving in the stream never shoves the messages above it upward.
+   A FIXED 140, not a ratio. A ratio grows the card with the phone, and the
+   thing this height is measured against is not the width: it is the visible
+   stream with the keyboard up, which is about 327pt and does not grow. At 16:9
+   the photo alone was 201pt and one card filled the screen. The band crops
+   through object-fit, which is the trade the product owner asked for.
+
+   Fixed also reserves the space before the image loads, so a card arriving in
+   the stream never shoves the messages above it upward.
    ========================================================================== */
 .chat-venue-hero {
   position: relative;
   width: 100%;
-  height: 168px;
+  height: 140px;
   background-color: var(--bg-tertiary);
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-@supports (aspect-ratio: 16 / 9) {
-  .chat-venue-hero {
-    height: auto;
-    aspect-ratio: 16 / 9;
-  }
 }
 
 /* THE CROWD DIAL. How full the place is, as a ring that fills, with the
@@ -276,18 +274,26 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* One action, the full width of the card, divided from the words by a hairline
-   rather than floated over them. 44 tall by construction, so it needs no hit44
-   overlay of its own. */
+/* ONE ACTION, ON THE PHOTO, opposite the crowd dial. It was a full-width
+   footer divided off by a hairline, which cost the card 44pt of height in a
+   stream where the whole card had to fit inside about 327. Here it costs
+   nothing: the photo is already there.
+
+   44 tall so it is a real target without an overlay, and the scrim is the same
+   neutral one the dial uses, for the same reason: it sits on an arbitrary
+   photograph and has to stay legible on all of them. */
 .chat-venue-action {
-  display: block;
-  width: 100%;
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
   min-height: 44px;
-  padding: 0 14px;
+  padding: 0 16px;
   border: none;
-  border-top: 1px solid var(--border-subtle);
-  background: transparent;
-  color: var(--chat-accent);
+  border-radius: 22px;
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  color: #ffffff;
   font-family: inherit;
   font-size: 14px;
   font-weight: 600;
@@ -295,30 +301,24 @@
 }
 
 /* Already voted or already pinned. The word itself changes to say so, and the
-   colour steps back because the action is no longer the thing to do. */
+   fill steps back because the action is no longer the thing to do. */
 .chat-venue-action[data-active='true'] {
-  color: var(--text-secondary);
+  background: rgba(0, 0, 0, 0.42);
+  color: rgba(255, 255, 255, 0.75);
 }
 
 .chat-venue-action:active {
-  background: var(--pill-bg);
+  background: rgba(0, 0, 0, 0.78);
 }
 
 .chat-venue-action:focus-visible {
-  outline: 2px solid var(--focus-ring);
+  outline: 2px solid #ffffff;
   outline-offset: -2px;
 }
 
-/* No picture and no placeholder. A short band with the pin, because holding a
-   16:9 rectangle open around a single glyph reads as a photo that failed to
+/* No picture and no placeholder. A shorter band with the pin, because holding
+   the full height open around a single glyph reads as a photo that failed to
    load rather than a card that never had one. */
 .chat-venue-hero--empty {
   height: 72px;
-}
-
-@supports (aspect-ratio: 16 / 9) {
-  .chat-venue-hero--empty {
-    height: 72px;
-    aspect-ratio: auto;
-  }
 }
