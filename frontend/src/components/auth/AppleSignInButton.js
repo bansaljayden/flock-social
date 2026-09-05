@@ -29,8 +29,13 @@ const isNativeIos = () =>
 // So the last name the plugin handed over is kept here, at module scope rather
 // than in state, so it outlives the re-render between the two taps, and it is
 // sent again whenever the plugin returns none. It is keyed on Apple's user
-// identifier so one person's name is never sent for another, it is never
-// written to storage, and it dies with the page.
+// identifier, and reused only when the plugin hands back the SAME identifier:
+// a delivery with no identifier is not remembered and a later sheet with no
+// identifier matches nothing, because the plugin's contract allows a null
+// `user` and "missing matches anything" could hand one person's name to the
+// next account created on a shared device (adversarial audit round 2,
+// 2026-09-05). It is forgotten the moment the server accepts a sign-in, it is
+// never written to storage, and it dies with the page.
 let lastDelivered = null;
 
 // `dob` (optional): passed through on account CREATION — the server requires a
@@ -70,12 +75,15 @@ const AppleSignInButton = ({ onSuccess, onError, dob, beforeAuthorize }) => {
       const delivered = (r.givenName || r.familyName)
         ? { givenName: r.givenName || '', familyName: r.familyName || '' }
         : undefined;
-      if (delivered) lastDelivered = { user: r.user || null, fullName: delivered };
-      const remembered = lastDelivered && (!r.user || !lastDelivered.user || lastDelivered.user === r.user)
+      if (delivered) lastDelivered = r.user ? { user: r.user, fullName: delivered } : null;
+      const remembered = lastDelivered && r.user && lastDelivered.user === r.user
         ? lastDelivered.fullName
         : undefined;
       const fullName = delivered || remembered;
       const data = await appleLogin(r.identityToken, fullName, r.authorizationCode, dob);
+      // Accepted: the account carries the name now, and nothing else on this
+      // device should ever receive it.
+      lastDelivered = null;
       onSuccess?.(data.user);
     } catch (err) {
       // User-cancelled flows should stay quiet; real failures surface.
