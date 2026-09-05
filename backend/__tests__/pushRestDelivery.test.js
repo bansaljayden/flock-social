@@ -203,6 +203,9 @@ test('a REST DM pushes the receiver with the socket dm debounce key', async () =
 // ---------------------------------------------------------------------------
 test('flock_rsvp carries the joiner as fromUserId', async () => {
   on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ status: 'invited' }] }));
+  // The flock row lock the join takes before its UPDATE, the same one billing
+  // reads the roster under. BEGIN and COMMIT pass through the client fake above.
+  on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] }));
   on(/UPDATE flock_members SET status = 'accepted'/, () => ({ rows: [{ flock_id: 42, user_id: 1, status: 'accepted' }], rowCount: 1 }));
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [] }));
   on(/FROM user_blocks/, () => ({ rows: [] }));
