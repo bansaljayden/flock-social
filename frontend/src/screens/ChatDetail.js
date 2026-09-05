@@ -153,9 +153,11 @@
  * list against what App.js passes, so dropping a name here would fail there
  * and would also hide the fact that App.js still computes them.
  *
- * REPLIES ARE STILL NOT WIRED. MessageRow reports a right swipe and
- * ChatInputBar can draw a quote bar, and neither is connected on this surface
- * because `messages` has no reply column. See the note at the composer.
+ * REPLIES ARE WIRED, as of migration 066. MessageRow's right swipe and
+ * ChatInputBar's quote bar were both built and both left disconnected on this
+ * surface for as long as `messages` had no reply column. It has one now, both
+ * transports carry a quote and the server refuses a target outside this flock,
+ * so the affordances are connected to something real.
  */
 import React from 'react';
 import { leaveFlock as apiLeaveFlock, createBillSplit, createFlockInviteLink, getFlockMessageImage, getPaymentLinks, ghostCommit, lockBudget, sendBudgetReminder, settleShare, submitBudget, trackNotificationPermission, unsettleShare, getBillSplit } from '../services/api';
@@ -515,6 +517,11 @@ export default function ChatDetail({
   chatSearch,
   chatSearchRef,
   colors,
+  // The message this composer is answering, and its setter. Held in App.js
+  // rather than here because a takedown arriving over the socket has to be
+  // able to close the quote bar, and that listener lives up there.
+  flockReplyingTo,
+  setFlockReplyingTo,
   confirmClick,
   confirmFlockPlan,
   copiedInviteUrl,
@@ -1129,10 +1136,23 @@ export default function ChatDetail({
     const sourceRowById = new Map((flock.messages || []).map((m) => [m.id, m]));
     const originalRow = (m) => (m && sourceRowById.get(m.id)) || m;
     const needsDressing = searchActive
-      || visibleMessages.some((m) => m.message_type === 'venue_card' && m.venue_data && m.text);
+      || visibleMessages.some((m) => m.message_type === 'venue_card' && m.venue_data && m.text)
+      // A quote needs the same preview treatment a row does: a reply to a photo
+      // or a venue card has no text to show, and messagePreview is what turns
+      // that into "Photo" instead of an empty quote block. Adding it to the
+      // dressing test rather than mapping unconditionally keeps the array
+      // identity stable for the common case, which is what MessageList's
+      // scroll rules key off.
+      || visibleMessages.some((m) => m.reply_to);
     const listRows = needsDressing ? visibleMessages.map((m) => {
       const isCard = m.message_type === 'venue_card' && m.venue_data;
-      const carded = isCard ? { ...m, text: '' } : m;
+      const carded0 = isCard ? { ...m, text: '' } : m;
+      /* hadContent tells messagePreview the quoted row DID carry something,
+         so an image quote reads "Photo" rather than falling through to the
+         empty-message wording. Same call the DM stream makes. */
+      const carded = m.reply_to
+        ? { ...carded0, reply_to: { ...m.reply_to, text: messagePreview({ ...m.reply_to, hadContent: true }) } }
+        : carded0;
       /* AND ON THE SEARCH PATH TOO. The highlight below rebuilds `text` from
          the row's own copy, so a query the caption matched ("check out") put
          that caption straight back under the card the line above had just
@@ -1881,6 +1901,12 @@ export default function ChatDetail({
           atTop={scrollbackExhausted}
           olderLoading={olderLoading}
           onLongPress={openMessageActions}
+          /* originalRow, not the dressed row. The list rows carry a
+             search-highlighted `text` full of <mark> tags and a blanked venue
+             caption, and quoting either would put markup or an empty string in
+             the composer's quote bar and then into the optimistic bubble. The
+             photo viewer above takes the same care for the same reason. */
+          onSwipeReply={(m) => setFlockReplyingTo(originalRow(m))}
           onOpenImage={(m) => openImageViewer(originalRow(m))}
           onReactionTap={(emoji, m) => addReactionToMessage(flock.id, m.id, emoji)}
           loadingState={messagesLoading && flock.messages.length === 0
@@ -1925,6 +1951,10 @@ export default function ChatDetail({
                   style={{ background: 'none', border: 'none', fontSize: 'var(--t-title)', cursor: 'pointer', padding: '6px', borderRadius: '10px', transition: 'transform 0.15s ease, background-color 0.15s ease' }}
                 >{r}</button>
               ))}
+              {/* The other way in. A swipe is faster once you know it is
+                  there and completely invisible until then, so the long-press
+                  sheet carries the same act. */}
+              <button aria-label="Reply" className="hit44" onClick={() => { closeMessageActions(); setFlockReplyingTo(originalRow(actionsMessage)); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }} title="Reply">{Icons.reply(colors.navy, 15)}</button>
               {(actionsMessage.image || actionsMessage.thumb) && (
                 <button aria-label="View photo full size" className="hit44" onClick={() => { closeMessageActions(); openImageViewer(actionsMessage); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }} title="View photo">{Icons.eye(colors.textSecondary, 15)}</button>
               )}
@@ -1945,17 +1975,12 @@ export default function ChatDetail({
 
 
         {/* Reply bar */}
-        {/* The "Replying to" bar sat here until 2026-08-27. It was the
-            sender-facing half of a reply feature whose other half never
-            existed on the flock side; see the removal note in App.js.
-
-            AND IT STAYS GONE THROUGH THIS REBUILD. MessageRow reports a right
-            swipe through `onSwipeReply` and ChatInputBar draws a quote bar
-            from `replyTo`, and neither is wired here on purpose: `messages`
-            has no reply column, nothing on the flock side sends one and no row
-            ever arrives carrying one, so a swipe would open a quote bar over a
-            send path that drops it. The DM thread's reply is real and keeps
-            its own wiring. */}
+        {/* THERE IS NO SEPARATE BAR HERE, and that is the point rather than an
+            omission. The "Replying to" strip is ChatInputBar's own, drawn
+            above the field from the `replyTo` prop below, so the composer is
+            one stack. The DM screen learned this the hard way: it drew its own
+            strip AND passed replyTo, so starting a reply put two identical
+            quote bars on screen, one above the other. */}
 
         {/* Image preview bar */}
         {/* It is ChatInputBar's now. The photo waiting to go, its caption
@@ -2025,6 +2050,13 @@ export default function ChatDetail({
              that is no longer there. */
           registerBar={keyboard.registerBar}
           registerInput={keyboard.registerInput}
+          /* The quote bar. `preview` is read before `text` by the bar, and a
+             quoted photo or venue card has no text at all, so the preview is
+             computed here and carried over rather than letting the bar fall
+             back to an empty line. Same call the stream makes for the bubble's
+             own quote block, so the two agree on what a photo is called. */
+          replyTo={flockReplyingTo && { ...flockReplyingTo, preview: messagePreview({ ...flockReplyingTo, hadContent: true }) }}
+          onCancelReply={() => setFlockReplyingTo(null)}
           value={draft}
           onChange={(next) => {
             writeDraft(next);
