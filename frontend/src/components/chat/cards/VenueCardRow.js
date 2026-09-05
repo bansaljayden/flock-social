@@ -87,11 +87,27 @@ const bandFor = (level) => {
 };
 
 /* "Bar", "night_club", "coffee shop" all arrive here in whatever shape their
-   source used. One word, sentence case, underscores opened up. */
+   source used. One word, sentence case, underscores opened up.
+
+   THE CONJUNCTION IS CUT, and that is what makes the "one word" above true
+   rather than aspirational. Most venues reach this from categorizeVenue,
+   which answers from a short closed set ("Food", "Nightlife") and always
+   fitted. An owner-claimed venue does not: venue_profiles.category is free
+   text somebody typed, and "Bar & grill" is the obvious thing to type. In the
+   88pt row that shares its meta line with a rating, a price band and a vote
+   count, it rendered as "Bar & g...", which is not a shortened category, it
+   is a word cut in half.
+
+   So a list becomes its first item. "Bar & grill" is a bar, "Bar/Restaurant"
+   is a bar, and neither needs the rest to be understood at a glance in a chat
+   row. A genuine single concept that happens to be long ("Coffee shop") is
+   left alone and still ellipsises if the row is tight, which is the right
+   outcome for a name with nothing to drop. */
 const categoryFor = (venue) => {
   const raw = venue.category || venue.type || null;
   if (typeof raw !== 'string') return null;
-  const clean = raw.replace(/_/g, ' ').trim();
+  const first = raw.replace(/_/g, ' ').split(/[&,/|]/)[0];
+  const clean = first.trim();
   if (clean.length === 0) return null;
   return clean.charAt(0).toUpperCase() + clean.slice(1).toLowerCase();
 };
