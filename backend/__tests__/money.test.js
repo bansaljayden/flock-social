@@ -289,6 +289,9 @@ function scriptBillCreate({ existingBill, existingShares, members, creatorId = 1
     // to answer the share lookup, not to pin its SELECT list.
     [/SELECT user_id, .*FROM bill_split_shares/, () => ({ rows: existingShares || [] })],
     [/INSERT INTO bill_splits/, () => ({ rows: [{ id: 7 }] })],
+    // A payer change clears the former payer's artifact flag before the
+    // DELETEs read the row; see the credit loop in routes/billing.js.
+    [/UPDATE bill_split_shares SET settled_at = NULL, settled = false/, () => ({ rows: [], rowCount: 1 })],
     [/DELETE FROM bill_split_shares/, () => ({ rows: [], rowCount: 0 })],
     // A departed person's row is restated to what they paid when the two
     // differ; see the credit block in routes/billing.js and the test on it.

@@ -21,7 +21,21 @@ test('settled-ness is read live, not from a snapshot that stops moving', () => {
   // "1/3 settled" beside its own green icon, which used the raw `shares` test
   // and was right, while the "Everyone's settled up" toast arrived.
   expect(chat).toMatch(/const billTally = \(bill\) => \{/);
-  expect(chat).toMatch(/const settled = shares\.filter\(\(sh\) => sh\.settled\)\.length;/);
+  // The visible array is one input; the server's tally is the other. Round 2
+  // of the adversarial audit (2026-09-05): the settled figure used to be the
+  // visible array's own count against the server's all-row denominator, so a
+  // hidden settled row was undercounted from the first render, and nothing
+  // ever moved the counts for a viewer who had blocked the actor. Now the
+  // server sends bill_tally to everyone after any settlement, the two
+  // responses carry it, and the header takes the larger of the two sources.
+  expect(chat).toMatch(/const visibleSettled = shares\.filter\(\(sh\) => sh\.settled\)\.length;/);
+  expect(chat).toMatch(/Math\.max\(visibleSettled, Number\(bill\?\.settledCount\) \|\| 0\)/);
+  expect(chat).toMatch(/\.\.\.tallyOf\(settled\),/);
+  expect(chat).toMatch(/\.\.\.tallyOf\(unsettled\),/);
+  expect(chat).toMatch(/settled: false, settledAt: null, outstanding: owedOn\(s\)/);
+  const app = read('App.js');
+  expect(app).toMatch(/onBillTally\(\(data\) => \{/);
+  expect(app).toMatch(/settled: false, settledAt: null, outstanding: owedOn\(s\)/);
   expect(chat).toMatch(/const billBar = billTally\(billSplit\);/);
   // Four readers: the bar's green ground, its icon, its sentence and the
   // panel's "All settled up". The ground was the fourth, added 2026-09-04

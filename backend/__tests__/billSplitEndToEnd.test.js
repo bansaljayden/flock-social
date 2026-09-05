@@ -391,7 +391,9 @@ function scriptSettle({ updated }) {
     [/UPDATE bill_split_shares SET settled = true/, () => ({ rows: updated ? [{ id: 1, amount: '12.50' }] : [] })],
     [/SELECT bss\.settled, bs\.paid_by/, () => ({ rows: [{ settled: true, paid_by: 2 }] })],
     [/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status/, () => ({ rows: [{ user_id: 1 }, { user_id: 2 }] })],
-    [/SELECT COUNT\(\*\) AS count FROM bill_split_shares/, () => ({ rows: [{ count: '0' }] })],
+    // The tally over every row, after the write; both rows settled here, so
+    // the old "0 unsettled" answer is the same bill.
+    [/COUNT\(\*\) FILTER \(WHERE settled IS TRUE\)/, () => ({ rows: [{ share_count: 2, settled_count: 2 }] })],
     [/SELECT bs\.paid_by, f\.name AS flock_name/, () => ({ rows: [{ paid_by: 2, flock_name: 'Dinner' }] })],
     noBlocks,
   ];
@@ -484,6 +486,7 @@ function scriptUnsettle({ paidBy = 2, updated = true, existing = { settled: true
     [/UPDATE bill_split_shares SET settled = false/, () => ({ rows: updated ? [{ id: 1, amount: '12.50' }] : [] })],
     [/SELECT settled, .*FROM bill_split_shares/, () => ({ rows: existing ? [existing] : [] })],
     [/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status/, () => ({ rows: [{ user_id: 1 }, { user_id: 2 }] })],
+    [/COUNT\(\*\) FILTER \(WHERE settled IS TRUE\)/, () => ({ rows: [{ share_count: 2, settled_count: 1 }] })],
     noBlocks,
   ];
 }
@@ -526,7 +529,12 @@ test('unsettling without a share on the bill is a 404', async () => {
 });
 
 test('unsettle needs membership, like every other route that touches this bill', async () => {
-  handlers = [[/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, noMember]];
+  // The lock is taken before membership is read now (round 2 of the
+  // adversarial audit), so a refusal still issues it.
+  handlers = [
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
+    [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, noMember],
+  ];
   const res = await call('POST', '/api/billing/42/unsettle');
   assert.strictEqual(res.status, 403, res.text);
 });
@@ -600,7 +608,11 @@ function scriptCreate(members, { existingBill = null, existingShares = [] } = {}
     // on purpose: money.test.js is where the SELECT itself is pinned.
     [/SELECT user_id, .*FROM bill_split_shares/, () => ({ rows: existingShares })],
     [/INSERT INTO bill_splits/, () => ({ rows: [{ id: 7 }] })],
+    // A payer change clears the former payer's artifact flag before the
+    // DELETEs read the row; see the credit loop in routes/billing.js.
+    [/UPDATE bill_split_shares SET settled_at = NULL, settled = false/, () => ({ rows: [], rowCount: 1 })],
     [/DELETE FROM bill_split_shares/, () => ({ rows: [] })],
+    [/UPDATE bill_split_shares SET amount/, () => ({ rows: [], rowCount: 1 })],
     [/INSERT INTO bill_split_shares/, () => ({ rows: [] })],
     [/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status/, () => ({ rows: members.map((m) => ({ user_id: m.id })) })],
     noBlocks,
@@ -943,4 +955,176 @@ test('the settle and unsettle routes are ignored when the caller sends a body', 
   await call('POST', '/api/billing/42/settle', { userId: 2, settled: true, amount: 0 });
   const upd = log.find((q) => /UPDATE bill_split_shares SET settled = true/.test(q.sql));
   assert.deepStrictEqual(upd.params, [7, 1], 'the bill id and the CALLER, nothing off the body');
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 8. Adversarial audit, round 2 (2026-09-05)
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('a payer change reads the former payer as unsettled and keeps the money they carried', async () => {
+  // Ava paid $10 on an earlier version of this bill when Ben was payer, then
+  // became payer herself (her row: settled as the artifact, paid_amount 10).
+  // Now Ben takes the bill back. The credit loop used to `continue` past her
+  // row, so her $10 was forgotten. Fails without the fix: paidAmount 0.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptCreate(THREE, {
+    existingBill: { id: 7, paid_by: 1 },
+    existingShares: [
+      { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '30.00', paid_amount: '10.00' },
+      { user_id: 2, committed: false, settled: false, settled_at: null, amount: '30.00', paid_amount: '0.00' },
+      { user_id: 3, committed: false, settled: false, settled_at: null, amount: '30.00', paid_amount: '0.00' },
+    ],
+  });
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 90, tipPercent: 0, paidBy: 2 });
+  assert.strictEqual(res.status, 201, res.text);
+  const ava = res.body.bill.shares.find((s) => s.userId === 1);
+  assert.strictEqual(ava.settled, false, 'the former payer owes the new one');
+  assert.strictEqual(ava.paidAmount, 10, 'what she paid before she was payer rides across');
+  assert.strictEqual(ava.outstanding, 20);
+  // The DB write agrees: paid_amount is the seventh INSERT parameter.
+  const row = log.find((q) => /INSERT INTO bill_split_shares/.test(q.sql) && q.params[1] === 1);
+  assert.strictEqual(Number(row.params[6]), 10);
+  // And the flag was cleared on her row before the DELETEs looked at it.
+  const clear = log.findIndex((q) => /SET settled_at = NULL, settled = false/.test(q.sql));
+  const del = log.findIndex((q) => /DELETE FROM bill_split_shares/.test(q.sql));
+  assert.ok(clear >= 0, 'the artifact flag must be cleared on the former payer\'s row');
+  assert.deepStrictEqual(log[clear].params, [7, 1]);
+  assert.ok(clear < del, 'the clear has to land before the DELETE that reads the flag');
+});
+
+test('a former payer left off a custom split does not survive on the artifact flag', async () => {
+  // Ava was payer (settled, nothing carried); Ben takes the bill and splits it
+  // between himself and Cy. Ava's row used to be kept by the DELETE because it
+  // read settled = true, so the sheet summed $90 + $30 for a $90 bill, and
+  // this response counted two rows while GET counted three. Fails without the
+  // fix: shareCount 3 (retained) or, before the counting, no clear at all.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptCreate(THREE, {
+    existingBill: { id: 7, paid_by: 1 },
+    existingShares: [
+      { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '30.00', paid_amount: '0.00' },
+      { user_id: 2, committed: false, settled: false, settled_at: null, amount: '30.00', paid_amount: '0.00' },
+      { user_id: 3, committed: false, settled: false, settled_at: null, amount: '30.00', paid_amount: '0.00' },
+    ],
+  });
+  const res = await call('POST', '/api/billing/42/create', {
+    totalAmount: 90, tipPercent: 0, paidBy: 2, splitType: 'custom',
+    customShares: [{ userId: 2, amount: 45 }, { userId: 3, amount: 45 }],
+  });
+  assert.strictEqual(res.status, 201, res.text);
+  assert.deepStrictEqual(res.body.bill.shares.map((s) => s.userId).sort(), [2, 3]);
+  assert.strictEqual(res.body.bill.shareCount, 2, 'the former payer\'s worthless row is not a row on the bill');
+  assert.strictEqual(res.body.bill.settledCount, 1, 'Ben as payer, nobody else');
+  assert.ok(log.some((q) => /SET settled_at = NULL, settled = false/.test(q.sql) && q.params[1] === 1));
+  assert.ok(!log.some((q) => /UPDATE bill_split_shares SET amount/.test(q.sql)), 'nothing to restate: she carried no credit');
+});
+
+test('a payer who stays the payer is not touched by the clear', async () => {
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptCreate(THREE, {
+    existingBill: { id: 7, paid_by: 1 },
+    existingShares: [{ user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '30.00', paid_amount: '0.00' }],
+  });
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 90, tipPercent: 0 });
+  assert.strictEqual(res.status, 201, res.text);
+  assert.ok(!log.some((q) => /SET settled_at = NULL, settled = false/.test(q.sql)));
+});
+
+test('unsettle reads membership and the payer under the lock, on the writing connection', async () => {
+  // Both reads ran on the pool before BEGIN, so a request could pass them,
+  // wait on the lock behind a /create making this caller the payer, and then
+  // clear the payer row /create had just written. Fails without the fix: the
+  // membership SELECT is logged before the lock.
+  scriptUnsettle();
+  const res = await call('POST', '/api/billing/42/unsettle');
+  assert.strictEqual(res.status, 200, res.text);
+  const first = (re) => log.findIndex((q) => re.test(q.sql));
+  const begin = first(/^BEGIN/);
+  const lock = first(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/);
+  const member = first(/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/);
+  const bill = first(/SELECT id, paid_by FROM bill_splits/);
+  const update = first(/UPDATE bill_split_shares SET settled = false/);
+  assert.ok(begin >= 0 && begin < lock, 'the lock is taken inside the transaction');
+  assert.ok(lock < member, 'membership is read after the lock');
+  assert.ok(lock < bill, 'the payer is read after the lock');
+  assert.ok(bill < update);
+});
+
+test('the settle and unsettle responses carry the tally, and bill_tally reaches every member', async () => {
+  scriptSettle({ updated: true });
+  const settle = await call('POST', '/api/billing/42/settle');
+  await drain();
+  assert.strictEqual(settle.status, 200, settle.text);
+  assert.deepStrictEqual(
+    { shareCount: settle.body.shareCount, settledCount: settle.body.settledCount, fullySettled: settle.body.fullySettled },
+    { shareCount: 2, settledCount: 2, fullySettled: true }
+  );
+  const tallies = emits.filter((e) => e.event === 'bill_tally');
+  assert.deepStrictEqual(tallies.map((e) => e.room).sort(), ['user:1', 'user:2']);
+  for (const t of tallies) {
+    assert.deepStrictEqual(t.payload, { flockId: 42, shareCount: 2, settledCount: 2, fullySettled: true });
+    assert.ok(!('userId' in t.payload) && !('userName' in t.payload), 'the tally names nobody, which is why it is unfiltered');
+  }
+
+  emits = [];
+  scriptUnsettle();
+  const unsettle = await call('POST', '/api/billing/42/unsettle');
+  await drain();
+  assert.strictEqual(unsettle.status, 200, unsettle.text);
+  assert.strictEqual(unsettle.body.settled, false);
+  assert.deepStrictEqual(
+    { shareCount: unsettle.body.shareCount, settledCount: unsettle.body.settledCount, fullySettled: unsettle.body.fullySettled },
+    { shareCount: 2, settledCount: 1, fullySettled: false }
+  );
+  assert.strictEqual(emits.filter((e) => e.event === 'bill_tally').length, 2);
+});
+
+test('ghost-commit reads membership, mode, threshold and count after the lock', async () => {
+  // Every one of those reads ran on the pool before BEGIN. A member could
+  // pass them, leave (a departure takes this lock and commits), and resume
+  // here to write a share as a former member. Fails without the fix: the
+  // membership SELECT is logged before the lock.
+  CURRENT_USER = { id: 2, name: 'Ben', role: 'user' };
+  handlers = [
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
+    [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, isMember],
+    [/SELECT budget_ceiling, budget_locked, status, ghost_mode_enabled FROM flocks/,
+      () => ({ rows: [{ budget_ceiling: 30, budget_locked: true, status: 'confirmed', ghost_mode_enabled: true }] })],
+    [/COUNT\(\*\)::int AS n FROM/, () => ({ rows: [{ n: 3 }] })],
+    [/SELECT COUNT\(\*\) AS count FROM flock_members/, () => ({ rows: [{ count: '3' }] })],
+    [/SELECT id, paid_by FROM bill_splits/, () => ({ rows: [] })],
+    [/INSERT INTO bill_splits/, () => ({ rows: [{ id: 7, paid_by: null }] })],
+    [/INSERT INTO bill_split_shares/, () => ({ rows: [] })],
+    [/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status/, () => ({ rows: [{ user_id: 1 }, { user_id: 2 }, { user_id: 3 }] })],
+    noBlocks,
+  ];
+  const res = await call('POST', '/api/billing/42/ghost-commit');
+  assert.strictEqual(res.status, 200, res.text);
+  const first = (re) => log.findIndex((q) => re.test(q.sql));
+  const begin = first(/^BEGIN/);
+  const lock = first(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/);
+  const reads = [
+    first(/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/),
+    first(/SELECT budget_ceiling, budget_locked/),
+    first(/COUNT\(\*\)::int AS n FROM/),
+    first(/SELECT COUNT\(\*\) AS count FROM flock_members/),
+  ];
+  const insert = first(/INSERT INTO bill_split_shares/);
+  const commit = first(/^COMMIT/);
+  assert.ok(begin >= 0 && begin < lock);
+  for (const r of reads) assert.ok(r > lock && r < insert, `a read ran outside the lock: ${JSON.stringify(reads)} lock=${lock}`);
+  assert.ok(insert < commit);
+});
+
+test('a ghost-commit refused after the lock rolls the transaction back', async () => {
+  CURRENT_USER = { id: 2, name: 'Ben', role: 'user' };
+  handlers = [
+    [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
+    [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, noMember],
+  ];
+  const res = await call('POST', '/api/billing/42/ghost-commit');
+  assert.strictEqual(res.status, 403, res.text);
+  assert.ok(log.some((q) => /^ROLLBACK/.test(q.sql)), 'a refusal inside the transaction must roll it back');
+  assert.ok(!log.some((q) => /^COMMIT/.test(q.sql)));
 });

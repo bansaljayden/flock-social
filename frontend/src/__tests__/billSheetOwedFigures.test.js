@@ -32,7 +32,7 @@
 const fs = require('fs');
 const path = require('path');
 const React = require('react');
-const { render, screen } = require('@testing-library/react');
+const { render, screen, fireEvent, waitFor } = require('@testing-library/react');
 
 jest.mock('../services/api', () => ({
   __esModule: true,
@@ -450,4 +450,97 @@ test('the lock-in hint does not say "unlocks"', () => {
   const detail = read('screens/FlockDetail.js');
   expect(detail).not.toMatch(/unlocks the done step/);
   expect(detail).toContain('Locking it in tells everyone the plan is on, and the done step appears afterwards.');
+});
+
+
+// ---------------------------------------------------------------------------
+// 7. Adversarial audit, round 2 (2026-09-05): the figure after a settlement
+//    moves, and a header that trusts the server for the rows it cannot see.
+// ---------------------------------------------------------------------------
+describe('taking a settlement back restores the figure Settle Up asks for', () => {
+  const api = require('../services/api');
+  const UNDO = 'That was a mistake, I have not paid';
+
+  test('the local reducer recomputes outstanding from the share and its credit', async () => {
+    // GET serves a settled row with outstanding 0; flipping the flag alone
+    // left that zero, so the button read "Settle Up · $0.00". Fails without
+    // the fix: outstanding stays 0 and the tally is not applied.
+    api.unsettleShare.mockResolvedValueOnce({ settled: false, shareCount: 2, settledCount: 1, fullySettled: false });
+    const setBillSplit = jest.fn();
+    const before = bill([
+      share(1, 'Ava', 100, { settled: true, outstanding: 0 }),
+      share(9, 'Jay', 100, { paidAmount: 30, outstanding: 0, settled: true, settledAt: 'now' }),
+    ]);
+    mount(before, { setBillSplit });
+    fireEvent.click(screen.getByText(UNDO));
+    await waitFor(() => expect(setBillSplit).toHaveBeenCalledTimes(1));
+    const after = setBillSplit.mock.calls[0][0](before);
+    const jay = after.shares.find((s) => s.userId === 9);
+    expect(jay.settled).toBe(false);
+    expect(jay.settledAt).toBeNull();
+    expect(jay.outstanding).toBe(70);
+    expect(after.settledCount).toBe(1);
+    expect(after.shareCount).toBe(2);
+    expect(after.fullySettled).toBe(false);
+  });
+
+  test('marking paid zeroes the figure and takes the tally off the response', async () => {
+    api.settleShare.mockResolvedValueOnce({ settled: true, shareCount: 2, settledCount: 2, fullySettled: true });
+    const setBillSplit = jest.fn();
+    const before = bill([
+      share(1, 'Ava', 100, { settled: true, outstanding: 0 }),
+      share(9, 'Jay', 100, { paidAmount: 30, outstanding: 70 }),
+    ]);
+    mount(before, { setBillSplit });
+    fireEvent.click(screen.getByText('Mark as Paid (cash or other)'));
+    await waitFor(() => expect(setBillSplit).toHaveBeenCalledTimes(1));
+    const after = setBillSplit.mock.calls[0][0](before);
+    expect(after.shares.find((s) => s.userId === 9)).toMatchObject({ settled: true, outstanding: 0 });
+    expect(after).toMatchObject({ shareCount: 2, settledCount: 2, fullySettled: true });
+  });
+
+  test('an older response with no tally leaves the counts alone', async () => {
+    api.unsettleShare.mockResolvedValueOnce({ settled: false });
+    const setBillSplit = jest.fn();
+    const before = bill([
+      share(1, 'Ava', 100, { settled: true, outstanding: 0 }),
+      share(9, 'Jay', 100, { paidAmount: 30, outstanding: 0, settled: true, settledAt: 'now' }),
+    ], { shareCount: 3, settledCount: 3, fullySettled: true });
+    mount(before, { setBillSplit });
+    fireEvent.click(screen.getByText(UNDO));
+    await waitFor(() => expect(setBillSplit).toHaveBeenCalledTimes(1));
+    const after = setBillSplit.mock.calls[0][0](before);
+    expect(after.shareCount).toBe(3);
+    expect(after.settledCount).toBe(3);
+  });
+});
+
+describe('the header counts the rows the viewer cannot see from the server\'s tally', () => {
+  test('a hidden settled row is counted from the first render', () => {
+    // Two visible rows, one settled; a third, blocked, settled. The header
+    // used to count the visible array on its own: "1/3 settled".
+    mount(bill([
+      share(1, 'Ava', 100, { settled: true, outstanding: 0 }),
+      share(9, 'Jay', 100),
+    ], { shareCount: 3, settledCount: 2, fullySettled: false }));
+    expect(screen.getByLabelText('Open bill split details').textContent).toContain('2/3 settled');
+  });
+
+  test('a square bill the viewer cannot fully see is square only when the server says so', () => {
+    mount(bill([
+      share(1, 'Ava', 100, { settled: true, outstanding: 0 }),
+      share(9, 'Jay', 100, { settled: true, outstanding: 0, settledAt: 'now' }),
+    ], { shareCount: 3, settledCount: 3, fullySettled: true }));
+    expect(screen.getByLabelText('Open bill split details').textContent).toContain('All settled up');
+  });
+
+  test('an optimistic local settle still moves the header before the server confirms it', () => {
+    // The array carries a settle the tally has not caught up with yet: the
+    // larger of the two sources wins.
+    mount(bill([
+      share(1, 'Ava', 100, { settled: true, outstanding: 0 }),
+      share(9, 'Jay', 100, { settled: true, outstanding: 0, settledAt: 'now' }),
+    ], { shareCount: 2, settledCount: 1, fullySettled: false }));
+    expect(screen.getByLabelText('Open bill split details').textContent).toContain('All settled up');
+  });
 });
