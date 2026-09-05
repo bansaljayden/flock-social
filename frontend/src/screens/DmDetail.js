@@ -76,6 +76,9 @@ import { dmReact, dmRemoveReact, dmStopSharingLocation, dmVoteVenue, getSocket }
 import { groupReactions } from './ChatDetail';
 import { MessageList, StatusLine, TypingRow, VenueCardRow, ChatInputBar, ComposerPlusSheet, PinStrip, DM_FRIEND_COLOUR } from '../components/chat';
 import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
+/* The keyboard lane, the same hook the flock thread calls. See the block at
+   its call below, and the longer version of the reasoning in ChatDetail.js. */
+import useKeyboardComposer from '../hooks/useKeyboardComposer';
 import Icons from '../components/ui/Icons';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 
@@ -587,6 +590,32 @@ export default function DmDetail({
      time anyone else reads it. */
   const [dmActionRect, setDmActionRect] = React.useState(null);
 
+  /* THE KEYBOARD DOCK, and the DM half of decision 4: the keyboard is up when
+     the thread opens, the caret is in the field, the bar rides on top of the
+     keys and nothing jumps. It was wired to neither screen until 2026-09-05,
+     so `hooks/useKeyboardComposer.js` sat finished, documented and tested with
+     no caller but its own test.
+
+     THE THREE TRAPS, WRITTEN OUT IN FULL IN ChatDetail.js AND NAMED HERE.
+     The committed inset is spent on this column and never on MessageList's
+     own `bottomInset`, because that prop pads the inside of the scroller and
+     leaves its box running on behind the keys, which hides messages from
+     anyone who scrolls up; spending it in both places makes the two insets
+     add. `boxSizing` travels with the padding because this app has no global
+     box-sizing reset, and on a content box the padding would land outside the
+     `height: 100%` and push the composer off the bottom of the phone. And
+     every sheet on this screen stays a sibling of the bar, because a
+     transformed element is the containing block for a fixed descendant.
+
+     WHAT THIS SCREEN ANSWERS THAT THE FLOCK ONE DOES NOT. A blocked pair. The
+     composer is not drawn at all down there, so there is no field to focus and
+     no bar to lift, and the gate that already does that is the whole answer:
+     nothing here withholds focus from a composer it has drawn. The pair with
+     no connection yet is the opposite case and keeps a live field on purpose,
+     per settled decision 5, because the first message is what carries the
+     friend request, so it is focused like any other. */
+  const keyboard = useKeyboardComposer();
+
   /* THE COMPOSER'S OWN COPY OF THE DRAFT.
      App.js owns this field: `handleDmInputChange` writes the shared
      `chatInputRef`, emits typing and sets `chatInputHasText`, and the input
@@ -661,7 +690,12 @@ export default function DmDetail({
   };
 
   return currentScreen === 'dmDetail' && selectedDm && (
-    <div key="dm-detail-screen" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
+    /* The keyboard's committed height, spent once, on this column. The padding
+       is what puts the bar and the bottom of the stream above the keys; the
+       border box is what keeps that padding inside the 100% rather than
+       hanging it off the end of the phone. Both are `0px` and a no-op with the
+       keyboard down. */
+    <div key="dm-detail-screen" style={{ display: 'flex', flexDirection: 'column', height: '100%', boxSizing: 'border-box', paddingBottom: keyboard.bottomInset, backgroundColor: 'var(--bg-card-solid)' }}>
       {/* Header */}
       <div style={{ padding: '6px 10px 5px 4px', background: colors.navyBg, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -1174,6 +1208,21 @@ export default function DmDetail({
           match-highlighted view of the thread. Everything a handler hands back
           to the app shell goes through originalDmRow first. */}
       <MessageList
+        /* The scroller, handed to the dock. The hook measures how far this
+           thread is from its own bottom before the layout changes and puts
+           exactly that distance back after, and it needs the node to do it.
+           Without this the conversation drops by the height of the keyboard on
+           the frame the column re-lays-out, which is the jump the whole lane
+           exists to remove.
+
+           `bottomInset` is deliberately not passed: the keyboard's height is
+           spent on the column above instead. */
+        registerScroller={keyboard.registerList}
+        /* A downward drag at the bottom of the thread puts the keyboard away.
+           WebKit gives JavaScript no interactive dismissal, so the gesture is
+           recognised rather than followed, and the hook reads the type off the
+           event, so one function serves the whole sequence. */
+        onTouch={keyboard.dismissOnDrag}
         rows={dmRows}
         /* The other person's id. App.js mounts this screen with no key, so a
            jump straight from one conversation into another reuses the
@@ -1365,6 +1414,19 @@ export default function DmDetail({
           variant="dm"
           threadName={selectedDm.name}
           ownColor="var(--chat-accent)"
+          /* THE CARET IS IN THE FIELD ON ENTRY. The dock can only move a
+             keyboard that something has asked for, and this is the ask. It
+             sits inside the blocked gate above, so the one surface where
+             taking focus would be wrong is the one surface that never reaches
+             this line. A thread with no connection yet does reach it, and
+             should: decision 5 keeps that field live because the first message
+             is what carries the friend request. */
+          autoFocus
+          /* The two nodes the dock moves: the bar rides the keyboard, and the
+             field is what it watches, because a focusout is the earliest
+             honest signal that the keyboard is going down. */
+          registerBar={keyboard.registerBar}
+          registerInput={keyboard.registerInput}
           value={dmDraft}
           onChange={(next) => {
             setDmDraft(next);
