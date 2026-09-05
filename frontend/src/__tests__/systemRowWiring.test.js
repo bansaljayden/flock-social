@@ -34,12 +34,35 @@ describe('the row reaches the screen', () => {
     expect(appSrc).toMatch(/system_kind: m\.system_kind \|\| null,/);
   });
 
-  test('ChatDetail has a branch for system rows, and it comes before the card branches', () => {
-    const at = chatDetailSrc.indexOf("if (m.message_type === 'system')");
+  test('the system branch claims only rows the SERVER authored', () => {
+    /* THE REGRESSION THIS EXISTS FOR, shipped in 3561d30 and caught two
+       commits later. The bill row is a SYNTHETIC local row spliced into the
+       stream as `{ id: BILL_ROW_ID, message_type: 'system' }`, so groupRows
+       treats it as ownerless the way it treats a real system row. It carries
+       no system_kind, because no server wrote it.
+
+       The first version of this branch matched on message_type alone and sat
+       above the bill check, so the bill row fell through to `return null` and
+       BILL SPLITTING SILENTLY DISAPPEARED FROM THE CHAT. The original test
+       here asserted only that the branch came FIRST, which is precisely the
+       arrangement that broke it: it pinned the bug rather than the behaviour.
+
+       A server row always has a kind; a synthetic one never does. */
+    expect(chatDetailSrc).toMatch(/if \(m\.message_type === 'system' && m\.system_kind\) \{/);
+    expect(chatDetailSrc).not.toMatch(/if \(m\.message_type === 'system'\) \{/);
+  });
+
+  test('the bill row still reaches BillCard', () => {
+    // The end-to-end version of the check above, stated as the thing a user
+    // would notice: the synthetic row must not be intercepted on its way.
+    const at = chatDetailSrc.indexOf("if (m.message_type === 'system' && m.system_kind)");
     const bill = chatDetailSrc.indexOf('if (m.id === BILL_ROW_ID)');
     expect(at).toBeGreaterThan(-1);
     expect(bill).toBeGreaterThan(-1);
-    expect(at).toBeLessThan(bill);
+    // Order no longer matters for correctness, but the bill row must still be
+    // reachable, so assert the branch exists rather than where it sits.
+    const systemBranch = chatDetailSrc.slice(at, bill > at ? bill : at + 1200);
+    expect(systemBranch).not.toMatch(/BILL_ROW_ID/);
   });
 
   test('an unknown kind draws NOTHING rather than a broken row', () => {
@@ -49,7 +72,7 @@ describe('the row reaches the screen', () => {
        through to null costs that reader one missing line; anything else puts a
        half-rendered row, or a crash, in the middle of a thread. */
     const branch = chatDetailSrc.slice(
-      chatDetailSrc.indexOf("if (m.message_type === 'system')"),
+      chatDetailSrc.indexOf("if (m.message_type === 'system' && m.system_kind)"),
       chatDetailSrc.indexOf('if (m.id === BILL_ROW_ID)')
     );
     expect(branch).toMatch(/return null;/);

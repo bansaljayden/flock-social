@@ -1218,7 +1218,23 @@ export default function ChatDetail({
          which is why the column carries no CHECK constraint: an older client
          meeting a newer event shows one missing line instead of a broken row,
          and a server rolled forward before its clients is the normal order. */
-      if (m.message_type === 'system') {
+      /* GATED ON system_kind, NOT ON message_type ALONE, and that distinction
+         is load-bearing rather than tidy. The bill row is a SYNTHETIC local
+         row spliced into the stream as `{ id: BILL_ROW_ID, message_type:
+         'system' }`, so that groupRows treats it as ownerless the way it
+         treats a real system row. It carries no system_kind because no server
+         ever wrote it.
+
+         Claiming every row whose type is 'system' therefore swallowed the
+         bill card whole: it fell past the venue_set check, hit the `return
+         null` below, and bill splitting silently vanished from the chat. That
+         shipped in 3561d30 and is the exact hazard of matching on a shape that
+         two different things share.
+
+         A row the SERVER authored always has a kind. A synthetic one never
+         does. So the kind is the test, which also means any future local row
+         borrowing this message_type keeps working without touching this. */
+      if (m.message_type === 'system' && m.system_kind) {
         if (m.system_kind === 'venue_set') {
           return (
             <SystemRow
