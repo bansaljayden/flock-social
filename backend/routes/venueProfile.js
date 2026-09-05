@@ -736,7 +736,7 @@ router.post('/request-verification', requireVerified, async (req, res) => {
     if (!profile.google_place_id) {
       // A claim on nothing cannot be checked against anything. Same next step
       // the advisor and dashboard name for the same condition.
-      return res.status(400).json({ error: 'Link your Google listing in Edit Profile first. Verification confirms you own a specific listed place, and this profile does not name one yet.' });
+      return res.status(400).json({ error: 'No Google listing is linked to this venue yet. Verification confirms you own a specific listed place, so that comes first. Write to hello@flockcorp.com to link one.' });
     }
     if (await claimedByAnother(profile.google_place_id, req.user.id)) {
       return res.status(409).json({ error: CLAIMED_MSG });

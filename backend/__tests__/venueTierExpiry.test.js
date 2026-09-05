@@ -550,8 +550,54 @@ test('NO GRANT IS EVER SILENTLY EXTENDED', async () => {
     'omitting an expiry no longer preserves the end date already on file, so a re-grant wipes it to permanent');
   // A repeated founding_comp is a correction, not a renewal: it may fill in a
   // MISSING end date, never replace one.
-  assert.match(sql, /WHEN \$7 THEN COALESCE\(venue_subscriptions\.expires_at, EXCLUDED\.expires_at\)/,
-    'a second founding_comp grant extends the comp by another six months');
+  // ...and a lapsed date counts as missing, so a founding re-grant after the
+  // comp ended starts a fresh window instead of re-activating a dead one.
+  assert.match(sql, /WHEN \$7 THEN COALESCE\(\s*CASE WHEN venue_subscriptions\.expires_at > NOW\(\) THEN venue_subscriptions\.expires_at END,\s*EXCLUDED\.expires_at\)/,
+    'a second founding_comp grant extends a LIVE comp by another six months, or keeps a dead date');
+});
+
+test('re-granting a tier after its comp lapsed is refused until an end date is named', async () => {
+  // Founding comp granted March 1, ended September 1. On the 5th the admin
+  // re-posts the tier with no expiry. The upsert used to keep the dead date:
+  // status active, expires_at in the past, "tier pro until 2026-09-01" on the
+  // response and the audit row, and every gated route still 403.
+  const ended = new Date(Date.now() - 4 * 24 * HOUR);
+  // The statement's `lapsed` CTE stops `upd`, so the row comes back with no
+  // id and the lapsed date; the route turns that into the refusal. Still one
+  // statement: nothing is read ahead of the write.
+  handlers = [[/UPDATE venue_profiles SET tier/, () => ({
+    rows: [{ id: null, business_name: null, tier: null, expires_at: null, granted_reason: null, lapsed_at: ended }],
+  })]];
+  const res = await call('POST', '/api/admin/venues/2/tier', { tier: 'pro', reason: 'renewal' }, MOD);
+  assert.strictEqual(res.status, 400, res.text);
+  assert.match(res.body.error, /ended on \d{4}-\d{2}-\d{2}\. Send expiresAt or durationDays/);
+  assert.ok(!res.body.error.includes('—'));
+  assert.strictEqual(log.length, 1, 'the check must live inside the one statement');
+  const sql = log[0].sql;
+  assert.match(sql, /lapsed AS \( SELECT expires_at FROM venue_subscriptions WHERE user_id = \$2 AND expires_at IS NOT NULL AND expires_at <= NOW\(\) \)/);
+  assert.match(sql, /AND NOT \(\$10::boolean AND EXISTS \(SELECT 1 FROM lapsed\)\)/, 'the lapsed grant must gate the UPDATE itself');
+  assert.strictEqual(log[0].params[9], true, '$10 says an unspecified expiry needs a live grant on file');
+  assert.ok(!('lapsed_at' in res.body), 'the CTE field is not part of the response shape');
+
+  // The same call with a duration is a new grant, and the gate is off.
+  handlers = [tierWrite(GRANTED_ROW)];
+  log = [];
+  const ok = await call('POST', '/api/admin/venues/2/tier', { tier: 'pro', durationDays: 30, reason: 'renewal' }, MOD);
+  assert.strictEqual(ok.status, 200, ok.text);
+  assert.strictEqual(grantParams().explicit, true);
+  assert.strictEqual(log[0].params[9], false);
+  assert.deepStrictEqual(ok.body, GRANTED_ROW, 'lapsed_at must not leak into the response');
+});
+
+test('a live grant re-posted without an expiry keeps its date, as before', async () => {
+  // A live grant is not in `lapsed`, so `upd` runs and the row comes back
+  // whole; the stored date survives through the CASE's ELSE branch.
+  handlers = [tierWrite({ ...GRANTED_ROW, lapsed_at: null })];
+  const res = await call('POST', '/api/admin/venues/2/tier', { tier: 'premium', reason: 'fixing the note' }, MOD);
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(grantParams().explicit, false);
+  assert.strictEqual(log[0].params[9], true);
+  assert.deepStrictEqual(res.body, GRANTED_ROW);
 });
 
 test('a downgrade to free clears the end date instead of leaving a lie behind', async () => {

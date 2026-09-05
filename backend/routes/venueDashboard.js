@@ -937,7 +937,7 @@ router.post('/reviews/:id/reply', [
     // later rides the legitimate owner's verified badge.
     const venue = await getVenueCtx(req.user.id);
     if (!venue) return res.status(403).json({ error: 'Not a venue owner' });
-    if (!venue.verified) return res.status(403).json({ error: 'Replies unlock once your venue is verified' });
+    if (!venue.verified) return res.status(403).json({ error: 'You can reply to reviews once your venue is verified.' });
     if (rejectIfProfane(res, req.body.reply)) return;
 
     // Round 18: a hidden review is not repliable, and `RETURNING *` on one was
@@ -1304,12 +1304,16 @@ router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
     // read, which is the harm the retirement exists to prevent.
     const { rows } = await pool.query(
       `SELECT vr.id, vr.rating, vr.text,
+              -- The reply is the business speaking in public; a banned owner
+              -- no longer speaks (see the promotions read). Both CASEs.
               CASE WHEN vr.venue_replied_at IS NOT NULL AND EXISTS (
                 SELECT 1 FROM venue_profiles vp
+                JOIN users ou ON ou.id = vp.user_id AND ou.is_banned IS NOT TRUE
                 WHERE vp.google_place_id = vr.google_place_id AND vp.verified = true
               ) THEN vr.venue_reply ELSE NULL END AS venue_reply,
               CASE WHEN EXISTS (
                 SELECT 1 FROM venue_profiles vp
+                JOIN users ou ON ou.id = vp.user_id AND ou.is_banned IS NOT TRUE
                 WHERE vp.google_place_id = vr.google_place_id AND vp.verified = true
               ) THEN vr.venue_replied_at ELSE NULL END AS venue_replied_at,
               vr.created_at, vr.user_id, u.name, u.profile_image_url
@@ -1478,6 +1482,14 @@ router.get('/public-promotions/:placeId', placeIdParam, async (req, res) => {
        JOIN venue_profiles vp ON vp.user_id = p.venue_user_id
          AND vp.google_place_id = p.google_place_id
          AND vp.verified = true
+       -- A BAN TAKES THE BUSINESS'S WORDS DOWN WITH IT (venue-owner audit,
+       -- 2026-09-05). "Ban user" on the moderation console touched only
+       -- users.is_banned; this read joined on verified alone, so a banned
+       -- owner's promotions kept serving to every consumer, views kept
+       -- counting, and the moderator had no signal a second click was needed.
+       -- Same rule the story and profile reads already apply to a banned
+       -- author (utils/relationships.js, routes/users.js).
+       JOIN users ou ON ou.id = vp.user_id AND ou.is_banned IS NOT TRUE
        LEFT JOIN venue_subscriptions vs ON vs.user_id = vp.user_id
        WHERE p.google_place_id = $1 AND p.active = true AND COALESCE(p.is_hidden, false) = false
          AND ($2::boolean = false OR (
@@ -1702,7 +1714,10 @@ router.get('/intelligence', requirePremium, async (req, res) => {
   try {
     const ctx = await getVenueCtx(req.user.id);
     if (!ctx?.google_place_id) {
-      return res.json({ available: false, reason: 'Link your Google listing in Edit Profile to unlock forecasts' });
+      // No control on the venue side writes google_place_id (onboarding
+      // requires one, so this is an API-made or legacy row), and "Edit
+      // Profile" is a consumer screen. Name the step that exists.
+      return res.json({ available: false, reason: 'No Google listing is linked to this venue yet, so forecasts are off. Write to hello@flockcorp.com to link one.' });
     }
     if (!ctx.verified) return res.json({ available: false, unverified: true, reason: unverifiedReason(ctx) });
     const cached = cacheGet(`intel:${ctx.google_place_id}`);
@@ -1793,7 +1808,7 @@ router.get('/strip', requirePremium, async (req, res) => {
   try {
     const ctx = await getVenueCtx(req.user.id);
     if (!ctx?.google_place_id) {
-      return res.json({ available: false, reason: 'Link your Google listing in Edit Profile to unlock the strip view' });
+      return res.json({ available: false, reason: 'No Google listing is linked to this venue yet, so the strip view is off. Write to hello@flockcorp.com to link one.' });
     }
     if (!ctx.verified) return res.json({ available: false, unverified: true, reason: unverifiedReason(ctx) });
     const cached = cacheGet(`strip:${ctx.google_place_id}`);
@@ -2044,7 +2059,7 @@ router.get('/busy-now', async (req, res) => {
   try {
     const ctx = await getVenueCtx(req.user.id);
     if (!ctx?.google_place_id) {
-      return res.json({ available: false, reason: 'Link your Google listing in Edit Profile to set a live number' });
+      return res.json({ available: false, reason: 'No Google listing is linked to this venue yet, so a live number cannot be set. Write to hello@flockcorp.com to link one.' });
     }
     if (!ctx.verified) return res.json({ available: false, unverified: true, reason: unverifiedReason(ctx) });
     const state = await ownerBusyState(ctx.google_place_id);
@@ -2085,7 +2100,7 @@ router.post('/busy-now', [
     }
     const ctx = await getVenueCtx(req.user.id);
     if (!ctx?.google_place_id) {
-      return res.status(400).json({ error: 'Link your Google listing in Edit Profile first' });
+      return res.status(400).json({ error: 'No Google listing is linked to this venue yet. Write to hello@flockcorp.com to link one.' });
     }
     if (!ctx.verified) {
       return res.status(403).json({ error: liveNumberRefusal(ctx) });
@@ -2270,7 +2285,7 @@ router.get('/this-week', requirePro, async (req, res) => {
   try {
     const ctx = await getVenueCtx(req.user.id);
     if (!ctx?.google_place_id) {
-      return res.json({ available: false, reason: 'Link your Google listing in Edit Profile to unlock the weekly summary' });
+      return res.json({ available: false, reason: 'No Google listing is linked to this venue yet, so the weekly summary is off. Write to hello@flockcorp.com to link one.' });
     }
     if (!ctx.verified) return res.json({ available: false, unverified: true, reason: unverifiedReason(ctx) });
     const placeId = ctx.google_place_id;

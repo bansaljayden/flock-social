@@ -37,6 +37,20 @@ import { BirdieStill, BirdNote, BIRDIE, WARM_BIRD } from '../components/ui/Birdi
 import Icons from '../components/ui/Icons';
 import VenueInsightCards from '../components/VenueInsightCards';
 import VenueAdvisorChat from '../components/VenueAdvisorChat';
+
+// When an incoming group is coming, from the row's event_time. The same
+// six-day rule App.js's formatEventTime applies to the consumer's own plans:
+// a weekday alone is ambiguous past one week. The feed's window runs from
+// twelve hours ago to seven days ahead, so the date form is reachable.
+const incomingWhen = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const opts = d.getTime() - Date.now() > 6 * 24 * 3600 * 1000
+    ? { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }
+    : { weekday: 'short', hour: 'numeric', minute: '2-digit' };
+  return d.toLocaleString([], opts);
+};
 import {
   BASE_URL,
   askAdvisor,
@@ -814,7 +828,7 @@ export default function VenueDashboard({
                       : "The map couldn't load"}
                   </p>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
-                    {venueMapState.reason === 'no_listing' ? 'No Google listing is linked, so there is no location to put a pin on. Link your listing in Edit Profile and the map fills in.'
+                    {venueMapState.reason === 'no_listing' ? 'No Google listing is linked, so there is no location to put a pin on. Write to hello@flockcorp.com to link one and the map fills in.'
                       : venueMapState.reason === 'no_coords' ? "Your listing exists but Google returned no location for it, so there is nothing to place a pin on. Users' maps have the same gap."
                       : 'The venue lookup failed. Check your connection and try again.'}
                   </p>
@@ -1552,7 +1566,15 @@ export default function VenueDashboard({
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div>
                         <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>{flock.title || flock.name}</h4>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0' }}>{memberCountLabel(flock)}{flock.date ? ` - ${new Date(flock.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}` : ''}{flock.time ? ` ${flock.time}` : ''}</p>
+                        {/* The row carries event_time (routes/venueDashboard.js
+                            selects id, event_time, status, member_count and
+                            writes title from the count). This line used to
+                            read `date` and `time`, keys no row has ever had,
+                            so the one thing the feed exists to say, WHEN the
+                            group is coming, never rendered (venue-owner audit,
+                            2026-09-05). And the heading already says "Party of
+                            4", so the member label repeated it. */}
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0' }}>{incomingWhen(flock.event_time) || memberCountLabel(flock)}</p>
                       </div>
                       <span style={{ padding: '4px 8px', borderRadius: '12px', backgroundColor: flock.status === 'confirmed' ? colors.steel : colors.amber, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500' }}>
                         {flock.status === 'confirmed' ? 'Confirmed' : 'Active'}
@@ -1986,10 +2008,44 @@ export default function VenueDashboard({
                 )}
               </div>
 
+              {/* WEEKLY REPORTS. One switch, because one send exists: the Monday
+                  digest (backend/services/venueDigest.js) reads
+                  notification_prefs.weekly and skips every venue whose value is
+                  not true, and PUT /api/venue-profile is its only writer. The
+                  panel that wrote it was removed (the note below) and nothing
+                  replaced it, so the digest could not be opted into from any
+                  screen, while the unsubscribe page, the email footer and the
+                  privacy policy all told the owner to use "the Weekly reports
+                  switch in your venue dashboard" (venue-owner audit,
+                  2026-09-05). This is that switch, and only that switch. */}
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+                <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.mail ? Icons.mail(colors.navy, 14) : null} Weekly reports</h3>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    aria-label="Weekly reports by email"
+                    checked={venueProfile?.notification_prefs?.weekly === true}
+                    onChange={async (e) => {
+                      const weekly = e.target.checked;
+                      try {
+                        const saved = await updateVenueProfile({ notificationPrefs: { weekly } });
+                        setVenueProfile(saved);
+                        showToast(weekly ? 'Weekly reports on. The first one comes Monday morning.' : 'Weekly reports off.');
+                      } catch (err) {
+                        showToast(err?.message || 'Could not save that. Try again.', 'error');
+                      }
+                    }}
+                    style={{ marginTop: '2px', width: '18px', height: '18px', flexShrink: 0 }}
+                  />
+                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', lineHeight: 1.5 }}>A short email every Monday morning with last week's readings, new ratings, and what the data suggests for the week ahead. Off until you turn it on.</span>
+                </label>
+              </div>
+
               {/* The Notifications panel used to sit here: three switches, one
                   offering to tell the owner when a flock books their venue, one
                   for new customer reviews, one for a weekly performance summary
-                  by email.
+                  by email. The weekly one is back above, alone, because its
+                  send now exists; the other two do not, and stay gone.
 
                   It is gone because none of those three notifications exists,
                   and none of them can be made to exist from this file.
