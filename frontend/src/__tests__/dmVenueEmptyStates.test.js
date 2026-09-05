@@ -102,6 +102,9 @@ function dmProps(over = {}) {
     dmNotConnected: false,
     dmPendingImage: null,
     dmPinnedVenue: null,
+    // Take the pin down. PinStrip draws its Unpin item only when handed a
+    // callback, so this is what makes the control exist at all.
+    unpinDmVenueNow: () => {},
     dmReactions: {},
     dmReplyingTo: null,
     dmRequestSending: false,
