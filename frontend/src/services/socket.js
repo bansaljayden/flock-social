@@ -1020,6 +1020,13 @@ export function onBillFullySettled(callback) {
   return register('bill_fully_settled', callback);
 }
 
+// The tally over every row after a settlement moved. It names nobody, so it
+// is the one settlement event a viewer who has blocked the actor still
+// receives; ChatDetail's header reads it for the rows it cannot see.
+export function onBillTally(callback) {
+  return register('bill_tally', callback);
+}
+
 export function onGhostCommitted(callback) {
   return register('ghost_committed', callback);
 }

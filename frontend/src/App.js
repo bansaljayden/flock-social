@@ -15,7 +15,7 @@ import { hapticTap, hapticSuccess, hapticAlarm } from './services/haptics';
 // Flock. App Review has that on tape. See the shim's header for the whole
 // story, including why moving the origin was the wrong fix.
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from './services/geolocation';
-import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled } from './services/socket';
+import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled } from './services/socket';
 import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
@@ -71,7 +71,7 @@ import AddFriends from './screens/AddFriends';
 // it is a static import rather than a lazy one. It is the screen this product
 // exists to show, every user opens it and most open it more than once a
 // session. The measurement is in the header of the file it moved to.
-import ChatDetail from './screens/ChatDetail';
+import ChatDetail, { owedOn } from './screens/ChatDetail';
 // The create screen, the one the Nest points a brand new account at, left
 // App.js on 2026-09-01 as the ninth screen of the sweep. Static for the
 // same reason as the three above it: it opens on a deliberate tap in the
@@ -9641,7 +9641,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     });
     const unsubSettled = onShareSettled((data) => {
       if (data.flockId === selectedFlockId) {
-        setBillSplit(prev => prev ? { ...prev, shares: prev.shares.map(s => s.userId === data.userId ? { ...s, settled: true } : s) } : prev);
+        // The array only; the counts arrive on bill_tally, see below.
+        setBillSplit(prev => prev ? { ...prev, shares: prev.shares.map(s => s.userId === data.userId ? { ...s, settled: true, outstanding: 0 } : s) } : prev);
       }
     });
     // The mirror of the above. The server has emitted share_unsettled since
@@ -9651,7 +9652,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // until they reopened the sheet.
     const unsubUnsettled = onShareUnsettled((data) => {
       if (data.flockId === selectedFlockId) {
-        setBillSplit(prev => prev ? { ...prev, shares: prev.shares.map(s => s.userId === data.userId ? { ...s, settled: false } : s) } : prev);
+        // The figure comes back with the flag: a settled row is served with
+        // outstanding 0, and leaving that in place read as nothing owed.
+        setBillSplit(prev => prev ? { ...prev, shares: prev.shares.map(s => s.userId === data.userId ? { ...s, settled: false, settledAt: null, outstanding: owedOn(s) } : s) } : prev);
+      }
+    });
+    // The tally over every row, from the server, after any settlement moves.
+    // Unfiltered because it names nobody, so it is what keeps the header right
+    // for a viewer who has blocked the person whose share just moved and will
+    // never receive the two events above for them.
+    const unsubTally = onBillTally((data) => {
+      if (data.flockId === selectedFlockId) {
+        setBillSplit(prev => prev ? {
+          ...prev,
+          shareCount: Number(data.shareCount) || 0,
+          settledCount: Number(data.settledCount) || 0,
+          fullySettled: !!data.fullySettled,
+        } : prev);
       }
     });
     const unsubFullySettled = onBillFullySettled((data) => {
@@ -9675,7 +9692,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         });
       }
     });
-    return () => { unsubBudget(); unsubLocked(); unsubReminder(); unsubBillCreated(); unsubSettled(); unsubUnsettled(); unsubFullySettled(); unsubGhost(); };
+    return () => { unsubBudget(); unsubLocked(); unsubReminder(); unsubBillCreated(); unsubSettled(); unsubUnsettled(); unsubTally(); unsubFullySettled(); unsubGhost(); };
   }, [selectedFlockId, showToast, loadMoneyState]);
 
   // Listen for real-time venue votes
