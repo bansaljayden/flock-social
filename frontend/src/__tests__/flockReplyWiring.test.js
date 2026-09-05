@@ -28,11 +28,24 @@ const chatDetailSrc = read('screens', 'ChatDetail.js');
 const socketSrc = read('services', 'socket.js');
 const apiSrc = read('services', 'api.js');
 
-/** The body of a named function/const, for pinning one site rather than a file. */
-function slice(src, anchor, chars = 3000) {
+/**
+ * The body of a named function/const, for pinning one site rather than a file.
+ *
+ * `end` closes the window at a real boundary. A fixed character count is a
+ * window that MOVES: adding `system_kind` to mapFlockRow for migration 067
+ * pushed `reply_to` past a 2600-char slice and failed a test about replies for
+ * a reason that had nothing to do with replies. Prefer an end marker; the
+ * character cap stays as a backstop so a missing marker cannot swallow the
+ * rest of a 21,000-line file.
+ */
+function slice(src, anchor, chars = 3000, end = null) {
   const at = src.indexOf(anchor);
   expect(at).toBeGreaterThan(-1);
-  return src.slice(at, at + chars);
+  const window = src.slice(at, at + chars);
+  if (!end) return window;
+  const stop = window.indexOf(end);
+  expect(stop).toBeGreaterThan(-1);
+  return window.slice(0, stop + end.length);
 }
 
 describe('both transports carry the quote', () => {
@@ -60,7 +73,10 @@ describe('both transports carry the quote', () => {
 
 describe('the row mapper', () => {
   test('mapFlockRow flattens the quote to the names mapDmRow uses', () => {
-    const body = slice(appSrc, 'const mapFlockRow = (m, myId)', 2600);
+    // To the end of the object literal, not a character count: this mapper
+    // gains fields (status and openedBy for 065, system_kind for 067) and a
+    // fixed window would keep sliding off the end of it.
+    const body = slice(appSrc, 'const mapFlockRow = (m, myId)', 6000, '\n});');
     expect(body).toMatch(/reply_to: m\.reply_to/);
     expect(body).toMatch(/text: m\.reply_to\.message_text/);
     expect(body).toMatch(/sender: m\.reply_to\.sender_name/);

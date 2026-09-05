@@ -1285,6 +1285,11 @@ const mapFlockRow = (m, myId) => ({
   // nothing and this does the same.
   status: m.status || null,
   openedBy: m.openedBy || null,
+  // WHICH plan event this row records (migration 067), when it records one.
+  // The server sends the kind and the changed value and never a finished
+  // sentence, so the wording, the casing and which piece is accented stay one
+  // decision in SystemRow rather than being split across two repositories.
+  system_kind: m.system_kind || null,
   // The quote, flattened to the same three names mapDmRow uses so MessageRow
   // draws a flock reply and a DM reply through one code path. message_type
   // rides along because the server sends it: a reply to a photo or a venue

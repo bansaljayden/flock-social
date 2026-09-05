@@ -178,6 +178,7 @@ import {
   MessageList,
   PinStrip,
   StatusLine,
+  SystemRow,
   TypingRow,
   VenueCardRow,
 } from '../components/chat';
@@ -1203,6 +1204,35 @@ export default function ChatDetail({
     // as the card this replaces, same exit through leaveChatScreen, and the
     // count is the real tally or nothing at all.
     const renderCard = (m) => {
+      /* THE PLAN'S OWN EVENTS (migration 067). groupRows already collapses
+         consecutive system rows into one ownerless run and MessageGroup
+         already routes them through this same door, so this branch is the
+         last piece: the module has been ready for these rows since it was
+         built and the database could not store one until 067 widened the
+         CHECK on message_type.
+
+         PARTS, NOT PROSE. SystemRow takes pieces and decides itself which one
+         is accented, so the sentence is assembled here, next to the rest of
+         this screen's copy, rather than shipped from the server. A kind this
+         build does not recognise falls through to null and draws NOTHING,
+         which is why the column carries no CHECK constraint: an older client
+         meeting a newer event shows one missing line instead of a broken row,
+         and a server rolled forward before its clients is the normal order. */
+      if (m.message_type === 'system') {
+        if (m.system_kind === 'venue_set') {
+          return (
+            <SystemRow
+              kind="venue_set"
+              parts={[
+                { text: `${m.sender === 'You' ? 'You' : m.sender} set the venue: ` },
+                { text: m.text, accent: true },
+              ]}
+            />
+          );
+        }
+        return null;
+      }
+
       /* The one row this screen builds itself. Its actions are the sheet's own
          handlers, so a settle from the card and a settle from the sheet are
          the same call. `canPayOnline` is deliberately not passed: this screen
