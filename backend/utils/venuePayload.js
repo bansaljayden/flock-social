@@ -8,7 +8,7 @@
 //     field goes through.
 // Everything else is type- and length-clamped to known fields.
 
-const { moderateText } = require('./moderation');
+const { moderateText, moderateVenueText } = require('./moderation');
 
 // Our own photo proxy is the only photo source that renders. Clients send the
 // proxy path either relative (as the search API returns it) or prefixed with
@@ -105,9 +105,14 @@ function sanitizeVenueData(raw) {
   // subtitle whenever `type` is absent, so it is displayed UGC on the same
   // terms as the name.
   const category = str(raw.category, 64);
-  for (const text of [name, addr, category]) {
-    if (text && !moderateText(text).allowed) return { ok: false };
+  // A card with a place id carries Google's name and address, screened as
+  // provider text (utils/moderation.js moderateVenueText); the category is
+  // the app's own label. A card without one is typed, and keeps the full list.
+  const placeIdForScreen = str(raw.place_id, 256);
+  for (const text of [name, addr]) {
+    if (text && !moderateVenueText(text, placeIdForScreen).allowed) return { ok: false };
   }
+  if (category && !moderateText(category).allowed) return { ok: false };
 
   const data = {
     place_id: str(raw.place_id, 256),

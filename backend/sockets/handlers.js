@@ -9,7 +9,7 @@ const { stripHtml } = require('../utils/sanitize');
 // GIF was refused was told it had failed a safety check, which is both wrong and
 // unactionable. It matters more now that the client shows these strings as a
 // toast instead of console.warn-ing them (App.js, the 'error' listener).
-const { moderateText, TEXT_REJECTED_MESSAGE, moderateImage, imageRejectionMessage } = require('../utils/moderation');
+const { moderateText, moderateVenueText, TEXT_REJECTED_MESSAGE, VENUE_REJECTED_MESSAGE: VENUE_TEXT_REJECTED_MESSAGE, moderateImage, imageRejectionMessage } = require('../utils/moderation');
 const { sanitizeVenueData, safeVenuePhotoUrl } = require('../utils/venuePayload');
 // EXIF/XMP/IPTC removal for the bytes that actually get stored. See the header
 // of utils/imageMetadata.js: a chat photo taken on a phone carries a GPS fix,
@@ -1447,8 +1447,9 @@ function registerHandlers(io, socket) {
         socket.emit('error', { message: 'Venue name too long' });
         return;
       }
-      if (!moderateText(venue_name).allowed) {
-        socket.emit('error', { message: TEXT_REJECTED_MESSAGE });
+      // Google's text is screened as Google's text; see moderateVenueText.
+      if (!moderateVenueText(venue_name, venue_id).allowed) {
+        socket.emit('error', { message: VENUE_TEXT_REJECTED_MESSAGE });
         return;
       }
 
@@ -2216,8 +2217,9 @@ function registerHandlers(io, socket) {
       const venue_name = stripHtml(typeof data?.venue_name === 'string' ? data.venue_name.trim() : '').slice(0, 255);
       const venue_id = typeof data?.venue_id === 'string' ? data.venue_id.slice(0, 255) : null;
       if (receiverId === null || receiverId === user.id || !venue_name) return;
-      if (!moderateText(venue_name).allowed) {
-        socket.emit('error', { message: TEXT_REJECTED_MESSAGE });
+      // Google's text is screened as Google's text; see moderateVenueText.
+      if (!moderateVenueText(venue_name, venue_id).allowed) {
+        socket.emit('error', { message: VENUE_TEXT_REJECTED_MESSAGE });
         return;
       }
       if (await isBlockedBetween(user.id, receiverId)) return;
@@ -2312,11 +2314,12 @@ function registerHandlers(io, socket) {
       const u1 = Math.min(user.id, receiverId);
       const u2 = Math.max(user.id, receiverId);
       const safeName = stripHtml(typeof venue_name === 'string' ? venue_name.trim() : '').slice(0, 255);
-      // Round 8: same screen + photo-proxy-only rule as venue cards.
-      if (!moderateText(safeName).allowed) return;
-      const safeAddress = typeof venue_address === 'string' ? stripHtml(venue_address.trim()).slice(0, 512) : null;
-      if (safeAddress && !moderateText(safeAddress).allowed) return;
       const safeVenueId = typeof venue_id === 'string' ? venue_id.slice(0, 256) : null;
+      // Round 8: same screen + photo-proxy-only rule as venue cards. Google's
+      // text is screened as Google's text; see moderateVenueText.
+      if (!moderateVenueText(safeName, safeVenueId).allowed) return;
+      const safeAddress = typeof venue_address === 'string' ? stripHtml(venue_address.trim()).slice(0, 512) : null;
+      if (safeAddress && !moderateVenueText(safeAddress, safeVenueId).allowed) return;
       // venue_rating is NUMERIC(2,1): 9.9 is the column's ceiling and Google's
       // scale ends at 5. Anything else used to reach Postgres and come back a
       // silent failure here (a swallowed 500 on the REST twin). Bounded like
