@@ -789,7 +789,7 @@ export default function FlockDetail({
             {isCreator && !isConfirmed && !isCompleted && (
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 4px' }}>
                 {hasVenue
-                  ? 'Locking it in tells everyone the plan is on, and unlocks the done step afterwards.'
+                  ? 'Locking it in tells everyone the plan is on, and the done step appears afterwards.'
                   : 'Pick a venue and you can lock the plan in.'}
               </p>
             )}
