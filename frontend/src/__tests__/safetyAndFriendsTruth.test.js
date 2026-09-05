@@ -2,13 +2,13 @@
 const fs = require('fs');
 const path = require('path');
 
-const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8').replace(/\r\n/g, '\n');
 const app = read('App.js');
 const sheet = read('components/safety/EmergencySheet.js');
 const profile = read('screens/ProfileSettings.js');
 const addFriends = read('screens/AddFriends.js');
-const safety = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'routes', 'safety.js'), 'utf8');
-const friends = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'routes', 'friends.js'), 'utf8');
+const safety = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'routes', 'safety.js'), 'utf8').replace(/\r\n/g, '\n');
+const friends = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'routes', 'friends.js'), 'utf8').replace(/\r\n/g, '\n');
 
 test('a live share follows the person instead of re-sending one frozen fix', () => {
   expect(app).toMatch(/const sharingAnywhere = !!sharingLocationForFlock \|\| !!dmSharingLocation;/);
@@ -20,16 +20,16 @@ test('a live share follows the person instead of re-sending one frozen fix', () 
 });
 
 test('the flock alarm says whether the trusted contacts were actually reached', () => {
-  expect(safety).toMatch(/async function alertFlockMembers\(io, user, coords, contactsAlerted\) \{/);
+  expect(safety).toMatch(/async function alertFlockMembers\(io, user, coords, contactsAlerted, alertId = null\) \{/);
   expect(safety).toMatch(/\.\.\.\(typeof contactsAlerted === 'number' \? \{ contactsAlerted \} : \{\}\),/);
-  expect(safety).toMatch(/alertFlockMembers\(req\.app\.get\('io'\), req\.user, coords, emailsSent\)/);
+  expect(safety).toMatch(/alertFlockMembers\(req\.app\.get\('io'\), req\.user, coords, emailsSent, alertId\)/);
   expect(app).toMatch(/\{safetyAlert\.contactsAlerted === 0/);
   // And the number reaches state from both transports (safety audit
   // 2026-09-05: the branch was pinned, the plumbing was not, and the sentence
   // said the adults were handled when nobody was reached).
   expect(app).toMatch(/\.\.\.\(Number\.isFinite\(Number\(data\.contactsAlerted\)\) \? \{ contactsAlerted: Number\(data\.contactsAlerted\) \} : \{\}\),/);
   expect(app).toMatch(/\.\.\.\(Number\.isFinite\(intent\.contactsAlerted\) \? \{ contactsAlerted: intent\.contactsAlerted \} : \{\}\),/);
-  const nav = fs.readFileSync(path.join(__dirname, '..', 'services', 'pushNavigation.js'), 'utf8');
+  const nav = fs.readFileSync(path.join(__dirname, '..', 'services', 'pushNavigation.js'), 'utf8').replace(/\r\n/g, '\n');
   expect(nav).toMatch(/const contactsAlerted = data\.contactsAlerted != null \? Number\(data\.contactsAlerted\) : NaN;/);
   expect(nav).toMatch(/\.\.\.\(Number\.isFinite\(contactsAlerted\) \? \{ contactsAlerted \} : \{\}\),/);
   // An unknown count says nothing rather than claiming the emails went.
