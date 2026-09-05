@@ -180,39 +180,47 @@ export function groupReactions(reactions) {
  * The server counts stay as the fallback for a body that carried no shares.
  */
 const billTally = (bill) => {
-  const shares = Array.isArray(bill?.shares) ? bill.shares : null;
-  if (shares && shares.length) {
-    const settled = shares.filter((sh) => sh.settled).length;
-    // THE ARRAY IS BLOCK-FILTERED; THE COUNTS ARE NOT. billing.js computes
-    // fullySettled/settledCount/shareCount over every row (:844-846) and then
-    // sends `shares` with anyone you have blocked removed (:848). Counting the
-    // array alone therefore forgot those people entirely: block one member of a
-    // three-way split, settle the other two, and the header and the green panel
-    // both declared the bill square while a third of it was still owed. The
-    // person is hidden from the list; their share is not hidden from the total.
-    //
-    // The live array still decides the settled figure, because it is what the
-    // socket updates and an optimistic local settle has to move immediately.
-    // The DENOMINATOR comes from the server, and the square claim may only be
-    // made when nothing is hidden or the server itself agrees.
-    //
-    // (Deliberately phrased without the two button/banner strings: the source
-    // contract in __tests__/billUnsettle.test.js slices the panel between
-    // them, and repeating either up here moves its anchor.)
-    const total = Math.max(shares.length, Number(bill?.shareCount) || 0);
-    const hidden = total - shares.length;
-    return {
-      settled,
-      total,
-      all: settled === shares.length && (hidden === 0 || !!bill?.fullySettled),
-    };
-  }
+  const shares = Array.isArray(bill?.shares) ? bill.shares : [];
+  const visibleSettled = shares.filter((sh) => sh.settled).length;
+  // THE ARRAY IS BLOCK-FILTERED; THE COUNTS ARE NOT. billing.js computes
+  // fullySettled/settledCount/shareCount over every row and then sends
+  // `shares` with anyone you have blocked removed. Counting the array alone
+  // therefore forgot those people entirely: block one member of a three-way
+  // split, settle the other two, and the header and the green panel both
+  // declared the bill square while a third of it was still owed. The person
+  // is hidden from the list; their share is not hidden from the total.
+  //
+  // WHO KEEPS THE COUNTS CURRENT. The server sends the three on GET, on
+  // bill_created, on the settle and unsettle responses, and as a bill_tally
+  // event to every member after any settlement moves, blocked or not, because
+  // the tally names nobody. share_settled and share_unsettled name the actor,
+  // are block-filtered, and touch only the array. So for the rows you cannot
+  // see the server's settled count is the truth (round 2 of the adversarial
+  // audit: the settled figure used to be the visible array's own count, which
+  // undercounted a hidden settled row from the first render), and the array
+  // covers the one thing the server has not confirmed yet: an optimistic
+  // local change. The square claim is the array's when nothing is hidden and
+  // the server's when something is.
+  //
+  // (Deliberately phrased without the two button/banner strings: the source
+  // contract in __tests__/billUnsettle.test.js slices the panel between
+  // them, and repeating either up here moves its anchor.)
+  const total = Math.max(shares.length, Number(bill?.shareCount) || 0);
+  const hidden = total - shares.length;
+  const settled = Math.min(total, Math.max(visibleSettled, Number(bill?.settledCount) || 0));
   return {
-    settled: bill?.settledCount ?? 0,
-    total: bill?.shareCount ?? 0,
-    all: !!bill?.fullySettled,
+    settled,
+    total,
+    all: total > 0 && (hidden === 0 ? visibleSettled === shares.length : !!bill?.fullySettled),
   };
 };
+
+// The three tallies off a settle or unsettle response, when it carried them.
+// An older server answers `{ settled }` alone, and nothing is overwritten by
+// undefined.
+const tallyOf = (r) => (r && Number.isFinite(Number(r.shareCount))
+  ? { shareCount: Number(r.shareCount), settledCount: Number(r.settledCount) || 0, fullySettled: !!r.fullySettled }
+  : {});
 
 /**
  * The money words on one share row, and the figure Settle Up asks for.
@@ -259,6 +267,16 @@ const settleUpFigure = (bill, userId) => {
 // reason 'credit', and a button that exists only to be refused is a dead one.
 // The same comparison the route makes.
 const coveredByCredit = (s) => Number(s?.paidAmount) >= Number(s?.amount);
+// What a share owes once its settlement is taken back: the share less the
+// credit carried on it, never below zero. GET serves every settled row with
+// outstanding 0, and the reducers that flipped the flag alone left that zero
+// in place, so a $100 share taken back read "Settle Up · $0.00" (adversarial
+// audit round 2, 2026-09-05). Exported for the socket reducers in App.js.
+export const owedOn = (s) => {
+  if (typeof s?.amount !== 'number') return s?.outstanding;
+  const paid = Number(s.paidAmount) > 0 ? Number(s.paidAmount) : 0;
+  return Math.max(0, Math.round((s.amount - paid) * 100)) / 100;
+};
 
 export default function ChatDetail({
   // Module-level helpers, constants and components that live in App.js and
@@ -1800,10 +1818,11 @@ export default function ChatDetail({
                     {billSplit.hasPayer !== false && billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
                       <button className="hit44 glass-btn glass-secondary" onClick={async () => {
                         try {
-                          await settleShare(selectedFlockId);
+                          const settled = await settleShare(selectedFlockId);
                           setBillSplit(prev => ({
                             ...prev,
-                            shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: true } : s),
+                            ...tallyOf(settled),
+                            shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: true, outstanding: 0 } : s),
                           }));
                           showToast('Marked as settled');
                         } catch (err) { showToast(err.message, 'error'); }
@@ -1828,10 +1847,11 @@ export default function ChatDetail({
                       && String(billSplit.paidBy?.id ?? '') !== String(authUser?.id ?? '') && (
                       <button className="hit44 glass-btn glass-secondary" onClick={async () => {
                         try {
-                          await unsettleShare(selectedFlockId);
+                          const unsettled = await unsettleShare(selectedFlockId);
                           setBillSplit(prev => ({
                             ...prev,
-                            shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: false, settledAt: null } : s),
+                            ...tallyOf(unsettled),
+                            shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: false, settledAt: null, outstanding: owedOn(s) } : s),
                           }));
                           showToast('Your share is marked unpaid again');
                         } catch (err) { showToast(err.message, 'error'); }

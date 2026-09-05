@@ -186,7 +186,8 @@ test('share_settled and bill_fully_settled use the same per-member delivery', as
     [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ id: 1 }] })],
     [/SELECT id FROM bill_splits WHERE flock_id/, () => ({ rows: [{ id: 7 }] })],
     [/UPDATE bill_split_shares SET settled/, () => ({ rows: [{ id: 1 }] })],
-    [/SELECT COUNT\(\*\) AS count FROM bill_split_shares/, () => ({ rows: [{ count: '0' }] })],
+    // The tally over every row, after the write: two rows, both settled.
+    [/COUNT\(\*\) FILTER \(WHERE settled IS TRUE\)/, () => ({ rows: [{ share_count: 2, settled_count: 2 }] })],
     // share_settled names the settler, so its recipient list is block-filtered
     // (2026-08-14). Nobody blocks anybody here; the actor stays a recipient.
     [/FROM user_blocks/, () => ({ rows: [] })],
@@ -201,6 +202,8 @@ test('share_settled and bill_fully_settled use the same per-member delivery', as
     ['user:1', 'user:2']
   );
   assert.strictEqual(emits.filter((e) => e.event === 'bill_fully_settled').length, 2);
+  // And the tally, the same delivery, naming nobody.
+  assert.deepStrictEqual(emits.filter((e) => e.event === 'bill_tally').map((e) => e.room).sort(), ['user:1', 'user:2']);
 });
 
 test('the fully-settled check counts a NULL settled flag as unsettled', async () => {
@@ -212,17 +215,22 @@ test('the fully-settled check counts a NULL settled flag as unsettled', async ()
     [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ id: 1 }] })],
     [/SELECT id FROM bill_splits WHERE flock_id/, () => ({ rows: [{ id: 7 }] })],
     [/UPDATE bill_split_shares SET settled/, () => ({ rows: [{ id: 1 }] })],
-    [/SELECT COUNT\(\*\) AS count FROM bill_split_shares/, () => ({ rows: [{ count: '1' }] })],
+    // One row whose settled flag is NULL: share_count 1, settled_count 0.
+    [/COUNT\(\*\) FILTER \(WHERE settled IS TRUE\)/, () => ({ rows: [{ share_count: 1, settled_count: 0 }] })],
     [/FROM user_blocks/, () => ({ rows: [] })],
   ];
 
-  await call('POST', '/api/billing/42/settle');
+  const res = await call('POST', '/api/billing/42/settle');
 
-  const countQuery = log.find((q) => /SELECT COUNT\(\*\) AS count FROM bill_split_shares/.test(q.sql));
-  assert.ok(
-    /settled IS NOT TRUE/.test(countQuery.sql),
-    `"settled = false" silently skips NULL rows: ${countQuery.sql}`
-  );
+  // The tally counts a row as settled only when the flag IS TRUE, so a NULL
+  // flag (the column has no NOT NULL constraint) is an open row, exactly as
+  // the old `IS NOT TRUE` count treated it.
+  const countQuery = log.find((q) => /COUNT\(\*\) FILTER/.test(q.sql));
+  assert.ok(countQuery, 'the tally query was not issued');
+  assert.match(countQuery.sql, /FILTER \(WHERE settled IS TRUE\)/, `a NULL flag must not count as settled: ${countQuery.sql}`);
+  assert.strictEqual(res.body.fullySettled, false);
+  assert.strictEqual(emits.filter((e) => e.event === 'bill_fully_settled').length, 0,
+    'a NULL flag is an open row, so the bill is not announced as closed');
 });
 
 // ---------------------------------------------------------------------------
