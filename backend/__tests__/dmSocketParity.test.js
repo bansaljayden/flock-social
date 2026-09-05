@@ -22,6 +22,11 @@
 //   5. venue vote tallies grouped by (venue_name, venue_id), splitting one
 //      venue into several rows whenever members voted for it from different
 //      entry points.
+//   6. dm_react, dm_remove_react, dm_vote_venue and dm_pin_venue acknowledged
+//      the person who acted with `socket.emit`, which reaches the one socket
+//      that sent the event. Their REST twins echo to `user:{id}` and reach the
+//      account's other devices, so the same action was more complete over the
+//      transport the client only falls back to when the socket is down.
 const test = require('node:test');
 const assert = require('node:assert');
 
@@ -446,6 +451,116 @@ test('dm_vote_venue leaves at most one row per voter on either branch', async ()
   assert.strictEqual(deletes.length, 1);
   assert.ok(!/venue_name/.test(deletes[0].sql), 'the delete clears every vote by this user in the pair');
   assert.strictEqual(wrote('dm_venue_votes').length, 0, 'toggling off does not re-insert');
+});
+
+// ---------------------------------------------------------------------------
+// 4a. The actor's OTHER devices — an echo belongs to the account, not the socket
+// ---------------------------------------------------------------------------
+//
+// Every other gap in this file is about what the socket transport lets THROUGH
+// that REST refuses. This one runs the other way: what the socket transport
+// fails to deliver that REST delivers.
+//
+// An account is several devices on purpose. MAX_SOCKETS_PER_USER is 8 and
+// device tokens are stored per device, so the laptop with the web app open and
+// the phone in the hand are both live sockets sitting in `user:{id}`. Four
+// handlers acknowledged the person who acted with `socket.emit`, which reaches
+// exactly one socket: the one that sent the event. Their twins in
+// routes/messages.js all echo with `io.to(user:${req.user.id})` and reach every
+// one. So a reaction tapped on a phone updated the laptop only when the phone's
+// socket was DOWN and the client fell back to HTTP, which is the wrong way
+// round — the degraded path was the correct one.
+//
+// These four pin the echo to the room. The counterpart's copy is unchanged and
+// asserted alongside each, because `socket.to(...)` excludes the sending socket
+// and `io.to(...)` does not, and confusing the two is how an echo becomes a
+// duplicate.
+
+test('dm_react echoes to every device of the reactor, not just the one that tapped', async () => {
+  const { io, socket } = connect({ id: 1, name: 'Ava' });
+  routes = [
+    [/SELECT sender_id, receiver_id FROM direct_messages/, [{ sender_id: 1, receiver_id: 7 }]],
+    [/FROM user_blocks/, []],
+    [/INSERT INTO dm_emoji_reactions/, []],
+  ];
+
+  await fire(socket, 'dm_react', { dmId: 5, emoji: '🔥' });
+
+  assert.ok(
+    socket.emitted.some((e) => e.target === 'user:7' && e.event === 'dm_reaction_added'),
+    'the counterpart still hears about it, over socket.to so this socket is not counted twice'
+  );
+  const echo = io.emitted.find((e) => e.event === 'dm_reaction_added');
+  assert.ok(echo, 'the reactor\'s own copy has to leave through io, which the whole account is in');
+  assert.strictEqual(echo.room, 'user:1');
+  assert.deepStrictEqual(echo.payload, { dmId: 5, emoji: '🔥', userId: 1, userName: 'Ava' },
+    'and it is the same payload POST /api/dm/messages/:id/react sends');
+  assert.ok(
+    !socket.emitted.some((e) => e.target === 'self'),
+    'a self-addressed emit reaches one device and leaves the account\'s others showing the old count'
+  );
+});
+
+test('dm_remove_react takes the reaction off every device of the person who removed it', async () => {
+  const { io, socket } = connect({ id: 1, name: 'Ava' });
+  routes = [
+    [/SELECT sender_id, receiver_id FROM direct_messages/, [{ sender_id: 1, receiver_id: 7 }]],
+    [/FROM user_blocks/, []],
+    [/DELETE FROM dm_emoji_reactions/, []],
+  ];
+
+  await fire(socket, 'dm_remove_react', { dmId: 5, emoji: '🔥' });
+
+  assert.ok(socket.emitted.some((e) => e.target === 'user:7' && e.event === 'dm_reaction_removed'));
+  const echo = io.emitted.find((e) => e.event === 'dm_reaction_removed');
+  assert.ok(echo, 'the removal is worse than the add if it only lands on one device: the other');
+  assert.strictEqual(echo.room, 'user:1');
+  assert.deepStrictEqual(echo.payload, { dmId: 5, emoji: '🔥', userId: 1 });
+  assert.ok(!socket.emitted.some((e) => e.target === 'self'));
+});
+
+test('dm_new_vote reaches the voter\'s other devices, and the two payloads stay different', async () => {
+  const { io, socket } = connect({ id: 1, name: 'Ava' });
+  const tally = [{ venue_name: "Joe's Bar", venue_id: null, vote_count: 1, voters: ['Ava'] }];
+  routes = dmVoteRoutes();
+  routes[6] = [/FROM dm_venue_votes vv/, tally];
+
+  await fire(socket, 'dm_vote_venue', { receiverId: 7, venue_name: "Joe's Bar" });
+
+  const toPeer = socket.emitted.find((e) => e.target === 'user:7' && e.event === 'dm_new_vote');
+  const echo = io.emitted.find((e) => e.event === 'dm_new_vote');
+  assert.ok(toPeer && echo, 'both sides are told');
+  assert.strictEqual(echo.room, 'user:1');
+  // `withUserId` names the OTHER end of the conversation and is therefore
+  // different in each copy. Only the delivery changed here; if these two ever
+  // become the same value, App.js files one of the tallies under the wrong
+  // thread again.
+  assert.strictEqual(toPeer.payload.withUserId, 1, 'the peer is told the thread is with the voter');
+  assert.strictEqual(echo.payload.withUserId, 7, 'and the voter is told it is with the peer');
+  assert.deepStrictEqual(echo.payload.votes, tally);
+  assert.deepStrictEqual(echo.payload.voter, { userId: 1, name: 'Ava' });
+  assert.ok(!socket.emitted.some((e) => e.target === 'self'));
+});
+
+test('dm_venue_pinned reaches the pinner\'s other devices, and the two payloads stay different', async () => {
+  const { io, socket } = connect({ id: 1, name: 'Ava' });
+  routes = [
+    [/FROM user_blocks/, []],
+    [/FROM friendships/, [{ '?column?': 1 }]],
+    [/INSERT INTO dm_pinned_venues/, []],
+  ];
+
+  await fire(socket, 'dm_pin_venue', { receiverId: 7, venue_name: "Joe's Bar" });
+
+  const toPeer = socket.emitted.find((e) => e.target === 'user:7' && e.event === 'dm_venue_pinned');
+  const echo = io.emitted.find((e) => e.event === 'dm_venue_pinned');
+  assert.ok(toPeer && echo);
+  assert.strictEqual(echo.room, 'user:1');
+  assert.strictEqual(toPeer.payload.withUserId, 1);
+  assert.strictEqual(echo.payload.withUserId, 7);
+  assert.strictEqual(echo.payload.venue_name, "Joe's Bar");
+  assert.strictEqual(echo.payload.pinned_by, 1);
+  assert.ok(!socket.emitted.some((e) => e.target === 'self'));
 });
 
 // ---------------------------------------------------------------------------
