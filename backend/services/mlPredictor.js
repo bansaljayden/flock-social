@@ -674,6 +674,7 @@ function init() {
     loadPromise = loadModel().catch((err) => {
       console.warn('[MLPredictor] Model load threw, serving rule engine:', err.message);
       session = null;
+      twoHead = null;
       metadata = null;
       useML = false;
       return false;
@@ -683,7 +684,10 @@ function init() {
 }
 
 async function loadModel() {
-  if (!fs.existsSync(ONNX_PATH) || !fs.existsSync(META_PATH)) {
+  // A two-head artifact (see loadTwoHead) is model_metadata.json plus
+  // profile.onnx and deviation.onnx; there is no crowd_model.onnx for it to
+  // be missing. Every other artifact is checked exactly as before.
+  if (!metadataDeclaresTwoHead() && (!fs.existsSync(ONNX_PATH) || !fs.existsSync(META_PATH))) {
     console.log('[MLPredictor] Model files not found — using rule engine');
     return false;
   }
@@ -704,6 +708,14 @@ async function loadModel() {
     }
 
     metadata = candidate;
+
+    // The two-head candidate shape. Unreachable until a metadata whose
+    // label_type is 'two_head' is placed in models/; the shipped delta
+    // artifact never enters this branch. Everything below it is the
+    // single-head path, unchanged.
+    if (candidate.label_type === 'two_head') {
+      return loadTwoHead(ort, candidate, version, gate, overridden);
+    }
 
     // Round 13: feature-coverage parity check. Any trained feature that this
     // file cannot compute would be silently zero-filled on EVERY prediction —
@@ -759,16 +771,226 @@ async function loadModel() {
     // blended figure, so an operator who reads the logs and then reads a card
     // would otherwise have no way to know why they disagree. This line says
     // which one is published and why the other is not.
-    if (served.status === 'measured') {
-      console.log(`[MLPredictor] confidence published = ${served.percent}% (${served.metric} on ${served.population}${served.rows ? `, ${served.rows} rows` : ''}). The blended training_metrics figure ${metadata.training_metrics?.within_15}% is NOT published: ~80% of those rows are weekly anchors whose label equals the baseline by construction.`);
-    } else {
-      console.warn(`[MLPredictor] v${version} reports no usable served-population accuracy (${served.reason}). The model still serves, including its per-venue baselines. No accuracy figure will be published: \`confidence\` carries crowdEngine's input-completeness ladder and confidenceMeasurement.status says 'unmeasured'. Re-export from a training run that writes training_metrics_by_population to publish a real one.`);
-    }
+    logServedAccuracy(version, served);
     return true;
   } catch (err) {
     console.warn('[MLPredictor] Failed to load model:', err.message);
     return false;
   }
+}
+
+function logServedAccuracy(version, served) {
+  if (served.status === 'measured') {
+    console.log(`[MLPredictor] confidence published = ${served.percent}% (${served.metric} on ${served.population}${served.rows ? `, ${served.rows} rows` : ''}). The blended training_metrics figure ${metadata.training_metrics?.within_15}% is NOT published: ~80% of those rows are weekly anchors whose label equals the baseline by construction.`);
+  } else {
+    console.warn(`[MLPredictor] v${version} reports no usable served-population accuracy (${served.reason}). The model still serves, including its per-venue baselines. No accuracy figure will be published: \`confidence\` carries crowdEngine's input-completeness ladder and confidenceMeasurement.status says 'unmeasured'. Re-export from a training run that writes training_metrics_by_population to publish a real one.`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// TWO-HEAD ARTIFACTS (metadata.label_type === 'two_head').
+//
+// The v2.7 candidate shape, trained by scripts/ml/train/train_two_head.py. A
+// PROFILE head predicts the venue's typical busyness for the slot from the
+// clock, the venue's attributes, the category curves and the stored baseline;
+// a DEVIATION head predicts how a live reading departs from that profile,
+// given every feature the delta model sees plus the stored baseline and the
+// profile head's own output (feature name TWO_HEAD_PROFILE_FEATURE). The
+// served score is profile plus the clamped deviation: reconstructTwoHeadScore
+// below, which train/train_two_head.reconstruct_two_head mirrors and
+// __tests__/mlTwoHeadReconstruction.test.js pins.
+//
+// Each head is its own ONNX graph with its own positional contract:
+// metadata.two_head.<head>.feature_names orders that head's vector, and the
+// two lists are checked against the graphs at load the way verifyModelShape
+// checks the single head. metadata.feature_names stays the union so any
+// reader asking "does this model consume temperature" gets the right answer.
+//
+// Nothing here runs unless a two_head metadata is in models/. The shipped
+// delta artifact takes the single-head path above, byte for byte as before.
+// ---------------------------------------------------------------------------
+const TWO_HEAD_PROFILE_FEATURE = 'profile_pred';
+const TWO_HEAD_NAMES = ['profile', 'deviation'];
+let twoHead = null;
+
+function metadataDeclaresTwoHead() {
+  if (!fs.existsSync(META_PATH)) return false;
+  try {
+    return JSON.parse(fs.readFileSync(META_PATH, 'utf8')).label_type === 'two_head';
+  } catch {
+    return false;
+  }
+}
+
+// One head's declaration, validated. Returns { file, path, featureNames,
+// inputName, shapeMeta } or throws with the reason, which loadTwoHead turns
+// into a refusal to promote.
+function twoHeadHeadSpec(meta, name) {
+  const block = meta.two_head && meta.two_head[name];
+  if (!block || typeof block !== 'object') {
+    throw new Error(`metadata.two_head.${name} is missing`);
+  }
+  const file = block.file;
+  if (typeof file !== 'string' || !/^[A-Za-z0-9_.-]+\.onnx$/.test(file)) {
+    throw new Error(`metadata.two_head.${name}.file must name a .onnx file in the model directory (got ${JSON.stringify(file)})`);
+  }
+  const names = block.feature_names;
+  if (!Array.isArray(names) || names.length === 0 || !names.every((n) => typeof n === 'string' && n.length > 0)) {
+    throw new Error(`metadata.two_head.${name}.feature_names must be a non-empty list of names`);
+  }
+  if (new Set(names).size !== names.length) {
+    throw new Error(`metadata.two_head.${name}.feature_names lists a feature twice`);
+  }
+  const inputName = block.onnx_input_name || 'input';
+  return {
+    file,
+    path: path.join(MODEL_DIR, file),
+    featureNames: names,
+    inputName,
+    // What verifyModelShape needs to check THIS graph against THIS list; the
+    // accuracy key is the artifact's, since one export produced both heads.
+    shapeMeta: {
+      feature_names: names,
+      feature_count: block.feature_count,
+      feature_types: block.feature_types,
+      onnx_input_name: inputName,
+      training_metrics: meta.training_metrics,
+    },
+  };
+}
+
+function twoHeadClamp(meta) {
+  const raw = meta.two_head && meta.two_head.deviation_clamp;
+  if (!Array.isArray(raw) || raw.length !== 2) {
+    throw new Error('metadata.two_head.deviation_clamp must be [lo, hi]');
+  }
+  const lo = Number(raw[0]);
+  const hi = Number(raw[1]);
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || !(lo < 0 && hi > 0)) {
+    throw new Error(`metadata.two_head.deviation_clamp ${JSON.stringify(raw)} must be finite with lo < 0 < hi`);
+  }
+  return [lo, hi];
+}
+
+// The two heads' feature names that buildFeatureMap cannot produce. The
+// profile feature is exempt because this file supplies it between the two
+// runs; everything else has to come from the map, same rule as the single
+// head's missingFeatureNames.
+function missingTwoHeadFeatureNames(meta) {
+  const missing = [];
+  for (const name of TWO_HEAD_NAMES) {
+    const names = ((meta.two_head || {})[name] || {}).feature_names || [];
+    const probe = { feature_names: names.filter((n) => n !== TWO_HEAD_PROFILE_FEATURE) };
+    for (const n of missingFeatureNames(probe)) {
+      if (!missing.includes(n)) missing.push(n);
+    }
+  }
+  return missing;
+}
+
+async function loadTwoHead(ort, candidate, version, gate, overridden) {
+  const override = process.env.ML_SHIP_GATE_OVERRIDE === 'true';
+  let profileSpec;
+  let deviationSpec;
+  let clamp;
+  try {
+    profileSpec = twoHeadHeadSpec(candidate, 'profile');
+    deviationSpec = twoHeadHeadSpec(candidate, 'deviation');
+    clamp = twoHeadClamp(candidate);
+  } catch (err) {
+    console.error(`[MLPredictor] REFUSING to promote two-head model v${version}: ${err.message}. Serving rule engine instead.`);
+    metadata = null;
+    return false;
+  }
+  if (!deviationSpec.featureNames.includes(TWO_HEAD_PROFILE_FEATURE)) {
+    // Not fatal on its own: a deviation head that never sees the profile is a
+    // legal, weaker design. Said out loud because it is unusual.
+    console.warn(`[MLPredictor] two-head model v${version}: the deviation head does not consume ${TWO_HEAD_PROFILE_FEATURE}`);
+  }
+  for (const spec of [profileSpec, deviationSpec]) {
+    if (!fs.existsSync(spec.path)) {
+      console.error(`[MLPredictor] REFUSING to promote two-head model v${version}: ${spec.file} is not in the model directory. Serving rule engine instead.`);
+      metadata = null;
+      return false;
+    }
+  }
+
+  const missing = missingTwoHeadFeatureNames(candidate);
+  if (missing.length > 0 && !override) {
+    console.error(`[MLPredictor] REFUSING to promote two-head model v${version}: ${missing.length} trained feature(s) have no inference-side implementation and would be silently zero-filled: ${missing.join(', ')}. Serving rule engine instead.`);
+    metadata = null;
+    return false;
+  }
+  if (missing.length > 0) {
+    console.warn(`[MLPredictor] ML_SHIP_GATE_OVERRIDE=true — promoting despite ${missing.length} missing feature(s): ${missing.join(', ')}`);
+  }
+
+  const served = readServedAccuracy(candidate);
+  if (served.status === 'malformed' && !override) {
+    console.error(`[MLPredictor] REFUSING to promote two-head model v${version}: ${served.reason}. Serving rule engine instead.`);
+    metadata = null;
+    return false;
+  }
+
+  const sessions = {};
+  for (const [name, spec] of [['profile', profileSpec], ['deviation', deviationSpec]]) {
+    const loaded = await ort.InferenceSession.create(spec.path);
+    const problems = verifyModelShape(loaded, spec.shapeMeta);
+    if (problems.length > 0 && !override) {
+      console.error(`[MLPredictor] REFUSING to promote two-head model v${version}: the ${name} graph and its metadata disagree — ${problems.join('; ')}. Serving rule engine instead.`);
+      metadata = null;
+      return false;
+    }
+    if (problems.length > 0) {
+      console.warn(`[MLPredictor] ML_SHIP_GATE_OVERRIDE=true — promoting despite ${name} graph/metadata drift: ${problems.join('; ')}`);
+    }
+    sessions[name] = loaded;
+  }
+
+  twoHead = {
+    profile: { session: sessions.profile, featureNames: profileSpec.featureNames, inputName: profileSpec.inputName },
+    deviation: { session: sessions.deviation, featureNames: deviationSpec.featureNames, inputName: deviationSpec.inputName },
+    clamp,
+  };
+  session = null;
+  useML = true;
+  console.log(`[MLPredictor] Loaded two-head ONNX model v${version} (profile ${profileSpec.featureNames.length} features, deviation ${deviationSpec.featureNames.length} features, clamp ${clamp.join('..')}) — ${overridden ? 'gate overridden' : gate.reason}`);
+  logServedAccuracy(version, served);
+  return true;
+}
+
+// One head's raw output, or a throw for anything that is not a finite number,
+// which the caller's catch turns into the rule engine. Same guard as the
+// single-head path, applied to each head in turn.
+async function runHead(ort, head, features) {
+  const vector = orderFeatureVector(features, head.featureNames);
+  const tensor = new ort.Tensor('float32', vector, [1, vector.length]);
+  const results = await head.session.run({ [head.inputName]: tensor });
+  const out = results[head.session.outputNames[0]].data[0];
+  if (typeof out !== 'number' || !Number.isFinite(out)) {
+    throw new Error(`model emitted a non-finite output (${String(out)})`);
+  }
+  return out;
+}
+
+// profile, then deviation with the profile's answer in its vector, then the
+// reconstruction. The feature map is built once and shared by both heads.
+async function scoreTwoHead(ort, venue, weather, timestamp, eventData, feedback, baseline, neighbors) {
+  const features = buildFeatureMap(venue, weather, timestamp, eventData, feedback, baseline, neighbors);
+  const profile = await runHead(ort, twoHead.profile, features);
+  features[TWO_HEAD_PROFILE_FEATURE] = profile;
+  const deviation = await runHead(ort, twoHead.deviation, features);
+  return reconstructTwoHeadScore(profile, deviation, twoHead.clamp);
+}
+
+// score = round(clip(clip(profile, 0, 100) + clip(deviation, lo, hi), 0, 100)).
+// No extremes push and no score quantile map: both were fitted to the delta
+// model's output distribution and belong to it.
+function reconstructTwoHeadScore(profile, deviation, clamp) {
+  const [lo, hi] = clamp;
+  const curve = Math.max(0, Math.min(100, profile));
+  const correction = Math.max(lo, Math.min(hi, deviation));
+  return Math.max(0, Math.min(100, Math.round(curve + correction)));
 }
 
 // ---------------------------------------------------------------------------
@@ -2587,7 +2809,12 @@ function buildFeatureVector(venue, weather, timestamp, eventData, feedback, base
   const features = buildFeatureMap(venue, weather, timestamp, eventData, feedback, baseline, neighbors);
   // Build ordered array matching feature_names — the model consumes POSITIONS,
   // so this ordering is the entire train/inference contract.
-  const featureNames = metadata.feature_names || [];
+  return orderFeatureVector(features, metadata.feature_names || []);
+}
+
+// The map, laid out in the order one graph consumes it. The single head passes
+// metadata.feature_names; each head of a two-head artifact passes its own list.
+function orderFeatureVector(features, featureNames) {
   const vector = new Float32Array(featureNames.length);
   for (let i = 0; i < featureNames.length; i++) {
     // Round 18: `features[name] || 0` only screened FALSY garbage. A non-numeric
@@ -2966,7 +3193,11 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
     // strictly worse than the rule engine. Only venues with NO stored
     // baseline AND no popular_times land here; the rule engine answers.
     // (Retrain plan: teach the model an absolute head so this path dies.)
-    if (metadata.label_type === 'delta' && (!baseline || baseline <= 0)) {
+    // The two-head candidate's profile head takes the stored baseline as an
+    // input and was trained only on venues that have one, so it is held to
+    // the same guard; a cold venue is out of its training distribution.
+    const baselineRequired = metadata.label_type === 'delta' || metadata.label_type === 'two_head';
+    if (baselineRequired && (!baseline || baseline <= 0)) {
       const result = crowdEngine.calculateCrowdScore(venue, weather, timestamp);
       // Which of the three zeros this was. `no_baseline` stays the name of the
       // corpus gap so every existing reader of that tag keeps its meaning; the
@@ -3002,31 +3233,38 @@ async function predictBusyness(venue, weather, timestamp, options = {}) {
     }
 
     const ort = require('onnxruntime-node');
-    const vector = buildFeatureVector(venue, weather, timestamp, eventData, feedback, baseline, neighbors);
-    const inputName = metadata.onnx_input_name || 'input';
-    const tensor = new ort.Tensor('float32', vector, [1, vector.length]);
-    const results = await session.run({ [inputName]: tensor });
-
-    const outputName = session.outputNames[0];
-    const rawOutput = results[outputName].data[0];
-    // A model output that is not a finite number must not reach the arithmetic
-    // below: NaN (or an empty output tensor's undefined, or an int64 head's
-    // BigInt) sails through clamp-and-round as NaN, getLabel(NaN) falls through
-    // every band to 'Packed', and the response ships score:null with
-    // predictionMethod 'ml'. verifyModelShape can only check the head shape
-    // when onnxruntime exposes outputMetadata, so this is the runtime backstop:
-    // throw, and the catch below answers with the rule engine, honestly labelled.
-    if (typeof rawOutput !== 'number' || !Number.isFinite(rawOutput)) {
-      throw new Error(`model emitted a non-finite output (${String(rawOutput)})`);
-    }
     let score;
-    if (metadata.label_type === 'delta') {
-      // Delta-trained model: reconstruct absolute as baseline + clamp(delta)
-      // + the dispersion-lab extremes push — see reconstructScore above for
-      // why the clamp is ±50 and not metadata.delta_clamp_range's ±30.
-      score = reconstructScore(rawOutput, baseline || 0);
+    if (twoHead) {
+      // Two graphs, profile then deviation; see scoreTwoHead. A non-finite
+      // output from either head throws into the catch below like the single
+      // head's guard does.
+      score = await scoreTwoHead(ort, venue, weather, timestamp, eventData, feedback, baseline, neighbors);
     } else {
-      score = Math.max(0, Math.min(100, Math.round(rawOutput)));
+      const vector = buildFeatureVector(venue, weather, timestamp, eventData, feedback, baseline, neighbors);
+      const inputName = metadata.onnx_input_name || 'input';
+      const tensor = new ort.Tensor('float32', vector, [1, vector.length]);
+      const results = await session.run({ [inputName]: tensor });
+
+      const outputName = session.outputNames[0];
+      const rawOutput = results[outputName].data[0];
+      // A model output that is not a finite number must not reach the arithmetic
+      // below: NaN (or an empty output tensor's undefined, or an int64 head's
+      // BigInt) sails through clamp-and-round as NaN, getLabel(NaN) falls through
+      // every band to 'Packed', and the response ships score:null with
+      // predictionMethod 'ml'. verifyModelShape can only check the head shape
+      // when onnxruntime exposes outputMetadata, so this is the runtime backstop:
+      // throw, and the catch below answers with the rule engine, honestly labelled.
+      if (typeof rawOutput !== 'number' || !Number.isFinite(rawOutput)) {
+        throw new Error(`model emitted a non-finite output (${String(rawOutput)})`);
+      }
+      if (metadata.label_type === 'delta') {
+        // Delta-trained model: reconstruct absolute as baseline + clamp(delta)
+        // + the dispersion-lab extremes push — see reconstructScore above for
+        // why the clamp is ±50 and not metadata.delta_clamp_range's ±30.
+        score = reconstructScore(rawOutput, baseline || 0);
+      } else {
+        score = Math.max(0, Math.min(100, Math.round(rawOutput)));
+      }
     }
 
     // score-qmap, ON unless CROWD_QMAP_ENABLED=false. After the reconstruction,
@@ -3456,7 +3694,16 @@ module.exports = {
     guessCategory,
     buildFeatureMap,
     buildFeatureVector,
+    orderFeatureVector,
     missingFeatureNames,
+    // The two-head path, for __tests__/mlTwoHeadReconstruction.test.js: the
+    // reconstruction, the per-head feature check, and the loaded state (null
+    // under the shipped delta artifact, which is what makes the path
+    // unreachable rather than merely unused).
+    reconstructTwoHeadScore,
+    missingTwoHeadFeatureNames,
+    TWO_HEAD_PROFILE_FEATURE,
+    twoHeadState: () => twoHead,
     evaluateShipGate,
     astronomyFeatures,
     groupWeatherCode,
