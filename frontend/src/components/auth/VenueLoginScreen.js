@@ -533,7 +533,20 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
           risk that the consumer screens had already fixed. */}
       <AppleSignInButton
         onSuccess={onLoginSuccess}
-        onError={(m) => setError(m)}
+        onError={(m, err) => {
+          // The structured error is the second argument for exactly this: a
+          // brand-new Apple account on the sign-in half is answered 403
+          // needsDob, and a screen that only read the message told them to
+          // try again with no field to fill, so every retry failed the same
+          // way (adversarial audit round 2, 2026-09-05). Same transition the
+          // Google path above makes: reveal the date field and say so.
+          if (err?.data?.needsDob) {
+            setNeedsDob(true);
+            setError(needsDob && dob ? m : 'Add your date of birth below, then tap Continue with Apple again.');
+          } else {
+            setError(m);
+          }
+        }}
         dob={dob}
         beforeAuthorize={() => {
           if (dobNeedsCheck) {

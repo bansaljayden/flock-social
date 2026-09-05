@@ -291,6 +291,25 @@ test('a signup that loses the race to an identical address is told the address i
     'the loser must hear exactly what the pre-check would have said');
 });
 
+test('an OAuth account creation that loses the same race is told the mailbox is taken', async () => {
+  // Migration 062 makes the canonical alphabet a unique index, so the loser
+  // of a dot-variant race on /google or /apple raises 23505 on its INSERT.
+  // Those two catch blocks reported it as a provider error, 500.
+  for (const [pathname, body] of [
+    ['/api/auth/google', { credential: googleToken(), ...DOB }],
+    ['/api/auth/apple', { identityToken: appleToken(), ...DOB }],
+  ]) {
+    reset();
+    insertRaises = Object.assign(
+      new Error('duplicate key value violates unique constraint "uq_users_canonical_email"'),
+      { code: '23505', constraint: 'uq_users_canonical_email' }
+    );
+    const res = await post(pathname, body);
+    assert.strictEqual(res.status, 409, `${pathname}: ${JSON.stringify(res.json())}`);
+    assert.strictEqual(res.json().error, 'An account with this email already exists. Log in the way you originally signed up.');
+  }
+});
+
 test('every other failure inside the signup transaction is still a 500', async () => {
   reset();
   insertRaises = Object.assign(new Error('connection terminated'), { code: '57P01' });

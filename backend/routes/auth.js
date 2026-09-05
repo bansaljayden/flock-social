@@ -2204,7 +2204,11 @@ router.post('/signup', signupValidation, async (req, res) => {
     // Two signups for one address in the same moment: both pass the existence
     // check above, one INSERT wins, and users.email is UNIQUE, so the other
     // lands here with 23505. That is the answer the check gives when it is
-    // not raced, not a server fault, and it was being reported as one.
+    // not raced, not a server fault, and it was being reported as one. Since
+    // migration 062 the same code arrives for a dot or plus VARIANT of an
+    // address that already has an account (john.doe@ against johndoe@): the
+    // canonical alphabet findUserByEmail compares in is now a unique index,
+    // so the check-then-insert race cannot seat two accounts on one mailbox.
     if (err.code === '23505') {
       return res.status(400).json({ error: 'Email already registered' });
     }
@@ -3180,6 +3184,15 @@ router.post('/google', [
     res.json({ token, user: safeUser });
   } catch (err) {
     console.error('Google OAuth error:', err);
+    // The canonical-email unique index (migration 062) raised: another
+    // account owns this mailbox under a dot or plus variant of the address,
+    // and it won the race this request lost. The same answer the pre-check
+    // gives when it is not raced.
+    if (err.code === '23505') {
+      return res.status(409).json({
+        error: 'An account with this email already exists. Log in the way you originally signed up.',
+      });
+    }
     if (err.message?.includes('Token used too late') || err.message?.includes('Invalid token')) {
       return res.status(401).json({ error: 'Google sign-in expired, please try again' });
     }
@@ -3619,6 +3632,15 @@ router.post('/apple', [
     res.json({ token, user: safeUser });
   } catch (err) {
     console.error('Apple Sign In error:', err);
+    // The canonical-email unique index (migration 062) raised: another
+    // account owns this mailbox under a dot or plus variant of the address,
+    // and it won the race this request lost. The same answer the pre-check
+    // gives when it is not raced.
+    if (err.code === '23505') {
+      return res.status(409).json({
+        error: 'An account with this email already exists. Log in the way you originally signed up.',
+      });
+    }
     if (err.name === 'TokenExpiredError') {
       return res.status(401).json({ error: 'Apple sign-in expired, please try again' });
     }
