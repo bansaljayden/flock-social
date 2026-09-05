@@ -96,6 +96,11 @@ function friendshipBetween(a, b) {
 // ── Fixture-backed pool.query ───────────────────────────────────────────────
 const realQuery = pool.query;
 pool.query = async (text, params = []) => {
+  // The join and update routes read the plan's status first, and the update and
+  // delete fan-outs reach invitees (lifecycle audit, 2026-09-05). Every plan in
+  // this file is open and nobody holds an invite, so both default quietly.
+  if (/^SELECT status FROM flocks WHERE id = \$1$/.test(String(text).trim())) return ({ rows: [{ status: 'planning' }], rowCount: 1 });
+  if (/status = 'invited' AND user_id != \$2/.test(String(text))) return ({ rows: [], rowCount: 0 });
   const sql = String(text).replace(/\s+/g, ' ').trim();
   queries.push({ sql, params });
   const has = (frag) => sql.includes(frag);

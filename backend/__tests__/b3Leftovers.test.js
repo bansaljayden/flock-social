@@ -59,7 +59,7 @@ test('B3-2: no window computation in crowd.js clamps at the day edge any more', 
   // All three feedback reads key on (day_of_week, hour) tuples, the shape
   // feedbackWindow emits.
   const tupleReads = src.match(/\(day_of_week, hour\) IN/g) || [];
-  assert.strictEqual(tupleReads.length, 2, 'the two inline feedback reads key on (day, hour) tuples');
+  assert.strictEqual(tupleReads.length, 3, 'the three inline feedback reads (two in the alternatives route, one in its calm shortcut) key on (day, hour) tuples');
   assert.ok(src.includes('unnest($1::text[], $2::int[], $3::int[])'),
     'the batch feedback read keys on per-venue (place, day, hour) tuples');
 });

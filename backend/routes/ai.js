@@ -314,7 +314,7 @@ function birdieBudgetLeg(userId, tokens) {
 function refundChirp(res) {
   if (!res.locals.chirpCharged) return;
   res.locals.chirpCharged = false;
-  refundTurn(res.locals.chirpUser);
+  refundTurn(res.locals.chirpUser, res.locals.chirpDay);
 }
 
 function birdieRefusal(res, leg) {
@@ -1555,7 +1555,7 @@ router.post('/chat',
 
       // Per-user rate limit (daily by tier + 15/min for everyone)
       const rateCheck = checkUserRateLimit(userId, dailyLimit);
-      if (rateCheck.allowed) { res.locals.chirpCharged = true; res.locals.chirpUser = userId; }
+      if (rateCheck.allowed) { res.locals.chirpCharged = true; res.locals.chirpUser = userId; res.locals.chirpDay = rateCheck.chargeDay; }
       if (!rateCheck.allowed) {
         if (freeTier && rateCheck.reason === 'daily') {
           return res.status(429).json({

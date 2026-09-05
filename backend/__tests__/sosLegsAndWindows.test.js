@@ -13,7 +13,7 @@ test('the flock is told before the email verdict can end the request, on the ala
   // contacts were actually reached, so the flockmate's screen stops claiming
   // they were emailed when none were. The ordering this test guards is
   // unchanged: the leg still runs before the 502 can end the request.
-  const alarmLeg = safety.indexOf("alertFlockMembers(req.app.get('io'), req.user, coords, emailsSent)");
+  const alarmLeg = safety.indexOf("alertFlockMembers(req.app.get('io'), req.user, coords, emailsSent, alertId)");
   const alarm502 = safety.indexOf('if (emailsSent === 0) {');
   assert.ok(alarmLeg > 0 && alarm502 > alarmLeg, 'the alarm flock leg runs before the 502');
   const sdLeg = safety.indexOf("notifyFlockStandDown(req.app.get('io'), req.user, hoursSinceAlert, flockIds)");
@@ -65,7 +65,8 @@ test('an alarm the flock heard can be withdrawn even when every email failed', (
   assert.match(safety, /UPDATE emergency_alerts SET flock_recipient_ids = \$1::int\[\] WHERE id = \$2/);
   assert.match(safety, /UPDATE emergency_alerts SET contacts_alerted = \$1, contact_recipients = \$3::jsonb WHERE id = \$2/);
   // And the stand-down goes to that list, not to live flock status.
-  assert.match(safety, /const members = snapshot\.length\s*\? await pool\.query\(SOS_STAND_DOWN_SNAPSHOT_SQL, \[user\.id, snapshot\]\)\s*: await pool\.query\(SOS_FLOCK_AUDIENCE_SQL, \[user\.id, windowHours\]\);/);
+  // NULL means the live audience, an array (even empty) means exactly who was told (migration 064).
+  assert.match(safety, /if \(Array\.isArray\(recipientIds\) && snapshot\.length === 0\) return \{ notified: 0 \};\s*const members = Array\.isArray\(recipientIds\)\s*\? await pool\.query\(SOS_STAND_DOWN_SNAPSHOT_SQL, \[user\.id, snapshot\]\)\s*: await pool\.query\(SOS_FLOCK_AUDIENCE_SQL, \[user\.id, windowHours\]\);/);
   // A queued retry of the alarm push is withdrawn with it.
   assert.match(safety, /DELETE FROM push_outbox WHERE data->>'type' = 'safety_alert' AND data->>'fromUserId' = \$1/);
 });

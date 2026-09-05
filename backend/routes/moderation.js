@@ -566,8 +566,9 @@ router.post('/blocks/:userId', [param('userId').isInt({ min: 1, max: INT4_MAX })
          RETURNING 1
        )
        DELETE FROM friendships
-        WHERE (requester_id = $1 AND addressee_id = $2)
-           OR (requester_id = $2 AND addressee_id = $1)`,
+        WHERE ((requester_id = $1 AND addressee_id = $2)
+           OR (requester_id = $2 AND addressee_id = $1))
+          AND status <> 'declined'`,
       [req.user.id, blockedId]
     );
 

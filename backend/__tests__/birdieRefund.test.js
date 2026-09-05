@@ -26,8 +26,8 @@ test('refundTurn hands one chirp back and never goes below zero', () => {
 });
 
 test('the route charges once, marks it, and refunds on every path that delivers nothing', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'ai.js'), 'utf8');
-  assert.match(src, /if \(rateCheck\.allowed\) \{ res\.locals\.chirpCharged = true; res\.locals\.chirpUser = userId; \}/);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'ai.js'), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(src, /if \(rateCheck\.allowed\) \{ res\.locals\.chirpCharged = true; res\.locals\.chirpUser = userId; res\.locals\.chirpDay = rateCheck\.chargeDay; \}/);
   assert.match(src, /function refundChirp\(res\) \{/);
   assert.match(src, /if \(e\?\.geminiBudget\) \{ refundChirp\(res\); return birdieRefusal\(res, e\.leg\); \}/);
   assert.match(src, /const blockReason = response\.promptFeedback\?\.blockReason/);

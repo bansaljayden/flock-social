@@ -119,7 +119,7 @@ async function collectVoteRows(flockId) {
             COUNT(*)::int AS member_count,
             ARRAY_AGG(json_build_object('id', u.id, 'name', u.name)) AS voter_rows
      FROM venue_votes vv
-     JOIN users u ON u.id = vv.user_id
+     JOIN users u ON u.id = vv.user_id AND u.is_banned IS NOT TRUE
      JOIN flock_members fm ON fm.flock_id = vv.flock_id AND fm.user_id = vv.user_id
        AND fm.status = 'accepted'
      WHERE vv.flock_id = $1
