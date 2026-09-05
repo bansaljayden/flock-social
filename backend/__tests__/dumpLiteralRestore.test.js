@@ -221,6 +221,26 @@ test('a text[] column restores every value a person can type into it', async () 
   }
 });
 
+test('an integer[] column restores every value the schema can hold', async () => {
+  // emergency_alerts.flock_recipient_ids (migration 063) is INTEGER[], the
+  // first integer array in the schema. Same serializer branch as text[] (any
+  // array-typed column), but the values are ids, so the cases are the ones a
+  // dump of a real alert row would carry: nothing yet, one id, many, and the
+  // shapes a naive formatter gets wrong.
+  const cases = [
+    [[], 'empty array, the column default'],
+    [[7], 'one id'],
+    [[2, 3, 3], 'duplicates, which the audience query collapses and the row must not'],
+    [[1, 2147483647], 'the int4 ceiling'],
+    [[-1], 'a negative, which no writer produces but the type allows'],
+    [[5, null, 9], 'a real SQL NULL element'],
+  ];
+  for (const [value, what] of cases) {
+    const { back, literal } = await roundTrip('integer[]', value);
+    assert.deepEqual(back, value, `integer[] round trip failed for ${what}: literal was ${literal}`);
+  }
+});
+
 test('a jsonb column keeps JSON, and is not confused with an array column', async () => {
   // THE DISTINCTION THE 2026-08-13 BUG TURNED ON. pg parses a jsonb column
   // holding a JSON array into a JavaScript array, identically to how it parses
@@ -563,7 +583,7 @@ test('the remaining column types this schema holds survive the trip', async () =
 // case above chooses its values by asking what the column can actually hold
 // rather than what a caller happens to write today.
 const ROUND_TRIPPED = new Set([
-  '_text', 'bool', 'bytea', 'date', 'float4', 'float8', 'int2', 'int4', 'int8',
+  '_int4', '_text', 'bool', 'bytea', 'date', 'float4', 'float8', 'int2', 'int4', 'int8',
   'json', 'jsonb', 'numeric', 'text', 'time', 'timestamp', 'timestamptz', 'uuid', 'varchar',
 ]);
 
