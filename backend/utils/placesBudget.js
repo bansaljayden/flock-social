@@ -451,6 +451,25 @@ function __resetPlacesBudget({ keepUsers = false } = {}) {
 // be refused the search, and have paid for half an answer. This is the same
 // arithmetic as allowPlacesSearch with the mutation removed, so a route can ask
 // "could I afford the whole thing" before it reserves the first part.
+// Give back units that were reserved for a call that turned out not to be
+// needed. routes/crowd.js /alternatives reserves both of its possible calls
+// before the first one is made (a caller one unit short must not buy the
+// details and then be refused the search), and hands the second unit back
+// here when the search cache answers instead. Bounded by what the caller
+// holds: it removes at most `units` of the most recent timestamps and never
+// takes the day count below zero.
+function refundPlacesSearch(userId, units = 1) {
+  assertCost(units);
+  const id = keyOf(userId);
+  if (id === null) return 0;
+  const hits = userHits.get(id) || [];
+  const returned = Math.min(units, hits.length);
+  hits.splice(hits.length - returned, returned);
+  userHits.set(id, hits);
+  dayCount = Math.max(0, dayCount - returned);
+  return returned;
+}
+
 function canAffordPlacesSearch(userId, units = 1) {
   assertCost(units);
   const id = keyOf(userId);
@@ -465,6 +484,7 @@ function canAffordPlacesSearch(userId, units = 1) {
 module.exports = {
   allowPlacesSearch,
   canAffordPlacesSearch,
+  refundPlacesSearch,
   allowGlobalPlacesCall,
   placesRetryAfter,
   globalPlacesRetryAfter,
