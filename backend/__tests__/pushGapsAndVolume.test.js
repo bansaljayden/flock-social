@@ -269,6 +269,10 @@ test('deleting a plan notifies its members, and carries no id because there is n
   // bill and every share row are ON DELETE CASCADE, so a delete used to take
   // them with it and nothing could recreate any of it. Nothing is owed here.
   on(/FROM bill_split_shares bss/, () => ({ rows: [{ owed: false }] }));
+  // Both delete paths run under the flock row lock now, in one transaction
+  // with the outstanding-bill guard, so a /create cannot commit a bill into
+  // the gap between the guard and the DELETE.
+  on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] }));
   on(/DELETE FROM flocks WHERE id = \$1/, () => ({ rows: [], rowCount: 1 }));
 
   const res = await call('DELETE', '/api/flocks/42');
@@ -280,6 +284,41 @@ test('deleting a plan notifies its members, and carries no id because there is n
   assert.strictEqual(off[0].body, 'Dinner is off.');
   assert.ok(!('flockId' in off[0].data),
     'the flock is gone: an id here would make pushHelper suppress the send and would name a screen that cannot open');
+});
+
+test('deleting a plan takes the flock lock before it checks for money owed', async () => {
+  // The outstanding-bill guard and the DELETE used to be two autocommit
+  // statements with awaited work between them, so a /create could commit a
+  // bill into the gap and the cascade would take it. Both now run in one
+  // transaction under the same row lock /create holds, and the ORDER is the
+  // property: lock, then guard, then delete, on one connection.
+  const order = [];
+  on(/^SELECT creator_id FROM flocks WHERE id = \$1$/, () => ({ rows: [{ creator_id: 1 }] }));
+  on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => { order.push('lock'); return { rows: [{ id: 42 }] }; });
+  on(/FROM bill_split_shares bss/, () => { order.push('guard'); return { rows: [{ owed: false }] }; });
+  on(/SELECT name FROM flocks WHERE id = \$1/, () => ({ rows: [{ name: 'Dinner' }] }));
+  on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [{ user_id: 2 }] }));
+  on(/FROM user_blocks/, () => ({ rows: [] }));
+  on(/DELETE FROM flocks WHERE id = \$1/, () => { order.push('delete'); return { rows: [], rowCount: 1 }; });
+
+  const res = await call('DELETE', '/api/flocks/42');
+  assert.strictEqual(res.status, 200);
+  assert.deepStrictEqual(order, ['lock', 'guard', 'delete'],
+    'the guard must read under the lock, and the delete must follow it on the same transaction');
+});
+
+test('a plan with money still owed cannot be deleted, and the transaction is rolled back', async () => {
+  const seen = [];
+  on(/^SELECT creator_id FROM flocks WHERE id = \$1$/, () => ({ rows: [{ creator_id: 1 }] }));
+  on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] }));
+  on(/FROM bill_split_shares bss/, () => ({ rows: [{ owed: true }] }));
+  on(/DELETE FROM flocks WHERE id = \$1/, () => { seen.push('delete'); return { rows: [], rowCount: 1 }; });
+
+  const res = await call('DELETE', '/api/flocks/42');
+  assert.strictEqual(res.status, 409, res.text);
+  assert.deepStrictEqual(seen, [], 'the DELETE ran despite money being owed');
+  assert.strictEqual(pushCalls.filter((p) => p.data.type === 'flock_cancelled').length, 0,
+    'nobody was told a plan was cancelled when it was not');
 });
 
 test('the recipient list for a deleted plan is read before the cascade removes it', async () => {
@@ -295,6 +334,10 @@ test('the recipient list for a deleted plan is read before the cascade removes i
   // bill and every share row are ON DELETE CASCADE, so a delete used to take
   // them with it and nothing could recreate any of it. Nothing is owed here.
   on(/FROM bill_split_shares bss/, () => ({ rows: [{ owed: false }] }));
+  // Both delete paths run under the flock row lock now, in one transaction
+  // with the outstanding-bill guard, so a /create cannot commit a bill into
+  // the gap between the guard and the DELETE.
+  on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] }));
   on(/DELETE FROM flocks WHERE id = \$1/, () => { order.push('delete'); return { rows: [], rowCount: 1 }; });
 
   await call('DELETE', '/api/flocks/42');

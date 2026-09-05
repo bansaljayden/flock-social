@@ -286,6 +286,10 @@ test('flock_deleted names the deleter, so it is filtered — and its recipients 
   on(/SELECT name FROM flocks WHERE id/, () => ({ rows: [{ name: 'Dinner' }] }));
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [{ user_id: 2 }, { user_id: 3 }] }));
   on(INVISIBLE_IDS, () => ({ rows: [{ id: 3 }] }));
+  // Both delete paths run under the flock row lock now, in one transaction
+  // with the outstanding-bill guard, so a /create cannot commit a bill into
+  // the gap between the guard and the DELETE.
+  on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] }));
   on(/DELETE FROM flocks/, () => ({ rows: [], rowCount: 1 }));
 
   const res = await call('DELETE', '/api/flocks/9');
