@@ -238,6 +238,7 @@ was never carried forward with the app after that.
 | `SUBMIT-CHECKLIST.md` | App Store submission: assets, ordered steps, privacy labels |
 | `backend/scripts/ml/RETRAIN.md` | Crowd-model retrain runbook and ship gate |
 | `backend/scripts/ml/MODEL-METRICS.md` | Measured model numbers and what they mean |
+| `ML-RESEARCH.md` | Crowd-model research record: the corpus, every finding in order with its numbers, accuracy on the served population, the open decisions, and an index of the detailed documents |
 | `codemagic.yaml` | iOS CI: build, sign, auto-increment, TestFlight |
 | `LICENSE` / `CONTRIBUTING.md` | PolyForm Noncommercial 1.0.0, and how contributions are accepted under it |
 
