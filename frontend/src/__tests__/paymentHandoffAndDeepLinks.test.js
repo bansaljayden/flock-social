@@ -1204,18 +1204,29 @@ describe('the revenue simulator does not reset itself mid-edit', () => {
 });
 
 describe('no switch is offered for an owner notification that cannot be sent', () => {
-  test('the venue notifications panel is gone, and so is its state', () => {
-    // backend/routes/venueProfile.js carries the audit: notification_prefs is
-    // written by this dashboard and read NOWHERE, because none of the three
-    // sends exists. Every push call in the backend addresses a flock member, a
-    // DM recipient, a flock creator or an admin, never a venue owner;
-    // venueDashboard.js inserts a review and notifies nobody; emailService.js
-    // has no digest, no template and no scheduler. That comment names this file
-    // as the place to fix it. Three controls for a feature that was never
-    // built, on a screen a venue pays $35/mo for.
+  test('the three-switch venue notifications panel is gone, and so is its state', () => {
+    // backend/routes/venueProfile.js carries the audit: notification_prefs was
+    // written by this dashboard and read nowhere, because none of the three
+    // sends existed. Three controls for a feature that was never built, on a
+    // screen a venue pays $35/mo for. The panel and its state stay gone.
     expect(appSource).not.toMatch(/venueNotifications/);
-    expect(appSource).not.toMatch(/notificationPrefs/);
     expect(appSource).not.toMatch(/toggleVenueNotification/);
+    // The two sends that still do not exist have no switch.
+    expect(appSource).not.toMatch(/notificationPrefs: \{ (bookings|reviews)/);
+  });
+
+  test('the one switch that came back has its send', () => {
+    // The Monday digest shipped (backend/services/venueDigest.js reads
+    // notification_prefs.weekly and skips every venue whose value is not
+    // true), and for a while nothing could set it: the unsubscribe page, the
+    // email footer and the privacy policy all named "the Weekly reports
+    // switch in your venue dashboard" and the dashboard had none (venue-owner
+    // audit 2026-09-05). One switch, one send, and this pin ties them: the
+    // switch may exist only while the sweep reads the key it writes.
+    expect(appSource).toMatch(/updateVenueProfile\(\{ notificationPrefs: \{ weekly \} \}\)/);
+    const digest = readSource('backend', 'services', 'venueDigest.js');
+    expect(digest).toMatch(/prefs\.weekly === true/);
+    expect(digest).toMatch(/notification_prefs/);
   });
 
   test('and the promise itself is off the screen', () => {
