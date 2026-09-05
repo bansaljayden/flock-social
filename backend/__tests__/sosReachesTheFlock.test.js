@@ -36,7 +36,7 @@ let emitted = [];
 pool.query = (sql, params) => {
   const flat = String(sql).replace(/\s+/g, ' ').trim();
   queries.push({ sql: flat, params: params || [] });
-  if (/FROM flock_members fm/.test(flat)) {
+  if (/FROM flock_members fm/.test(flat) || /FROM users u WHERE u\.id = ANY/.test(flat)) {
     return Promise.resolve({ rows: memberRows, rowCount: memberRows.length });
   }
   return Promise.resolve({ rows: [], rowCount: 0 });
@@ -216,3 +216,30 @@ test('the all-clear rings through the night, because the alarm it withdraws did'
     'an all-clear held until morning is a night spent acting on an ended emergency');
 });
 
+
+
+test('a stand-down with the recorded audience goes to exactly those people and asks nothing about the flock', async () => {
+  // The old query re-derived the audience from live flock status, so a plan
+  // the sweep had marked completed answered no rows and the alarm stayed up.
+  reset();
+  memberRows = [{ user_id: 2 }, { user_id: 3 }];
+  const result = await notifyFlockStandDown(io, USER, 9, [2, 3, 3, 'x', -1]);
+  assert.strictEqual(result.notified, 2);
+  const q = queries.find((x) => /FROM users u/.test(x.sql));
+  assert.ok(q, 'the snapshot query was not issued');
+  assert.match(q.sql, /u\.id = ANY\(\$2::int\[\]\)/);
+  assert.ok(!/flock_members|f\.status|event_time/.test(q.sql), 'the flock must not be consulted');
+  assert.match(q.sql, /is_banned/);
+  assert.match(q.sql, /user_blocks/);
+  assert.deepStrictEqual(q.params, [1, [2, 3, 3]], 'ids are coerced; junk is dropped; duplicates are the query\'s to collapse');
+  assert.ok(!queries.some((x) => /FROM flock_members fm/.test(x.sql)), 'the live audience query is the fallback only');
+  assert.deepStrictEqual(emitted.map((e) => e.room).sort(), ['user:2', 'user:3']);
+});
+
+test('an escalation after an alert with no coordinates is "location", never "moved"', () => {
+  const { escalationKind } = __test;
+  assert.strictEqual(escalationKind({ latitude: null, longitude: null }), 'location');
+  assert.strictEqual(escalationKind({}), 'location');
+  assert.strictEqual(escalationKind({ latitude: 40.7, longitude: -74 }), 'moved');
+  assert.strictEqual(escalationKind({ latitude: '40.7', longitude: '-74.0' }), 'moved');
+});
