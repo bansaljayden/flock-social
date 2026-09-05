@@ -344,8 +344,15 @@ function dispatch(text, params = []) {
   if (/FROM flock_members fm/i.test(sql)) {
     const flockId = Number(params[0]);
     const submitted = new Set(db.budget_submissions.filter((r) => r.flock_id === flockId).map((r) => r.user_id));
+    // The caller's own exclusion is read out of the statement, not assumed, the
+    // way every other WHERE in this fixture is. Delete `fm.user_id <> $2` from
+    // the route and the organiser comes back into this result set, which is
+    // what the reminder tests below are actually watching for.
+    const selfPredicate = /fm\.user_id\s*(?:<>|!=)\s*\$(\d+)/i.exec(sql);
+    const excluded = selfPredicate ? Number(params[Number(selfPredicate[1]) - 1]) : null;
     const rows = db.flock_members
-      .filter((fm) => fm.flock_id === flockId && fm.status === 'accepted' && !submitted.has(fm.user_id))
+      .filter((fm) => fm.flock_id === flockId && fm.status === 'accepted'
+        && !submitted.has(fm.user_id) && fm.user_id !== excluded)
       .map((fm) => ({ id: fm.user_id, name: USERS.find((u) => u.id === fm.user_id).name }));
     return { rows, rowCount: rows.length };
   }
@@ -1400,9 +1407,56 @@ test('budget reminder: the cooldown is per flock and claimed before the work', a
   fresh();
   const first = await call('POST', '/api/budget/10/remind', undefined, 1);
   assert.strictEqual(first.status, 200, first.raw);
-  assert.strictEqual(first.json.reminded, 4, 'should remind all four members, none of whom has submitted');
+  assert.strictEqual(first.json.reminded, 3,
+    'four accepted members, and the one who tapped the button is not someone to remind');
   const second = await call('POST', '/api/budget/10/remind', undefined, 1);
   assert.strictEqual(second.status, 429, second.raw);
+});
+
+test('budget reminder: it never comes back to the organiser who sent it', async () => {
+  // Nobody in flock 10 has submitted, Ava included, which is the ordinary state
+  // of things when a creator taps Remind everyone: she is chasing the others
+  // precisely because the budget is going nowhere. /remind is creator-only and
+  // a creator is always an accepted member of their own flock, so she was in
+  // her own "has not submitted" set. That meant a budget_reminder toast on the
+  // screen she was already looking at and, worse, a push — and this route's
+  // push is pushAlways, which skips the presence gate deliberately, so being
+  // visibly on the screen was no protection and the phone in her hand buzzed.
+  fresh();
+  const res = await call('POST', '/api/budget/10/remind', undefined, 1);
+  assert.strictEqual(res.status, 200, res.raw);
+  assert.strictEqual(res.json.reminded, 3, 'the count must describe other people, not include the sender');
+
+  const reminded = pushes.filter((p) => p.data && p.data.type === 'budget_reminder');
+  assert.deepStrictEqual(reminded.map((p) => p.userId).sort((a, b) => a - b), [2, 3, 4],
+    'Ava sent it, so Ava is not one of the four devices it lands on');
+  assert.ok(reminded.every((p) => p.kind === 'always'),
+    'pinning WHY this mattered: the reminder push bypasses the presence gate on purpose');
+  assert.deepStrictEqual(
+    emits.filter((e) => e.event === 'budget_reminder').map((e) => e.room).sort(),
+    ['user:2', 'user:3', 'user:4'],
+    'and the live toast is addressed the same way as the push'
+  );
+});
+
+test('budget reminder: a creator who has already submitted still chases everyone left', async () => {
+  // The positive control on the exclusion above. What is excluded is the
+  // CALLER, not "anyone who has submitted", so the reminder must still reach
+  // every outstanding member and only shrink by the people who actually filed a
+  // number. Two of four have submitted here and Ava is one of them.
+  fresh();
+  await call('POST', '/api/budget/10/submit', { amount: 40, skipped: false }, 1);
+  await call('POST', '/api/budget/10/submit', { amount: 50, skipped: false }, 3);
+  pushes = [];
+  emits = [];
+
+  const res = await call('POST', '/api/budget/10/remind', undefined, 1);
+  assert.strictEqual(res.status, 200, res.raw);
+  assert.strictEqual(res.json.reminded, 2, 'Ben and Dee are the two still outstanding');
+  assert.deepStrictEqual(
+    pushes.filter((p) => p.data && p.data.type === 'budget_reminder').map((p) => p.userId).sort((a, b) => a - b),
+    [2, 4]
+  );
 });
 
 test('budget: the "Budget set!" push fires on the crossing and not on later edits', async () => {

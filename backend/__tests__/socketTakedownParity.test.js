@@ -190,7 +190,7 @@ test('a moderator-hidden DM is not reactable over the socket', async () => {
 });
 
 test('a visible DM is still reactable — the predicate is a filter, not an off switch', async () => {
-  const { socket } = connect({ id: 1, name: 'Ava' });
+  const { io, socket } = connect({ id: 1, name: 'Ava' });
   routes = [
     [DM_LOOKUP, dmRow], // a row that is not hidden: the predicate lets it through
     [/FROM user_blocks/, []],
@@ -200,8 +200,14 @@ test('a visible DM is still reactable — the predicate is a filter, not an off 
   await fire(socket, 'dm_react', { dmId: 5, emoji: '🔥' });
 
   assert.strictEqual(ran(/INSERT INTO dm_emoji_reactions/).length, 1);
-  assert.strictEqual(socket.emitted.filter((e) => e.event === 'dm_reaction_added').length, 2,
-    'counterpart room + sender echo');
+  // Still two copies, counterpart plus the reactor's own. The reactor's leaves
+  // through io rather than back down this socket, because the account can hold
+  // several and all of them show the same thread; __tests__/dmSocketParity.test.js
+  // pins that. The takedown question here is only whether anything is sent at
+  // all, so both destinations are counted together.
+  const announced = socket.emitted.filter((e) => e.event === 'dm_reaction_added')
+    .concat(io.emitted.filter((e) => e.event === 'dm_reaction_added'));
+  assert.strictEqual(announced.length, 2, 'counterpart room + the reactor\'s own account room');
 });
 
 test('removing a reaction after a takedown stays possible, on both transports', async () => {

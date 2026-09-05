@@ -906,13 +906,30 @@ router.post('/:flockId/remind',
       reminderCooldowns.set(cooldownKey, now);
       sweepReminderCooldowns(now);
 
-      // Find members who haven't submitted
+      // Find members who haven't submitted — the organiser excluded.
+      //
+      // This route is creator-only and a creator is always an accepted member of
+      // their own flock (routes/flocks.js writes that row on create), so the
+      // person tapping "Remind everyone" was in their own result set whenever
+      // they had not filled in a number yet. That is not a corner case; chasing
+      // the people who are holding the budget up is exactly the moment an
+      // organiser has not got round to their own. So the reminder came back to
+      // the phone that sent it: a budget_reminder toast on the screen they were
+      // already looking at, and then a push. The push is pushAlways, which skips
+      // the presence gate on purpose because a creator asking for attention
+      // should not be swallowed by "they look online", so it really does buzz a
+      // device that is plainly in the sender's hand.
+      //
+      // The count in the response was wrong for the same reason, and wrong in
+      // the direction that hides the mistake: an organiser with three
+      // outstanding members was told four people had been reminded.
       const missingResult = await pool.query(
         `SELECT u.id, u.name FROM flock_members fm
          JOIN users u ON u.id = fm.user_id
          WHERE fm.flock_id = $1 AND fm.status = 'accepted'
+         AND fm.user_id <> $2
          AND fm.user_id NOT IN (SELECT user_id FROM budget_submissions WHERE flock_id = $1)`,
-        [flockId]
+        [flockId, userId]
       );
 
       const io = req.app.get('io');

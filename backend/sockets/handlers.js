@@ -2108,9 +2108,22 @@ function registerHandlers(io, socket) {
         [dmId, user.id, emoji]
       );
 
+      // The echo goes to the ACCOUNT's room, not back down this one socket.
+      //
+      // An account is explicitly several devices here: MAX_SOCKETS_PER_USER is
+      // 8 and device tokens are stored per device, so the laptop with the web
+      // app open and the phone in the hand are both live sockets sitting in
+      // `user:{id}`. `socket.emit` reaches exactly one of them, the one that
+      // sent the event, so a reaction tapped on the phone left the laptop
+      // showing the old count until something made it re-read the thread.
+      // POST /api/dm/messages/:id/react — the same action, the fallback the
+      // client uses when its socket is DOWN — has always echoed with
+      // `io.to(user:${req.user.id})` and reached every device, so the tap
+      // worked properly only on the worse connection. `user:{id}` contains
+      // this socket too, so the device that acted still gets its own copy.
       const payload = { dmId, emoji, userId: user.id, userName: user.name };
       socket.to(`user:${counterpart}`).emit('dm_reaction_added', payload);
-      socket.emit('dm_reaction_added', payload);
+      io.to(`user:${user.id}`).emit('dm_reaction_added', payload);
     } catch (err) {
       console.error('dm_react error:', err);
     }
@@ -2160,7 +2173,10 @@ function registerHandlers(io, socket) {
 
       const payload = { dmId, emoji, userId: user.id };
       socket.to(`user:${counterpart}`).emit('dm_reaction_removed', payload);
-      socket.emit('dm_reaction_removed', payload);
+      // The account room rather than this socket, for the reason written out
+      // over dm_react above. DELETE /api/dm/messages/:id/react/:emoji is the
+      // twin, and it already echoes to `user:${req.user.id}`.
+      io.to(`user:${user.id}`).emit('dm_reaction_removed', payload);
     } catch (err) {
       console.error('dm_remove_react error:', err);
     }
@@ -2248,7 +2264,16 @@ function registerHandlers(io, socket) {
       // any other conversation overwrote the list the user was looking at.
       const tally = { voter: { userId: user.id, name: user.name }, venue_name, votes: votes.rows };
       socket.to(`user:${receiverId}`).emit('dm_new_vote', { ...tally, withUserId: user.id });
-      socket.emit('dm_new_vote', { ...tally, withUserId: receiverId });
+      // The account room rather than this socket, for the reason written out
+      // over dm_react above. Only the delivery changes: the two payloads stay
+      // different, because each side has to be told who the OTHER side is, and
+      // the voter's copy still names the receiver. There is no emit at all on
+      // POST /api/dm/:userId/venue-votes; that route answers with the fresh
+      // tally in its body, so over REST the acting device is served by the
+      // response and there is nothing to echo. Over the socket there is no
+      // response, which makes this the only thing the voter's other devices
+      // ever hear.
+      io.to(`user:${user.id}`).emit('dm_new_vote', { ...tally, withUserId: receiverId });
     } catch (err) {
       console.error('dm_vote_venue error:', err);
     }
@@ -2294,7 +2319,12 @@ function registerHandlers(io, socket) {
       // conversation redrew the card in whichever one happened to be open.
       const pin = { venue_name: safeName, venue_address: safeAddress, venue_id: safeVenueId, venue_rating: safeRating, venue_photo_url: safePhoto, pinned_by: user.id, pinned_by_name: user.name };
       socket.to(`user:${receiverId}`).emit('dm_venue_pinned', { ...pin, withUserId: user.id });
-      socket.emit('dm_venue_pinned', { ...pin, withUserId: receiverId });
+      // The account room rather than this socket, for the reason written out
+      // over dm_react above, and the two payloads stay different for the reason
+      // written out just here. PUT /api/dm/:userId/pinned-venue already echoes
+      // to `user:${req.user.id}`, so a pin set from a phone redrew the card on
+      // a laptop only when the phone had fallen back to HTTP.
+      io.to(`user:${user.id}`).emit('dm_venue_pinned', { ...pin, withUserId: receiverId });
     } catch (err) {
       console.error('dm_pin_venue error:', err);
     }
