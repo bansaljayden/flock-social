@@ -615,15 +615,15 @@ export default function DmDetail({
           </button>
           <h2 style={{ flex: 1, fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontWeight: '600', color: 'white', fontSize: 'var(--t-title)', margin: 0, lineHeight: '1.3', minWidth: 0 }}>{selectedDm.name}</h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
-            {/* Collapsed means gone. See the same fix on the flock chat
-                header in screens/ChatDetail.js: a zero max-width with hidden
-                overflow paints nothing and leaves every button inside it
-                focusable and readable. */}
-            <div style={{ display: 'flex', gap: '4px', overflow: 'hidden', maxWidth: dmNavOpen ? '114px' : '0px', opacity: dmNavOpen ? 1 : 0, visibility: dmNavOpen ? undefined : 'hidden', transition: `max-width 0.3s ease, opacity 0.25s ease, visibility 0s linear ${dmNavOpen ? '0s' : '0.3s'}` }}>
-              <button aria-label="Venue voting" className="hit44 glass-btn" onClick={() => { setDmNavOpen(false); setShowDmVotePanel(!showDmVotePanel); if (!showDmVotePanel) loadPopularVenues(); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 16)}</button>
-              <button aria-label="Search" className="hit44 glass-btn" onClick={() => { setDmNavOpen(false); setShowDmChatSearch(!showDmChatSearch); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: showDmChatSearch ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 16)}</button>
-            </div>
-            <button aria-label="Features" aria-expanded={dmNavOpen} className="hit44" onClick={() => setDmNavOpen(!dmNavOpen)} style={{ height: '34px', minWidth: dmNavOpen ? '34px' : 'auto', width: dmNavOpen ? '34px' : 'auto', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: dmNavOpen ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: dmNavOpen ? '0' : '0 12px', fontSize: 'var(--t-meta)', fontWeight: '600', flexShrink: 0, transition: 'all 0.3s ease', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)' }}>{dmNavOpen ? Icons.x('white', 16) : <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500' }}>Features</span>}</button>
+            {/* THE RAIL AND ITS "Features" PILL STOOD HERE, and went the same
+                way as the flock chat's on 2026-09-05. Snapchat's chat header
+                is a name and three small glyphs; everything else is behind the
+                plus, which is the control the thumb is already on.
+
+                Venue voting and Search in chat are tiles in ComposerPlusSheet
+                now. Neither was dropped, and leaving this rail here while the
+                flock's went would have given the two threads different
+                headers for no reason a person could work out. */}
           </div>
           <div style={{ position: 'relative', flexShrink: 0 }}>
             <button aria-label="More options" className="hit44" onClick={() => setShowDmMenu(!showDmMenu)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moreVertical('white', 16)}</button>
@@ -1305,6 +1305,9 @@ export default function DmDetail({
             setDmPlusOpen(false);
             startDmLocationSharing(selectedDmId);
           }}
+          /* The two the header rail used to hold. */
+          onVenueVotes={() => { setDmPlusOpen(false); setShowDmVotePanel(true); loadPopularVenues(); }}
+          onSearchMessages={() => { setDmPlusOpen(false); setShowDmChatSearch(!showDmChatSearch); }}
         />
       </>
       )}
