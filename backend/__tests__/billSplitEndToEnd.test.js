@@ -759,6 +759,77 @@ test('GET /:flockId shows the credit and what is still owed on every share', asy
   assert.strictEqual(res.body.bill.fullySettled, false);
 });
 
+test('the 201 body and the bill_created payload carry the three tallies GET carries', async () => {
+  // billTally in ChatDetail.js reads fullySettled, settledCount and shareCount
+  // beside a `shares` array that has anyone the viewer blocked removed, so the
+  // denominator has to come from the server. GET sent all three and this route
+  // sent none: straight after posting a bill, or on receiving bill_created, a
+  // viewer who had blocked one of three sharers counted the two rows they
+  // could see, and once the other one paid the sheet read "All settled up"
+  // over the blocked person's open share. Fails without the fix: all three
+  // fields are undefined on both the body and the payload.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptCreate(THREE);
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 90, tipPercent: 0 });
+  assert.strictEqual(res.status, 201, res.text);
+  assert.strictEqual(res.body.bill.shareCount, 3);
+  assert.strictEqual(res.body.bill.settledCount, 1, 'the payer is settled as an artifact of having paid the venue');
+  assert.strictEqual(res.body.bill.fullySettled, false);
+  await drain();
+
+  const toBen = emits.find((e) => e.event === 'bill_created' && e.room === 'user:2');
+  assert.ok(toBen, 'Ben was not sent the bill');
+  assert.strictEqual(toBen.payload.bill.shareCount, 3);
+  assert.strictEqual(toBen.payload.bill.settledCount, 1);
+  assert.strictEqual(toBen.payload.bill.fullySettled, false);
+});
+
+test('the tallies range over the rows kept for people who paid and left', async () => {
+  // The four friends from the retained-credit case: Bob paid $25 and left,
+  // then the total was corrected. His row stays, settled, and is not in the
+  // roster the sheet lists, so a count over `shares` alone would say 3 rows
+  // with 1 settled while GET says 4 with 2. The two have to agree, or the
+  // header changes its mind on the first refresh after a rewrite.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptCreate([{ id: 1, name: 'Ava' }, { id: 3, name: 'Carol' }, { id: 4, name: 'Dave' }], {
+    existingBill: { id: 7, paid_by: 1 },
+    existingShares: [
+      { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '25.00' },
+      { user_id: 2, committed: false, settled: true, settled_at: new Date(), amount: '25.00' },
+      { user_id: 3, committed: false, settled: false, settled_at: null, amount: '25.00' },
+      { user_id: 4, committed: false, settled: false, settled_at: null, amount: '25.00' },
+    ],
+  });
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 120, tipPercent: 0 });
+  assert.strictEqual(res.status, 201, res.text);
+  assert.strictEqual(res.body.bill.shares.length, 3, 'Bob is not on the roster the sheet lists');
+  assert.strictEqual(res.body.bill.shareCount, 4, 'but his retained row is a row on the bill');
+  assert.strictEqual(res.body.bill.settledCount, 2, 'Ava as payer, Bob by his payment');
+  assert.strictEqual(res.body.bill.fullySettled, false);
+});
+
+test('fullySettled on the 201 body is true only when every row is covered', async () => {
+  // Three people paid $30 each, then the payer corrects the bill DOWN to $60.
+  // Every $20 share is covered by the $30 credit on its row, so the bill is
+  // square the moment it is posted and the response has to say so, or the
+  // header reads "1/3 settled" over three settled rows until a refresh.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptCreate(THREE, {
+    existingBill: { id: 7, paid_by: 1 },
+    existingShares: [
+      { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '30.00', paid_amount: '0.00' },
+      { user_id: 2, committed: false, settled: true, settled_at: new Date(), amount: '30.00', paid_amount: '30.00' },
+      { user_id: 3, committed: false, settled: true, settled_at: new Date(), amount: '30.00', paid_amount: '30.00' },
+    ],
+  });
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 60, tipPercent: 0 });
+  assert.strictEqual(res.status, 201, res.text);
+  assert.ok(res.body.bill.shares.every((s) => s.settled), res.text);
+  assert.strictEqual(res.body.bill.shareCount, 3);
+  assert.strictEqual(res.body.bill.settledCount, 3);
+  assert.strictEqual(res.body.bill.fullySettled, true);
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 6. Honesty
 //
