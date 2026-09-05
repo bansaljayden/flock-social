@@ -569,7 +569,14 @@ function venueForScoring(ctx, now = new Date()) {
     google_place_id: ctx.profile.google_place_id,
     name: m.name || ctx.profile.business_name || '',
     rating: m.rating != null ? Number(m.rating) : null,
-    user_ratings_total: m.review_count != null ? Number(m.review_count) : 0,
+    // NULL, not 0. mlPredictor fills a missing review count the way the loaded
+    // model was trained to expect (a median, once a median-trained artifact
+    // ships), and it can only do that if this object does not answer "zero
+    // reviews" first. A literal 0 here was a measured value, and it bypassed
+    // that fill on the one production path that scores a venue straight out
+    // of ml_venues, so training and serving would have disagreed on every
+    // venue nobody had asked Google about.
+    user_ratings_total: m.review_count != null ? Number(m.review_count) : null,
     price_level: m.price_level != null ? Number(m.price_level) : null,
     types: Array.isArray(m.google_types) ? m.google_types : [],
     location: { latitude: Number(m.latitude), longitude: Number(m.longitude) },
@@ -1485,3 +1492,8 @@ module.exports = {
   busiestHourByDay,
   dayMeans,
 };
+
+// Exposed for backend/__tests__/advisorCards.test.js, which pins that a venue
+// with no review count reaches mlPredictor as null rather than as a measured
+// zero, so the train/serve fill for review_count can see the gap.
+module.exports.__test = { venueForScoring };
