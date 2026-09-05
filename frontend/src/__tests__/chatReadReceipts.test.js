@@ -277,6 +277,10 @@ function chatProps(over = {}) {
     chatNavOpen: false,
     chatSearch: '',
     chatSearchRef: { current: null },
+    // Migration 066 gave the flock composer a real reply. Both are held in
+    // App.js so a takedown arriving over the socket can close the quote bar.
+    flockReplyingTo: null,
+    setFlockReplyingTo: () => {},
     colors: {},
     confirmClick: fn(),
     confirmFlockPlan: fn(),
