@@ -90,9 +90,19 @@ const scalarUserId = () =>
 // ---------------------------------------------------------------------------
 async function reRequestDeclined(rowId, requesterId, addresseeId) {
   try {
+    // ONE REVIVE A DAY PER PAIR (friends audit, 2026-09-05). A declined row
+    // could be flipped back to pending as fast as the API limiter allowed,
+    // and each flip put the request back at the top of the decliner's list
+    // with a live toast, so the only exit from a persistent requester was a
+    // block. created_at is the row's last-request time: it moves on a
+    // revive, and a revive inside a day of it is refused, which the route
+    // answers exactly as it answers a request that is already pending, so
+    // the refusal itself says nothing about a decline. Naive column, so the
+    // window is read the way every other naive window in the codebase is.
     const r = await pool.query(
-      `UPDATE friendships SET status = 'pending', requester_id = $1, addressee_id = $2
+      `UPDATE friendships SET status = 'pending', requester_id = $1, addressee_id = $2, created_at = NOW()
         WHERE id = $3 AND status = 'declined'
+          AND created_at < (NOW() AT TIME ZONE 'UTC') - INTERVAL '24 hours'
         RETURNING id`,
       [requesterId, addresseeId, rowId]
     );
@@ -253,15 +263,28 @@ const PAIR_LOOKUP_SQL =
 // What the relationship is right now, for the caller who lost one of the races
 // above. Reported rather than guessed: the whole point is that we no longer
 // know without asking.
+// A DECLINE IS NEVER VISIBLE TO THE PERSON DECLINED. /outgoing has masked a
+// declined row as pending for as long as declines have been kept; three
+// other reads did not (friends audit, 2026-09-05): this helper answered
+// status 'declined' with a sentence that differed from the pending one,
+// GET /status returned the raw status, and find-by-phone put it on the
+// row. maskedStatus is the one rule, applied wherever the caller is the
+// requester of a declined row.
+function maskedStatus(row, callerId) {
+  if (!row) return 'none';
+  if (row.status === 'declined' && Number(row.requester_id) === Number(callerId)) return 'pending';
+  return row.status;
+}
+
 async function currentState(a, b) {
   const r = await pool.query(
-    `SELECT status FROM friendships
+    `SELECT id, status, requester_id FROM friendships
       WHERE (requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1)
       ORDER BY CASE status WHEN 'accepted' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, id
       LIMIT 1`,
     [a, b]
   );
-  const status = r.rows[0]?.status || 'none';
+  const status = maskedStatus(r.rows[0], a) || 'none';
   if (status === 'accepted') return { message: 'Already friends', status: 'accepted' };
   if (status === 'pending') return { message: 'Friend request already sent', status: 'pending' };
   return { message: 'Friend request could not be sent. Try again.', status };
@@ -309,7 +332,11 @@ router.post('/request',
       // Charged on every probe at a stranger, hit or miss. Charging only on
       // hits would leave misses free and unbounded, and "the free answers are
       // the misses" is the enumeration signal itself.
-      const withinBudget = existing.rows.length > 0 || friendProbeBudget.allow(req.user.id);
+      // An existing row is not charged, because it is not a probe, with one
+      // exception: reviving a DECLINED row is a fresh request to somebody who
+      // said no, and it is metered like any other (friends audit, 2026-09-05).
+      const untouched = existing.rows.length > 0 && !existing.rows.some((r) => r.status === 'declined');
+      const withinBudget = untouched || friendProbeBudget.allow(req.user.id);
 
       // Deliberately queried even when the budget is spent, so the exhausted
       // path does the same work as a genuine miss and cannot be separated from
@@ -366,7 +393,9 @@ router.post('/request',
         const revived = await reRequestDeclined(row.id, req.user.id, user_id);
         if (!revived) return res.json(await currentState(req.user.id, user_id));
         if (io) io.to(`user:${user_id}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
-        return res.json({ message: `Friend request sent to ${userCheck.rows[0].name}`, status: 'pending' });
+        // The same sentence a pending row gets: "sent to <name>" here and
+        // "already sent" there told the requester which one they were.
+        return res.json({ message: 'Friend request already sent', status: 'pending' });
       }
 
       // ON CONFLICT DO NOTHING, because the read above and this write are not
@@ -841,7 +870,11 @@ router.post('/add-by-code',
       // the directory read, with one indistinguishable answer for all misses.
       const existing = await pool.query(PAIR_LOOKUP_SQL, [req.user.id, targetUserId]);
 
-      const withinBudget = existing.rows.length > 0 || friendProbeBudget.allow(req.user.id);
+      // An existing row is not charged, because it is not a probe, with one
+      // exception: reviving a DECLINED row is a fresh request to somebody who
+      // said no, and it is metered like any other (friends audit, 2026-09-05).
+      const untouched = existing.rows.length > 0 && !existing.rows.some((r) => r.status === 'declined');
+      const withinBudget = untouched || friendProbeBudget.allow(req.user.id);
 
       // Same statement, same single miss, and the banned row folded into it.
       // See NOT_BANNED_SQL. A friend code is a base36 user id, so this door is
@@ -888,7 +921,8 @@ router.post('/add-by-code',
           return res.json({ ...await currentState(req.user.id, targetUserId), user: userCheck.rows[0] });
         }
         if (io) io.to(`user:${targetUserId}`).emit('friend_request_received', { fromUserId: req.user.id, fromUserName: req.user.name });
-        return res.json({ message: `Friend request sent to ${userCheck.rows[0].name}`, status: 'pending', user: userCheck.rows[0] });
+        // Same sentence as a pending row; see POST /request.
+        return res.json({ message: 'Friend request already sent', status: 'pending', user: userCheck.rows[0] });
       }
 
       // Conflict-tolerant insert, post-write block verify, and the crossed-pair
@@ -1078,13 +1112,15 @@ router.post('/find-by-phone',
         const friendships = await pool.query(
           `SELECT
             CASE WHEN requester_id = $1 THEN addressee_id ELSE requester_id END AS friend_id,
-            status
+            status, requester_id
            FROM friendships
            WHERE (requester_id = $1 OR addressee_id = $1)
            AND (requester_id = ANY($2::int[]) OR addressee_id = ANY($2::int[]))`,
           [req.user.id, userIds]
         );
-        friendships.rows.forEach(f => { friendshipMap[f.friend_id] = f.status; });
+        // A declined row reads as pending to the person declined; see
+        // maskedStatus.
+        friendships.rows.forEach(f => { friendshipMap[f.friend_id] = maskedStatus(f, req.user.id); });
       }
 
       const users = result.rows.map(u => ({
@@ -1124,7 +1160,8 @@ router.get('/status/:userId', async (req, res) => {
     if (result.rows.length === 0) {
       return res.json({ status: 'none' });
     }
-    res.json({ status: result.rows[0].status, requester_id: result.rows[0].requester_id });
+    // Masked for the requester of a declined row; see maskedStatus.
+    res.json({ status: maskedStatus(result.rows[0], req.user.id), requester_id: result.rows[0].requester_id });
   } catch (err) {
     console.error('Friend status error:', err);
     res.status(500).json({ error: 'Failed to check friendship status' });
@@ -1151,3 +1188,5 @@ module.exports.__budgetLimits = () => ({
   contactSync: contactSyncBudget.limits,
   phoneLookup: phoneLookupBudget.limits,
 });
+
+module.exports.__test = { maskedStatus };
