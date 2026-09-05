@@ -446,6 +446,44 @@ async function hasMembershipRow(flockId, userId) {
 }
 
 // GET /api/flocks - Get all flocks the user belongs to
+
+// A PLAN WITH MONEY OUTSTANDING IS NOT THE CREATOR'S TO DELETE.
+//
+// bill_splits.flock_id and bill_split_shares.bill_id are both ON DELETE CASCADE
+// (migration 001), so deleting a flock takes the bill and every share row with
+// it. Both delete paths - DELETE /:id and the creator branch of /leave - ran
+// that DELETE with no idea whether anyone was owed anything. The `completed`
+// refusal in /leave sits inside `if (!isCreator)`, so the creator is exempt
+// from it, and DELETE /:id has no status check at all.
+//
+// Alice fronts $200 for dinner, four ways, $50 each. Bob and Dave settle. Carol
+// - who created the flock and owes $50 - taps Delete plan. The bill row and all
+// four share rows are cascaded away. Alice's sheet 404s, her $50 receivable is
+// gone, the record that Bob and Dave paid is gone, and nothing in billing.js
+// can recreate any of it.
+//
+// SHELLS DO NOT COUNT. A ghost-commit bill has paid_by NULL: nobody has claimed
+// it, the amounts are estimates off the budget ceiling rather than money
+// anybody handed over, and blocking a delete on one would make an abandoned
+// plan undeletable. Only a bill with a real payer holds a real debt.
+async function outstandingBillFor(flockId) {
+  const { rows } = await pool.query(
+    `SELECT EXISTS (
+       SELECT 1
+         FROM bill_split_shares bss
+         JOIN bill_splits bs ON bs.id = bss.bill_id
+        WHERE bs.flock_id = $1
+          AND bs.paid_by IS NOT NULL
+          AND bss.settled IS NOT TRUE
+     ) AS owed`,
+    [flockId]
+  );
+  return !!rows[0]?.owed;
+}
+
+const OUTSTANDING_BILL_MESSAGE =
+  'Someone still owes money on this plan. Settle the bill first, then you can delete it.';
+
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query(
@@ -1522,6 +1560,14 @@ router.delete('/:id', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('
         return res.status(404).json({ error: 'Flock not found' });
       }
       return res.status(403).json({ error: 'Only the creator can delete this flock' });
+    }
+
+    // Before anything is announced, and before the DELETE: see
+    // outstandingBillFor. The fan-out below is awaited and irreversible, so a
+    // refusal after it would tell everyone the plan was cancelled and then
+    // leave it standing.
+    if (await outstandingBillFor(flockId)) {
+      return res.status(409).json({ error: OUTSTANDING_BILL_MESSAGE });
     }
 
     // Notify members before deleting
@@ -2614,6 +2660,13 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
     const io = req.app.get('io');
 
     if (isCreator) {
+      // The creator leaving DELETES the flock, so it is a delete and takes the
+      // delete's rule. Note that the `completed` refusal above is inside
+      // `if (!isCreator)`, so the creator reaches this line with no status
+      // check of any kind behind them.
+      if (await outstandingBillFor(flockId)) {
+        return res.status(409).json({ error: OUTSTANDING_BILL_MESSAGE });
+      }
       // Same read-before-delete as DELETE /:id, and the same reason: the
       // cascade takes the recipient list with it.
       let cancelRecipients = [];
