@@ -1553,6 +1553,18 @@ export default function ChatDetail({
             if (otherMembers === 0) { showToast('No one else in this flock to share with', 'error'); return; }
             startSharingLocation(flock.id);
           }}
+          /* The other three this screen can honour. Each posts something into
+             the stream, which is the rule for what belongs in this sheet: a
+             poll card, a bill card, and Birdie's answer. They were reachable
+             only from the Features rail in the header, so the composer, which
+             is where a person goes to send something, offered none of them.
+
+             Check in is not here because this screen has no handler for it.
+             The sheet drops a tile with no handler rather than greying one
+             out, so nothing below promises a feature that is not wired. */
+          onOpenVote={() => { setPlusOpen(false); setShowVotePanel(true); loadPopularVenues(); }}
+          onSplitBill={() => { setPlusOpen(false); setShowCreateBill(true); }}
+          onAskBirdie={() => { setPlusOpen(false); openBirdie(); }}
         />
 
 

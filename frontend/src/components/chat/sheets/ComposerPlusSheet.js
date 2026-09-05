@@ -34,7 +34,7 @@
  *
  * MEASUREMENTS
  *   Tiles are a 4 column grid. The icon well is 56, radius 28, filled with
- *   --icon-bg, the glyph at 22. The label sits under it at --t-meta, two lines
+ *   --icon-bg, the glyph at 22, except the solid bird at 20. The label sits under it at --t-meta, two lines
  *   maximum, centred. Whole tile is 44 minimum in both directions by
  *   construction (56 alone clears it), so no tile needs the hit44 overlay.
  *   Sheet geometry, backdrop, grabber, focus handling and keyboard dismissal
@@ -50,10 +50,10 @@ import './sheets.css';
 /* One tile. The visible label IS the accessible name, so there is no
    aria-label here and the glyph stays decorative. An icon-only control would
    need both; this is not one. */
-function Tile({ glyph, label, onClick }) {
+function Tile({ glyph, label, onClick, size = 22 }) {
   return (
     <button type="button" className="cs-tile" onClick={onClick}>
-      <span className="cs-tile-well" aria-hidden="true">{glyph('currentColor', 22)}</span>
+      <span className="cs-tile-well" aria-hidden="true">{glyph('currentColor', size)}</span>
       <span className="cs-tile-label">{label}</span>
     </button>
   );
@@ -94,7 +94,12 @@ export default function ComposerPlusSheet({
     { key: 'venue', glyph: venueGlyph, label: venueLabel, onClick: venueHandler },
     { key: 'location', glyph: Icons.crosshair, label: 'Share location', onClick: onShareLocation },
     { key: 'money', glyph: moneyGlyph, label: moneyLabel, onClick: moneyHandler },
-    { key: 'birdie', glyph: Icons.birdie, label: 'Ask Birdie', onClick: onAskBirdie },
+    /* Two sizes under the bird, and only under the bird. It is the one solid
+       mark in the set (the icon system's own stated exception, drawn unstroked
+       so the punched eye stays open), and a filled glyph reads heavier than an
+       outline at the same nominal size. At 22 beside these outlines it was the
+       largest and darkest thing in the sheet. */
+    { key: 'birdie', glyph: Icons.birdie, label: 'Ask Birdie', onClick: onAskBirdie, size: 20 },
     { key: 'checkin', glyph: Icons.checkCircle, label: 'Check in', onClick: onCheckIn },
   ].filter((t) => typeof t.onClick === 'function');
 
@@ -111,7 +116,7 @@ export default function ComposerPlusSheet({
       {tiles.length > 0 ? (
         <div className="cs-tiles" data-chat-section="send">
           {tiles.map((t) => (
-            <Tile key={t.key} glyph={t.glyph} label={t.label} onClick={t.onClick} />
+            <Tile key={t.key} glyph={t.glyph} label={t.label} onClick={t.onClick} size={t.size} />
           ))}
         </div>
       ) : (

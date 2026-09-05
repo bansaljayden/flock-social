@@ -122,7 +122,10 @@ export default function ChatInputBar({
   /* the controls */
   onCamera = noop,
   onLibrary = noop,
-  onPlus = noop,
+  /* No default. The plus is only drawn when there is something behind it: see
+     the slot below. A `noop` default here is what made it possible to ship a
+     button that opens nothing. */
+  onPlus = null,
 
   /* reply quote bar */
   replyTo = null,
@@ -446,6 +449,8 @@ export default function ChatInputBar({
 
         {/* Decision 1. One slot: plus until there is something to send, send
             after that. There is never a disabled send button here. */}
+        {/* Nothing to send and no sheet to open leaves the slot empty rather
+            than drawing a plus that answers a press with silence. */}
         {canSend ? (
           <button
             type="button"
@@ -464,7 +469,7 @@ export default function ChatInputBar({
           >
             {Icons.send('var(--chat-send-glyph)', 18)}
           </button>
-        ) : (
+        ) : onPlus ? (
           <button
             type="button"
             aria-label="More to send"
@@ -481,7 +486,7 @@ export default function ChatInputBar({
           >
             {Icons.plus(iconColor, 24)}
           </button>
-        )}
+        ) : null}
       </div>
     </div>
   );
