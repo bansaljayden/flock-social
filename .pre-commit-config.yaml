@@ -3,3 +3,21 @@ repos:
     rev: v8.30.1
     hooks:
       - id: gitleaks
+
+  # The three suites that used to run in GitHub Actions on every push to main.
+  # They moved here on 2026-09-05: the repository is private, so those minutes
+  # are billed, and the account hit a payment hold that made every run fail in
+  # three seconds without starting. The script explains what this does and does
+  # not replace, including the Node version gap that CI could see and a local
+  # run cannot.
+  #
+  # Install it with:  pre-commit install --hook-type pre-push
+  - repo: local
+    hooks:
+      - id: changed-suites
+        name: test suites for whatever this push changes
+        entry: bash tools/hooks/run-changed-suites.sh
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true
