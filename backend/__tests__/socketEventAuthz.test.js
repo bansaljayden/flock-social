@@ -676,16 +676,25 @@ test('dm_new_vote and dm_venue_pinned name the other side of the conversation, p
       release: () => {},
     });
 
-    const s = fakeSocket('voter', { id: 1330, name: 'Ava' });
-    registerHandlers(fakeIo(), s);
+    const io = fakeIo();
+    const s = fakeSocket('voter', { id: 1330, name: 'Ava' }, io);
+    registerHandlers(io, s);
 
     await fire(s, 'dm_vote_venue', { receiverId: 1331, venue_name: 'Bar' });
     await fire(s, 'dm_pin_venue', { receiverId: 1331, venue_name: 'Bar' });
 
     const toThem = s.emitted.filter((e) => e.target === 'user:1331');
-    const toMe = s.emitted.filter((e) => e.target === 'self');
+    // The voter's own copy leaves through io and not back down this socket,
+    // because an account holds up to MAX_SOCKETS_PER_USER of them and the other
+    // devices need the same tally. `withUserId` is what this test is about and
+    // it is unchanged by that: the room the echo goes to and the id inside it
+    // are two different questions.
+    const toMe = io.emitted.filter((e) => e.event === 'dm_new_vote' || e.event === 'dm_venue_pinned');
     assert.strictEqual(toThem.length, 2);
     assert.strictEqual(toMe.length, 2);
+    for (const e of toMe) {
+      assert.strictEqual(e.room, 'user:1330', 'addressed to the account, not to one socket');
+    }
     for (const e of toThem) {
       assert.strictEqual(e.payload.withUserId, 1330, 'the recipient is told who the thread is with: the sender');
     }
