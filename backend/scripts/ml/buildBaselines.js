@@ -25,6 +25,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
 
 const { Pool } = require('pg');
+const { withCorpusWriteLock } = require('./config');
 
 // The axis a baseline-eligible row must declare. Mirrors
 // collectWeekly.HOUR_AXIS_VENUE_LOCAL and the value migration 023 stamps.
@@ -101,15 +102,24 @@ const DELETE_STALE_SQL = `
 // deliberate — baselineMeta reads it as `stale: null`, "nothing to say", which
 // is true. NOW() would have been a claim about data we cannot date.
 //
-// MONOTONIC, so the correction costs nothing up front. Migration 023 stamped
-// every one of production's ~3.45M collected rows with NOW() on 2026-08-15, and
-// switching the source of this column outright would have rewritten all of them
-// on the next cron - one multi-minute locking UPDATE inside a job that runs
-// hourly. GREATEST keeps whichever stamp is later, so a row whose evidence
-// predates the migration keeps the migration's date (today's behaviour, which
-// understates freshness and therefore errs toward warning) and only a row with
-// genuinely newer evidence is written. The table converts itself venue by venue
-// as collection reaches each one.
+// THE STAMP MOVES ONLY WITH THE VALUE IT DESCRIBES. Whenever the row is
+// written, updated_at is EXCLUDED.updated_at, the evidence date of the value
+// being written, and nothing else. It used to be GREATEST(old stamp, new
+// evidence), kept so that a row migration 023 had stamped with NOW() on
+// 2026-08-15 would not move backwards. That made (baseline, updated_at) two
+// facts from two different moments: a value that changed because rows moved
+// under it (the venue repair does exactly that) kept the older, newer-looking
+// stamp; and two refreshes running at once could publish the OLDER value with
+// the NEWER stamp, because the value was overwritten whenever it differed
+// while the stamp took the maximum on its own. The date of the evidence is
+// what the column means, so a value whose evidence is older than the stamp it
+// replaces gets the older date, and baselineMeta says stale sooner rather than
+// claiming freshness the rows cannot support.
+//
+// THE COST ARGUMENT WAS NEVER ABOUT GREATEST. What stops a mass rewrite of the
+// ~3.45M migration-stamped rows is the WHERE below, which is unchanged: a row
+// is written only when its value differs or its evidence is newer. Rows whose
+// value and evidence both stand still are not touched, whatever their stamp.
 //
 // Re-running stays free. If no new weekly row arrived, MAX(collected_at) has
 // not moved either, so neither clause of the WHERE fires and the row is
@@ -132,10 +142,7 @@ const UPSERT_SQL = `
   ON CONFLICT (google_place_id, day_of_week, hour)
   DO UPDATE SET
     baseline = EXCLUDED.baseline,
-    updated_at = GREATEST(
-      COALESCE(ml_venue_baselines.updated_at, 'epoch'::timestamptz),
-      COALESCE(EXCLUDED.updated_at, 'epoch'::timestamptz)
-    )
+    updated_at = EXCLUDED.updated_at
   WHERE ml_venue_baselines.baseline IS DISTINCT FROM EXCLUDED.baseline
      OR EXCLUDED.updated_at > COALESCE(ml_venue_baselines.updated_at, 'epoch'::timestamptz)
 `;
@@ -143,20 +150,34 @@ const UPSERT_SQL = `
 // Rebuild every source='collected' baseline from the corrected weekly corpus.
 // Safe to call any number of times, from anywhere, in any order.
 // Returns { ok, undeclared, deleted, upserted }.
+//
+// SERIALIZED. The check, the delete and the upsert run in one transaction
+// under the corpus write lock (config.withCorpusWriteLock), the same lock the
+// collectors and the venue repair take. collectRealtime.js calls this at the
+// end of every hourly run and buildBaselines.js is run by hand after a repair,
+// so two refreshes can overlap, and two overlapping refreshes were how an
+// older value could be published under a newer stamp: each is one statement
+// over its own snapshot, and the later-started one can commit first. Under
+// the lock the second refresh starts after the first commits and reads a
+// corpus at least as new, so the newest snapshot is always the last written.
+// The DDL stays outside the transaction; it is IF NOT EXISTS and takes no
+// part in the race.
 async function refreshCollectedBaselines(pool) {
   await pool.query(CREATE_TABLE_SQL);
   // Both columns are created by migration 023 on a booted server; these scripts
   // also run against databases that have not booted the current server.
   await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS hour_axis VARCHAR(16)`);
 
-  const { rows: [{ undeclared }] } = await pool.query(UNDECLARED_WEEKLY_SQL);
-  if (undeclared) {
-    return { ok: false, undeclared: true, deleted: 0, upserted: 0 };
-  }
+  return withCorpusWriteLock(pool, async (client) => {
+    const { rows: [{ undeclared }] } = await client.query(UNDECLARED_WEEKLY_SQL);
+    if (undeclared) {
+      return { ok: false, undeclared: true, deleted: 0, upserted: 0 };
+    }
 
-  const del = await pool.query(DELETE_STALE_SQL);
-  const up = await pool.query(UPSERT_SQL);
-  return { ok: true, undeclared: false, deleted: del.rowCount, upserted: up.rowCount };
+    const del = await client.query(DELETE_STALE_SQL);
+    const up = await client.query(UPSERT_SQL);
+    return { ok: true, undeclared: false, deleted: del.rowCount, upserted: up.rowCount };
+  });
 }
 
 const REFUSAL_MESSAGE =

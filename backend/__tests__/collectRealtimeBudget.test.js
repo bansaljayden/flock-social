@@ -258,6 +258,8 @@ test('the repair script can see its own miss', () => {
 // ---------------------------------------------------------------------------
 const discover = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'discoverBestTime.js'), 'utf8');
 const venueRepair = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'repairBestTimeDiscoveredVenues.js'), 'utf8');
+const mlConfig = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'config.js'), 'utf8');
+const baselines = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'buildBaselines.js'), 'utf8');
 const migration060 = fs.readFileSync(path.join(__dirname, '..', 'migrations', '060_ml_venues_besttime_identity.sql'), 'utf8');
 const prepareFeatures = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'train', 'prepare_features.py'), 'utf8');
 
@@ -412,13 +414,17 @@ test('the repair merges the twins, and refuses to delete a venue Google knows ab
   assert.match(venueRepair, /PARTITION BY day_of_week, hour, observed_date/);
   assert.match(venueRepair, /UPDATE ml_training_data t\s*\n\s*SET venue_id\s*= k\.id/);
   assert.match(venueRepair, /DELETE FROM ml_venues WHERE id = \$1/);
-  // Nothing is deleted in the 24 groups where two REAL Google places share one
-  // BestTime venue: they lose the mapping, never the row.
+  // The VENUE ROW survives in the 24 groups where two REAL Google places share
+  // one BestTime venue: it loses the mapping, never its identity. (Its training
+  // rows are another matter; see the F3 test further down.)
   assert.match(venueRepair, /besttime_venue_id = NULL,\s*\n\s*besttime_status = 'duplicate'/);
-  // Batched and resumable, on a database an hourly cron is also using.
+  // Batched and resumable, on a database an hourly cron is also using. The
+  // transaction is the shared helper's, which is what puts the corpus lock in
+  // front of every group; BEGIN and ROLLBACK live there now.
   assert.match(venueRepair, /const BATCH = \d+;/);
-  assert.match(venueRepair, /await client\.query\('BEGIN'\);/);
-  assert.match(venueRepair, /await client\.query\('ROLLBACK'\)/);
+  assert.match(venueRepair, /await withCorpusWriteLock\(pool, async \(client\) => \{/);
+  assert.match(mlConfig, /await client\.query\('BEGIN'\);/);
+  assert.match(mlConfig, /await client\.query\('ROLLBACK'\)/);
   // It builds the index 060 could not, and only when nothing is left to trip it.
   assert.match(venueRepair, /CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS \$\{VENUE_ID_INDEX\}/);
   assert.match(venueRepair, /duplicate groups remain; NOT building/);
@@ -472,4 +478,130 @@ test('the weekly collector survives two Google places resolving to one BestTime 
   assert.match(venueRepair, /besttime_status = 'duplicate'/);
   // Not a failure: the run continues and the venue is counted as skipped.
   assert.match(weekly, /Left unmapped and marked duplicate/);
+});
+
+// ---------------------------------------------------------------------------
+// 2026-09-04 adversarial audit of the repair against the live cron. The
+// behavioural half of each of these is in mlCorpusDedupe.test.js and
+// mlClockAxisBackfill.test.js against a real server; what is pinned here is
+// the SHAPE that makes the behaviour hold, so a refactor that keeps the tests
+// green by accident still has to keep the lock in the right place.
+// ---------------------------------------------------------------------------
+test('every writer of the corpus takes one advisory lock, and the repair takes it before it reads a row', () => {
+  // One name, one statement, defined once. Four callers spelling the key by
+  // hand is four ways for one of them to hold a different lock.
+  assert.match(mlConfig, /const ML_CORPUS_LOCK_SQL = "SELECT pg_advisory_xact_lock\(hashtext\('ml_corpus_writer'\)\)";/);
+  assert.match(mlConfig, /async function withCorpusWriteLock\(pool, fn\) \{/);
+  // Lock first, before any row is read or touched, so a waiter holds nothing.
+  const helper = mlConfig.slice(mlConfig.indexOf('async function withCorpusWriteLock'));
+  assert.ok(helper.indexOf("await client.query('BEGIN');") < helper.indexOf('await client.query(ML_CORPUS_LOCK_SQL);'));
+  assert.ok(helper.indexOf('await client.query(ML_CORPUS_LOCK_SQL);') < helper.indexOf('await fn(client);'));
+  for (const [name, src] of [
+    ['collectRealtime', collect], ['collectWeekly', weekly],
+    ['repairBestTimeDiscoveredVenues', venueRepair], ['buildBaselines', baselines],
+  ]) {
+    assert.match(src, /withCorpusWriteLock\b[\s\S]{0,80}?require\('\.\/config'\)/, `${name} does not import the shared lock`);
+    assert.match(src, /await withCorpusWriteLock\(pool, async \(client\) => \{|return withCorpusWriteLock\(pool, async \(client\) => \{/,
+      `${name} never takes the lock`);
+  }
+  // The repair's group transaction IS the locked callback: nothing in
+  // mergeGroup runs outside it.
+  const merge = venueRepair.slice(venueRepair.indexOf('async function mergeGroup'), venueRepair.indexOf('async function phase2'));
+  assert.match(merge, /^\s*await withCorpusWriteLock\(pool, async \(client\) => \{/m);
+  assert.ok(!/pool\.query|pool\.connect/.test(merge), 'mergeGroup touches the database outside the locked transaction');
+});
+
+test('both collectors re-resolve the venue inside the lock, immediately before the insert', () => {
+  // Realtime: the id is always stored, so the check is an equality.
+  const rtCheck = collect.indexOf("'SELECT 1 FROM ml_venues WHERE id = $1 AND besttime_venue_id = $2'");
+  const rtLock = collect.indexOf('const result = await withCorpusWriteLock(pool, async (client) => {');
+  const rtInsert = collect.indexOf("INSERT INTO ml_training_data (collection_mode,");
+  assert.ok(rtLock > -1 && rtCheck > rtLock && rtInsert > rtCheck,
+    'collectRealtime does not check the venue between taking the lock and inserting');
+  assert.match(collect, /if \(still\.length === 0\) return null;/);
+  assert.match(collect, /let vanished = 0;/);
+  assert.match(collect, /vanished\+\+;/);
+  // A retired venue is accounted for in the empty-run refusal, or an hour in
+  // which the repair retired every venue in scope would exit non-zero.
+  assert.match(collect, /skipped \+ closedSkips \+ vanished < venues\.length/);
+  // Weekly: the id may have been learned this iteration, so it is the claimed
+  // id, and NULL on both sides must still match.
+  const wkCheck = weekly.indexOf("'SELECT 1 FROM ml_venues WHERE id = $1 AND besttime_venue_id IS NOT DISTINCT FROM $2'");
+  const wkLock = weekly.indexOf('const res = await withCorpusWriteLock(pool, async (client) => {');
+  // search(), not indexOf() on a literal newline: the checkout is CRLF.
+  const wkInsert = weekly.search(/INSERT INTO ml_training_data\s+\(venue_id, collection_mode, hour_axis/);
+  assert.ok(wkLock > -1 && wkCheck > wkLock && wkInsert > wkCheck,
+    'collectWeekly does not check the venue between taking the lock and inserting');
+  assert.match(weekly, /const claimedId = venue\.besttime_venue_id \|\| forecast\.venueId \|\| null;/);
+  // And the 'found' stamp only lands on a row that still holds that id, so it
+  // cannot overwrite the repair's 'duplicate' verdict.
+  assert.match(weekly, /besttime_status = 'found'\s*\n\s*WHERE id = \$1 AND besttime_venue_id IS NOT DISTINCT FROM \$2/);
+});
+
+test('collectWeekly asks the table who holds a BestTime id before claiming it, and does not rely on the index', () => {
+  // Migration 060 skips its index build while the duplicate groups exist,
+  // which is production's state until the repair runs. A stamp guarded only by
+  // 23505 was guarded by an error that could not fire.
+  const holderLookup = weekly.indexOf('WHERE besttime_venue_id = $1 AND id <> $2');
+  const claim = weekly.indexOf('SET besttime_venue_id = $1,');
+  assert.ok(holderLookup > -1, 'the holder lookup is gone');
+  assert.ok(holderLookup < claim, 'the id is stamped before the table is asked who holds it');
+  // Both inside one locked transaction, so nothing can claim it in between.
+  const claimBlock = weekly.slice(weekly.indexOf('holder = await withCorpusWriteLock(pool, async (client) => {'), claim);
+  assert.ok(claimBlock.includes('WHERE besttime_venue_id = $1 AND id <> $2'),
+    'the holder lookup is not in the same locked transaction as the stamp');
+  // The 23505 net stays for the day the index exists.
+  assert.match(weekly, /if \(err\.code !== '23505'\) throw err;/);
+  assert.match(weekly, /storing it would file the same forecast under a second parent/);
+});
+
+test("the repair strips a rival of the keeper's data and keeps only what is genuinely the rival's", () => {
+  // Every row under a rival was bought with the shared id, so its weekly and
+  // realtime rows are the keeper's data under another name.
+  assert.match(venueRepair, /DELETE FROM ml_training_data\s*\n\s*WHERE venue_id = \$1\s*\n\s*AND collection_mode IN \('weekly', 'realtime'\)/);
+  // Only the collected half of its baselines: Google popular_times rows are
+  // about the rival's own place id.
+  assert.match(venueRepair, /DELETE FROM ml_venue_baselines WHERE google_place_id = \$1 AND source = 'collected'/);
+  // The venue row itself is still not deleted.
+  const rivalLoop = venueRepair.slice(venueRepair.indexOf('for (const rival of g.rivals)'), venueRepair.indexOf('async function phase2'));
+  assert.ok(!/DELETE FROM ml_venues/.test(rivalLoop), 'a rival ml_venues row is deleted');
+  assert.match(rivalLoop, /DROP_RIVAL_ROWS_SQL/);
+  assert.match(rivalLoop, /DROP_RIVAL_BASELINES_SQL/);
+  // And the reasoning for deleting rather than moving the realtime rows is in
+  // the file, because it is a judgement and the next reader needs it.
+  assert.match(venueRepair, /realtime rows are deleted rather than moved onto the keeper/);
+});
+
+test('the repair exits 1 when the index is not in place, and drops an INVALID leftover before rebuilding', () => {
+  // A false from buildIndex used to be ignored: main awaited it and returned
+  // pool.end(), exit 0, with the constraint absent.
+  assert.match(venueRepair, /const built = await buildIndex\(\);\s*\n\s*if \(!built\) \{[\s\S]{0,400}?process\.exitCode = 1;/);
+  // CREATE INDEX CONCURRENTLY IF NOT EXISTS skips an invalid same-name index.
+  const build = venueRepair.slice(venueRepair.indexOf('async function buildIndex'), venueRepair.indexOf('async function main'));
+  assert.match(build, /if \(before && before\.indisvalid === false\) \{/);
+  assert.match(build, /DROP INDEX CONCURRENTLY IF EXISTS \$\{VENUE_ID_INDEX\}/);
+  assert.ok(build.indexOf('DROP INDEX CONCURRENTLY') < build.indexOf('CREATE UNIQUE INDEX CONCURRENTLY'),
+    'the invalid leftover is dropped after the build that would have skipped it');
+  // The hard assertion reads the catalog, all four facts.
+  assert.match(venueRepair, /function indexProblems\(ix\)/);
+  for (const fact of ['indisunique', 'columns', 'predicate', 'indisvalid']) {
+    assert.ok(venueRepair.slice(venueRepair.indexOf('function indexProblems')).includes(fact), `the assertion does not check ${fact}`);
+  }
+  assert.match(build, /const problems = indexProblems\(after\);\s*\n\s*if \(problems\.length > 0\) \{[\s\S]{0,600}?return false;/);
+});
+
+test('a baseline refresh is serialized, and its stamp is the evidence date of the value it writes', () => {
+  // One transaction under the corpus lock: check, delete, upsert.
+  const refresh = baselines.slice(baselines.indexOf('async function refreshCollectedBaselines'));
+  assert.match(refresh, /return withCorpusWriteLock\(pool, async \(client\) => \{/);
+  for (const stmt of ['UNDECLARED_WEEKLY_SQL', 'DELETE_STALE_SQL', 'UPSERT_SQL']) {
+    assert.match(refresh, new RegExp('client\\.query\\(' + stmt + '\\)'), `${stmt} runs outside the locked transaction`);
+  }
+  // updated_at moves only with the value: no GREATEST that lets an older value
+  // inherit a newer stamp.
+  const upsert = baselines.slice(baselines.indexOf('const UPSERT_SQL'), baselines.indexOf('async function refreshCollectedBaselines'));
+  assert.match(upsert, /updated_at = EXCLUDED\.updated_at/);
+  assert.ok(!/GREATEST/.test(upsert), 'updated_at still takes GREATEST(old, new) independently of the value written');
+  // The churn guard is unchanged, because it is what keeps re-runs free.
+  assert.match(upsert, /WHERE ml_venue_baselines\.baseline IS DISTINCT FROM EXCLUDED\.baseline\s*\n\s*OR EXCLUDED\.updated_at > COALESCE\(ml_venue_baselines\.updated_at, 'epoch'::timestamptz\)/);
 });

@@ -45,13 +45,39 @@
 // own matcher resolved to one venue id: a Bangkok "Taco Bell" at two addresses,
 // "100 Gramm Bar" and "100 GRAMM Lounge" in Berlin, "ICONSIAM" and "ICONSIAM
 // PARK". Nothing here can tell which of them BestTime actually answered for,
-// and both are real Google records with real coordinates and real training
-// rows. So NOTHING IS DELETED in those groups. One row keeps the mapping and
-// the others have besttime_venue_id set to NULL and besttime_status set to
-// 'duplicate'. They keep their identity, their coordinates and every row they
-// have ever been given; they stop claiming a BestTime venue another row also
-// claims, which is the only thing the unique index actually forbids.
-// collectWeekly.js writes the same word when a fresh lookup hits the same wall.
+// and both are real Google records with real coordinates. So the VENUE ROWS
+// are not deleted in those groups. One row keeps the mapping and the others
+// have besttime_venue_id set to NULL and besttime_status set to 'duplicate'.
+// They keep their identity and their coordinates; they stop claiming a
+// BestTime venue another row also claims, which is the only thing the unique
+// index actually forbids. collectWeekly.js writes the same word when a fresh
+// lookup hits the same wall.
+//
+// Their TRAINING ROWS are a different matter, and the first version of this
+// file got it wrong by keeping them. Every row under a rival was bought with
+// the shared BestTime id: collectWeekly fetches by venue.besttime_venue_id
+// once one is stored, collectRealtime only ever fetches by it, and a row's id
+// is never overwritten once set. So the rival's 168 weekly rows are the same
+// forecast the keeper holds, filed under a second set of coordinates, and its
+// realtime rows are the same live readings the keeper was polled for in the
+// same sweeps. Left in place, train/export_training_data.js exports one
+// source twice under two venues, and buildBaselines.js rebuilds the rival's
+// baseline curve from the keeper's data on the next hourly cron, which is the
+// contamination this whole repair exists to end. So the rival's weekly rows,
+// its realtime rows and its source='collected' baselines are deleted. Its
+// source='google' baselines are not: those come from Google popular_times for
+// the rival's own place id and are genuinely about the rival.
+//
+// The realtime rows are deleted rather than moved onto the keeper, unlike an
+// orphan's, and the reason is the context columns. A realtime row carries
+// weather, the nearest event, the venue's category and rating, all resolved
+// from the rival's coordinates and record at collection time. Its busyness is
+// the keeper's reading but the rest of the row describes another place, and
+// two Google places sharing an id can be a chain's two addresses across a
+// city. A moved row would pair the keeper's label with another venue's
+// features. The keeper was in the same sweeps (same city, same active flag,
+// same id) and holds its own row for each observation, so nothing is lost
+// that the keeper does not already have.
 //
 // PHASE 2 is the other half of the same carelessness. discoverBestTime wrote a
 // literal 0 into review_count because BestTime does not report review counts,
@@ -75,6 +101,25 @@
 // batch commits on its own, so the script can be killed at any point and simply
 // resumes: every predicate only matches work that has not been done yet.
 //
+// SAFE UNDER THE HOURLY CRON. Each group's transaction takes the corpus write
+// lock (config.withCorpusWriteLock) before it reads a row, and both collectors
+// take the same lock around each venue's write, re-checking that the venue
+// still exists and still holds its id before they insert. Without that, a
+// collector that had read its venue list before this script retired a `bt_`
+// row could insert an observation between the move and the DELETE, and the
+// ON DELETE CASCADE on ml_training_data.venue_id would take the fresh row with
+// it; or the insert could arrive after the DELETE and fail its foreign key
+// after the BestTime credit had been spent. The lock is per group, not per
+// run, so the sweep waits milliseconds at a time and never loses an hour.
+//
+// THE INDEX IS THE EXIT CODE. A run that merged everything and then failed to
+// leave ml_venues_besttime_venue_id_uniq built, unique, on the right column,
+// with the right predicate and valid, exits 1, because an operator reading
+// "exit 0" would reasonably assume the constraint is in place and it is not.
+// A CREATE INDEX CONCURRENTLY that dies partway leaves an INVALID index under
+// the same name, and IF NOT EXISTS then skips it forever; that case is
+// detected before the build, dropped, and rebuilt.
+//
 // AFTER A --commit RUN, rebuild the derived tables, because a venue's corpus
 // changed underneath them:
 //
@@ -88,6 +133,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
 
 const { Pool } = require('pg');
+const { withCorpusWriteLock } = require('./config');
 
 if (!process.env.DATABASE_URL && process.env.PGHOST) {
   const host = process.env.PGHOST;
@@ -237,6 +283,22 @@ const MOVE_ROWS_SQL = `
 // will never revisit.
 const DROP_BASELINES_SQL = 'DELETE FROM ml_venue_baselines WHERE google_place_id = $1';
 
+// A rival's training rows: the keeper's data under another name, per the
+// header. Both modes named rather than a bare DELETE by venue_id, so the
+// statement says what it believes about the rows it removes. RETURNING the
+// mode lets the log count each kind.
+const DROP_RIVAL_ROWS_SQL = `
+  DELETE FROM ml_training_data
+   WHERE venue_id = $1
+     AND collection_mode IN ('weekly', 'realtime')
+  RETURNING collection_mode`;
+
+// Only the half buildBaselines.js owns. A rival is a real Google place, and
+// mlPredictor.storeGoogleBaselines may have written source='google' rows for
+// it from Google's own popular_times, which are about the rival and stay.
+const DROP_RIVAL_BASELINES_SQL =
+  "DELETE FROM ml_venue_baselines WHERE google_place_id = $1 AND source = 'collected'";
+
 const PHASE2_SCOPE = `
   ml_training_data t
    WHERE t.review_count = 0
@@ -278,7 +340,7 @@ async function report(groups) {
 
   console.log(`[Repair] ${groups.length} BestTime venue ids are held by more than one ml_venues row.`);
   console.log(`[Repair] PHASE 1a: ${merges.length} groups hold ${orphanRows} pseudo rows that will be MERGED into the row keeping the Google identity.`);
-  console.log(`[Repair] PHASE 1b: ${contested.length} groups hold ${rivalRows} further REAL Google places sharing one BestTime venue. Nothing is deleted there; they lose only the mapping.`);
+  console.log(`[Repair] PHASE 1b: ${contested.length} groups hold ${rivalRows} further REAL Google places sharing one BestTime venue. The venue rows stay; the mapping, the training rows bought with it and the collected baselines built from them go.`);
 
   for (const g of merges.slice(0, 5)) {
     console.log(`  ${g.besttimeVenueId}`);
@@ -297,10 +359,11 @@ async function report(groups) {
   console.log(`[Repair] PHASE 2: ${p2.n} training rows carry review_count = 0 copied from a venue nobody ever asked Google about.`);
 }
 
+// One group, one transaction, under the corpus write lock from its first
+// statement. The lock is what keeps a collector's in-flight observation for the
+// orphan from landing between the move and the DELETE below (see the header).
 async function mergeGroup(g) {
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  await withCorpusWriteLock(pool, async (client) => {
     for (const orphan of g.orphans) {
       await client.query(COLLAPSE_WEEKLY_SQL, [g.keeper.id, orphan.id]);
       await client.query(COLLAPSE_REALTIME_SQL, [g.keeper.id, orphan.id]);
@@ -310,10 +373,19 @@ async function mergeGroup(g) {
       g.movedRows = (g.movedRows || 0) + moved.rowCount;
     }
     for (const rival of g.rivals) {
-      // NOT deleted. It keeps its Google identity, its coordinates and every
-      // row it has ever been given; it stops claiming a BestTime venue another
-      // row also claims. besttime_attempted_at is preserved when it exists so
-      // the record of when we last tried is not rewritten by a cleanup.
+      // The venue row is NOT deleted: it keeps its Google identity and its
+      // coordinates and stops claiming a BestTime venue another row also
+      // claims. Its training rows and collected baselines go, because they
+      // are the keeper's data under this row's name (header, "Their TRAINING
+      // ROWS"). besttime_attempted_at is preserved when it exists so the
+      // record of when we last tried is not rewritten by a cleanup.
+      const dropped = await client.query(DROP_RIVAL_ROWS_SQL, [rival.id]);
+      for (const r of dropped.rows) {
+        if (r.collection_mode === 'weekly') g.rivalWeeklyDropped = (g.rivalWeeklyDropped || 0) + 1;
+        else g.rivalRealtimeDropped = (g.rivalRealtimeDropped || 0) + 1;
+      }
+      const baselines = await client.query(DROP_RIVAL_BASELINES_SQL, [rival.google_place_id]);
+      g.rivalBaselinesDropped = (g.rivalBaselinesDropped || 0) + baselines.rowCount;
       await client.query(
         `UPDATE ml_venues
             SET besttime_venue_id = NULL,
@@ -324,13 +396,7 @@ async function mergeGroup(g) {
         [rival.id]
       );
     }
-    await client.query('COMMIT');
-  } catch (err) {
-    await client.query('ROLLBACK').catch(() => {});
-    throw err;
-  } finally {
-    client.release();
-  }
+  });
 }
 
 async function phase2() {
@@ -351,37 +417,91 @@ async function phase2() {
   return total;
 }
 
+// What the catalog says about the index under our name, or null when there is
+// none. Every field the final assertion judges is read here, from pg_index
+// itself rather than from a string: uniqueness, the key columns in order, the
+// partial predicate, and whether the index is valid.
+async function indexState() {
+  const { rows } = await pool.query(
+    `SELECT i.indisvalid, i.indisunique,
+            pg_get_expr(i.indpred, i.indrelid) AS predicate,
+            pg_get_indexdef(i.indexrelid) AS def,
+            ARRAY(
+              SELECT a.attname::text
+                FROM unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
+                JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum
+               ORDER BY k.ord
+            ) AS columns
+       FROM pg_class c
+       JOIN pg_index i ON i.indexrelid = c.oid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = 'public' AND c.relname = $1`,
+    [VENUE_ID_INDEX]
+  );
+  return rows[0] || null;
+}
+
+// The hard assertion, as a list of what is wrong so the log can name all of it
+// at once. Empty means the index is exactly what migration 060 describes.
+function indexProblems(ix) {
+  if (!ix) return ['it does not exist'];
+  const problems = [];
+  if (ix.indisunique !== true) problems.push('it is not UNIQUE');
+  if (!Array.isArray(ix.columns) || ix.columns.length !== 1 || ix.columns[0] !== 'besttime_venue_id') {
+    problems.push(`its key is (${(ix.columns || []).join(', ')}) rather than (besttime_venue_id)`);
+  }
+  const predicate = String(ix.predicate || '').replace(/[()\s]+/g, ' ').trim().toLowerCase();
+  if (predicate !== 'besttime_venue_id is not null') {
+    problems.push(`its predicate is ${ix.predicate ? `"${ix.predicate}"` : 'absent'} rather than "besttime_venue_id IS NOT NULL"`);
+  }
+  if (ix.indisvalid !== true) problems.push('it is INVALID (enforced on every insert, ignored by the planner)');
+  return problems;
+}
+
 async function buildIndex() {
   const { rows: left } = await pool.query(GROUPS_SQL);
   if (left.length > 0) {
     console.error(`[Repair] ${left.length} duplicate groups remain; NOT building ${VENUE_ID_INDEX}.`);
     return false;
   }
+
+  // An earlier CONCURRENTLY build that died partway (a duplicate that slipped
+  // in, a lost connection, a kill) leaves the name in the catalog flagged
+  // invalid, and CREATE INDEX IF NOT EXISTS sees the name and skips. So the
+  // leftover is dropped first. Only an INVALID index is dropped: a valid index
+  // of the wrong shape under this name is somebody's deliberate object, and the
+  // assertion below reports it for a human rather than replacing it.
+  const before = await indexState();
+  if (before && before.indisvalid === false) {
+    console.warn(`[Repair] ${VENUE_ID_INDEX} exists but is INVALID, left by a build that died partway. Dropping it before rebuilding.`);
+    await pool.query(`DROP INDEX CONCURRENTLY IF EXISTS ${VENUE_ID_INDEX}`);
+  }
+
   // CONCURRENTLY here and plainly in migration 060, which is a build strategy
   // and not a different index: same name, same column, same predicate. This
   // script is not in the boot path and production's collectors may be running,
   // so it takes no write lock; 060 runs before server.listen() on a 34,785-row
   // table where the lock is measured in milliseconds and CONCURRENTLY is not
   // allowed inside its conditional block anyway.
-  await pool.query(
-    `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ${VENUE_ID_INDEX}
-       ON ml_venues (besttime_venue_id)
-       WHERE besttime_venue_id IS NOT NULL`
-  );
-  const { rows } = await pool.query(
-    `SELECT i.indisvalid FROM pg_class c
-       JOIN pg_index i ON i.indexrelid = c.oid
-       JOIN pg_namespace n ON n.oid = c.relnamespace
-      WHERE n.nspname = 'public' AND c.relname = $1`,
-    [VENUE_ID_INDEX]
-  );
-  if (!rows[0] || rows[0].indisvalid === false) {
-    console.error(`[Repair] ${VENUE_ID_INDEX} is missing or INVALID after the build. `
-      + 'Drop it and re-run this script; an invalid index enforces itself on every insert '
-      + 'and is ignored by the planner.');
+  try {
+    await pool.query(
+      `CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ${VENUE_ID_INDEX}
+         ON ml_venues (besttime_venue_id)
+         WHERE besttime_venue_id IS NOT NULL`
+    );
+  } catch (err) {
+    console.error(`[Repair] CREATE INDEX CONCURRENTLY failed: ${err.message}`);
+  }
+
+  const after = await indexState();
+  const problems = indexProblems(after);
+  if (problems.length > 0) {
+    console.error(`[Repair] ${VENUE_ID_INDEX} is NOT in place after the build: ${problems.join('; ')}.`);
+    if (after) console.error(`[Repair] Catalog definition: ${after.def}`);
+    console.error('[Repair] Re-run this script once the cause is understood; an invalid leftover is dropped and rebuilt automatically, anything else is left for a human.');
     return false;
   }
-  console.log(`[Repair] ${VENUE_ID_INDEX} is built and valid.`);
+  console.log(`[Repair] ${VENUE_ID_INDEX} is built: unique, on (besttime_venue_id), WHERE besttime_venue_id IS NOT NULL, valid.`);
   return true;
 }
 
@@ -398,16 +518,24 @@ async function main() {
   let merged = 0;
   let unmapped = 0;
   let movedRows = 0;
+  let rivalWeekly = 0;
+  let rivalRealtime = 0;
+  let rivalBaselines = 0;
   for (const g of groups) {
     await mergeGroup(g);
     merged += g.orphans.length;
     unmapped += g.rivals.length;
     movedRows += g.movedRows || 0;
+    rivalWeekly += g.rivalWeeklyDropped || 0;
+    rivalRealtime += g.rivalRealtimeDropped || 0;
+    rivalBaselines += g.rivalBaselinesDropped || 0;
     if ((merged + unmapped) % 100 === 0) {
       console.log(`[Repair] phase 1: ${merged} pseudo rows merged, ${unmapped} rows unmapped...`);
     }
   }
-  console.log(`[Repair] phase 1 done. ${merged} pseudo rows merged (${movedRows} training rows moved onto their keeper), ${unmapped} real rows unmapped.`);
+  console.log(`[Repair] phase 1 done. ${merged} pseudo rows merged (${movedRows} training rows moved onto their keeper), `
+    + `${unmapped} real rows unmapped (${rivalWeekly} weekly rows, ${rivalRealtime} realtime rows and `
+    + `${rivalBaselines} collected baseline slots removed from them as the keeper's data under another name).`);
 
   const cleared = await phase2();
   console.log(`[Repair] phase 2 done. ${cleared} training rows cleared.`);
@@ -415,7 +543,14 @@ async function main() {
   const { rows: after } = await pool.query(GROUPS_SQL);
   console.log(`[Repair] Remaining duplicate groups: ${after.length} (expected 0).`);
 
-  await buildIndex();
+  // The index is the point of the whole run, so its absence is the exit code.
+  const built = await buildIndex();
+  if (!built) {
+    console.error(`[Repair] FAILED: ${VENUE_ID_INDEX} is not in place. The merges above are committed and will not be redone; `
+      + 'discoverBestTime.js keeps refusing to run and collectWeekly.js keeps checking the table by hand until it is.');
+    process.exitCode = 1;
+    return pool.end();
+  }
   console.log('[Repair] Next: node scripts/ml/buildBaselines.js, then node scripts/ml/train/export_training_data.js.');
   return pool.end();
 }
