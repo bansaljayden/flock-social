@@ -568,3 +568,40 @@ test('the fixed collectors run for real, land on one clock, and the corpus accep
   );
   assert.strictEqual(bl.baseline, rt[0].hour * 4, 'ml_venue_baselines is on a different axis from the corpus');
 });
+
+// ---------------------------------------------------------------------------
+// The third writer of this column, which was still on the other clock.
+//
+// This file's whole subject is that `hour` means the venue's wall clock and
+// that migration 023's SQL and collectWeekly's bestTimeSlotToLocal must never
+// disagree about the transform. RETRAIN.md recorded a third writer as "still
+// broken, deliberately out of scope": scripts/ml/discoverBestTime.js iterated
+// the same day_raw array, wrote the ARRAY INDEX, and never set hour_axis. Since
+// 023 that meant migration 023's ml_training_data_weekly_axis_declared CHECK
+// raised 23514 on every row it wrote, and its catch suppressed only 23505 — so
+// it logged an error per row, printed "Training rows inserted: 0" and exited 0.
+//
+// It is fixed by IMPORTING the transform, and that is the part worth pinning
+// here rather than in the collector's own suite: a third copy of `(slot + 6)`
+// is a third thing that can drift from the SQL this file compares against.
+// ---------------------------------------------------------------------------
+test('the discovery collector shares this transform rather than keeping its own', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'scripts', 'ml', 'discoverBestTime.js'), 'utf8'
+  );
+  assert.match(src, /bestTimeSlotToLocal[\s\S]{0,120}?\} = require\('\.\/collectWeekly'\);/,
+    'discoverBestTime.js does not import the shared slot transform');
+  assert.ok(!/function bestTimeSlotToLocal/.test(src),
+    'discoverBestTime.js defines its own copy of the transform this file pins against the SQL');
+  assert.match(src, /const local = bestTimeSlotToLocal\(slot, jsDayOfWeek\);/);
+  // The day rollover comes with it. The old loop wrote day_of_week from a local
+  // ternary and never rolled slots 18-23 into the next day at all.
+  assert.ok(!/dayInt === 6 \? 0 : dayInt \+ 1/.test(src));
+  assert.match(src, /const jsDayOfWeek = bestTimeDayToJsDay\(day\.day_int\);/);
+  // And the row states which clock it is on, which is what the CHECK requires.
+  const insert = src.slice(src.indexOf('INSERT INTO ml_training_data'));
+  assert.ok(insert.slice(0, insert.indexOf('VALUES')).includes('hour_axis'),
+    'the discovery collector still writes an undeclared weekly row');
+  assert.match(src, /HOUR_AXIS_VENUE_LOCAL/,
+    "the axis literal is hand-typed instead of taken from the collector that defines it");
+});

@@ -747,3 +747,117 @@ test('venueCalendar falls back to UTC rather than losing a venue to a bad timezo
     { month: 12, season: 'winter' }
   );
 });
+
+// ---------------------------------------------------------------------------
+// Migration 060 — the SECOND identity, one table up.
+//
+// 024 gave ml_training_data a unique key and this suite proves it bites. The
+// key it could not give was on ml_venues: scripts/ml/discoverBestTime.js minted
+// a pseudo google_place_id (`bt_<besttime_venue_id>`) and upserted on it, and
+// since ml_venues is UNIQUE on google_place_id and on nothing else, a venue we
+// already held under its REAL place id conflicted with nothing and got a SECOND
+// row. 933 BestTime venue ids are held by two or more ml_venues rows in the
+// 2026-09-03 dump; 111 of those groups are active philly/lehigh venues, which
+// is the hourly realtime cron's whole scope, so each sweep pays two credits and
+// writes two rows for one building. 024's indexes are keyed on venue_id, so two
+// venue ids are simply two venues to them and none of this was visible from
+// there.
+//
+// Against a real server because inference against a PARTIAL unique index either
+// works or it does not, and the whole fix rests on that clause.
+// ---------------------------------------------------------------------------
+const MIGRATION_060 = '060_ml_venues_besttime_identity.sql';
+const VENUE_ID_INDEX = 'ml_venues_besttime_venue_id_uniq';
+
+test('060 applied with the chain, and ml_venues has a unique key on the id BestTime issues', async () => {
+  const { rows } = await pool.query('SELECT 1 FROM schema_migrations WHERE name = $1', [MIGRATION_060]);
+  assert.strictEqual(rows.length, 1, '060 was not recorded in schema_migrations by db/migrate.js');
+
+  const ix = await indexState(VENUE_ID_INDEX);
+  assert.ok(ix, `${VENUE_ID_INDEX} was not created — on a database with no duplicates 060 must build it`);
+  assert.strictEqual(ix.indisunique, true, 'the index is not UNIQUE, so the ON CONFLICT target is decorative');
+  assert.strictEqual(ix.indisvalid, true, 'the index is INVALID: enforced on every insert, ignored by the planner');
+  assert.match(ix.def, /\(besttime_venue_id\)/);
+  assert.match(ix.def, /besttime_venue_id IS NOT NULL/,
+    'the predicate is what says a venue we have never resolved is not "the venue named NULL"');
+});
+
+test('two ml_venues rows cannot claim one BestTime venue; unresolved venues are still free', async () => {
+  const mk = (place, bt) => pool.query(
+    `INSERT INTO ml_venues (google_place_id, besttime_venue_id, name, city, latitude, longitude, venue_category, timezone)
+     VALUES ($1, $2, 'Twin Test', 'philly', 40.0, -75.1, 'mall', 'America/New_York') RETURNING id`,
+    [place, bt]
+  );
+  const { rows: [real] } = await mk('ChIJdedupeTwinReal1', 'ven_twin_0001');
+  await assert.rejects(
+    () => mk('bt_ven_twin_0001', 'ven_twin_0001'),
+    (err) => err.code === '23505' && new RegExp(VENUE_ID_INDEX).test(err.constraint || err.message),
+    'ml_venues still accepts a second row for one BestTime venue, so the bt_ twin can come straight back'
+  );
+  // NULL is not a claim. 12,634 of the 34,785 production rows have no BestTime
+  // mapping at all and they are not all the same venue.
+  const { rows: [n1] } = await mk('ChIJdedupeTwinNull1', null);
+  const { rows: [n2] } = await mk('ChIJdedupeTwinNull2', null);
+  await pool.query('DELETE FROM ml_venues WHERE id = ANY($1)', [[real.id, n1.id, n2.id]]);
+});
+
+test("the discovery collector's upsert finds the venue we already have, Willow Grove exactly", async () => {
+  // ml_venues 49000: the real Google record.
+  const { rows: [google] } = await pool.query(
+    `INSERT INTO ml_venues (google_place_id, besttime_venue_id, name, city, latitude, longitude,
+                            venue_category, rating, review_count, timezone)
+     VALUES ('ChIJfxx3xTuwxokRg2ccehxvlmU', 'ven_willowgrove_test', 'Willow Grove Park', 'philly',
+             40.15, -75.11, 'mall', 4.4, 9880, 'America/New_York')
+     RETURNING id`
+  );
+
+  // What discoverBestTime.js now sends: BestTime's own view of the same place,
+  // a pseudo place id, no rating, no review count, category 'park'. The clause
+  // is written out here rather than imported because what is under test is
+  // whether POSTGRES infers a partial index from it; the collector is pinned
+  // against this same text in collectRealtimeBudget.test.js.
+  const { rows: [upserted] } = await pool.query(
+    `INSERT INTO ml_venues (google_place_id, besttime_venue_id, name, city, latitude, longitude,
+                            venue_category, price_level, rating, review_count, timezone)
+     VALUES ('bt_ven_willowgrove_test', 'ven_willowgrove_test', 'Willow Grove Park', 'philly',
+             40.15, -75.11, 'park', NULL, NULL, NULL, 'America/New_York')
+     ON CONFLICT (besttime_venue_id) WHERE besttime_venue_id IS NOT NULL
+     DO UPDATE SET updated_at = NOW()
+     RETURNING id, google_place_id, venue_category, rating, review_count`
+  );
+
+  assert.strictEqual(upserted.id, google.id,
+    'the upsert created a second venue instead of finding the one we already had');
+  assert.strictEqual(upserted.google_place_id, 'ChIJfxx3xTuwxokRg2ccehxvlmU',
+    'the pseudo place id replaced the real one');
+  // And BestTime's blanks did not overwrite Google's record, which is the other
+  // way the same defect could survive.
+  assert.strictEqual(upserted.venue_category, 'mall');
+  assert.strictEqual(Number(upserted.rating), 4.4);
+  assert.strictEqual(upserted.review_count, 9880);
+
+  const { rows: [n] } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM ml_venues WHERE besttime_venue_id = 'ven_willowgrove_test'`
+  );
+  assert.strictEqual(n.n, 1, 'one physical venue, two rows, two BestTime credits an hour');
+
+  await pool.query('DELETE FROM ml_venues WHERE id = $1', [google.id]);
+});
+
+test('an unknown review count is stored as unknown, not as a measured zero', async () => {
+  const { rows: [col] } = await pool.query(
+    `SELECT column_default FROM information_schema.columns
+      WHERE table_name = 'ml_venues' AND column_name = 'review_count'`
+  );
+  assert.strictEqual(col.column_default, null,
+    'review_count still DEFAULTs to 0, so "we never asked Google" is stored as "nobody has ever been here" — '
+    + 'and review_count and log_review_count are both shipped model features');
+
+  const { rows: [v] } = await pool.query(
+    `INSERT INTO ml_venues (google_place_id, name, city, latitude, longitude, venue_category, timezone)
+     VALUES ('ChIJdedupeNoReviews1', 'Unknown Reviews', 'philly', 40.0, -75.1, 'bar', 'America/New_York')
+     RETURNING id, review_count`
+  );
+  assert.strictEqual(v.review_count, null);
+  await pool.query('DELETE FROM ml_venues WHERE id = $1', [v.id]);
+});
