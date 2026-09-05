@@ -824,10 +824,15 @@ describe('VenueCardRow', () => {
     const css = fs.readFileSync(
       path.join(__dirname, '..', 'components', 'chat', 'cards', 'cards.css'), 'utf8'
     ).replace(/\r\n/g, '\n');
-    const hero = css.slice(css.indexOf('.chat-venue-hero {'));
-    expect(hero.slice(0, hero.indexOf('}'))).toMatch(/height: 140px;/);
-    // And no ratio anywhere near it, which is what this replaced.
-    expect(css).not.toMatch(/aspect-ratio: 16 \/ 9/);
+    const thumb = css.slice(css.indexOf('.chat-venue-thumb {'));
+    const rule = thumb.slice(0, thumb.indexOf('}'));
+    expect(rule).toMatch(/width: 88px;/);
+    expect(rule).toMatch(/height: 88px;/);
+    // No ratio anywhere near it, which is what this replaced: a ratio grows
+    // the card with the phone, and the constraint is the stream's height.
+    expect(css).not.toMatch(/aspect-ratio/);
+    // And no full-bleed hero left to grow back into.
+    expect(css).not.toMatch(/chat-venue-hero/);
   });
 
   test('a flock gets Vote, a DM gets Pin, and neither gets View', () => {
@@ -841,7 +846,7 @@ describe('VenueCardRow', () => {
     expect(screen.queryByRole('button', { name: /^View/ })).toBeNull();
   });
 
-  test('exactly one action, on the photo, and the whole card opens the place', () => {
+  test('exactly one action, and the whole card opens the place', () => {
     const onOpen = jest.fn();
     const onAction = jest.fn();
     const { container } = render(<VenueCardRow venue={venue} onOpen={onOpen} onAction={onAction} />);
@@ -855,14 +860,20 @@ describe('VenueCardRow', () => {
     // The action does not also open the card underneath it.
     expect(onOpen).toHaveBeenCalledTimes(1);
 
-    // IT SITS ON THE PHOTO, not in a footer of its own. A full-width footer
-    // cost the card 44pt in a stream that is only about 327pt tall with the
-    // keyboard up; on the photo it costs nothing. No app surveyed (iMessage,
-    // WhatsApp, Telegram, Signal, Discord, Messenger, Instagram) puts a
-    // persistent full-width button inside an inline card at all.
+    // IT IS AN ICON AT THE TRAILING EDGE, not a footer and not a worded pill.
+    // A full-width footer cost the card 44pt of height in a stream only about
+    // 327pt tall with the keyboard up, and spelling the word cost about 72pt
+    // of width, which came out of the line of facts and truncated the
+    // category. No app surveyed (iMessage, WhatsApp, Telegram, Signal,
+    // Discord, Messenger, Instagram) puts a persistent full-width button
+    // inside an inline card at all.
     const action = screen.getByRole('button', { name: 'Vote' });
-    expect(action.parentElement.className).toContain('chat-venue-hero');
-    expect(container.querySelector('.chat-venue-hero').contains(action)).toBe(true);
+    expect(action.className).toContain('chat-venue-action');
+    // A sibling of the picture and the words, not inside either.
+    expect(container.querySelector('.chat-venue-thumb').contains(action)).toBe(false);
+    expect(container.querySelector('.chat-venue-text').contains(action)).toBe(false);
+    // The word is still spoken even though it is not drawn.
+    expect(textOf(action)).toBe('');
   });
 
   test('an active action says what it already is', () => {
@@ -872,16 +883,19 @@ describe('VenueCardRow', () => {
   });
 
   test('a count draws only when a count was supplied', () => {
-    const { unmount } = render(<VenueCardRow venue={venue} onAction={() => {}} />);
-    // Scoped to the action, not to the whole card. The shared fixture's
-    // address is "17 W Broad St", so a digit assertion over the container was
-    // reading a street number as an invented vote count and failing on it.
-    // The rule is about the count on the action, and that is where it is now.
-    expect(textOf(screen.getByRole('button', { name: 'Vote' }))).not.toMatch(/\d/);
+    // The count is a fact about the place now, in the same line as the rating
+    // and the price, because the action is an icon with no room for it.
+    const { container, unmount } = render(<VenueCardRow venue={venue} onAction={() => {}} />);
+    expect(textOf(container)).not.toMatch(/vote/i);
     unmount();
 
-    render(<VenueCardRow venue={venue} count={1} onAction={() => {}} />);
-    expect(screen.getByRole('button', { name: 'Vote · 1' })).toBeTruthy();
+    const one = render(<VenueCardRow venue={venue} count={1} onAction={() => {}} />);
+    expect(one.container.textContent).toContain('1 vote');
+    expect(one.container.textContent).not.toContain('1 votes');
+    one.unmount();
+
+    render(<VenueCardRow venue={venue} count={4} onAction={() => {}} />);
+    expect(screen.getByText(/4 votes/)).toBeTruthy();
   });
 
   test('the address is not drawn at all, and survives in the accessible name', () => {
@@ -897,9 +911,10 @@ describe('VenueCardRow', () => {
     expect(screen.getByRole('button', { name: 'Kome, 17 W Broad St. Open the place.' })).toBeTruthy();
   });
 
-  test('a card with nothing but a name draws the name and the action', () => {
+  test('a card with nothing but a name draws the name and nothing else', () => {
+    // The action is an icon, so it contributes no text at all.
     const { container } = render(<VenueCardRow venue={{ name: 'Kome' }} onAction={() => {}} />);
-    expect(textOf(container)).toBe('VoteKome');
+    expect(textOf(container)).toBe('Kome');
   });
 
   test('a venue with no name is not a card', () => {
@@ -937,29 +952,31 @@ describe('VenueCardRow', () => {
     expect(container.querySelector('img').getAttribute('src')).toBe('/marks/venue-placeholder.jpg');
   });
 
-  test('the picture runs the full width, clipped by the card itself', () => {
-    // A shared place shrunk to a 64px thumbnail turns the one thing worth
-    // looking at into a bullet point. It is a hero now, and full bleed means
-    // the CARD carries no padding and clips the photo with its own corners,
-    // so what to pin is the shell's padding and the hero class, not a height.
+  test('the picture is a square flush to the card edge, clipped by the card', () => {
+    // The card is a row and the picture is its leading edge, so the shell
+    // carries no padding of its own and clips the square with its corners.
     const { container } = render(
       <VenueCardRow venue={venue} placeholder="/marks/venue-placeholder.jpg" onAction={() => {}} />
     );
     const img = container.querySelector('img');
     // No photo on the venue, so the placeholder stands in rather than nothing.
     expect(img.getAttribute('src')).toBe('/marks/venue-placeholder.jpg');
-    const hero = img.parentElement;
-    expect(hero.className).toContain('chat-venue-hero');
-    expect(hero.className).not.toContain('chat-venue-hero--empty');
+    const thumb = img.parentElement;
+    expect(thumb.className).toContain('chat-venue-thumb');
+    expect(thumb.className).not.toContain('chat-venue-thumb--empty');
     const shell = container.querySelector('.chat-card');
     expect(shell.style.padding).toBe('0px');
     expect(shell.style.overflow).toBe('hidden');
+    expect(shell.style.display).toBe('flex');
   });
 
-  test('with no picture at all the hero collapses instead of holding a void open', () => {
+  test('with no picture the square stays, so the row keeps its height', () => {
+    // Losing it would sit this card at a different height from every other one
+    // in the thread, which reads as a rendering fault rather than a card with
+    // no photo.
     const { container } = render(<VenueCardRow venue={venue} onAction={() => {}} />);
     expect(container.querySelector('img')).toBeNull();
-    expect(container.querySelector('.chat-venue-hero--empty')).toBeTruthy();
+    expect(container.querySelector('.chat-venue-thumb--empty')).toBeTruthy();
   });
 
   test('with no photo, no resolver and no placeholder it draws no image at all', () => {
@@ -989,7 +1006,7 @@ describe('VenueCardRow', () => {
       // dial that reads 95 cannot be drawn a quarter full.
       const arc = container.querySelectorAll('.chat-venue-dial circle')[1];
       const [on] = arc.getAttribute('stroke-dasharray').split(' ').map(Number);
-      const circumference = 2 * Math.PI * 13;
+      const circumference = 2 * Math.PI * 11;
       expect(on / circumference).toBeCloseTo(score / 100, 2);
       unmount();
     });
@@ -1042,11 +1059,10 @@ describe('VenueCardRow', () => {
   });
 
   test('and none of the three when the data does not carry them', () => {
-    // The action comes first in the DOM because it sits on the photo, which is
-    // above the words. Nothing between the name and it: no rating, no price,
-    // no category, no crowd, and no address line any more.
+    // Nothing but the name: no rating, no price, no category, no crowd, no
+    // vote count, and no address line any more.
     const { container } = render(<VenueCardRow venue={venue} onAction={() => {}} />);
-    expect(textOf(container)).toBe('VoteKome');
+    expect(textOf(container)).toBe('Kome');
   });
 
   test('a venue with nothing to open is not announced as a button', () => {

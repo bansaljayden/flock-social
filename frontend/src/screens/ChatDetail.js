@@ -108,8 +108,11 @@
  * fixed 58px typing slot is gone. The always-present Send button at 45%
  * opacity is gone.
  *
- * FIVE PROPS ARE NOW UNREAD and stay in the parameter list on purpose:
- * VenueCard, getRelativeTime, profilePic, isDark and colorsLight. It was seven
+ * SIX PROPS ARE NOW UNREAD and stay in the parameter list on purpose:
+ * chatNavOpen, VenueCard, getRelativeTime, profilePic, isDark and colorsLight.
+ * chatNavOpen joined them when the header rail went behind the plus; App.js
+ * still owns the flag and `setChatNavOpen(false)` on the way out still closes
+ * it, so nothing is left half open if the rail ever comes back. It was seven
  * until the two scroll refs went: chatEndRef and chatNearBottomRef existed only
  * to feed a tail-follow effect in App.js, and MessageList does that work now,
  * so App.js no longer computes them and there is nothing left to keep in step. `__tests__/extractionEquivalence.test.js` pins this
@@ -364,7 +367,7 @@ export default function ChatDetail({
   budgetSubmitting,
   chatGalleryInputRef,
   chatInputHasText,
-  chatNavOpen,
+  chatNavOpen, // unused: the header rail it opened is gone; the plus holds those five
   chatSearch,
   chatSearchRef,
   colors,
@@ -963,8 +966,11 @@ export default function ChatDetail({
         <div style={{ padding: '10px 10px 8px 6px', background: colors.navyBg, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
           <div style={{ display: 'flex', alignItems: 'stretch', gap: '6px' }}>
             <button aria-label="Back" className="hit44" onClick={() => { leaveChatScreen(); setCurrentScreen('main'); }} style={{ width: '34px', borderRadius: '10px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
-            {!chatNavOpen && (
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: 0 }}>
+            {/* THE NAME IS ALWAYS THE NAME. It used to be swapped out for a rail
+                of five controls whenever the "Features" pill was pressed, so
+                reaching for a feature cost you the title of the thing you were
+                looking at. Those five live behind the plus now. */}
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: 0 }}>
                 <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontWeight: '600', color: 'white', fontSize: 'var(--t-title)', margin: 0, lineHeight: '1.2', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.name}</h2>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px' }}>
                   <span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>{memberCountLabel(flock)}</span>
@@ -978,40 +984,23 @@ export default function ChatDetail({
                       covers the whole app for it. */}
                   {isTyping ? <span style={{ fontSize: 'var(--t-meta)', color: '#86EFAC', fontWeight: '500' }}>{typingUser} is typing...</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: connectionState === 'online' ? '#22c55e' : connectionState === 'offline' ? '#9CA3AF' : '#F59E0B', boxShadow: 'none' }} /><span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>{connectionState === 'online' ? 'online' : connectionState === 'offline' ? 'offline' : 'reconnecting...'}</span></>}
                 </div>
-              </div>
-            )}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flex: chatNavOpen ? 1 : 'none', justifyContent: chatNavOpen ? 'center' : 'flex-end', flexShrink: 0 }}>
-              {/* COLLAPSED MEANS GONE, NOT NARROW. `maxWidth: 0` with
-                  `overflow: hidden` paints nothing and leaves all four
-                  buttons focusable, so Tab from the back arrow landed on
-                  "Vote on a venue", "Invite friends", "Search messages" and
-                  "Group cash pool" while the screen showed a "Features"
-                  pill, and VoiceOver read four controls nobody could see.
-                  `visibility: hidden` is what takes a subtree out of the
-                  accessibility tree AND out of the tab order in one
-                  property. The 0.3s delay on the way out is so the slide
-                  still reads; on the way in it is 0s so the buttons are
-                  focusable the instant they start moving.
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
 
-                  THE OPEN STATE IS `undefined`, NOT `'visible'`, and that is
-                  not a style choice. `visibility` inherits, and an explicit
-                  `visible` on a child BEATS a `hidden` ancestor. The first
-                  version of this fix wrote `'visible'`, and because the
-                  whole Discover screen is held at `visibility: hidden` while
-                  another tab is on screen, the same pattern over there put
-                  three Discover buttons back into the tab order of every
-                  other screen in the app. Leaving the property unset lets
-                  the ancestor win. */}
-              <div style={{ display: 'flex', gap: '6px', overflow: 'hidden', maxWidth: chatNavOpen ? '300px' : '0px', opacity: chatNavOpen ? 1 : 0, visibility: chatNavOpen ? undefined : 'hidden', transition: `max-width 0.3s ease, opacity 0.25s ease, visibility 0s linear ${chatNavOpen ? '0s' : '0.3s'}` }}>
-                {/* Birdie, present in the chat: the same panel as Home, opened over
-                    this chat, and the model is told which flock this is. */}
-                <button aria-label="Ask Birdie" className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); openBirdie(); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.birdie('white', 15)}</button>
-                <button aria-label="Vote on a venue" className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowVotePanel(true); loadPopularVenues(); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: flock.status === 'voting' ? colors.steel : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 17)}</button>
-                <button aria-label="Invite friends" className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowFlockInviteModal(true); setCopiedInviteUrl(''); setFlockInviteSelected([]); setFlockInviteSearch(''); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.userPlus('white', 17)}</button>
-                <button aria-label="Search messages" className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowChatSearch(!showChatSearch); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 17)}</button>
-                <button aria-label="Group cash pool" className="hit44 glass-btn" onClick={() => { setChatNavOpen(false); setShowChatPool(true); }} style={{ width: '36px', height: '36px', minWidth: '36px', borderRadius: '10px', border: '1px solid rgba(255,255,255,0.15)', backgroundColor: 'rgba(255,255,255,0.08)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.dollar('white', 15)}</button>
-              </div>
-              <button aria-label="Features" aria-expanded={chatNavOpen} className="hit44" onClick={() => setChatNavOpen(!chatNavOpen)} style={{ height: '42px', minWidth: chatNavOpen ? '42px' : 'auto', width: chatNavOpen ? '42px' : 'auto', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: chatNavOpen ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: chatNavOpen ? '0' : '0 18px', fontSize: 'var(--t-body)', fontWeight: '600', flexShrink: 0, transition: 'all 0.3s ease', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)' }}>{chatNavOpen ? Icons.x('white', 17) : <span style={{ fontSize: 'var(--t-body)', fontWeight: '600' }}>Features</span>}</button>
+              {/* THE RAIL AND ITS "Features" PILL STOOD HERE.
+                Five controls behind a pill wide enough to push the plan's name
+                into an ellipsis, on a header that already carried a back
+                arrow, a title, a member count, a presence dot and an overflow
+                button. Snapchat's chat header is a name and three small
+                glyphs; everything else is behind the plus, and that is where
+                these five went (the maintainer, 2026-09-05, looking at the shipped
+                screen).
+
+                Ask Birdie, Vote on a venue, Invite friends, Search messages
+                and the cash pool are all tiles in ComposerPlusSheet now. None
+                of them was dropped, and none of them moved anywhere a thumb
+                has to travel further to reach: the plus is the control the
+                hand is already on. */}
             </div>
             <div style={{ position: 'relative', flexShrink: 0 }}>
               <button aria-label="More options" className="hit44" onClick={() => setShowFlockMenu(!showFlockMenu)} style={{ width: '42px', height: '42px', borderRadius: '14px', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)' }}>{Icons.moreVertical('white', 18)}</button>
@@ -1577,6 +1566,18 @@ export default function ChatDetail({
           onOpenVote={() => { setPlusOpen(false); setShowVotePanel(true); loadPopularVenues(); }}
           onSplitBill={() => { setPlusOpen(false); setShowCreateBill(true); }}
           onAskBirdie={() => { setPlusOpen(false); openBirdie(); }}
+          /* The four the header rail used to hold. Same handlers, same order
+             of use, one tap further from the thumb's resting place instead of
+             two taps behind a pill. */
+          onCashPool={() => { setPlusOpen(false); setShowChatPool(true); }}
+          onInviteFriends={() => {
+            setPlusOpen(false);
+            setShowFlockInviteModal(true);
+            setCopiedInviteUrl('');
+            setFlockInviteSelected([]);
+            setFlockInviteSearch('');
+          }}
+          onSearchMessages={() => { setPlusOpen(false); setShowChatSearch(!showChatSearch); }}
         />
 
 
