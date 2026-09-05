@@ -1189,8 +1189,38 @@ def add_venue_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
         median_rating = 4.0
     df['rating'] = df['rating'].fillna(median_rating)
 
-    # Review count + log transform
-    df['review_count'] = df['review_count'].fillna(0)
+    # Review count — filled with the MEDIAN, the same way rating is filled six
+    # lines up, and stored so the holdout reuses the number rather than
+    # recomputing one from its own rows.
+    #
+    # This was fillna(0), which is not a neutral fill. Zero reviews means
+    # "nobody has ever been here" — the far end of the range, not the middle —
+    # and it is not what a missing value means here. It means Google was never
+    # asked. scripts/ml/discoverBestTime.js wrote a literal 0 for every venue it
+    # found through BestTime (which reports no review counts at all) and
+    # ml_venues.review_count carried DEFAULT 0 besides, so those venues reached
+    # the model as: median rating, zero reviews. review_count and
+    # log_review_count are both shipped features, so that pairing is a strong
+    # learnable signature for "this row came from the discovery path" rather
+    # than anything about the venue — the same leakage shape as the
+    # single-instant weather that repairWeeklyWeather.js clears off the weekly
+    # rows, and it sits on exactly the venues that were duplicated.
+    #
+    # Migration 060 drops the DEFAULT and clears the fabricated zeros, so an
+    # unknown now arrives here as NULL -> NaN and is imputed like any other.
+    #
+    # THE SERVING SIDE MUST MATCH BEFORE THE NEXT MODEL SHIPS.
+    # services/mlPredictor.js buildFeatureMap reads
+    #   const reviewCount = venue.user_ratings_total || venue.review_count || 0;
+    # while rating one line above it already falls back to
+    # metadata.median_rating. A model trained with a median fill and served with
+    # a zero fill has the skew the other way round, so that fallback has to
+    # become metadata.median_review_count (published below) in the same change
+    # that retrains.
+    median_review_count = df['review_count'].median()
+    if pd.isna(median_review_count):
+        median_review_count = 0.0
+    df['review_count'] = df['review_count'].fillna(median_review_count)
     df['log_review_count'] = np.log1p(df['review_count'])
 
     # Google types one-hot (top N most common). The columns are part of the
@@ -1213,6 +1243,9 @@ def add_venue_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
         'category_encoding': cat_map,
         'median_price_level': float(median_price),
         'median_rating': float(median_rating),
+        # Published for the same two readers median_rating has: the holdout
+        # transform below, and services/mlPredictor.js at serving time.
+        'median_review_count': float(median_review_count),
         'top_google_types': top_types,
     }
 
@@ -1972,7 +2005,10 @@ def main():
         holdout_df['venue_category_encoded'] = holdout_df['venue_category'].map(cat_map).fillna(-1).astype(int)
         holdout_df['price_level'] = holdout_df['price_level'].fillna(venue_metadata['median_price_level'])
         holdout_df['rating'] = holdout_df['rating'].fillna(venue_metadata['median_rating'])
-        holdout_df['review_count'] = holdout_df['review_count'].fillna(0)
+        # The STORED median, not one recomputed from the holdout's own rows —
+        # recomputing is how a fill becomes a leak. Same rule the line above it
+        # has always followed; review_count was filled with a literal 0 here.
+        holdout_df['review_count'] = holdout_df['review_count'].fillna(venue_metadata['median_review_count'])
         holdout_df['log_review_count'] = np.log1p(holdout_df['review_count'])
 
         # Google types one-hot

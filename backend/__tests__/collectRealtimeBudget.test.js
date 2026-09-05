@@ -235,3 +235,241 @@ test('the repair script can see its own miss', () => {
   assert.strictEqual((repair.match(/OR nearest_event_attendance IS NOT NULL/g) || []).length, 2);
   assert.match(repair, /left the SEVEN enrichment columns/);
 });
+
+// ---------------------------------------------------------------------------
+// 2026-09-04. scripts/ml/discoverBestTime.js, both halves, verified against the
+// 2026-09-03 production dump.
+//
+// It minted a pseudo google_place_id (`bt_<besttime_venue_id>`) and upserted on
+// it. ml_venues is UNIQUE on google_place_id and on nothing else, so a venue
+// already stored under its REAL Google place id conflicted with nothing and got
+// a SECOND row. 933 BestTime venue ids are held by two or more ml_venues rows;
+// 111 of those groups are active philly/lehigh venues, which is the hourly
+// realtime cron's whole scope, so each sweep pays two credits and writes two
+// rows for one building. Willow Grove Park is ml_venues 33840 ('park', rating
+// NULL, review_count 0) and 49000 ('mall', 4.4, 9,880 reviews), both active,
+// both philly, both handed 168 identical weekly rows on 2026-09-01.
+//
+// And the training rows it wrote were all rejected while it reported success:
+// `hour` held BestTime's day_raw ARRAY INDEX, six hours off the venue clock
+// with no day rollover for slots 18-23, hour_axis was never set, so migration
+// 023's axis CHECK raised 23514 on every row and the catch suppressed only
+// 23505. "Training rows inserted: 0", exit 0.
+// ---------------------------------------------------------------------------
+const discover = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'discoverBestTime.js'), 'utf8');
+const venueRepair = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'repairBestTimeDiscoveredVenues.js'), 'utf8');
+const migration060 = fs.readFileSync(path.join(__dirname, '..', 'migrations', '060_ml_venues_besttime_identity.sql'), 'utf8');
+const prepareFeatures = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'train', 'prepare_features.py'), 'utf8');
+
+// The ml_venues upsert, sliced out so the assertions below read the STATEMENT
+// and not the header comment that quotes the old one.
+const venueUpsert = discover.slice(
+  discover.indexOf('INSERT INTO ml_venues'),
+  discover.indexOf('RETURNING id, google_place_id')
+);
+
+test('the discovery collector upserts on the id BestTime issues, not on one it invented', () => {
+  assert.ok(venueUpsert.length > 0, 'the ml_venues upsert is gone');
+  assert.doesNotMatch(venueUpsert, /ON CONFLICT \(google_place_id\)/,
+    'a pseudo place id cannot arbitrate identity: the venue we already hold has a real one, so it never conflicts');
+  assert.match(venueUpsert, /ON CONFLICT \(besttime_venue_id\) WHERE besttime_venue_id IS NOT NULL/,
+    "the arbiter must be the BestTime id, with 060's partial predicate repeated verbatim so Postgres can infer it");
+  // The conflict path must not push BestTime's blanks over Google's record.
+  // Willow Grove is a 'mall' with 9,880 reviews in one row and a 'park' with
+  // none in the other; the wrong DO UPDATE turns the duplicate-row defect into
+  // a quieter overwrite defect.
+  const doUpdate = venueUpsert.slice(venueUpsert.indexOf('DO UPDATE SET'));
+  assert.match(doUpdate, /DO UPDATE SET updated_at = NOW\(\)/);
+  for (const col of ['venue_category', 'rating', 'review_count', 'name', 'google_place_id']) {
+    assert.ok(!new RegExp(col + '\\s*=\\s*EXCLUDED').test(doUpdate),
+      col + ' is overwritten from BestTime, which knows less about the venue than the stored row does');
+  }
+});
+
+test('the discovery collector refuses to spend credits it cannot store', () => {
+  // Same refusal collectWeekly.requireSlotIndex makes. Without it Postgres
+  // raises 42P10 once per venue and a run of thousands reports failed inserts
+  // with no stated cause.
+  assert.match(discover, /const VENUE_ID_INDEX = 'ml_venues_besttime_venue_id_uniq';/);
+  assert.match(discover, /await requireVenueIdIndex\(pool\);/);
+  assert.match(discover, /await requireSlotIndex\(pool, WEEKLY_SLOT_INDEX\);/);
+  // Before the first paid search, not after it.
+  assert.ok(
+    discover.indexOf('await requireVenueIdIndex(pool);') < discover.indexOf('const job = await submitSearch'),
+    'the refusals run after the first search has already been paid for'
+  );
+  // And each names the remedy, because the remedy is not "run the migration".
+  assert.match(discover, /repairBestTimeDiscoveredVenues\.js/);
+});
+
+test('the discovery collector writes the venue wall clock, and says which clock it is', () => {
+  // IMPORTED, not reimplemented: migration 023's SQL is pinned against
+  // collectWeekly's exported transform by mlClockAxisBackfill.test.js, so a
+  // second copy here is how the two would drift.
+  assert.match(discover, /bestTimeSlotToLocal[\s\S]{0,120}?\} = require\('\.\/collectWeekly'\);/);
+  assert.ok(!/function bestTimeSlotToLocal/.test(discover), 'the slot transform is reimplemented here');
+  assert.match(discover, /const local = bestTimeSlotToLocal\(slot, jsDayOfWeek\);/);
+  assert.match(discover, /const jsDayOfWeek = bestTimeDayToJsDay\(day\.day_int\);/);
+  assert.ok(!/dayInt === 6 \? 0 : dayInt \+ 1/.test(discover),
+    'the BestTime-to-JS day mapping is a second copy of config.bestTimeDayToJsDay');
+
+  const insert = discover.slice(discover.indexOf('INSERT INTO ml_training_data'));
+  const cols = insert.slice(0, insert.indexOf('VALUES'));
+  assert.ok(cols.includes('hour_axis'),
+    "hour_axis is unset, so migration 023's CHECK rejects every row and the run still reports success");
+  assert.match(insert, /ON CONFLICT \(venue_id, day_of_week, hour\)\s*\n?\s*WHERE collection_mode = 'weekly' AND hour_axis = 'venue_local'/,
+    "migration 024's weekly arbiter is not named, so a re-run stacks another copy of the week");
+  // The catch used to swallow 23505 on the theory that a duplicate slot was
+  // expected; what it hid was 23514 on every row it ever wrote.
+  assert.ok(!/err\.code !== '23505'/.test(discover), 'an error class is still suppressed unread');
+});
+
+test('the discovery collector fabricates neither an event absence nor a review count', () => {
+  const insert = discover.slice(discover.indexOf('INSERT INTO ml_training_data'));
+  const cols = insert.slice(0, insert.indexOf('VALUES'));
+  // The SQL defaults are false/false/0/0, so a row that omits these asserts a
+  // measured "no event nearby" beside an honest "nothing was measured" - the
+  // pairing migration 045 and repairFabricatedEventAbsence.js exist to end.
+  for (const col of [
+    'events_observed', 'events_unavailable_reason',
+    'event_nearby', 'has_nearby_event', 'total_nearby_events', 'total_nearby_attendance',
+    'nearest_event_attendance', 'nearest_event_distance_km', 'nearest_event_type',
+  ]) {
+    assert.ok(cols.includes(col), col + ' is missing from the discovery INSERT column list');
+  }
+  for (const col of [
+    'event_nearby', 'has_nearby_event', 'total_nearby_events', 'total_nearby_attendance',
+    'nearest_event_attendance', 'nearest_event_distance_km', 'nearest_event_type',
+  ]) {
+    assert.match(insert, new RegExp(col + '\\s*=\\s*EXCLUDED\\.' + col),
+      col + ' is missing from the discovery DO UPDATE, so a refresh keeps the stale value');
+  }
+  // month and season, the same way collectWeekly stamps them, from the venue's
+  // own clock - not omitted into the month = 0 corner the serving path cannot
+  // reach.
+  assert.match(discover, /const calendar = venueCalendar\(\{ timezone: city\.tz \}\);/);
+  assert.ok(cols.includes('month') && cols.includes('season'));
+
+  // review_count: NULL, never 0. BestTime reports no review counts, and a
+  // stored zero says "nobody has ever been here" - the far end of the range.
+  assert.ok(!/^\s*0,\s*$/m.test(venueUpsert), 'a literal 0 is still written into the ml_venues insert');
+  // and the training rows copy the VENUE's stored metadata, so a row filed
+  // under a Google-enriched venue carries that venue's category and rating
+  // rather than BestTime's blanks.
+  for (const col of ['venue_category', 'price_level', 'rating', 'review_count']) {
+    assert.ok(discover.includes('dbVenue.' + col), col + ' is not read off the ml_venues row');
+  }
+});
+
+test('a venue BestTime cannot place is skipped, not dropped in the Gulf of Guinea', () => {
+  // The header comment quotes the old expression on purpose, so this reads the
+  // code and not the account of what the code used to be.
+  const codeLines = discover.split('\n').filter((l) => !l.trim().startsWith('//'));
+  assert.ok(!codeLines.some((l) => /venue\.venue_(lat|lon) \|\| 0/.test(l)),
+    'a coordinate-less venue is stored at 0,0, and weather, events and the astronomy features all read it');
+  assert.match(discover, /if \(!Number\.isFinite\(lat\) \|\| !Number\.isFinite\(lon\)\) \{/);
+  assert.match(discover, /noCoords\+\+;/);
+  assert.match(discover, /Skipped, no coordinates/);
+});
+
+test('requiring the discovery collector does not start a paid run', () => {
+  // It called discover() at import time, so a require from a test or a sibling
+  // script began spending BestTime credits against whatever DATABASE_URL was set.
+  assert.match(discover, /if \(require\.main === module\) \{/);
+});
+
+// ---------------------------------------------------------------------------
+// Migration 060 and the repair script that finishes what it cannot.
+// ---------------------------------------------------------------------------
+test('060 gives besttime_venue_id a unique key and refuses to take the boot down for it', () => {
+  assert.match(migration060, /CREATE UNIQUE INDEX IF NOT EXISTS ml_venues_besttime_venue_id_uniq\s*\n\s*ON ml_venues \(besttime_venue_id\)\s*\n\s*WHERE besttime_venue_id IS NOT NULL;/);
+  // Production still holds the 933 groups. db/migrate.js runs the chain before
+  // server.listen() and exits 1 on a failure, so an unconditional build here
+  // would close the port rather than surface the problem.
+  assert.match(migration060, /HAVING COUNT\(\*\) > 1/);
+  assert.match(migration060, /IF dup_groups > 0 THEN\s*\n\s*RAISE NOTICE/);
+  assert.match(migration060, /repairBestTimeDiscoveredVenues\.js/,
+    'a migration that skips its own protection must name the thing that finishes it');
+  // The DEFAULT that made "we never asked Google" indistinguishable from
+  // "nobody has ever been here".
+  assert.match(migration060, /ALTER TABLE ml_venues ALTER COLUMN review_count DROP DEFAULT;/);
+  assert.match(migration060, /SET review_count = NULL[\s\S]{0,200}?WHERE google_place_id LIKE 'bt\\_%' ESCAPE '\\'/,
+    'the fabricated zeros are cleared, scoped to rows discoverBestTime created');
+  // The 186 Google-sourced zeros are a measurement and must survive: the scope
+  // is the SOURCE of the row, never the value.
+  assert.ok(!/WHERE review_count = 0;\s*$/m.test(migration060),
+    'an unscoped clear would erase Google answering "0 reviews", which is a measurement');
+});
+
+test('the repair merges the twins, and refuses to delete a venue Google knows about', () => {
+  // Report only by default, --commit to write, the shape both sibling repairs use.
+  assert.match(venueRepair, /const commit = process\.argv\.includes\('--commit'\);/);
+  assert.match(venueRepair, /Report only\. Re-run with --commit/);
+  // The merge: collisions resolved by migration 024's survivor rule BEFORE the
+  // move, because repointing venue_id is exactly what its two partial unique
+  // indexes forbid, and Willow Grove's two rows hold all 168 of the same cells.
+  assert.match(venueRepair, /PARTITION BY day_of_week, hour\s*\n\s*ORDER BY collected_at DESC NULLS LAST,\s*\n\s*besttime_epoch DESC NULLS LAST,\s*\n\s*id DESC/);
+  assert.match(venueRepair, /PARTITION BY day_of_week, hour, observed_date/);
+  assert.match(venueRepair, /UPDATE ml_training_data t\s*\n\s*SET venue_id\s*= k\.id/);
+  assert.match(venueRepair, /DELETE FROM ml_venues WHERE id = \$1/);
+  // Nothing is deleted in the 24 groups where two REAL Google places share one
+  // BestTime venue: they lose the mapping, never the row.
+  assert.match(venueRepair, /besttime_venue_id = NULL,\s*\n\s*besttime_status = 'duplicate'/);
+  // Batched and resumable, on a database an hourly cron is also using.
+  assert.match(venueRepair, /const BATCH = \d+;/);
+  assert.match(venueRepair, /await client\.query\('BEGIN'\);/);
+  assert.match(venueRepair, /await client\.query\('ROLLBACK'\)/);
+  // It builds the index 060 could not, and only when nothing is left to trip it.
+  assert.match(venueRepair, /CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS \$\{VENUE_ID_INDEX\}/);
+  assert.match(venueRepair, /duplicate groups remain; NOT building/);
+  // ml_venue_baselines is keyed on google_place_id, so the FK cascade never
+  // reaches it and a deleted pseudo id would leave a baseline behind.
+  assert.match(venueRepair, /DELETE FROM ml_venue_baselines WHERE google_place_id = \$1/);
+});
+
+test('a missing review count is imputed like a missing rating, not like a measured zero', () => {
+  // rating fills with the corpus median and stores it for the holdout;
+  // review_count filled with 0, the MINIMUM of its range. Paired with the
+  // median rating that is a learnable signature for "this row came from the
+  // discovery path", and both review_count and log_review_count are shipped
+  // features.
+  assert.ok(!/df\['review_count'\] = df\['review_count'\]\.fillna\(0\)/.test(prepareFeatures),
+    'review_count is still filled with a measured zero');
+  assert.match(prepareFeatures, /median_review_count = df\['review_count'\]\.median\(\)/);
+  assert.match(prepareFeatures, /df\['review_count'\] = df\['review_count'\]\.fillna\(median_review_count\)/);
+  assert.match(prepareFeatures, /'median_review_count': float\(median_review_count\),/,
+    'the median is not published, so the holdout has nothing to reuse');
+  // The holdout must reuse the STORED number. Recomputing one from the holdout's
+  // own rows is how a fill becomes a leak.
+  assert.match(prepareFeatures, /holdout_df\['review_count'\]\.fillna\(venue_metadata\['median_review_count'\]\)/);
+  assert.ok(!/holdout_df\['review_count'\]\.fillna\(0\)/.test(prepareFeatures));
+  // log_review_count is derived from the imputed value, not from the raw one.
+  const idx = prepareFeatures.indexOf("df['review_count'] = df['review_count'].fillna(median_review_count)");
+  assert.ok(
+    prepareFeatures.slice(idx, idx + 200).includes("df['log_review_count'] = np.log1p(df['review_count'])"),
+    'log_review_count is not recomputed from the imputed review_count'
+  );
+  // And the serving side is named at the site, because a model trained with a
+  // median fill and served with `|| 0` has the same skew the other way round.
+  assert.match(prepareFeatures, /THE SERVING SIDE MUST MATCH BEFORE THE NEXT MODEL SHIPS/);
+});
+
+test('the weekly collector survives two Google places resolving to one BestTime venue', () => {
+  // Migration 060 makes besttime_venue_id unique, and the stamp at the top of
+  // the per-venue loop writes it. That is a route widening and a constraint
+  // arriving in the same change, which is the pairing 017's header says has
+  // nearly shipped three times: 24 pairs in the 2026-09-03 dump have two
+  // DIFFERENT Google places behind one BestTime venue id (a Bangkok "Taco Bell"
+  // at two addresses, "100 Gramm Bar" and "100 GRAMM Lounge"), so an unhandled
+  // 23505 there would become a per-venue error and ten in a row would end the
+  // run.
+  assert.match(weekly, /if \(err\.code !== '23505'\) throw err;/,
+    'the besttime_venue_id stamp does not handle the collision its own new constraint creates');
+  assert.match(weekly, /besttime_status = 'duplicate'/,
+    "the venue is left unmarked, so every later run re-resolves it and hits the same wall");
+  // The same word the repair script writes on the losing row of an existing
+  // pair, so a reader has one term to grep for.
+  assert.match(venueRepair, /besttime_status = 'duplicate'/);
+  // Not a failure: the run continues and the venue is counted as skipped.
+  assert.match(weekly, /Left unmapped and marked duplicate/);
+});

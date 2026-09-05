@@ -2290,7 +2290,29 @@ function buildFeatureMap(venue, weather, timestamp, eventData, feedback, baselin
   const types = venue.types || [];
   const rating = venue.rating || metadata.median_rating || 4.0;
   const priceLevel = venue.price_level != null ? venue.price_level : (metadata.median_price_level || 2);
-  const reviewCount = venue.user_ratings_total || venue.review_count || 0;
+  // FILLED THE WAY THE LOADED MODEL WAS TRAINED, which is not the same answer
+  // forever. prepare_features.py used to do review_count.fillna(0), so a venue
+  // with no Google data was described to the model as having zero reviews -
+  // the minimum of the range, meaning "nobody has ever been here", while
+  // `rating` one line above was filled with the median. Two features about the
+  // same unknown venue disagreeing about what unknown means is a learnable
+  // signature for the collection path rather than the venue, which is why the
+  // trainer now imputes the median and publishes it as median_review_count.
+  //
+  // Serving cannot simply follow suit. The artifact in models/ decides: a model
+  // trained with the zero fill must be SERVED the zero fill, or every cold
+  // venue moves under weights that never saw that value. So the presence of
+  // median_review_count in the metadata is the signal, exactly as
+  // median_rating is above, and v2.6.0-starling (which has no such key) keeps
+  // the zero it was trained on. The first retrain after this ships the key and
+  // the branch flips on its own.
+  //
+  // `??` rather than `||` because once the median fill is live the difference
+  // matters: Google answering "0 reviews" is a measurement, and `||` would
+  // throw that away and substitute the median for a venue we know is new.
+  const reviewCount = venue.user_ratings_total
+    ?? venue.review_count
+    ?? (metadata.median_review_count ?? 0);
 
   // Coordinates. Round 15: this read only venue.latitude/venue.lat, and NOT ONE
   // live caller sets those — routes/crowd.js, routes/ai.js, routes/badge.js and
