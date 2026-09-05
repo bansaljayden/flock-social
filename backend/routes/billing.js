@@ -341,6 +341,11 @@ router.post('/:flockId/create',
       // over. Filled under the flock lock below; spent by the credit block that
       // sits just above the UPSERT, which is where the reasoning lives.
       let retainedPaidCents = 0;
+      // How many of those people's rows the second DELETE below leaves on the
+      // bill. The 201 body and the bill_created payload carry the same three
+      // tallies GET /:flockId computes over every row, and these rows are
+      // the ones `shares` does not hold once the response is built.
+      let retainedRowCount = 0;
       // Rows of departed people whose allocation has to be restated as what
       // they paid so the sheet still adds up. See the credit block.
       const retainedRewrites = [];
@@ -616,6 +621,11 @@ router.post('/:flockId/create',
             if (!Number.isFinite(amountCents) || !Number.isFinite(creditCents)) continue;
             const paidCents = row.settled ? Math.max(amountCents, creditCents) : creditCents;
             if (!plannedShareIds.has(row.user_id)) {
+              // The second DELETE below keeps this row when it is settled or
+              // carries a credit, and every kept row ends the rewrite settled:
+              // it already was, or it is restated to its credit just under
+              // the DELETE. Counted here for the tallies on the response.
+              if (row.settled || creditCents > 0) retainedRowCount += 1;
               // Somebody who has paid and is not on the new split keeps their
               // row, because that row is the only record that they paid. What
               // they paid is money this bill has already collected, so it is
@@ -875,6 +885,17 @@ router.post('/:flockId/create',
       });
 
       const payer = members.find(m => m.id === payerId);
+      // Settled-ness over EVERY row the bill holds after this rewrite, counted
+      // the way GET /:flockId counts it: the shares just written plus the rows
+      // kept for people who paid and left. billTally in the client reads these
+      // three beside a `shares` array that has anyone the viewer blocked
+      // removed, so the denominator has to come from here. GET sent all three
+      // and this route sent none, so straight after posting a bill, or on
+      // receiving bill_created, a viewer who had blocked one of three sharers
+      // counted the two rows they could see and read "All settled up" over the
+      // blocked person's open share until the next refresh.
+      const shareCount = shares.length + retainedRowCount;
+      const settledCount = shares.filter((s) => s.settled).length + retainedRowCount;
       const bill = {
         id: billId,
         flockId,
@@ -899,6 +920,9 @@ router.post('/:flockId/create',
         // branch on rather than two. See the note in GET /:flockId.
         hasPayer: true,
         paidBy: { id: payerId, name: payer?.name || 'Unknown' },
+        fullySettled: shareCount > 0 && settledCount === shareCount,
+        settledCount,
+        shareCount,
         shares: shareDetails,
         createdAt: new Date().toISOString(),
       };

@@ -9119,6 +9119,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       prevFlockIdRef.current = null;
       setBudgetStatus(null);
       setBillSplit(null);
+      // The cash pool sheet and the bill form belong to the chat being left,
+      // and neither was reset here. A bill_created push tap on a plan that had
+      // since been deleted opened the sheet over MissingFlockPanel, and the
+      // next chat opened with it still up.
+      setShowChatPool(false);
+      setShowCreateBill(false);
     }
   }, [currentScreen, selectedFlockId, loadFlockVotes, refreshFlockRoster, loadFlockMessages, loadMoneyState]);
 

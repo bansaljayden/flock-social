@@ -23,7 +23,11 @@ test('settled-ness is read live, not from a snapshot that stops moving', () => {
   expect(chat).toMatch(/const billTally = \(bill\) => \{/);
   expect(chat).toMatch(/const settled = shares\.filter\(\(sh\) => sh\.settled\)\.length;/);
   expect(chat).toMatch(/const billBar = billTally\(billSplit\);/);
-  expect((chat.match(/billBar\.all/g) || []).length).toBe(3);
+  // Four readers: the bar's green ground, its icon, its sentence and the
+  // panel's "All settled up". The ground was the fourth, added 2026-09-04
+  // when it was found testing the block-filtered array on its own.
+  expect((chat.match(/billBar\.all/g) || []).length).toBe(4);
+  expect(chat).not.toMatch(/billSplit\.shares\?\.every\(s => s\.settled\)/);
   expect(chat).not.toMatch(/billSplit\.fullySettled \?\? billSplit\.shares\?\.every/);
   // And a withheld total is dropped rather than printed as $undefined.
   expect(chat).toMatch(/typeof billSplit\.totalWithTip === 'number' \?/);
@@ -87,10 +91,23 @@ test('two people committing in the same second both get an answer', () => {
 
 test('a settled share does not survive being asked for more money', () => {
   const billing = backend('billing.js');
-  expect(billing).toMatch(/const existingAmounts = new Map\(\);/);
-  expect(billing).toMatch(/existingAmounts\.set\(row\.user_id, Number\(row\.amount\)\);/);
-  expect(billing).toMatch(/const owesMore = typeof paidBefore === 'number' && Number\(share\.amount\) > paidBefore \+ 0\.004;/);
-  expect(billing).toMatch(/const wasSettled = existingSettled\.has\(share\.userId\) && !owesMore;/);
+  // Since migration 061 (commit ce06574) the credit rides on its own column
+  // and the flag is a consequence of it: what a person paid against the old
+  // share comes across as paid_amount in cents, they are settled only if it
+  // covers the new share, and what they still owe is the share less the
+  // credit. The three names this test pinned before that (existingAmounts,
+  // owesMore, wasSettled) were the version that cleared the flag AND the
+  // money together, which is how Ben paid $130 for a $100 share.
+  expect(billing).toMatch(/const existingPaidCents = new Map\(\);/);
+  expect(billing).toMatch(/if \(paidCents > 0\) existingPaidCents\.set\(row\.user_id, paidCents\);/);
+  expect(billing).toMatch(/const coveredByCredit = carriedCents > 0 && carriedCents >= newCents;/);
+  expect(billing).toMatch(/share\.settled = isPayer \|\| coveredByCredit;/);
+  expect(billing).toMatch(/share\.paidAmount = carriedCents \/ 100;/);
+  expect(billing).toMatch(/share\.outstanding = share\.settled \? 0 : \(newCents - carriedCents\) \/ 100;/);
+  // And the sheet reads the two figures rather than the whole share.
+  const chat = read('screens/ChatDetail.js');
+  expect(chat).toMatch(/const shareFigure = \(s\) => \{/);
+  expect(chat).toMatch(/Settle Up\{settleUpFigure\(billSplit, authUser\?\.id\)\}/);
 });
 
 test('a closed budget cannot be reminded about', () => {

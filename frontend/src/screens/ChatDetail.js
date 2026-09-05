@@ -214,6 +214,52 @@ const billTally = (bill) => {
   };
 };
 
+/**
+ * The money words on one share row, and the figure Settle Up asks for.
+ *
+ * Since migration 061 a share carries `paidAmount`, the credit brought across
+ * from an earlier version of the bill, beside `amount`, and the two disagree
+ * in both directions. Ben paid $30, the bill was raised, his share is now
+ * $100: he is asked for $70, not $100. A share revised below a payment keeps
+ * the payment on the row as the record of what he is owed back. The payment
+ * picker already asked for the outstanding figure while this row printed the
+ * whole share beside it, so one sheet named two different debts for one
+ * person.
+ *
+ * A figure the server withholds (a shell whose flock has fallen under three
+ * present sharers) arrives as null, and `null?.toFixed(2)` is undefined,
+ * which a template prints as "$undefined" or a bare "$". So a figure that is
+ * not a number is not printed; the row and the total say what the budget
+ * pill says for the same state.
+ */
+const HIDDEN_FIGURE = 'no group number to show';
+const shareFigure = (s) => {
+  if (typeof s?.amount !== 'number') return HIDDEN_FIGURE;
+  const paid = Number(s.paidAmount);
+  if (!s.settled && paid > 0) {
+    const left = typeof s.outstanding === 'number'
+      ? s.outstanding
+      : Math.max(0, Math.round((s.amount - paid) * 100)) / 100;
+    return `$${left.toFixed(2)} left of $${s.amount.toFixed(2)}`;
+  }
+  if (s.settled && paid > s.amount) {
+    return `paid $${paid.toFixed(2)}, owed back $${(Math.round((paid - s.amount) * 100) / 100).toFixed(2)}`;
+  }
+  return `$${s.amount.toFixed(2)}`;
+};
+// What /payment-links will ask for: the outstanding figure, or the share on
+// a body from before the credit column existed.
+const settleUpFigure = (bill, userId) => {
+  const mine = (bill?.shares || []).find((s) => String(s.userId) === String(userId));
+  const figure = mine?.outstanding ?? mine?.amount;
+  return typeof figure === 'number' ? ` · $${figure.toFixed(2)}` : '';
+};
+// Settled by credit rather than by a tap: what this person paid on an earlier
+// version of the bill already covers the share, so POST /unsettle answers 409
+// reason 'credit', and a button that exists only to be refused is a dead one.
+// The same comparison the route makes.
+const coveredByCredit = (s) => Number(s?.paidAmount) >= Number(s?.amount);
+
 export default function ChatDetail({
   // Module-level helpers, constants and components that live in App.js and
   // are shared with screens other than this one, so they stay declared there
@@ -920,9 +966,12 @@ export default function ChatDetail({
           </div>
         )}
 
-        {/* Bill summary bar — shows when bill exists */}
+        {/* Bill summary bar, shown when a bill exists. The green ground reads
+            the same tally as the icon and the sentence beside it: it used to
+            test the block-filtered array on its own, and turned green for a
+            viewer who had blocked a sharer while the sentence said 2/3. */}
         {billSplit && (
-          <div role="button" tabIndex={0} aria-label="Open bill split details" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowChatPool(true); } }} onClick={() => setShowChatPool(true)} style={{ padding: '8px 14px', background: billSplit.shares?.every(s => s.settled) ? 'linear-gradient(135deg, #ecfdf5, #d1fae5)' : `linear-gradient(135deg, ${colors.navy}06, ${colors.navy}12)`, borderBottom: '1px solid var(--divider)', flexShrink: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div role="button" tabIndex={0} aria-label="Open bill split details" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowChatPool(true); } }} onClick={() => setShowChatPool(true)} style={{ padding: '8px 14px', background: billBar.all ? 'linear-gradient(135deg, #ecfdf5, #d1fae5)' : `linear-gradient(135deg, ${colors.navy}06, ${colors.navy}12)`, borderBottom: '1px solid var(--divider)', flexShrink: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               {Icons.dollar(billBar.all ? '#22C55E' : colors.navy, 13)}
               <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>
@@ -1685,7 +1734,7 @@ export default function ChatDetail({
                   <div>
                     <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                        <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>Total: ${billSplit.totalWithTip?.toFixed(2)}</span>
+                        <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{typeof billSplit.totalWithTip === 'number' ? `Total: $${billSplit.totalWithTip.toFixed(2)}` : `Total · ${HIDDEN_FIGURE}`}</span>
                         {billSplit.tipPercent > 0 && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>includes {billSplit.tipPercent}% tip</span>}
                       </div>
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px' }}>
@@ -1701,11 +1750,15 @@ export default function ChatDetail({
                               {s.committed && !s.settled && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.amberText, backgroundColor: `${colors.amber}20`, padding: '1px 6px', borderRadius: '4px' }}>Pre-committed</span>}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>${s.amount?.toFixed(2)}</span>
+                              <span style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{shareFigure(s)}</span>
                               {s.settled ? (
                                 <span style={{ color: '#22C55E', fontSize: 'var(--t-body)' }}>{Icons.check('#22C55E', 16)}<span className="sr-only">Paid</span></span>
                               ) : (
-                                <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>Owes</span>
+                                /* "left of" already says it for a part-paid row,
+                                   and a withheld figure is not a debt to label. */
+                                typeof s.amount === 'number' && !(Number(s.paidAmount) > 0) && (
+                                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>Owes</span>
+                                )
                               )}
                             </div>
                           </div>
@@ -1741,7 +1794,7 @@ export default function ChatDetail({
                           showToast(err?.message || 'Could not load payment links. Use "Mark as Paid" after paying.', 'error');
                         }
                       }} style={{ ...styles.gradientButton, padding: '14px', marginBottom: '8px' }}>
-                        Settle Up · ${billSplit.shares.find(s => String(s.userId) === String(authUser?.id))?.amount?.toFixed(2)}
+                        Settle Up{settleUpFigure(billSplit, authUser?.id)}
                       </button>
                     )}
                     {billSplit.hasPayer !== false && billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
@@ -1768,8 +1821,10 @@ export default function ChatDetail({
                         Hidden for the payer rather than shown and refused. The
                         server answers 409 reason:'payer' because there is
                         nothing of theirs to unmark, and a control that exists
-                        only to be rejected is a dead button. */}
-                    {billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && s.settled)
+                        only to be rejected is a dead button. Hidden for the
+                        same reason on a share settled by carried credit, where
+                        the server answers 409 reason:'credit' every time. */}
+                    {billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && s.settled && !coveredByCredit(s))
                       && String(billSplit.paidBy?.id ?? '') !== String(authUser?.id ?? '') && (
                       <button className="hit44 glass-btn glass-secondary" onClick={async () => {
                         try {
