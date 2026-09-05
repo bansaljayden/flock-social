@@ -674,11 +674,25 @@ export default function ChatDetail({
     // what a send, a photo caption going out and every exit on this screen all
     // produce, and it is the only thing that should empty the field.
     const [draft, setDraft] = React.useState('');
+    /* The mirror, readable from the effect below without widening its deps. */
+    const draftRef = React.useRef('');
+    const writeDraft = React.useCallback((next) => {
+      draftRef.current = next;
+      setDraft(next);
+    }, []);
     const hadTextRef = React.useRef(false);
     React.useEffect(() => {
-      if (hadTextRef.current && !chatInputHasText) setDraft('');
+      /* Same correction as the DM twin: chatInputHasText is `!!value.trim()`
+         in App.js, so a box backspaced down to spaces drops the flag and this
+         used to wipe those spaces. Clear only when the mirror still holds real
+         text, which is the case where App.js emptied the box on a send or an
+         exit and this screen never saw a change event. */
+      const mirrorHasRealText = draftRef.current.trim().length > 0;
+      if (hadTextRef.current && !chatInputHasText && mirrorHasRealText) writeDraft('');
       hadTextRef.current = chatInputHasText;
-    }, [chatInputHasText]);
+      // writeDraft is a useCallback with no deps, so it is stable and this
+      // list still changes only when App.js's flag does.
+    }, [chatInputHasText, writeDraft]);
 
     // Where a long press was raised, so the actions menu can be drawn over the
     // row it belongs to. WHICH message is open is still App.js's
@@ -762,7 +776,7 @@ export default function ChatDetail({
          only spaces never armed that flag and so produces no edge, and
          leaving spaces behind for the next visit is the small half of
          the draft leak this function exists to close. */
-      setDraft('');
+      writeDraft('');
       /* THE SAME HOLE, and here it predates the rebuild. `shareImageToChat`
          reads the caption from the shared `chatInputRef`, so a photo picked in
          one flock and abandoned was offered in the next flock opened and went
@@ -1895,7 +1909,7 @@ export default function ChatDetail({
           registerInput={keyboard.registerInput}
           value={draft}
           onChange={(next) => {
-            setDraft(next);
+            writeDraft(next);
             setComposerHasRealText(next.trim().length > 0);
             /* App.js's handler is written against a change event and owns the
                draft ref, the typing emit and chatInputHasText. The bar reports
