@@ -37,10 +37,16 @@ test('settled-ness is read live, not from a snapshot that stops moving', () => {
   expect(app).toMatch(/onBillTally\(\(data\) => \{/);
   expect(app).toMatch(/settled: false, settledAt: null, outstanding: owedOn\(s\)/);
   expect(chat).toMatch(/const billBar = billTally\(billSplit\);/);
-  // Four readers: the bar's green ground, its icon, its sentence and the
-  // panel's "All settled up". The ground was the fourth, added 2026-09-04
-  // when it was found testing the block-filtered array on its own.
-  expect((chat.match(/billBar\.all/g) || []).length).toBe(4);
+  // THREE readers, down from four on 2026-09-05. The pinned bill bar became a
+  // 24pt header pill plus one BillCard in the stream, so the bar's own three
+  // (its green ground, its icon and its sentence) collapsed into the pill's
+  // two, and the panel's "All settled up" is the third.
+  //
+  // The count is not the point and never was: what this pins is that EVERY
+  // reader takes the value live from billTally rather than from a snapshot
+  // that stops moving. The number is here so the assertion cannot quietly pass
+  // on zero readers the day somebody deletes the last one.
+  expect((chat.match(/billBar\.all/g) || []).length).toBe(3);
   expect(chat).not.toMatch(/billSplit\.shares\?\.every\(s => s\.settled\)/);
   expect(chat).not.toMatch(/billSplit\.fullySettled \?\? billSplit\.shares\?\.every/);
   // And a withheld total is dropped rather than printed as $undefined.

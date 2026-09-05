@@ -105,6 +105,24 @@ describe('no exit from the DM thread can skip the clear', () => {
     );
   });
 
+  test('a photo picked and then abandoned does not ride into the next thread', () => {
+    /* THE SAME DEFECT AS THE DRAFT, one state over, and worse.
+       `dmPendingImage` is App-level and nothing in App.js ever clears it. Pick
+       a photo in one conversation, press back without sending, open another:
+       the photo was still pending, it armed Send on its own, and the first
+       thing typed in the new thread went out as ITS caption. One person's
+       photo delivered to somebody else entirely.
+
+       It was unreachable until 2026-09-05 only by accident. The full-screen
+       confirm covered the whole screen including the back arrow, so Cancel and
+       Send were the only exits, and Send passed an explicit empty string so
+       the draft could never become the caption. Putting the preview into the
+       composer's own row removed both accidental guards at once. */
+    expect(clearCallsMade.map((c) => c.name)).toEqual(
+      expect.arrayContaining(['setShowDmImagePreview', 'setDmPendingImage']),
+    );
+  });
+
   test('leaving also ends a live location share, whatever door was used', () => {
     // The back arrow used to be the ONLY exit that stopped the GPS emit loop;
     // leaving through Map or a venue card kept streaming a fix every ten

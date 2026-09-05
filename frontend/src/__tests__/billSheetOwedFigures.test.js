@@ -371,7 +371,19 @@ describe('"That was a mistake, I have not paid" is not offered where it would be
 // 3. The bar's ground reads the tally its sentence reads
 // ---------------------------------------------------------------------------
 describe('the bill bar does not turn green over a share the viewer cannot see', () => {
-  const GREEN = 'linear-gradient(135deg, #ecfdf5, #d1fae5)';
+  /* THE BAR IS A 24pt HEADER PILL NOW. Its wording and its green both moved
+     with it and nothing this file is about did: these tests are here because a
+     bill must not read as fully settled over a share the viewer cannot see,
+     and because the tally has to come from the server rather than from the
+     rows that survived the block filter.
+
+     The pill says "$300.00 · 2/3" and "$300.00 · settled" where the bar said
+     "2/3 settled" and "All settled up", so the assertions read the halves that
+     carry meaning rather than a sentence that no longer exists. Its green is a
+     flat backgroundColor, which is also why the gradient note above this line
+     stopped mattering: jsdom dropped that gradient outright and the helper
+     existed to work around it. */
+  const GREEN_PILL = 'rgba(34, 197, 94, 0.22)';
 
   test('two settled rows of three (one blocked) is not "all settled", in colour or in words', () => {
     // The server filters `shares` for a viewer who blocked a member and sends
@@ -383,9 +395,10 @@ describe('the bill bar does not turn green over a share the viewer cannot see', 
       share(9, 'Jay', 100, { settled: true, outstanding: 0, settledAt: 'now' }),
     ], { fullySettled: false, settledCount: 2, shareCount: 3 }));
     const bar = screen.getByLabelText('Open bill split details');
-    expect(bar.textContent).toContain('2/3 settled');
-    expect(bar.textContent).not.toContain('All settled up');
-    expect(styleProp(bar).background).not.toBe(GREEN);
+    expect(bar.textContent).toContain('2/3');
+    // The word the pill uses for a bill that IS square. Two of three is not it.
+    expect(bar.textContent).not.toContain('settled');
+    expect(bar.style.backgroundColor).not.toBe(GREEN_PILL);
   });
 
   test('and does go green when every row is settled', () => {
@@ -394,8 +407,8 @@ describe('the bill bar does not turn green over a share the viewer cannot see', 
       share(9, 'Jay', 100, { settled: true, outstanding: 0, settledAt: 'now' }),
     ]));
     const bar = screen.getByLabelText('Open bill split details');
-    expect(bar.textContent).toContain('All settled up');
-    expect(styleProp(bar).background).toBe(GREEN);
+    expect(bar.textContent).toContain('settled');
+    expect(bar.style.backgroundColor).toBe(GREEN_PILL);
   });
 });
 
@@ -419,7 +432,11 @@ describe('a shell whose figures are withheld prints no bare dollar sign', () => 
     expect(container.textContent).not.toMatch(/\$(?!\d)/);
     expect(container.textContent).not.toMatch(/undefined|NaN|null/);
     // And the header bar, which already guarded this, still does.
-    expect(screen.getByLabelText('Open bill split details').textContent).toContain('Bill: 0/2 settled');
+    // "0/2", not "Bill: 0/2 settled": the pill drops the word "Bill" because
+    // it sits in the chat header where there is nothing else it could be, and
+    // it drops the figure entirely when billing.js withholds the total, which
+    // is the case under test here.
+    expect(screen.getByLabelText('Open bill split details').textContent).toContain('0/2');
   });
 });
 
@@ -523,7 +540,7 @@ describe('the header counts the rows the viewer cannot see from the server\'s ta
       share(1, 'Ava', 100, { settled: true, outstanding: 0 }),
       share(9, 'Jay', 100),
     ], { shareCount: 3, settledCount: 2, fullySettled: false }));
-    expect(screen.getByLabelText('Open bill split details').textContent).toContain('2/3 settled');
+    expect(screen.getByLabelText('Open bill split details').textContent).toContain('2/3');
   });
 
   test('a square bill the viewer cannot fully see is square only when the server says so', () => {
@@ -531,7 +548,7 @@ describe('the header counts the rows the viewer cannot see from the server\'s ta
       share(1, 'Ava', 100, { settled: true, outstanding: 0 }),
       share(9, 'Jay', 100, { settled: true, outstanding: 0, settledAt: 'now' }),
     ], { shareCount: 3, settledCount: 3, fullySettled: true }));
-    expect(screen.getByLabelText('Open bill split details').textContent).toContain('All settled up');
+    expect(screen.getByLabelText('Open bill split details').textContent).toContain('settled');
   });
 
   test('an optimistic local settle still moves the header before the server confirms it', () => {
@@ -541,6 +558,6 @@ describe('the header counts the rows the viewer cannot see from the server\'s ta
       share(1, 'Ava', 100, { settled: true, outstanding: 0 }),
       share(9, 'Jay', 100, { settled: true, outstanding: 0, settledAt: 'now' }),
     ], { shareCount: 2, settledCount: 1, fullySettled: false }));
-    expect(screen.getByLabelText('Open bill split details').textContent).toContain('All settled up');
+    expect(screen.getByLabelText('Open bill split details').textContent).toContain('settled');
   });
 });

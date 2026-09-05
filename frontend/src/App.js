@@ -14723,6 +14723,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                     }
                   }} className="hit44 glass-btn glass-primary" style={{ width: '100%', padding: '9px', borderRadius: '10px', border: 'none', backgroundColor: colors.steel, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.check('white', 14)} Select Venue</button>
                 ) : venueDetailReturnTo ? (
+                  /* BACK TO CHAT IS NAVIGATION, SO IT IS DRAWN AS NAVIGATION.
+                     It used to be the loudest thing on this sheet: full width,
+                     14px padding, 12px radius, --t-body type and a 16px arrow,
+                     all in solid navy, which made a roughly 48px slab sitting
+                     directly on top of a 10px outlined "Check In". the maintainer saw it
+                     on device and the first words were that it was way too big.
+                     He was right about the size and the size was the smaller
+                     half of the problem: this control only undoes the tap that
+                     opened the sheet, and it was shouting over the one action a
+                     person standing outside the venue actually came to press.
+                     Weight follows consequence, so it now wears exactly the
+                     "Details" treatment two rows down (10px padding, 10px
+                     radius, --t-meta, 1.5px hairline, 14px glyph). Nothing here
+                     invents a size. .hit44 still lays a 44x44 target over it, so
+                     the smaller paint costs no reachability, which is the whole
+                     reason that class exists. */
                   <button onClick={() => {
                     setVenueDetailHistory([]);
                     const ret = venueDetailReturnTo;
@@ -14732,7 +14748,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                     setCurrentScreen(ret.screen);
                     if (ret.flockId) setSelectedFlockId(ret.flockId);
                     if (ret.dmId) setSelectedDmId(ret.dmId);
-                  }} className="hit44 glass-btn glass-navy" style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.arrowLeft('white', 16)} Back to Chat</button>
+                  }} className="hit44 glass-btn glass-secondary" style={{ width: '100%', padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.arrowLeft('var(--text-secondary)', 14)} Back to Chat</button>
                 ) : (
                   <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); setSelectedVenueForCreate({ ...activeVenue, addr: activeVenue.addr || activeVenue.formatted_address, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); setActiveVenue(null); setCurrentScreen('create'); }} style={{ width: '100%', padding: '10px', borderRadius: '10px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', textAlign: 'center' }}>Start Flock Here</button>
                 )}
@@ -14740,17 +14756,37 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                   const checkedIn = checkinDoneAt && (Date.now() - checkinDoneAt < 2 * 60 * 60 * 1000);
                   const label = checkinJustSaved ? 'Checked In ✓' : checkedIn ? 'Checked In ✓' : 'Check In';
                   const disabled = checkedIn || checkinSaving;
+                  // EXACTLY ONE FILLED BUTTON IN THIS STACK, AND IT IS THE ONE
+                  // THAT DOES SOMETHING. The slot above renders a solid navy
+                  // primary in two of its three branches ("Select Venue" while
+                  // picking, "Start Flock Here" by default), and in those cases
+                  // Check In is correctly the quieter of the two. The third
+                  // branch is the one you reach by tapping a venue card in a
+                  // chat: venueDetailReturnTo is set, the venue is already the
+                  // plan's venue so there is nothing to start, and the slot
+                  // holds a back button. That branch used to leave the sheet
+                  // with its heaviest paint on the control that just retraces
+                  // your last tap, and its real action outlined underneath.
+                  // So when the slot above is carrying navigation rather than
+                  // an action, Check In takes the primary paint. Same box as
+                  // before, only the fill changes, because the geometry here is
+                  // already the one "Start Flock Here" uses and re-sizing a
+                  // device-tested button to signal priority is how the mess
+                  // above got started. Disabled stays muted: "Checked In" is a
+                  // receipt, not an invitation, and a filled slab you cannot
+                  // press is worse than a quiet one.
+                  const isTopAction = !pickingVenueForCreate && !!venueDetailReturnTo && !disabled;
                   return (
-                    <button className="hit44"
+                    <button className={isTopAction ? 'hit44 glass-btn glass-navy' : 'hit44'}
                       onClick={() => handleCheckIn(activeVenue.place_id)}
                       disabled={disabled}
                       style={{
                         width: '100%',
                         padding: '10px',
                         borderRadius: '10px',
-                        border: '1.5px solid var(--border-default)',
-                        backgroundColor: disabled ? 'var(--bg-tertiary)' : 'var(--bg-card-solid)',
-                        color: disabled ? 'var(--text-tertiary)' : colors.navy,
+                        border: isTopAction ? 'none' : '1.5px solid var(--border-default)',
+                        backgroundColor: isTopAction ? colors.navyBg : disabled ? 'var(--bg-tertiary)' : 'var(--bg-card-solid)',
+                        color: isTopAction ? 'white' : disabled ? 'var(--text-tertiary)' : colors.navy,
                         cursor: disabled ? 'default' : 'pointer',
                         fontWeight: '600',
                         fontSize: 'var(--t-meta)',
@@ -19058,6 +19094,44 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             if (ret.dmId) setSelectedDmId(ret.dmId);
           }
         };
+        // THE FOOTER'S FILL BELONGS TO WHATEVER THE ROW ACTUALLY DOES.
+        // The bottom row is [Get Directions][primary], and the primary's label
+        // is a four-way ternary: "Pin to DM", "Back to Chat", "Suggest to
+        // flock", "Add to Flock". Three of those four are things that happen to
+        // the world, so the fill is theirs and the row was always right. The
+        // fourth is not an action at all. It appears when you reached this card
+        // by tapping a venue in a chat, and all it does is put you back in that
+        // chat, which is the one thing in the row nobody needs help finding.
+        // The map sheet had the identical inversion and the maintainer caught it there
+        // first, in stronger words, so this is the same fix before he has to
+        // report it twice: when the primary slot is only carrying a way out,
+        // Get Directions takes the fill and the way out takes the outline that
+        // Get Directions was already wearing. Both treatments are the ones this
+        // footer already ships, so the row swaps paint and not geometry.
+        //
+        // The directions link is conditional, and that is the whole reason for
+        // the second flag. The card opens on a seed object while Places is
+        // still answering, and one caller (a push deep link) has no seed at
+        // all, so there is a real moment with no google_maps_url and no
+        // place_id and therefore no left-hand button. Demoting the primary in
+        // that moment would leave a row of one outlined control and nothing
+        // filled anywhere. A lone button is not competing with anything, so it
+        // keeps the fill. The rule is that the loudest control is the most
+        // consequential one present, not that back buttons are always quiet.
+        //
+        // One mechanical note for whoever edits the row next: the demoted state
+        // has to drop the glass-primary CLASS as well as the inline colors.
+        // That class sets background, border and color with !important, so
+        // leaving it on paints a solid navy slab straight over every outlined
+        // value in the style object and the change looks like it silently did
+        // not apply. Plain glass-btn keeps the press-scale and the blur, which
+        // carry no color of their own, and .hit44 keeps the 44pt target in both
+        // states. The two paints also keep the same 2px border box rather than
+        // swapping one side to `border: none`, so promoting or demoting never
+        // moves the row by four pixels.
+        const footerReturnsToChat = !pickingVenueForDm && !!venueDetailReturnTo;
+        const footerHasDirections = !!(httpUrl(venueDetailModal.google_maps_url) || venueDetailModal.place_id);
+        const directionsIsPrimary = footerReturnsToChat && footerHasDirections;
         return (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onClick={(e) => { if (e.target === e.currentTarget) closeVenueDetail(); }}
@@ -19345,12 +19419,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             {/* Bottom action buttons */}
             <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0, display: 'flex', gap: '8px' }}>
               {httpUrl(venueDetailModal.google_maps_url) ? (
-                <a href={httpUrl(venueDetailModal.google_maps_url)} target="_blank" rel="noopener noreferrer" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none' }}>
-                  {Icons.mapPin(colors.navy, 16)} Get Directions
+                <a href={httpUrl(venueDetailModal.google_maps_url)} target="_blank" rel="noopener noreferrer" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${directionsIsPrimary ? colors.navyBg : colors.navy}`, backgroundColor: directionsIsPrimary ? colors.navyBg : 'var(--bg-card-solid)', color: directionsIsPrimary ? 'white' : colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none', boxShadow: directionsIsPrimary ? '0 4px 12px rgba(13,40,71,0.10)' : 'none' }}>
+                  {Icons.mapPin(directionsIsPrimary ? 'white' : colors.navy, 16)} Get Directions
                 </a>
               ) : venueDetailModal.place_id ? (
-                <a href={`https://www.google.com/maps/place/?q=place_id:${venueDetailModal.place_id}`} target="_blank" rel="noopener noreferrer" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none' }}>
-                  {Icons.mapPin(colors.navy, 16)} Get Directions
+                <a href={`https://www.google.com/maps/place/?q=place_id:${venueDetailModal.place_id}`} target="_blank" rel="noopener noreferrer" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${directionsIsPrimary ? colors.navyBg : colors.navy}`, backgroundColor: directionsIsPrimary ? colors.navyBg : 'var(--bg-card-solid)', color: directionsIsPrimary ? 'white' : colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none', boxShadow: directionsIsPrimary ? '0 4px 12px rgba(13,40,71,0.10)' : 'none' }}>
+                  {Icons.mapPin(directionsIsPrimary ? 'white' : colors.navy, 16)} Get Directions
                 </a>
               ) : null}
               <button onClick={(e) => {
@@ -19397,8 +19471,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                   setVenueDetailModal(null);
                   setCurrentScreen('create');
                 }
-              }} className="hit44 glass-btn glass-primary" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', boxShadow: '0 4px 12px rgba(13,40,71,0.10)', position: 'relative', overflow: 'hidden' }}>
-                {venueDetailReturnTo ? Icons.arrowLeft('white', 16) : Icons.plus('white', 16)} {pickingVenueForDm ? 'Pin to DM' : venueDetailReturnTo ? 'Back to Chat' : (pickingVenueForFlockId && String(flocksRef.current.find(f => f.id === pickingVenueForFlockId)?.creatorId) !== String(meRef.current?.id)) ? 'Suggest to flock' : 'Add to Flock'}
+              }} className={directionsIsPrimary ? 'hit44 glass-btn' : 'hit44 glass-btn glass-primary'} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${directionsIsPrimary ? colors.navy : colors.navyBg}`, background: directionsIsPrimary ? 'var(--bg-card-solid)' : colors.navyBg, color: directionsIsPrimary ? colors.navy : 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', boxShadow: directionsIsPrimary ? 'none' : '0 4px 12px rgba(13,40,71,0.10)', position: 'relative', overflow: 'hidden' }}>
+                {/* THE GLYPH FOLLOWS THE SAME TEST AS THE WORDS. It used to key on
+                    venueDetailReturnTo alone while the label below checks
+                    pickingVenueForDm first, so a card opened from a chat WHILE
+                    picking a venue for a DM drew a back arrow next to the words
+                    "Pin to DM": the icon said leave and the label said pin, on the
+                    same button. Both read the branches in the same order now, so
+                    they cannot disagree. */}
+                {pickingVenueForDm ? Icons.pin(directionsIsPrimary ? colors.navy : 'white', 16) : venueDetailReturnTo ? Icons.arrowLeft(directionsIsPrimary ? colors.navy : 'white', 16) : Icons.plus('white', 16)} {pickingVenueForDm ? 'Pin to DM' : venueDetailReturnTo ? 'Back to Chat' : (pickingVenueForFlockId && String(flocksRef.current.find(f => f.id === pickingVenueForFlockId)?.creatorId) !== String(meRef.current?.id)) ? 'Suggest to flock' : 'Add to Flock'}
               </button>
             </div>
           </div>

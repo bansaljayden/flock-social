@@ -699,30 +699,65 @@ describe('leaving the flock chat leaves the half-written message behind', () => 
     return p;
   };
 
+  test('a photo picked and then abandoned does not ride into the next flock', () => {
+    /* The flock twin of the DM defect found on 2026-09-05, and here it is
+       OLDER than the rebuild. `shareImageToChat` reads its caption from the
+       shared chatInputRef, so a photo picked in one flock and left unsent was
+       offered in the next flock opened, armed Send by itself, and went out
+       with whatever was typed there. Nobody had looked at this one; it turned
+       up only because the DM rewrite was reviewed adversarially. */
+    const p = clicked('Back');
+    expect(p.setPendingImage).toHaveBeenCalledWith(null);
+    expect(p.setShowImagePreview).toHaveBeenCalledWith(false);
+  });
+
   test('the back arrow, which is the one exit that always did', () => {
     const p = clicked('Back');
     expect(p.setChatInput).toHaveBeenCalledWith('');
     expect(p.setCurrentScreen).toHaveBeenCalledWith('main');
   });
 
-  test('"Add a Venue", the exit the browser suite walked out through', () => {
-    const p = clicked(/Add a Venue/);
+  /* THE THREE VENUE EXITS MOVED ON 2026-09-05, and what this block is about
+     did not: every way OUT of the flock chat has to go through
+     leaveChatScreen, because the composer's ref and its armed flag are shared
+     with the DM side, so a draft left behind here rides into the next thread
+     anybody opens.
+
+     The 72pt pinned-venue banner became a 36pt PinStrip, and with it went the
+     two empty bands ("Add a Venue" for the creator, "No venue yet" for
+     everybody else). So:
+       "Map"          is the strip itself, whose accessible name is the venue.
+       "Change"       is behind the strip's options menu.
+       "Add a Venue"  has no button on this screen at all any more. Its job,
+                      picking a first venue, lives on the plan screen and
+                      behind the plus, so the exit tested in its place is the
+                      header, which is the new door to the plan and is a
+                      navigation this file had never covered. */
+
+  test('the pinned venue strip, which is where "Map" went', () => {
+    // Anchored at the start, because the strip's own options button is named
+    // "Options for Kome" and a bare /Kome/ matches both of them.
+    const p = clicked(/^Kome/, { getSelectedFlock: () => FLOCK_WITH_VENUE });
     expect(p.setChatInput).toHaveBeenCalledWith('');
-    // And it still does the thing it exists to do.
-    expect(p.setPickingVenueForFlockId).toHaveBeenCalledWith(1);
-    expect(p.setCurrentTab).toHaveBeenCalledWith('explore');
+    expect(p.setVenueDetailReturnTo).toHaveBeenCalled();
   });
 
-  test('"Change", the same picker from a flock that already has a venue', () => {
-    const p = clicked('Change', { getSelectedFlock: () => FLOCK_WITH_VENUE });
+  test('"Change place", the same picker, now behind the strip\'s own menu', () => {
+    const { getSelectedFlock } = { getSelectedFlock: () => FLOCK_WITH_VENUE };
+    const p = chatProps({ getSelectedFlock });
+    render(React.createElement(ChatDetail, p));
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'half typed' } });
+    // The menu has to be opened before the item exists to click.
+    fireEvent.click(screen.getByRole('button', { name: /^Options for/ }));
+    fireEvent.click(screen.getByText('Change place'));
     expect(p.setChatInput).toHaveBeenCalledWith('');
     expect(p.setPickingVenueForCreate).toHaveBeenCalledWith(true);
   });
 
-  test('"Map" on the pinned venue banner', () => {
-    const p = clicked('Map', { getSelectedFlock: () => FLOCK_WITH_VENUE });
+  test('the header, which is the new way to the plan', () => {
+    const p = clicked('Open the plan');
     expect(p.setChatInput).toHaveBeenCalledWith('');
-    expect(p.setVenueDetailReturnTo).toHaveBeenCalled();
+    expect(p.setCurrentScreen).toHaveBeenCalledWith('detail');
   });
 
   test('opening a venue card somebody shared into the thread', () => {

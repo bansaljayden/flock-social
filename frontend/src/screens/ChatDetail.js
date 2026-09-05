@@ -94,9 +94,38 @@
  * typing indicator are `components/chat` now, imported through that module's
  * one index and nowhere deeper. The header, the Features rail, the plan bar,
  * the pinned venue banner, the bill bar, the ghost commit card, the momentum
- * meter and every sheet below are untouched and stay exactly where they are;
- * re-homing those is a later pass and doing it here would have made this diff
- * unreadable, which is the same reason the DM thread moved out separately.
+ * meter and every sheet below were left where they were; re-homing those was
+ * a later pass and doing it there would have made that diff unreadable, which
+ * is the same reason the DM thread moved out separately.
+ *
+ * THE LATER PASS, AND WHAT IT TOOK OUT (2026-09-05, same day)
+ *
+ * The bands between the header and the first message. There were five of them
+ * on a confirmed flock with a bill, about 215pt before anybody had said
+ * anything, and the owner looked at the shipped screen and said it was far too
+ * heavy. What is left in that space is one 36pt strip, and only when there is
+ * something to put in it.
+ *
+ *   The momentum meter    GONE. screens/FlockDetail.js already draws the same
+ *                         meter off the same data, and draws it better.
+ *   The 40pt plan bar     GONE. Its two facts, the time and the status, are
+ *                         the header's subtitle now, and the header itself is
+ *                         the button that opens the plan.
+ *   The 72pt venue banner GONE, replaced by `PinStrip`. Tapping the strip is
+ *                         the old Map button; Change is in the strip's menu,
+ *                         creator only; the rating and the address are a tap
+ *                         away on the venue's own page. The two empty states
+ *                         ("Add a Venue", "No venue yet") drew a band when
+ *                         there was nothing to show and are gone with it; an
+ *                         open vote now draws the strip instead, reading
+ *                         "Vote open, 3 of 8" and opening the vote panel.
+ *   The ghost commit card GONE, and the bill bar with it. They were two
+ *   and the bill bar       surfaces for one object. `BillCard` is that object,
+ *                         once, in the stream, updating in place, with the
+ *                         header keeping a 24pt pill for the state.
+ *
+ * The stream therefore carries one row this screen invents rather than reads
+ * off the server: see BILL_ROW_ID below.
  *
  * The deletions are the point of the swap, so they are named here as well as
  * where they happened. The `<div onScroll>` is gone, and with it the blur()
@@ -108,8 +137,13 @@
  * fixed 58px typing slot is gone. The always-present Send button at 45%
  * opacity is gone.
  *
- * SIX PROPS ARE NOW UNREAD and stay in the parameter list on purpose:
- * chatNavOpen, VenueCard, getRelativeTime, profilePic, isDark and colorsLight.
+ * NINE PROPS ARE NOW UNREAD and stay in the parameter list on purpose:
+ * chatNavOpen, VenueCard, getRelativeTime, profilePic, isDark, colorsLight,
+ * MOMENTUM_STAGES, momentumStageKey and memberCountLabel. The last three
+ * joined on the chrome pass: the meter they drew retired to the plan screen,
+ * and the member count gave up its half of the header subtitle to the time
+ * and the status of the plan. App.js still computes all three for
+ * screens/FlockDetail.js and the flock list, so nothing upstream changed.
  * chatNavOpen joined them when the header rail went behind the plus; App.js
  * still owns the flag and `setChatNavOpen(false)` on the way out still closes
  * it, so nothing is left half open if the rail ever comes back. It was seven
@@ -136,9 +170,11 @@ import Icons from '../components/ui/Icons';
    no file inside it, so the module's surface is one line to keep in step with
    rather than a dozen paths spread through a 2,400 line screen. */
 import {
+  BillCard,
   ChatInputBar,
   ComposerPlusSheet,
   MessageList,
+  PinStrip,
   StatusLine,
   TypingRow,
   VenueCardRow,
@@ -188,6 +224,26 @@ const highlightMatches = (text, query) => (
  * drop shorter than one sample is never drawn, and a real reconnect takes
  * longer than one sample in every case that has been measured. */
 const SOCKET_SAMPLE_MS = 2000;
+
+/* The id of the one synthetic row this screen puts into the stream.
+ *
+ * A bill is not a message and `messages` has no row for it, so the card that
+ * draws it rides in on a row this screen builds: `message_type: 'system'`, so
+ * groupRows gives it its own centred run with no name and no coloured bar
+ * (a bill belongs to the room, not to whoever opened it), and this id, so
+ * `renderCard` can tell it apart from a real row without guessing at a shape.
+ *
+ * A STRING, DELIBERATELY, and it carries NO sentAt. Message ids on this table
+ * are SERIAL integers, so nothing on the wire can ever collide with it, and
+ * the lookups that resolve a row back to App.js's copy simply miss it, which
+ * is the right answer: there is no server row to resolve it to. The missing
+ * sentAt is the other half. groupRows opens a day divider on a change of
+ * calendar day and skips any row with no timestamp, so wherever this card
+ * lands it cannot invent a "Yesterday" between two of today's messages. Its
+ * PLACE still comes from the bill's createdAt; only the divider vote is
+ * withheld.
+ */
+const BILL_ROW_ID = 'bill-card';
 
 /* One pill per emoji, not one per person.
  *
@@ -633,6 +689,14 @@ export default function ChatDetail({
          leaving spaces behind for the next visit is the small half of
          the draft leak this function exists to close. */
       setDraft('');
+      /* THE SAME HOLE, and here it predates the rebuild. `shareImageToChat`
+         reads the caption from the shared `chatInputRef`, so a photo picked in
+         one flock and abandoned was offered in the next flock opened and went
+         out with whatever was typed there. The DM twin of this was found by an
+         adversarial review of the DM rewrite on 2026-09-05; this one had been
+         reachable for longer and nobody had looked. */
+      setPendingImage(null);
+      setShowImagePreview(false);
       setPlusOpen(false);
       setShowFlockMenu(false);
       setShowLeaveConfirm(false);
@@ -695,6 +759,87 @@ export default function ChatDetail({
     // not "no bill yet": it is a shell holding estimates from the group budget,
     // and the server marks it hasPayer: false.
     const billSplitIsShell = !!billSplit && billSplit.hasPayer === false;
+    /* THE HEADER PILL'S WORDS. Money first, then how far along, and either
+       half is dropped when there is nothing honest to put there rather than
+       printed as a bare "$" or an "0/0" a shell would produce before anyone
+       has committed. */
+    const billPillMoney = typeof billSplit?.totalWithTip === 'number' ? `$${billSplit.totalWithTip.toFixed(2)}` : null;
+    const billPillCount = billBar.total > 0 ? `${billBar.settled}/${billBar.total}` : null;
+    const billPillLabel = billBar.all
+      ? (billPillMoney ? `${billPillMoney} · settled` : 'Settled')
+      : ([billPillMoney, billPillCount].filter(Boolean).join(' · ') || 'Bill');
+    /* The viewer's own figure before a bill exists, for the card's shell
+       state. It is the settled budget ceiling, which is the same number
+       POST /ghost-commit answers with, so the card and the budget band cannot
+       name two different amounts for one night. A withheld ceiling is not a
+       number and is not turned into one. */
+    const estimatedShare = budgetStatus?.ceiling != null && Number.isFinite(Number(budgetStatus.ceiling))
+      ? Number(budgetStatus.ceiling)
+      : null;
+    /* THE GHOST STATE IS THE SAME CARD, WHICH MEANS IT HAS TO EXIST BEFORE THE
+       BILL DOES. The card the "Lock in your share?" band became draws a bill,
+       and the whole point of that band was the moment when there is no bill
+       row at all: a venue is confirmed, the budget has settled, and committing
+       is what CREATES the shell. So when those conditions hold and nothing has
+       been posted yet, the card is handed a payerless bill with no shares,
+       which is exactly what the server would answer with a second later, and
+       it draws the estimate and the commit off that. The conditions are the
+       old band's own, unchanged, including the ceiling having to be a real
+       figure above zero: "Commit $0" is not a thing to ask anybody. */
+    const ghostAsk = !billSplit
+      && flock.status === 'confirmed'
+      && flock.budgetEnabled
+      && flock.ghostModeEnabled
+      && estimatedShare != null && estimatedShare > 0;
+    const billForCard = billSplit || (ghostAsk ? { hasPayer: false, shares: [] } : null);
+
+    /* THE THREE MONEY ACTIONS, DECLARED ONCE AND CALLED FROM BOTH COPIES.
+       The bill is drawn in two places now, as a card in the stream and as the
+       sheet behind the header pill, and a Settle Up that does one thing on the
+       card and another in the sheet is the same class of defect the tally had
+       before billTally was pulled out: one object, two answers. The bodies are
+       the sheet's own, moved rather than rewritten. */
+
+    // Settling is a handoff, never an automatic write. A method with no deep
+    // link, no web link and no instructions does nothing when it is tapped, so
+    // it is not offered and it does not count towards "is there anything to
+    // pay through". A failed lookup is NOT a payment: the debt stays open and
+    // the reader is pointed at Mark as Paid, which is a deliberate tap.
+    const startSettleUp = async () => {
+      try {
+        const result = await getPaymentLinks(selectedFlockId);
+        const methods = (result.methods || []).filter((m) => paymentRoutes(m).actionable);
+        setPaymentOptions({ ...result, methods });
+        setShowPaymentPicker(true);
+      } catch (err) {
+        showToast(err?.message || 'Could not load payment links. Use "Mark as Paid" after paying.', 'error');
+      }
+    };
+
+    // The way back out of "I paid". Settling used to be a one-way door and a
+    // mis-tap left a debt recorded as cleared with no remedy in the product.
+    const undoMySettle = async () => {
+      try {
+        const unsettled = await unsettleShare(selectedFlockId);
+        setBillSplit(prev => ({
+          ...prev,
+          ...tallyOf(unsettled),
+          shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: false, settledAt: null, outstanding: owedOn(s) } : s),
+        }));
+        showToast('Your share is marked unpaid again');
+      } catch (err) { showToast(err.message, 'error'); }
+    };
+
+    // Pre-committing to the group's number. The bill is re-read straight
+    // after, because the commit changes the row the card draws and without
+    // this the card stayed as it was until the screen was left.
+    const commitEstimatedShare = async () => {
+      try {
+        await ghostCommit(selectedFlockId);
+        try { const d = await getBillSplit(selectedFlockId); setBillSplit(d.bill); } catch (_) { /* the socket event covers it */ }
+        showToast('Committed');
+      } catch (err) { showToast(err.message, 'error'); }
+    };
     // The composer's arming condition, read by the Send button and by the
     // Enter key so the two cannot disagree about what is sendable. It is an
     // AND of two facts owned by two places and it needs both. App.js's
@@ -705,6 +850,68 @@ export default function ChatDetail({
     // is only visible in here, because chatInputHasText is `!!value` and a
     // string of spaces is truthy.
     const canSendComposerText = chatInputHasText && composerHasRealText;
+
+    /* WHICH STRIP, IF ANY, SITS UNDER THE HEADER.
+       PinStrip takes ONE already-decided model and refuses to choose between
+       states itself, which is the whole reason it exists: this screen used to
+       hold three separate booleans for three separate bars and two of them
+       could be true at once. So the order is decided here, once. A confirmed
+       place wins, because it is the answer; an open vote is the strip while
+       the answer is still being argued about; and a flock with neither gets
+       nothing at all, which is the rule the header is built on. */
+    const pinModel = (() => {
+      if (flock.venue && flock.venue !== 'TBD') {
+        return { kind: 'venue', name: flock.venue, thumbUrl: flock.venuePhoto || undefined, caption: 'Pinned' };
+      }
+      const openVotes = flock.votes || [];
+      if (openVotes.length === 0) return null;
+      /* The vote panel's own arithmetic, so the strip and the panel it opens
+         cannot report two different tallies. Guests vote from the invite link
+         and stay anonymous, so they add to the total without adding a name. */
+      const votedCount = new Set(openVotes.flatMap(v => v.voters || [])).size
+        + openVotes.reduce((sum, v) => sum + (v.guestCount || 0), 0);
+      const roster = Number(flock.memberCount) || (flock.members || []).length;
+      // PinStrip prints the figure only when both numbers really arrived, and
+      // a flock whose roster has not loaded has no denominator to print.
+      return { kind: 'vote', votedCount, memberCount: roster > 0 ? roster : undefined };
+    })();
+
+    /* A tap on the strip goes to whatever the strip is about. On a place that
+       is the venue's page on the map, which is where the banner's "Map" button
+       went and it pans exactly as that button did. On an open vote it is the
+       panel, because the thing a member wants when they read "Vote open, 3 of
+       8" is the ballot. The vote branch does not leave the screen, so it does
+       not clear the composer; the venue branch does both. */
+    const openPinStrip = (model) => {
+      if (model && model.kind === 'vote') {
+        setShowVotePanel(true);
+        loadPopularVenues();
+        return;
+      }
+      leaveChatScreen();
+      setVenueDetailReturnTo({ tab: 'chat', screen: 'chatDetail', flockId: selectedFlockId });
+      setCurrentTab('explore');
+      setCurrentScreen('main');
+      if (flock.venueId || flock.venueLat) {
+        setTimeout(() => {
+          if (window.__flockPanToVenue) {
+            window.__flockPanToVenue({ place_id: flock.venueId, lat: flock.venueLat, lng: flock.venueLng, name: flock.venue, address: flock.venueAddress, rating: flock.venueRating, photo_url: flock.venuePhoto });
+          }
+        }, 300);
+      }
+    };
+
+    /* The banner's "Change" button, which is PUT /api/flocks/:id and therefore
+       creator-only. It hands off to the Discover picker the same way it always
+       did, and it clears the composer on the way out like every other exit
+       from this screen. */
+    const changePinnedPlace = () => {
+      leaveChatScreen();
+      setPickingVenueForCreate(true);
+      setPickingVenueForFlockId(flock.id);
+      setCurrentTab('explore');
+      setCurrentScreen('main');
+    };
 
     // ── WHAT THE STREAM IS HANDED ───────────────────────────────────────────
     //
@@ -764,11 +971,79 @@ export default function ChatDetail({
       return { ...carded, text: highlightMatches(m.text, chatSearch) };
     }) : visibleMessages;
 
+    /* THE BILL CARD RIDES IN HERE, and the two bands it replaces are gone.
+       A bill used to be told in two places at once above the first message: a
+       "Lock in your share?" card that appeared the moment a venue was
+       confirmed, and a summary bar under it once a bill existed. They were two
+       surfaces for one object and they could disagree about it, which is
+       exactly how a member came to see a commit card over a bill bar for the
+       same night. This is one card, posted where the bill was created and
+       rewritten in place every time somebody settles.
+
+       NOT WHILE A SEARCH IS OPEN. A search shows the rows that match and
+       nothing else; a card that ignored the query would be the one thing on
+       screen that is not a result.
+
+       PLACED BY THE BILL'S OWN createdAt, not appended. A bill posted before
+       tonight's messages belongs above them, and MessageList reads the last
+       row's id to decide whether something just arrived, so dropping an old
+       bill on the end would announce it as a new message every time the screen
+       re-rendered. Appending is the fallback for a bill whose createdAt did
+       not parse, which is also the common case: a bill is usually the newest
+       thing in the room. */
+    const streamRows = (billForCard && !searchActive) ? (() => {
+      const created = billForCard.createdAt ? new Date(billForCard.createdAt).getTime() : NaN;
+      let at = listRows.length;
+      if (Number.isFinite(created)) {
+        const after = listRows.findIndex((m) => {
+          const t = m.sentAt ? new Date(m.sentAt).getTime() : NaN;
+          return Number.isFinite(t) && t > created;
+        });
+        if (after >= 0) at = after;
+      }
+      const withBill = listRows.slice();
+      withBill.splice(at, 0, { id: BILL_ROW_ID, message_type: 'system' });
+      return withBill;
+    })() : listRows;
+
     // A venue card is the one message shape the module does not own, so the
     // screen draws it and the module calls back for it. Same vote arithmetic
     // as the card this replaces, same exit through leaveChatScreen, and the
     // count is the real tally or nothing at all.
     const renderCard = (m) => {
+      /* The one row this screen builds itself. Its actions are the sheet's own
+         handlers, so a settle from the card and a settle from the sheet are
+         the same call. `canPayOnline` is deliberately not passed: this screen
+         does not know whether the payer has a handle on file until
+         getPaymentLinks answers, and BillCard treats an unstated capability as
+         unstated rather than as "no", which keeps the label honest instead of
+         promising a cash-only night the server never described. */
+      if (m.id === BILL_ROW_ID) {
+        const roster = {};
+        for (const mem of flock.members || []) {
+          if (mem && typeof mem === 'object' && mem.id != null) roster[mem.id] = { avatarUrl: mem.image || undefined };
+        }
+        const isShell = billForCard.hasPayer === false;
+        const myShare = (billForCard.shares || []).find((s) => String(s.userId) === String(authUser?.id)) || null;
+        return (
+          <BillCard
+            bill={billForCard}
+            viewerId={authUser?.id}
+            members={roster}
+            estimatedShare={estimatedShare}
+            onOpen={() => setShowChatPool(true)}
+            onCommit={isShell ? commitEstimatedShare : undefined}
+            onSettle={!isShell && myShare && !myShare.settled ? startSettleUp : undefined}
+            /* Hidden for the payer and for a share settled by carried credit,
+               rather than shown and refused: the server answers 409 on both
+               and a control that exists only to be rejected is a dead one. */
+            onUndo={myShare && myShare.settled && !coveredByCredit(myShare)
+              && String(billForCard.paidBy?.id ?? '') !== String(authUser?.id ?? '')
+              ? undoMySettle
+              : undefined}
+          />
+        );
+      }
       if (m.message_type === 'venue_card' && m.venue_data) {
         const vc = m.venue_data;
         const existingVote = (flock.votes || []).find(v => v.venue === vc.name);
@@ -966,26 +1241,100 @@ export default function ChatDetail({
         <div style={{ padding: '10px 10px 8px 6px', background: colors.navyBg, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
           <div style={{ display: 'flex', alignItems: 'stretch', gap: '6px' }}>
             <button aria-label="Back" className="hit44" onClick={() => { leaveChatScreen(); setCurrentScreen('main'); }} style={{ width: '34px', borderRadius: '10px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
-            {/* THE NAME IS ALWAYS THE NAME. It used to be swapped out for a rail
-                of five controls whenever the "Features" pill was pressed, so
-                reaching for a feature cost you the title of the thing you were
-                looking at. Those five live behind the plus now. */}
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', minWidth: 0 }}>
-                <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontWeight: '600', color: 'white', fontSize: 'var(--t-title)', margin: 0, lineHeight: '1.2', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.name}</h2>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px' }}>
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>{memberCountLabel(flock)}</span>
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.3)' }}>•</span>
+            {/* THE NAME IS ALWAYS THE NAME, AND IT IS NOW THE DOOR TO THE PLAN.
+                It used to be swapped out for a rail of five controls whenever
+                the "Features" pill was pressed, so reaching for a feature cost
+                you the title of the thing you were looking at. Those five live
+                behind the plus now.
+
+                WHAT ARRIVED HERE ON 2026-09-05. A full width 40pt button
+                reading "Thu 3:59 AM · Called off" with a "Plan" affordance sat
+                between this header and the first message, one of three bars
+                stacked there. The two facts it carried are facts about the
+                plan, and the plan's name is already on this line, so they moved
+                into the line under it and the bar went. Same handler, same
+                aria-label, one fewer band of chrome.
+
+                WHY THE MEMBER COUNT DID NOT COME WITH THEM. Three things do not
+                fit on a 12pt line at 320px without an ellipsis eating the one
+                that changes, and the roster is the only one of the three that
+                is not a live state: it is on the plan screen this button opens,
+                in full, with names and RSVPs. The time and the status are the
+                two that move under you while you are reading.
+
+                WHY THE HEADING BECAME A SPAN. ARIA gives role=button
+                presentational children, so an <h2> in here is announced by
+                nothing and reachable by no rotor; it was a heading in name
+                only. The name and the state are pulled back into the button's
+                announcement by aria-describedby, which resolves an id
+                reference whether or not the element it names is a child, so a
+                screen reader hears which chat this is and what the plan is
+                doing rather than four words about a screen it has not opened
+                yet. */}
+            <button
+              type="button"
+              className="hit44"
+              aria-label="Open the plan"
+              aria-describedby="chat-header-name chat-header-plan-state"
+              onClick={() => { leaveChatScreen(); setCurrentScreen('detail'); }}
+              style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'flex-start', padding: '0 2px', border: 'none', background: 'none', cursor: 'pointer', textAlign: 'left' }}
+            >
+                <span id="chat-header-name" style={{ maxWidth: '100%', fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', fontWeight: '600', color: 'white', fontSize: 'var(--t-title)', lineHeight: '1.2', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.name}</span>
+                <span id="chat-header-plan-state" style={{ maxWidth: '100%', display: 'flex', alignItems: 'center', gap: '5px', marginTop: '2px', overflow: 'hidden' }}>
                   {/* Reads the live socket, not a literal. The dot and the
                       word both move, so the state is carried by more than a
-                      tint, and "reconnecting..." is the truth while socket.io
+                      tint, and "reconnecting" is the truth while socket.io
                       is still retrying: history is already on screen over
                       HTTP, and what is missing is anything said since. A total
                       loss of network is a different thing and OfflineGate
-                      covers the whole app for it. */}
-                  {isTyping ? <span style={{ fontSize: 'var(--t-meta)', color: '#86EFAC', fontWeight: '500' }}>{typingUser} is typing...</span> : <><span style={{ width: '5px', height: '5px', borderRadius: '3px', backgroundColor: connectionState === 'online' ? '#22c55e' : connectionState === 'offline' ? '#9CA3AF' : '#F59E0B', boxShadow: 'none' }} /><span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500' }}>{connectionState === 'online' ? 'online' : connectionState === 'offline' ? 'offline' : 'reconnecting...'}</span></>}
-                </div>
-            </div>
+                      covers the whole app for it.
+
+                      THE ORDER CHANGED AND THE WORDS DID NOT. The plan line
+                      leads, because it is what a person came in to know, and
+                      it is the half that ellipsises last. The dot and its
+                      word close the line, together rather than a separator
+                      apart, so the tint sits beside the word it tints and the
+                      connection is the thing that gets cut on a narrow phone
+                      rather than the time of the plan. What the member count
+                      used to hold is this space; it is on the plan screen this
+                      header opens, with names and RSVPs beside it. */}
+                  {isTyping ? <span style={{ fontSize: 'var(--t-meta)', color: '#86EFAC', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{typingUser} is typing...</span> : <><span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.time && flock.time !== 'TBD' ? flock.time : 'Time still open'} · {flock.status === 'confirmed' ? 'Locked in' : flock.status === 'completed' ? 'Done' : flock.status === 'cancelled' ? 'Called off' : 'Still voting'}</span><span aria-hidden="true" style={{ width: '5px', height: '5px', borderRadius: '3px', flexShrink: 0, backgroundColor: connectionState === 'online' ? '#22c55e' : connectionState === 'offline' ? '#9CA3AF' : '#F59E0B', boxShadow: 'none' }} /><span style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.55)', fontWeight: '500', flexShrink: 0 }}>{connectionState === 'online' ? 'online' : connectionState === 'offline' ? 'offline' : 'reconnecting...'}</span></>}
+                </span>
+            </button>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+              {/* THE BILL, AS A 24pt PILL, AND THE 30pt BAR IT REPLACES.
+                  A bill used to own a full width band under the header reading
+                  "Bill: $84.50 · 2/5 settled", stacked under a budget band
+                  under a venue banner under a plan bar. The bill itself is a
+                  card in the stream now (see the bill row handed to
+                  MessageList), and what a header owes a reader is the state,
+                  not the object: how much, and how far along. Same target as
+                  the bar had, same aria-label, so the sheet is one tap from
+                  here exactly as it was.
+
+                  The figure is dropped rather than printed when the server
+                  withholds it. billing.js sends null for every money field on
+                  a shell whose flock has fallen under three present sharers,
+                  and `null?.toFixed(2)` is undefined, which a template literal
+                  prints as "$undefined". That bug shipped once on the bar this
+                  pill replaces; it is not coming back through the pill. */}
+              {billSplit && (
+                <button
+                  type="button"
+                  className="hit44"
+                  aria-label="Open bill split details"
+                  /* The label names the action, so the figure inside would be
+                     announced by nothing: ARIA gives a button presentational
+                     children and aria-label wins over them. The description
+                     resolves an id instead, which is not pruned, so a screen
+                     reader hears the total and the tally as well as the door. */
+                  aria-describedby="chat-bill-pill"
+                  onClick={() => setShowChatPool(true)}
+                  style={{ height: '24px', padding: '0 10px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: billBar.all ? 'rgba(34,197,94,0.22)' : 'rgba(255,255,255,0.12)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', whiteSpace: 'nowrap', flexShrink: 0 }}
+                >
+                  <span id="chat-bill-pill">{billPillLabel}</span>
+                </button>
+              )}
 
               {/* THE RAIL AND ITS "Features" PILL STOOD HERE.
                 Five controls behind a pill wide enough to push the plan's name
@@ -1020,33 +1369,26 @@ export default function ChatDetail({
           <div onClick={() => setShowFlockMenu(false)} style={{ position: 'absolute', inset: 0, zIndex: 55 }} />
         )}
 
-        {/* ── Momentum Meter (compact) ── */}
-        {flock.momentum && flock.status !== 'completed' && (() => {
-          const m = flock.momentum;
-          const stages = MOMENTUM_STAGES;
-          const activeIdx = stages.findIndex(s => s.key === momentumStageKey(m));
-          const activeColor = stages[activeIdx]?.color || '#94a3b8';
-          return (
-            <div style={{ padding: '8px 14px 10px', background: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-                <span style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Momentum</span>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>
-                    {m.accepted}/{m.totalMembers} RSVPs
-                    {m.hasVenue ? ' · Venue set' : ''}
-                    {m.hasTime ? ' · Time set' : ''}
-                  </span>
-                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: activeColor }}>{stages[activeIdx]?.label}</span>
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: '3px', height: '4px' }}>
-                {stages.map((s, i) => (
-                  <div key={s.key} style={{ flex: 1, borderRadius: '2px', background: i <= activeIdx ? activeColor : 'var(--bg-tertiary)', transition: 'background 0.4s ease' }} />
-                ))}
-              </div>
-            </div>
-          );
-        })()}
+        {/* THE MOMENTUM METER STOOD HERE, and it retired to the plan screen.
+            A 40pt band under the header: the word MOMENTUM, a sentence reading
+            "2/4 RSVPs · Venue set · Time set", a stage label and five segment
+            bars. It was one of three bands stacked between this header and the
+            first message, and a meter is a thing you consult, not a thing you
+            watch while you talk.
+
+            NOTHING WAS LOST WITH IT, and that is worth saying plainly because
+            "it moved to the plan page" is the kind of claim that turns out to
+            be a plan rather than a fact. screens/FlockDetail.js already draws
+            the same meter off the same `flock.momentum` and the same
+            MOMENTUM_STAGES, and draws it BETTER: hollow outlines for the
+            stages not yet reached so the boundary survives without colour, a
+            role="img" label naming the stage for a screen reader, and a
+            three-signal summary with check and ring glyphs instead of a
+            run-on sentence. The header above is one tap from it.
+
+            The Birdie nudge row the rebuild plan puts in this meter's place is
+            a separate piece of work and is deliberately NOT here. Drawing a
+            nudge with nothing behind it would ship a feature that cannot fire. */}
 
         {/* Chat message search bar */}
         {showChatSearch && (
@@ -1072,106 +1414,60 @@ export default function ChatDetail({
           </div>
         )}
 
-        {/* The plan, in one line, and the way to it. The chat never showed
-            the time or the status: a member in here when the host locked the
-            plan or moved it saw nothing change, and the only way to the plan
-            screen was Home, then the card. */}
-        <button
-          className="hit44"
-          aria-label="Open the plan"
-          onClick={() => { leaveChatScreen(); setCurrentScreen('detail'); }}
-          style={{ width: '100%', minHeight: '40px', padding: '8px 14px', border: 'none', borderBottom: `1px solid ${colors.creamDark}`, background: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '500', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', cursor: 'pointer', flexShrink: 0, textAlign: 'left' }}
-        >
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {flock.time && flock.time !== 'TBD' ? flock.time : 'Time still open'} · {flock.status === 'confirmed' ? 'Locked in' : flock.status === 'completed' ? 'Done' : flock.status === 'cancelled' ? 'Called off' : 'Still voting'}
-          </span>
-          <span style={{ flexShrink: 0, color: colors.navy, fontWeight: '600' }}>Plan</span>
-        </button>
-        {/* Pinned Venue Banner — shows which venue this flock is at */}
-        {flock.venue && flock.venue !== 'TBD' ? (
-          <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.navy}08, ${colors.steel}12)`, borderBottom: `1px solid ${colors.creamDark}`, flexShrink: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              {flock.venuePhoto ? (
-                <img src={flock.venuePhoto} alt="" style={{ width: '52px', height: '52px', borderRadius: '12px', objectFit: 'cover', flexShrink: 0, boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }} onError={onVenuePhotoError} />
-              ) : (
-                <div style={{ width: '52px', height: '52px', borderRadius: '12px', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, boxShadow: '0 2px 8px rgba(13,40,71,0.10)' }}>
-                  {Icons.mapPin('white', 22)}
-                </div>
-              )}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venue}</h4>
-                  {flock.venueRating && (
-                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#F59E0B', display: 'flex', alignItems: 'center', gap: '2px', flexShrink: 0 }}>
-                      {Icons.starFilled('#F59E0B', 12)} {flock.venueRating}
-                    </span>
-                  )}
-                </div>
-                {flock.venueAddress && (
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{flock.venueAddress}</p>
-                )}
-              </div>
-              <div style={{ display: 'flex', gap: '4px', flexShrink: 0 }}>
-                <button
-                  onClick={() => {
-                    leaveChatScreen();
-                    setVenueDetailReturnTo({ tab: 'chat', screen: 'chatDetail', flockId: selectedFlockId });
-                    setCurrentTab('explore');
-                    setCurrentScreen('main');
-                    if (flock.venueId || flock.venueLat) {
-                      setTimeout(() => {
-                        if (window.__flockPanToVenue) {
-                          window.__flockPanToVenue({ place_id: flock.venueId, lat: flock.venueLat, lng: flock.venueLng, name: flock.venue, address: flock.venueAddress, rating: flock.venueRating, photo_url: flock.venuePhoto });
-                        }
-                      }, 300);
-                    }
-                  }}
-                  className="hit44 glass-btn glass-primary" style={{ padding: '8px 10px', borderRadius: '10px', border: 'none', background: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '4px', boxShadow: '0 1px 2px rgba(30,41,59,0.10)' }}
-                >
-                  {Icons.mapPin('white', 12)} Map
-                </button>
-                {isCreator && (
-                  <button
-                    className="hit44 glass-btn glass-secondary"
-                    onClick={() => { leaveChatScreen(); setPickingVenueForCreate(true); setPickingVenueForFlockId(flock.id); setCurrentTab('explore'); setCurrentScreen('main'); }}
-                    style={{ padding: '8px 10px', borderRadius: '10px', border: `1px solid ${colors.creamDark}`, background: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '3px' }}
-                  >
-                    Change
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        ) : isCreator ? (
-          <button className="hit44"
-            onClick={() => { leaveChatScreen(); setPickingVenueForCreate(true); setPickingVenueForFlockId(flock.id); setCurrentTab('explore'); setCurrentScreen('main'); }}
-            style={{ margin: '0', padding: '10px 14px', background: `linear-gradient(135deg, var(--bg-primary), var(--bg-card-solid))`, borderBottom: `1px solid ${colors.creamDark}`, border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '10px', width: '100%', flexShrink: 0 }}
-          >
-            <div style={{ width: '40px', height: '40px', borderRadius: '12px', border: `2px dashed ${colors.steel}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              {Icons.mapPin(colors.steel, 18)}
-            </div>
-            <div style={{ flex: 1, textAlign: 'left' }}>
-              <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>Add a Venue</p>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0' }}>Pick a spot for this flock</p>
-            </div>
-            <div style={{ color: colors.steel, fontWeight: '700', fontSize: 'var(--t-title)' }}>+</div>
-          </button>
-        ) : (
-          // Everyone used to get "Add a Venue", but the route behind it is
-          // creator-only, so for every other member the whole venue-picker flow
-          // ended in a 403 that never reached the screen. Voting is the thing
-          // they can actually do, so say that instead of offering a dead button.
-          <div style={{ margin: '0', padding: '10px 14px', background: `linear-gradient(135deg, var(--bg-primary), var(--bg-card-solid))`, borderBottom: `1px solid ${colors.creamDark}`, display: 'flex', alignItems: 'center', gap: '10px', width: '100%', flexShrink: 0 }}>
-            <BirdieStill bird={WARM_BIRD} size={48} style={{ flexShrink: 0 }} />
-            <div style={{ flex: 1, textAlign: 'left' }}>
-              <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>No venue yet</p>
-              {/* flock.host falls back to the literal string 'Unknown' when the
-                  list endpoint has no creator_name, so it is not safe to print
-                  as a person's name. */}
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0' }}>{flock.host && flock.host !== 'Unknown' ? `${flock.host} picks the spot. Vote to say where you want to go.` : 'The host picks the spot. Vote to say where you want to go.'}</p>
-            </div>
-          </div>
-        )}
+        {/* THE PLAN BAR AND THE PINNED VENUE BANNER STOOD HERE. One 36pt strip
+            is what is left of the two of them.
+
+            WHAT WENT. A full width 40pt button reading "Thu 3:59 AM · Called
+            off" with a "Plan" affordance at its right, and under it a 72pt
+            banner carrying a 52px photo, the venue name, a rating, the address
+            and two buttons. With the momentum meter above them that was about
+            180pt of chrome between a header and the first thing anybody said,
+            on the screen this product exists to show.
+
+            WHERE EVERYTHING WENT.
+              The time and the status  the header's own subtitle, and the
+                                       header is the button that opens the plan
+                                       now. Same handler, same aria-label.
+              The photo and the name   this strip, at 20 and 15 instead of 52
+                                       and 17.
+              Map                      the strip itself. Tapping it is the tap
+                                       that used to be the Map button, pan and
+                                       all. A place is what the strip is about,
+                                       so opening it is what a tap on it should
+                                       do.
+              Change                   the strip's own menu, on a long press or
+                                       on the visually hidden options button
+                                       that PinStrip keeps in the DOM for
+                                       everyone a long press cannot reach.
+                                       Creator only, as the route behind it is.
+              The rating and address   the venue's page, one tap through the
+                                       strip. Neither is a live state and
+                                       neither ever changed while a chat was
+                                       open, so neither was earning a band.
+
+            AND WHAT THE EMPTY STATES BECAME. "Add a Venue" for the host and
+            "No venue yet, the host picks the spot" for everybody else were two
+            more bands that appeared exactly when there was nothing to show.
+            The strip draws nothing when there is no venue and no vote, which
+            is the rule the rebuild is built on: nothing stacks between the
+            header and the first message. Neither control was dropped. The
+            host's picker is on the plan screen the header opens
+            (screens/FlockDetail.js) and behind "Vote on a venue" in the "+"
+            sheet, which lands on the vote panel's own "Browse venues on
+            Discover"; and voting, which is the thing a member could actually
+            do, is now the strip itself the moment a vote exists, reading
+            "Vote open, 3 of 8" and opening the panel.
+
+            NO UNPIN. A flock's venue is a column on the flock, not a pin, and
+            nothing in this build clears it: the only route is the creator
+            changing it to another place. PinStrip draws the menu item only
+            when it is handed a handler, so the control that would fail is
+            simply not there. */}
+        <PinStrip
+          model={pinModel}
+          onOpen={openPinStrip}
+          onChangePlace={pinModel && pinModel.kind === 'venue' && isCreator ? changePinnedPlace : undefined}
+        />
 
         {/* THE NOTIFICATION ASK, and the only one in the app besides the Enable
             button in Settings.
@@ -1302,51 +1598,25 @@ export default function ChatDetail({
           </div>
         )}
 
-        {/* Ghost Mode Card — after venue confirmed, before bill created */}
-        {flock.status === 'confirmed' && flock.budgetEnabled && flock.ghostModeEnabled && budgetStatus?.ceiling && !billSplit && (
-          <div style={{ padding: '10px 14px', background: `linear-gradient(135deg, ${colors.amber}08, ${colors.amber}15)`, borderBottom: `1px solid ${colors.amber}25`, flexShrink: 0 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 2px' }}>Lock in your share?</p>
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>Pre-commit ${budgetStatus.ceiling} to tonight's plan</p>
-              </div>
-              <button className="hit44 glass-btn glass-navy" onClick={async () => {
-                try {
-                  await ghostCommit(selectedFlockId);
-                  // The commit changed the bill the card below reads; without
-                  // this the card stayed as it was until the screen was left.
-                  try { const d = await getBillSplit(selectedFlockId); setBillSplit(d.bill); } catch (_) { /* the socket event covers it */ }
-                  showToast('Committed');
-                } catch (err) { showToast(err.message, 'error'); }
-              }} style={{ padding: '6px 14px', borderRadius: '14px', border: 'none', background: colors.navyMidBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0 }}>
-                Commit ${budgetStatus.ceiling}
-              </button>
-            </div>
-          </div>
-        )}
+        {/* THE GHOST COMMIT CARD (the "Ghost Mode Card") AND THE BILL BAR BOTH
+            STOOD HERE, and they are one card in the stream now.
 
-        {/* Bill summary bar, shown when a bill exists. The green ground reads
-            the same tally as the icon and the sentence beside it: it used to
-            test the block-filtered array on its own, and turned green for a
-            viewer who had blocked a sharer while the sentence said 2/3. */}
-        {billSplit && (
-          <div role="button" tabIndex={0} aria-label="Open bill split details" onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setShowChatPool(true); } }} onClick={() => setShowChatPool(true)} style={{ padding: '8px 14px', background: billBar.all ? 'linear-gradient(135deg, #ecfdf5, #d1fae5)' : `linear-gradient(135deg, ${colors.navy}06, ${colors.navy}12)`, borderBottom: '1px solid var(--divider)', flexShrink: 0, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              {Icons.dollar(billBar.all ? '#22C55E' : colors.navy, 13)}
-              <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: 0 }}>
-                {billBar.all
-                  ? 'All settled up'
-                  /* The amount is withheld on a shell whose flock has fallen
-                     under three present sharers (billing.js sends null), and
-                     `null?.toFixed(2)` is undefined, which a template literal
-                     prints. Every remaining member's header read
-                     "Bill: $undefined". Drop the figure rather than print it. */
-                  : `Bill: ${typeof billSplit.totalWithTip === 'number' ? `$${billSplit.totalWithTip.toFixed(2)} · ` : ''}${billBar.settled}/${billBar.total} settled`}
-              </p>
-            </div>
-            <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>View</span>
-          </div>
-        )}
+            They were two surfaces for one object. The ghost card ("Lock in
+            your share? Pre-commit $40") appeared the moment a venue was
+            confirmed and vanished the moment a bill existed; the bar under it
+            ("Bill: $84.50 · 2/5 settled") appeared at exactly that moment.
+            Between them they could describe the same night twice, and they
+            had already done it once: a commit creates a REAL bill_splits row
+            with paid_by NULL, so a member who committed saw a bar for a bill
+            nobody had paid while the card that made it disappeared from under
+            them.
+
+            One card, posted where the bill was created and rewritten in place
+            every time somebody settles, is what BillCard is for. The shell
+            state IS the ghost state: same component, same row, "Estimated
+            share $40" with Commit before a payer exists, "Bill $84.50, paid by
+            Maya" after. What is left up here is a 24pt pill in the header
+            carrying the state, and the sheet is still one tap behind it. */}
 
         {/* THE STREAM.
             What was here was a `<div onScroll>` holding a map over the rows,
@@ -1367,7 +1637,7 @@ export default function ChatDetail({
             computed above. onSwipeReply is deliberately absent: see the note
             at the composer. */}
         <MessageList
-          rows={listRows}
+          rows={streamRows}
           threadKey={flock.id}
           myId={authUser?.id}
           ownName="You"
@@ -1901,33 +2171,22 @@ export default function ChatDetail({
                     </div>
                     {/* Settle Up button for current user if they owe */}
                     {billSplit.hasPayer !== false && billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
-                      <button className="hit44 glass-btn glass-primary" onClick={async () => {
-                        try {
-                          const result = await getPaymentLinks(selectedFlockId);
-                          // A method with no deep link, no web link and no
-                          // instructions is a row that does nothing when it is
-                          // tapped, so it is not offered and it does not count
-                          // towards "is there anything to pay through".
-                          const methods = (result.methods || []).filter((m) => paymentRoutes(m).actionable);
-                          // ONE pay surface, whatever the payee saved. This
-                          // used to branch three ways and two of them were
-                          // wrong. With exactly one handle it launched the
-                          // wallet with nothing on screen naming who or where.
-                          // With none it called settleShare on the spot, so
-                          // tapping "Settle Up" recorded the debt as PAID
-                          // without anybody having paid anything, which is the
-                          // same class of bug as auto-settling on a handoff
-                          // (see startPaymentHandoff). Marking it paid is still
-                          // one tap away, on the button directly below this
-                          // one, where the payer chooses it deliberately.
-                          setPaymentOptions({ ...result, methods });
-                          setShowPaymentPicker(true);
-                        } catch (err) {
-                          // A failed payment-link lookup is NOT a payment —
-                          // never mark the debt settled on an error path
-                          showToast(err?.message || 'Could not load payment links. Use "Mark as Paid" after paying.', 'error');
-                        }
-                      }} style={{ ...styles.gradientButton, padding: '14px', marginBottom: '8px' }}>
+                      /* startSettleUp, declared once above and called by the
+                          bill card in the stream as well, so the two copies of
+                          this bill cannot behave differently.
+
+                          ONE pay surface, whatever the payee saved. This used
+                          to branch three ways and two of them were wrong. With
+                          exactly one handle it launched the wallet with
+                          nothing on screen naming who or where. With none it
+                          called settleShare on the spot, so tapping "Settle
+                          Up" recorded the debt as PAID without anybody having
+                          paid anything, which is the same class of bug as
+                          auto-settling on a handoff (see startPaymentHandoff).
+                          Marking it paid is still one tap away, on the button
+                          directly below this one, where the payer chooses it
+                          deliberately. */
+                      <button className="hit44 glass-btn glass-primary" onClick={startSettleUp} style={{ ...styles.gradientButton, padding: '14px', marginBottom: '8px' }}>
                         Settle Up{settleUpFigure(billSplit, authUser?.id)}
                       </button>
                     )}
@@ -1961,17 +2220,7 @@ export default function ChatDetail({
                         the server answers 409 reason:'credit' every time. */}
                     {billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && s.settled && !coveredByCredit(s))
                       && String(billSplit.paidBy?.id ?? '') !== String(authUser?.id ?? '') && (
-                      <button className="hit44 glass-btn glass-secondary" onClick={async () => {
-                        try {
-                          const unsettled = await unsettleShare(selectedFlockId);
-                          setBillSplit(prev => ({
-                            ...prev,
-                            ...tallyOf(unsettled),
-                            shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: false, settledAt: null, outstanding: owedOn(s) } : s),
-                          }));
-                          showToast('Your share is marked unpaid again');
-                        } catch (err) { showToast(err.message, 'error'); }
-                      }} style={{ width: '100%', padding: '10px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-tertiary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
+                      <button className="hit44 glass-btn glass-secondary" onClick={undoMySettle} style={{ width: '100%', padding: '10px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-tertiary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
                         That was a mistake, I have not paid
                       </button>
                     )}

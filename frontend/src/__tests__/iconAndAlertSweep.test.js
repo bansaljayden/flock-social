@@ -168,11 +168,28 @@ describe('the 12px floor holds for every icon in App.js, JSX or hand-written', (
   });
 
   it('the sharing-location status uses the system pin, not a teardrop', () => {
-    const i = APP.indexOf('sharing location</span>');
+    /* THE HEADER'S COPY OF THIS IS GONE, and the sweep follows the survivor.
+       On 2026-09-05 a live DM location share was being announced in three
+       places at once on one socket event: the header subtitle, a green banner
+       under the header, and the chip ChatInputBar draws over the field. The
+       header's went.
+
+       The rule this protects has not changed and is not about the header: a
+       status pin is the system glyph at a legible size, never a hand-rolled
+       11px teardrop, which is what hid from the Icons.* sweep in the first
+       place. The chip is where that status lives now, so that is what is
+       read. The generic under-12px scan above still covers the whole file. */
+    const bar = fs.readFileSync(
+      path.join(__dirname, '..', 'components', 'chat', 'ChatInputBar.js'), 'utf8'
+    );
+    // Anchored on the chip's own render, not on the prop default of the same
+    // name 190 lines above it, which is what this first reached for and why it
+    // read a window of comment text instead of the control.
+    const i = bar.indexOf("{locationLabel || 'Sharing your location'}");
     expect(i).toBeGreaterThan(-1);
-    const row = APP.slice(Math.max(0, i - 600), i);
-    expect(row).toContain("Icons.mapPin('#34d399', 12)");
-    expect(row).not.toContain('<svg');
+    const chip = bar.slice(Math.max(0, i - 400), i + 200);
+    expect(chip).toMatch(/Icons\.mapPin\([^)]*1[2-9]\)/);
+    expect(chip).not.toContain('<svg');
   });
 });
 

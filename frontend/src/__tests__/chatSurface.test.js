@@ -684,7 +684,15 @@ describe('whitespace does not arm the Send button on either chat screen', () => 
     // only the screen can see that the box holds nothing but whitespace.
     const dmSource = dmScreenSource;
     expect(dmSource).toContain('const canSendDmText = chatInputHasText && dmComposerHasRealText;');
-    expect(dmSource).toMatch(/onSend=\{\(\) => \{ if \(canSendDmText\) sendDmMessage\(\); \}\}/);
+    // The whitespace guard still gates the TEXT send. The send path grew a
+    // branch above it on 2026-09-05, when the DM's full-screen photo confirm
+    // became ChatInputBar's pending-image row: a photo waiting to go wins and
+    // carries the draft as its caption, which is what the flock side has always
+    // done. That branch is deliberately NOT behind canSendDmText, because a
+    // photo on its own is a message and needs no words.
+    expect(dmSource).toMatch(/if \(canSendDmText\) sendDmMessage\(\);/);
+    expect(dmSource).toMatch(/if \(showDmImagePreview && dmPendingImage\) \{/);
+    expect(dmSource).toMatch(/const caption = dmDraft\.trim\(\);/);
     expect(dmSource).toMatch(/setDmComposerHasRealText\(next\.trim\(\)\.length > 0\);/);
     // And no disabled send survived the swap on this screen.
     expect(dmSource).not.toContain('disabled={!chatInputHasText}');
