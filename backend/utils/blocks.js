@@ -96,10 +96,17 @@ async function isBlockedBetween(a, b, db = pool) {
 async function getInvisibleUserIds(userId, db = pool) {
   const id = participantId(userId, 'userId');
   if (id === ABSENT) return [];
+  // A banned account joins the set (UGC-loop audit, 2026-09-05): the DM
+  // inbox, the roster and every fan-out that asks this question treat a ban
+  // the way they treat a block, which is what the profile card, stories and
+  // the push gate already did on their own. Bans are moderation-scale, so the
+  // list stays small; a banned account's OWN reads still see everyone.
   const r = await db.query(
     `SELECT blocked_id AS id FROM user_blocks WHERE blocker_id = $1
      UNION
-     SELECT blocker_id AS id FROM user_blocks WHERE blocked_id = $1`,
+     SELECT blocker_id AS id FROM user_blocks WHERE blocked_id = $1
+     UNION
+     SELECT id FROM users WHERE is_banned IS TRUE AND id <> $1`,
     [id]
   );
   return r.rows.map((row) => row.id);

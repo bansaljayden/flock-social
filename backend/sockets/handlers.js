@@ -1368,10 +1368,14 @@ function registerHandlers(io, socket) {
           // Floating promise: a rejection here is an UNHANDLED rejection, which
           // Node 18+ turns into a process exit — the enclosing try only catches
           // what it awaits. The DM path already guards this way.
+          // senderId lets the release re-check a block or a ban on the
+          // sender; messageId lets it re-check the row (pushHelper
+          // contentGoneFor). Without both, a push held for quiet hours
+          // delivered hidden text from a blocked or banned account.
           pushIfOfflineDebounced(io, m.user_id,
             `${user.name} in ${flockName}`,
             preview,
-            { type: 'flock_message', flockId: String(flockId) }
+            { type: 'flock_message', flockId: String(flockId), senderId: String(user.id), messageId: String(message.id) }
           ).catch(() => {});
         }
       } catch (fanoutErr) {
@@ -1978,7 +1982,9 @@ function registerHandlers(io, socket) {
       }
 
       // Verify receiver exists
-      const receiver = await pool.query('SELECT id, name FROM users WHERE id = $1', [receiverId]);
+      // A banned account is gone from the app; a thread to it is closed the
+      // way a blocked one is (UGC-loop audit, 2026-09-05).
+      const receiver = await pool.query('SELECT id, name FROM users WHERE id = $1 AND is_banned IS NOT TRUE', [receiverId]);
       if (receiver.rows.length === 0) return;
 
       // SECURITY: a reply may only reference a message from THIS conversation.
@@ -2075,7 +2081,7 @@ function registerHandlers(io, socket) {
       pushIfOfflineDebounced(io, receiverId,
         user.name,
         preview,
-        { type: 'dm_message', senderId: String(user.id) }
+        { type: 'dm_message', senderId: String(user.id), dmId: String(msg.id) }
       ).catch(() => {});
     } catch (err) {
       console.error('send_dm error:', err);

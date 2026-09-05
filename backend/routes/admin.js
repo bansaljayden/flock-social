@@ -1400,7 +1400,10 @@ router.put('/reports/:id', async (req, res) => {
             banned
               ? `UPDATE users SET is_banned = true, banned_at = NOW()
                  WHERE id = $1 AND COALESCE(role, 'user') <> 'admin' AND is_banned IS NOT TRUE`
-              : 'UPDATE users SET is_banned = false, banned_at = NULL WHERE id = $1',
+              // `is_banned IS TRUE`, so a second moderator clicking Unban on
+              // the same card does not write a second reversal of one ban
+              // (UGC-loop audit, 2026-09-05).
+              : 'UPDATE users SET is_banned = false, banned_at = NULL WHERE id = $1 AND is_banned IS TRUE',
             [report.reported_user_id]
           );
           if (changed.rowCount === 0 && banned) {
@@ -1416,7 +1419,10 @@ router.put('/reports/:id', async (req, res) => {
                   : 'That account is a moderator, and a banned moderator cannot reach this console again. Remove its admin role on the deployment first.',
               };
           } else if (changed.rowCount === 0) {
-            refusal = { status: 404, error: 'That user no longer exists. Dismiss the report instead.' };
+            const who = await client.query('SELECT id, is_banned FROM users WHERE id = $1', [report.reported_user_id]);
+            refusal = who.rows.length === 0
+              ? { status: 404, error: 'That user no longer exists. Dismiss the report instead.' }
+              : { status: 409, error: 'That account is not banned. Dismiss the report instead.' };
           } else {
             actionType = banned ? 'user_banned' : 'user_unbanned';
             if (banned) banTargetId = report.reported_user_id;
