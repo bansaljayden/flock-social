@@ -850,6 +850,7 @@ test('vote_venue tallies group by venue_name alone, so one venue is one row', as
     [/DELETE FROM venue_votes/, []],
     [/INSERT INTO venue_votes/, []],
     [/FROM venue_votes vv/, []],
+    [/FROM guest_votes gv/, []],
     [/FROM flock_members WHERE flock_id = \$1 AND status/, []],
   ];
 

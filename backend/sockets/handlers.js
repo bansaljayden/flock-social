@@ -17,6 +17,9 @@ const { sanitizeVenueData, safeVenuePhotoUrl } = require('../utils/venuePayload'
 const { stripDataUrlMetadata } = require('../utils/imageMetadata');
 const VENUE_REJECTED_MESSAGE = "That venue card couldn't be shared.";
 const { isBlockedBetween, isBlockedBetweenCached, getInvisibleUserIds } = require('../utils/blocks');
+// The vote tally is routes/venues.js's, not a copy of it. See the note at
+// vote_venue below.
+const { collectVoteRows, tailorVotes } = require('../routes/venues');
 const { isPlaceIdShaped, isKnownVenue } = require('../utils/places');
 const {
   hasDmRelationship,
@@ -1493,39 +1496,24 @@ function registerHandlers(io, socket) {
       //     bigint, while the REST payload's is a number.
       //   - the field guest_count was simply absent from this payload.
       //
-      // One statement rather than two so the tally stays a single round trip.
-      // The real fix is for both producers to share one module, the way
-      // utils/places.js and utils/relationships.js collapsed their duplicated
-      // rules — collectVoteRows lives in routes/, so that is not this file's to
-      // do alone.
-      const votes = await pool.query(
-        `WITH member_votes AS (
-           SELECT venue_name,
-                  MIN(vv.venue_id) FILTER (WHERE vv.venue_id IS NOT NULL) AS venue_id,
-                  COUNT(*)::int AS member_count,
-                  ARRAY_AGG(json_build_object('id', u.id, 'name', u.name)) AS voter_rows
-           FROM venue_votes vv
-           JOIN users u ON u.id = vv.user_id
-           JOIN flock_members fm ON fm.flock_id = vv.flock_id AND fm.user_id = vv.user_id
-             AND fm.status = 'accepted'
-           WHERE vv.flock_id = $1
-           GROUP BY venue_name
-         ), guest_tally AS (
-           SELECT gv.venue_name, COUNT(*)::int AS guest_count
-           FROM guest_votes gv
-           JOIN guest_rsvps gr ON gr.id = gv.guest_rsvp_id
-           WHERE gv.flock_id = $1 AND COALESCE(gr.is_hidden, false) = false
-           GROUP BY gv.venue_name
-         )
-         SELECT COALESCE(m.venue_name, g.venue_name) AS venue_name,
-                m.venue_id AS venue_id,
-                COALESCE(m.member_count, 0) AS member_count,
-                COALESCE(g.guest_count, 0) AS guest_count,
-                COALESCE(m.voter_rows, '{}'::json[]) AS voter_rows
-         FROM member_votes m
-         FULL JOIN guest_tally g ON g.venue_name = m.venue_name`,
-        [flockId]
-      );
+      // That round closed the four gaps by copying the SQL and the arithmetic
+      // in here, and said the real fix was for both producers to share one
+      // module. It is shared now: the tally below IS routes/venues.js's
+      // collectVoteRows and tailorVotes, imported at the top of this file, so
+      // there is no second copy left to drift. The copy had already drifted
+      // once more before it was removed - see the next note.
+      //
+      // ONE TALLY, NOT TWO. This used to carry its own CTE over venue_votes and
+      // guest_votes and its own arithmetic, under a comment saying "same wire
+      // shape as routes/venues.js tailorVotes". The shape matched; the numbers
+      // did not. routes/venues.js caps guest weight at the member turnout
+      // (guestCap) and breaks ties toward members, which is the defence
+      // against one invite-link holder minting fifty guest RSVPs and steering
+      // the vote. This handler added guest_count raw, so the same flock got one
+      // ranking from GET /votes and a different one from the live event. No
+      // shipped client emits vote_venue today, which is why it went unnoticed;
+      // it is fixed before a second client exists rather than after.
+      const rows = await collectVoteRows(flockId);
 
       const members = await pool.query(
         "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
@@ -1546,19 +1534,7 @@ function registerHandlers(io, socket) {
         }
         return s;
       };
-      // Same wire shape as routes/venues.js tailorVotes: vote_count is the total
-      // the bars are drawn from (members + guests), guest_count lets the UI say
-      // "+2 guests", and the ordering is applied AFTER the blend rather than in
-      // SQL — a venue's rank must not depend on which producer built the event.
-      const tailor = (invisible) => votes.rows
-        .map(v => ({
-          venue_name: v.venue_name,
-          venue_id: v.venue_id,
-          vote_count: v.member_count + v.guest_count,
-          guest_count: v.guest_count,
-          voters: (v.voter_rows || []).filter(p => !invisible.has(p.id)).map(p => p.name),
-        }))
-        .sort((a, b) => b.vote_count - a.vote_count);
+      const tailor = (invisible) => tailorVotes(rows, invisible);
 
       socket.emit('new_vote', { flockId, voter: { userId: user.id, name: user.name }, venue_name, votes: tailor(invisibleOf(user.id)) });
       for (const uid of memberIds) {
