@@ -326,27 +326,44 @@ async function collectRealtime() {
   const maxCreditsArg = process.argv.find((a) => a.startsWith('--max-credits='));
   const maxCredits = maxCreditsArg ? parseInt(maxCreditsArg.split('=')[1], 10) : 2500;
   if (!Number.isInteger(maxCredits) || maxCredits <= 0) {
-    console.error('[ML:Realtime] --max-credits must be a positive integer.');
     await pool.end();
-    return;
+    // Thrown, not returned. See the ceiling refusal below for why.
+    throw new Error('REFUSED: --max-credits must be a positive integer. Exiting non-zero so the scheduler records a failure.');
   }
   if (venues.length > maxCredits) {
-    console.error(
-      `[ML:Realtime] REFUSED: this run would spend ~${venues.length} live credits `
-      + `against a ceiling of ${maxCredits}. On Basic metered that is `
-      + `$${(venues.length * 0.04).toFixed(2)}; on Pro metered about `
-      + `$${(venues.length * 0.009).toFixed(2)}. Narrow the scope (--cities=...) `
-      + `or raise the ceiling on purpose with --max-credits=${venues.length}.`
-    );
     await pool.end();
-    return;
+    // THROWN, NOT RETURNED (2026-09-05). This used to end the process with a
+    // console.error and a bare return, so a refused run exited 0 and Railway
+    // painted the cron green while nothing had been collected. That is the
+    // same silent-success shape as the ninety-day gap this file's header
+    // exists to prevent, and it is exactly the failure a new city's service
+    // would hit first, because its scope is likely to exceed a stale ceiling.
+    // Every other refusal in this file throws; this one now does too.
+    //
+    // The prices quoted are for the METERED plans. On the current package
+    // subscription live calls are unlimited and cost nothing, so the ceiling
+    // here is a guard against a runaway scope rather than against a bill.
+    throw new Error(
+      `REFUSED: this run would spend ~${venues.length} live credits `
+      + `against a ceiling of ${maxCredits}. On a metered plan that is about `
+      + `$${(venues.length * 0.009).toFixed(2)} on Pro, and it is free on a package `
+      + `subscription. Narrow the scope (--cities=...) or raise the ceiling on `
+      + `purpose with --max-credits=${venues.length}. Exiting non-zero so the `
+      + `scheduler records a failure rather than a green run that collected nothing.`);
   }
   console.log(`[ML:Realtime] Credit budget: ~${venues.length} of ${maxCredits} allowed this run.`);
 
   if (venues.length === 0) {
-    console.log('[ML:Realtime] No venues with besttime_venue_id. Run weekly collection first.');
     await pool.end();
-    return;
+    // ALSO THROWN (2026-09-05), for the same reason as the ceiling above. An
+    // empty scope is not a quiet no-op: with the default cities there are
+    // always venues, so zero means the scope asked for something that does not
+    // exist. A mistyped --cities=maimi would otherwise log one line, exit 0,
+    // and paint a green cron every hour for as long as nobody looked.
+    throw new Error(
+      `REFUSED: no active venues with a besttime_venue_id in scope (${cityScope ? cityScope.join(', ') : 'all cities'}). `
+      + 'Either the city name is wrong or weekly collection has not run for it. '
+      + 'Exiting non-zero so the scheduler records a failure rather than a green run that collected nothing.');
   }
 
   console.log(`[ML:Realtime] Starting real-time collection for ${venues.length} venues...`);
