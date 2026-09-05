@@ -351,6 +351,34 @@ test('the recipient list for a deleted plan is read before the cascade removes i
   assert.ok(order.slice(0, -1).every((step) => step === 'read-members'));
 });
 
+test('a member leaving takes the flock lock before the membership statement', async () => {
+  // POST /api/billing/:flockId/create reads the accepted roster and the
+  // payer's eligibility under `SELECT id FROM flocks WHERE id = $1 FOR UPDATE`.
+  // The leave used to run its one atomic statement on the pool, outside any
+  // lock, so it could commit between billing's read and billing's COMMIT: Bob
+  // names himself payer, leaves in that window, and a bill is committed that
+  // is payable to someone who can no longer open billing. The ORDER is the
+  // property: lock first, then the statement, on one transaction.
+  CURRENT_USER = { id: 2, name: 'Bo', role: 'user' };
+  const order = [];
+  on(/SELECT id, name, creator_id, status FROM flocks WHERE id = \$1/, () => ({ rows: [{ id: 42, name: 'Dinner', creator_id: 9, status: 'planning' }] }));
+  on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, () => ({ rows: [{ status: 'accepted' }] }));
+  on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [{ user_id: 3 }] }));
+  on(/FROM user_blocks/, () => ({ rows: [] }));
+  on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => { order.push('lock'); return { rows: [{ id: 42 }] }; });
+  on(/WITH gone AS/, () => { order.push('leave'); return { rows: [], rowCount: 0 }; });
+
+  const res = await call('POST', '/api/flocks/42/leave');
+  assert.strictEqual(res.status, 200, res.text);
+  assert.deepStrictEqual(order, ['lock', 'leave'],
+    'the membership must be removed under the lock billing holds, not beside it');
+  const begin = log.findIndex((q) => /^BEGIN/.test(q.sql));
+  const commit = log.findIndex((q) => /^COMMIT/.test(q.sql));
+  const leaveAt = log.findIndex((q) => /WITH gone AS/.test(q.sql));
+  assert.ok(begin > -1 && commit > -1 && begin < leaveAt && leaveAt < commit,
+    'the leave statement must sit inside the transaction, not before or after it');
+});
+
 test('the host is told when the last member leaves, and never told about the ones before', async () => {
   CURRENT_USER = { id: 2, name: 'Bo', role: 'user' };
   on(/SELECT id, name, creator_id, status FROM flocks WHERE id = \$1/, () => ({ rows: [{ id: 42, name: 'Dinner', creator_id: 9, status: 'planning' }] }));
@@ -360,6 +388,9 @@ test('the host is told when the last member leaves, and never told about the one
   // The leave is one statement now: membership out and, with nobody accepted
   // left, the flock too. The RETURNING row is how the route learns the plan
   // is gone, which is what tells the host.
+  // A non-creator leave runs under the flock row lock now, in one
+  // transaction with the CTE, so it serialises against billing's roster read.
+  on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] }));
   on(/WITH gone AS/, () => ({ rows: [{ id: 42 }], rowCount: 1 }));
 
   const res = await call('POST', '/api/flocks/42/leave');
@@ -396,6 +427,9 @@ test('a member leaving a plan that survives does not interrupt the host', async 
   on(/FROM user_blocks/, () => ({ rows: [] }));
   // Somebody accepted remains, so the statement removes the membership and
   // returns no flock row: the plan survives and the host hears nothing.
+  // A non-creator leave runs under the flock row lock now, in one
+  // transaction with the CTE, so it serialises against billing's roster read.
+  on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] }));
   on(/WITH gone AS/, () => ({ rows: [], rowCount: 0 }));
 
   await call('POST', '/api/flocks/42/leave');
