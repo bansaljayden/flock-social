@@ -147,6 +147,30 @@ test('the safety gate still fails closed even when the preference read failed op
   assert.strictEqual(res.reason, 'visibility-uncheckable');
 });
 
+test('two crowd alerts for one recipient in flight together each keep their own answer', async () => {
+  // The sweep fans out with Promise.allSettled, and a person with two plans
+  // the same night sits in two of those fan-outs at once. The safety gate's
+  // "the check itself failed" answer used to be a module-level mark keyed by
+  // recipient, which the sibling delivery cleared when its own lookup settled
+  // first in the same tick. The outage was then filed as 'not-visible', the
+  // reason the outbox sweep treats as permanent, and the held alert was
+  // deleted rather than retried.
+  reset();
+  on(/FROM user_settings/i, () => ({ rows: [] }));
+  const parked = [];
+  on(/FROM users u/i, () => new Promise((resolve, reject) => { parked.push({ resolve, reject }); }));
+  const a = pushHelper.pushAlways(1, 'T', 'A', { type: 'crowd_alert', flockId: 7 });
+  const b = pushHelper.pushAlways(1, 'T', 'B', { type: 'crowd_alert', flockId: 8 });
+  while (parked.length < 2) await new Promise((r) => setImmediate(r));
+  parked[1].resolve({ rows: [{ is_banned: false, can_see: true }] });
+  parked[0].reject(new Error('connection terminated'));
+  const [ra, rb] = await Promise.all([a, b]);
+  assert.strictEqual(ra.reason, 'visibility-uncheckable',
+    'the failed gate was filed as a permanent refusal because its sibling cleared the mark');
+  assert.strictEqual(rb.sent, 1);
+  assert.strictEqual(sends.length, 1, 'block/ban enforcement keeps its own rules for the one that failed');
+});
+
 test('transactional types do not pay the preference read', async () => {
   // The switch governs crowd alerts. A DM about a message someone just sent
   // needs no opt-out check and must not grow one silently.

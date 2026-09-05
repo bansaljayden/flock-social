@@ -436,9 +436,11 @@ test('a recipient who genuinely may not see it still reads as not-visible', asyn
 });
 
 test('a failed check does not leave its mark on the next recipient', async () => {
-  // canNotify records the failure in a module-scope set keyed by recipient and
-  // deliver() clears it. If it were ever left behind, the next push to that
-  // account would be filed as an outage and retried forever.
+  // The failure used to be recorded in a module-scope set keyed by recipient
+  // that deliver() cleared; it now travels back as the check's own return
+  // value. Kept as the guard it always was: if a failure ever outlived its
+  // call again, the next push to that account would be filed as an outage and
+  // retried forever.
   reset();
   on(/FROM user_blocks/i, () => ({ rows: [] }));
   on(/FROM users u/i, () => Promise.reject(new Error('connection terminated')));
@@ -450,6 +452,67 @@ test('a failed check does not leave its mark on the next recipient', async () =>
   on(/FROM users u/i, () => ({ rows: [{ is_banned: false, can_see: false }] }));
   const second = await pushHelper.pushIfOffline(offline, 1, 'T', 'B', { type: 'flock_message', flockId: 7 });
   assert.strictEqual(second.reason, 'not-visible', 'the previous failure was still marked');
+});
+
+// Two pushes to ONE recipient are routinely in flight together: a DM and a
+// flock message landing in the same second, or a Promise.allSettled fan-out
+// that names the same person twice. The failure marker used to live in a
+// module-level set keyed by recipient, so a sibling delivery whose lookup
+// settled in the same tick could clear it (filing the outage as 'not-visible',
+// which the outbox sweep deletes for good) or claim it (filing a healthy "no"
+// as an outage to be retried). The fixture parks both visibility lookups and
+// settles them in one tick, the healthy one first, which is the order that
+// lost the mark.
+async function twoInFlight(dataA, dataB) {
+  const parked = [];
+  on(/FROM users u/i, () => new Promise((resolve, reject) => { parked.push({ resolve, reject }); }));
+  const a = pushHelper.pushIfOffline(offline, 1, 'T', 'A', dataA);
+  const b = pushHelper.pushIfOffline(offline, 1, 'T', 'B', dataB);
+  while (parked.length < 2) await new Promise((r) => setImmediate(r));
+  return { a, b, parked };
+}
+
+test('a sibling delivery that succeeds does not take the outage away from the one that failed', async () => {
+  reset();
+  on(/FROM user_blocks/i, () => ({ rows: [] }));
+  const { a, b, parked } = await twoInFlight(
+    { type: 'flock_message', flockId: 7 }, { type: 'flock_message', flockId: 8 });
+  parked[1].resolve({ rows: [{ is_banned: false, can_see: true }] });
+  parked[0].reject(new Error('connection terminated'));
+  const [ra, rb] = await Promise.all([a, b]);
+  assert.strictEqual(ra.reason, 'visibility-uncheckable',
+    'the outage was filed as a permanent suppression because a sibling cleared its mark');
+  assert.strictEqual(rb.sent, 1, 'the healthy delivery still goes out');
+  assert.strictEqual(sends.length, 1);
+});
+
+test('a sibling delivery that is refused does not swap answers with the one that failed', async () => {
+  reset();
+  on(/FROM user_blocks/i, () => ({ rows: [] }));
+  const { a, b, parked } = await twoInFlight(
+    { type: 'flock_message', flockId: 7 }, { type: 'flock_message', flockId: 8 });
+  parked[1].resolve({ rows: [{ is_banned: false, can_see: false }] });
+  parked[0].reject(new Error('connection terminated'));
+  const [ra, rb] = await Promise.all([a, b]);
+  assert.strictEqual(ra.reason, 'visibility-uncheckable');
+  assert.strictEqual(rb.reason, 'not-visible', 'a healthy "no" was filed as an outage and retried');
+  assert.strictEqual(sends.length, 0);
+});
+
+test('two failed checks in one tick are both filed as outages', async () => {
+  // A set cannot count. With both lookups failing in the same tick the first
+  // reader took the one mark and the second found nothing, so one of two
+  // identical outages was deleted by the sweep as a refusal.
+  reset();
+  on(/FROM user_blocks/i, () => ({ rows: [] }));
+  const { a, b, parked } = await twoInFlight(
+    { type: 'flock_message', flockId: 7 }, { type: 'flock_message', flockId: 8 });
+  parked[0].reject(new Error('connection terminated'));
+  parked[1].reject(new Error('connection terminated'));
+  const [ra, rb] = await Promise.all([a, b]);
+  assert.strictEqual(ra.reason, 'visibility-uncheckable');
+  assert.strictEqual(rb.reason, 'visibility-uncheckable');
+  assert.strictEqual(sends.length, 0);
 });
 
 // ---------------------------------------------------------------------------
