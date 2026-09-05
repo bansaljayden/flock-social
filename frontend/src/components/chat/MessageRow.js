@@ -28,6 +28,15 @@ import './chat.css';
  * thing this is built to avoid. Put `image_width` and `image_height` (or
  * `image_aspect`) on the row and it gets the exact shape instead.
  *
+ * THE TIME IS A TAP, NOT A LINE UNDER EVERY MESSAGE. The old screens drew a
+ * clock time under every single bubble and the capture has none, so the time
+ * did not come back as a line: a tap on a row toggles that row's own time and
+ * nothing else. It is drawn in the reserved space the reactions already own,
+ * out of flow and bottom aligned, so revealing it moves no other row, costs no
+ * reflow and cannot jump the scroll. A row that already carries a control
+ * underneath it (a failed send's Retry and Remove) is not offered the reveal:
+ * that space is spoken for, and a tap there belongs to the control.
+ *
  * GESTURES. Long press is 350ms, swipe right is a 48px threshold, and both are
  * REPORTED, not handled: this file builds no menu and inserts no quote bar. It
  * calls `onLongPress(message, detail)` and `onSwipeReply(message)` and stops.
@@ -115,6 +124,25 @@ export function imageOf(message) {
   return message.thumb || message.image || message.thumb_url || message.image_url || null;
 }
 
+/**
+ * The clock time this row was sent, or null.
+ *
+ * `time` is what both mappers already write ("9:41 PM", in the reader's own
+ * locale), so the reveal below prints the same string the old screens printed
+ * under every bubble. `sentAt` is the fallback for a row that carries the raw
+ * instant and no formatted copy. A row with neither has no time to reveal and
+ * the reveal is not offered on it, which is the rule for every other figure in
+ * this module: draw what the data can back, or draw nothing.
+ */
+export function timeOf(message) {
+  if (!message) return null;
+  if (typeof message.time === 'string' && message.time.trim().length > 0) return message.time.trim();
+  if (!message.sentAt) return null;
+  const d = new Date(message.sentAt);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
 /** Known aspect ratio, or null. Never guessed from the bytes after they land. */
 export function aspectOf(message) {
   if (!message) return null;
@@ -154,6 +182,7 @@ function MessageRow({
   const dragRef = useRef(0);
   const [dragX, setDragX] = useState(0);
   const [dragging, setDragging] = useState(false);
+  const [timeShown, setTimeShown] = useState(false);
 
   const clearTimer = useCallback(() => {
     if (timerRef.current) {
@@ -244,7 +273,13 @@ function MessageRow({
     setDrag(0);
     // The row starts following the finger SLOP px in, so the finger has
     // travelled SLOP further than the transform says.
-    if (onSwipeReply && travelled + SLOP >= SWIPE_THRESHOLD) onSwipeReply(message);
+    if (onSwipeReply && travelled + SLOP >= SWIPE_THRESHOLD) {
+      // A swipe is not a tap. Engines differ on whether a horizontal drag on a
+      // pan-y element still dispatches a click on release, and on the ones that
+      // do, quoting a message would also have revealed its time.
+      suppressClickRef.current = true;
+      onSwipeReply(message);
+    }
   };
 
   const onMouseDown = (e) => {
@@ -272,6 +307,24 @@ function MessageRow({
   const reply = message && message.reply_to;
   const pending = !!(message && message.pending);
   const who = isMine ? 'you' : ((message && message.sender) || 'this chat');
+  const time = timeOf(message);
+
+  /* Offered only where there is a real time to show and the space under the
+     row is still free. A failed send's Retry and Remove already live there. */
+  const canRevealTime = !!time && !status;
+
+  const onRowClick = (e) => {
+    if (!canRevealTime) return;
+    /* A control inside the row owns its own tap: the keyboard actions door,
+       a card the parent rendered, the failed line's two buttons. Only a tap
+       on the message itself toggles the time. */
+    const target = e.target;
+    if (target && typeof target.closest === 'function'
+      && target.closest('button, a, [role="button"], input, textarea, select')) return;
+    // The click a long press leaves behind is not a tap either.
+    if (consumeClick()) return;
+    setTimeShown((shown) => !shown);
+  };
 
   /* Shared by the tappable and the plain form of each, so the two cannot drift
      apart. Whether the photo and the quote are controls at all is decided by
@@ -372,6 +425,7 @@ function MessageRow({
       onMouseUp={endMouse}
       onMouseLeave={endMouse}
       onContextMenu={onContextMenu}
+      onClick={onRowClick}
     >
       {reply && (
         /* The quote. Name in the quoted person's colour, one line of what they
@@ -534,6 +588,37 @@ function MessageRow({
             );
           })}
         </div>
+      )}
+
+      {timeShown && time && (
+        /* The revealed time. Out of flow in the same reserved strip the
+           reactions hang in, at the opposite end of it, so showing it costs
+           the page nothing: no reflow, no scroll jump, no other row moving.
+           It sits on the stream's own ground with a little padding, because
+           out of flow it can land over the tail of a long last line and a
+           time printed through words is unreadable. Aligned to the same 16
+           the body text keeps clear of the right edge. */
+        <span
+          className="chat-row-time"
+          style={{
+            position: 'absolute',
+            right: '16px',
+            bottom: 0,
+            height: 'var(--chat-reaction-h)',
+            display: 'inline-flex',
+            alignItems: 'center',
+            padding: '0 4px',
+            borderRadius: '6px',
+            background: 'var(--chat-ground)',
+            color: 'var(--chat-meta)',
+            fontSize: '10px',
+            lineHeight: '10px',
+            fontWeight: 600,
+            letterSpacing: '0.3px',
+          }}
+        >
+          {time}
+        </span>
       )}
 
       {onLongPress && (

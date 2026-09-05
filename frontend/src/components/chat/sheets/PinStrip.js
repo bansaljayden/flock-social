@@ -103,6 +103,10 @@ export default function PinStrip({
     // document. Worse than usual on this strip: the control they came from is
     // clipped to 1x1 unless it holds focus, so it is invisible again the
     // moment it loses it.
+    // Captured while the menu is still mounted. The cleanup below asks
+    // whether focus is inside the menu it is tearing down, and by then
+    // React may have already nulled the ref, so the live ref cannot answer.
+    const menuNode = menuRef.current;
     const returnTo = document.activeElement;
     const t = setTimeout(() => {
       const first = menuRef.current && menuRef.current.querySelector('button');
@@ -121,7 +125,7 @@ export default function PinStrip({
       const focused = document.activeElement;
       const orphaned = !focused
         || focused === document.body
-        || (menuRef.current && menuRef.current.contains(focused));
+        || (menuNode && menuNode.contains(focused));
       // Back where it came from, and nowhere else. A long press opens the menu
       // with focus still on <body>, so preferring the options button here sent
       // focus to a control the user never touched, and :focus unclips that

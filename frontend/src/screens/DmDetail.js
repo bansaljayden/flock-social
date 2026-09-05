@@ -74,48 +74,84 @@ import React from 'react';
 import { sendFriendRequest, trackDmVenueVote, getDmMessageImage, addDmReaction, removeDmReaction } from '../services/api';
 import { dmReact, dmRemoveReact, dmStopSharingLocation, dmVoteVenue, getSocket } from '../services/socket';
 import { groupReactions } from './ChatDetail';
+import { MessageList, StatusLine, TypingRow, VenueCardRow } from '../components/chat';
+import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
 import Icons from '../components/ui/Icons';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 
-// Day separators. Long threads used to be one undifferentiated scroll where
-// last Tuesday touched tonight with nothing between them. A row draws a
-// divider when its calendar day differs from the previous row's; rows with no
-// sentAt (old cached rows, failed sends) inherit the previous day so a
-// missing timestamp can never invent a boundary. Mirrored in ChatDetail.js
-// and DmDetail.js by design; the copy vocabulary is Today / Yesterday / the
-// dated weekday.
-const dayKeyOf = (iso) => {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
-};
-const dayLabelOf = (iso) => {
-  const d = new Date(iso);
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const that = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  const diffDays = Math.round((today - that) / 86400000);
-  if (diffDays <= 0) return 'Today';
-  if (diffDays === 1) return 'Yesterday';
-  if (diffDays < 7) return d.toLocaleDateString([], { weekday: 'long' });
-  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-};
-const daySeparatorFor = (rows, idx) => {
-  const cur = dayKeyOf(rows[idx]?.sentAt);
-  if (!cur) return null;
-  for (let i = idx - 1; i >= 0; i--) {
-    const prev = dayKeyOf(rows[i]?.sentAt);
-    if (prev) return prev === cur ? null : dayLabelOf(rows[idx].sentAt);
-  }
-  // First dated row in the thread: label it so history opens with its day.
-  return dayLabelOf(rows[idx].sentAt);
-};
+/* THE STREAM IS THE CHAT MODULE'S NOW, and this is the first screen wired to
+   it. `components/chat` is imported as one door, never file by file, so the
+   module's surface stays its index and this screen has one import line to
+   read.
 
+   WHAT LEFT THIS FILE with the swap, and it is worth being blunt about the
+   first one because it was a real defect and not a tidy-up:
+
+     - The scroll handler on the old list container. It blurred whatever input
+       held focus on EVERY scroll event, which is why the keyboard shut itself
+       the moment a message arrived and moved the list. It is not carried over
+       in any form. MessageList's own comment says the same thing from the
+       other side.
+     - The day separator helpers (dayKeyOf, dayLabelOf, daySeparatorFor) and
+       the backward scan every row made through them. groupRows inside the
+       module decides where a day opens now, with the same vocabulary and the
+       same "a row with no sentAt inherits the previous day" rule, so dividers
+       land where they always did.
+     - "Jump to latest", its 200/600px hysteresis state and the end-ref it
+       scrolled to, plus the writes into the near-bottom flag that App.js's
+       tail-follow effect read. Scroll position lives in one place now, and
+       that place is the scroller.
+     - The fixed 50px typing slot at the bottom of the stream. TypingRow above
+       the composer replaces it and costs nothing when nobody is typing.
+
+   Nothing else went. Search, scrollback, the skeleton, the empty and blocked
+   states, every message shape, the failed row, reactions, the actions and the
+   swipe-to-reply are all still here; several of them are further down this
+   file rather than gone. */
 
 // Same cadence the flock header samples at (ChatDetail SOCKET_SAMPLE_MS).
 const DM_SOCKET_SAMPLE_MS = 2000;
 
+/* One shared empty array, so a render before the thread's rows exist does not
+   hand the list a fresh reference and reset its anchor. */
+const NO_DM_ROWS = [];
+
+/**
+ * A search match, highlighted where it sits.
+ *
+ * The old text bubble did this inline. The row belongs to the module now and
+ * MessageRow prints whatever `message.text` holds, so the highlight is built
+ * here and handed over as that row's text: an array of strings and <mark>s
+ * draws exactly what the one string drew. The regex escape and the
+ * case-insensitive compare are the ones the bubble used, character for
+ * character, so a query with a bracket in it still cannot throw.
+ */
+const highlightMatches = (text, query) => (
+  String(text)
+    .split(new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi'))
+    .map((part, pi) => (
+      part.toLowerCase() === query.toLowerCase()
+        ? <mark key={pi} style={{ background: 'var(--search-highlight)', color: 'inherit', borderRadius: '2px', padding: '0 1px' }}>{part}</mark>
+        : part
+    ))
+);
+
+/* FIVE PROPS BELOW ARE NO LONGER READ, and they are still in this list on
+   purpose. `__tests__/extractionEquivalence.test.js` pins the parameter list
+   against the object App.js spreads in, in BOTH directions, so dropping a name
+   here without dropping it there is a red test rather than a tidy diff. They
+   are marked "unused" where they sit, and each marker says what took over:
+
+     VenueCard      the module's VenueCardRow draws a shared venue now
+     colorsLight    bubble fill, and there are no bubbles
+     isDark         the same bubble fill's dark variant
+     profilePic     the 32px own-avatar beside every own message
+     getRelativeTime  the per-message time stamp; the stream carries none
+
+   `dmChatEndRef` and `dmNearBottomRef` were on that list and are gone from it,
+   in both files at once. With no sentinel left to scroll to, the tail-follow
+   effect in App.js could only ever call scrollIntoView on null, so the effect
+   and the two refs it read went with it. */
 export default function DmDetail({
   // Module-level helpers, constants and components that live in App.js and
   // are shared with screens other than this one, so they stay declared there
@@ -124,8 +160,8 @@ export default function DmDetail({
   DM_PAGE_SIZE,
   DialogBehavior,
   SearchInputLocal,
-  VenueCard,
-  colorsLight,
+  VenueCard, // unused: VenueCardRow from components/chat draws venue messages
+  colorsLight, // unused: the text bubble it tinted is gone
   messagePreview,
   oldestServerId,
   onVenuePhotoError,
@@ -140,8 +176,6 @@ export default function DmDetail({
   deletedDmUserIds,
   dmAtTop,
   dmBlocked,
-  dmChatEndRef,
-  dmNearBottomRef,
   dmChatSearch,
   dmChatSearchRef,
   dmGalleryInputRef,
@@ -160,10 +194,10 @@ export default function DmDetail({
   dmVenueVotes,
   dmVenueVotesError,
   getCategoryColor,
-  getRelativeTime,
+  getRelativeTime, // unused: no per-message time stamp in the new stream
   handleDmImageSelect,
   handleDmInputChange,
-  isDark,
+  isDark, // unused: the bubble fill it switched is gone
   loadDmVenueVotes,
   loadOlderDms,
   loadPopularVenues,
@@ -172,7 +206,7 @@ export default function DmDetail({
   openUserProfile,
   openVenueDetail,
   popularVenues,
-  profilePic,
+  profilePic, // unused: runs carry a name and a coloured bar, not avatars
   retryFailedDm,
   discardFailedDm,
   selectedDm,
@@ -239,6 +273,10 @@ export default function DmDetail({
     setShowDmVenueSearch(false);
     setDmReplyingTo(null);
     setDmNavOpen(false);
+    // The actions menu is a full screen overlay now rather than a picker
+    // pinned inside one row, so an exit that left it open would put a backdrop
+    // over the next thread the moment it opened.
+    setShowDmReactionPicker(null);
     if (dmSharingLocation) { dmStopSharingLocation(dmSharingLocation); setDmSharingLocation(null); }
   };
 
@@ -277,14 +315,11 @@ export default function DmDetail({
   };
   // Full-size photo viewer, the same shape ChatDetail carries: history rows
   // hold only the thumbnail, the original is one gated fetch away.
-
-  // Jump-to-latest. Scrolled deep into history, the way back down was a long
-  // manual drag and a live message arriving off-screen was invisible. The
-  // pill appears once the reader is more than ~600px from the bottom and one
-  // tap returns them to now. Sticky inside the scroll container, so it needs
-  // no coordination with the composer's layout.
-  const [showJumpPill, setShowJumpPill] = React.useState(false);
-  const dmEndRef = React.useRef(null);
+  //
+  // "Jump to latest" and its 200/600px hysteresis used to live here. They are
+  // MessageList's "N new messages" affordance now, which is the same idea told
+  // honestly: it counts what arrived while you were reading rather than
+  // offering a ride to a bottom that may not have moved.
   const [imageViewer, setImageViewer] = React.useState(null);
   const openImageViewer = (m) => {
     if (m.image_url) { setImageViewer({ src: m.image_url }); return; }
@@ -307,6 +342,225 @@ export default function DmDetail({
       window.removeEventListener('offline', sample);
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ── The rows the stream draws ───────────────────────────────────────────
+     Two arrays, and the distinction between them is load bearing.
+
+     `dmSourceRows` is what the app shell owns. Every handler that hands a
+     message back to the shell (retry, remove, unsend, reply, report, the photo
+     viewer) takes one of these, because a display copy's `text` can be an
+     array of highlight nodes and `retryFailedDm` would put that array back on
+     the wire as the message body.
+
+     `dmRows` is the same list dressed for the stream: filtered by the search
+     query, its quotes resolved through messagePreview so a quoted photo still
+     says Photo and a quoted venue card still says Venue, and its matches
+     wrapped in <mark>. Memoised because MessageList's scroll rules key off the
+     identity of this array: a fresh one on every socket event would re-run the
+     layout effect several times a second.
+
+     Hooks sit above the `selectedDm` guard in the return below, so the source
+     is read with optional chaining. A thread that is not there yet is an empty
+     stream, not a crash. */
+  const dmSearchQuery = showDmChatSearch && dmChatSearch.trim() ? dmChatSearch : '';
+  const dmSourceRows = selectedDm?.messages || NO_DM_ROWS;
+  const myDmId = authUser?.id;
+
+  const dmRowsById = React.useMemo(() => {
+    const byId = new Map();
+    for (const m of dmSourceRows) byId.set(m.id, m);
+    return byId;
+  }, [dmSourceRows]);
+
+  const originalDmRow = (m) => (m && dmRowsById.get(m.id)) || m;
+
+  const dmRows = React.useMemo(() => {
+    const q = dmSearchQuery.toLowerCase();
+    const base = q
+      ? dmSourceRows.filter(m => m.text?.toLowerCase().includes(q) || m.sender?.toLowerCase().includes(q))
+      : dmSourceRows;
+    return base.map((m) => {
+      const quoted = m.reply_to
+        ? { ...m, reply_to: { ...m.reply_to, text: messagePreview({ ...m.reply_to, hadContent: true }) } }
+        : m;
+      /* A venue card message carries a generated caption ("Check out Kome!")
+         that the old stream never drew, because the card branch replaced the
+         text branch outright. MessageRow draws a card AND its text, so the
+         caption is dropped from the DISPLAY row rather than repeated under a
+         card whose first line is the venue's name. The shell's own copy still
+         has it, which is what the conversation list previews. */
+      const isCard = quoted.message_type === 'venue_card' && quoted.venue_data;
+      const carded = isCard ? { ...quoted, text: '' } : quoted;
+      /* AND ON THE SEARCH PATH TOO. The highlight below rebuilds `text` from
+         the shell's own copy, so a query the caption matched ("check out")
+         put that caption straight back under the card the line above had
+         just cleared, which is the duplicate the blanking exists to stop. A
+         card is a card whether or not a search is running. */
+      if (isCard || !q || typeof m.text !== 'string' || !m.text.toLowerCase().includes(q)) return carded;
+      return { ...carded, text: highlightMatches(m.text, dmSearchQuery) };
+    });
+  }, [dmSourceRows, dmSearchQuery, messagePreview]);
+
+  // The count line above the stream. Only drawn on a live query, and only when
+  // something matched, exactly as it was.
+  const dmMatchCount = dmSearchQuery ? dmRows.length : 0;
+
+  /* Scrollback, condition unchanged: only offered when the thread is showing a
+     full page, which is the only case where there can be anything behind it,
+     and it retires itself the moment the server hands back a short page. A
+     search is a filtered view of what is already loaded, so paging behind it
+     would be paging into a list the reader cannot see. */
+  const dmCanLoadOlder = !dmMessagesLoading && !(showDmChatSearch && dmChatSearch.trim()) && !dmAtTop[selectedDmId] && dmSourceRows.length >= DM_PAGE_SIZE;
+
+  /* THE STATUS LINE, AND WHAT THIS SCREEN IS ENTITLED TO SAY. A DM row carries
+     `pending` and `failed` and nothing else: there is no delivered and no
+     opened on the wire yet, so the ladder stops at Sending and no word is
+     invented to fill the gap.
+
+     BOTH are asked of every row, not just the last one, and neither is a
+     receipt. Send while offline so it fails, reconnect, send again, and both
+     are yours on the same day, so they are one run with the failed row in the
+     middle; asking only about the last row would leave that one dimmed with
+     no Retry and no Remove. Sending is the same fact about a different row:
+     two messages can be in flight at once, and each is the one that has not
+     landed. Pinning it to "the last own row" also attached it to the wrong
+     message during a search, because the row it found was the last own row
+     that MATCHED the query rather than the one still on the wire.
+     MessageGroup draws a non-last row's status under that row for exactly
+     this. */
+  const renderDmStatus = (m) => {
+    if (!m) return null;
+    if (m.failed) {
+      return (
+        <StatusLine
+          status="failed"
+          onRetry={() => retryFailedDm(selectedDmId, originalDmRow(m))}
+          onRemove={() => discardFailedDm(selectedDmId, originalDmRow(m))}
+        />
+      );
+    }
+    if (m.pending) return <StatusLine status="sending" />;
+    return null;
+  };
+
+  /* A shared venue, as a message. The module owns the card; this decides what
+     the card's one action does, and here that is the vote it has always been.
+     VenueCardRow's `surface` picks the WORD on that action, Vote in a flock
+     and Pin in a DM, and the plan's DM pin is not reachable from this screen:
+     no pin handler is among its props. Naming the button Pin while it writes a
+     vote would be the lie, so the default stands and the button says Vote. The
+     whole card opens the place, which is what View Details did. */
+  const renderDmCard = (m) => {
+    if (!(m.message_type === 'venue_card' && m.venue_data)) return null;
+    const vd = m.venue_data;
+    const tally = dmVenueVotes.find(v => v.venue_name === vd.name);
+    const tallyCount = tally ? parseInt(tally.vote_count || 0) : 0;
+    const iVoted = (tally?.voters || []).includes(authUser?.name);
+    /* A long press fires at 350ms and the browser still dispatches a click on
+       release, so a press held over this card would open the venue, or cast a
+       vote, underneath the menu the press just asked for. MessageRow spends
+       that click for the controls it owns (the photo, the quote, the reaction
+       pills); the card is the parent's, so the parent spends it, and the test
+       is simply whether this row's menu is the one now open. */
+    const pressOpenedTheMenu = () => showDmReactionPicker === m.id;
+    return (
+      <VenueCardRow
+        venue={vd}
+        actionActive={iVoted}
+        count={tallyCount}
+        /* The card is presentational and has no BASE_URL, so the path resolver
+           is handed in, the same way the flock side hands it in. A venue_data
+           photo is routinely a relative /api/ path, and an unresolved one is a
+           broken image rather than a picture. The placeholder goes with it, so
+           a photo that dies lands on the app's own bird rather than the card's
+           map pin. */
+        resolvePhoto={resolveVenuePhoto}
+        placeholder={VENUE_PHOTO_PLACEHOLDER}
+        /* NOTHING TO OPEN MEANS NO CONTROL. This used to be given every time
+           and check inside, so a card with no place_id announced itself as a
+           button and answered the tap with nothing. */
+        onOpen={vd.place_id ? () => {
+          if (pressOpenedTheMenu()) return;
+          leaveDmScreen();
+          setVenueDetailReturnTo({ tab: 'chat', screen: 'dmDetail', dmId: selectedDmId });
+          setCurrentTab('explore');
+          setCurrentScreen('main');
+          setTimeout(() => {
+            openVenueDetail(vd.place_id, { name: vd.name, formatted_address: vd.addr, place_id: vd.place_id, rating: vd.stars || vd.rating, photo_url: vd.photo_url }, { panMap: true });
+          }, 500);
+        } : undefined}
+        onAction={() => {
+          if (pressOpenedTheMenu()) return;
+          const vName = vd.name;
+          const vId = vd.place_id;
+          const mn = authUser?.name;
+          // Same capture as the panel's own vote button: this card is the third
+          // way into the same tally and it rolled back no further than the
+          // other two did.
+          const previousVotes = dmVenueVotes;
+          const existing = dmVenueVotes.find(v => v.venue_name === vName);
+          if (existing && (existing.voters || []).includes(mn)) return;
+          if (existing) {
+            setDmVenueVotes(prev => prev.map(v => ({ ...v, voters: v.venue_name === vName ? [...(v.voters || []), mn] : (v.voters || []).filter(x => x !== mn), vote_count: v.venue_name === vName ? parseInt(v.vote_count || 0) + 1 : (v.voters || []).includes(mn) ? parseInt(v.vote_count || 0) - 1 : parseInt(v.vote_count || 0) })).filter(v => parseInt(v.vote_count || 0) > 0 || v.venue_name === vName));
+          } else {
+            setDmVenueVotes(prev => [...prev.map(v => ({ ...v, voters: (v.voters || []).filter(x => x !== mn), vote_count: (v.voters || []).includes(mn) ? parseInt(v.vote_count || 0) - 1 : parseInt(v.vote_count || 0) })).filter(v => parseInt(v.vote_count || 0) > 0), { venue_name: vName, venue_id: vId, vote_count: 1, voters: [mn] }]);
+          }
+          if (commitDmVote(vName, vId, previousVotes, "Your vote didn't save.")) trackDmVenueVote();
+        }}
+      />
+    );
+  };
+
+  /* MESSAGE ACTIONS. The trigger moved from a tap on the bubble to a long
+     press, which MessageRow reports through onLongPress with the message and
+     the row's own bounding rect. The open menu is still identified by the
+     app shell's `showDmReactionPicker`, so leaving the screen and every other
+     thing that already closed it still does; only the rect is local, because a
+     screen coordinate is not app state and cannot be anything but stale by the
+     time anyone else reads it. */
+  const [dmActionRect, setDmActionRect] = React.useState(null);
+  const openDmActions = (m, detail) => {
+    setDmActionRect(detail && detail.rect ? { top: detail.rect.top, bottom: detail.rect.bottom } : null);
+    setShowDmReactionPicker(m.id);
+  };
+  const closeDmActions = () => {
+    setShowDmReactionPicker(null);
+    setDmActionRect(null);
+  };
+  const dmActionMessage = showDmReactionPicker == null ? null : (dmRowsById.get(showDmReactionPicker) || null);
+
+  /* Below the row if the sheet fits under it, above it if not, and centred
+     when a press arrived without a rect (the keyboard door reports one, a
+     synthetic event in a test may not). Menu height is the 44 target plus its
+     padding, so 56 is the box it needs to clear. */
+  const dmActionTop = (() => {
+    const viewportH = typeof window !== 'undefined' ? window.innerHeight : 640;
+    if (!dmActionRect) return Math.max(12, Math.round(viewportH / 2) - 28);
+    const below = dmActionRect.bottom + 8;
+    if (below + 56 <= viewportH) return below;
+    return Math.max(12, dmActionRect.top - 64);
+  })();
+
+  // Swipe right to reply, and the tap on Reply in the menu, are the same act.
+  // The row handed back is the shell's own, never the display copy.
+  const startDmReply = (m) => {
+    setDmReplyingTo(originalDmRow(m));
+    closeDmActions();
+  };
+
+  /* A reaction pill, tapped. groupReactions, the same helper the flock side
+     uses, so a DM reaction read back from history keeps the id of who left it
+     and ownership is compared as a string: the REST history hands user_id back
+     as a number while the live socket hands it back as a string, so strict
+     equality answered false for your own reaction after a reload. */
+  const toggleDmReaction = (emoji, m) => {
+    const otherUser = selectedDmId;
+    const g = groupReactions(m.reactions).find((r) => r.emoji === emoji) || { emoji, userIds: [] };
+    const mine = g.userIds.some((id) => String(id) === String(authUser?.id));
+    if (mine) {
+      if (!dmRemoveReact(m.id, g.emoji, otherUser)) removeDmReaction(m.id, g.emoji).catch(() => showToast('Could not remove that reaction. Try again.', 'error'));
+    } else if (!dmReact(m.id, g.emoji, otherUser)) { addDmReaction(m.id, g.emoji).catch(() => showToast('Could not react. Try again.', 'error')); }
+  };
 
   return currentScreen === 'dmDetail' && selectedDm && (
     <div key="dm-detail-screen" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
@@ -335,10 +589,10 @@ export default function DmDetail({
                 overflow paints nothing and leaves every button inside it
                 focusable and readable. */}
             <div style={{ display: 'flex', gap: '4px', overflow: 'hidden', maxWidth: dmNavOpen ? '114px' : '0px', opacity: dmNavOpen ? 1 : 0, visibility: dmNavOpen ? undefined : 'hidden', transition: `max-width 0.3s ease, opacity 0.25s ease, visibility 0s linear ${dmNavOpen ? '0s' : '0.3s'}` }}>
-              <button aria-label="Venue voting" className="hit44 glass-btn" onClick={() => { setDmNavOpen(false); setShowDmVotePanel(!showDmVotePanel); if (!showDmVotePanel) loadPopularVenues(); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 14)}</button>
-              <button aria-label="Search" className="hit44 glass-btn" onClick={() => { setDmNavOpen(false); setShowDmChatSearch(!showDmChatSearch); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: showDmChatSearch ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 15)}</button>
+              <button aria-label="Venue voting" className="hit44 glass-btn" onClick={() => { setDmNavOpen(false); setShowDmVotePanel(!showDmVotePanel); if (!showDmVotePanel) loadPopularVenues(); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.vote('white', 16)}</button>
+              <button aria-label="Search" className="hit44 glass-btn" onClick={() => { setDmNavOpen(false); setShowDmChatSearch(!showDmChatSearch); }} style={{ width: '34px', height: '34px', minWidth: '34px', borderRadius: '17px', border: 'none', backgroundColor: showDmChatSearch ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.search('white', 16)}</button>
             </div>
-            <button aria-label="Features" aria-expanded={dmNavOpen} className="hit44" onClick={() => setDmNavOpen(!dmNavOpen)} style={{ height: '34px', minWidth: dmNavOpen ? '34px' : 'auto', width: dmNavOpen ? '34px' : 'auto', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: dmNavOpen ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: dmNavOpen ? '0' : '0 12px', fontSize: 'var(--t-meta)', fontWeight: '600', flexShrink: 0, transition: 'all 0.3s ease', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)' }}>{dmNavOpen ? Icons.x('white', 14) : <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500' }}>Features</span>}</button>
+            <button aria-label="Features" aria-expanded={dmNavOpen} className="hit44" onClick={() => setDmNavOpen(!dmNavOpen)} style={{ height: '34px', minWidth: dmNavOpen ? '34px' : 'auto', width: dmNavOpen ? '34px' : 'auto', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.18)', backgroundColor: dmNavOpen ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: dmNavOpen ? '0' : '0 12px', fontSize: 'var(--t-meta)', fontWeight: '600', flexShrink: 0, transition: 'all 0.3s ease', boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.12)' }}>{dmNavOpen ? Icons.x('white', 16) : <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500' }}>Features</span>}</button>
           </div>
           <div style={{ position: 'relative', flexShrink: 0 }}>
             <button aria-label="More options" className="hit44" onClick={() => setShowDmMenu(!showDmMenu)} style={{ width: '34px', height: '34px', borderRadius: '17px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.moreVertical('white', 16)}</button>
@@ -367,6 +621,19 @@ export default function DmDetail({
         <div style={{ padding: '8px 12px', backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--divider)', display: 'flex', gap: '8px', alignItems: 'center', flexShrink: 0 }}>
           <SearchInputLocal aria-label="Search messages" inputRef={dmChatSearchRef} type="text" initialValue={dmChatSearch} onCommit={setDmChatSearch} placeholder="Search messages..." style={{ flex: 1, padding: '8px 12px', borderRadius: '20px', backgroundColor: 'var(--bg-hover)', color: 'var(--text-primary)', border: 'none', fontSize: 'var(--t-label)', outline: 'none' }} />
           {dmChatSearch && <button aria-label="Clear search" className="hit44" onClick={() => setDmChatSearch('')} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textSecondary, 14)}</button>}
+        </div>
+      )}
+
+      {/* The match count. It used to be the first thing inside the scroller,
+          which meant it scrolled away from the field that produced it; the
+          stream is the module's now, so it sits under the search bar where it
+          answers the query it belongs to. Same condition as before: a live
+          query, and something to count. */}
+      {showDmChatSearch && dmChatSearch.trim() && dmMatchCount > 0 && (
+        <div style={{ textAlign: 'center', padding: '8px 12px 0', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
+          <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-card)', padding: '4px 12px', borderRadius: '12px' }}>
+            {dmMatchCount} matching messages
+          </span>
         </div>
       )}
 
@@ -778,55 +1045,55 @@ export default function DmDetail({
         </div>
       )}
 
-      <div onScroll={(e) => {
-        const el = document.activeElement;
-        if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) el.blur();
-        const c = e.currentTarget;
-        const fromBottom = c.scrollHeight - c.scrollTop - c.clientHeight;
-        setShowJumpPill((prev) => {
-          const next = prev ? fromBottom > 200 : fromBottom > 600;
-          // Same hysteresis band, read by App.js's tail-follow effect. See
-          // the flock twin in ChatDetail.js.
-          dmNearBottomRef.current = !next;
-          return next;
-        });
-      }} style={{ flex: 1, padding: '16px', overflowY: 'auto', overflowX: 'hidden', background: `linear-gradient(180deg, ${colors.cream} 0%, ${colors.cream}cc 100%)`, scrollBehavior: 'smooth' }}>
-        {showDmChatSearch && dmChatSearch.trim() && selectedDm.messages.filter(m => {
-          const q = dmChatSearch.toLowerCase();
-          return m.text?.toLowerCase().includes(q) || m.sender?.toLowerCase().includes(q);
-        }).length > 0 && (
-          <div style={{ textAlign: 'center', marginBottom: '12px' }}>
-            <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', backgroundColor: 'var(--bg-card)', padding: '4px 12px', borderRadius: '12px' }}>
-              {selectedDm.messages.filter(m => { const q = dmChatSearch.toLowerCase(); return m.text?.toLowerCase().includes(q) || m.sender?.toLowerCase().includes(q); }).length} matching messages
-            </span>
-          </div>
-        )}
-        {showDmChatSearch && dmChatSearch.trim() && selectedDm.messages.filter(m => {
-          const q = dmChatSearch.toLowerCase();
-          return m.text?.toLowerCase().includes(q) || m.sender?.toLowerCase().includes(q);
-        }).length === 0 && (
+      {/* THE STREAM. MessageList owns the scroll from here on: it lands on the
+          newest message when the thread opens, follows the tail on your own
+          send and never on somebody else's arrival, raises "N new messages"
+          instead when one lands while you are reading back, and corrects the
+          offset by the exact height that appeared when an older page goes in
+          above you. The div that used to be here did none of that, and it
+          blurred the focused field on every scroll event, which is why the
+          keyboard shut itself whenever a message arrived and moved the list.
+          That handler is not carried over in any form.
+
+          Rows, not messages: dmRows is the search-filtered, quote-resolved,
+          match-highlighted view of the thread. Everything a handler hands back
+          to the app shell goes through originalDmRow first. */}
+      <MessageList
+        rows={dmRows}
+        /* The other person's id. App.js mounts this screen with no key, so a
+           jump straight from one conversation into another reuses the
+           component; without this the second thread would inherit the first
+           one's scroll position and its unread count. */
+        threadKey={selectedDmId}
+        myId={myDmId}
+        ownName="You"
+        /* A member's colour is a fact about a conversation, so it arrives as a
+           prop rather than out of a stylesheet. Two people here: the viewer
+           takes the module's accent and the other person the neutral fallback
+           MessageList already defaults to. Tokens, never literals, so both
+           themes are answered. --chat-accent is defined by the module's own
+           cards.css, which VenueCardRow below pulls in; the second value keeps
+           the name legible if that ever stops being true. */
+        ownColour="var(--chat-accent, var(--accent-purple-text))"
+        renderCard={renderDmCard}
+        renderStatus={renderDmStatus}
+        /* Scrollback. The button and its Loading state are the module's; the
+           condition behind atTop is this screen's, unchanged. */
+        onLoadOlder={() => loadOlderDms(selectedDmId, oldestServerId(dmSourceRows))}
+        atTop={!dmCanLoadOlder}
+        olderLoading={olderLoading}
+        onLongPress={openDmActions}
+        onSwipeReply={startDmReply}
+        onOpenImage={(m) => openImageViewer(originalDmRow(m))}
+        onReactionTap={toggleDmReaction}
+        loadingState={dmMessagesLoading && selectedDm.messages.length === 0 ? (
+          <ChatSkeleton label={`Loading your messages with ${selectedDm.name}`} />
+        ) : null}
+        emptyState={dmSearchQuery ? (
           <div style={{ textAlign: 'center', padding: '40px 20px' }}>
             <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-tertiary)', fontWeight: '500' }}>No messages match "{dmChatSearch}"</p>
           </div>
-        )}
-        {/* Scrollback. Only offered when the thread is showing a full page,
-            which is the only case where there can be anything behind it, and
-            it retires itself the moment the server hands back a short page. */}
-        {!dmMessagesLoading && !(showDmChatSearch && dmChatSearch.trim()) && !dmAtTop[selectedDmId] && selectedDm.messages.length >= DM_PAGE_SIZE && (
-          <div style={{ textAlign: 'center', marginBottom: '14px' }}>
-            <button
-              className="hit44"
-              disabled={olderLoading}
-              onClick={() => loadOlderDms(selectedDmId, oldestServerId(selectedDm.messages))}
-              style={{ padding: '8px 14px', borderRadius: '14px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: olderLoading ? 'default' : 'pointer', opacity: olderLoading ? 0.6 : 1 }}
-            >
-              {olderLoading ? 'Loading' : 'Load earlier messages'}
-            </button>
-          </div>
-        )}
-        {dmMessagesLoading && selectedDm.messages.length === 0 ? (
-          <ChatSkeleton label={`Loading your messages with ${selectedDm.name}`} />
-        ) : selectedDm.messages.length === 0 ? (
+        ) : (
           <div style={{ textAlign: 'center', padding: '40px 20px' }}>
             <div style={{ width: '60px', height: '60px', borderRadius: '30px', background: colors.navyBg, margin: '0 auto 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-display)', fontWeight: '600', color: 'white', overflow: 'hidden' }}>
               {selectedDm.image ? <img src={selectedDm.image} alt="" style={{ width: '60px', height: '60px', borderRadius: '30px', objectFit: 'cover' }} /> : (selectedDm.name?.[0]?.toUpperCase() || '?')}
@@ -838,223 +1105,8 @@ export default function DmDetail({
             <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{dmBlocked[String(selectedDmId)] ? 'These messages are not available.' : 'Say hi to start the conversation.'}</p>
             <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '16px auto 0' }} />
           </div>
-        ) : (
-          (() => {
-            const dmRows = showDmChatSearch && dmChatSearch.trim()
-              ? selectedDm.messages.filter(m => { const q = dmChatSearch.toLowerCase(); return m.text?.toLowerCase().includes(q) || m.sender?.toLowerCase().includes(q); })
-              : selectedDm.messages;
-            return dmRows.map((m, idx) => {
-            const separatorLabel = daySeparatorFor(dmRows, idx);
-            return (
-            <React.Fragment key={m.id}>
-                {separatorLabel && (
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '4px 0 14px' }}>
-                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-tertiary)', background: 'var(--bg-hover)', padding: '3px 12px', borderRadius: '10px' }}>{separatorLabel}</span>
-                  </div>
-                )}
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '12px', flexDirection: m.sender === 'You' ? 'row-reverse' : 'row' }}>
-              <div style={{ width: '32px', height: '32px', borderRadius: '16px', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', color: 'white', fontWeight: '500', flexShrink: 0, overflow: 'hidden' }}>
-                {m.sender === 'You'
-                  ? (profilePic ? <img src={profilePic} alt="" style={{ width: '32px', height: '32px', borderRadius: '16px', objectFit: 'cover' }} /> : 'Y')
-                  : (selectedDm.image ? <img src={selectedDm.image} alt="" style={{ width: '32px', height: '32px', borderRadius: '16px', objectFit: 'cover' }} /> : (selectedDm.name?.[0]?.toUpperCase() || '?'))
-                }
-              </div>
-              {/* A send in flight is dimmed and says so below. `pending` has
-                  been set on every optimistic bubble since the echo work
-                  landed and nothing ever rendered it, so a message sat looking
-                  exactly like a delivered one until either the server echoed
-                  it or the 8 second timer turned it red. On a slow phone that
-                  is eight seconds of a photo that looks sent and is not. */}
-              <div style={{ maxWidth: '75%', position: 'relative', opacity: m.pending ? 0.6 : 1, transition: 'opacity 0.2s ease' }}>
-                {/* Reply reference. A quoted photo has no text of its own, so
-                    the quote says what it is instead of sitting empty. */}
-                {m.reply_to && (
-                  <div style={{ padding: '4px 10px', marginBottom: '2px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)', border: '1px solid var(--border-default)' }}>
-                    <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{m.reply_to.sender}</span>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '1px 0 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{messagePreview({ ...m.reply_to, hadContent: true })}</p>
-                  </div>
-                )}
-                {/* A send the server never acknowledged. The photo is still in
-                    this bubble, so retrying costs one tap and never asks for
-                    the picture again (upload contract, SLOP-AUDIT J3). */}
-                {m.failed && (
-                  <div role="alert">
-                    {/* role="alert" on a wrapper, not on the button: a button
-                        that claims the alert role stops announcing as a
-                        button. This text arrives on an eight second timeout
-                        with no keypress behind it, so without a region a
-                        screen reader user is left believing it sent. */}
-                  <button className="hit44" onClick={() => retryFailedDm(selectedDmId, m)} style={{ background: 'none', border: 'none', padding: '0 4px 4px', cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--accent-red-text, #b91c1c)', display: 'block', marginLeft: 'auto' }}>
-                    Didn't send. Tap to retry
-                  </button>
-                  {/* The same way out the flock chat has. Some sends can never
-                      succeed, and retry is not a way out of one. */}
-                  <button
-                    className="hit44"
-                    aria-label="Remove this message that did not send"
-                    onClick={() => discardFailedDm(selectedDmId, m)}
-                    style={{ background: 'none', border: 'none', padding: '0 4px 4px', cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-tertiary)' }}
-                  >
-                    Remove
-                  </button>
-                  </div>
-                )}
-                {/* Venue card message. Same VenueCard as flocks, and wrapped in
-                    the same tap target as text and photo bubbles so it can be
-                    reported. The card's own buttons stop propagation. */}
-                {m.message_type === 'venue_card' && m.venue_data ? (
-                  <div
-                    onClick={() => setShowDmReactionPicker(showDmReactionPicker === m.id ? null : m.id)}
-                    /* The DM picker is absolutely positioned against the bottom
-                       of the row. On a venue card that is exactly where View
-                       Details and Vote sit, so open the space rather than cover
-                       the buttons with the row that reports them. */
-                    style={{ cursor: 'pointer', paddingBottom: showDmReactionPicker === m.id ? '40px' : 0 }}
-                  >
-                  <VenueCard
-                    venue={m.venue_data}
-                    colors={colors}
-                    Icons={Icons}
-                    getCategoryColor={getCategoryColor}
-                    onViewDetails={() => {
-                      const vd = m.venue_data;
-                      const pid = vd.place_id;
-                      if (pid) {
-                        leaveDmScreen();
-                        setVenueDetailReturnTo({ tab: 'chat', screen: 'dmDetail', dmId: selectedDmId });
-                        setCurrentTab('explore');
-                        setCurrentScreen('main');
-                        setTimeout(() => {
-                          openVenueDetail(pid, { name: vd.name, formatted_address: vd.addr, place_id: pid, rating: vd.stars || vd.rating, photo_url: vd.photo_url }, { panMap: true });
-                        }, 500);
-                      }
-                    }}
-                    onVote={() => {
-                      const vName = m.venue_data.name;
-                      const vId = m.venue_data.place_id;
-                      const mn = authUser?.name;
-                      // Same capture as the panel's own vote button: this card
-                      // is the third way into the same tally and it rolled back
-                      // no further than the other two did.
-                      const previousVotes = dmVenueVotes;
-                      const existing = dmVenueVotes.find(v => v.venue_name === vName);
-                      if (existing && (existing.voters || []).includes(mn)) return;
-                      if (existing) {
-                        setDmVenueVotes(prev => prev.map(v => ({ ...v, voters: v.venue_name === vName ? [...(v.voters || []), mn] : (v.voters || []).filter(x => x !== mn), vote_count: v.venue_name === vName ? parseInt(v.vote_count || 0) + 1 : (v.voters || []).includes(mn) ? parseInt(v.vote_count || 0) - 1 : parseInt(v.vote_count || 0) })).filter(v => parseInt(v.vote_count || 0) > 0 || v.venue_name === vName));
-                      } else {
-                        setDmVenueVotes(prev => [...prev.map(v => ({ ...v, voters: (v.voters || []).filter(x => x !== mn), vote_count: (v.voters || []).includes(mn) ? parseInt(v.vote_count || 0) - 1 : parseInt(v.vote_count || 0) })).filter(v => parseInt(v.vote_count || 0) > 0), { venue_name: vName, venue_id: vId, vote_count: 1, voters: [mn] }]);
-                      }
-                      if (commitDmVote(vName, vId, previousVotes, "Your vote didn't save.")) trackDmVenueVote();
-                    }}
-                  />
-                  </div>
-                ) : m.message_type === 'image' && (m.image_url || m.thumb_url) ? (
-                  /* Image message */
-                  <button type="button" onClick={() => setShowDmReactionPicker(showDmReactionPicker === m.id ? null : m.id)} style={{ borderRadius: '18px', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.1)', borderTopRightRadius: m.sender === 'You' ? '4px' : '18px', borderTopLeftRadius: m.sender === 'You' ? '18px' : '4px', cursor: 'pointer', lineHeight: 0, padding: 0, border: 'none', background: 'none', display: 'block' }}>
-                    {/* alt was the empty string, which told VoiceOver this
-                        message had no content at all: an empty bubble where a
-                        photo should be. */}
-                    <img src={m.thumb_url || m.image_url} alt={`From ${m.sender}`} loading="lazy" style={{ width: '100%', maxWidth: '260px', maxHeight: '340px', objectFit: 'cover', display: 'block' }} />
-                  </button>
-                ) : (
-                  /* Text message */
-                  /* overflowWrap: 'anywhere' is load-bearing, not polish. The
-                     row caps at 75% but a message with no spaces in it (a
-                     pasted link, a keysmash, a wall of one repeated character)
-                     has nowhere to break, so the bubble grew past the phone and
-                     took the chat's horizontal scrollbar with it. SLOP-AUDIT
-                     H19: nothing cut off at 320-390px. */
-                  <button type="button" onClick={() => setShowDmReactionPicker(showDmReactionPicker === m.id ? null : m.id)} style={{ borderRadius: '16px', padding: '10px 14px', fontSize: 'var(--t-label)', overflowWrap: 'anywhere', backgroundColor: m.sender === 'You' ? (isDark ? '#1e3a5c' : colorsLight.navy) : 'var(--msg-received-bg)', color: m.sender === 'You' ? 'white' : 'var(--msg-received-text)', borderTopRightRadius: m.sender === 'You' ? '4px' : '16px', borderTopLeftRadius: m.sender === 'You' ? '16px' : '4px', boxShadow: 'var(--card-shadow-sm)', cursor: 'pointer', textAlign: 'left', font: 'inherit', display: 'inline-block', border: 'none' }}>
-                    {showDmChatSearch && dmChatSearch.trim() && m.text?.toLowerCase().includes(dmChatSearch.toLowerCase()) ? (
-                      m.text.split(new RegExp(`(${dmChatSearch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')).map((part, pi) =>
-                        part.toLowerCase() === dmChatSearch.toLowerCase() ? <mark key={pi} style={{ background: 'var(--search-highlight)', color: 'inherit', borderRadius: '2px', padding: '0 1px' }}>{part}</mark> : part
-                      )
-                    ) : m.text}
-                  </button>
-                )}
-                {/* Reactions display. groupReactions, the same helper the flock
-                    side uses, so a DM reaction read back from history keeps the
-                    id of who left it and ownership is compared as a string. The
-                    old inline reduce dropped user_id from the key and compared
-                    r.user_id === authUser.id with ===, so a reaction survived a
-                    reload as a pill you could see but could no longer take back:
-                    the REST history hands user_id back as a number while the
-                    live socket payload hands it back as a string, so strict
-                    equality answered false for your own reaction after a reload. */}
-                {m.reactions && m.reactions.length > 0 && (
-                  <div style={{ display: 'flex', gap: '4px', marginTop: '4px', flexWrap: 'wrap', justifyContent: m.sender === 'You' ? 'flex-end' : 'flex-start' }}>
-                    {groupReactions(m.reactions).map((g) => {
-                      const mine = g.userIds.some((id) => String(id) === String(authUser?.id));
-                      return (
-                        <button
-                          key={g.emoji}
-                          type="button"
-                          className="reaction-pop hit44"
-                          aria-pressed={mine}
-                          aria-label={`${g.emoji} ${g.count}${mine ? ', including you. Tap to remove your reaction' : '. Tap to react'}`}
-                          onClick={() => { const otherUser = selectedDmId; if (mine) { if (!dmRemoveReact(m.id, g.emoji, otherUser)) removeDmReaction(m.id, g.emoji).catch(() => showToast('Could not remove that reaction. Try again.', 'error')); } else if (!dmReact(m.id, g.emoji, otherUser)) { addDmReaction(m.id, g.emoji).catch(() => showToast('Could not react. Try again.', 'error')); } }}
-                          style={{ fontSize: 'var(--t-meta)', backgroundColor: 'var(--bg-card-solid)', border: mine ? `1px solid ${colors.steel}` : '1px solid var(--border-default)', borderRadius: '12px', padding: '2px 6px', cursor: 'pointer', boxShadow: 'var(--card-shadow-sm)', display: 'inline-flex', alignItems: 'center', gap: '3px', minHeight: 'auto' }}
-                        >{g.emoji} {g.count > 1 ? g.count : ''}</button>
-                      );
-                    })}
-                  </div>
-                )}
-                {/* Reaction picker */}
-                {showDmReactionPicker === m.id && (
-                  <div style={{ display: 'flex', gap: '4px', marginTop: '4px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '4px 8px', boxShadow: '0 2px 12px rgba(0,0,0,0.15)', position: 'absolute', [m.sender === 'You' ? 'right' : 'left']: 0, bottom: '-8px', zIndex: 5 }}>
-                    {dmReactions.map(emoji => (
-                      <button aria-label={`React with ${emoji}`} className="hit44" key={emoji} onClick={(e) => { e.stopPropagation(); if (!dmReact(m.id, emoji, selectedDmId)) addDmReaction(m.id, emoji).catch(() => showToast('Could not react. Try again.', 'error')); setShowDmReactionPicker(null); }} style={{ fontSize: 'var(--t-title)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', borderRadius: '8px', transition: 'transform 0.15s' }}
-                        onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.3)'; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
-                      >{emoji}</button>
-                    ))}
-                    {m.sender === 'You' && typeof m.id === 'number' && m.id <= 2147483647 && (
-                      <button aria-label="Unsend message" className="hit44" onClick={(e) => { e.stopPropagation(); setShowDmReactionPicker(null); handleUnsendDm(m.id); }} style={{ fontSize: 'var(--t-meta)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: 'var(--text-secondary)', fontWeight: '600' }} title="Unsend">Unsend</button>
-                    )}
-                    {m.message_type === 'image' && (m.image_url || m.thumb_url) && (
-                      <button aria-label="View photo full size" className="hit44" onClick={(e) => { e.stopPropagation(); setShowDmReactionPicker(null); openImageViewer(m); }} style={{ fontSize: 'var(--t-body)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: colors.navy, fontWeight: '600' }} title="View photo">{Icons.eye(colors.navy, 14)}</button>
-                    )}
-                    <button aria-label="Reply" className="hit44" onClick={(e) => { e.stopPropagation(); setDmReplyingTo(m); setShowDmReactionPicker(null); }} style={{ fontSize: 'var(--t-body)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: colors.navy, fontWeight: '600' }} title="Reply">{Icons.reply(colors.navy, 14)}</button>
-                    {m.sender !== 'You' && (
-                      <button aria-label="Report" className="hit44" onClick={(e) => { e.stopPropagation(); setShowDmReactionPicker(null); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'dm', contentId: m.id }); }} style={{ fontSize: 'var(--t-body)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: '#EF4444', fontWeight: '600' }} title="Report">{Icons.flag('#EF4444', 15)}</button>
-                    )}
-                  </div>
-                )}
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 4px 0', textAlign: m.sender === 'You' ? 'right' : 'left' }}>{m.pending ? 'Sending' : getRelativeTime(m.time)}</p>
-              </div>
-            </div>
-            </React.Fragment>
-            );
-            });
-          })()
         )}
-        {/* Typing indicator */}
-        {/* `visibility` as well as opacity. See the same indicator in
-            screens/ChatDetail.js: opacity alone leaves the name in the
-            accessibility tree when nobody is typing. */}
-        <div style={{ height: '50px', overflow: 'hidden', opacity: dmIsTyping ? 1 : 0, visibility: dmIsTyping ? undefined : 'hidden', transition: `opacity 0.2s ease, visibility 0s linear ${dmIsTyping ? '0s' : '0.2s'}`, pointerEvents: dmIsTyping ? 'auto' : 'none' }}>
-          <div style={{ display: 'flex', gap: '10px' }}>
-            <div style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-card-solid)', border: '2px solid var(--border-subtle)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{selectedDm.name?.[0] || '?'}</div>
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start' }}>
-              <span style={{ fontSize: 'var(--t-meta)', color: colors.navy, fontWeight: '500', marginBottom: '4px', paddingLeft: '4px' }}>{dmTypingUser || selectedDm.name}</span>
-              <div style={{ padding: '10px 16px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '18px', borderBottomLeftRadius: '4px', boxShadow: '0 2px 10px rgba(0,0,0,0.05)', display: 'flex', alignItems: 'center', gap: '3px' }}>
-                <div style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: colors.navyBg, animation: 'typingDot 1.4s ease-in-out infinite', opacity: 0.7 }} />
-                <div style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: colors.navyBg, animation: 'typingDot 1.4s ease-in-out 0.2s infinite', opacity: 0.7 }} />
-                <div style={{ width: '7px', height: '7px', borderRadius: '50%', backgroundColor: colors.navyBg, animation: 'typingDot 1.4s ease-in-out 0.4s infinite', opacity: 0.7 }} />
-              </div>
-            </div>
-          </div>
-        </div>
-        {showJumpPill && (
-          <div style={{ position: 'sticky', bottom: '8px', display: 'flex', justifyContent: 'center', zIndex: 5, pointerEvents: 'none' }}>
-            <button className="hit44" onClick={() => dmEndRef?.current?.scrollIntoView({ behavior: 'smooth' })} style={{ pointerEvents: 'auto', display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', borderRadius: '18px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', boxShadow: '0 4px 14px rgba(0,0,0,0.14)' }}>
-              {Icons.chevronDown(colors.navy, 14)} Jump to latest
-            </button>
-          </div>
-        )}
-        <div ref={dmEndRef} />
-        <div ref={dmChatEndRef} />
-      </div>
+      />
 
       {/* The server refused this conversation. Standing, not a toast: retrying
           will be refused identically, so the screen has to say what is wrong
@@ -1101,6 +1153,35 @@ export default function DmDetail({
         </div>
       )}
 
+      {/* TYPING, IN ONE STRIP ABOVE THE COMPOSER. This replaces the fixed 50px
+          slot that used to sit at the bottom of the stream and cost that height
+          all the time to say something true for a few seconds an hour. The
+          strip collapses to nothing when nobody is typing, and the list above
+          is bottom anchored, so it slides the stream up under itself rather
+          than pushing the composer down.
+
+          MOUNTED UNCONDITIONALLY, and that is not an oversight. TypingRow keeps
+          a clipped live region alive whether or not anybody is here, because a
+          screen reader only announces text arriving in a region that was
+          already in the tree. Rendering it conditionally would put the region
+          back to being created together with its first sentence, which
+          VoiceOver routinely says nothing about.
+
+          NO PRESENCE CLAIM. `present` is false because this screen has no
+          presence data: the socket says who is typing and nothing more. The
+          header's own dot is a connection reading about the viewer, not about
+          the other person, and it is not repeated here. */}
+      <TypingRow
+        members={[{
+          id: selectedDmId,
+          name: dmTypingUser || selectedDm.name,
+          colour: 'var(--chat-name-fallback)',
+          avatarUrl: selectedDm.image,
+          present: false,
+          typing: !!dmIsTyping,
+        }]}
+      />
+
       {/* Reply bar */}
       {dmReplyingTo && (
         <div style={{ padding: '8px 12px', borderTop: '1px solid var(--divider)', backgroundColor: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
@@ -1136,6 +1217,54 @@ export default function DmDetail({
           <button aria-label="Send" className="hit44 glass-btn glass-navy" onClick={() => sendDmMessage()} disabled={!chatInputHasText} style={{ width: '42px', height: '42px', minWidth: '42px', flexShrink: 0, borderRadius: '21px', border: 'none', background: chatInputHasText ? colors.navyBg : 'var(--pill-bg)', color: 'white', cursor: chatInputHasText ? 'pointer' : 'default', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.send('white', 18)}</button>
         </div>
       </div>
+      )}
+
+      {/* MESSAGE ACTIONS, ON A LONG PRESS.
+          Every action the tap-to-open picker carried is here and none of them
+          changed: the quick emoji, View photo, Unsend, Reply, Report. Only the
+          trigger moved. MessageRow reports a 350ms press through onLongPress
+          with the message and the row's own rect and draws no menu itself, so
+          the menu is the screen's, which is also why a card, a photo or a
+          reaction pill inside the row keeps its own tap.
+
+          Positioned against the row and centred across the phone: at 320px a
+          menu anchored to the row's left edge runs off the screen the moment
+          the row is a wide one. The backdrop is a real button rather than a
+          div with an onClick, so dismissing it is reachable without a pointer,
+          and DialogBehavior brings the same Escape and focus handling every
+          other sheet on this screen already has. */}
+      {dmActionMessage && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 300 }}>
+          <DialogBehavior onClose={closeDmActions} label="Message actions" />
+          <button
+            aria-label="Close message actions"
+            className="hit44"
+            onClick={closeDmActions}
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', background: 'transparent', border: 'none', padding: 0, cursor: 'default' }}
+          />
+          <div
+            role="group"
+            aria-label="Message actions"
+            style={{ position: 'absolute', top: `${dmActionTop}px`, left: '50%', transform: 'translateX(-50%)', maxWidth: 'calc(100% - 24px)', display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: '4px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-subtle)', borderRadius: '16px', padding: '4px 8px', boxShadow: 'var(--card-shadow)' }}
+          >
+            {dmReactions.map(emoji => (
+              <button aria-label={`React with ${emoji}`} className="hit44" key={emoji} onClick={(e) => { e.stopPropagation(); const m = dmActionMessage; if (!dmReact(m.id, emoji, selectedDmId)) addDmReaction(m.id, emoji).catch(() => showToast('Could not react. Try again.', 'error')); setShowDmReactionPicker(null); }} style={{ fontSize: 'var(--t-title)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', borderRadius: '8px', transition: 'transform 0.15s' }}
+                onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.3)'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
+              >{emoji}</button>
+            ))}
+            {dmActionMessage.sender === 'You' && typeof dmActionMessage.id === 'number' && dmActionMessage.id <= 2147483647 && (
+              <button aria-label="Unsend message" className="hit44" onClick={(e) => { e.stopPropagation(); const id = dmActionMessage.id; closeDmActions(); handleUnsendDm(id); }} style={{ fontSize: 'var(--t-meta)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: 'var(--text-secondary)', fontWeight: '600' }} title="Unsend">Unsend</button>
+            )}
+            {dmActionMessage.message_type === 'image' && (dmActionMessage.image_url || dmActionMessage.thumb_url) && (
+              <button aria-label="View photo full size" className="hit44" onClick={(e) => { e.stopPropagation(); const m = dmActionMessage; closeDmActions(); openImageViewer(m); }} style={{ fontSize: 'var(--t-body)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: colors.navy, fontWeight: '600' }} title="View photo">{Icons.eye(colors.navy, 14)}</button>
+            )}
+            <button aria-label="Reply" className="hit44" onClick={(e) => { e.stopPropagation(); startDmReply(dmActionMessage); }} style={{ fontSize: 'var(--t-body)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: colors.navy, fontWeight: '600' }} title="Reply">{Icons.reply(colors.navy, 14)}</button>
+            {dmActionMessage.sender !== 'You' && (
+              <button aria-label="Report" className="hit44" onClick={(e) => { e.stopPropagation(); const id = dmActionMessage.id; closeDmActions(); setModerationTarget({ userId: selectedDmId, userName: selectedDm.name, contentType: 'dm', contentId: id }); }} style={{ fontSize: 'var(--t-body)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: '#EF4444', fontWeight: '600' }} title="Report">{Icons.flag('#EF4444', 15)}</button>
+            )}
+          </div>
+        </div>
       )}
 
     </div>

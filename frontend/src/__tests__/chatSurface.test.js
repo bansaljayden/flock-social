@@ -51,6 +51,22 @@ const appSource = fs.readFileSync(appPath, 'utf8')
   + fs.readFileSync(path.join(__dirname, '..', 'screens', 'DmDetail.js'), 'utf8');
 const apiSource = fs.readFileSync(apiPath, 'utf8');
 
+/* THE STREAM ITSELF IS `components/chat` NOW, and that is why several counts
+   below dropped from two to one and then to none. The scrollback control, the
+   in-flight dimming, the "Sending" word, the failed row's Retry and Remove and
+   the scroller's own overflow rules were written twice, once per screen; both
+   screens hand those to one module and the module draws them once for both.
+   A count of two was only ever standing in for "both threads have it", so
+   where the pair collapsed the assertion moved to the file that now draws it
+   rather than being relaxed. The screens are still read for everything they
+   still own: the loaders, the cursors, the gating conditions, the empty
+   states and both composers. */
+const dmScreenSource = fs.readFileSync(path.join(__dirname, '..', 'screens', 'DmDetail.js'), 'utf8');
+const chatModule = (f) => fs.readFileSync(path.join(__dirname, '..', 'components', 'chat', f), 'utf8');
+const messageListSource = chatModule('MessageList.js');
+const messageRowSource = chatModule('MessageRow.js');
+const statusLineSource = chatModule('StatusLine.js');
+
 // Same extractor as contentTakedownWiring.test.js: lift a module-scope `const`
 // out of App.js and evaluate it, so a pure helper can be exercised without
 // mounting a 23k-line component that pulls in maplibre and a QR scanner.
@@ -177,7 +193,14 @@ describe('scrollback', () => {
   test('both threads offer the control and both loaders exist', () => {
     expect(appSource).toMatch(/const loadOlderDms = useCallback/);
     expect(appSource).toMatch(/const loadOlderFlockMessages = useCallback/);
-    expect(appSource.match(/\{olderLoading \? 'Loading' : 'Load earlier messages'\}/g)).toHaveLength(2);
+    // Both screens still OFFER it: each hands MessageList the loader and the
+    // exhausted flag, and without both the module draws no control at all.
+    expect(appSource.match(/\n\s*onLoadOlder=\{/g)).toHaveLength(2);
+    expect(appSource.match(/\n\s*atTop=\{/g)).toHaveLength(2);
+    // And the one button both of them get is still the sentence the rest of
+    // the app uses. "EARLIER MESSAGES" is a different promise: this control
+    // loads them, it does not jump to them.
+    expect(messageListSource).toMatch(/\{olderLoading \? 'Loading' : 'Load earlier messages'\}/);
   });
 
   test('oldestServerId ignores bubbles the server never gave an id to', () => {
@@ -207,9 +230,26 @@ describe('scrollback', () => {
     // Loading older messages grows the list at the TOP. A length check read
     // that as new traffic and threw the reader back down to the newest
     // message the instant they asked for scrollback.
-    expect(appSource).toMatch(/const chatTailRef = useRef\(null\)/);
-    expect(appSource).toMatch(/const dmTailRef = useRef\(null\)/);
+    // BOTH of App.js's tail-follow effects have gone now, the flock one with
+    // the DM one, because neither screen owns a scroll sentinel any more. This
+    // used to pin the flock effect's ref, and by the end that assertion was
+    // passing on code that could not run: its effect was guarded on a ref that
+    // is never attached, so it was null forever.
+    expect(appSource).not.toMatch(/const chatTailRef = useRef\(null\)/);
+    // The declarations, not any mention: the comment left in their place names
+    // both refs while explaining why they went, and that comment is the thing
+    // that stops somebody re-adding them.
+    expect(appSource).not.toMatch(/const chatEndRef = useRef/);
+    expect(appSource).not.toMatch(/const dmChatEndRef = useRef/);
+    expect(appSource).not.toMatch(/scrollIntoView\(\{ behavior: 'instant', block: 'end' \}\)/);
+    // MessageList holds the rule for both threads: the tail ID has to have
+    // changed AND the list has to have grown, so a page going in above the
+    // reader is not new traffic and neither is an optimistic row taking the
+    // server's id.
+    expect(messageListSource).toMatch(/lastId !== prev\.lastId/);
+    expect(messageListSource).toMatch(/list\.length > prev\.count/);
     expect(appSource).not.toMatch(/chatMsgCountRef|dmMsgCountRef/);
+    expect(messageListSource).not.toMatch(/msgCountRef/);
   });
 });
 
@@ -244,9 +284,18 @@ describe('claims a chat screen must not make', () => {
     // `pending` has been set on every optimistic bubble since the echo work
     // landed and nothing rendered it, so a message looked delivered for the
     // whole eight seconds before its timer could call it failed.
-    expect(appSource).toMatch(/m\.pending \? 'Sending' : getRelativeTime\(m\.time\)/);
-    expect(appSource).toMatch(/m\.pending \? 'Sending' : \(m\.time \|\| getRelativeTime\(m\.time\)\)/);
-    expect(appSource.match(/opacity: m\.pending \? 0\.6 : 1/g)).toHaveLength(2);
+    //
+    // The word and the dimming both moved into the module, and both screens
+    // still ask for them per row.
+    expect(appSource.match(/<StatusLine status="sending" \/>/g)).toHaveLength(2);
+    expect(statusLineSource).toMatch(/sending: 'Sending',/);
+    expect(messageRowSource).toMatch(/opacity: pending \? 0\.6 : 1,/);
+    // On the DM side it is asked of EVERY row in flight, not just the newest.
+    // Two sends can be on the wire at once, and under a search "the newest own
+    // row" is the newest own row that MATCHED the query, which is a different
+    // message from the one that has not landed.
+    expect(dmScreenSource).toMatch(/if \(m\.pending\) return <StatusLine status="sending" \/>;/);
+    expect(dmScreenSource).not.toMatch(/lastOwnDmId/);
   });
 });
 
@@ -299,9 +348,15 @@ describe('a block landing mid-thread', () => {
 
 describe('layout', () => {
   test('a message with nowhere to break wraps instead of widening the phone', () => {
-    expect(appSource.match(/overflowWrap: 'anywhere'/g).length).toBeGreaterThanOrEqual(3);
-    // Both message scrollers refuse a horizontal axis outright.
-    expect(appSource.match(/overflowY: 'auto', overflowX: 'hidden'/g)).toHaveLength(2);
+    // The message body is MessageRow's now, so the rule is asserted once in
+    // the file that draws it for both threads rather than twice in the screens.
+    expect(messageRowSource).toMatch(/overflowWrap: 'anywhere',/);
+    expect(messageRowSource).toMatch(/whiteSpace: 'pre-wrap',/);
+    // The one scroller both threads mount refuses a horizontal axis outright.
+    expect(messageListSource).toMatch(/overflowY: 'auto',/);
+    expect(messageListSource).toMatch(/overflowX: 'hidden',/);
+    // And App.js's own long-string sites still wrap.
+    expect(appSource.match(/overflowWrap: 'anywhere'/g).length).toBeGreaterThanOrEqual(2);
   });
 
   test('a conversation row does not date-stamp something that arrived a minute ago', () => {
@@ -608,7 +663,9 @@ test('a send the server will always refuse has a way off the screen', () => {
   // runs the same refusal. It also parks a data URL in a 5 MB store.
   expect(appSource).toMatch(/const discardFailedMessage = useCallback\(\(flockId, failedMsg\) => \{/);
   expect(appSource).toMatch(/removeFailedFlockMessage\(flockId, failedMsg\.id\);/);
-  expect(appSource).toMatch(/aria-label="Remove this message that did not send"/);
+  // The control is StatusLine's, drawn for whichever screen hands it onRemove.
+  expect(statusLineSource).toMatch(/aria-label="Remove this message that did not send"/);
+  expect(appSource).toMatch(/onRemove=\{\(\) => discardFailedMessage\(/);
 });
 
 test('an unsent message stops being counted as unread', () => {
@@ -645,7 +702,11 @@ test('a direct message that cannot send has the same way out as a flock message'
   // control re-runs a refusal that cannot succeed, for as long as the app is
   // open, and the control has to mean one thing in both threads.
   expect(appSource).toMatch(/const discardFailedDm = useCallback\(\(userId, failedMsg\) => \{/);
-  expect((appSource.match(/aria-label="Remove this message that did not send"/g) || []).length).toBe(2);
+  // One control, written once, wired from both threads. The count of two is
+  // now the two wirings rather than two copies of the button.
+  expect(statusLineSource).toMatch(/aria-label="Remove this message that did not send"/);
+  expect((appSource.match(/\n\s*onRemove=\{\(\) => discard/g) || []).length).toBe(2);
+  expect((appSource.match(/\n\s*onRetry=\{\(\) => retry/g) || []).length).toBe(2);
 });
 
 
