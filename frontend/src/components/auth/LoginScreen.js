@@ -162,7 +162,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
     <>
       <img className="auth-mark" src="/logo192.png" alt="" aria-hidden="true" />
       <h1 className="auth-h1">Welcome back</h1>
-      <p className="auth-sub">Plans die in the group chat. This is where they happen.</p>
+      <p className="auth-sub">Get the flock out the door.</p>
     </>
   );
 

@@ -1,6 +1,6 @@
 # Flock
 
-**Plans die in the group chat. Flock is where they happen.**
+**Get the flock out the door.**
 
 Flock is a social planning app for going out with friends: start a flock,
 invite your people, vote on where to go, match budgets privately, split the
