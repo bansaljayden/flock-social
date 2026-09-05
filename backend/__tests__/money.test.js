@@ -10,7 +10,9 @@
 //      amount. Responses are scanned for the victim's number, not just for the
 //      documented keys.
 //   2. Bill-split integrity — payer changes cannot leave the former payer
-//      settled, and a settled share cannot be erased by a rewrite.
+//      settled, a settled share cannot be erased by a rewrite, and what was
+//      paid against a share survives a rewrite as credit, so an edit can never
+//      ask for the same money twice.
 //   3. Bill-split authorization — membership is required by every route that
 //      settles a debt or discloses payment handles; ghost commit cannot write
 //      into a finalized bill.
@@ -288,11 +290,29 @@ function scriptBillCreate({ existingBill, existingShares, members, creatorId = 1
     [/SELECT user_id, .*FROM bill_split_shares/, () => ({ rows: existingShares || [] })],
     [/INSERT INTO bill_splits/, () => ({ rows: [{ id: 7 }] })],
     [/DELETE FROM bill_split_shares/, () => ({ rows: [], rowCount: 0 })],
+    // A departed person's row is restated to what they paid when the two
+    // differ; see the credit block in routes/billing.js and the test on it.
+    [/UPDATE bill_split_shares SET amount/, () => ({ rows: [], rowCount: 1 })],
     [/INSERT INTO bill_split_shares/, () => ({ rows: [] })],
   ];
 }
 
 const THREE = [{ id: 1, name: 'Ava' }, { id: 2, name: 'Ben' }, { id: 3, name: 'Cy' }];
+// For every share on a bill: what was paid before this version plus what is
+// still owed on it is the share, or the payment when the payment is bigger.
+// This is the sentence that was false in both directions before migration
+// 061, and it is the one every edit test below holds the response to. The
+// payer's own row is the exception by design: it is settled as an artifact of
+// having paid the venue, with no credit and nothing owed, so it is skipped.
+function paidPlusOwedIsTheShare(share, payerId) {
+  if (share.userId === payerId) return;
+  const cents = (v) => Math.round(Number(v) * 100);
+  assert.strictEqual(
+    cents(share.paidAmount) + cents(share.outstanding),
+    Math.max(cents(share.amount), cents(share.paidAmount)),
+    `user ${share.userId}: paid ${share.paidAmount} + owed ${share.outstanding} does not reach share ${share.amount}`
+  );
+}
 
 test('changing the payer does not leave the former payer marked settled', async () => {
   // Ava opened the bill, so her share was auto-settled as the payer. She now
@@ -509,6 +529,323 @@ test('a bill revised downward leaves a settled share alone', async () => {
     'a smaller share un-settled somebody who had already overpaid it');
 });
 
+test('a bill revised upward carries what was already paid as credit and asks only for the difference', async () => {
+  // THE TEST ABOVE STOPPED AT THE FLAG (adversarial audit 2026-09-04). It
+  // pinned that Ben is un-settled when his $30 share becomes $100, and said
+  // nothing about the $30. The route cleared the flag and stored $100 against
+  // a row that no longer knew about the $30, so /payment-links asked Ben for
+  // the full $100, the push said "You owe $100.00", and a Ben who trusted the
+  // app paid $130 for a $100 share. The payment now rides across as
+  // bill_split_shares.paid_amount and what he is asked for is the difference.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptBillCreate({
+    existingBill: { id: 7, paid_by: 1 },
+    existingShares: [
+      { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '30.00', paid_amount: '0.00' },
+      { user_id: 2, committed: false, settled: true, settled_at: new Date(), amount: '30.00', paid_amount: '0.00' },
+      { user_id: 3, committed: false, settled: false, settled_at: null, amount: '30.00', paid_amount: '0.00' },
+    ],
+    members: THREE,
+  });
+
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 300, paidBy: 1 });
+
+  assert.strictEqual(res.status, 201, res.text);
+  const ben = res.body.bill.shares.find((sh) => sh.userId === 2);
+  assert.strictEqual(ben.amount, 100);
+  assert.strictEqual(ben.paidAmount, 30, 'the $30 Ben already paid is gone from the record');
+  assert.strictEqual(ben.outstanding, 70, 'Ben is being asked for the whole share, not the difference');
+  assert.strictEqual(ben.settled, false);
+  const cy = res.body.bill.shares.find((sh) => sh.userId === 3);
+  assert.strictEqual(cy.paidAmount, 0);
+  assert.strictEqual(cy.outstanding, 100);
+  for (const share of res.body.bill.shares) paidPlusOwedIsTheShare(share, 1);
+
+  // The row agrees with the response, and the INSERT names the column, since
+  // the fake would accept a seventh parameter bound to nothing.
+  const benRow = inserts('bill_split_shares').find((q) => q.params[1] === 2);
+  assert.match(benRow.sql, /paid_amount/, 'the credit is not written to the row');
+  assert.strictEqual(benRow.params[6], 30);
+  assert.strictEqual(benRow.params[4], false);
+  // And the payer's own row carries no credit: their flag records having paid
+  // the venue, not a debt they cleared.
+  const avaRow = inserts('bill_split_shares').find((q) => q.params[1] === 1);
+  assert.strictEqual(avaRow.params[6], 0);
+  assert.strictEqual(avaRow.params[4], true);
+});
+
+test('a bill revised downward keeps the payment on the row, so the overpayment is not erased', async () => {
+  // The other direction of the same defect. Ben paid $50; the bill is corrected
+  // and his share is now $20. The flag survived, which was right, and the row
+  // was rewritten to $20, which erased the only evidence that he is owed $30
+  // back.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptBillCreate({
+    existingBill: { id: 7, paid_by: 1 },
+    existingShares: [
+      { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '50.00', paid_amount: '0.00' },
+      { user_id: 2, committed: false, settled: true, settled_at: new Date(), amount: '50.00', paid_amount: '0.00' },
+      { user_id: 3, committed: false, settled: false, settled_at: null, amount: '50.00', paid_amount: '0.00' },
+    ],
+    members: THREE,
+  });
+
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 60, paidBy: 1 });
+
+  assert.strictEqual(res.status, 201, res.text);
+  const ben = res.body.bill.shares.find((sh) => sh.userId === 2);
+  assert.strictEqual(ben.amount, 20);
+  assert.strictEqual(ben.paidAmount, 50, 'the $50 Ben paid was overwritten by the $20 share');
+  assert.strictEqual(ben.outstanding, 0);
+  assert.strictEqual(ben.settled, true);
+  for (const share of res.body.bill.shares) paidPlusOwedIsTheShare(share, 1);
+  assert.strictEqual(inserts('bill_split_shares').find((q) => q.params[1] === 2).params[6], 50);
+});
+
+test('credit already carried on a row counts along with the share it then settled', async () => {
+  // Two edits deep. Ben paid $30, the bill went up to $100 a head and his row
+  // became (amount 100, paid_amount 30, unsettled); he then paid the $70 and
+  // tapped Mark as Paid, so the row is (100, 30, settled). What he has paid
+  // in total is $100, the greater of the two columns, and a third edit has to
+  // start from that figure and not from the $30 alone.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptBillCreate({
+    existingBill: { id: 7, paid_by: 1 },
+    existingShares: [
+      { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '100.00', paid_amount: '0.00' },
+      { user_id: 2, committed: false, settled: true, settled_at: new Date(), amount: '100.00', paid_amount: '30.00' },
+      { user_id: 3, committed: false, settled: false, settled_at: null, amount: '100.00', paid_amount: '0.00' },
+    ],
+    members: THREE,
+  });
+
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 600, paidBy: 1 });
+
+  assert.strictEqual(res.status, 201, res.text);
+  const ben = res.body.bill.shares.find((sh) => sh.userId === 2);
+  assert.strictEqual(ben.amount, 200);
+  assert.strictEqual(ben.paidAmount, 100, 'only the carried $30 was counted, not the $70 he settled on top of it');
+  assert.strictEqual(ben.outstanding, 100);
+  assert.strictEqual(ben.settled, false);
+  for (const share of res.body.bill.shares) paidPlusOwedIsTheShare(share, 1);
+
+  // And an unsettled row with credit that a reduction now covers is settled by
+  // that credit, with nothing asked of the person.
+  scriptBillCreate({
+    existingBill: { id: 7, paid_by: 1 },
+    existingShares: [
+      { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '100.00', paid_amount: '0.00' },
+      { user_id: 2, committed: false, settled: false, settled_at: null, amount: '100.00', paid_amount: '30.00' },
+      { user_id: 3, committed: false, settled: false, settled_at: null, amount: '100.00', paid_amount: '0.00' },
+    ],
+    members: THREE,
+  });
+  const down = await call('POST', '/api/billing/42/create', { totalAmount: 90, paidBy: 1 });
+  assert.strictEqual(down.status, 201, down.text);
+  const benDown = down.body.bill.shares.find((sh) => sh.userId === 2);
+  assert.strictEqual(benDown.amount, 30);
+  assert.strictEqual(benDown.paidAmount, 30);
+  assert.strictEqual(benDown.settled, true, 'Ben has paid $30 against a $30 share and still shows as owing');
+  assert.strictEqual(benDown.outstanding, 0);
+});
+
+test('the payment links ask for what is still owed, not the share', async () => {
+  // The other end of the same money. Every link and the Zelle instruction
+  // carried the share, so the $30 credit on the row above was invisible at
+  // the exact moment Ben opened his wallet app.
+  const rowWithCredit = { amount: '100.00', paid_amount: '30.00', settled: false };
+  for (const path of ['/api/billing/42/venmo-link', '/api/billing/42/payment-links']) {
+    handlers = [
+      [/SELECT id FROM flock_members/, isMember],
+      [/FROM bill_splits bs/, () => ({ rows: [{ id: 7, paid_by: 2, flock_id: 42, flock_name: 'Dinner' }] })],
+      [/FROM user_blocks/, () => ({ rows: [] })],
+      [/SELECT amount, .*FROM bill_split_shares/, () => ({ rows: [rowWithCredit] })],
+      [/venmo_username/, () => ({ rows: [{ name: 'Ben', venmo_username: 'ben-v', cashapp_cashtag: 'benc', zelle_identifier: 'ben@x.com' }] })],
+    ];
+
+    const res = await call('GET', path);
+
+    assert.strictEqual(res.status, 200, `${path}: ${res.text}`);
+    assert.strictEqual(res.body.amount, 70, `${path} asks for the whole share`);
+    assert.strictEqual(res.body.shareAmount, 100);
+    assert.strictEqual(res.body.paidAmount, 30);
+    assert.ok(!/amount=100(\D|$)/.test(res.text), `${path} put the full share in a link: ${res.text}`);
+    assert.ok(/amount=70(\D|$)/.test(res.text), `${path} carries no link for the $70 owed: ${res.text}`);
+    if (path.endsWith('payment-links')) {
+      assert.match(res.body.methods.find((m) => m.method === 'zelle').instructions, /\$70\.00/);
+    }
+    // The fake hands back paid_amount and settled whether or not the SQL asked
+    // for them, and Postgres does not, so the SELECT list is pinned the same
+    // way the share SELECT in /create is.
+    const sel = log.find((q) => /SELECT amount, .*FROM bill_split_shares/.test(q.sql));
+    assert.match(sel.sql, /SELECT amount, settled, paid_amount FROM bill_split_shares/,
+      `${path} does not read the credit off the row`);
+  }
+
+  // Settled means nothing is owed, whatever the two columns say.
+  handlers = [
+    [/SELECT id FROM flock_members/, isMember],
+    [/FROM bill_splits bs/, () => ({ rows: [{ id: 7, paid_by: 2, flock_id: 42, flock_name: 'Dinner' }] })],
+    [/FROM user_blocks/, () => ({ rows: [] })],
+    [/SELECT amount, .*FROM bill_split_shares/, () => ({ rows: [{ amount: '20.00', paid_amount: '50.00', settled: true }] })],
+    [/venmo_username/, () => ({ rows: [{ name: 'Ben', venmo_username: 'ben-v' }] })],
+  ];
+  const settled = await call('GET', '/api/billing/42/payment-links');
+  assert.strictEqual(settled.body.amount, 0);
+  assert.strictEqual(settled.body.paidAmount, 50);
+});
+
+test('a custom edit succeeds against the remainder once somebody who left has paid', async () => {
+  // The refusal two tests up named $40.00 as the figure the typed shares had to
+  // reach, and a payer who typed exactly that got refused again (adversarial
+  // audit 2026-09-04): the sum was first checked against the full $60 before
+  // the credit had been read, and only then against the $40 remainder, so no
+  // list of numbers passed both. One check now, against the remainder.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptBillCreate({
+    existingBill: { id: 7, paid_by: 1 },
+    existingShares: [
+      { user_id: 3, committed: false, settled: true, settled_at: new Date(), amount: '20.00' },
+    ],
+    members: [{ id: 1, name: 'Ava' }, { id: 2, name: 'Ben' }],
+  });
+
+  const res = await call('POST', '/api/billing/42/create', {
+    totalAmount: 60,
+    tipPercent: 0,
+    splitType: 'custom',
+    customShares: [{ userId: 1, amount: 15 }, { userId: 2, amount: 25 }],
+  });
+
+  assert.strictEqual(res.status, 201, res.text);
+  assert.strictEqual(res.body.bill.splitType, 'custom');
+  assert.deepStrictEqual(res.body.bill.shares.map((s) => s.amount), [15, 25]);
+  const onTheSheet = res.body.bill.shares.reduce((sum, s) => sum + Math.round(s.amount * 100), 0) + 2000;
+  assert.strictEqual(onTheSheet, 6000, `the bill's rows come to ${onTheSheet} cents against a $60 bill`);
+  assert.strictEqual(inserts('bill_split_shares').length, 2);
+  assert.deepStrictEqual(deletes('bill_split_shares')[1].params[1], [1, 2], "Cy's paid row must be spared");
+  // And a custom split that reaches the FULL total, which was the only thing
+  // the old first check accepted, is what gets refused now.
+  scriptBillCreate({
+    existingBill: { id: 7, paid_by: 1 },
+    existingShares: [
+      { user_id: 3, committed: false, settled: true, settled_at: new Date(), amount: '20.00' },
+    ],
+    members: [{ id: 1, name: 'Ava' }, { id: 2, name: 'Ben' }],
+  });
+  const full = await call('POST', '/api/billing/42/create', {
+    totalAmount: 60, tipPercent: 0, splitType: 'custom',
+    customShares: [{ userId: 1, amount: 30 }, { userId: 2, amount: 30 }],
+  });
+  assert.strictEqual(full.status, 400, full.text);
+  assert.match(full.body.error, /add up to \$40\.00/);
+});
+
+test('somebody who paid part of a share and then left is credited for it and asked for nothing', async () => {
+  // Bob paid $25, the bill went up and his row became (amount 40, paid 25,
+  // unsettled), then he left. The unsettled-only DELETE used to erase that
+  // row, and his $25 with it, so the three who were left covered his $25 a
+  // second time. His row survives because it carries a payment, the $25 comes
+  // off the total, and the row is restated to say what it now means: his
+  // allocation is what he paid and nothing is outstanding on it.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptBillCreate({
+    existingBill: { id: 7, paid_by: 1 },
+    existingShares: [
+      { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '40.00', paid_amount: '0.00' },
+      { user_id: 2, committed: false, settled: false, settled_at: null, amount: '40.00', paid_amount: '25.00' }, // Bob: part paid, gone
+      { user_id: 3, committed: false, settled: false, settled_at: null, amount: '40.00', paid_amount: '0.00' },
+      { user_id: 4, committed: false, settled: false, settled_at: null, amount: '40.00', paid_amount: '0.00' },
+    ],
+    members: [{ id: 1, name: 'Ava' }, { id: 3, name: 'Carol' }, { id: 4, name: 'Dave' }],
+  });
+
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 120, tipPercent: 0 });
+
+  assert.strictEqual(res.status, 201, res.text);
+  assert.deepStrictEqual(res.body.bill.shares.map((s) => s.amount), [31.67, 31.67, 31.66],
+    "Bob's $25 was not taken off the total");
+  const dels = deletes('bill_split_shares');
+  assert.match(dels[1].sql, /paid_amount = 0/, 'the unsettled-only DELETE would erase a row that carries a payment');
+  assert.strictEqual(dels[1].params[2], false, 'a bill with a real payer keeps what was paid on it');
+  const restated = log.filter((q) => /UPDATE bill_split_shares SET amount/.test(q.sql));
+  assert.strictEqual(restated.length, 1, "Bob's row was left saying he owes $15 he can no longer be asked for");
+  assert.deepStrictEqual(restated[0].params, [7, 2, 25]);
+  assert.match(restated[0].sql, /settled = true/);
+  assert.match(restated[0].sql, /paid_amount = \$3/);
+});
+
+test('nothing on a shell counts as paid, so a departed committer is neither credited nor kept', async () => {
+  // A ghost-commit shell has paid_by NULL. A settled flag on one of its rows
+  // is an estimate somebody tapped through before /settle refused shells, not
+  // money, and the loop that fills the credit already says so. The credit
+  // used to be banked before that rule ran, so a committer who left took $40
+  // off a real $100 bill on the strength of a flag nobody paid behind.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptBillCreate({
+    existingBill: { id: 7, paid_by: null },
+    existingShares: [
+      { user_id: 3, committed: true, settled: true, settled_at: new Date(), amount: '40.00' },
+    ],
+    members: [{ id: 1, name: 'Ava' }, { id: 2, name: 'Ben' }],
+  });
+
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 100, tipPercent: 0 });
+
+  assert.strictEqual(res.status, 201, res.text);
+  assert.deepStrictEqual(res.body.bill.shares.map((s) => s.amount), [50, 50],
+    'an estimate settled on a shell was credited against the real bill');
+  const dels = deletes('bill_split_shares');
+  assert.strictEqual(dels[1].params[2], true, "on a shell every departed row goes, the flag was never a receipt");
+  assert.strictEqual(log.filter((q) => /UPDATE bill_split_shares SET amount/.test(q.sql)).length, 0);
+});
+
+test('who is in the flock and who the money goes to are read under the flock lock', async () => {
+  // THE RACE (adversarial audit 2026-09-04). The membership check, the payer
+  // check and the roster were read on the pool before BEGIN, with the row lock
+  // taken only afterwards. Bob starts posting the bill naming himself payer,
+  // leaves the flock before the transaction opens, and the stale request
+  // commits a bill payable to somebody who is no longer in the flock: he
+  // cannot reach the sheet and the creator cannot hand the bill to anybody
+  // else, because a payer change is reserved for the outgoing payer.
+  //
+  // The fake answers "Bob is a member" only until the lock has been taken,
+  // which is Bob leaving in that window. Reads under the lock see him gone.
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptBillCreate({ existingBill: null, members: THREE, creatorId: 1 });
+  handlers[0] = [/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/, (params) => {
+    const locked = log.some((q) => /FOR UPDATE/.test(q.sql));
+    if (params[1] === 2 && locked) return noMember();
+    return isMember();
+  }];
+
+  const res = await call('POST', '/api/billing/42/create', { totalAmount: 90, paidBy: 2 });
+
+  assert.strictEqual(res.status, 400, `a bill was written against a payer who had left: ${res.text}`);
+  assert.strictEqual(inserts('bill_splits').length, 0);
+
+  // And the order itself, so the property does not depend on this one fixture:
+  // BEGIN, then the lock, then every read the handler decides anything from.
+  const first = (re) => log.findIndex((q) => re.test(q.sql));
+  const begin = first(/^BEGIN/);
+  const lock = first(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/);
+  const membership = first(/SELECT id FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/);
+  assert.ok(begin >= 0 && lock > begin, 'the transaction must open before the lock is taken');
+  assert.ok(membership > lock, 'membership was read before the flock row was locked');
+  const rollback = first(/^ROLLBACK/);
+  assert.ok(rollback > membership, 'the refusal must release the lock');
+
+  // The roster and the creator read sit under the lock as well on the path
+  // that reaches them. The log is cleared so the indices are this call's.
+  log = [];
+  scriptBillCreate({ existingBill: null, members: THREE, creatorId: 1 });
+  await call('POST', '/api/billing/42/create', { totalAmount: 90 });
+  const lock2 = first(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/);
+  assert.ok(first(/SELECT u\.id, u\.name FROM flock_members/) > lock2, 'the roster was read before the lock');
+  assert.ok(first(/SELECT name, creator_id FROM flocks/) > lock2, 'the creator was read before the lock');
+  assert.ok(first(/^COMMIT/) > first(/INSERT INTO bill_split_shares/));
+});
+
 test('the flock creator cannot move an existing bill onto themselves', async () => {
   // The creator is allowed to correct a bill they did not pay, because someone
   // has to be able to fix a typed total. `paid_by` is a different thing: it is
@@ -608,7 +945,7 @@ test('payment handles are not readable by an ex-member holding a stale share', a
     [/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/, () => ({ rows: [{ id: 42 }] })],
       [/SELECT id FROM flock_members/, noMember],
       [/FROM bill_splits bs/, () => ({ rows: [{ id: 7, paid_by: 2, flock_id: 42, flock_name: 'Dinner' }] })],
-      [/SELECT amount FROM bill_split_shares/, () => ({ rows: [{ amount: '30.00' }] })],
+      [/SELECT amount, .*FROM bill_split_shares/, () => ({ rows: [{ amount: '30.00' }] })],
       [/venmo_username/, () => ({ rows: [{ name: 'Ben', venmo_username: 'ben-v', cashapp_cashtag: 'benc', zelle_identifier: 'ben@x.com' }] })],
     ];
 
