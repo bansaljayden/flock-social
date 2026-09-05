@@ -8247,14 +8247,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const getSelectedFlock = useCallback(() => flocks.find(f => f.id === selectedFlockId), [flocks, selectedFlockId]);
 
   // Haversine distance between two lat/lng points
-  const calcDistance = useCallback((lat1, lng1, lat2, lng2) => {
+  /* THE HAVERSINE ITSELF, IN KILOMETRES. calcDistance below formats this for
+     display, and it was the only copy: anything needing to COMPARE distances
+     rather than print one had no number to compare. The who-is-here card asks
+     exactly that question ("is this member AT the venue?"), and a second copy
+     of this arithmetic somewhere else is how two surfaces come to disagree
+     about what "near" means. */
+  const distanceKm = useCallback((lat1, lng1, lat2, lng2) => {
     const R = 6371;
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLng = (lng2 - lng1) * Math.PI / 180;
     const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
-    const d = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return d < 1 ? `${Math.round(d * 1000)}m` : `${d.toFixed(1)}km`;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }, []);
+
+  const calcDistance = useCallback((lat1, lng1, lat2, lng2) => {
+    const d = distanceKm(lat1, lng1, lat2, lng2);
+    return d < 1 ? `${Math.round(d * 1000)}m` : `${d.toFixed(1)}km`;
+  }, [distanceKm]);
 
   // Local YYYY-MM-DD. toISOString() would shift the key by a day for anyone
   // east of UTC, which put their plans on the wrong calendar cell.
@@ -17965,6 +17975,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const chatDetailProps = {
         flockReplyingTo,
         setFlockReplyingTo,
+        // The numeric distance, for the who-is-here card.
+        // flockMemberLocations is already passed further down this object: the
+        // header has counted "N sharing" off it for a while, so the chat had
+        // the positions all along and only ever printed how many there were.
+        distanceKm,
         userLocation,
         ChatSkeleton,
         DM_PAGE_SIZE,
