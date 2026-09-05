@@ -466,8 +466,8 @@ async function hasMembershipRow(flockId, userId) {
 // it, the amounts are estimates off the budget ceiling rather than money
 // anybody handed over, and blocking a delete on one would make an abandoned
 // plan undeletable. Only a bill with a real payer holds a real debt.
-async function outstandingBillFor(flockId) {
-  const { rows } = await pool.query(
+async function outstandingBillFor(flockId, db = pool) {
+  const { rows } = await db.query(
     `SELECT EXISTS (
        SELECT 1
          FROM bill_split_shares bss
@@ -1566,44 +1566,66 @@ router.delete('/:id', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('
     // outstandingBillFor. The fan-out below is awaited and irreversible, so a
     // refusal after it would tell everyone the plan was cancelled and then
     // leave it standing.
-    if (await outstandingBillFor(flockId)) {
-      return res.status(409).json({ error: OUTSTANDING_BILL_MESSAGE });
-    }
-
-    // Notify members before deleting
+    // THE GUARD AND THE DELETE ARE ONE TRANSACTION, under the flock row lock
+    // POST /api/billing/:flockId/create holds for the whole of its own write.
+    // They were two autocommit statements with several awaited steps between
+    // them, so the guard could see no bill, Ben's /create could commit one in
+    // the gap, and the DELETE would then cascade through the bill and shares
+    // that had just been acknowledged to him with a 201. Under the same lock a
+    // bill being created is either committed before the guard reads, and
+    // refuses the delete, or blocked until the delete commits and then fails
+    // on a flock that no longer exists.
     const io = req.app.get('io');
-    const nameResult = await pool.query('SELECT name FROM flocks WHERE id = $1', [flockId]);
-    // Read BEFORE the delete, for the same reason the socket fan-out below is
-    // awaited before it: the DELETE cascades flock_members away, and a push
-    // that goes looking for its recipients afterwards finds nobody. Only when
-    // push is actually configured, so a deployment without it pays for no
-    // extra query.
+    const client = await pool.connect();
     let cancelRecipients = [];
-    if (isPushConfigured()) {
-      const members = await pool.query(
-        "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
-        [flockId, req.user.id]
-      );
-      cancelRecipients = members.rows.map((m) => m.user_id);
-    }
-    if (io) {
-      // `deletedBy` is the deleter's NAME, so this needs the same block-aware
-      // fan-out as every other actor-naming event. AWAITED, and deliberately
-      // before the DELETE below: the helper reads flock_members to find its
-      // recipients, and the delete CASCADEs those rows away — fire-and-forget
-      // here would race the delete and reach nobody at all.
-      await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_deleted', {
-        flockId: parseInt(flockId), flockName: nameResult.rows[0]?.name, deletedBy: req.user.name,
-      }).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
-    }
-
-    const removed = await pool.query('DELETE FROM flocks WHERE id = $1', [flockId]);
-    // Same two-statement window as PUT: the ownership check read a row that was
-    // gone by the time this ran. Reporting "Flock deleted" for a DELETE that
-    // matched nothing tells the caller their action landed when somebody else's
-    // did, so it gets the same 404 the check itself would have given.
-    if (removed.rowCount === 0) {
-      return res.status(404).json({ error: 'Flock not found' });
+    let flockName = null;
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
+      if (await outstandingBillFor(flockId, client)) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: OUTSTANDING_BILL_MESSAGE });
+      }
+      const nameResult = await client.query('SELECT name FROM flocks WHERE id = $1', [flockId]);
+      flockName = nameResult.rows[0]?.name;
+      // Read BEFORE the delete, for the same reason the socket fan-out below is
+      // awaited before it: the DELETE cascades flock_members away, and a push
+      // that goes looking for its recipients afterwards finds nobody. Only when
+      // push is actually configured, so a deployment without it pays for no
+      // extra query.
+      if (isPushConfigured()) {
+        const members = await client.query(
+          "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+          [flockId, req.user.id]
+        );
+        cancelRecipients = members.rows.map((m) => m.user_id);
+      }
+      if (io) {
+        // `deletedBy` is the deleter's NAME, so this needs the same block-aware
+        // fan-out as every other actor-naming event. AWAITED, and deliberately
+        // before the DELETE below: the helper reads flock_members to find its
+        // recipients, and the delete CASCADEs those rows away. Its reads go
+        // through the pool, outside this transaction, which is fine because
+        // nothing has changed yet at this point.
+        await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_deleted', {
+          flockId: parseInt(flockId), flockName, deletedBy: req.user.name,
+        }).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
+      }
+      const removed = await client.query('DELETE FROM flocks WHERE id = $1', [flockId]);
+      // Same two-statement window as PUT: the ownership check read a row that
+      // was gone by the time this ran. Reporting "Flock deleted" for a DELETE
+      // that matched nothing tells the caller their action landed when
+      // somebody else's did, so it gets the same 404 the check would have.
+      if (removed.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return res.status(404).json({ error: 'Flock not found' });
+      }
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw txErr;
+    } finally {
+      client.release();
     }
     res.json({ message: 'Flock deleted' });
 
@@ -1620,11 +1642,13 @@ router.delete('/:id', param('id').isInt({ min: 1, max: INT4_MAX }).withMessage('
     // file.
     if (cancelRecipients.length > 0) {
       try {
-        const flockName = nameResult.rows[0]?.name || 'A plan';
+        // flockName was read inside the transaction above, before the DELETE
+        // took the row with it.
+        const cancelledName = flockName || 'A plan';
         await Promise.allSettled(
           cancelRecipients.map((userId) => pushIfOffline(io, userId,
             'Plan cancelled',
-            `${flockName} is off.`,
+            `${cancelledName} is off.`,
             { type: 'flock_cancelled' }
           ))
         );
@@ -2664,29 +2688,44 @@ router.post('/:id/leave', param('id').isInt({ min: 1, max: INT4_MAX }).withMessa
       // delete's rule. Note that the `completed` refusal above is inside
       // `if (!isCreator)`, so the creator reaches this line with no status
       // check of any kind behind them.
-      if (await outstandingBillFor(flockId)) {
-        return res.status(409).json({ error: OUTSTANDING_BILL_MESSAGE });
-      }
-      // Same read-before-delete as DELETE /:id, and the same reason: the
-      // cascade takes the recipient list with it.
+      // Same transaction and the same flock lock as DELETE /:id, for the same
+      // reason: a guard in one autocommit statement and a DELETE in another
+      // leaves a gap a concurrent /create can commit a bill into.
       let cancelRecipients = [];
-      if (isPushConfigured()) {
-        const members = await pool.query(
-          "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
-          [flockId, req.user.id]
-        );
-        cancelRecipients = members.rows.map((m) => m.user_id);
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT id FROM flocks WHERE id = $1 FOR UPDATE', [flockId]);
+        if (await outstandingBillFor(flockId, client)) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({ error: OUTSTANDING_BILL_MESSAGE });
+        }
+        // Same read-before-delete as DELETE /:id, and the same reason: the
+        // cascade takes the recipient list with it.
+        if (isPushConfigured()) {
+          const members = await client.query(
+            "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+            [flockId, req.user.id]
+          );
+          cancelRecipients = members.rows.map((m) => m.user_id);
+        }
+        // Notify all members before deleting. Block-aware (`deletedBy` is a
+        // name) and awaited: the fan-out reads flock_members, which the DELETE
+        // below cascades away, so the read has to finish first.
+        if (io) {
+          await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_deleted', {
+            flockId: parseInt(flockId), flockName, deletedBy: req.user.name,
+          }).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
+        }
+        // Creator leaving deletes the entire flock (cascade removes members, messages, votes)
+        await client.query('DELETE FROM flocks WHERE id = $1', [flockId]);
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
       }
-      // Notify all members before deleting. Block-aware (`deletedBy` is a name)
-      // and awaited: the fan-out reads flock_members, which the DELETE on the
-      // next line cascades away, so the read has to finish first.
-      if (io) {
-        await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_deleted', {
-          flockId: parseInt(flockId), flockName, deletedBy: req.user.name,
-        }).catch((e) => console.error('flock_deleted fan-out failed:', e.message));
-      }
-      // Creator leaving deletes the entire flock (cascade removes members, messages, votes)
-      await pool.query('DELETE FROM flocks WHERE id = $1', [flockId]);
       if (io) io.socketsLeave(`flock:${flockId}`); // no ghost listeners on a dead room
       res.json({ message: 'Left flock', flock_name: flockName, deleted: true });
       // The host walking away deletes the plan, so everybody else needs the

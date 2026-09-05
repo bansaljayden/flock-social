@@ -203,6 +203,11 @@ test.after(() => new Promise((resolve) => {
 
 test.beforeEach(() => {
   __resetPlacesBudget();
+  // The crowd route's own response and neighbour-search caches. A money test
+  // has to start cold: the alternatives route now charges a unit only when an
+  // upstream call is actually made, so a search warmed by an earlier test
+  // would make the next test measure a cache hit and call it a charge.
+  crowdRouter.__test.clearCache();
   queries = [];
   handlers = [];
   weatherCalls = [];
@@ -299,10 +304,14 @@ test('an unauthenticated surface and a logged-in user draw down one ledger', asy
 // 2. Charge what you spend
 // ---------------------------------------------------------------------------
 
-// Each alternatives test uses a place id of its own. The route caches its
-// response for 10 minutes in a module-level map that no beforeEach can reach, so
-// two tests sharing an id would have the second one silently measuring a cache
-// hit — which is exactly the failure mode a money test must not have.
+// Each alternatives test uses a place id of its own, and beforeEach clears the
+// route's module-level caches as well. Either alone was once the only defence
+// (the map used to be unreachable from a test), and the second matters more
+// now: the route keys its neighbour-search cache on venue TYPE and area, not on
+// the place id, so two tests with different ids at the fixture's one address
+// share a search key. Without the reset the second would silently measure a
+// cache hit and call it a charge, which is exactly the failure mode a money
+// test must not have.
 test('alternatives charges two units for its two paid Google calls', async () => {
   const res = await get('/api/crowd/PLACE_ALT_COST/alternatives?localHour=20&localDay=5');
   assert.strictEqual(res.status, 200);
@@ -328,6 +337,30 @@ test('a second identical alternatives request costs nothing and never reaches Go
   assert.deepStrictEqual(second.body, first.body, 'a cache hit must be the same answer, not a stub');
   assert.strictEqual(googleCalls.length, 0, 'the repeat request reached Google anyway');
   assert.strictEqual(placesBudgetStatus(7).globalUsed, 2, 'a call we did not make was charged');
+});
+
+test('an alternatives request served from warm caches charges nothing', async () => {
+  // THE DEFECT, stated as a number. The payload is deliberately not cached while
+  // an owner's live reading is in it, so every request for such a venue runs the
+  // route body. The route used to reserve one or two units at the top before it
+  // knew whether either Google call would be made; once the target details and
+  // the neighbour search were both warm, each of those requests made zero calls
+  // and still spent a unit. Thirty of them emptied a person's hourly allowance.
+  // Warm both caches with one cold request, then prove the next one that runs
+  // the whole body costs nothing.
+  const first = await get('/api/crowd/PLACE_ALT_WARM/alternatives?localHour=20&localDay=5');
+  assert.strictEqual(first.status, 200);
+  assert.strictEqual(placesBudgetStatus(7).globalUsed, 2, 'the cold request buys both calls');
+
+  // Evict only the PAYLOAD entry, the way an owner's live reading does, and
+  // leave the details and search caches warm.
+  crowdRouter.__test.evictPayload('PLACE_ALT_WARM');
+  googleCalls = [];
+  const second = await get('/api/crowd/PLACE_ALT_WARM/alternatives?localHour=20&localDay=5');
+  assert.strictEqual(second.status, 200);
+  assert.strictEqual(googleCalls.length, 0, 'both caches were warm, so no call was made');
+  assert.strictEqual(placesBudgetStatus(7).globalUsed, 2,
+    'a request that made no Google call was charged for one');
 });
 
 test('a caller with one unit left cannot start a two-call request', async () => {

@@ -370,6 +370,9 @@ async function dispatch(text, params = []) {
     keys.forEach((k, i) => { if (params[i] !== null && params[i] !== undefined) f[k] = params[i]; });
     return { rows: [{ ...f }], rowCount: 1 };
   }
+  // The flock row lock both delete paths take before the outstanding-bill
+  // guard and the DELETE, so a concurrent /create cannot slip a bill between.
+  if (has('FROM flocks WHERE id = $1 FOR UPDATE')) return { rows: [{ id: params[0] }], rowCount: 1 };
   if (has('DELETE FROM flocks WHERE id = $1')) {
     const id = Number(params[0]);
     const existed = flocks.delete(id);
