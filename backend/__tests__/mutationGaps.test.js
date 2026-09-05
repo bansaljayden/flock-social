@@ -786,7 +786,9 @@ function scriptBill({
     [/SELECT id, paid_by FROM bill_splits/, () => ({ rows: existingBill })],
     [/SELECT user_id, .*FROM bill_split_shares/, () => ({ rows: existingShares })],
     [/INSERT INTO bill_splits/, () => ({ rows: [{ id: 7 }] })],
+    [/UPDATE bill_split_shares SET settled_at = NULL, settled = false/, () => ({ rows: [], rowCount: 1 })],
     [/DELETE FROM bill_split_shares/, () => ({ rows: [], rowCount: 0 })],
+    [/UPDATE bill_split_shares SET amount/, () => ({ rows: [], rowCount: 1 })],
     [/INSERT INTO bill_split_shares/, () => ({ rows: [] })],
   ];
 }
@@ -993,10 +995,11 @@ test('the flock creator can rewrite a bill someone else opened', async () => {
 
 test('a settled debt survives a payer change, and keeps the time it was settled', async () => {
   // Two clauses in one line, neither pinned:
-  //   `if (row.user_id === prevPayer && prevPayer !== payerId) continue;`
-  //     — drops ONLY the former payer's auto-settled flag. With `||` every
-  //       settled row is dropped on any payer change, so a debt someone
-  //       actually paid is re-issued.
+  //   `const payerArtifact = row.user_id === prevPayer && prevPayer !== payerId;`
+  //     — drops ONLY the former payer's auto-settled flag (it used to
+  //       `continue` past the whole row; the flag is the artifact, the money
+  //       on it is not, see the loop). With `||` every settled row is dropped
+  //       on any payer change, so a debt someone actually paid is re-issued.
   //   `existingSettled.set(row.user_id, row.settled_at || new Date())`
   //     — with `&&` the ORIGINAL settlement time is replaced by now, so the
   //       receipt says the debt was paid at the moment the bill was edited.
