@@ -482,22 +482,46 @@ export default function DmDetail({
      would be paging into a list the reader cannot see. */
   const dmCanLoadOlder = !dmMessagesLoading && !(showDmChatSearch && dmChatSearch.trim()) && !dmAtTop[selectedDmId] && dmSourceRows.length >= DM_PAGE_SIZE;
 
-  /* THE STATUS LINE, AND WHAT THIS SCREEN IS ENTITLED TO SAY. A DM row carries
-     `pending` and `failed` and nothing else: there is no delivered and no
-     opened on the wire yet, so the ladder stops at Sending and no word is
-     invented to fill the gap.
+  /* THE STATUS LINE, AND WHAT THIS SCREEN IS ENTITLED TO SAY.
 
-     BOTH are asked of every row, not just the last one, and neither is a
-     receipt. Send while offline so it fails, reconnect, send again, and both
-     are yours on the same day, so they are one run with the failed row in the
-     middle; asking only about the last row would leave that one dimmed with
-     no Retry and no Remove. Sending is the same fact about a different row:
-     two messages can be in flight at once, and each is the one that has not
-     landed. Pinning it to "the last own row" also attached it to the wrong
-     message during a search, because the row it found was the last own row
-     that MATCHED the query rather than the one still on the wire.
-     MessageGroup draws a non-last row's status under that row for exactly
-     this. */
+     This block used to end "there is no delivered and no opened on the wire
+     yet, so the ladder stops at Sending". Migration 065 and commit 2bcdc55
+     put both on the wire: `direct_messages` carries `delivered_at` and
+     `opened_at`, GET /api/dm/:userId puts the resulting word on the viewer's
+     OWN rows as `status`, and `dm_delivered` / `dm_opened` move it while the
+     thread is open. Nothing on the client asked for any of it, so for a while
+     the feature existed on both sides of the wire and on no screen.
+
+     THE TWO CLIENT-OWNED STATES STAY PER ROW, unchanged. Both are asked of
+     every row, not just the last one, and neither is a receipt. Send while
+     offline so it fails, reconnect, send again, and both are yours on the same
+     day, so they are one run with the failed row in the middle; asking only
+     about the last row would leave that one dimmed with no Retry and no
+     Remove. Sending is the same fact about a different row: two messages can
+     be in flight at once, and each is the one that has not landed. Pinning it
+     to "the last own row" also attached it to the wrong message during a
+     search, because the row it found was the last own row that MATCHED the
+     query rather than the one still on the wire. MessageGroup draws a non-last
+     row's status under that row for exactly this.
+
+     THE THREE SERVER STATES ARE NOT PER ROW. They belong to the conversation
+     and appear once, under your last own message, which is what StatusLine's
+     header describes: the word goes when the other person's next message
+     arrives, because there is now a newer thing on the screen than your
+     receipt.
+
+     NO `openedBy` HERE, and that is not an omission. A DM has one recipient,
+     so "Opened" is the whole of what there is to say and the server sends no
+     name list on this route. The flock twin's roster arithmetic has nothing to
+     do on a thread with one counterparty. */
+  const lastDmThreadRow = dmSourceRows[dmSourceRows.length - 1];
+  /* Off the thread, not off the rows being drawn: a search filters the stream
+     and must not move a receipt. */
+  const dmReceiptRowId = lastDmThreadRow && lastDmThreadRow.sender === 'You'
+    && !lastDmThreadRow.pending && !lastDmThreadRow.failed
+    ? lastDmThreadRow.id
+    : null;
+
   const renderDmStatus = (m) => {
     if (!m) return null;
     if (m.failed) {
@@ -510,7 +534,14 @@ export default function DmDetail({
       );
     }
     if (m.pending) return <StatusLine status="sending" />;
-    return null;
+    if (m.id !== dmReceiptRowId) return null;
+    /* Straight off the row, with no derivation and no default. The server sets
+       `status` on the viewer's own rows only, so an incoming message has none
+       and could never grow one here; a row stored before 065 has none either,
+       because that migration backfills nothing on purpose. Both draw the empty
+       live region StatusLine keeps mounted rather than a word. */
+    if (!m.status) return null;
+    return <StatusLine status={m.status} />;
   };
 
   /* A shared venue, as a message. The module owns the card; this decides what

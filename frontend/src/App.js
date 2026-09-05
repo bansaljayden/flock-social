@@ -3,7 +3,7 @@ import { useTheme } from './context/ThemeContext';
 // The revenue simulator math (lib/finance.js) moved to screens/RevenueScreen.js
 // with the admin console on 2026-08-27 and is imported there now. It was the
 // only reader of it in App.js, so the import went with it.
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue } from './services/api';
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
@@ -15,7 +15,7 @@ import { hapticTap, hapticSuccess, hapticAlarm } from './services/haptics';
 // Flock. App Review has that on tape. See the shim's header for the whole
 // story, including why moving the origin was the wrong fix.
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from './services/geolocation';
-import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled } from './services/socket';
+import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled, sendDmAck, sendDmOpen, sendFlockAck, sendFlockOpen, onDmDelivered, onDmOpened, onFlockRead } from './services/socket';
 import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken } from './services/firebase';
 import { resendVerificationEmail } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
@@ -1236,6 +1236,19 @@ const mapDmRow = (m, myId) => ({
   thumb_url: m.thumb_url || null,
   reactions: m.reactions || [],
   reply_to: m.reply_to ? { id: m.reply_to.id, text: m.reply_to.message_text, sender: m.reply_to.sender_name } : null,
+  // THE RECEIPT (migration 065), carried through verbatim and never invented.
+  //
+  // backend/utils/messageStatus.js attaches this to the viewer's OWN rows only
+  // and answers 'sent', 'delivered' or 'opened'. Somebody else's row has no
+  // status and must not acquire one here: a receipt belongs to the person who
+  // sent the message, and putting one on an incoming row would show the
+  // recipient a report on their own reading habits.
+  //
+  // `|| null` rather than a default word. StatusLine draws NOTHING for a
+  // missing status, which is the honest answer for every row stored before
+  // this migration existed (065 backfills nothing, deliberately) and for a
+  // response from a server that predates it.
+  status: m.status || null,
 });
 
 const mapFlockRow = (m, myId) => ({
@@ -1259,6 +1272,19 @@ const mapFlockRow = (m, myId) => ({
   // reopen it could be seen and never taken back. mapDmRow keeps the row for
   // the same reason; the two mappers now agree.
   reactions: m.reactions || [],
+  // The flock twin of the DM receipt, plus the one thing a group has that a
+  // one-to-one thread does not: WHO. `openedBy` is a list of FIRST NAMES the
+  // server already trimmed (utils/messageStatus.js firstName), so it is
+  // carried across untouched — trimming it again here would be the second
+  // trim on a value that has had one, and re-deriving it from the roster
+  // would be a second answer to a question the server has already answered.
+  //
+  // It rides only when there is something in it. StatusLine reads an empty
+  // openedBy on an 'opened' row as plain "Opened", which is right for a DM and
+  // would be a dropped fact in a group, so the server sends the list or sends
+  // nothing and this does the same.
+  status: m.status || null,
+  openedBy: m.openedBy || null,
   ...(m.image_url ? { image: m.image_url } : {}),
 });
 
@@ -8935,6 +8961,62 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     });
   }, [currentScreen, selectedFlockId, selectedFlock?.messages, docVisible]);
 
+  // ── OPENED: the receipt that names a person (migration 065) ──────────────
+  //
+  // WHAT "ON SCREEN" MEANS HERE, and why it is these three facts and not
+  // others. `currentScreen === 'chatDetail'` is the chat being the screen the
+  // app is drawing. `selectedFlockId` is WHICH chat, so a receipt can never
+  // land on the thread the user just left. `docVisible` is React state fed by
+  // visibilitychange rather than a read at effect time, which is the fix code review
+  // found on 2026-09-01 for the cursor PUT directly above: a tab parked on
+  // chatDetail and then hidden kept claiming to be reading, forever, off one
+  // stale evaluation.
+  //
+  // Together they are the same three the unread badge already trusts, and that
+  // matching matters more than any refinement would. The two answers are shown
+  // to different people — the badge to the reader, this to the sender — and
+  // the day they disagree is the day one of them is lying about the same
+  // moment.
+  //
+  // WHAT DOES NOT FIRE THIS, all of it deliberate:
+  //
+  //   A history fetch. loadFlockMessages sends the DELIVERY half and stops
+  //   there. It runs on screen entry, on the reconnect catch-up and on a tab
+  //   coming back, none of which is a person reading.
+  //
+  //   A push. Tapping a notification routes here and this effect then runs on
+  //   its own terms, with the screen actually up. The push itself claims
+  //   nothing.
+  //
+  //   A backgrounded app. docVisible is false, so the effect returns before it
+  //   reaches the emit, and the emit does not fire again until the person comes
+  //   back and something changes.
+  //
+  // NEWEST FROM OTHERS, not newest overall: a watermark is a claim about
+  // reading somebody ELSE's messages, and your own do not need one. That also
+  // makes this idempotent in the quiet case, because a thread where you were
+  // the last to speak has nothing new to claim.
+  //
+  // The ref dedupes on flock AND id, so sitting in a chat costs one emit per
+  // arriving message rather than one per render. The socket is the normal
+  // path; the REST route is the fallback for a dead socket, and only IT can
+  // report failure, so only it releases the key — the same shape the cursor
+  // PUT above uses, and for the same reason: the moment this call is most
+  // likely to fail is the moment a receipt matters most.
+  const openPutRef = useRef('');
+  useEffect(() => {
+    if (currentScreen !== 'chatDetail' || !selectedFlockId || !docVisible) return;
+    const newest = newestFromOthers(selectedFlock?.messages);
+    if (newest === null) return;
+    const key = `${selectedFlockId}:${newest}`;
+    if (openPutRef.current === key) return;
+    openPutRef.current = key;
+    if (sendFlockOpen(selectedFlockId, newest)) return;
+    markFlockOpened(selectedFlockId, newest).catch(() => {
+      if (openPutRef.current === key) openPutRef.current = '';
+    });
+  }, [currentScreen, selectedFlockId, selectedFlock?.messages, docVisible]);
+
   // Load suggested users when opening Create screen
   useEffect(() => {
     if (currentScreen === 'create') loadSuggestedUsers();
@@ -9076,12 +9158,46 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             return next;
           });
         }
+        // THE ROSTER BEHIND "Opened by 3" (migration 065).
+        //
+        // `readers` is every OTHER accepted member with their two watermarks,
+        // already filtered by the same invisible set the messages were, so a
+        // blocked or banned member can never turn up in an "Opened by" list.
+        // It lands on the flock beside `messages` rather than in a map of its
+        // own because it has exactly the flock's lifetime and every reader of
+        // it already holds the flock.
+        //
+        // REPLACED, not merged, and only from this read. The route runs one
+        // roster query for the whole page, so this is the complete and current
+        // answer; the live `flock_read` events below merge into it because each
+        // of those carries one member and nothing about the rest. The
+        // older-page reader deliberately ignores the copy it gets back: it is
+        // the same query, it adds nothing, and a `before` page that lands after
+        // a live event would put the roster back to how it looked when the
+        // request went out.
+        const readers = Array.isArray(data.readers) ? data.readers : [];
         setFlocks(prev => prev.map(f => {
           if (f.id !== flockId) return f;
           const have = new Set((f.messages || []).map(m => m.id));
           const localWithFailed = [...(f.messages || []), ...failed.filter(fm => !have.has(fm.id))];
-          return { ...f, messages: mergeHistory(localWithFailed, msgs, { keepOlder }) };
+          return { ...f, messages: mergeHistory(localWithFailed, msgs, { keepOlder }), readers };
         }));
+        // DELIVERY, THE VIEWER'S OWN. These rows just reached this device,
+        // which is the whole of what "Delivered" claims. The route already
+        // wrote the same watermark on its way out, so this is the client
+        // confirming what it actually took off the wire rather than what the
+        // server believes it sent — the case that matters is a read whose
+        // response arrived over a connection the socket had already lost and
+        // regained. Both writes are the same UPDATE with a `<` predicate, so
+        // the second one moves nothing and announces nothing.
+        //
+        // NOT AN OPEN. A history read fires on screen entry, on the reconnect
+        // catch-up and on a background tab coming back, and calling any of
+        // those "Opened" is the lie migration 065 was written to stop. The open
+        // half is the effect further down, and it asks whether a person is
+        // actually looking.
+        const newestHere = msgs.reduce((best, m) => (isServerId(m.id) && m.id > best ? m.id : best), 0);
+        if (newestHere > 0) sendFlockAck(flockId, newestHere);
       })
       .catch(() => {
         // A failed read must not look like a successful one to the throttle,
@@ -9155,6 +9271,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             ? { ...d, messages: mergeHistory(d.messages, msgs, { keepOlder }), unread: 0 }
             : d);
         });
+        // The DM half of the delivery receipt, and the flock twin's comment
+        // above applies word for word: delivered, never opened.
+        //
+        // NO `upToId`, which means "everything from this person". That is not
+        // a wider claim than the read that just happened: GET /api/dm/:userId
+        // ends by calling markDmDelivered with a null bound for this exact
+        // pair, so the server has already said it. This is the same sentence
+        // from the client, and every predicate behind it is `delivered_at IS
+        // NULL`, so the repeat writes nothing and emits nothing.
+        //
+        // The blocked branch above returns before reaching here on purpose. A
+        // receipt is a message to the other person and the server refuses one
+        // for a blocked pair; sending it anyway would be a request that exists
+        // only to be thrown away.
+        sendDmAck(userId);
       })
       .catch(() => { historyReadAtRef.current[`dm:${userId}`] = 0; })
       .finally(() => { if (showSkeleton) setDmMessagesLoading(false); });
@@ -9459,7 +9590,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             if (f.id !== msg.flock_id) return f;
             return {
               ...f,
-              messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, id: msg.id, pending: false, failed: false, time: new Date(msg.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), sentAt: msg.created_at || m.sentAt || null } : m)),
+              // `status` off the echo and never a literal. The server puts
+            // 'sent' on the SENDER's copy alone and omits it entirely on the
+            // fan-out path that fires when the block filter is unavailable
+            // ("Message saved, but live delivery is delayed"). An absent
+            // status draws nothing, which is the honest reading of a send the
+            // server could not fully account for.
+            messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, id: msg.id, pending: false, failed: false, status: msg.status || null, time: new Date(msg.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), sentAt: msg.created_at || m.sentAt || null } : m)),
             };
           }));
           return;
@@ -9479,7 +9616,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // instead of re-rendering the whole tree on every echo.
           if (staleIdx === -1) return prev;
           const updated = [...msgs];
-          updated[staleIdx] = { ...updated[staleIdx], id: msg.id, pending: false, failed: false };
+          updated[staleIdx] = { ...updated[staleIdx], id: msg.id, pending: false, failed: false, status: msg.status || null };
           const next = [...prev];
           next[fi] = { ...prev[fi], messages: updated };
           return next;
@@ -9517,6 +9654,124 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     });
     return unsub;
   }, [authUser]);
+
+  // ── RECEIPTS ARRIVING (migration 065) ────────────────────────────────────
+  //
+  // Three events, two shapes, one rule: a receipt only ever moves UP the
+  // ladder. Sent, then Delivered, then Opened, and never back. The server
+  // enforces that in its own storage (opening writes the delivery timestamp
+  // alongside, and the flock watermarks use GREATEST), but the wire does not
+  // guarantee order, and a "Delivered" landing after an "Opened" would show
+  // the sender their message being un-read.
+  //
+  // All three are handled whether or not the thread is open, because this is
+  // state and not a drawing. What the screen shows is decided by the two
+  // renderStatus functions; what happens here is that the fact is recorded, so
+  // a receipt that arrives while you are looking updates under your message,
+  // and one that arrives while you are elsewhere is already right when you
+  // come back.
+  useEffect(() => {
+    // The DM pair is a property of the ROW: two events carrying the exact ids
+    // that moved, addressed to the sender's room alone. An empty list is never
+    // sent, so an empty one here is a payload worth ignoring rather than a
+    // receipt worth drawing.
+    const applyDmReceipt = (word) => (ev) => {
+      const withUserId = Number(ev?.withUserId);
+      if (!Number.isInteger(withUserId)) return;
+      const ids = new Set((ev?.messageIds || []).map(Number).filter(isServerId));
+      if (ids.size === 0) return;
+      setDirectMessages((prev) => {
+        const at = prev.findIndex((d) => Number(d.userId) === withUserId);
+        if (at === -1) return prev;
+        let touched = false;
+        const messages = (prev[at].messages || []).map((m) => {
+          if (!ids.has(Number(m.id))) return m;
+          if (m.status === word) return m;
+          // The one-way ratchet. 'opened' outranks 'delivered' everywhere in
+          // this feature, including in backend/utils/messageStatus.js, so a
+          // late delivery event leaves an opened row alone.
+          if (word === 'delivered' && m.status === 'opened') return m;
+          touched = true;
+          return { ...m, status: word };
+        });
+        // The same array back when nothing moved, so React bails out instead
+        // of re-rendering an open thread on every no-op receipt.
+        if (!touched) return prev;
+        const next = prev.slice();
+        next[at] = { ...prev[at], messages };
+        return next;
+      });
+    };
+    const unsubDelivered = onDmDelivered(applyDmReceipt('delivered'));
+    const unsubOpened = onDmOpened(applyDmReceipt('opened'));
+
+    // The flock side is a WATERMARK PER MEMBER, so the event carries no message
+    // ids at all: one member, their two high-water marks, and the page works
+    // out which rows that covers. Merged onto the flock's roster rather than
+    // written onto rows, which is what lets a message sent five seconds ago
+    // pick up a receipt that was recorded before it existed.
+    //
+    // MERGED ON userId, NEVER ON NAME, and the name is treated as optional
+    // because it IS optional: the send-time delivery sweep in
+    // backend/sockets/handlers.js updates every online member in one statement
+    // and has their ids and nothing else, so it emits `name: null`. A client
+    // that keyed on the name would lose every one of those, and a client that
+    // overwrote the roster's name with the event's would erase the names it
+    // needs for "Opened by Ava and Bo".
+    const unsubFlockRead = onFlockRead((ev) => {
+      const flockId = Number(ev?.flockId);
+      const userId = Number(ev?.userId);
+      if (!Number.isInteger(flockId) || !Number.isInteger(userId) || userId <= 0) return;
+      // Your own receipt is not a receipt about you. The server already
+      // excludes the reader from this fan-out (emitToFlockExcludingBlocked
+      // takes the reader as the actor), so this is belt and braces against a
+      // future writer forgetting: adding yourself to the roster would make
+      // your own message report that you had opened it.
+      if (meRef.current?.id != null && Number(meRef.current.id) === userId) return;
+      const delivered = Number(ev.lastDeliveredMessageId) || 0;
+      const opened = Number(ev.lastOpenedMessageId) || 0;
+      setFlocks((prev) => {
+        const at = prev.findIndex((f) => Number(f.id) === flockId);
+        if (at === -1) return prev;
+        const list = Array.isArray(prev[at].readers) ? prev[at].readers : [];
+        const seat = list.findIndex((r) => Number(r.userId) === userId);
+        if (seat === -1) {
+          // Somebody the roster read did not return: a member who joined after
+          // it, or a roster query that failed. Recorded with whatever name the
+          // event carried, which may be none — a reader with no readable name
+          // is dropped from "Opened by" by the same rule the server uses, so
+          // the count and the names cannot disagree.
+          const next = prev.slice();
+          next[at] = {
+            ...prev[at],
+            readers: [...list, {
+              userId,
+              name: ev.name || null,
+              lastDeliveredMessageId: delivered,
+              lastOpenedMessageId: opened,
+            }],
+          };
+          return next;
+        }
+        const cur = list[seat];
+        const curDelivered = Number(cur.lastDeliveredMessageId) || 0;
+        const curOpened = Number(cur.lastOpenedMessageId) || 0;
+        const name = cur.name || ev.name || null;
+        // Forward only, on both marks. A watermark that went backwards would
+        // be a message un-delivering itself.
+        const nextDelivered = Math.max(curDelivered, delivered);
+        const nextOpened = Math.max(curOpened, opened);
+        if (nextDelivered === curDelivered && nextOpened === curOpened && name === cur.name) return prev;
+        const readers = list.slice();
+        readers[seat] = { ...cur, name, lastDeliveredMessageId: nextDelivered, lastOpenedMessageId: nextOpened };
+        const next = prev.slice();
+        next[at] = { ...prev[at], readers };
+        return next;
+      });
+    });
+
+    return () => { unsubDelivered(); unsubOpened(); unsubFlockRead(); };
+  }, []);
 
   // Listen for typing indicators via WebSocket (scoped to current flock, multi-user)
   const typingUsersRef = useRef({}); // { [userId]: name }
@@ -10282,7 +10537,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const savedId = data?.message?.id;
         setFlocks(prev => prev.map(f => {
           if (f.id !== flockId) return f;
-          return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, ...(isServerId(savedId) ? { id: savedId } : {}), ...(data?.message?.created_at ? { sentAt: data.message.created_at } : {}), pending: false } : m)) };
+          // The REST twin echoes the same `status: 'sent'` on the sender's
+          // copy, so the bubble picks up the first rung of the ladder on this
+          // transport too. Read off the body rather than assumed: this branch
+          // runs when the socket is down, which is exactly when a stale or
+          // proxied response is most likely.
+          return { ...f, messages: (f.messages || []).map(m => (m.id === tempId ? { ...m, ...(isServerId(savedId) ? { id: savedId } : {}), ...(data?.message?.created_at ? { sentAt: data.message.created_at } : {}), status: data?.message?.status || null, pending: false } : m)) };
         }));
       } catch (err) {
         // The server words a moderation refusal ("that image can't be sent")
@@ -12185,6 +12445,40 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
   }, [currentScreen, selectedDmId, loadDmMessages, loadDmVenueVotes]);
 
+  // ── OPENED, the DM twin ─────────────────────────────────────────────────
+  //
+  // Same three facts as the flock effect ("OPENED: the receipt that names a
+  // person" above, which is where the reasoning is written out in full), with
+  // the screen and the id swapped for this surface's pair. The gate has to be
+  // spelled twice because the two screens are two screens; what must never
+  // differ is WHAT it gates on, so if one of these three ever changes, change
+  // both.
+  //
+  // ONE EXTRA REFUSAL. A blocked pair is skipped rather than sent and refused.
+  // The route answers 403 for a block in either direction, so firing anyway
+  // would be a request that exists only to be thrown away, on the one screen
+  // that stands there telling the user the conversation is over.
+  //
+  // `newestFromOthers` reads the same field on a DM row as on a flock row
+  // (`sender === 'You'`), so the bound is the newest message from the person
+  // you are talking to. The route accepts an absent bound as "everything from
+  // this person" and this always sends one anyway: a bounded claim is a
+  // smaller claim, and the screen knows exactly what it drew.
+  const dmOpenPutRef = useRef('');
+  useEffect(() => {
+    if (currentScreen !== 'dmDetail' || !selectedDmId || !docVisible) return;
+    if (dmBlocked[String(selectedDmId)]) return;
+    const newest = newestFromOthers(selectedDm?.messages);
+    if (newest === null) return;
+    const key = `${selectedDmId}:${newest}`;
+    if (dmOpenPutRef.current === key) return;
+    dmOpenPutRef.current = key;
+    if (sendDmOpen(selectedDmId, newest)) return;
+    markDmOpened(selectedDmId, newest).catch(() => {
+      if (dmOpenPutRef.current === key) dmOpenPutRef.current = '';
+    });
+  }, [currentScreen, selectedDmId, selectedDm?.messages, dmBlocked, docVisible]);
+
   // Socket-sent DMs waiting for their own echo back from the server, keyed by
   // the optimistic bubble's temp id. Same job as pendingEchoRef in flock chat:
   // a connected socket is not proof of persistence, and a DM the server refused
@@ -12269,6 +12563,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // REST-confirmed send stayed undated all session and a day
           // boundary at it silently disappeared.
           ...(saved?.created_at ? { sentAt: saved.created_at } : {}),
+          // The first rung, off the body rather than assumed. Same rule as the
+          // flock REST branch: this path runs when the socket is down, and a
+          // response that carried no status is not one to put a word on.
+          status: saved?.status || null,
           pending: false,
         });
         setDmNotConnected(prev => {
@@ -12459,6 +12757,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               sender: msg.reply_to.sender || msg.reply_to.sender_name || '',
             }
           : null,
+        // The receipt, on the sender's own echo only. The server puts
+        // `status: 'sent'` on the copy it sends back to `user:{sender}` and on
+        // nothing else, so an incoming DM arrives here with none, which is
+        // right: a receipt belongs to whoever sent the message.
+        status: msg.status || null,
       };
       const previewText = messagePreview(mapped);
       // Own echo = the server's acknowledgement that the socket send was
