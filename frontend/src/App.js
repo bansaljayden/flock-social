@@ -19104,7 +19104,32 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                                 </div>
                               )}
                               {crowdScore != null && (
-                              <div style={{ position: 'absolute', top: '8px', right: '8px', padding: '4px 8px', borderRadius: '10px', backgroundColor: `${crowdColor}18`, backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              /* THE FIGURE IS DRAWN, THE MEANING IS SPOKEN.
+                                 This pill was a coloured dot and a bare number,
+                                 so a screen reader met "43" with no scale and
+                                 no unit attached to it: 43 of what, out of
+                                 what, high or low. The chat module's CrowdDial
+                                 already settled this exact question and says
+                                 so in its own header, so this follows it
+                                 rather than inventing a second answer.
+
+                                 role="img" makes the pill one leaf with this
+                                 name, instead of an unnamed group whose
+                                 aria-label a screen reader is free to ignore,
+                                 and it stops the number being announced twice.
+
+                                 "out of 100" and not "percent", deliberately.
+                                 A BestTime score is relative busyness on a
+                                 0-100 ladder, not a share of capacity, and
+                                 calling it a percentage would be a claim about
+                                 how full the room is that nothing here can
+                                 support. */
+                              <div
+                                role="img"
+                                aria-label={ownerReportShown(prediction)
+                                  ? `${prediction?.ownerReport?.noun || 'venue'} says ${crowdScore} out of 100${crowdLabelFor(crowdScore) ? `, ${crowdLabelFor(crowdScore)}` : ''}`
+                                  : `Crowd level ${crowdScore} out of 100${crowdLabelFor(crowdScore) ? `, ${crowdLabelFor(crowdScore)}` : ''}`}
+                                style={{ position: 'absolute', top: '8px', right: '8px', padding: '4px 8px', borderRadius: '10px', backgroundColor: `${crowdColor}18`, backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', gap: '4px' }}>
                                 <div style={{ width: '6px', height: '6px', borderRadius: '3px', backgroundColor: crowdColor }} />
                                 {/* An owner-asserted number carries its source
                                     even at list size — "{venue-type} says" is

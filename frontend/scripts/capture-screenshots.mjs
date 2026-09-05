@@ -509,7 +509,12 @@ async function buildFrontend() {
   if (SKIP_BUILD && fs.existsSync(path.join(BUILD_DIR, 'index.html')) && fs.existsSync(BUILD_STAMP)) {
     const old = JSON.parse(fs.readFileSync(BUILD_STAMP, 'utf8').replace(/^﻿/, ''));
     if (old.apiUrl === API_ORIGIN) {
-      log('reusing existing build (--skip-build)');
+      // The stamp tracks the API url and nothing else, so a build made before
+      // your last edit is reused without complaint. That cost a full debug
+      // cycle once: a fix was made, the capture re-run with --skip-build, and
+      // the old bundle reported the old failure. Say so rather than making the
+      // next person work it out.
+      log('reusing existing build (--skip-build) - source edits since that build are NOT in it');
       // Re-applied on the reuse path too. It is idempotent in effect (the
       // origin is already listed on a build this run made), and without it a
       // build carried over from a run on a different port keeps a policy that
@@ -789,7 +794,13 @@ const DRIVERS = {
     await search.fill('bars');
     await batch;
     await page.getByText(/See All Results/).first().click();
-    await page.getByText(/\d+%/).first().waitFor({ timeout: 30000 });
+    /* The crowd pill, by its accessible name rather than by a percent sign.
+       This waited for /\d+%/ and the app has not drawn a "%" on a crowd score
+       for a while, correctly: a BestTime score is relative busyness on a 0-100
+       ladder, not a share of capacity, so "43%" would be a claim about how
+       full the room is. The pill now carries a real name, which is both the
+       accessible fix and a handle that cannot go stale behind a style change. */
+    await page.getByLabel(/out of 100/).first().waitFor({ timeout: 30000 });
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
     await settle(page, { quiet: 1500 });
   },
