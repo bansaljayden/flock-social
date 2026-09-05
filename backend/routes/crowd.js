@@ -1677,13 +1677,28 @@ router.get('/:placeId/alternatives',
       // The owner's live reading counts, since it is the figure the sheet
       // shows for the venue itself.
       {
+        // Calibrated the way the full path calibrates (verified reports in
+        // the same window), then the owner's reading, so a venue that recent
+        // reports say is busy is not called calm on its raw score (Codex
+        // round 3, 2026-09-05). A cold details lookup reserved two units; the
+        // search unit goes back when no search runs.
+        const targetFeedback = await pool.query(
+          `SELECT venue_place_id, crowd_level, predicted_score, user_id, created_at FROM venue_feedback
+           WHERE venue_place_id = ANY($1::text[])
+             AND (day_of_week, hour) IN (($2::int, $3::int), ($4::int, $5::int), ($6::int, $7::int))
+             AND verified = true
+             AND created_at > NOW() - INTERVAL '28 days'`,
+          [[placeId], ...feedbackWindow(localDay, localHour).flat()]
+        ).catch(() => ({ rows: [] }));
+        const targetOnly = buildCalibrationAdjustment(targetFeedback.rows || [], targetResult.score);
         const ownerOnTarget = await ownerReports.getLiveOwnerReports([placeId]).catch(() => ({}));
         const shown = ownerReports.applyOwnerReport(
-          { score: targetResult.score },
+          { score: targetOnly.adjustedScore },
           ownerOnTarget && ownerOnTarget[placeId],
-          { reporters: 0, feedbackRows: [] }
+          { reporters: targetOnly.feedbackUsed ? targetOnly.reportCount : 0, feedbackRows: targetFeedback.rows || [] }
         ).score;
         if (Number.isFinite(shown) && shown <= 39) {
+          if (searchUnitReserved) refundPlacesSearch(req.user.id, 1);
           return res.json({ alternatives: [] });
         }
       }

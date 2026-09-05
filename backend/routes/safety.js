@@ -887,10 +887,21 @@ const SOS_FLOCK_AUDIENCE_SQL = `SELECT DISTINCT fm.user_id
              OR (b.blocker_id = fm.user_id AND b.blocked_id = $1)
         )`;
 
-async function alertFlockMembers(io, user, coords, contactsAlerted) {
+async function alertFlockMembers(io, user, coords, contactsAlerted, alertId = null) {
   const members = await pool.query(SOS_FLOCK_AUDIENCE_SQL, [user.id, SOS_FLOCK_WINDOW_HOURS]);
 
-  if (members.rows.length === 0) return { notified: 0 };
+  // The audience is written on the alert row BEFORE anyone hears the alarm
+  // (Codex round 3, 2026-09-05): the stand-down reads this list, and the old
+  // fire-and-forget write after the push fan-out left a window in which a
+  // cancel answered 400 and a restart made the stand-down impossible. An
+  // empty audience is written too, as the authoritative "nobody"; migration
+  // 064 reserves NULL for rows older than the snapshot.
+  const audience = members.rows.map((row) => Number(row.user_id));
+  if (alertId) {
+    await pool.query('UPDATE emergency_alerts SET flock_recipient_ids = $1::int[] WHERE id = $2', [audience, alertId]);
+  }
+
+  if (members.rows.length === 0) return { notified: 0, recipientIds: [] };
 
   const name = String(user.name || 'Someone you are out with').slice(0, 80);
   const title = `${name} needs help`;
@@ -947,7 +958,7 @@ async function alertFlockMembers(io, user, coords, contactsAlerted) {
 // go to exactly those people (migration 063). Nothing to record is not an
 // error; a write that fails is logged by the caller's catch.
 function recordFlockRecipients(alertId, leg) {
-  if (!alertId || !leg || !Array.isArray(leg.recipientIds) || leg.recipientIds.length === 0) return null;
+  if (!alertId || !leg || !Array.isArray(leg.recipientIds)) return null;
   return pool.query('UPDATE emergency_alerts SET flock_recipient_ids = $1::int[] WHERE id = $2', [leg.recipientIds, alertId]);
 }
 
@@ -991,7 +1002,11 @@ async function notifyFlockStandDown(io, user, hoursSinceAlert = 0, recipientIds 
   // was, the window could only shrink, and a flockmate reached near its
   // edge held a full-screen alarm nobody ever called off.
   const windowHours = SOS_FLOCK_WINDOW_HOURS + Math.max(0, Math.ceil(Number(hoursSinceAlert) || 0));
-  const members = snapshot.length
+  // NULL (a row from before migration 064's sentinel) means the live audience;
+  // an array, even an empty one, is exactly who was told, so an empty
+  // snapshot tells nobody (Codex round 3, 2026-09-05).
+  if (Array.isArray(recipientIds) && snapshot.length === 0) return { notified: 0 };
+  const members = Array.isArray(recipientIds)
     ? await pool.query(SOS_STAND_DOWN_SNAPSHOT_SQL, [user.id, snapshot])
     : await pool.query(SOS_FLOCK_AUDIENCE_SQL, [user.id, windowHours]);
   if (members.rows.length === 0) return { notified: 0 };
@@ -1206,8 +1221,8 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
       userName = user.rows[0]?.name || 'A Flock user';
 
       const claim = await client.query(
-        `INSERT INTO emergency_alerts (user_id, latitude, longitude, contacts_alerted)
-         VALUES ($1, $2, $3, 0) RETURNING id`,
+        `INSERT INTO emergency_alerts (user_id, latitude, longitude, contacts_alerted, flock_recipient_ids, contact_recipients)
+         VALUES ($1, $2, $3, 0, '{}'::int[], '[]'::jsonb) RETURNING id`,
         [req.user.id, coords?.lat ?? null, coords?.lng ?? null]
       );
       alertId = claim.rows[0].id;
@@ -1396,7 +1411,7 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
     // response is never held on it, and it cannot change the answer.
     // Who the alarm reached goes on the row (migration 063) so the all-clear
     // can go to them; best effort, the live-audience fallback stands otherwise.
-    alertFlockMembers(req.app.get('io'), req.user, coords, emailsSent)
+    alertFlockMembers(req.app.get('io'), req.user, coords, emailsSent, alertId)
       .then((leg) => recordFlockRecipients(alertId, leg))
       .catch((err) => console.error(
         `[Safety] SOS from user ${req.user.id}: the flock leg failed (${err.message}). `
@@ -1598,7 +1613,10 @@ router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
     // the column falls back to the live audience query, widened by the time
     // since the alarm as it always was.
     const hoursSinceAlert = (Date.now() - new Date(last.rows[0].created_at).getTime()) / 3600000;
-    const flockIds = Array.isArray(last.rows[0].flock_recipient_ids) ? last.rows[0].flock_recipient_ids : [];
+    // NULL is a row from before the snapshot (migration 064) and means the
+    // live audience; an array, even an empty one, is exactly who was told.
+    const flockIds = Array.isArray(last.rows[0].flock_recipient_ids) ? last.rows[0].flock_recipient_ids : null;
+    const flockCount = Array.isArray(flockIds) ? flockIds.length : 0;
     // A push the alarm queued for a retry (a device that timed out) must not
     // be released after the all-clear: it would put "X needs help" back on a
     // lock screen minutes after "X says they are OK". Best effort.
@@ -1618,9 +1636,11 @@ router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
       ? last.rows[0].contact_recipients
           .filter((c) => c && isMailableAddress(c.email))
           .map((c) => ({ contact_name: String(c.name || 'Your contact').slice(0, 100), contact_email: c.email }))
-      : [];
+      : null;
+    // A recorded empty list is "no contact got the alarm", so nobody gets an
+    // all-clear; only the pre-snapshot NULL re-reads the live contacts.
     let withEmail = recorded;
-    if (withEmail.length === 0) {
+    if (withEmail === null) {
       const contacts = await pool.query(
         `SELECT contact_name, contact_email
            FROM trusted_contacts
@@ -1634,7 +1654,7 @@ router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
       // The flock leg above has already gone out. If the alarm reached a
       // flock, that is the honest answer; only when it reached nobody at all
       // is there nothing this route can do.
-      if (flockIds.length > 0) {
+      if (flockCount > 0) {
         return res.json({
           success: true,
           message: 'The people on your plan have been told you are OK. None of your contacts could be reached here, so call them.',
@@ -1715,11 +1735,11 @@ router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
       if (entry && entry.count > 0) entry.count -= 1;
       return res.status(502).json({
         success: false,
-        error: flockIds.length > 0
+        error: flockCount > 0
           ? 'The people on your plan have been told you are OK, but we could not tell any of your contacts. They still have your alert. Call them.'
           : 'We could not tell any of your contacts that you are OK. They still have your alert. Call them.',
         canRetry: true,
-        flockStoodDown: flockIds.length > 0,
+        flockStoodDown: flockCount > 0,
       });
     }
 
@@ -1731,7 +1751,7 @@ router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
       success: true,
       message: parts.join('. '),
       contactsToldCount: told.length,
-      flockStoodDown: flockIds.length > 0,
+      flockStoodDown: flockCount > 0,
     });
 
     return undefined;

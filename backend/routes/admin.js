@@ -2019,12 +2019,17 @@ router.post('/venues/:userId/tier', async (req, res) => {
          SELECT expires_at FROM venue_subscriptions
           WHERE user_id = $2 AND expires_at IS NOT NULL AND expires_at <= NOW()
        ),
+       live AS (
+         SELECT 1 FROM venue_subscriptions
+          WHERE user_id = $2 AND status = 'active' AND (expires_at IS NULL OR expires_at > NOW())
+       ),
        upd AS (
          UPDATE venue_profiles SET tier = $1, updated_at = NOW()
          FROM old
          WHERE venue_profiles.user_id = old.user_id
            AND ($1 = 'free' OR old.verified = true)
            AND NOT ($10::boolean AND EXISTS (SELECT 1 FROM lapsed))
+           AND NOT ($10::boolean AND NOT EXISTS (SELECT 1 FROM live))
          RETURNING venue_profiles.id, venue_profiles.business_name, venue_profiles.tier, old.tier AS old_tier
        ),
        granted AS (
@@ -2059,7 +2064,8 @@ router.post('/venues/:userId/tier', async (req, res) => {
          FROM upd u LEFT JOIN granted g ON g.user_id = $2
        )
        SELECT u.id, u.business_name, u.tier, g.expires_at, g.granted_reason,
-              (SELECT expires_at FROM lapsed) AS lapsed_at
+              (SELECT expires_at FROM lapsed) AS lapsed_at,
+              EXISTS (SELECT 1 FROM live) AS has_live
          FROM old o
          LEFT JOIN upd u ON true
          LEFT JOIN granted g ON true`,
@@ -2072,10 +2078,18 @@ router.post('/venues/:userId/tier', async (req, res) => {
     if (result.rows.length === 0) return res.status(404).json({ error: 'Venue profile not found' });
     // The grant on file has ended and nobody said when the new one does: the
     // `lapsed` CTE stopped the write. Say when it ended and what to send.
-    const { lapsed_at: lapsedAt, ...row } = result.rows[0];
+    const { lapsed_at: lapsedAt, has_live: hasLive, ...row } = result.rows[0];
     if ((row.id === null || row.id === undefined) && needsLiveGrant && lapsedAt) {
       return res.status(400).json({
         error: `The previous grant ended on ${new Date(lapsedAt).toISOString().slice(0, 10)}. Send expiresAt or durationDays to start a new one.`,
+      });
+    }
+    // No row at all used to slip through as a permanent grant when expiresAt
+    // was omitted (Codex round 3, 2026-09-05): omitting it preserves only a
+    // LIVE grant. Explicit null stays the one permanent-grant path.
+    if ((row.id === null || row.id === undefined) && needsLiveGrant && !hasLive) {
+      return res.status(400).json({
+        error: 'This venue has no live paid grant to keep. Send expiresAt or durationDays to start one, or expiresAt: null for a permanent grant.',
       });
     }
     // A profile that exists but did not update: the UPDATE's own guard refused

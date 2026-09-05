@@ -415,12 +415,18 @@ async function repairMergedHold(userId, data = {}) {
     const firstMessageId = Number(data.firstMessageId);
     const firstDmId = Number(data.firstDmId);
     if (flockId && Number.isInteger(firstMessageId) && firstMessageId > 0) {
+      // The survivor's own sender rides on the payload (Codex round 3,
+      // 2026-09-05): the merged row carried the NEWEST message's sender, and a
+      // repair that kept it let a push caused by a since-blocked sender out
+      // under another name. Blocked either way and banned senders are not
+      // survivors at all.
       const r = await pool.query(
-        `SELECT m.id
+        `SELECT m.id, m.sender_id
            FROM messages m
            JOIN flock_members fm ON fm.flock_id = m.flock_id
                                 AND fm.user_id = $2
                                 AND fm.status = 'accepted'
+           JOIN users su ON su.id = m.sender_id AND su.is_banned IS NOT TRUE
           WHERE m.flock_id = $1
             AND m.id >= $3
             AND m.id > COALESCE(fm.last_read_message_id, 0)
@@ -428,23 +434,37 @@ async function repairMergedHold(userId, data = {}) {
             AND m.sender_id != $2
             AND m.is_hidden IS NOT TRUE
             AND m.sender_deleted_at IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM user_blocks b
+               WHERE (b.blocker_id = $2 AND b.blocked_id = m.sender_id)
+                  OR (b.blocker_id = m.sender_id AND b.blocked_id = $2)
+            )
           ORDER BY m.id DESC
           LIMIT 1`,
         [flockId, userId, firstMessageId]
       );
       if (r.rows.length === 0) return null;
-      return { body: 'New messages', data: { ...data, messageId: String(r.rows[0].id) } };
+      return {
+        body: 'New messages',
+        data: { ...data, messageId: String(r.rows[0].id), senderId: String(r.rows[0].sender_id) },
+      };
     }
     if (Number.isInteger(senderId) && senderId > 0 && Number.isInteger(firstDmId) && firstDmId > 0) {
       const r = await pool.query(
         `SELECT dm.id
            FROM direct_messages dm
+           JOIN users su ON su.id = dm.sender_id AND su.is_banned IS NOT TRUE
           WHERE dm.receiver_id = $1
             AND dm.sender_id = $2
             AND dm.id >= $3
             AND dm.read_status = FALSE
             AND COALESCE(dm.is_hidden, false) = false
             AND dm.sender_deleted_at IS NULL
+            AND NOT EXISTS (
+              SELECT 1 FROM user_blocks b
+               WHERE (b.blocker_id = $1 AND b.blocked_id = $2)
+                  OR (b.blocker_id = $2 AND b.blocked_id = $1)
+            )
           ORDER BY dm.id DESC
           LIMIT 1`,
         [userId, senderId, firstDmId]

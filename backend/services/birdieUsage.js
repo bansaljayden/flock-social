@@ -167,7 +167,10 @@ function checkUserRateLimit(userId, dailyLimit = PREMIUM_DAILY_LIMIT) {
   // Allow and record
   limit.dailyCount++;
   limit.recentTimestamps.push(now);
-  return { allowed: true, remaining: dailyLimit - limit.dailyCount };
+  // chargeDay binds a refund to the counter it was charged on: a call that
+  // straddles UTC midnight must not hand back the next day's chirp (Codex
+  // round 3, 2026-09-05).
+  return { allowed: true, remaining: dailyLimit - limit.dailyCount, chargeDay: key };
 }
 
 // How many Birdie messages this user has used today (0 if none or stale day).
@@ -180,11 +183,12 @@ function checkUserRateLimit(userId, dailyLimit = PREMIUM_DAILY_LIMIT) {
 // nothing, and the error copy invited the retry that spent the next one
 // (chat audit, 2026-09-05). The per-minute stamp stays: a burst is a burst
 // whether or not the model answered.
-function refundTurn(userId) {
+function refundTurn(userId, chargeDay) {
   const id = accountKey(userId);
   if (id === null) return;
   const limit = userRateLimits.get(id);
-  if (!limit || limit.day !== todayKey()) return;
+  if (!limit) return;
+  if (limit.day !== (chargeDay || todayKey())) return;
   if (limit.dailyCount > 0) limit.dailyCount -= 1;
 }
 

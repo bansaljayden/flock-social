@@ -130,7 +130,7 @@ pool.query = async (text, params = []) => {
   }
 
   // ── flock row lookups ──
-  if (/^SELECT (creator_id|id, name, creator_id|id, name|creator_id, name|creator_id, status, name|id) FROM flocks WHERE id = \$1/.test(sql)) {
+  if (/^SELECT (creator_id|id, name, creator_id|id, name|creator_id, name|creator_id, status, name|id|status) FROM flocks WHERE id = \$1/.test(sql)) {
     return Number(params[0]) === FLOCK.id ? { rows: [{ ...FLOCK }], rowCount: 1 } : { rows: [], rowCount: 0 };
   }
   if (has('FROM flocks f JOIN users u ON u.id = f.creator_id')) {

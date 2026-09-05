@@ -901,6 +901,11 @@ router.get('/dm/:userId',
       if (await isBlockedBetween(req.user.id, otherUserId)) {
         return res.json({ messages: [], blocked: true });
       }
+      // A banned counterpart is gone from the inbox; the direct thread read
+      // used to hand it back by id (Codex round 3, 2026-09-05).
+      if ((await getInvisibleUserIds(req.user.id)).some((id) => Number(id) === otherUserId)) {
+        return res.json({ messages: [], blocked: true });
+      }
 
       // Same cursor/order alignment as the flock read above, for the same
       // reasons: the sort key IS the cursor key (id — SERIAL, unique, monotone

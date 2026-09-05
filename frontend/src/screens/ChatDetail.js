@@ -1738,7 +1738,20 @@ export default function ChatDetail({
                         setBillSplit(data.bill);
                         setShowCreateBill(false);
                         showToast('Bill split created');
-                      } catch (err) { showToast(err.message, 'error'); }
+                      } catch (err) {
+                        // A refusal can follow a handoff that DID commit (the
+                        // first response was lost, so the retry is judged
+                        // against the new payer). The bill is re-read so the
+                        // sheet never sits on stale payer state (Codex round 3,
+                        // 2026-09-05).
+                        if (err?.status === 403) {
+                          try {
+                            const fresh = await getBillSplit(selectedFlockId);
+                            if (fresh?.bill) { setBillSplit(fresh.bill); setShowCreateBill(false); }
+                          } catch { /* the toast below still says what the server said */ }
+                        }
+                        showToast(err.message, 'error');
+                      }
                     }} style={{ ...styles.gradientButton, padding: '14px', opacity: (!billTotal || parseFloat(billTotal) <= 0) ? 0.4 : 1 }}>
                       Create Split
                     </button>

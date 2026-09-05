@@ -560,7 +560,13 @@ router.post('/:flockId/create',
               return refuse(403, { error: 'Only the person who paid can start the bill' });
             }
           } else if (userId !== prevPayer && userId !== flockCreatorId) {
-            return refuse(403, { error: 'Only the person who paid or the flock creator can change this bill' });
+            // A former payer retrying a handoff whose response was lost lands
+            // here too, and the server cannot tell them from a bystander who
+            // names the current payer (no idempotency ledger yet; Codex round 3,
+            // 2026-09-05). The refusal carries the bill id so the client
+            // re-reads the bill instead of staying on its stale state.
+            return refuse(403, { error: 'Only the person who paid or the flock creator can change this bill', billId: existingBill.rows[0].id, code: 'NOT_PAYER' });
+
           } else if (payerId !== prevPayer && userId !== prevPayer) {
             // WHO MAY EDIT IS NOT WHO MAY BECOME THE PAYER.
             //
@@ -1300,7 +1306,9 @@ router.post('/:flockId/settle',
         // Already settled. Not an error, because what the caller wanted is already
         // true, and a retry after a dropped response must not be punished.
         // 200 without re-notifying anybody.
-        return res.json({ settled: true, alreadySettled: true });
+        // The no-op answer carries the tally too, or a retry after a lost
+        // response leaves the client on a stale count (Codex round 3).
+        return res.json({ settled: true, alreadySettled: true, bill_tally: await billTallyFor(billId) });
       }
 
       // Emit settled event (per-member fan-out — see emitToFlockMembers).
@@ -1535,7 +1543,7 @@ router.post('/:flockId/unsettle',
           });
         }
         // Already unsettled. What the caller wanted is already true.
-        return res.json({ settled: false, alreadyUnsettled: true });
+        return res.json({ settled: false, alreadyUnsettled: true, bill_tally: await billTallyFor(billId) });
       }
 
       // The tally after the write; see billTallyFor. Post-commit, logged on

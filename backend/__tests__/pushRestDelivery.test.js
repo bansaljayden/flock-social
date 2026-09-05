@@ -37,6 +37,8 @@ function dispatch(sql, params) {
       return Promise.resolve(out === undefined ? { rows: [], rowCount: 0 } : out);
     }
   }
+  // The join route reads the plan's status first (lifecycle audit, 2026-09-05).
+  if (/^SELECT status FROM flocks WHERE id = \$1$/.test(String(sql).trim())) return Promise.resolve({ rows: [{ status: 'planning' }], rowCount: 1 });
   return Promise.reject(new Error(`unscripted query: ${String(sql).replace(/\s+/g, ' ').slice(0, 120)}`));
 }
 

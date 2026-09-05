@@ -57,6 +57,8 @@ async function dispatch(sql, params) {
       return out === undefined ? { rows: [], rowCount: 0 } : out;
     }
   }
+  // The direct thread read filters banned counterparts (Codex round 3, 2026-09-05).
+  if (/blocked_id AS id FROM user_blocks/.test(flat)) return { rows: [], rowCount: 0 };
   throw new Error(`unscripted query: ${flat.slice(0, 160)}`);
 }
 

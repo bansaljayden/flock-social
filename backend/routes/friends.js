@@ -706,6 +706,15 @@ router.delete('/:userId', async (req, res) => {
     );
 
     if (result.rows.length === 0) {
+      // A declined request reads as pending to its requester, so cancelling
+      // it must answer as cancelling a pending one does; the 404 here was a
+      // decline oracle (Codex round 3, 2026-09-05). The row stays, because it
+      // carries the one-a-day revive cooldown.
+      const masked = await pool.query(
+        "SELECT 1 FROM friendships WHERE requester_id = $1 AND addressee_id = $2 AND status = 'declined'",
+        [req.user.id, userId]
+      );
+      if (masked.rows.length > 0) return res.json({ message: 'Removed' });
       return res.status(404).json({ error: 'No friendship found' });
     }
 

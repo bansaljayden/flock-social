@@ -135,7 +135,13 @@ function moderateVenueText(text, placeId) {
   if (typeof text !== 'string' || text.trim() === '') {
     return { allowed: true, flagged: false, reason: null };
   }
-  const fromProvider = typeof placeId === 'string' && placeId.trim().length >= 6;
+  // Any six characters used to count as provider provenance, so a fabricated
+  // card with place_id "abcdef" got the relaxed list (Codex round 3,
+  // 2026-09-05). A Google place id is a long token of URL-safe characters;
+  // anything else is typed text and takes the full list. This is a shape
+  // check, not a lookup: a crafted id of the right shape still passes, which
+  // is the residual risk until cards are verified against the details cache.
+  const fromProvider = typeof placeId === 'string' && /^[A-Za-z0-9_-]{20,}$/.test(placeId.trim());
   if ((fromProvider ? providerFilter : filter).isProfane(text)) {
     return { allowed: false, flagged: true, reason: 'profanity' };
   }
