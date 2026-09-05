@@ -1,0 +1,782 @@
+/* CHAT FEATURE HOMES: the two sheets and the two strips.
+   Scoped cs- classes, used only by the four components in this folder.
+
+   WHAT LIVES HERE AND WHAT DOES NOT
+   The repo styles with inline objects that read CSS variables. That is still
+   true of the message stream. It is not workable for this folder, because
+   these four files need pseudo-elements (the inset hairline between rows),
+   two keyframes, a focus-visible reveal, a media query and a grid, and an
+   inline style object can express none of those. So: everything positional and
+   every state that needs a selector lives here, and every colour is a token
+   from index.css so light and dark parity is automatic.
+
+   FIVE NEW TOKENS, DECLARED BELOW
+     --chat-strip-bg     the ground under the pin strip and the pinned bar
+     --chat-presence     the presence dot, a fill and never text
+     --chat-strip-h      36px, the measured strip height
+     --chat-pinbar-h     32px, the pinned message bar
+     --chat-row-min      44px, the Apple HIG floor these rows are built on
+   The first two are colours and are declared twice, once on :root and once on
+   the dark-theme selector. The last three are measurements, identical in both
+   themes, so they are declared once. Everything else in this file is an
+   existing index.css token.
+
+   MOTION
+   Two keyframes, both allowed by the spec: the sheet's 200ms rise, and the
+   long-press menu scaling in over a blur. Nothing else moves. Both are
+   collapsed by index.css's global prefers-reduced-motion rule and again by the
+   scoped one at the bottom, so this folder stays correct if the global rule
+   ever moves.
+*/
+
+:root {
+  --chat-strip-bg: #ffffff;
+  /* Non-text: a 6px dot. Full saturation is correct here and the WCAG text
+     floor does not apply, which is why this is not --accent-green-text. */
+  --chat-presence: #16a34a;
+
+  /* Measurements. No dark variant exists for a height. */
+  --chat-strip-h: 36px;
+  --chat-pinbar-h: 32px;
+  --chat-row-min: 44px;
+}
+
+[data-theme="dark"] {
+  --chat-strip-bg: #16233a;
+  --chat-presence: #34d399;
+}
+
+/* ── THE SHEET SHELL ────────────────────────────────────────────────────── */
+
+.cs-backdrop {
+  position: fixed;
+  inset: 0;
+  /* Above the chat screen's own inline sheets (50) and deliberately BELOW
+     ModerationSheet and PaywallSheet (200): Report and Block open from a
+     member row in the profile sheet and must land on top of it. The toast
+     layer stays clear at 400. */
+  z-index: 150;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  animation: cs-fade 150ms ease-out;
+}
+
+.cs-sheet {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 480px;
+  background: var(--bg-card-solid);
+  border-radius: 20px 20px 0 0;
+  padding: 8px 0 calc(12px + var(--safe-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  outline: none;
+  font-family: var(--font-body);
+  animation: cs-rise 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.25);
+}
+
+.cs-grabber {
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--pill-bg);
+  margin: 4px auto 10px;
+}
+
+.cs-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 0 16px 12px;
+}
+
+.cs-head-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.cs-title {
+  margin: 0;
+  font-size: var(--t-title);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs-subtitle {
+  margin: 2px 0 0;
+  font-size: var(--t-meta);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.cs-close {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 16px;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cs-body {
+  padding: 0 0 4px;
+}
+
+/* ── GROUPS AND ROWS (SLOP-AUDIT section S) ─────────────────────────────── */
+
+/* Rule 3: groups are separated by the page background, never one card per
+   row. Rule 4: the label sits outside the container. */
+.cs-group {
+  margin: 0 0 18px;
+}
+
+.cs-group-label {
+  margin: 0 0 6px;
+  padding: 0 16px;
+  font-size: var(--t-label);
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+
+.cs-subgroup-label {
+  margin-top: 14px;
+}
+
+.cs-rows {
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.cs-group-foot {
+  margin: 8px 0 0;
+  padding: 0 16px;
+  font-size: var(--t-meta);
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.cs-row {
+  box-sizing: border-box;
+  position: relative;
+  width: 100%;
+  min-height: var(--chat-row-min);
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: var(--t-body);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cs-row-static {
+  cursor: default;
+}
+
+/* Inset hairline, not a border on the element: a full-bleed line across a
+   grouped list reads as a table rule, and the last row must not carry one
+   because the container already has its own edge. */
+.cs-row + .cs-row::before,
+.cs-row + .cs-row-split::before,
+.cs-row-split + .cs-row::before {
+  content: '';
+  position: absolute;
+  left: 16px;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: var(--border-subtle);
+}
+
+.cs-row:active {
+  background: var(--bg-hover);
+}
+
+.cs-row-danger {
+  color: var(--accent-red-text);
+}
+
+.cs-row-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  color: var(--text-tertiary);
+}
+
+.cs-row-danger .cs-row-icon {
+  color: var(--accent-red-text);
+}
+
+.cs-row-label {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.cs-clip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
+.cs-row-desc {
+  font-size: var(--t-meta);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+/* Section S rule 2: the current value, inline, left of the chevron. */
+.cs-row-value {
+  flex-shrink: 0;
+  font-size: var(--t-meta);
+  font-weight: 500;
+  color: var(--text-secondary);
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs-row-chev {
+  flex-shrink: 0;
+  display: inline-flex;
+  color: var(--text-tertiary);
+}
+
+/* A row with a primary action and a second control at its end. The split is
+   two real buttons, not one button with a nested one, which is invalid and
+   which no screen reader reads correctly. */
+/* The child .cs-row-main owns the 16px left inset and the 44px height, exactly
+   as .cs-row does for every other row. This element carries .cs-row too, so
+   leaving .cs-row's `padding: 10px 16px` standing here double-padded the row:
+   the pin glyph started at 32px instead of 16 and the row measured 64 tall
+   against everything else's 44, with the inset hairline (drawn at left: 16px)
+   no longer lining up with its own content. */
+.cs-row-split {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: var(--chat-row-min);
+  padding: 0 6px 0 0;
+}
+
+.cs-row-main {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--chat-row-min);
+  padding: 10px 4px 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: var(--t-body);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cs-icon-btn {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 16px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── THE SWITCH ─────────────────────────────────────────────────────────── */
+
+.cs-switch {
+  flex-shrink: 0;
+  width: 42px;
+  height: 24px;
+  border-radius: 12px;
+  background: var(--toggle-off);
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  transition: background-color 150ms ease;
+}
+
+.cs-switch-on {
+  background: var(--text-primary);
+  justify-content: flex-end;
+}
+
+.cs-switch-knob {
+  width: 20px;
+  height: 20px;
+  border-radius: 10px;
+  background: var(--toggle-knob);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+/* ── THE PLAN FACTS ─────────────────────────────────────────────────────── */
+
+.cs-facts {
+  padding: 12px 16px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cs-fact {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.cs-fact-key {
+  width: 54px;
+  flex-shrink: 0;
+  font-size: var(--t-meta);
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
+
+.cs-fact-val {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--t-body);
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+/* ── PEOPLE ─────────────────────────────────────────────────────────────── */
+
+.cs-avatar {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 15px;
+  border: 1.5px solid var(--border-default);
+  background: var(--icon-bg);
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cs-avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cs-avatar-initial {
+  font-size: var(--t-meta);
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+/* A member row carries a 30px avatar where every other row carries a 17px
+   glyph, so it needs slightly less vertical padding to keep the same 44
+   minimum without growing past it. */
+.cs-member {
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.cs-presence {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--t-meta);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.cs-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--text-tertiary);
+}
+
+.cs-dot-here {
+  background: var(--chat-presence);
+}
+
+/* ── THE "+" GRID ───────────────────────────────────────────────────────── */
+
+.cs-tiles {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px 6px;
+  padding: 4px 12px 12px;
+}
+
+/* 320px phones: four 56px wells plus gutters do not fit, so three. */
+@media (max-width: 359px) {
+  .cs-tiles {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.cs-tile {
+  min-height: var(--chat-row-min);
+  padding: 4px 2px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-body);
+}
+
+.cs-tile-well {
+  width: 56px;
+  height: 56px;
+  border-radius: 28px;
+  background: var(--icon-bg);
+  color: var(--text-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cs-tile:active .cs-tile-well {
+  background: var(--bg-hover);
+}
+
+.cs-tile-label {
+  font-size: var(--t-meta);
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-align: center;
+  line-height: 1.25;
+}
+
+.cs-empty {
+  margin: 0;
+  padding: 4px 16px 16px;
+  font-size: var(--t-body);
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+
+/* ── THE PIN STRIP ──────────────────────────────────────────────────────── */
+
+.cs-strip-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  background: var(--chat-strip-bg);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.cs-strip {
+  flex: 1;
+  min-width: 0;
+  height: var(--chat-strip-h);
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--font-body);
+  text-align: left;
+  /* The strip is 36 tall by measurement and cannot grow to 44, and it is a
+     full-width target, so the horizontal dimension carries the hit area. This
+     is the documented exception in index.css's .hit44 note: a control that is
+     already large in one axis and edge to edge in the other. */
+}
+
+.cs-strip-thumb {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--icon-bg);
+  color: var(--text-tertiary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cs-strip-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cs-strip-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs-strip-caption {
+  flex: 1 0 auto;
+  font-size: var(--t-meta);
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.cs-strip-chev {
+  flex-shrink: 0;
+  display: inline-flex;
+  color: var(--text-tertiary);
+}
+
+/* The keyboard and screen-reader route into the long-press menu. In the DOM
+   at all times, so assistive technology finds it; clipped out of the picture
+   until it takes focus, so the 36pt strip renders exactly as measured for
+   everybody else. Same pattern as a skip link. */
+.cs-strip-more {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  pointer-events: none;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+/* relative, not static: index.css's .hit44::after is an absolutely positioned
+   44x44 overlay and it needs this button to be its containing block. Under
+   static it would centre itself on .cs-strip-wrap instead. */
+.cs-strip-more:focus {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  margin-right: 8px;
+  clip: auto;
+  clip-path: none;
+  overflow: visible;
+  pointer-events: auto;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cs-strip-menu {
+  position: absolute;
+  top: calc(var(--chat-strip-h) + 4px);
+  right: 10px;
+  z-index: 60;
+  min-width: 168px;
+  padding: 4px;
+  border-radius: 14px;
+  background: var(--bg-card-solid);
+  border: 1px solid var(--border-default);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+  /* The one scale the spec allows, and it is over a blur. */
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transform-origin: top right;
+  animation: cs-menu-in 140ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.cs-menu-item {
+  width: 100%;
+  min-height: var(--chat-row-min);
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: var(--t-body);
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cs-menu-item:active {
+  background: var(--bg-hover);
+}
+
+/* ── THE PINNED MESSAGE BAR ─────────────────────────────────────────────── */
+
+/* No right padding: the two trailing controls are a real 44px wide each (see
+   the note on them below) and the last one ends at the bar's edge, with its
+   glyph optically inset by its own box. */
+.cs-pinbar {
+  display: flex;
+  align-items: center;
+  height: var(--chat-pinbar-h);
+  padding: 0 0 0 14px;
+  background: var(--chat-strip-bg);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+  touch-action: pan-y;
+}
+
+.cs-pinbar-main {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--font-body);
+  text-align: left;
+}
+
+.cs-pinbar-icon {
+  flex-shrink: 0;
+  display: inline-flex;
+  color: var(--text-tertiary);
+}
+
+.cs-pinbar-text {
+  min-width: 0;
+  font-size: var(--t-meta);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cs-pinbar-key {
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.cs-pinbar-body {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.cs-pinbar-dots {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+}
+
+/* Decorative. Not buttons: see the note at the top of PinnedMessageBar.js. */
+.cs-pinbar-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--border-mid);
+}
+
+.cs-pinbar-dot-on {
+  background: var(--text-secondary);
+}
+
+/* THE TWO TRAILING CONTROLS, AND WHY THEY ARE 44 WIDE AND NOT 28 SQUARE
+   They were 28x28 and adjacent with no gap, and .hit44::after lays a
+   max(100%, 44px) box centred on its host. At 28 wide that overlay reached 8px
+   past the button on every side, so Unpin's overlay covered the right edge of
+   the Next chevron and, being later in the DOM at the same z-index, won the
+   hit test: a tap on the right of "Next pinned message" unpinned a message
+   everyone in the thread can see. Making the boxes a real 44px wide resolves
+   max(100%, 44px) to the button itself on that axis, so the two targets abut
+   instead of overlapping.
+   The vertical half cannot be solved the same way. The bar is 32 by
+   measurement and does not grow, so a 44 tall overlay would spill 6px into the
+   pin strip above and 6px into the message stream below and take their taps
+   instead. The override below holds the overlay to the bar's own height and
+   the horizontal axis carries the target, which is the documented .hit44
+   exception the strip above already uses. */
+.cs-pinbar-next,
+.cs-pinbar-unpin {
+  width: 44px;
+  height: var(--chat-pinbar-h);
+  flex-shrink: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Scoped through the bar so this beats .hit44::after on specificity rather
+   than on which stylesheet the bundler happens to emit second. */
+.cs-pinbar .cs-pinbar-next::after,
+.cs-pinbar .cs-pinbar-unpin::after {
+  height: 100%;
+}
+
+/* ── MOTION ─────────────────────────────────────────────────────────────── */
+
+@keyframes cs-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes cs-rise {
+  from { transform: translateY(24px); }
+  to { transform: translateY(0); }
+}
+
+@keyframes cs-menu-in {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* index.css collapses animation globally under reduced motion. This scoped
+   rule keeps the folder correct if that global rule ever moves. */
+@media (prefers-reduced-motion: reduce) {
+  .cs-backdrop,
+  .cs-sheet,
+  .cs-strip-menu {
+    animation: none;
+  }
+  .cs-switch {
+    transition: none;
+  }
+}
