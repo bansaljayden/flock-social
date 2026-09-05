@@ -119,6 +119,16 @@ pool.query = async (text, params = []) => {
     return { rows: ok ? [{ id: 1 }] : [], rowCount: ok ? 1 : 0 };
   }
 
+  // ── the join transaction ──
+  // POST /:id/join runs on a pooled client now: BEGIN, the flock row lock
+  // billing reads the roster under, the UPDATE, COMMIT. The client fake below
+  // routes through this dispatcher, so the bookends are answered here and the
+  // lock returns the row it locked, for the flock the fixture knows.
+  if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(sql)) return { rows: [], rowCount: 0 };
+  if (has('SELECT id FROM flocks WHERE id = $1 FOR UPDATE')) {
+    return Number(params[0]) === FLOCK.id ? { rows: [{ id: FLOCK.id }], rowCount: 1 } : { rows: [], rowCount: 0 };
+  }
+
   // ── flock row lookups ──
   if (/^SELECT (creator_id|id, name, creator_id|id, name|creator_id, name|creator_id, status, name|id) FROM flocks WHERE id = \$1/.test(sql)) {
     return Number(params[0]) === FLOCK.id ? { rows: [{ ...FLOCK }], rowCount: 1 } : { rows: [], rowCount: 0 };
@@ -195,6 +205,12 @@ pool.query = async (text, params = []) => {
   return { rows: [], rowCount: 0 };
 };
 
+// POST /:id/join and POST /:id/leave run on a pooled client: BEGIN, the flock
+// row lock, the statement, COMMIT. Same dispatcher, so the fixture sees the
+// write exactly as it sees everything else.
+const realConnect = pool.connect;
+pool.connect = async () => ({ query: pool.query, release() {} });
+
 // ── App under test: the real routers, mounted the way server.js mounts them ──
 const app = express();
 app.use(express.json());
@@ -213,7 +229,7 @@ test.before(() => new Promise((resolve) => {
   });
 }));
 test.after(() => new Promise((resolve) => server.close(resolve)));
-test.after(() => { pool.query = realQuery; return pool.end().catch(() => {}); });
+test.after(() => { pool.query = realQuery; pool.connect = realConnect; return pool.end().catch(() => {}); });
 
 test.beforeEach(reset);
 

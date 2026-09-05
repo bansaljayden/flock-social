@@ -422,6 +422,9 @@ test('the attendance push still goes out after the response', async () => {
 
 function scriptJoin() {
   on(/SELECT status FROM flock_members WHERE flock_id = \$1 AND user_id = \$2/i, () => ({ rows: [{ status: 'invited' }] }));
+  // The flock row lock the join takes before its UPDATE, the same one billing
+  // reads the roster under. BEGIN and COMMIT pass through the client fake above.
+  on(/SELECT id FROM flocks WHERE id = \$1 FOR UPDATE/i, () => ({ rows: [{ id: 42 }] }));
   on(/UPDATE flock_members SET status = 'accepted'/i, () => ({ rows: [{ flock_id: 42, user_id: 1, status: 'accepted' }], rowCount: 1 }));
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/i, () => ({ rows: [] }));
   on(/FROM user_blocks/i, () => ({ rows: [] }));
