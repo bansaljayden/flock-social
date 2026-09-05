@@ -228,6 +228,23 @@ function resetAll({ freeText = true, phrasing = true } = {}) {
 
 // ── 1. The three modes route, and the answer says which ─────────────────────
 
+test('an unverified or unlinked venue is refused before any model call is charged', async () => {
+  // /questions already told such a venue that free text is off; this route
+  // only checked that a venue_profiles row existed, which a verified email
+  // and one POST with a business name is enough to create. Twenty paid
+  // questions a day per throwaway account, and the route's own arithmetic
+  // says sixteen of them empty the global token wall for every real venue.
+  for (const variant of [{ verified: false }, { google_place_id: null }]) {
+    resetAll();
+    handlers.push([/FROM venue_profiles WHERE user_id/, () => ({ rows: [{ ...PROFILE().rows[0], ...variant }], rowCount: 1 })]);
+    const r = await ask('how do I fill tuesdays');
+    assert.strictEqual(r.status, 200, r.text);
+    assert.strictEqual(r.body.mode, 'refusal', JSON.stringify(variant));
+    assert.strictEqual(modelCalls.length, 0, 'two model calls used to be spent for a venue that could not get a chip');
+    assert.ok(!JSON.stringify(queryLog).includes('INSERT INTO advisor_spend'), 'a unit was charged for a refusal');
+  }
+});
+
 test('a question about the venue routes GROUNDED, through the same pipeline a chip uses', async () => {
   resetAll();
   installProfile();
