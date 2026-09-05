@@ -204,7 +204,15 @@ async function dispatch(text, params = [], sink) {
     // LIMIT is always the LAST parameter on both review list queries.
     const limit = Number(params[params.length - 1]);
     assert.ok(Number.isInteger(limit) && limit > 0, 'review list must be bounded by a LIMIT parameter');
-    return { rows: reviews.slice(0, limit) };
+    // The keyset cursor, when the route sent one: the two parameters before
+    // the LIMIT, compared the way (created_at, id) < ($a, $b) compares.
+    let pool_ = reviews;
+    if (has('(vr.created_at, vr.id) <')) {
+      const at = params[params.length - 3];
+      const id = Number(params[params.length - 2]);
+      pool_ = reviews.filter((r) => r.created_at < at || (r.created_at === at && r.id < id));
+    }
+    return { rows: pool_.slice(0, limit) };
   }
 
   // ── flocks create ─────────────────────────────────────────────────────────
@@ -661,4 +669,53 @@ test('the pool caps a single statement and rides out a burst', () => {
     'without a statement_timeout one stuck query parks a pool slot indefinitely; 20 of those and the API is down');
   assert.ok(opts.connectionTimeoutMillis >= 10000,
     'a 2s checkout timeout turns a brief saturation burst into opaque 500s');
+});
+
+
+test('the owner tab can page past the first fifty, and the pages tile', async () => {
+  // From the fifty-first review on, the oldest were unreachable and could
+  // never be replied to (venue-owner audit, 2026-09-05). `nextBefore` is the
+  // last row of a page; sending it back as ?before= continues strictly below.
+  seedReviews(120, (i) => (i % 5) + 1);
+  const first = await call('GET', '/api/venue-dashboard/reviews', 'alice');
+  const one = await first.json();
+  assert.strictEqual(one.reviews.length, 50);
+  assert.strictEqual(one.hasMore, true);
+  assert.match(String(one.nextBefore), /^\d{4}-\d{2}-\d{2}T.*Z,50$/, `nextBefore was ${one.nextBefore}`);
+
+  const second = await call('GET', `/api/venue-dashboard/reviews?before=${encodeURIComponent(one.nextBefore)}`, 'alice');
+  const two = await second.json();
+  assertQueriesUnderstood();
+  assert.strictEqual(two.reviews.length, 50);
+  assert.strictEqual(two.reviews[0].id, 51, 'the second page starts right after the first');
+  assert.strictEqual(two.hasMore, true);
+  const seen = new Set([...one.reviews, ...two.reviews].map((r) => r.id));
+  assert.strictEqual(seen.size, 100, 'no row on two pages, none dropped between them');
+
+  const third = await call('GET', `/api/venue-dashboard/reviews?before=${encodeURIComponent(two.nextBefore)}`, 'alice');
+  const three = await third.json();
+  assert.strictEqual(three.reviews.length, 20);
+  assert.strictEqual(three.hasMore, false, 'the last page says so');
+  assert.strictEqual(three.nextBefore, null);
+  assert.strictEqual(three.stats.total, 120, 'the stats stay the whole set on every page');
+});
+
+test('a malformed cursor is read as the first page, and the public card pages the same way', async () => {
+  seedReviews(60, () => 4);
+  const junk = await call('GET', '/api/venue-dashboard/reviews?before=yesterday', 'alice');
+  const j = await junk.json();
+  assert.strictEqual(j.reviews[0].id, 1);
+  assert.strictEqual(j.hasMore, true);
+
+  const pub = await call('GET', `/api/venue-dashboard/public-reviews/${PLACE_ID}`, 'alice');
+  const p1 = await pub.json();
+  assert.strictEqual(p1.reviews.length, 50);
+  assert.strictEqual(p1.hasMore, true);
+  const pub2 = await call('GET', `/api/venue-dashboard/public-reviews/${PLACE_ID}?before=${encodeURIComponent(p1.nextBefore)}`, 'alice');
+  const p2 = await pub2.json();
+  assertQueriesUnderstood();
+  assert.strictEqual(p2.reviews.length, 10);
+  assert.strictEqual(p2.reviews[0].id, 51);
+  assert.strictEqual(p2.hasMore, false);
+  assert.strictEqual(p2.total, 60);
 });
