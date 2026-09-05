@@ -997,3 +997,41 @@ test('contacts: email stays mandatory, because it is the only channel there is',
     assert.ok(S.readContactFields({ name: 'Mum', phone: '5550100', email: bad }).error, bad);
   }
 });
+
+
+test('an unblock is announced to both sides, the way a block is', async () => {
+  // Without it the other person's thread stayed on "closed on both sides"
+  // with no composer until they left it and came back (UGC-loop audit,
+  // 2026-09-05).
+  const emits = [];
+  const io = { to: (room) => ({ emit: (event, payload) => emits.push({ room, event, payload }) }) };
+  const { restore } = stubPool(async (sql) => {
+    if (sql.includes('DELETE FROM user_blocks')) return { rows: [{ id: 1 }], rowCount: 1 };
+    return null;
+  });
+  try {
+    const res = await call(moderationRoutes, 'DELETE', '/api/blocks/9', undefined, { userId: 7, io });
+    assert.strictEqual(res.status, 200, res.text);
+    const rooms = emits.filter((e) => e.event === 'unblocked_by');
+    assert.deepStrictEqual(rooms.map((e) => [e.room, e.payload.userId]).sort(), [['user:7', 9], ['user:9', 7]]);
+  } finally { restore(); }
+});
+
+test('a report on a promotion names the owner the row resolved to', async () => {
+  // The public promotion read carries no owner id, so the client could not
+  // name one, and the report reached the queue with no reported user and
+  // neither Warn nor Ban to press (UGC-loop audit, 2026-09-05).
+  const inserts = [];
+  const { restore } = stubPool(async (sql, params) => {
+    if (sql.includes('venue_user_id AS sender_id')) return { rows: [{ sender_id: 9, is_hidden: false }] };
+    if (sql.includes('INSERT INTO content_reports')) { inserts.push(params); return { rows: [{ id: 5, status: 'open', created_at: new Date() }] }; }
+    return null;
+  });
+  try {
+    const res = await call(moderationRoutes, 'POST', '/api/reports',
+      { content_type: 'venue_promotion', content_id: 55, reason: 'hate' }, { userId: 7 });
+    assert.strictEqual(res.status, 201, res.text);
+    assert.strictEqual(inserts.length, 1, 'no report row was written');
+    assert.strictEqual(inserts[0][1], 9, 'reported_user_id must be the promotion owner');
+  } finally { restore(); }
+});

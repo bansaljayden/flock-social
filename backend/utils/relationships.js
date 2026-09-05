@@ -25,15 +25,22 @@ async function hasDmRelationship(userId, otherId) {
   const a = Number(userId);
   const b = Number(otherId);
   if (!Number.isInteger(a) || !Number.isInteger(b) || a === b) return false;
+  // A BANNED ACCOUNT HAS NO DM RELATIONSHIP (UGC-loop audit, 2026-09-05).
+  // Every DM door on both transports asks this question, so answering "no"
+  // for a banned counterpart closes the thread the way a block does: send,
+  // react, vote, pin, typing and live location all stop, with no new query
+  // on any of them. The clause is repeated on both halves so the statement's
+  // shape, and the prefix the test fakes key on, stays what it was.
   const r = await pool.query(
     `SELECT 1 WHERE EXISTS (
        SELECT 1 FROM friendships
        WHERE status = 'accepted'
          AND ((requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1))
-     ) OR EXISTS (
+     ) AND NOT EXISTS (SELECT 1 FROM users bu WHERE bu.id = $2 AND bu.is_banned IS TRUE)
+     OR EXISTS (
        SELECT 1 FROM direct_messages
        WHERE (sender_id = $1 AND receiver_id = $2) OR (sender_id = $2 AND receiver_id = $1)
-     )`,
+     ) AND NOT EXISTS (SELECT 1 FROM users bu WHERE bu.id = $2 AND bu.is_banned IS TRUE)`,
     [a, b]
   );
   return r.rows.length > 0;

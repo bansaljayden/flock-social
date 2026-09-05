@@ -858,6 +858,13 @@ function reviewPage(page, limit) {
 // no request data anywhere in it, exactly as routes/feedback.js keeps
 // VERIFIED_PRESENCE_SQL. It correlates on vr, so every read that uses it must
 // alias venue_reviews as vr.
+// A BANNED AUTHOR'S REVIEWS COME DOWN WITH THE BAN (UGC-loop audit,
+// 2026-09-05). Stories, the profile card, the roster and the promotions read
+// all treat a banned account as gone; the five venue_reviews reads below
+// did not, so a review a moderator banned somebody FOR stayed on every venue
+// card with the author's name and kept moving the average. Each read's users
+// join carries `AND u.is_banned IS NOT TRUE`; the digest count, which has no
+// join, carries the NOT EXISTS.
 const NOT_OWNER_OF_THE_PLACE = `AND NOT EXISTS (
            SELECT 1 FROM venue_profiles vpo
            WHERE vpo.user_id = vr.user_id
@@ -897,7 +904,7 @@ router.get('/reviews', async (req, res) => {
               COUNT(*) FILTER (WHERE vr.rating = 4)::int AS r4,
               COUNT(*) FILTER (WHERE vr.rating = 5)::int AS r5
        FROM venue_reviews vr
-       JOIN users u ON u.id = vr.user_id
+       JOIN users u ON u.id = vr.user_id AND u.is_banned IS NOT TRUE
        WHERE vr.google_place_id = $1
          AND COALESCE(vr.is_hidden, false) = false
          ${NOT_OWNER_OF_THE_PLACE}`,
@@ -926,7 +933,7 @@ router.get('/reviews', async (req, res) => {
       `SELECT vr.*, u.name, u.profile_image_url,
               (vr.venue_reply IS NOT NULL AND vr.venue_replied_at IS NULL) AS reply_needs_review
        FROM venue_reviews vr
-       JOIN users u ON u.id = vr.user_id
+       JOIN users u ON u.id = vr.user_id AND u.is_banned IS NOT TRUE
        WHERE vr.google_place_id = $1
          AND COALESCE(vr.is_hidden, false) = false
          ${NOT_OWNER_OF_THE_PLACE}
@@ -1315,7 +1322,7 @@ router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
     const statsResult = await pool.query(
       `SELECT COUNT(*)::int AS total, AVG(vr.rating)::float AS average
        FROM venue_reviews vr
-       JOIN users u ON u.id = vr.user_id
+       JOIN users u ON u.id = vr.user_id AND u.is_banned IS NOT TRUE
        WHERE vr.google_place_id = $1
          AND COALESCE(vr.is_hidden, false) = false
          AND NOT EXISTS (
@@ -1362,7 +1369,7 @@ router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
               ) THEN vr.venue_replied_at ELSE NULL END AS venue_replied_at,
               vr.created_at, vr.user_id, u.name, u.profile_image_url
        FROM venue_reviews vr
-       JOIN users u ON u.id = vr.user_id
+       JOIN users u ON u.id = vr.user_id AND u.is_banned IS NOT TRUE
        WHERE vr.google_place_id = $1
          AND COALESCE(vr.is_hidden, false) = false
          AND NOT EXISTS (
@@ -2414,6 +2421,7 @@ router.get('/this-week', requirePro, async (req, res) => {
            FROM venue_reviews vr
           WHERE vr.google_place_id = $1 AND COALESCE(vr.is_hidden, false) = false
             AND vr.created_at >= NOW() - INTERVAL '7 days'
+            AND NOT EXISTS (SELECT 1 FROM users bu WHERE bu.id = vr.user_id AND bu.is_banned IS TRUE)
             ${NOT_OWNER_OF_THE_PLACE}`,
         [placeId]
       ),

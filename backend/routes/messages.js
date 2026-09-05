@@ -433,10 +433,11 @@ router.post('/flocks/:id/messages',
                 // dedupes on message id, so a sender whose socket comes back
                 // mid-request cannot end up with two bubbles.
                 io.to(`user:${m.user_id}`).emit('new_message', message);
+                // senderId and messageId: see the socket twin.
                 return pushIfOfflineDebounced(io, m.user_id,
                   `${req.user.name} in ${flockName}`,
                   preview,
-                  { type: 'flock_message', flockId: String(flockId) }
+                  { type: 'flock_message', flockId: String(flockId), senderId: String(req.user.id), messageId: String(message.id) }
                 );
               })
           );
@@ -1195,7 +1196,7 @@ router.post('/dm/:userId',
           await pushIfOfflineDebounced(io, receiverId,
             req.user.name,
             preview,
-            { type: 'dm_message', senderId: String(req.user.id) }
+            { type: 'dm_message', senderId: String(req.user.id), dmId: String(message.id) }
           );
         }
       } catch (pushErr) {

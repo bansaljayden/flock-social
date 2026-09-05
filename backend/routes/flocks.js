@@ -578,7 +578,7 @@ router.get('/', async (req, res) => {
                  FROM (
                    SELECT mu.id, mu.name, mu.profile_image_url, (mu.id = f.creator_id) AS is_creator
                    FROM flock_members mfm
-                   JOIN users mu ON mu.id = mfm.user_id
+                   JOIN users mu ON mu.id = mfm.user_id AND mu.is_banned IS NOT TRUE
                    WHERE mfm.flock_id = f.id AND mfm.status = 'accepted'
                      AND NOT EXISTS (
                        SELECT 1 FROM user_blocks b
