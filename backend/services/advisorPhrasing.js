@@ -213,6 +213,12 @@ function advisorModel() {
 function isModelNotFound(err) {
   if (!err) return false;
   if (err.status === 404) return true;
+  // The message test used to stand alone, so any error whose text happened
+  // to contain "not found", a proxy page or a transient rollout hiccup
+  // included, moved every Roost call onto the fallback model for the life
+  // of the process with one warning. The phrase only counts on a client
+  // error, which is the only status a genuinely unknown model produces.
+  if (err.status !== 400) return false;
   return /NOT_FOUND|not found|is not supported|unknown model|invalid model/i.test(err.message || '');
 }
 

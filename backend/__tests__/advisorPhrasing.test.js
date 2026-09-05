@@ -710,3 +710,16 @@ test('the fallback-model retry releases its second reservation too', async () =>
   assert.strictEqual(released.length, 1,
     'the second reservation was never released, so the venue paid twice for a call that never left the process');
 });
+
+test('a "not found" message only swaps the model on a client error', () => {
+  // The message test used to stand alone, so a proxy page or a transient
+  // rollout error containing "not found" moved every Roost call onto the
+  // fallback model for the life of the process. A genuinely unknown model is
+  // a 404, or a 400 that says so.
+  const { isModelNotFound } = advisorPhrasing.internals;
+  assert.strictEqual(isModelNotFound(Object.assign(new Error('model not found'), { status: 404 })), true);
+  assert.strictEqual(isModelNotFound(Object.assign(new Error('unknown model: x'), { status: 400 })), true);
+  assert.strictEqual(isModelNotFound(Object.assign(new Error('upstream not found'), { status: 502 })), false);
+  assert.strictEqual(isModelNotFound(new Error('resource not found')), false);
+  assert.strictEqual(isModelNotFound(Object.assign(new Error('quota exceeded'), { status: 400 })), false);
+});

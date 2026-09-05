@@ -904,7 +904,10 @@ export async function getVenueThisWeek() {
 // facts with a source on every number, refusals as data. A 403 is the Pro
 // gate answering, which the component renders as a plan line, not an error.
 export async function getVenueAdvisorCards() {
-  return request('/api/venue/advisor/cards');
+  // Same deadline as Birdie, for the same reason: the cards are built from
+  // the fact engine and may end in a model call, and a 15 s client deadline
+  // against a server that is still working discards a real answer.
+  return request('/api/venue/advisor/cards', { timeout: AI_TIMEOUT_MS });
 }
 
 // Roost, the venue advisor's chat surface (components/VenueAdvisorChat.js).
@@ -945,6 +948,14 @@ export async function askAdvisor(intentId) {
   const data = await request('/api/venue/advisor/ask', {
     method: 'POST',
     body: JSON.stringify({ intentId }),
+    // ROOST IS CHARGED BEFORE IT RUNS AND NEVER REFUNDS, so a client that
+    // gives up early does not save money, it throws the answer away. The
+    // server budgets 30 s per model call and a typed question is two of
+    // them; the default 15 s here aborted the hard questions, the component
+    // showed "That did not go through", and the retry was a second charge
+    // that would time out the same way. Birdie's deadline, and the comment
+    // beside it, are the precedent.
+    timeout: AI_TIMEOUT_MS,
   });
   // Which chip, because the intent id is a fixed key from a registry in this
   // repo and not anything a person typed. Knowing WHICH question owners press
@@ -964,6 +975,8 @@ export async function askAdvisorQuestion(question) {
   const data = await request('/api/venue/advisor/question', {
     method: 'POST',
     body: JSON.stringify({ question }),
+    // Two sequential model calls at up to 30 s each; see askAdvisor.
+    timeout: AI_TIMEOUT_MS,
   });
   // NOT the question, and not the answer text either. A typed question is an
   // owner describing their own business in their own words, and the response
