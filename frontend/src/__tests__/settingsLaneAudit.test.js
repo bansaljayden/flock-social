@@ -6,7 +6,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8').replace(/\r\n/g, '\n');
 
 test('Sign out everywhere says which one happened when the server call fails', () => {
   const app = read('App.js');

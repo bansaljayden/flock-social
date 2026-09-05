@@ -12,7 +12,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8').replace(/\r\n/g, '\n');
 
 test('the attentive set is handed to the send and only unattended tokens are pushed', () => {
   const helper = read('services/pushHelper.js');

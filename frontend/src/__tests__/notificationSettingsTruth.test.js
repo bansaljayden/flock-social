@@ -11,7 +11,7 @@ const profile = read('screens/ProfileSettings.js');
 
 test('signing out on a device that never registered does not unregister the account', () => {
   expect(firebase).toMatch(/const everRegistered = !!token \|\| getNotificationStatus\(\) === 'granted';/);
-  expect(firebase).toMatch(/: everRegistered\s*\? unregisterAllTokens\(\)\.catch\(\(\) => \{\}\)\s*: Promise\.resolve\(\);/);
+  expect(firebase).toMatch(/: everRegistered\s*(?:\/\/[^\n]*\n\s*)*\? unregisterAllTokens\(isNativeApp\(\) \? \(window\.Capacitor\.getPlatform\(\) === 'android' \? 'android' : 'ios'\) : 'web'\)\.catch\(\(\) => \{\}\)\s*: Promise\.resolve\(\);/);
 });
 
 test('every session start pulls the account settings, not only a cold boot', () => {
