@@ -295,7 +295,7 @@ export default function LandingPage() {
      the panel — but none of that reaches a screen reader's virtual cursor,
      which walks the DOM and does not care where the browser thinks focus is.
      Measured with the panel open in NVDA: down-arrow read straight past the
-     six menu links into "Plans die in the group chat", the whole hero, and the
+     six menu links into the hero headline, the whole hero, and the
      footer, none of which was on screen. aria-modal is not the tool here (the
      close control is the corner block, which lives OUTSIDE the panel, and
      aria-modal would hide it); marking the page behind it inert is.
@@ -386,7 +386,7 @@ export default function LandingPage() {
           {/* "they happen." is held together: text-wrap balance, pretty and
               auto all break this sentence 4+1 at phone widths and leave
               "happen." alone on line four. */}
-          <h1 id="lp-h-hero">Plans die in the group chat.<br />Flock is where <span className="lp-keep">they happen.</span></h1>
+          <h1 id="lp-h-hero">Get the flock<br /><span className="lp-keep">out the door.</span></h1>
           <hr className="lp-hero-rule" aria-hidden="true" />
 
           <div className="lp-hero-copy">
