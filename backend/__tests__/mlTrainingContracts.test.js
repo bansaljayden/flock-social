@@ -437,3 +437,299 @@ test('the trainer only writes numbers it measured, and never invents a search re
   assert.match(TRAIN_PY, /^FIXED_PARAMS = \{/m);
   assert.match(TRAIN_PY, /metadata\['hyperparameters'\] = \{\*\*hp_info, 'params': params\}/);
 });
+
+// ── Round 26 (2026-09-04): nothing reaches the matrix that nobody measured ──
+//
+// prepare_features.py is read as source below and, when a Python with pandas
+// is on the box, actually executed on fixtures. The source pins say what the
+// code must contain; the fixture run says what it must DO to a row, which is
+// the half a regex cannot check. Neither touches the CSVs, the pickles, the
+// models directory or a database.
+
+const { spawnSync } = require('child_process');
+const os = require('os');
+
+// export_training_data.js is read as TEXT, never required: requiring it runs
+// dotenv against backend/.env, which points at the live Railway database.
+const EXPORT_JS = read(path.join(TRAIN_DIR, 'export_training_data.js'));
+
+function pyStringList(source, name) {
+  const m = source.match(new RegExp(`^${name}[^=]*=\\s*\\[([\\s\\S]*?)\\]`, 'm'));
+  assert.ok(m, `${name} is not a list literal in the Python source`);
+  return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+}
+
+function pyStringDict(source, name) {
+  const m = source.match(new RegExp(`^${name}[^=]*=\\s*\\{([\\s\\S]*?)\\}`, 'm'));
+  assert.ok(m, `${name} is not a dict literal in the Python source`);
+  return Object.fromEntries([...m[1].matchAll(/'([^']+)':\s*'([^']+)'/g)].map((x) => [x[1], x[2]]));
+}
+
+test('(a) one event-type vocabulary in three files, and the two legacy words map by their reading', () => {
+  // eventService.mapEventType returned 'concert' for Ticketmaster's Music
+  // segment and 'film' for Film from commit 25113d2 to 73c0374; the fixed
+  // function returns 'music' for Music and lets Film fall through to 'other'.
+  // Production holds 1,964 live realtime rows written under the old function
+  // (philly 1,547, lehigh 417, 2026-09-01 to 09-04). Without the alias each
+  // trained as has_nearby_event = 1 with all five etype slots at 0, a corner
+  // serving never produces.
+  const prepare = pyStringList(PREPARE_PY, 'EVENT_TYPE_VOCABULARY');
+  const exporter = (() => {
+    const m = EXPORT_JS.match(/const EVENT_TYPE_VOCABULARY = \[([^\]]*)\];/);
+    assert.ok(m, 'export_training_data.js must declare EVENT_TYPE_VOCABULARY');
+    return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+  })();
+  const serving = [...PREDICTOR_JS.matchAll(/etype_(\w+): nearestType === '(\w+)' \? 1 : 0/g)]
+    .map((m) => { assert.equal(m[1], m[2]); return m[1]; });
+  assert.deepEqual(prepare, ['music', 'sports', 'arts', 'family', 'other']);
+  assert.deepEqual(exporter, prepare, 'the exporter census and the trainer disagree about the vocabulary');
+  assert.deepEqual(serving, prepare, 'buildFeatureMap emits a different set of etype_* slots than training builds');
+
+  const aliases = pyStringDict(PREPARE_PY, 'LEGACY_EVENT_TYPE_ALIASES');
+  assert.deepEqual(aliases, { concert: 'music', film: 'other' },
+    'the aliases are the OLD mapEventType outputs read through the NEW one, nothing more');
+  assert.match(PREPARE_PY, /def normalise_event_types\(/);
+  assert.match(PREPARE_PY, /normalise_event_types\(train_df, 'train'\)/, 'the training CSV must be normalised');
+  assert.match(PREPARE_PY, /normalise_event_types\(holdout_df, 'holdout'\)/, 'so must the holdout');
+  assert.match(PREPARE_PY, /raise CorpusContractError\(\s*\n?\s*f'\[\{label\}\] nearest_event_type carries/,
+    'a value outside the vocabulary that no alias covers must stop the run by name');
+  assert.match(PREPARE_PY, /for etype in EVENT_TYPE_VOCABULARY:/,
+    'the one-hot must be built over the named vocabulary, not a second literal list');
+  // And the exporter says so before a two-hour run, without laundering the column.
+  assert.match(EXPORT_JS, /async function eventTypeCensus\(db\)/);
+  assert.match(EXPORT_JS, /const eventTypes = await eventTypeCensus\(db\);/, 'preflight must run the census');
+  assert.ok(!/CASE\s+t\.nearest_event_type/i.test(EXPORT_JS) && !/REPLACE\(t\.nearest_event_type/i.test(EXPORT_JS),
+    'the export must carry nearest_event_type as stored; the mapping belongs to prepare_features.py');
+});
+
+test('(c)(g) a missing weather reading is filled the way serving fills it, and the norms see only readings', () => {
+  // Weekly rows carry no weather since repairWeeklyWeather.js. The city-month
+  // MEDIAN this file used to fill with gave every weekly venue-batch one
+  // temperature on all 168 rows (18,621 of 18,621 venues on the 2026-08-30
+  // export), fed 88% imputed values into the climate norms (moved by up to
+  // 3.56F) and left the weekly rows with a nonzero per-city anomaly while
+  // serving hands an imputed temperature to the model with anomaly 0.
+  assert.ok(!/city_month_temp/.test(PREPARE_PY), 'the city-month median fill is back');
+  assert.ok(!/global_temp_median/.test(PREPARE_PY), 'the global median fill is back');
+  assert.ok(!/= 20\.0\s*$/m.test(PREPARE_PY.split('def add_weather_features')[1].split('\ndef ')[0]),
+    'the literal 20.0 fallback temperature is back');
+  assert.match(PREPARE_PY, /def fit_temperature_norms\(/);
+  assert.match(PREPARE_PY, /observed = df\['temperature'\]\.notna\(\)\.to_numpy\(\)/,
+    'the norms must be fitted from rows that carry a reading');
+  assert.match(PREPARE_PY, /temp_norms = fit_temperature_norms\(train_df\)\s*\n\s*train_df = add_weather_features\(train_df, temp_norms\)/,
+    'the table must be fitted BEFORE any fill and handed to the fill');
+  assert.match(PREPARE_PY, /holdout_df = add_weather_features\(holdout_df, temp_norms\)/,
+    'the holdout must be filled from the TRAIN table, not a table fitted on its own rows');
+  assert.match(PREPARE_PY, /df\['temperature'\] = pd\.to_numeric\(df\['temperature'\], errors='coerce'\)\.fillna\(df\['temp_norm'\]\)/,
+    'a missing temperature takes its (band, month) norm');
+  assert.match(PREPARE_PY, /return keys\.map\(table\)\.astype\(float\)\.fillna\(global_mean\)/,
+    'and the table mean when the cell has none: climateNorm then globalTempNorm, in that order');
+  assert.match(PREPARE_PY, /'temp_norm_counts'/, 'the row count behind each norm must ship beside it');
+
+  // The three constants, value for value, against buildFeatureMap.
+  const fills = (() => {
+    const m = PREPARE_PY.match(/WEATHER_NO_READING_FILLS: Dict\[str, float\] = \{([^}]*)\}/);
+    assert.ok(m, 'prepare_features.py must name the no-reading fills in one dict');
+    return Object.fromEntries([...m[1].matchAll(/'(\w+)':\s*(-?[\d.]+)/g)].map((x) => [x[1], Number(x[2])]));
+  })();
+  const serveHumidity = PREDICTOR_JS.match(/const humidity = weather\?\.humidity \?\? (-?[\d.]+);/);
+  const serveWind = PREDICTOR_JS.match(/const windSpeed = weather\?\.wind_speed \?\? weather\?\.windSpeed \?\? (-?[\d.]+);/);
+  const serveRain = PREDICTOR_JS.match(/const isRaining = \(weather\?\.is_raining \?\? weather\?\.isRaining\) \? 1 : (\d);/);
+  assert.ok(serveHumidity && serveWind && serveRain, 'buildFeatureMap no longer fills the three slots with literals');
+  assert.deepEqual(fills, {
+    humidity: Number(serveHumidity[1]), wind_speed: Number(serveWind[1]), is_raining: Number(serveRain[1]),
+  }, 'training and serving disagree about what a missing reading looks like; the weekly ' +
+     'rows would train an outage vector serving never builds');
+  assert.match(PREDICTOR_JS, /const temp = tempForFeature\(weather, lat, month\);/,
+    'serving must impute temperature through the climate norm, which is what training now mirrors');
+  assert.match(PREPARE_PY, /'weather_observed': train_df\['weather_observed'\]\.values\.astype\(np\.int8\)/,
+    'which rows carry a reading must ride the pickle as a carried column');
+  assert.match(PREPARE_PY, /'weather_observed',\r?\n/, 'and be excluded from the feature set');
+});
+
+test('(d) an unknown-provenance realtime row is not a live label, and the default says no', () => {
+  // 4,577 live rows (2026-09-01 to 09-04) now sit beside 457,402 rows whose
+  // label_source is NULL and unrecoverable (migration 025). The old guard
+  // raised only when EVERY realtime row was unknown, so it stopped firing the
+  // day the first live row landed and left the 457,402 at weight 1.0 with
+  // nothing said.
+  assert.match(PREPARE_PY, /def exclude_unknown_provenance\(/);
+  assert.match(PREPARE_PY, /train_df, unknown_train = exclude_unknown_provenance\(train_df, 'train'\)/);
+  assert.match(PREPARE_PY, /holdout_df, unknown_holdout = exclude_unknown_provenance\(holdout_df, 'holdout'\)/,
+    'the holdout is subject to the same rule: a gate scored on rows that may be the vendor forecast is not a gate on reality');
+  assert.match(PREPARE_PY, /return df\[~unknown\], record/, 'the default must drop the rows');
+  assert.match(PREPARE_PY, /UNKNOWN_PROVENANCE_ENV = 'ML_ALLOW_UNKNOWN_PROVENANCE'/);
+  assert.match(PREPARE_PY, /\.strip\(\)\.lower\(\) == 'true'/, 'only an explicit true admits them');
+  assert.ok(!/rt_prov == \['unknown'\]/.test(PREPARE_PY),
+    'the all-unknown guard is back; it cannot fire on a corpus with one live row');
+  assert.match(PREPARE_PY, /'unknown_provenance': unknown_provenance_record/,
+    'the artifact must record whether unprovable rows were admitted');
+  // There is no downweight tier for them, and that is deliberate: the trainer
+  // demands one weight for every non-forecast realtime row.
+  assert.match(TRAIN_PY, /tiers\['realtime_observed'\] = rt & \(prov != 'forecast'\)/);
+  assert.match(PREPARE_PY, /assert_weighting_matches_provenance requires every\s*\n?#?\s*non-forecast realtime row to carry ONE weight/,
+    'the reason there is no tier must stay next to the decision');
+});
+
+test('(e)(f) the split stays whole-city, the holdout never fits on itself, and is_realtime is named for what it is', () => {
+  assert.ok(!/train_test_split|\.sample\(frac/.test(PREPARE_PY),
+    'prepare_features.py must not carve a row-level split out of the city-level one');
+  assert.match(PREPARE_PY, /add_baseline_features\(holdout_df, cat_maps=cat_baseline_maps\)/);
+  assert.match(PREPARE_PY, /add_climate_anomaly\(holdout_df, norms=temp_norms\)/);
+  assert.match(PREPARE_PY, /holdout_df\['review_count'\]\.fillna\(venue_metadata\['median_review_count'\]\)/);
+  assert.ok(!/holdout_df\.groupby\(\['city', 'month'\]\)/.test(PREPARE_PY),
+    'a per-city statistic fitted on the holdout is a holdout self-fit');
+  assert.match(EXPORT_JS, /const isHoldout = HOLDOUT_CITIES\.includes\(city\);/,
+    'the exporter routes whole cities; a venue is in exactly one city, so no venue can sit on both sides');
+  // is_realtime is a provenance flag hardcoded to 1 at serving (PRE-RETRAIN-AUDIT
+  // finding 18). It stays a feature only because quick_eval, train_model,
+  // sports_ablation and hour_ranking_eval read it out of X by position; the
+  // carried key is the step that lets them stop, and the reason is written
+  // where the key is.
+  assert.match(PREPARE_PY, /'is_realtime': train_df\['is_realtime'\]\.values\.astype\(np\.int8\)/);
+  assert.match(PREPARE_PY, /'is_realtime': holdout_df\['is_realtime'\]\.values\.astype\(np\.int8\)/);
+  assert.match(PREPARE_PY, /PRE-RETRAIN-AUDIT finding 18/);
+  assert.match(QUICK_EVAL_PY, /X\[:, feature_cols\.index\('is_realtime'\)\]/,
+    'the day quick_eval stops reading the flag from X is the day it can leave feature_cols');
+});
+
+test('no blanket fill, and coordinates are a contract rather than an equator', () => {
+  assert.match(PREPARE_PY, /def refuse_unfilled_features\(/);
+  assert.ok(!/\[feature_cols\]\.fillna\(0\)/.test(PREPARE_PY),
+    'the blanket fillna(0) turned the first forgotten fill into a measured zero');
+  assert.match(PREPARE_PY, /def require_coordinates\(/);
+  assert.match(PREPARE_PY, /require_coordinates\(train_df, train_path, 'training_data.csv'\)/);
+  assert.match(PREPARE_PY, /require_coordinates\(holdout_df, holdout_path, 'holdout_data.csv'\)/);
+  assert.ok(!/df\['latitude'\]\.fillna\(0\)/.test(PREPARE_PY),
+    'a coordinate-less row was being trained at 0N 0E');
+});
+
+// The fixture run. Skipped, not failed, where Python with pandas is absent.
+const PY_PANDAS = (() => {
+  for (const bin of ['python', 'python3']) {
+    const probe = spawnSync(bin, ['-c', 'import pandas, numpy'], { encoding: 'utf8' });
+    if (probe.status === 0) return bin;
+  }
+  return null;
+})();
+
+const FIXTURE_DRIVER = `
+import sys, json, os
+import numpy as np, pandas as pd
+sys.path.insert(0, sys.argv[1])
+os.environ.pop('ML_ALLOW_UNKNOWN_PROVENANCE', None)
+import prepare_features as pf
+out = {}
+ev = pd.DataFrame({
+    'nearest_event_type': ['music', 'concert', 'film', None, 'sports', 'Concert '],
+    'has_nearby_event': [1, 1, 1, 0, 1, 1],
+    'nearest_event_attendance': [100, 200, 300, None, 400, 500],
+    'total_nearby_events': [1, 1, 1, None, 1, 1],
+    'total_nearby_attendance': [100, 200, 300, None, 400, 500],
+    'nearest_event_distance_km': [1, 1, 1, None, 1, 1],
+    'is_weekend': [0, 1, 0, 1, 0, 1], 'is_dinner_hour': [1, 1, 0, 0, 1, 1],
+    'venue_category': ['bar'] * 6,
+})
+stats = pf.normalise_event_types(ev, 'fixture')
+ev = pf.add_event_features(ev)
+out['event'] = {
+    'aliased': stats['legacy_values_aliased'],
+    'music': ev['etype_music'].tolist(), 'other': ev['etype_other'].tolist(),
+    'sports': ev['etype_sports'].tolist(),
+    'slots_sum': ev[[f'etype_{t}' for t in pf.EVENT_TYPE_VOCABULARY]].sum(axis=1).tolist(),
+}
+try:
+    pf.normalise_event_types(pd.DataFrame({'nearest_event_type': ['rave']}), 'bad')
+    out['event']['unknown_raises'] = False
+except pf.CorpusContractError as e:
+    out['event']['unknown_raises'] = 'rave' in str(e)
+w = pd.DataFrame({
+    'latitude': [40.0, 40.0, 40.0, 30.0, 40.0], 'longitude': [-75.0] * 5,
+    'month': [5, 5, 5, 5, 5], 'hour': [20, 20, 20, 20, 9],
+    'temperature': [60.0, 70.0, None, None, 80.0],
+    'humidity': [30.0, 40.0, None, None, 60.0], 'wind_speed': [3.0, 4.0, None, None, 5.0],
+    'is_raining': [1, 0, None, None, 0],
+    'weather_condition_code': [800, 803, None, None, 500],
+    'is_weekend': [0] * 5, 'is_dinner_hour': [1, 1, 1, 1, 0],
+})
+norms = pf.fit_temperature_norms(w)
+w = pf.add_weather_features(w, norms)
+w, _ = pf.add_climate_anomaly(w, norms)
+out['weather'] = {
+    'cells': norms[['lat_band', 'month', 'temp_norm', 'n_obs']].values.tolist(),
+    'temperature': w['temperature'].tolist(), 'anomaly': w['temp_anomaly'].tolist(),
+    'humidity': w['humidity'].tolist(), 'wind': w['wind_speed'].tolist(), 'rain': w['is_raining'].tolist(),
+    'unknown': w['weather_unknown'].tolist(), 'observed': w['weather_observed'].tolist(),
+    'refit_same': bool(len(pf.fit_temperature_norms(w)) == len(norms)
+                       and np.allclose(pf.fit_temperature_norms(w)['temp_norm'], norms['temp_norm'])),
+}
+p = pd.DataFrame({'is_realtime': [1, 1, 0, 1], 'label_provenance': ['live', 'unknown', 'weekly', None]})
+kept, rec = pf.exclude_unknown_provenance(p, 'fixture')
+os.environ['ML_ALLOW_UNKNOWN_PROVENANCE'] = 'true'
+kept2, rec2 = pf.exclude_unknown_provenance(p, 'fixture')
+out['prov'] = {'default_rows': len(kept), 'default_levels': kept['label_provenance'].fillna('unknown').tolist(),
+               'excluded': rec['rows_excluded'], 'admitted_rows': len(kept2), 'admitted_policy': rec2['policy']}
+try:
+    pf.refuse_unfilled_features(pd.DataFrame({'a': [1.0, None], 'b': [1.0, 2.0]}), ['a', 'b'], 'fixture')
+    out['refuse'] = False
+except pf.CorpusContractError as e:
+    out['refuse'] = "'a': 1" in str(e)
+try:
+    pf.require_coordinates(pd.DataFrame({'latitude': [1.0, None], 'longitude': [1.0, 2.0]}), 'x.csv', 'fixture')
+    out['coords'] = False
+except pf.CorpusContractError:
+    out['coords'] = True
+print('RESULT ' + json.dumps(out))
+`;
+
+test('prepare_features.py, run on fixtures', { skip: PY_PANDAS ? false : 'python with pandas not available' }, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'flock-prep-fixture-'));
+  const driver = path.join(dir, 'drive.py');
+  fs.writeFileSync(driver, FIXTURE_DRIVER);
+  let r;
+  try {
+    r = spawnSync(PY_PANDAS, [driver, TRAIN_DIR], { encoding: 'utf8', env: { ...process.env } });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  assert.equal(r.status, 0, r.stderr);
+  const line = r.stdout.split('\n').find((l) => l.startsWith('RESULT '));
+  assert.ok(line, `no RESULT line in:\n${r.stdout}\n${r.stderr}`);
+  const out = JSON.parse(line.slice(7));
+
+  // (a) 'concert' trains as music, 'film' as other, case and whitespace do not
+  // matter, an absent type lights no slot, and a sixth word stops the run.
+  assert.deepEqual(out.event.aliased, { concert: 2, film: 1 });
+  assert.deepEqual(out.event.music, [1, 1, 0, 0, 0, 1]);
+  assert.deepEqual(out.event.other, [0, 0, 1, 0, 0, 0]);
+  assert.deepEqual(out.event.sports, [0, 0, 0, 0, 1, 0]);
+  assert.deepEqual(out.event.slots_sum, [1, 1, 1, 0, 1, 1],
+    'every row with a type lights exactly one slot; the all-zero corner is gone');
+  assert.equal(out.event.unknown_raises, true);
+
+  // (c) the norm is the mean of the three READINGS in band 40 (60, 70, 80 ->
+  // 70); the two rows with no reading take it (band 30 has no cell, so it
+  // takes the table mean, also 70 here) and sit at anomaly 0; the other three
+  // slots take serving's outage values; weather_unknown marks the two rows.
+  assert.deepEqual(out.weather.cells, [[40, 5, 70, 3]]);
+  assert.deepEqual(out.weather.temperature, [60, 70, 70, 70, 80]);
+  assert.deepEqual(out.weather.anomaly, [-10, 0, 0, 0, 10]);
+  assert.deepEqual(out.weather.humidity, [30, 40, 50, 50, 60]);
+  assert.deepEqual(out.weather.wind, [3, 4, 0, 0, 5]);
+  assert.deepEqual(out.weather.rain, [1, 0, 0, 0, 0]);
+  assert.deepEqual(out.weather.unknown, [0, 0, 1, 1, 0]);
+  assert.deepEqual(out.weather.observed, [1, 1, 0, 0, 1]);
+  assert.equal(out.weather.refit_same, true,
+    'refitting after the fill must give the same table: the imputed rows never feed it');
+
+  // (d) by default the two unknown rows go and the live and weekly rows stay;
+  // the hatch admits all four.
+  assert.equal(out.prov.default_rows, 2);
+  assert.deepEqual(out.prov.default_levels, ['live', 'weekly']);
+  assert.equal(out.prov.excluded, 2);
+  assert.equal(out.prov.admitted_rows, 4);
+  assert.equal(out.prov.admitted_policy, 'admit_at_live_weight');
+
+  assert.equal(out.refuse, true, 'a NaN feature column must be named, not zeroed');
+  assert.equal(out.coords, true);
+});

@@ -19,6 +19,27 @@ model_metadata.json so an artifact can never hide which one was used:
 
 `require` means "the corpus must carry this signal"; `drop` means "we know it is
 absent, so remove the dead feature slots instead of shipping constants".
+
+ROUND 26 (2026-09-04): NO VALUE REACHES THE MATRIX THAT NOBODY MEASURED
+------------------------------------------------------------------------
+The weekly rows stopped carrying weather, the collectors stopped writing event
+defaults, and this file had to stop turning the resulting NULLs back into
+numbers. Four things changed, each argued at its own function:
+
+  * a missing temperature takes the climate norm serving would impute, fitted
+    from observed readings only, so its anomaly is 0 rather than a per-city
+    constant (fit_temperature_norms, add_weather_features);
+  * nearest_event_type is normalised onto the model's five-level vocabulary,
+    the two legacy values eventService.js wrote are mapped by their exact
+    reading, and any other value stops the run (normalise_event_types);
+  * a realtime row whose label_provenance is 'unknown' is EXCLUDED from both
+    frames unless ML_ALLOW_UNKNOWN_PROVENANCE=true admits it, because it can
+    no longer sit at the live weight beside rows that proved they are live
+    (main);
+  * the blanket fillna(0) over the feature columns is gone. Every feature has
+    its own named fill, and a NaN that survives them is a fill somebody forgot,
+    which stops the run instead of becoming a measured zero
+    (refuse_unfilled_features).
 """
 
 import logging
@@ -171,6 +192,75 @@ DEAD_SLOT_POLICY = _policy('FLOCK_DEAD_SLOT_POLICY', 'require', {'require', 'war
 # Smoke-test escape hatch for the realtime-row floor. A real retrain must never
 # set this; it exists so the pipeline can be exercised on a synthetic fixture.
 MIN_REALTIME_ROWS = int(os.environ.get('FLOCK_MIN_REALTIME_ROWS', '50000'))
+
+# ---------------------------------------------------------------------------
+# UNKNOWN PROVENANCE IS NOT A LIVE LABEL (round 26).
+#
+# 457,402 realtime rows were collected before label_source existed and
+# migration 025 proves they cannot be told apart: an unknown share of them are
+# BestTime's own forecast, stored as if observed. While every realtime row was
+# in that state the guard below raised only when ALL of them were unknown, and
+# the file argued that "silently demoting the whole historical corpus would be
+# a bigger change than the bug". That argument expired on 2026-09-01, when the
+# hourly sweep began writing label_source: the corpus now holds 4,577 rows that
+# PROVED they are live beside 457,402 that cannot, the all-unknown guard no
+# longer fires, and the weight-1.0 pool would be 99% rows nobody can vouch for.
+#
+# So an unknown realtime row is excluded from BOTH frames by default. Not
+# downweighted: train_model.assert_weighting_matches_provenance requires every
+# non-forecast realtime row to carry ONE weight, so there is no tier between
+# forecast and live for these rows to sit in without changing the trainer,
+# which this file may not do. ML_ALLOW_UNKNOWN_PROVENANCE=true admits them, at
+# the live weight, loudly, and model_metadata.json records that it did. That is
+# the pre-existing meaning of the variable ("train on the pre-2026-05 corpus
+# anyway, knowing what it contains"); what changed is that the default no
+# longer needs the whole corpus to be unknown before it says no.
+#
+# WHAT THIS COSTS TODAY, said plainly. The proven-live rows are all in philly
+# and lehigh, so under the default the holdout cities (miami, tokyo, barcelona)
+# have no realtime rows at all and the training frame has 4,577, below
+# MIN_REALTIME_ROWS. That is the true state of the corpus: there is no
+# live-labelled holdout yet. Either the hatch is set for a run that knows what
+# it is scoring, or collection reaches a holdout city. Nothing here can make a
+# third option appear by relabelling.
+# ---------------------------------------------------------------------------
+UNKNOWN_PROVENANCE_ENV = 'ML_ALLOW_UNKNOWN_PROVENANCE'
+
+
+def unknown_provenance_admitted(env=os.environ) -> bool:
+    return str(env.get(UNKNOWN_PROVENANCE_ENV, '')).strip().lower() == 'true'
+
+
+def exclude_unknown_provenance(df: pd.DataFrame, label: str) -> Tuple[pd.DataFrame, Dict]:
+    """Drop realtime rows whose provenance is 'unknown', unless admitted."""
+    prov = df['label_provenance'].fillna('unknown')
+    unknown = ((pd.to_numeric(df['is_realtime'], errors='coerce') == 1)
+               & (prov == 'unknown')).to_numpy()
+    n_unknown = int(unknown.sum())
+    n_rt = int((pd.to_numeric(df['is_realtime'], errors='coerce') == 1).sum())
+    admitted = unknown_provenance_admitted()
+    record = {
+        'realtime_rows': n_rt,
+        'unknown_provenance_rows': n_unknown,
+        'policy': 'admit_at_live_weight' if admitted else 'exclude',
+        'rows_excluded': 0 if admitted else n_unknown,
+    }
+    if n_unknown == 0:
+        return df, record
+    if admitted:
+        logger.warning(
+            'POLICY OVERRIDE %s=true: [%s] %d of %d realtime rows have '
+            'label_provenance="unknown" and are ADMITTED at the live weight. Migration '
+            '025 records that an unknown share of them are the vendor forecast. This is '
+            'recorded in model_metadata.json.', UNKNOWN_PROVENANCE_ENV, label, n_unknown, n_rt)
+        return df, record
+    logger.warning(
+        '[%s] EXCLUDING %d of %d realtime rows whose label_provenance is "unknown": they '
+        'predate label_source and cannot be told from a vendor forecast, so they may not '
+        'sit at the live weight beside the %d rows that proved they are live. Set '
+        '%s=true to admit them anyway.', label, n_unknown, n_rt, n_rt - n_unknown,
+        UNKNOWN_PROVENANCE_ENV)
+    return df[~unknown], record
 
 # Features that a policy switched off for this run. get_feature_columns()
 # excludes them, so metadata.feature_names never advertises a dead slot.
@@ -909,7 +999,9 @@ def add_astronomy_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     doy = df['month'].fillna(6) * 30.4 - 15.2
     decl = -23.44 * np.cos(np.radians((360.0 / 365.0) * (doy + 10)))
-    lat = df['latitude'].fillna(0).clip(-65, 65)
+    # No fill: require_coordinates has already refused a row without a finite
+    # latitude, so the equator is not quietly substituted for one here.
+    lat = pd.to_numeric(df['latitude'], errors='coerce').clip(-65, 65)
     x = (-np.tan(np.radians(lat)) * np.tan(np.radians(decl))).clip(-1, 1)
     daylight = 2 * np.degrees(np.arccos(x)) / 15.0
     df['daylight_hours'] = daylight
@@ -920,24 +1012,180 @@ def add_astronomy_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ---------------------------------------------------------------------------
+# WEATHER ON A ROW THAT HAS NONE (round 26, 2026-09-04).
+#
+# Weekly rows carry no weather, and never truthfully did: collectWeekly stamped
+# each venue's 168 typical-week rows with the one reading taken at the moment of
+# collection, a single number for a whole week, and repairWeeklyWeather.js
+# cleared it because a Tuesday-3AM row wearing Thursday-noon's temperature is a
+# batch signature, not a measurement. So the six weather columns are NULL on
+# every weekly row, on the 99 realtime rows whose reading failed, and on nothing
+# else.
+#
+# WHAT THIS FILE USED TO DO WITH THE GAP, and why it was wrong twice over.
+# add_weather_features filled a missing temperature with the (city, month)
+# MEDIAN of the frame, then the global median, then a literal 20.0, and
+# add_climate_anomaly fitted the (latitude band, month) norms from the FILLED
+# column. Measured on the 2026-08-30 export with the weekly weather blanked the
+# way the corpus now is:
+#
+#   * every weekly venue-batch came out with exactly ONE temperature on all 168
+#     of its rows, the city-month median (18,621 of 18,621 venues): a
+#     per-(city, month) constant wearing the units of a reading;
+#   * 88% of the rows feeding each norm were those medians, so the norms moved
+#     by a mean of 1.04F and up to 3.56F (band 20, May) from what the observed
+#     readings alone say;
+#   * the weekly rows' temp_anomaly became median-minus-contaminated-norm, a
+#     nonzero per-(city, month) constant (76 distinct values across the weekly
+#     rows), while services/mlPredictor.js hands an imputed temperature to the
+#     model with an anomaly of exactly 0.
+#
+# Serving's rule is the one to match, because serving is where the model is
+# scored. tempForFeature() imputes a missing reading with climateNorm(): the
+# metadata.temp_norms entry for this (5-degree latitude band, month), else the
+# mean of that whole table. temp_anomaly then cancels to 0. So:
+#
+#   1. the norms are fitted from rows that CARRY a reading and from nothing
+#      else (fit_temperature_norms), and the row counts behind each cell are
+#      published beside the values;
+#   2. a missing temperature is filled with the norm for its (band, month), or
+#      the table mean when that cell has no observed row, which is the same
+#      two-step lookup mlPredictor.climateNorm performs, keyed by the same
+#      string;
+#   3. humidity, wind_speed and is_raining are filled with 50, 0 and 0, the
+#      values buildFeatureMap emits for a missing reading (`?? 50`, `?? 0`,
+#      `? 1 : 0`). They are not measurements and nothing here says they are:
+#      the honest marker is weather_unknown = 1, which a row with no condition
+#      code carries and which serving emits on an outage. There is no
+#      in-distribution "unknown" for a continuous slot, and a sentinel the
+#      model has never seen is the `?? 20` mistake over again.
+#
+# A weekly row's weather slots are therefore, value for value, the vector
+# serving builds when OpenWeatherMap is down, so the outage behaviour is
+# trained rather than improvised and the anchor rows carry no fabricated
+# climate. weather_observed rides both pickles as a CARRIED column so a retrain
+# can weight or slice on the difference. __tests__/mlTrainingContracts.test.js
+# pins the three fill constants against mlPredictor.js and runs the fill on a
+# fixture when a Python with pandas is available.
+# ---------------------------------------------------------------------------
+WEATHER_NO_READING_FILLS: Dict[str, float] = {'humidity': 50, 'wind_speed': 0, 'is_raining': 0}
+LAT_BAND_DEGREES = 5.0
+
+
+def require_coordinates(df: pd.DataFrame, csv_path: Path, label: str) -> None:
+    """Every row needs a finite latitude and longitude, or the run stops.
+
+    Three feature families derive from the coordinates: the astronomy shape,
+    the climate norm lookup and the neighbour grid. The old `fillna(0)` in two
+    of them put a coordinate-less row on the equator at the prime meridian and
+    trained it there, silently. No row in the corpus lacks coordinates, which
+    is exactly why a hard contract costs nothing now and catches the first one.
+    """
+    lat = pd.to_numeric(df['latitude'], errors='coerce')
+    lng = pd.to_numeric(df['longitude'], errors='coerce')
+    bad = ~(np.isfinite(lat.to_numpy(dtype=float)) & np.isfinite(lng.to_numpy(dtype=float)))
+    if bad.any():
+        raise CorpusContractError(
+            f'{label} ({csv_path}) has {int(bad.sum())} row(s) without a finite latitude/'
+            'longitude. Astronomy, the climate norm and the neighbour grid are all derived '
+            'from the coordinates, and filling them with 0 would train those rows at 0N 0E. '
+            'Fix the venue in ml_venues; do not fill.'
+        )
+
+
+def latitude_band(lat: pd.Series) -> pd.Series:
+    """The 5-degree band mlPredictor.monthClimateNorm keys temp_norms on."""
+    return (pd.to_numeric(lat, errors='coerce') / LAT_BAND_DEGREES).round() * LAT_BAND_DEGREES
+
+
+def temp_norm_keys(band: pd.Series, month: pd.Series) -> pd.Series:
+    """`${band}_${month}`, the metadata.temp_norms key mlPredictor.js builds.
+
+    A month that is NaN (only reachable under FLOCK_CALENDAR_POLICY=drop) keys
+    to a cell no table has, so it takes the table mean, which is what serving
+    does for a month the artifact has never seen.
+    """
+    b = band.round().fillna(0).astype(int).astype(str)
+    m = pd.to_numeric(month, errors='coerce')
+    m = m.where(m.notna(), -1).astype(int).astype(str)
+    return b + '_' + m
+
+
+def fit_temperature_norms(df: pd.DataFrame) -> pd.DataFrame:
+    """(lat_band, month) mean temperature, over rows that CARRY a reading.
+
+    Nothing imputed feeds this. When add_weather_features has already run on
+    the frame it left `weather_observed` behind and that marker is used; before
+    it, a reading is a non-null temperature. Either way the population is the
+    same rows.
+    """
+    if 'weather_observed' in df.columns:
+        observed = df['weather_observed'].to_numpy() == 1
+    else:
+        observed = df['temperature'].notna().to_numpy()
+    d = pd.DataFrame({
+        'lat_band': latitude_band(df['latitude']).to_numpy()[observed],
+        'month': pd.to_numeric(df['month'], errors='coerce').to_numpy()[observed],
+        'temperature': pd.to_numeric(df['temperature'], errors='coerce').to_numpy()[observed],
+    })
+    d = d.dropna(subset=['lat_band', 'month', 'temperature'])
+    if d.empty:
+        raise CorpusContractError(
+            'No row carries a temperature reading, so there is nothing to fit a climate '
+            'norm from and nothing honest to fill a missing temperature with. The corpus '
+            'has weather on every realtime row collectRealtime.js wrote; a frame with none '
+            'is not the corpus.'
+        )
+    norms = (d.groupby(['lat_band', 'month'])['temperature']
+              .agg(temp_norm='mean', n_obs='size').reset_index())
+    logger.info('Climate norms: %d (lat_band, month) cells fitted from %d rows that carry a '
+                'temperature reading (%d rows carry none and will take the norm).',
+                len(norms), int(observed.sum()), int((~observed).sum()))
+    return norms
+
+
+def temperature_norm_lookup(df: pd.DataFrame, norms: pd.DataFrame) -> pd.Series:
+    """The norm serving would look up for each row: its cell, else the table mean.
+
+    Index-preserving on purpose (a map, not a merge): this runs before the
+    baseline smoothing and the neighbour grid, both of which key on the frame's
+    own columns, and a merge that reset the index here would be an invitation
+    to a positional mistake later.
+    """
+    table = {
+        f'{int(b)}_{int(m)}': float(v)
+        for b, m, v in zip(norms['lat_band'], norms['month'], norms['temp_norm'])
+        if np.isfinite(v)
+    }
+    global_mean = float(norms['temp_norm'].mean())
+    keys = temp_norm_keys(latitude_band(df['latitude']), df['month'])
+    return keys.map(table).astype(float).fillna(global_mean)
+
+
 def add_climate_anomaly(df: pd.DataFrame, norms: pd.DataFrame = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Temperature vs latitude-band x month climatology (v2.4).
 
     Literature: anomaly vs seasonal norm predicts demand better than absolute
-    temperature. Norms are computed FROM THE TRAINING SET (train split only,
-    passed in for holdout/inference parity) on 5-degree latitude bands so
-    inference needs only lat + month. Saved into model metadata for Node.
+    temperature. The norms are fitted by fit_temperature_norms from rows that
+    carry a reading (train split only; the holdout is handed the train table)
+    on 5-degree latitude bands so inference needs only lat + month, and they
+    ship in model metadata for Node.
+
+    add_weather_features attached `temp_norm` and filled the missing
+    temperatures from it, so on an imputed row the anomaly below is exactly 0,
+    which is what mlPredictor.buildFeatureMap produces for the same row. The
+    `norms` argument is returned so callers that fit on the frame (the
+    within-city eval) still get the table back.
     """
-    df['lat_band'] = (df['latitude'].fillna(0) / 5.0).round() * 5
+    if 'temp_norm' not in df.columns:
+        raise CorpusContractError(
+            'add_climate_anomaly needs temp_norm on the frame; call add_weather_features '
+            'first. It is the step that fits the norms from observed readings and fills '
+            'the missing temperatures from them.')
     if norms is None:
-        norms = (
-            df.groupby(['lat_band', 'month'])['temperature']
-            .mean().rename('temp_norm').reset_index()
-        )
-    df = df.merge(norms, on=['lat_band', 'month'], how='left')
-    global_mean = float(norms['temp_norm'].mean())
-    df['temp_norm'] = df['temp_norm'].fillna(global_mean)
-    df['temp_anomaly'] = (df['temperature'].fillna(df['temp_norm']) - df['temp_norm']).clip(-25, 25)
+        norms = fit_temperature_norms(df)
+    df['temp_anomaly'] = (df['temperature'] - df['temp_norm']).clip(-25, 25)
     df['is_warm_anomaly_evening'] = ((df['temp_anomaly'] > 5) & (df['hour'] >= 17)).astype(int)
     return df, norms
 
@@ -1252,20 +1500,34 @@ def add_venue_features(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict]:
     return df, metadata
 
 
-def add_weather_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Add weather-derived features."""
-    # Fill missing weather data
-    # Temperature: fill with city-month median, then global median
-    city_month_temp = df.groupby(['city', 'month'])['temperature'].transform('median')
-    df['temperature'] = df['temperature'].fillna(city_month_temp)
-    global_temp_median = df['temperature'].median()
-    if pd.isna(global_temp_median):
-        global_temp_median = 20.0
-    df['temperature'] = df['temperature'].fillna(global_temp_median)
+def add_weather_features(df: pd.DataFrame, norms: pd.DataFrame = None) -> pd.DataFrame:
+    """Add weather-derived features.
 
-    df['humidity'] = df['humidity'].fillna(50)
-    df['wind_speed'] = df['wind_speed'].fillna(0)
-    df['is_raining'] = df['is_raining'].fillna(0).astype(int)
+    `norms` is the climate table fitted on the TRAINING frame; pass it for the
+    holdout so no holdout reading shapes a holdout feature. None fits it from
+    this frame's observed readings (training, and the within-city eval).
+    """
+    if norms is None:
+        norms = fit_temperature_norms(df)
+
+    # CARRIED, never a feature: whether this row's weather is a reading or the
+    # outage vector below. Recorded before any fill so it cannot be laundered.
+    df['weather_observed'] = df['temperature'].notna().astype(int)
+
+    # A missing temperature takes the climate norm for its (band, month), the
+    # table mean when the cell has no observed row: mlPredictor.climateNorm,
+    # in the same order, on the same key. See the block above
+    # fit_temperature_norms for what the city-month median used to do here.
+    df['lat_band'] = latitude_band(df['latitude'])
+    df['temp_norm'] = temperature_norm_lookup(df, norms)
+    df['temperature'] = pd.to_numeric(df['temperature'], errors='coerce').fillna(df['temp_norm'])
+
+    # The outage vector, column by column, from WEATHER_NO_READING_FILLS. Each
+    # constant is the one buildFeatureMap emits for a missing reading and is
+    # pinned against it; weather_unknown = 1 (below) is what says "no reading".
+    for col, value in WEATHER_NO_READING_FILLS.items():
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(value)
+    df['is_raining'] = df['is_raining'].astype(int)
 
     # Weather code groups. recover_weather_codes() has already run, so a NaN
     # here means the row genuinely carries no weather reading — 'unknown' is
@@ -1803,8 +2065,83 @@ def add_user_feedback_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ---------------------------------------------------------------------------
+# THE EVENT-TYPE VOCABULARY, AND THE TWO WORDS THAT WERE WRITTEN OUTSIDE IT.
+#
+# The etype_* one-hots are built over exactly these five levels, and
+# mlPredictor.buildFeatureMap emits exactly these five, so a nearest_event_type
+# outside the list is a row the one-hot cannot describe: has_nearby_event = 1
+# with all five etype slots at 0, a corner serving never produces.
+#
+# scripts/ml/eventService.js returned 'concert' for the Ticketmaster Music
+# segment and 'film' for the Film segment from the day it was written until
+# 2026-09-04 (commits d6c806e through 73c0374 carry the old function). That was
+# harmless while it fed only `event_type`, which is not a feature. From
+# 2026-09-01 collectRealtime.js wrote nearest_event_type from the same function,
+# and 1,964 live-labelled realtime rows (philly 1,547, lehigh 417, observed
+# 2026-09-01 to 09-04) carry 'concert' as a result. The 2026-09-04 fix stops
+# new ones; nothing repairs the old.
+#
+# The aliases below are the OLD function's outputs mapped through the NEW one:
+# Music -> 'concert' is Music -> 'music', and Film -> 'film' is Film -> 'other',
+# because the fixed function has no film branch and the segment falls through.
+# That is a reading of two versions of one function, not a guess about what a
+# concert is. Anything else outside the vocabulary has no such reading and stops
+# the run by name, so a new writer cannot land a sixth level as five zeros.
+#
+# The CSV carries the raw value. The exporter reports every value it sees and
+# says which fall outside the vocabulary (eventTypeCensus), and this is where
+# the two known ones are mapped; the raw corpus stays what was written.
+# ---------------------------------------------------------------------------
+EVENT_TYPE_VOCABULARY: List[str] = ['music', 'sports', 'arts', 'family', 'other']
+LEGACY_EVENT_TYPE_ALIASES: Dict[str, str] = {'concert': 'music', 'film': 'other'}
+
+
+def normalise_event_types(df: pd.DataFrame, label: str) -> Dict:
+    """Map the two legacy values onto the vocabulary; refuse anything else.
+
+    Idempotent, so add_event_features can call it on a frame main() already
+    normalised without changing a row. Returns the counts for metadata.
+    """
+    raw = df['nearest_event_type'].astype('string').str.strip().str.lower()
+    present = (raw.notna() & (raw != '')).fillna(False).to_numpy()
+    aliased = raw.map(LEGACY_EVENT_TYPE_ALIASES)
+    hit = (aliased.notna().to_numpy()) & present
+    out = raw.where(~hit, aliased)
+    in_vocab = out.isin(EVENT_TYPE_VOCABULARY).fillna(False).to_numpy()
+    unknown = out[present & ~in_vocab]
+    if len(unknown):
+        counts = {str(k): int(v) for k, v in unknown.value_counts().items()}
+        raise CorpusContractError(
+            f'[{label}] nearest_event_type carries {len(counts)} value(s) outside the '
+            f'vocabulary {EVENT_TYPE_VOCABULARY} that no alias covers: {counts}.\n'
+            '  The etype_* one-hot cannot describe such a row: it would train as '
+            'has_nearby_event = 1 with every etype slot at 0, a combination serving never '
+            'produces. LEGACY_EVENT_TYPE_ALIASES maps the two values eventService.js used '
+            'to write (concert, film) because both have an exact reading in the fixed '
+            'function; a new value needs the writer fixed and its own reading added here, '
+            'not a silent bucket.'
+        )
+    aliased_counts = {str(k): int(v) for k, v in raw[hit].value_counts().items()}
+    # Object dtype with NaN for the empty field, not the nullable string dtype:
+    # the one-hot below compares with ==, and a <NA> there would poison the cast.
+    df['nearest_event_type'] = np.where(present, out.astype(object), np.nan)
+    stats = {
+        'rows': int(len(df)),
+        'rows_with_type': int(present.sum()),
+        'legacy_values_aliased': aliased_counts,
+        'levels_after': {str(k): int(v) for k, v in out[present].value_counts().items()},
+    }
+    if aliased_counts:
+        logger.warning('[%s] nearest_event_type: %d row(s) carried a legacy value and were '
+                       'mapped onto the vocabulary %s: %s', label, int(hit.sum()),
+                       LEGACY_EVENT_TYPE_ALIASES, aliased_counts)
+    return stats
+
+
 def add_event_features(df: pd.DataFrame) -> pd.DataFrame:
     """Add Ticketmaster event proximity features."""
+    normalise_event_types(df, 'features')
     # Core event features — fill missing with 0
     df['has_nearby_event'] = df['has_nearby_event'].fillna(0).astype(int)
     df['nearest_event_attendance'] = df['nearest_event_attendance'].fillna(0)
@@ -1831,10 +2168,11 @@ def add_event_features(df: pd.DataFrame) -> pd.DataFrame:
         df['venue_category'].isin(['bar', 'nightclub']).astype(int)
     ).astype(int)
 
-    # Event type one-hot encoding
-    event_types = ['music', 'sports', 'arts', 'family', 'other']
-    for etype in event_types:
-        df[f'etype_{etype}'] = (df['nearest_event_type'] == etype).astype(int)
+    # Event type one-hot encoding, over the vocabulary and nothing else:
+    # normalise_event_types above has already refused any other value.
+    types = df['nearest_event_type'].astype(object)
+    for etype in EVENT_TYPE_VOCABULARY:
+        df[f'etype_{etype}'] = (types == etype).astype(int)
 
     return df
 
@@ -1856,6 +2194,12 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
         'user_feedback_count',  # raw count — use log_user_feedback_count instead
         'sample_weight',  # training weight — NEVER a feature (encodes row provenance = label regime)
         '_vkey', 'lat_band', 'temp_norm', 'neighbor_count',  # v2.4 intermediates (log_neighbor_count is the feature)
+        # Round 26 CARRIED COLUMN. Whether the row's weather is a reading or the
+        # outage vector. As a feature it would be a perfect proxy for weekly
+        # versus realtime, i.e. the label regime, which is why sample_weight
+        # and label_provenance are excluded; the marker the model may see is
+        # weather_unknown, which serving emits on an outage too.
+        'weather_observed',
         'observed_date',  # raw date string — v2.5 holiday features are derived from it
         # Round 10 additions:
         'venue_id',  # identifier — a feature here is pure venue memorization
@@ -1898,6 +2242,32 @@ def get_feature_columns(df: pd.DataFrame) -> List[str]:
     return sorted(feature_cols)
 
 
+def refuse_unfilled_features(df: pd.DataFrame, feature_cols: List[str], label: str) -> None:
+    """A NaN in a feature column at this point is a fill somebody forgot.
+
+    This replaces the blanket zero fill over the feature columns, which ran
+    last and caught whatever every other fill had missed. It caught nothing on the last run
+    (prep3.log: "No missing values in features!"), and that is the only state
+    in which it is safe, because 0 is not a neutral value for any column in this
+    matrix: 0F, 0% humidity, a venue with no reviews, a category encoded as the
+    first one in the map. Each feature now has its own named fill with its own
+    argument, and the one that arrives here without one stops the run and is
+    named, rather than being trained as a measurement of nothing.
+    """
+    missing = df[feature_cols].isna().sum()
+    missing = missing[missing > 0]
+    if len(missing):
+        detail = {str(k): int(v) for k, v in missing.items()}
+        raise CorpusContractError(
+            f'[{label}] {len(missing)} feature column(s) still carry NaN after every named '
+            f'fill: {detail}.\n'
+            '  There is no blanket fillna(0) any more. Find the feature\'s own fill (or '
+            'write one, with the argument for its value) rather than restoring a zero '
+            'that would train as a measurement.'
+        )
+    logger.info('[%s] every feature column is fully populated by its own named fill.', label)
+
+
 def main():
     logger.info('Loading training data...')
     train_path = SCRIPT_DIR / 'training_data.csv'
@@ -1920,6 +2290,8 @@ def main():
     holdout_df = pd.read_csv(holdout_path)
     logger.info(f'Holdout data: {len(holdout_df)} rows')
     require_export_columns(holdout_df, holdout_path, 'holdout_data.csv')
+    require_coordinates(train_df, train_path, 'training_data.csv')
+    require_coordinates(holdout_df, holdout_path, 'holdout_data.csv')
 
     # ── CORPUS CONTRACT (audit findings 4 and 5) ────────────────────────────
     # Recover weather_condition_code from the description text, then decide the
@@ -1959,6 +2331,16 @@ def main():
     report_event_provenance(train_df, 'train')
     report_event_provenance(holdout_df, 'holdout')
 
+    # Round 26: the event-type vocabulary. The two legacy values are mapped by
+    # their exact reading and anything else stops the run here, before a
+    # two-hour feature build, on BOTH frames.
+    event_type_stats = {
+        'train': normalise_event_types(train_df, 'train'),
+        'holdout': normalise_event_types(holdout_df, 'holdout'),
+        'vocabulary': list(EVENT_TYPE_VOCABULARY),
+        'legacy_aliases': dict(LEGACY_EVENT_TYPE_ALIASES),
+    }
+
     # Drop rows with null label
     train_df = train_df.dropna(subset=['busyness_pct'])
     logger.info(f'After dropping null labels: {len(train_df)} rows')
@@ -1978,13 +2360,17 @@ def main():
     logger.info('Engineering features...')
     train_df = add_temporal_features(train_df)
     train_df, venue_metadata = add_venue_features(train_df)
-    train_df = add_weather_features(train_df)
+    # Round 26: the climate table is fitted ONCE, from the training rows that
+    # carry a reading, and handed to every weather step on both frames. It is
+    # the table serving imputes from, so it is fitted before anything is filled.
+    temp_norms = fit_temperature_norms(train_df)
+    train_df = add_weather_features(train_df, temp_norms)
     train_df, cat_baseline_maps = add_baseline_features(train_df)
     train_df = add_user_feedback_features(train_df)
     train_df = add_event_features(train_df)
     # v2.4 features (sunset/anomaly/neighbors) — see function docstrings
     train_df = add_astronomy_features(train_df)
-    train_df, temp_norms = add_climate_anomaly(train_df)
+    train_df, _ = add_climate_anomaly(train_df, temp_norms)
     train_df = add_neighbor_features(train_df)
     # v2.5: special-night calendar features from observed_date
     train_df = add_holiday_features(train_df)
@@ -1993,6 +2379,23 @@ def main():
     venue_metadata['temp_norms'] = {
         f"{int(r.lat_band)}_{int(r.month)}": round(float(r.temp_norm), 2)
         for r in temp_norms.itertuples() if not pd.isna(r.month)
+    }
+    # The row count behind each cell, so serving can one day tell a norm built
+    # from thousands of readings from one built from a handful (the question
+    # mlPredictor.monthClimateNorm says it cannot ask of the shipped table).
+    venue_metadata['temp_norm_counts'] = {
+        f"{int(r.lat_band)}_{int(r.month)}": int(r.n_obs)
+        for r in temp_norms.itertuples() if not pd.isna(r.month)
+    }
+    weather_imputation = {
+        'temperature': ('temp_norms[(lat_band, month)], else the mean of that table: the '
+                        'lookup mlPredictor.climateNorm performs for a missing reading'),
+        'no_reading_fills': dict(WEATHER_NO_READING_FILLS),
+        'norms_fit_population': 'rows carrying a temperature reading (weather_observed = 1)',
+        'norms_fit_rows': int(temp_norms['n_obs'].sum()),
+        'norms_cells': int(len(temp_norms)),
+        'train_rows_with_reading': int((train_df['weather_observed'] == 1).sum()),
+        'train_rows_imputed': int((train_df['weather_observed'] == 0).sum()),
     }
 
     # Feature engineering — holdout data (same transforms)
@@ -2019,7 +2422,11 @@ def main():
             for tc in ['google_type_1', 'google_type_2', 'google_type_3']:
                 holdout_df.loc[holdout_df[tc] == t, col_name] = 1
 
-        holdout_df = add_weather_features(holdout_df)
+        # TRAIN norms: a holdout reading never shapes a holdout feature, and the
+        # city-month median this used to fit on the holdout's own rows is gone.
+        holdout_df = add_weather_features(holdout_df, temp_norms)
+        weather_imputation['holdout_rows_with_reading'] = int((holdout_df['weather_observed'] == 1).sum())
+        weather_imputation['holdout_rows_imputed'] = int((holdout_df['weather_observed'] == 0).sum())
         # TRAIN maps — holdout labels must never build holdout features (round 10)
         holdout_df, _ = add_baseline_features(holdout_df, cat_maps=cat_baseline_maps)
         holdout_df = add_user_feedback_features(holdout_df)
@@ -2075,15 +2482,28 @@ def main():
     # were carrying weight 1.0 — a vendor's prediction outranking every other
     # label in the corpus, and teaching the model to reproduce a competitor's
     # model rather than reality. Forecast-derived labels now sit between weekly
-    # and live. Rows collected before label_provenance existed stay at 1.0:
-    # their provenance is genuinely unknown and silently demoting the whole
-    # historical corpus would be a bigger change than the bug.
+    # and live. Rows collected before label_provenance existed USED to stay at
+    # 1.0 on the argument that "silently demoting the whole historical corpus
+    # would be a bigger change than the bug"; that held while every realtime
+    # row was in that state and expired on 2026-09-01, when proven-live rows
+    # began landing beside them. Round 26 excludes them instead; see
+    # exclude_unknown_provenance.
     # label_provenance is part of the export contract (require_export_columns
     # already refused the file if it were absent). It used to be defaulted to
     # 'unknown' here when missing, which silently weighted EVERY vendor-forecast
     # label at 1.0 — the exact thing round 10 added the column to stop, and the
     # regime the shipped v2.5 model was trained under without anyone noticing.
     train_df['label_provenance'] = train_df['label_provenance'].fillna('unknown')
+    # Round 26: an unknown-provenance realtime row is not a live label. Excluded
+    # from both frames unless ML_ALLOW_UNKNOWN_PROVENANCE=true admits it; see
+    # the block above exclude_unknown_provenance for why there is no tier for it.
+    # The holdout keeps its rows only under the same hatch: a gate scored on
+    # rows that may be the vendor's own forecast is not a gate on reality.
+    train_df, unknown_train = exclude_unknown_provenance(train_df, 'train')
+    holdout_df['label_provenance'] = holdout_df['label_provenance'].fillna('unknown')
+    holdout_df, unknown_holdout = exclude_unknown_provenance(holdout_df, 'holdout')
+    unknown_provenance_record = {'train': unknown_train, 'holdout': unknown_holdout,
+                                 'env': UNKNOWN_PROVENANCE_ENV}
     is_forecast_label = (train_df['is_realtime'] == 1) & (train_df['label_provenance'] == 'forecast')
     is_owner_label = (train_df['is_realtime'] == 1) & (train_df['label_provenance'] == 'owner_report')
     train_df['sample_weight'] = np.where(
@@ -2123,21 +2543,29 @@ def main():
     rt_prov = sorted(
         train_df.loc[train_df['is_realtime'] == 1, 'label_provenance']
         .dropna().unique().tolist()
-    ) if 'is_realtime' in train_df.columns else known_prov
+    )
     logger.info(f'label_provenance levels on realtime rows: {rt_prov}')
-    if ((rt_prov == ['unknown'] or not rt_prov)
-            and os.environ.get('ML_ALLOW_UNKNOWN_PROVENANCE', '').lower() != 'true'):
+    # Round 26: the old check here raised only when EVERY realtime row was
+    # 'unknown', which stopped being true on 2026-09-01 and left 457,402
+    # unprovable rows at the live weight beside 4,577 proven ones with nothing
+    # said. exclude_unknown_provenance above now decides row by row; what is
+    # left to check is that a row with 'unknown' can only be here by admission.
+    if 'unknown' in rt_prov and not unknown_provenance_admitted():
         raise CorpusContractError(
-            'Every REALTIME training row has label_provenance="unknown" — the column '
-            'is present but carries no signal on the only rows the weighting ladder '
-            'can act on, so vendor-forecast labels would all be weighted 1.0 again. '
-            'Re-export after collectRealtime.js has written label_source, or fix the '
-            'export join. Set ML_ALLOW_UNKNOWN_PROVENANCE=true to train on the '
-            'pre-2026-05 corpus anyway, knowing what it contains.'
+            'label_provenance="unknown" survived exclusion on a realtime row without '
+            f'{UNKNOWN_PROVENANCE_ENV}=true. That cannot happen unless '
+            'exclude_unknown_provenance was bypassed; do not weaken it.'
         )
     if n_rt < MIN_REALTIME_ROWS:
-        raise ValueError(f'Only {n_rt} realtime rows — expected {MIN_REALTIME_ROWS}+. '
-                         'Check is_realtime/baseline columns.')
+        raise ValueError(
+            f'Only {n_rt} realtime rows — expected {MIN_REALTIME_ROWS}+. '
+            f'{unknown_train["rows_excluded"]} realtime row(s) were excluded because their '
+            'label_provenance is "unknown" (collected before label_source existed; not '
+            'separable from a vendor forecast, migration 025). The floor is the corpus '
+            'saying it does not yet hold enough PROVEN live labels to train on. Either '
+            f'wait for collectRealtime.js to write more, or set {UNKNOWN_PROVENANCE_ENV}=true '
+            'to admit the unprovable rows at the live weight, knowing what they contain.'
+        )
 
     # Get feature columns (excludes baseline_busyness — now in label)
     feature_cols = get_feature_columns(train_df)
@@ -2182,10 +2610,13 @@ def main():
     # so the first real run after the gate was armed crashed at the dump: the
     # arming edit was never executed until 2026-08-30. A carried column, not a
     # feature, same as the others here.
+    # Round 26: weather_observed rides along too, on the same terms as
+    # events_observed: which holdout rows carry a reading and which carry the
+    # outage vector is a fact the pickle has to keep.
     keep_extra = ['busyness_pct', 'delta_label', 'baseline_busyness', 'city',
                   'label_provenance', 'venue_category',
                   'label_source', 'vendor_forecast_pct', 'events_observed',
-                  'observed_date']
+                  'observed_date', 'weather_observed']
     holdout_df = holdout_df[feature_cols + keep_extra]
 
     logger.info(f'Feature count: {len(feature_cols)}')
@@ -2199,19 +2630,12 @@ def main():
     logger.info(f'  Std: {train_df["busyness_pct"].std():.1f}')
     logger.info(f'  Min: {train_df["busyness_pct"].min()}, Max: {train_df["busyness_pct"].max()}')
 
-    # Missing value report
-    missing = train_df[feature_cols].isnull().sum()
-    missing = missing[missing > 0]
-    if len(missing) > 0:
-        logger.info(f'\nMissing values:')
-        for col, count in missing.items():
-            logger.info(f'  {col}: {count} ({count/len(train_df)*100:.1f}%)')
-    else:
-        logger.info('\nNo missing values in features!')
-
-    # Fill any remaining NaN in features with 0
-    train_df[feature_cols] = train_df[feature_cols].fillna(0)
-    holdout_df[feature_cols] = holdout_df[feature_cols].fillna(0)
+    # Round 26: no blanket fill. Every feature column arrives here populated by
+    # its own named fill, or the run stops and names the column. The
+    # `fillna(0)` that stood here caught nothing on the last run and would have
+    # turned the first forgotten fill into a measured zero.
+    refuse_unfilled_features(train_df, feature_cols, 'train')
+    refuse_unfilled_features(holdout_df, feature_cols, 'holdout')
 
     # Dead-slot contract (round 22). This used to be a bare logger.warning that
     # ended "some of these are legitimately sparse" without saying WHICH, so the
@@ -2323,6 +2747,16 @@ def main():
         # Round 14: raw material for a per-fold refit of the two category
         # label-means. Not features, not applied to any row here.
         'category_cell_stats': cell_stats,
+        # Round 26 carried columns. weather_observed: 1 where the six weather
+        # slots are a reading, 0 where they are the outage vector. is_realtime
+        # is ALSO still a feature (quick_eval, train_model, sports_ablation and
+        # hour_ranking_eval all read it out of X by position), and this key is
+        # the step that lets them stop: PRE-RETRAIN-AUDIT finding 18 names it
+        # as a provenance feature kept for itself, hardcoded to 1 at serving,
+        # and it cannot leave feature_cols until those readers take it from
+        # here instead.
+        'weather_observed': train_df['weather_observed'].values.astype(np.int8),
+        'is_realtime': train_df['is_realtime'].values.astype(np.int8),
     }
     with open(SCRIPT_DIR / 'features_train.pkl', 'wb') as f:
         pickle.dump(train_data, f)
@@ -2347,6 +2781,8 @@ def main():
         # prepare_features is required before a GATE-B admission but not
         # before a legacy one.
         'observed_date': holdout_df['observed_date'].astype('string').fillna('').values.astype(str),
+        'weather_observed': holdout_df['weather_observed'].values.astype(np.int8),
+        'is_realtime': holdout_df['is_realtime'].values.astype(np.int8),
     }
     with open(SCRIPT_DIR / 'features_holdout.pkl', 'wb') as f:
         pickle.dump(holdout_data, f)
@@ -2444,6 +2880,13 @@ def main():
             },
             'dropped_features': sorted(DROPPED_FEATURES),
             'dropped_feature_reasons': DROP_REASONS,
+            # Round 26. What was imputed, what was aliased, what was excluded
+            # and what was refused, so the artifact says it rather than the
+            # reader inferring it from a diff.
+            'weather_imputation': weather_imputation,
+            'event_type_normalisation': event_type_stats,
+            'unknown_provenance': unknown_provenance_record,
+            'feature_nan_policy': 'refuse (refuse_unfilled_features); no blanket fillna(0)',
             'constant_feature_slots': constant_cols,
             # Round 22. Not just WHICH slots are dead but why each one is
             # allowed to be, and what makes it stop. An artifact that ships a

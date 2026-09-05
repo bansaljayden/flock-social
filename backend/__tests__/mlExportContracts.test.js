@@ -349,6 +349,29 @@ test.before(async () => {
   for (const r of WEEKLY) await insert(r, 'weekly');
   for (const r of REALTIME) await insert(r, 'realtime');
 
+  // Round 26: one live row carrying the legacy event type eventService.js wrote
+  // until 2026-09-04. The exporter must carry it AS STORED (the raw corpus is
+  // not to look cleaner than it is) and its preflight census must name it.
+  const { rows: evented } = await pool.query(
+    `INSERT INTO ml_venues (google_place_id, name, city, latitude, longitude,
+                            venue_category, google_types, timezone, price_level, rating, review_count)
+     VALUES ('ChIJexportEvented1', 'Concert Bar', 'philly', 39.95, -75.16, 'bar',
+             ARRAY['bar'], 'America/New_York', 2, 4.5, 300)
+     RETURNING id`
+  );
+  venueIds.evented = evented[0].id;
+  await pool.query(
+    `INSERT INTO ml_training_data
+       (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category,
+        busyness_pct, month, season, temperature, weather_condition,
+        observed_date, label_source, collected_at,
+        has_nearby_event, total_nearby_events, nearest_event_attendance,
+        nearest_event_distance_km, nearest_event_type, events_observed)
+     VALUES ($1, 'realtime', 'venue_local', 5, 21, 'bar', 85, 9, 'fall', 71.0, 'clear sky',
+             '2026-09-02', 'live', $2, true, 1, NULL, 0.8, 'concert', true)`,
+    [venueIds.evented, T('2026-09-02T01:00:00Z')]
+  );
+
   // A bulk city so the cursor has to FETCH more than once.
   const { rows: bulk } = await pool.query(
     `INSERT INTO ml_venues (google_place_id, name, city, latitude, longitude,
@@ -534,6 +557,46 @@ test('label_provenance survives the round trip through the database', () => {
   assert.equal(counts.weekly, 4);
 });
 
+// ── Round 26: the event-type vocabulary ─────────────────────────────────────
+
+test('a legacy event type is carried as stored, and the preflight census names it', async () => {
+  // eventService.js wrote 'concert' for the Music segment until 2026-09-04 and
+  // collectRealtime.js copied it into nearest_event_type from 2026-09-01: 1,964
+  // live rows in production carry it. The CSV must carry the value AS STORED,
+  // because the exporter normalising it would leave the raw corpus looking
+  // cleaner than it is; the mapping (concert -> music, by the fixed function's
+  // own reading) lives in prepare_features.py, which is pinned separately.
+  const rows = readCsv(path.join(outDir, 'training_data.csv')).rows
+    .filter((r) => r.venue_id === String(venueIds.evented));
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].nearest_event_type, 'concert',
+    'the exporter must not launder a stored event type — the census is what names it');
+  assert.equal(rows[0].has_nearby_event, '1');
+  assert.equal(rows[0].events_observed, '1');
+  assert.equal(rows[0].nearest_event_attendance, '',
+    'an unpublished capacity is NULL and must reach the CSV as the empty field, not 0');
+
+  const lines = [];
+  const pre = await exporter.preflight(roPool, (l) => lines.push(l));
+  assert.deepEqual(pre.eventTypes.outside, [{ type: 'concert', rows: 1 }],
+    'the census must single out the value the etype one-hot cannot describe');
+  assert.ok(lines.some((l) => /outside the etype vocabulary/.test(l) && /concert \(1\)/.test(l)),
+    'the export must say, before it starts, which stored values fall outside the vocabulary');
+  assert.ok(lines.some((l) => /concert -> music, film -> other/.test(l)),
+    'and name the two legacy readings prepare_features.py applies');
+});
+
+test('the census sees the value through whitespace and case, and only the vocabulary passes', async () => {
+  const seen = await exporter.eventTypeCensus({
+    query: async () => ({ rows: [
+      { type: 'music', rows: '10' }, { type: ' Sports ', rows: '2' },
+      { type: 'concert', rows: '3' }, { type: 'rave', rows: '1' },
+    ] }),
+  });
+  assert.deepEqual(seen.outside.map((v) => v.type), ['concert', 'rave']);
+  assert.deepEqual(seen.values.map((v) => v.rows), [10, 2, 3, 1], 'bigint counts arrive as numbers');
+});
+
 test('a city larger than one cursor FETCH is exported whole', () => {
   const rows = readCsv(path.join(outDir, 'training_data.csv')).rows
     .filter((r) => r.city === 'austin');
@@ -591,7 +654,8 @@ test('a realtime row without an axis stamp is NOT a refusal', async () => {
   try {
     const r = await exporter.runExport({ pool: roPool, outDir, log: quiet });
     const rt = readCsv(path.join(outDir, 'training_data.csv')).rows.filter((x) => x.is_realtime === '1');
-    assert.equal(rt.length, 4, 'undeclared realtime rows must still export');
+    // philly 3 + nobase 1 + the round-26 evented row 1; miami is holdout.
+    assert.equal(rt.length, 5, 'undeclared realtime rows must still export');
     assert.ok(r.trainCount > 0);
   } finally {
     await pool.query(`UPDATE ml_training_data SET hour_axis = 'venue_local' WHERE collection_mode = 'realtime'`);
