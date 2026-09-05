@@ -227,6 +227,59 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// ---------------------------------------------------------------------------
+// THE CORPUS WRITE LOCK. One transaction-level advisory lock under one name,
+// taken by every process that writes ml_venues or ml_training_data on a
+// venue's behalf: collectWeekly.js, collectRealtime.js,
+// repairBestTimeDiscoveredVenues.js, and buildBaselines.js's refresh.
+//
+// Why it exists. ml_training_data.venue_id cascades on delete, and the repair
+// deletes ml_venues rows. The hourly cron reads its venue list once and then
+// sweeps for up to fifty minutes, so a venue the repair retires is still in
+// some collector's memory. Without a lock the collector could insert an
+// observation for that venue between the repair moving its rows and deleting
+// it, and the cascade would take the fresh row with it; or the insert could
+// land after the delete and fail its foreign key, after the BestTime credit had
+// been spent. Neither side can see the other coming, so they take turns.
+//
+// Transaction-level, and per write rather than per run. A collector's write is
+// a few milliseconds with no network call inside it, and a repair group is a
+// few hundred rows, so nobody waits long and the hourly sweep is never skipped
+// wholesale because a repair happens to be running. A session-level lock at
+// collector start was the other option and was rejected: it needs one pinned
+// connection for the whole sweep, and it costs an hour of live readings
+// whenever the two overlap, which is the scarce half of the corpus. The
+// transaction lock is released by COMMIT or ROLLBACK, so a killed process
+// cannot leave it held.
+//
+// hashtext() folds the name to an int4, the one-argument form the rest of the
+// codebase uses for its advisory locks (routes/feedback.js explains the two key
+// spaces).
+// ---------------------------------------------------------------------------
+const ML_CORPUS_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtext('ml_corpus_writer'))";
+
+// Runs fn(client) inside BEGIN, the lock, COMMIT, on one checked-out
+// connection, rolling back and rethrowing on any error. The lock is the first
+// statement after BEGIN, before any row is read or touched, so a waiter holds
+// nothing while it waits and the order cannot deadlock against row locks.
+async function withCorpusWriteLock(pool, fn) {
+  const client = await pool.connect();
+  let broken = false;
+  try {
+    await client.query('BEGIN');
+    await client.query(ML_CORPUS_LOCK_SQL);
+    const result = await fn(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => { broken = true; });
+    throw err;
+  } finally {
+    // A connection whose ROLLBACK failed is not one to hand back to the pool.
+    client.release(broken || undefined);
+  }
+}
+
 module.exports = {
   CITIES,
   VENUE_TARGETS,
@@ -238,4 +291,6 @@ module.exports = {
   getLocalTime,
   priceLevelToNum,
   sleep,
+  ML_CORPUS_LOCK_SQL,
+  withCorpusWriteLock,
 };
