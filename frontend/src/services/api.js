@@ -1708,6 +1708,14 @@ export async function pinDmVenue(userId, v) {
   });
 }
 
+/* Take the pin down. There was no unpin anywhere in this product: no route,
+   no socket event, no handler, so PinStrip correctly refused to draw the menu
+   item it supports. dm_pinned_venues upserts on the pair, so a pin could be
+   replaced forever and never cleared. */
+export async function unpinDmVenue(userId) {
+  return request(`/api/dm/${userId}/pinned-venue`, { method: 'DELETE' });
+}
+
 export async function getDmVenueVotes(userId) {
   return request(`/api/dm/${userId}/venue-votes`);
 }

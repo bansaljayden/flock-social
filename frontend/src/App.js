@@ -3,7 +3,7 @@ import { useTheme } from './context/ThemeContext';
 // The revenue simulator math (lib/finance.js) moved to screens/RevenueScreen.js
 // with the admin console on 2026-08-27 and is imported there now. It was the
 // only reader of it in App.js, so the import went with it.
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue, pinFlockMessage as apiPinFlockMessage, unpinFlockMessage as apiUnpinFlockMessage } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, submitVenueFeedback, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, getEventDetails, sendAiChat, getWeatherForecast, submitAttendance, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, submitVenueReview, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue, unpinDmVenue as apiUnpinDmVenue, pinFlockMessage as apiPinFlockMessage, unpinFlockMessage as apiUnpinFlockMessage } from './services/api';
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
@@ -10702,6 +10702,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
   }, [applyPins, showToast]);
 
+  /* Take a DM's pinned venue down. Optimistic, because the strip is the thing
+     the person just asked to be rid of and leaving it up while a request flies
+     is the lag that makes people tap twice. On failure it goes back and the
+     server's own sentence is shown: a pin that quietly returns with no
+     explanation reads as the app ignoring the tap. */
+  const unpinDmVenueNow = useCallback(async (userId) => {
+    const previous = dmPinnedVenue;
+    setDmPinnedVenue(null);
+    try {
+      await apiUnpinDmVenue(userId);
+    } catch (err) {
+      setDmPinnedVenue(previous);
+      showToast(err?.message || "That didn't unpin.", 'error');
+    }
+  }, [dmPinnedVenue, showToast]);
+
   const retryFailedMessage = useCallback((flockId, failedMsg) => {
     // The old failed bubble is dropped from state and from the reload store; the
     // resend below mints a fresh one that persists again only if it fails again.
@@ -13069,6 +13085,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   useEffect(() => {
     const unsub = onDmVenuePinned((data) => {
       if (!isOpenDm(data.withUserId)) return;
+      /* A CLEARED PIN ARRIVES ON THE SAME EVENT, with a null name. The unpin
+         route deliberately reuses dm_venue_pinned rather than adding a second
+         event name, so this is the one branch that needs to exist: without it
+         an unpin would build a venue object of undefined fields and the strip
+         would draw a nameless row instead of disappearing. */
+      if (!data.venue_name) {
+        setDmPinnedVenue(null);
+        return;
+      }
       setDmPinnedVenue({ name: data.venue_name, addr: data.venue_address, place_id: data.venue_id, rating: data.venue_rating, photo_url: resolveVenuePhoto(data.venue_photo_url) });
     });
     return unsub;
@@ -18224,6 +18249,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // this component, and reading them any earlier is a temporal dead zone
       // throw.
       const dmDetailProps = {
+        unpinDmVenueNow,
         handleUnsendDm,
         ChatSkeleton,
         DM_PAGE_SIZE,
