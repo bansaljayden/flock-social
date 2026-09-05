@@ -99,6 +99,13 @@ async function dispatch(sql, params) {
   if (/^(BEGIN|COMMIT|ROLLBACK)/i.test(flat)) return { rows: [], rowCount: 0 };
 
   // ── PUT /:id ──────────────────────────────────────────────────────────────
+  // The join and update routes read the plan's status first (lifecycle
+  // audit, 2026-09-05): a finished or cancelled plan is neither joined nor
+  // reopened. Answered from the world, so a completed flock stays completed.
+  if (/^SELECT status FROM flocks WHERE id = \$1$/.test(flat)) {
+    const f = world.flocks.get(Number(p[0]));
+    return f ? { rows: [{ status: f.status }], rowCount: 1 } : { rows: [], rowCount: 0 };
+  }
   if (/^SELECT creator_id FROM flocks WHERE id = \$1$/.test(flat)) {
     const f = world.flocks.get(Number(p[0]));
     return f ? { rows: [{ creator_id: f.creator_id }], rowCount: 1 } : { rows: [], rowCount: 0 };
