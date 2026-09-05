@@ -229,6 +229,8 @@ async function dispatch(sql, params) {
   // nobody accepted remains, the flock, together or not at all. Mirror the
   // route's own semantics: the leaver's row is excluded by id, and a request
   // from a non-member deletes nothing.
+  // The flock row lock the leave path takes before its CTE (same lock billing holds).
+  if (/^SELECT id FROM flocks WHERE id = \$1 FOR UPDATE$/.test(flat)) return { rows: [{ id: params[0] }], rowCount: 1 };
   if (/^WITH gone AS \(\s*DELETE FROM flock_members WHERE flock_id = \$1 AND user_id = \$2 RETURNING 1\s*\)\s*DELETE FROM flocks f/.test(flat)) {
     const fid = Number(p[0]);
     const uid = Number(p[1]);
