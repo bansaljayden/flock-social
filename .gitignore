@@ -124,6 +124,9 @@ frontend/public/birdie/flap-src.png
 # BACKUP-AND-VERIFICATION.md, MODERATION-LEGAL.md, MONEY-MODEL.md,
 # SUBMIT-CHECKLIST.md, VENUE-BILLING.md, backend/.env.example.
 ADVERSARIAL-REVIEW.md
+# 2026-09-05: the chat rebuild plan names another company's product as the
+# target; it stays local like the other strategy docs.
+CHAT-REBUILD-PLAN.md
 APP-STORE-SUBMISSION.md
 # The App Review screen recordings for the 2.1 reply. Never committed, never
 # mirrored: they show a demo password being typed and belong to the reply
