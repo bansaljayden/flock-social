@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-09-05T22:13:30.413Z",
+  "generatedAt": "2026-09-05T23:08:29.328Z",
   "generator": "frontend/scripts/capture-screenshots.mjs",
   "note": "Real captures of the shipping app against a seeded local stack. See WIRING.md for the swap plan.",
   "captures": [
@@ -244,6 +244,46 @@
       "replaces": null
     },
     {
+      "file": "screenshots/plans-dark@2x.png",
+      "screen": "plans",
+      "title": "Plans tab",
+      "mode": "dark",
+      "set": "web",
+      "width": 780,
+      "height": 1688,
+      "replaces": null
+    },
+    {
+      "file": "screenshots/plans-dark@2x.webp",
+      "screen": "plans",
+      "title": "Plans tab",
+      "mode": "dark",
+      "set": "web",
+      "width": 780,
+      "height": 1688,
+      "replaces": null
+    },
+    {
+      "file": "screenshots/plans-light@2x.png",
+      "screen": "plans",
+      "title": "Plans tab",
+      "mode": "light",
+      "set": "web",
+      "width": 780,
+      "height": 1688,
+      "replaces": null
+    },
+    {
+      "file": "screenshots/plans-light@2x.webp",
+      "screen": "plans",
+      "title": "Plans tab",
+      "mode": "light",
+      "set": "web",
+      "width": 780,
+      "height": 1688,
+      "replaces": null
+    },
+    {
       "file": "screenshots/venue-analytics-dark@2x.png",
       "screen": "venue-analytics",
       "title": "Venue dashboard (analytics tab)",
@@ -317,6 +357,46 @@
       "file": "screenshots/venue-dash-light@2x.webp",
       "screen": "venue-dash",
       "title": "Venue dashboard (reviews tab)",
+      "mode": "light",
+      "set": "web",
+      "width": 780,
+      "height": 1688,
+      "replaces": null
+    },
+    {
+      "file": "screenshots/you-dark@2x.png",
+      "screen": "you",
+      "title": "Profile tab",
+      "mode": "dark",
+      "set": "web",
+      "width": 780,
+      "height": 1688,
+      "replaces": null
+    },
+    {
+      "file": "screenshots/you-dark@2x.webp",
+      "screen": "you",
+      "title": "Profile tab",
+      "mode": "dark",
+      "set": "web",
+      "width": 780,
+      "height": 1688,
+      "replaces": null
+    },
+    {
+      "file": "screenshots/you-light@2x.png",
+      "screen": "you",
+      "title": "Profile tab",
+      "mode": "light",
+      "set": "web",
+      "width": 780,
+      "height": 1688,
+      "replaces": null
+    },
+    {
+      "file": "screenshots/you-light@2x.webp",
+      "screen": "you",
+      "title": "Profile tab",
       "mode": "light",
       "set": "web",
       "width": 780,

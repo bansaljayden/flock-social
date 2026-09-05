@@ -15929,12 +15929,30 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             </div>
             <button aria-label="Next month" className="hit44" onClick={() => setCalendarMonth(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 1))} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.arrowRight('white', 16)}</button>
           </div>
-          {/* Today Quick Jump */}
+          {/* TODAY QUICK JUMP, drawn only when it has somewhere to jump to.
+              The Plans tab opens with calendarMonth and selectedDate both set
+              to `new Date()`, so in the DEFAULT state this full-width control
+              offered to take you to the day you were already looking at. Its
+              translucent fill reads as disabled besides, so the first thing on
+              the screen was a large grey bar that appeared dead and, if
+              tapped, did nothing observable.
+
+              Hidden rather than disabled or restyled, which is the rule this
+              app already follows elsewhere: BillCard withholds its undo
+              control instead of drawing one the server would refuse, because
+              "a control that exists only to be rejected is a dead one".
+
+              The row is kept as the wrapper so the header's spacing does not
+              move when the button appears; only the button goes. */}
           <div style={{ display: 'flex', gap: '8px' }}>
+            {(calendarMonth.getMonth() !== today.getMonth()
+              || calendarMonth.getFullYear() !== today.getFullYear()
+              || selectedDate.toDateString() !== today.toDateString()) && (
             <button className="hit44 glass-btn glass-secondary" onClick={() => { setCalendarMonth(today); setSelectedDate(today); }} style={{ flex: 1, padding: '8px', borderRadius: '10px', border: 'none', backgroundColor: 'rgba(255,255,255,0.15)', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
               {Icons.zap('#F59E0B', 12)}
               Jump to Today
             </button>
+            )}
           </div>
         </div>
 
