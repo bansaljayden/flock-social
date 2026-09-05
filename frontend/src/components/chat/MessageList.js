@@ -1,4 +1,4 @@
-import React, { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import DayDivider from './DayDivider';
 import MessageGroup from './MessageGroup';
 import { groupRows } from './groupRows';
@@ -172,6 +172,40 @@ export default function MessageList({
      fighting each other. */
   const [offBottom, setOffBottom] = useState(false);
 
+  /* A SMOOTH SCROLL WE STARTED IS NOT THE READER LEAVING THE BOTTOM.
+     Tapping the pill sets nearBottomRef true and then animates down. The
+     animation raises scroll events, and the first of them ran the band with
+     wasOff already false, so it measured against LEAVE_BOTTOM_PX: a reader
+     2000px up is still well over 600 on that first frame, off flipped back to
+     true, and the pill they had just pressed faded straight back in and rode
+     down the screen until the animation dropped under 600. Same on the follow
+     path, when your own message lands while you are scrolled up.
+
+     So a programmatic smooth scroll latches. While it is settling the handler
+     holds "near the bottom" rather than re-deciding it, and the latch lifts
+     the moment the scroller actually reaches the bottom. `scrollTo` has no
+     completion event of its own, hence the timer, which is a backstop and not
+     the normal path: an interrupted or refused animation must not leave the
+     list permanently deaf to the reader scrolling away. */
+  const settlingRef = useRef(false);
+  const settleTimerRef = useRef(null);
+  const clearSettle = useCallback(() => {
+    settlingRef.current = false;
+    if (settleTimerRef.current) {
+      clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = null;
+    }
+  }, []);
+  const beginSettle = useCallback(() => {
+    settlingRef.current = true;
+    if (settleTimerRef.current) clearTimeout(settleTimerRef.current);
+    settleTimerRef.current = setTimeout(() => {
+      settlingRef.current = false;
+      settleTimerRef.current = null;
+    }, 700);
+  }, []);
+  useEffect(() => clearSettle, [clearSettle]);
+
   const isMineRow = useCallback((m) => (
     !!m && (m.sender === ownName || (myId != null && m.senderId != null && String(m.senderId) === String(myId)))
   ), [myId, ownName]);
@@ -224,6 +258,7 @@ export default function MessageList({
            server's is not a new message, and treating it as one would raise
            a "1 new message" pill for a message the reader wrote. */
         if (isMineRow(lastRow) || nearBottomRef.current) {
+          beginSettle();
           scrollToBottom(el, true);
           /* Following the tail IS catching up, so the pill has nothing left
              to say, on either of its two grounds. Clearing both here rather
@@ -242,11 +277,22 @@ export default function MessageList({
     }
 
     prevRef.current = { firstId, lastId, height: el.scrollHeight, count: list.length };
-  }, [list, isMineRow]);
+    // beginSettle is a useCallback with no deps, so it is stable and this
+    // list still changes only when the rows or the ownership test do.
+  }, [list, isMineRow, beginSettle]);
 
   const onScroll = (e) => {
     const c = e.currentTarget;
     const fromBottom = c.scrollHeight - c.scrollTop - c.clientHeight;
+    if (settlingRef.current) {
+      // Our own animation. Hold the answer it is travelling towards, and let
+      // go as soon as it has actually arrived.
+      if (fromBottom <= RETURN_BOTTOM_PX) clearSettle();
+      nearBottomRef.current = true;
+      if (offBottom) setOffBottom(false);
+      if (newCount !== 0) setNewCount(0);
+      return;
+    }
     // The ref holds the previous answer, which is the half of the band that
     // decides which threshold this event is measured against.
     const wasOff = !nearBottomRef.current;
@@ -376,6 +422,7 @@ export default function MessageList({
               setNewCount(0);
               nearBottomRef.current = true;
               setOffBottom(false);
+              beginSettle();
               scrollToBottom(scrollerRef.current, true);
             }}
             style={{
