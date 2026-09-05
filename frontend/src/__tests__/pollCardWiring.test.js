@@ -99,6 +99,34 @@ describe('the card reaches the stream', () => {
   });
 });
 
+describe('every sender gets their own colour', () => {
+  test('the flock stream is handed a colourFor, not left on the fallback', () => {
+    /* components/chat/runColours.js exists for this: six colours measured
+       against the chat ground in both themes, picked by a hash of the sender
+       id so the same person keeps the same colour across reloads and devices.
+       Nothing in the app imported runColourFor, so this screen passed neither
+       `colours` nor `colourFor` and every run that was not yours fell through
+       to --chat-name-fallback, which is --text-secondary. In a five person
+       flock all four other people were drawn in the same grey as every
+       secondary word on screen, and the colours told the reader nothing.
+
+       Found by looking at a screenshot, not by a test, which is why there is
+       one now. */
+    expect(chatDetailSrc).toMatch(/colourFor=\{\(run\) => \(run\.isMine \? OWN_RUN_COLOUR : runColourFor\(run\.senderId\)\)\}/);
+    expect(chatDetailSrc).toMatch(/^  runColourFor,$/m);
+  });
+
+  test('it answers for YOUR runs too, or it takes your own colour away', () => {
+    // MessageList consults colourFor FIRST and returns whatever it says, so
+    // one that returned nothing for your runs would override ownColour rather
+    // than defer to it. DmDetail's note records the same trap.
+    expect(chatDetailSrc).toMatch(/run\.isMine \? OWN_RUN_COLOUR/);
+    // Hoisted, so the own colour is not written twice and cannot drift.
+    expect(chatDetailSrc).toMatch(/const OWN_RUN_COLOUR = 'var\(--chat-accent\)';/);
+    expect(chatDetailSrc).toMatch(/ownColour=\{OWN_RUN_COLOUR\}/);
+  });
+});
+
 describe('the numbers', () => {
   test('the footer count is voters plus guests, not a vote total', () => {
     /* A guest voting from an invite link adds to a row's count without adding
