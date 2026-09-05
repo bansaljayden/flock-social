@@ -821,11 +821,17 @@ test('friends / TWO AT ONCE: re-requesting must not demote a friendship accepted
   // landed on an ACCEPTED row and put it back to pending — two people who are
   // friends, one of whom is told the request was merely sent. Guard the write
   // with the status it was decided on.
-  friendFixtures({ existing: [{ id: 55, status: 'declined', requester_id: 1 }] });
+  // The answer after a 0-row revive comes from a re-read of the row, so the
+  // fixture flips the row the way the database would; a row that is STILL
+  // declined after a 0-row revive (the one-a-day cooldown) is reported to
+  // the requester as pending on purpose (friends audit, 2026-09-05).
+  const row = { id: 55, status: 'declined', requester_id: 1 };
+  friendFixtures({ existing: [row] });
   let updateWhere = null;
   handlers.push([/^UPDATE friendships SET status = 'pending'/i, (_p, sql) => {
     updateWhere = sql;
-    return { rows: [], rowCount: 0 }; // it turned 'accepted' underneath us
+    row.status = 'accepted'; // it turned 'accepted' underneath us
+    return { rows: [], rowCount: 0 };
   }]);
   const res = await post('/api/friends/request', { user_id: 2 });
   assert.ok(updateWhere, 'the re-request never ran an UPDATE');
@@ -833,6 +839,7 @@ test('friends / TWO AT ONCE: re-requesting must not demote a friendship accepted
     'the re-request UPDATE is not guarded by the status it read');
   assert.notStrictEqual(res.body.status, 'pending',
     'reported a pending request over a friendship that already exists');
+  assert.strictEqual(res.body.status, 'accepted', 'the answer comes from the re-read, not the stale row');
 });
 
 test('friends / TWO AT ONCE: auto-accept is guarded by the status it read', async () => {

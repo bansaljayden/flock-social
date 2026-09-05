@@ -5383,6 +5383,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Add Friends screen state (declared before handlers that reference them)
   const [addFriendsTab, setAddFriendsTab] = useState('username');
   const [pendingRequests, setPendingRequests] = useState([]);
+  // A failed read is not an empty list (friends audit, 2026-09-05): Quick Add
+  // told a person with twenty friends they had none, and a failed pending
+  // read hid incoming requests with no way to retry. Same shape as
+  // calendarError: set in the catch, cleared on a landed read, rendered as
+  // its own sentence with a retry, never as the empty state.
+  const [pendingRequestsError, setPendingRequestsError] = useState('');
+  const [friendSuggestionsError, setFriendSuggestionsError] = useState('');
   const [outgoingRequests, setOutgoingRequests] = useState([]);
   const [friendSuggestions, setFriendSuggestions] = useState([]);
   const [addFriendsSearch, setAddFriendsSearch] = useState('');
@@ -5464,7 +5471,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setMyFriendCode('FLOCK-' + authUser.id.toString(36).toUpperCase().padStart(4, '0'));
     }
     // Load each independently so one failure doesn't block the rest
-    getPendingRequests().then(d => setPendingRequests(d.requests || [])).catch(e => console.error('[AddFriends] Pending:', e.message));
+    getPendingRequests()
+      .then(d => { setPendingRequests(d.requests || []); setPendingRequestsError(''); })
+      .catch(e => { console.error('[AddFriends] Pending:', e.message); setPendingRequestsError(e?.message || 'Your friend requests are not loading right now.'); });
     getOutgoingRequests().then(d => {
       const requests = d.requests || [];
       setOutgoingRequests(requests);
@@ -5478,7 +5487,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         });
       }
     }).catch(e => console.error('[AddFriends] Outgoing:', e.message));
-    getFriendSuggestions().then(d => setFriendSuggestions(d.suggestions || [])).catch(e => console.error('[AddFriends] Suggestions:', e.message));
+    getFriendSuggestions()
+      .then(d => { setFriendSuggestions(d.suggestions || []); setFriendSuggestionsError(''); })
+      .catch(e => { console.error('[AddFriends] Suggestions:', e.message); setFriendSuggestionsError(e?.message || 'Quick Add is not loading right now.'); });
     // friendStatuses is otherwise written only by sending, accepting and the
     // socket, so nothing seeded it from the server and a reload lost every
     // existing friendship: the search row then offered an Add button for
@@ -5509,6 +5520,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // The server's "confirm your email" refusal used to land here as a red
       // toast with no resend, beside a request that stayed on screen.
       if (needsEmailVerification(err, 'add friends')) return;
+      // The requester withdrew it (Cancel on Sent Requests tells nobody), so
+      // the server answers 404. The row leaves the list instead of re-toasting
+      // on every tap until the screen is left (friends audit, 2026-09-05).
+      if (err?.status === 404) {
+        setPendingRequests(prev => prev.filter(r => r.id !== userId));
+        showToast('That request was withdrawn.');
+        return;
+      }
       showToast(err.message || 'Failed to accept', 'error');
     }
   }, [showToast, needsEmailVerification]);
@@ -17184,6 +17203,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         friendCodeLoading,
         friendStatuses,
         friendSuggestions,
+        friendSuggestionsError,
         handleAcceptFriendRequest,
         handleAddByCode,
         handleAddFriendsSearch,
@@ -17193,10 +17213,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         handleLookupByNumber,
         handleSendFriendRequest,
         handleSyncContacts,
+        loadAddFriendsData,
         myFriendCode,
         openUserProfile,
         outgoingRequests,
         pendingRequests,
+        pendingRequestsError,
         phoneLookupError,
         phoneLookupInput,
         phoneLookupLoading,

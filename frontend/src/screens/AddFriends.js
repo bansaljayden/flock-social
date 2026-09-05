@@ -87,6 +87,7 @@ export default function AddFriends({
   friendCodeLoading,
   friendStatuses,
   friendSuggestions,
+  friendSuggestionsError,
   handleAcceptFriendRequest,
   handleAddByCode,
   handleAddFriendsSearch,
@@ -96,10 +97,12 @@ export default function AddFriends({
   handleLookupByNumber,
   handleSendFriendRequest,
   handleSyncContacts,
+  loadAddFriendsData,
   myFriendCode,
   openUserProfile,
   outgoingRequests,
   pendingRequests,
+  pendingRequestsError,
   phoneLookupError,
   phoneLookupInput,
   phoneLookupLoading,
@@ -164,6 +167,16 @@ export default function AddFriends({
 
         {/* Content */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
+
+          {/* A failed read of the requests is said, with a retry, and never
+              rendered as "no requests" (friends audit, 2026-09-05). Plain
+              text, no bird: an error must not read like an empty inbox. */}
+          {pendingRequestsError && (
+            <div role="status" style={{ marginBottom: '16px', padding: '10px 12px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{pendingRequestsError}</p>
+              <button className="hit44" onClick={() => loadAddFriendsData()} style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>Try again</button>
+            </div>
+          )}
 
           {/* Pending Friend Requests (always visible at top if any) */}
           {pendingRequests.length > 0 && (
@@ -289,7 +302,18 @@ export default function AddFriends({
           {/* TAB: Quick Add / Suggestions */}
           {activeTab === 'suggestions' && (
             <div>
-              {friendSuggestions.length === 0 ? (
+              {/* Same rule as the requests above: a failed read is its own
+                  sentence with a retry, and the empty state below is
+                  suppressed while it stands, because "No suggestions yet"
+                  over a read that never landed told a person with twenty
+                  friends they had none (friends audit, 2026-09-05). */}
+              {friendSuggestionsError && (
+                <div role="status" style={{ padding: '10px 12px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{friendSuggestionsError}</p>
+                  <button className="hit44" onClick={() => loadAddFriendsData()} style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', flexShrink: 0 }}>Try again</button>
+                </div>
+              )}
+              {friendSuggestionsError ? null : friendSuggestions.length === 0 ? (
                 /* Quick Add is mutual friends only, so it is empty by
                    construction for a new account. The old copy told that
                    account to "add more friends to see people you may know",
