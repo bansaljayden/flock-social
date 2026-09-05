@@ -189,6 +189,14 @@ pool.query = async (text, params = []) => {
     return { rows: [], rowCount: 0 };
   }
   if (has('UPDATE direct_messages SET read_status = TRUE')) return { rows: [], rowCount: 0 };
+  // Read receipts (migration 065). Opening a thread stamps delivered_at on
+  // everything from the other person that has not been receipted yet, which is
+  // a claim about the READER's own device and so carries no authorization
+  // question of its own: the predicate is `receiver_id = the caller`, so the
+  // worst a wrong id can do is receipt nothing. Returning no rows means no
+  // dm_delivered is emitted either, which keeps this suite's socket recorder
+  // measuring only what it is about.
+  if (has('UPDATE direct_messages SET delivered_at')) return { rows: [], rowCount: 0 };
   if (has('INSERT INTO dm_emoji_reactions')) {
     return { rows: [{ id: 1, dm_id: params[0], user_id: params[1], emoji: params[2] }], rowCount: 1 };
   }
