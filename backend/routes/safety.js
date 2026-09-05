@@ -731,6 +731,13 @@ function isEscalation(coords, previous) {
 // earlier no-location alert is once again the most recent. An attempt that
 // reached nobody has not spent anything, and MAX_ATTEMPTS_PER_WINDOW is the
 // ceiling on that loop, exactly as it is for a failing first alert.
+// What an escalation is called in the email: a change of position when the
+// previous alert carried one, the first position when it did not.
+function escalationKind(previous) {
+  const hadLocation = previous && previous.latitude != null && previous.longitude != null;
+  return hadLocation ? 'moved' : 'location';
+}
+
 function isLocationFollowUp(coords, previous, ageMs) {
   if (!coords || !previous) return false;
   if (previous.latitude != null || previous.longitude != null) return false;
@@ -930,8 +937,36 @@ async function alertFlockMembers(io, user, coords, contactsAlerted) {
   // reached; only a delivered push counts, so the log does not over-report.
   const notified = results.filter((r) => r.status === 'fulfilled' && r.value && (r.value.sent || 0) > 0).length;
   console.log(`[Safety] SOS from user ${user.id} reached ${notified} of ${members.rows.length} flock members in the app.`);
-  return { notified };
+  // Everyone the alarm was ADDRESSED to, not only those a push reached: a
+  // socket emit lands on an open app without a device row, and the stand-down
+  // has to reach every one of them. Written on the alert row by the caller.
+  return { notified, recipientIds: members.rows.map((row) => Number(row.user_id)) };
 }
+
+// The flock leg's audience, written on the alert row so the stand-down can
+// go to exactly those people (migration 063). Nothing to record is not an
+// error; a write that fails is logged by the caller's catch.
+function recordFlockRecipients(alertId, leg) {
+  if (!alertId || !leg || !Array.isArray(leg.recipientIds) || leg.recipientIds.length === 0) return null;
+  return pool.query('UPDATE emergency_alerts SET flock_recipient_ids = $1::int[] WHERE id = $2', [leg.recipientIds, alertId]);
+}
+
+// The stand-down's audience when the alarm recorded who it reached (migration
+// 063): exactly those people, less anyone banned or blocked since. Nothing
+// about the flock is consulted, because the flock is what changed under the
+// old query: a plan the sweep marked completed, one the host cancelled, or
+// one the sender had since left answered no rows, and every flockmate's
+// full-screen alarm stayed up for good (safety audit, 2026-09-05).
+const SOS_STAND_DOWN_SNAPSHOT_SQL = `SELECT DISTINCT u.id AS user_id
+       FROM users u
+      WHERE u.id = ANY($2::int[])
+        AND u.id <> $1
+        AND COALESCE(u.is_banned, FALSE) = FALSE
+        AND NOT EXISTS (
+          SELECT 1 FROM user_blocks b
+          WHERE (b.blocker_id = $1 AND b.blocked_id = u.id)
+             OR (b.blocker_id = u.id AND b.blocked_id = $1)
+        )`;
 
 // The stand-down's flock leg, and the leg /alert/cancel forgot for as long as
 // it existed: the alarm above deliberately rings through quiet hours and puts
@@ -942,13 +977,23 @@ async function alertFlockMembers(io, user, coords, contactsAlerted) {
 // window is re-evaluated at cancel time, which can only shrink the set toward
 // people whose plan is still near; anyone the alarm reached outside it holds
 // a stale alert, which the email contacts always risked too.
-async function notifyFlockStandDown(io, user, hoursSinceAlert = 0) {
+async function notifyFlockStandDown(io, user, hoursSinceAlert = 0, recipientIds = null) {
+  // `recipientIds` is what the alarm recorded (migration 063). When it is
+  // there, the stand-down goes to that list and to nobody else; the live
+  // audience query below is the fallback for alerts written before the
+  // column existed, and it carries the widening below for the same reason it
+  // always did.
+  const snapshot = Array.isArray(recipientIds)
+    ? recipientIds.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0)
+    : [];
   // The window is widened by the time since the alarm, so a plan that was
   // inside the alarm's window is still inside this one. Re-evaluated as it
   // was, the window could only shrink, and a flockmate reached near its
   // edge held a full-screen alarm nobody ever called off.
   const windowHours = SOS_FLOCK_WINDOW_HOURS + Math.max(0, Math.ceil(Number(hoursSinceAlert) || 0));
-  const members = await pool.query(SOS_FLOCK_AUDIENCE_SQL, [user.id, windowHours]);
+  const members = snapshot.length
+    ? await pool.query(SOS_STAND_DOWN_SNAPSHOT_SQL, [user.id, snapshot])
+    : await pool.query(SOS_FLOCK_AUDIENCE_SQL, [user.id, windowHours]);
   if (members.rows.length === 0) return { notified: 0 };
 
   const name = String(user.name || 'Someone you are out with').slice(0, 80);
@@ -1102,7 +1147,10 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
             });
           }
           // Escalation allowed: fall through and send the updated location.
-          updateKind = 'moved';
+          // Past the follow-up window this is a plain escalation, and the
+          // email used to say "Their location has changed" over an alert
+          // that never had one. There is nothing to have moved from.
+          updateKind = escalationKind(last);
           updateAgeMs = ageMs;
         }
 
@@ -1311,9 +1359,15 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
       // One retry first: a lost write here also makes the alert impossible
       // to stand down, because /alert/cancel only withdraws an alert that
       // reached somebody, and this count is how it knows.
+      // The contacts the mail provider accepted, kept on the row so the
+      // stand-down reaches them whether or not they are still on the list
+      // (migration 063).
+      const contactRecipients = alerts
+        .filter((a) => a.sent === true && isMailableAddress(a.email))
+        .map((a) => ({ name: String(a.contactName || '').slice(0, 100), email: a.email }));
       const recordCount = () => pool.query(
-        'UPDATE emergency_alerts SET contacts_alerted = $1 WHERE id = $2',
-        [emailsSent, alertId]
+        'UPDATE emergency_alerts SET contacts_alerted = $1, contact_recipients = $3::jsonb WHERE id = $2',
+        [emailsSent, alertId, JSON.stringify(contactRecipients)]
       );
       await recordCount().catch(() => recordCount()).catch((e) => console.error(
         `[Safety] alert ${alertId} was DELIVERED to ${emailsSent} contact(s) but the count could not be recorded: ${e.message}. The cooldown for this user is not armed.`
@@ -1340,10 +1394,14 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
     // email failed the people in the room were told nothing at all, and
     // they are the ones who can physically get there. Fire-and-forget: the
     // response is never held on it, and it cannot change the answer.
-    alertFlockMembers(req.app.get('io'), req.user, coords, emailsSent).catch((err) => console.error(
-      `[Safety] SOS from user ${req.user.id}: the flock leg failed (${err.message}). `
-      + 'The trusted-contact emails are unaffected.'
-    ));
+    // Who the alarm reached goes on the row (migration 063) so the all-clear
+    // can go to them; best effort, the live-audience fallback stands otherwise.
+    alertFlockMembers(req.app.get('io'), req.user, coords, emailsSent)
+      .then((leg) => recordFlockRecipients(alertId, leg))
+      .catch((err) => console.error(
+        `[Safety] SOS from user ${req.user.id}: the flock leg failed (${err.message}). `
+        + 'The trusted-contact emails are unaffected.'
+      ));
 
     if (emailsSent === 0) {
       // Nobody was reached — say so loudly, and the retry path is open now.
@@ -1491,11 +1549,16 @@ router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
     // confirmed sends only (see the claim comment on /alert), so a claim row
     // that reached nobody correctly does not qualify: there is no message out
     // there to withdraw.
+    // An alarm the FLOCK heard is an alarm that can be withdrawn, whether or
+    // not a single email landed (safety audit, 2026-09-05): the flock leg
+    // runs regardless of the email verdict, so gating the all-clear on
+    // contacts_alerted left a full-screen alarm on every flockmate's phone
+    // with no way to call it off whenever the mail provider was down.
     const last = await pool.query(
-      `SELECT created_at, contacts_alerted
+      `SELECT id, created_at, contacts_alerted, flock_recipient_ids, contact_recipients
          FROM emergency_alerts
         WHERE user_id = $1
-          AND COALESCE(contacts_alerted, 0) > 0
+          AND (COALESCE(contacts_alerted, 0) > 0 OR COALESCE(cardinality(flock_recipient_ids), 0) > 0)
           AND created_at > (NOW() AT TIME ZONE 'UTC') - ($2::int || ' milliseconds')::interval
         ORDER BY created_at DESC LIMIT 1`,
       [req.user.id, CANCEL_WINDOW_MS]
@@ -1527,15 +1590,58 @@ router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
     // had never heard of us, past the do-not-mail list, on the strength of the
     // one argument that lets this route past it. COALESCE covers every row
     // written before migration 052, where the two dates are the same thing.
-    const contacts = await pool.query(
-      `SELECT contact_name, contact_email
-         FROM trusted_contacts
-        WHERE user_id = $1 AND COALESCE(email_set_at, created_at) <= $2
-        ORDER BY created_at ASC`,
-      [req.user.id, last.rows[0].created_at]
-    );
-    const withEmail = contacts.rows.filter((c) => isMailableAddress(c.contact_email));
+    // THE FLOCK FIRST, and to exactly who the alarm reached. Before the
+    // contacts are even looked at, because the refusal below used to come
+    // first and a person whose contacts had all been removed could not call
+    // off the flock alarm at all. The recorded ids (migration 063) make a
+    // completed, cancelled or departed plan irrelevant; a row from before
+    // the column falls back to the live audience query, widened by the time
+    // since the alarm as it always was.
+    const hoursSinceAlert = (Date.now() - new Date(last.rows[0].created_at).getTime()) / 3600000;
+    const flockIds = Array.isArray(last.rows[0].flock_recipient_ids) ? last.rows[0].flock_recipient_ids : [];
+    // A push the alarm queued for a retry (a device that timed out) must not
+    // be released after the all-clear: it would put "X needs help" back on a
+    // lock screen minutes after "X says they are OK". Best effort.
+    pool.query(
+      `DELETE FROM push_outbox WHERE data->>'type' = 'safety_alert' AND data->>'fromUserId' = $1`,
+      [String(req.user.id)]
+    ).catch((outboxErr) => console.error('[Safety] Could not withdraw queued SOS pushes:', outboxErr?.message));
+    notifyFlockStandDown(req.app.get('io'), req.user, hoursSinceAlert, flockIds).catch((fanErr) => {
+      console.error('[Safety] Flock stand-down fan-out failed:', fanErr?.message);
+    });
+
+    // The contacts the alarm's emails reached, as recorded on the row; a
+    // contact removed since still gets the all-clear, because they still
+    // hold the alarm. Rows from before migration 063 fall back to the list
+    // as it stood when the alarm went out.
+    const recorded = Array.isArray(last.rows[0].contact_recipients)
+      ? last.rows[0].contact_recipients
+          .filter((c) => c && isMailableAddress(c.email))
+          .map((c) => ({ contact_name: String(c.name || 'Your contact').slice(0, 100), contact_email: c.email }))
+      : [];
+    let withEmail = recorded;
     if (withEmail.length === 0) {
+      const contacts = await pool.query(
+        `SELECT contact_name, contact_email
+           FROM trusted_contacts
+          WHERE user_id = $1 AND COALESCE(email_set_at, created_at) <= $2
+          ORDER BY created_at ASC`,
+        [req.user.id, last.rows[0].created_at]
+      );
+      withEmail = contacts.rows.filter((c) => isMailableAddress(c.contact_email));
+    }
+    if (withEmail.length === 0) {
+      // The flock leg above has already gone out. If the alarm reached a
+      // flock, that is the honest answer; only when it reached nobody at all
+      // is there nothing this route can do.
+      if (flockIds.length > 0) {
+        return res.json({
+          success: true,
+          message: 'The people on your plan have been told you are OK. None of your contacts could be reached here, so call them.',
+          contactsToldCount: 0,
+          flockStoodDown: true,
+        });
+      }
       return res.status(400).json({
         error: 'None of the contacts who received that alert are still on your list with a working email, so we cannot reach them here. Call them.',
         unreachableContacts: true,
@@ -1599,11 +1705,6 @@ router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
     // The flock leg first, for the same reason as on /alert: a stand-down
     // whose emails all failed used to leave every flockmate holding the
     // alarm. Best-effort and never awaited by the response.
-    const hoursSinceAlert = (Date.now() - new Date(last.rows[0].created_at).getTime()) / 3600000;
-    notifyFlockStandDown(req.app.get('io'), req.user, hoursSinceAlert).catch((fanErr) => {
-      console.error('[Safety] Flock stand-down fan-out failed:', fanErr?.message);
-    });
-
     if (told.length === 0) {
       // Same rule as /alert: never report a delivery that did not happen, and
       // say what to do instead. The meter is given back, because an attempt
@@ -1614,8 +1715,11 @@ router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
       if (entry && entry.count > 0) entry.count -= 1;
       return res.status(502).json({
         success: false,
-        error: 'We could not tell any of your contacts that you are OK. They still have your alert. Call them.',
+        error: flockIds.length > 0
+          ? 'The people on your plan have been told you are OK, but we could not tell any of your contacts. They still have your alert. Call them.'
+          : 'We could not tell any of your contacts that you are OK. They still have your alert. Call them.',
         canRetry: true,
+        flockStoodDown: flockIds.length > 0,
       });
     }
 
@@ -1627,6 +1731,7 @@ router.post('/alert/cancel', authenticateAllowBanned, async (req, res) => {
       success: true,
       message: parts.join('. '),
       contactsToldCount: told.length,
+      flockStoodDown: flockIds.length > 0,
     });
 
     return undefined;
@@ -1788,7 +1893,9 @@ module.exports.__test = {
   safeSubjectText,
   metresBetween,
   isEscalation,
+  escalationKind,
   isLocationFollowUp,
+  SOS_STAND_DOWN_SNAPSHOT_SQL,
   agoPhrase,
   namePhrase,
   readAccuracy,
