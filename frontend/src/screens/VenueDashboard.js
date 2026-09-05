@@ -37,20 +37,6 @@ import { BirdieStill, BirdNote, BIRDIE, WARM_BIRD } from '../components/ui/Birdi
 import Icons from '../components/ui/Icons';
 import VenueInsightCards from '../components/VenueInsightCards';
 import VenueAdvisorChat from '../components/VenueAdvisorChat';
-
-// When an incoming group is coming, from the row's event_time. The same
-// six-day rule App.js's formatEventTime applies to the consumer's own plans:
-// a weekday alone is ambiguous past one week. The feed's window runs from
-// twelve hours ago to seven days ahead, so the date form is reachable.
-const incomingWhen = (iso) => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const opts = d.getTime() - Date.now() > 6 * 24 * 3600 * 1000
-    ? { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }
-    : { weekday: 'short', hour: 'numeric', minute: '2-digit' };
-  return d.toLocaleString([], opts);
-};
 import {
   BASE_URL,
   askAdvisor,
@@ -66,6 +52,21 @@ import {
   updateVenueProfile,
   updateVenuePromotion,
 } from '../services/api';
+
+
+// When an incoming group is coming, from the row's event_time. The same
+// six-day rule App.js's formatEventTime applies to the consumer's own plans:
+// a weekday alone is ambiguous past one week. The feed's window runs from
+// twelve hours ago to seven days ahead, so the date form is reachable.
+const incomingWhen = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const opts = d.getTime() - Date.now() > 6 * 24 * 3600 * 1000
+    ? { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }
+    : { weekday: 'short', hour: 'numeric', minute: '2-digit' };
+  return d.toLocaleString([], opts);
+};
 
 export default function VenueDashboard({
   // Module-level helpers and components that live in App.js and are shared
